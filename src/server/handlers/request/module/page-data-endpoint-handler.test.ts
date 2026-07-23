@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -13,8 +14,16 @@ import {
 } from "../../../shared/renderer/index.ts";
 import {
   __clearPageDataEndpointCacheForTests,
+  buildPageDataCacheKey,
   handlePageDataEndpoint,
 } from "./page-data-endpoint-handler.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 type PageDataEndpointHandler = typeof handlePageDataEndpoint;
 
@@ -170,7 +179,6 @@ async function callPageDataEndpoint(
     ctx,
     () => new ResponseBuilder(),
     (response): HandlerResult => ({ response, continue: false }),
-    (error) => error instanceof Error ? error.message : String(error),
   );
 
   return result.response!;
@@ -186,9 +194,73 @@ function restoreEnv(name: string, value: string | undefined): void {
 
 describe("server/handlers/request/module/page-data-endpoint-handler", () => {
   afterEach(async () => {
+    Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    Deno.env.delete("WORKER_ISOLATION_DATA");
+    __resetPoolForTests();
+    __resetLogRecordEmitterForTests();
     __clearPageDataEndpointCacheForTests();
     await destroyRendererAdapter();
     setRendererInitializer(undefined);
+  });
+
+  it("rejects remote page data before renderer resolution even when worker flags are enabled", async () => {
+    Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+    Deno.env.set("WORKER_ISOLATION_DATA", "1");
+    __resetPoolForTests();
+
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => {
+        calls++;
+        return Promise.resolve(createPageData(slug, calls));
+      }),
+    );
+
+    const response = await callPageDataEndpoint(
+      new Request("https://runtime.example.com/_veryfront/page-data/index.json"),
+      makeCtx({ isLocalProject: false }),
+    );
+
+    assertEquals(response.status, 503);
+    assertEquals(response.headers.get("cache-control"), "no-store");
+    assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+    assertEquals(calls, 0);
+  });
+
+  it("does not infer a not-found response from an untyped error message", async () => {
+    const secret = "private 404 at /srv/customer/project.ts?token=secret";
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+    setRendererInitializer(
+      createInitializer(() => Promise.reject(new Error(secret))),
+    );
+
+    const response = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/private.json"),
+      makeCtx(),
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(await response.json(), { error: "Internal server error", status: 500 });
+    const failure = entries.find((entry) => entry.message.includes("Failed to resolve page data"));
+    assertEquals(failure?.context?.errorName, "Error");
+    assertEquals(failure?.context?.status, 500);
+    assertEquals(JSON.stringify(failure).includes(secret), false);
+    assertEquals(failure?.context && Object.hasOwn(failure.context, "pathname"), false);
+  });
+
+  it("returns not found only for typed not-found errors", async () => {
+    setRendererInitializer(
+      createInitializer(() => Promise.reject(FILE_NOT_FOUND.create({ detail: "private path" }))),
+    );
+
+    const response = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/missing.json"),
+      makeCtx(),
+    );
+
+    assertEquals(response.status, 404);
+    assertEquals(await response.json(), { error: "Page not found", status: 404 });
   });
 
   it("caches anonymous page-data responses by project, release, slug, and query", async () => {
@@ -210,6 +282,48 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(second.status, 200);
     assertEquals(calls, 1);
     assertEquals(await first.text(), await second.text());
+  });
+
+  it("keeps structured cache-key fields distinct when values contain delimiters", () => {
+    const firstContext = makeCtx({
+      enriched: { contentSourceId: "c|d" } as HandlerContext["enriched"],
+    });
+    const secondContext = makeCtx({
+      enriched: { contentSourceId: "c" } as HandlerContext["enriched"],
+    });
+    const url = new URL("http://localhost/_veryfront/page-data/index.json");
+    const first = buildPageDataCacheKey(firstContext, "index", url);
+    const second = buildPageDataCacheKey(secondContext, "d|index", url);
+
+    assertEquals(first === second, false);
+  });
+
+  it("starts fresh work after cache invalidation while an older resolution is in flight", async () => {
+    const firstResolution = Promise.withResolvers<PageDataResponse>();
+    const firstStarted = Promise.withResolvers<void>();
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => {
+        calls++;
+        if (calls === 1) {
+          firstStarted.resolve();
+          return firstResolution.promise;
+        }
+        return Promise.resolve(createPageData(slug, calls));
+      }),
+    );
+
+    const ctx = makeCtx();
+    const request = () => new Request("http://localhost/_veryfront/page-data/index.json");
+    const firstResponse = callPageDataEndpoint(request(), ctx);
+    await firstStarted.promise;
+    __clearPageDataEndpointCacheForTests();
+    const secondResponse = callPageDataEndpoint(request(), ctx);
+    firstResolution.resolve(createPageData("index", 1));
+
+    assertEquals(JSON.parse(await (await firstResponse).text()).frontmatter.sequence, 1);
+    assertEquals(JSON.parse(await (await secondResponse).text()).frontmatter.sequence, 2);
+    assertEquals(calls, 2);
   });
 
   it("shares page-data cache entries across tracking and cache-busting query params", async () => {
@@ -373,17 +487,58 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       const first = await callPageDataEndpoint(req(), ctx);
       clock.advance(60_001);
       const second = await callPageDataEndpoint(req(), ctx);
-      await Promise.resolve();
-      const third = await callPageDataEndpoint(req(), ctx);
+      let refreshedSequence = 0;
+      await waitFor(async () => {
+        const refreshed = await callPageDataEndpoint(req(), ctx);
+        refreshedSequence = JSON.parse(await refreshed.text()).frontmatter.sequence;
+        return refreshedSequence === 2;
+      }, { timeout: 1_000, interval: 1 });
 
       assertEquals(JSON.parse(await first.text()).frontmatter.sequence, 1);
       assertEquals(JSON.parse(await second.text()).frontmatter.sequence, 1);
-      assertEquals(JSON.parse(await third.text()).frontmatter.sequence, 2);
+      assertEquals(refreshedSequence, 2);
       assertEquals(calls, 2);
       assertEquals(
         first.headers.get("cache-control"),
         "public, max-age=60, stale-while-revalidate=1800",
       );
+    });
+  });
+
+  it("does not log background refresh error details", async () => {
+    const secret = "private refresh failure at /srv/customer/page.ts";
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => {
+        calls++;
+        return calls === 1
+          ? Promise.resolve(createPageData(slug, calls))
+          : Promise.reject(new Error(secret));
+      }),
+    );
+
+    await withMockedNow(1_000_000, async (clock) => {
+      const ctx = makeCtx();
+      const req = () => new Request("http://localhost/_veryfront/page-data/index.json");
+
+      const first = await callPageDataEndpoint(req(), ctx);
+      clock.advance(60_001);
+      const stale = await callPageDataEndpoint(req(), ctx);
+      await waitFor(
+        () => entries.some((entry) => entry.message.includes("Background refresh failed")),
+        { timeout: 1_000, interval: 1 },
+      );
+
+      assertEquals(first.status, 200);
+      assertEquals(stale.status, 200);
+      assertEquals(calls, 2);
+      const failure = entries.find((entry) => entry.message.includes("Background refresh failed"));
+      assertEquals(failure?.context?.errorName, "Error");
+      assertEquals(failure?.context?.status, 500);
+      assertEquals(JSON.stringify(failure).includes(secret), false);
+      assertEquals(failure?.context && Object.hasOwn(failure.context, "detail"), false);
     });
   });
 

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_CONFIG, mergeConfig } from "./configurator.ts";
+import type { AutoInstrumentConfig } from "./types.ts";
 
 describe("observability/auto-instrument/configurator", () => {
   describe("DEFAULT_CONFIG", () => {
@@ -48,6 +49,18 @@ describe("observability/auto-instrument/configurator", () => {
           captureErrors: false,
         },
       );
+    });
+
+    it("rejects invalid runtime flags and snapshots nested config", () => {
+      const tracing = { enabled: true, serviceName: "service" };
+      const merged = mergeConfig({
+        tracing,
+        instrumentHttp: "false",
+      } as unknown as AutoInstrumentConfig);
+      tracing.serviceName = "changed";
+
+      assertEquals(merged.instrumentHttp, true);
+      assertEquals(merged.tracing?.serviceName, "service");
     });
   });
 });

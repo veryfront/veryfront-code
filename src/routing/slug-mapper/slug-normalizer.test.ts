@@ -90,6 +90,10 @@ describe("slug-normalizer", () => {
         expect(getSlugFromPath(input)).toBe(expected);
       }
     });
+
+    it("should support Windows-style paths", () => {
+      expect(getSlugFromPath(String.raw`C:\project\app\blog\page.tsx`)).toBe("blog");
+    });
   });
 
   describe("round-trip conversions", () => {
@@ -141,7 +145,7 @@ describe("slug-normalizer", () => {
     });
 
     it("should handle uppercase extensions", () => {
-      expect(getSlugFromPath("/project/pages/blog.MDX")).toBe("blog.MDX");
+      expect(getSlugFromPath("/project/pages/blog.MDX")).toBe("blog");
     });
   });
 });

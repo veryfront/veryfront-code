@@ -1,280 +1,57 @@
-/**
- * Pages Router API Handler
- *
- * Handles Pages Router API routes (under /api/ directory).
- * Supports optional cache injection for testing.
- *
- * @module server/handlers/request/api/pages-api-handler
- */
+/** Pages Router API handler cache and lifecycle facade. */
 
 import { APIRouteHandler } from "#veryfront/routing";
-import { serverLogger } from "#veryfront/utils";
-import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 import {
   extractCacheKeyContext,
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
+import { type HandlerCache, PagesApiHandlerCache } from "./pages-api-cache.ts";
 
-const logger = serverLogger.component("reset-api-handler");
-
-export interface HandlerCache<T> {
-  get(key: string): T | undefined;
-  set(key: string, value: T): void;
-  delete(key: string): boolean;
-  clear(): void;
-  entries(): IterableIterator<[string, T]>;
-  values(): IterableIterator<T>;
-}
-
-// LRU-backed implementation of HandlerCache so entries evict naturally in
-// long-lived / multi-tenant processes instead of growing without bound.
-export class LRUHandlerCache<T> implements HandlerCache<T> {
-  private readonly lru: LRUCacheAdapter;
-  private suppressEvictionCleanup = false;
-
-  constructor(
-    options: {
-      maxEntries?: number;
-      onEvict?: (value: T) => void;
-    } = {},
-  ) {
-    this.lru = new LRUCacheAdapter({
-      maxEntries: options.maxEntries ?? 1000,
-      onEvict: (_key, value) => {
-        if (!this.suppressEvictionCleanup) options.onEvict?.(value as T);
-      },
-    });
-  }
-
-  get(key: string): T | undefined {
-    return this.lru.get<T>(key);
-  }
-  set(key: string, value: T): void {
-    this.lru.set(key, value);
-  }
-  delete(key: string): boolean {
-    const had = this.lru.has(key);
-    this.suppressEvictionCleanup = true;
-    try {
-      this.lru.delete(key);
-    } finally {
-      this.suppressEvictionCleanup = false;
-    }
-    return had;
-  }
-  clear(): void {
-    this.suppressEvictionCleanup = true;
-    try {
-      this.lru.clear();
-    } finally {
-      this.suppressEvictionCleanup = false;
-    }
-  }
-  entries(): IterableIterator<[string, T]> {
-    return this.lru.entries<T>();
-  }
-  *values(): IterableIterator<T> {
-    for (const [, v] of this.lru.entries<T>()) yield v;
-  }
-}
-
-const apiHandlerCache = new LRUHandlerCache<Promise<APIRouteHandler>>({
-  onEvict: (promise) => {
-    void destroyHandler(promise);
-  },
-});
-let injectedCache: HandlerCache<Promise<APIRouteHandler>> | null = null;
-
-interface HandlerLeaseState {
-  active: number;
-  destroyRequested: boolean;
-  destroyPromise?: Promise<void>;
-}
-
-const handlerLeaseStates = new WeakMap<Promise<APIRouteHandler>, HandlerLeaseState>();
-
-function getCache(): HandlerCache<Promise<APIRouteHandler>> {
-  return injectedCache ?? apiHandlerCache;
-}
-
-export function __injectCacheForTests(
-  cache: HandlerCache<Promise<APIRouteHandler>> | null,
-): void {
-  injectedCache = cache;
-}
-
-function getApiHandlerCacheContext(ctx: HandlerContext) {
-  return tryGetCacheKeyContext() ?? extractCacheKeyContext(ctx);
-}
-
-function getCacheKey(ctx: HandlerContext): string {
-  if (!ctx.projectSlug) return ctx.projectDir;
-
-  const cacheContext = getApiHandlerCacheContext(ctx);
-  // No safe scoped key (e.g. production without a releaseId): fall back to the
-  // project-specific dir key rather than a shared bucket.
-  if (!cacheContext) return ctx.projectDir;
-  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}`;
-}
-
-function shouldCacheApiHandler(ctx: HandlerContext): boolean {
-  if (!ctx.projectSlug) return true;
-
-  // Cannot confirm a production context → do not cache.
-  return getApiHandlerCacheContext(ctx)?.mode === "production";
-}
+export type { HandlerCache } from "./pages-api-cache.ts";
+export { LRUHandlerCache } from "./pages-api-cache.ts";
 
 async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
   if (!ctx.projectSlug) return;
-  const cacheContext = getApiHandlerCacheContext(ctx);
-  // Skip when production, or when the context is indeterminate.
+  const cacheContext = tryGetCacheKeyContext() ?? extractCacheKeyContext(ctx);
   if (!cacheContext || cacheContext.mode === "production") return;
-
   await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
 }
 
 async function createApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
   await refreshPreviewSourceSnapshot(ctx);
-
-  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
+  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter, ctx.config);
   await handler.initialize();
   return handler;
 }
 
-function getHandlerLeaseState(promise: Promise<APIRouteHandler>): HandlerLeaseState {
-  let state = handlerLeaseStates.get(promise);
-  if (!state) {
-    state = { active: 0, destroyRequested: false };
-    handlerLeaseStates.set(promise, state);
-  }
-  return state;
+const apiHandlers = new PagesApiHandlerCache(createApiHandler);
+
+export function __injectCacheForTests(
+  cache: HandlerCache<Promise<APIRouteHandler>> | null,
+): void {
+  apiHandlers.inject(cache);
 }
 
-function destroyHandlerNow(
-  promise: Promise<APIRouteHandler>,
-  state: HandlerLeaseState,
-): Promise<void> {
-  if (state.destroyPromise) return state.destroyPromise;
-
-  state.destroyPromise = (async () => {
-    try {
-      const handler = await promise;
-      handler.destroy?.();
-    } catch (error) {
-      try {
-        logger.debug("Failed to destroy handler", error);
-      } catch (_) {
-        // expected: logger itself may throw during shutdown
-      }
-    }
-  })();
-  return state.destroyPromise;
+export function getApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
+  return apiHandlers.get(ctx);
 }
 
-async function destroyHandler(promise?: Promise<APIRouteHandler>): Promise<void> {
-  if (!promise) return;
-
-  const state = getHandlerLeaseState(promise);
-  state.destroyRequested = true;
-  if (state.active > 0) return;
-  await destroyHandlerNow(promise, state);
-}
-
-function retainHandler(promise: Promise<APIRouteHandler>): () => Promise<void> {
-  const state = getHandlerLeaseState(promise);
-  state.active++;
-  let released = false;
-
-  return async () => {
-    if (released) return;
-    released = true;
-    state.active--;
-    if (state.active === 0 && state.destroyRequested) {
-      await destroyHandlerNow(promise, state);
-    }
-  };
-}
-
-function getApiHandlerPromise(
-  ctx: HandlerContext,
-): { promise: Promise<APIRouteHandler>; cached: boolean } {
-  if (!shouldCacheApiHandler(ctx)) {
-    return { promise: createApiHandler(ctx), cached: false };
-  }
-
-  const cache = getCache();
-  const key = getCacheKey(ctx);
-
-  let promise = cache.get(key);
-  if (!promise) {
-    promise = createApiHandler(ctx);
-    cache.set(key, promise);
-  }
-
-  return { promise, cached: true };
-}
-
-export async function getApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
-  return await getApiHandlerPromise(ctx).promise;
-}
-
-/**
- * Use an API handler while holding a lease that defers cache-eviction cleanup.
- * The lease begins before the handler promise is awaited, closing the gap
- * between a cache lookup and APIRouteHandler.handle() registering the request.
- */
-export async function withApiHandler<T>(
+/** Use a handler while deferring cache-eviction cleanup until the request finishes. */
+export function withApiHandler<T>(
   ctx: HandlerContext,
   use: (handler: APIRouteHandler) => T | Promise<T>,
 ): Promise<T> {
-  const { promise, cached } = getApiHandlerPromise(ctx);
-  const release = retainHandler(promise);
-
-  try {
-    return await use(await promise);
-  } finally {
-    if (!cached) await destroyHandler(promise);
-    await release();
-  }
+  return apiHandlers.withHandler(ctx, use);
 }
 
-export async function resetApiHandler(projectDir?: string): Promise<void> {
-  const cache = getCache();
-
-  if (projectDir) {
-    const cached = cache.get(projectDir);
-    cache.delete(projectDir);
-    await destroyHandler(cached);
-    return;
-  }
-
-  const handlers = Array.from(cache.values());
-  cache.clear();
-  await Promise.all(handlers.map(destroyHandler));
+export function resetApiHandler(projectDir?: string): Promise<void> {
+  return apiHandlers.resetByProjectDir(projectDir);
 }
 
-/**
- * Reset cached API handlers for a specific project slug.
- *
- * In proxy/production mode the cache key includes the project slug and release
- * context, so we can't reuse `resetApiHandler(projectDir)`. Instead we iterate
- * all entries and destroy those scoped to the project slug.
- */
-export async function resetApiHandlerForProject(
-  projectSlug: string,
-): Promise<void> {
-  const cache = getCache();
-  const toDestroy: Promise<APIRouteHandler>[] = [];
-
-  for (const [key, promise] of cache.entries()) {
-    if (
-      key === projectSlug || key.endsWith(`:${projectSlug}`) || key.includes(`:${projectSlug}:`)
-    ) {
-      cache.delete(key);
-      toDestroy.push(promise);
-    }
-  }
-
-  await Promise.all(toDestroy.map(destroyHandler));
+export function resetApiHandlerForProject(projectSlug: string): Promise<void> {
+  return apiHandlers.resetByProjectSlug(projectSlug);
 }
+
+registerProcessStateReset("pages API handler", resetApiHandler);

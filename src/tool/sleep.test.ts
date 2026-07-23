@@ -56,6 +56,75 @@ describe("tool/sleep", () => {
     assertEquals(testSleepTool.inputSchema.safeParse({ seconds: 11 }).success, false);
   });
 
+  it("rejects invalid creation options", () => {
+    for (const maxSeconds of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => createSleepTool({ maxSeconds, wait: () => undefined }),
+        Error,
+        "maxSeconds must be a positive safe integer",
+      );
+    }
+    assertThrows(
+      () => createSleepTool({ wait: null as never }),
+      Error,
+      "wait must be a function",
+    );
+  });
+
+  it("forwards the execution abort signal to custom wait implementations", async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const testSleepTool = createSleepTool({
+      wait: (_milliseconds, signal) => {
+        receivedSignal = signal;
+      },
+    });
+    const controller = new AbortController();
+
+    await testSleepTool.execute({ seconds: 1 }, { abortSignal: controller.signal });
+
+    assertEquals(receivedSignal, controller.signal);
+  });
+
+  it("rejects immediately when the execution was already cancelled", async () => {
+    const testSleepTool = createSleepTool({ maxSeconds: 1 });
+    const controller = new AbortController();
+    controller.abort(new Error("sleep cancelled"));
+
+    await assertRejects(
+      () => testSleepTool.execute({ seconds: 1 }, { abortSignal: controller.signal }),
+      Error,
+      "sleep cancelled",
+    );
+  });
+
+  it("completes the built-in timer wait", async () => {
+    const testSleepTool = createSleepTool({ maxSeconds: 1 });
+
+    assertEquals(await testSleepTool.execute({ seconds: 1 }), {
+      sleptFor: 1,
+      message: "Waited for 1 second",
+    });
+  });
+
+  it("clears and rejects the built-in timer when cancellation arrives", async () => {
+    const testSleepTool = createSleepTool({ maxSeconds: 1 });
+    const controller = new AbortController();
+    const cancellation = setTimeout(
+      () => controller.abort(new Error("sleep cancelled while waiting")),
+      10,
+    );
+
+    try {
+      await assertRejects(
+        () => testSleepTool.execute({ seconds: 1 }, { abortSignal: controller.signal }),
+        Error,
+        "sleep cancelled while waiting",
+      );
+    } finally {
+      clearTimeout(cancellation);
+    }
+  });
+
   it("rejects values outside the configured public schema bounds", async () => {
     await assertRejects(
       () => sleepTool.execute({ seconds: 0 }),
@@ -67,5 +136,44 @@ describe("tool/sleep", () => {
       Error,
       'Tool "sleep" input validation failed',
     );
+    await assertRejects(
+      () => sleepTool.execute({ seconds: 1.5 }),
+      Error,
+      'Tool "sleep" input validation failed',
+    );
+  });
+
+  it("keeps lazy tool reads, writes, and descriptors on the same object", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(sleepTool, "id");
+    if (!originalDescriptor) throw new Error("sleep tool id descriptor is missing");
+
+    let observedId: string | undefined;
+    let observedDescriptor: PropertyDescriptor | undefined;
+    try {
+      sleepTool.id = "renamed-sleep";
+      observedId = sleepTool.id;
+      observedDescriptor = Object.getOwnPropertyDescriptor(sleepTool, "id");
+    } finally {
+      Object.defineProperty(sleepTool, "id", originalDescriptor);
+    }
+
+    assertEquals(observedId, "renamed-sleep");
+    assertEquals(observedDescriptor?.value, "renamed-sleep");
+    assertEquals(sleepTool.id, "sleep");
+  });
+
+  it("preserves receiver semantics for objects inheriting from the lazy tool", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(sleepTool, "id");
+    if (!originalDescriptor) throw new Error("sleep tool id descriptor is missing");
+    const child = Object.create(sleepTool) as { id: string };
+
+    try {
+      child.id = "child-sleep";
+      assertEquals(Object.hasOwn(child, "id"), true);
+      assertEquals(child.id, "child-sleep");
+      assertEquals(sleepTool.id, "sleep");
+    } finally {
+      Object.defineProperty(sleepTool, "id", originalDescriptor);
+    }
   });
 });

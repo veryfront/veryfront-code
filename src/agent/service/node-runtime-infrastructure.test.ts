@@ -1,5 +1,12 @@
 import { assertEquals, assertObjectMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type NodeTelemetryLogRecord,
+  type NodeTelemetryProvider,
+  NodeTelemetryProviderName,
+} from "#veryfront/extensions/observability/index.ts";
+import { __resetLogRecordEmitterForTests } from "#veryfront/utils/logger/index.ts";
 import {
   createNodeAgentServiceRuntimeInfrastructure,
   createNodeHostedAgentServiceRuntimeInfrastructure,
@@ -53,5 +60,40 @@ describe("createNodeAgentServiceRuntimeInfrastructure", () => {
     assertEquals(infrastructure.getTraceContext(), {});
     assertEquals(await infrastructure.initializeOpenTelemetry(), false);
     assertEquals(infoMessages, ["OpenTelemetry disabled"]);
+  });
+
+  it("bridges structured logger records to the node telemetry provider", async () => {
+    const records: NodeTelemetryLogRecord[] = [];
+    const telemetryProvider: NodeTelemetryProvider = {
+      initialize(options) {
+        options.registerLogRecordEmitter?.((record) => records.push(record));
+        return Promise.resolve(true);
+      },
+    };
+    register(NodeTelemetryProviderName, telemetryProvider);
+
+    try {
+      const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
+        serviceName: "custom-service",
+        env: {
+          VERYFRONT_API_URL: "https://api.example.com",
+          OTEL_ENABLED: "true",
+        },
+      });
+
+      assertEquals(await infrastructure.initializeOpenTelemetry(), true);
+      infrastructure.logger.info("agent run started", { run_id: "run-1" });
+
+      assertObjectMatch(records[0] ?? {}, {
+        level: "info",
+        service: "agent",
+        message: "agent run started",
+        component: "custom-service",
+        run_id: "run-1",
+      });
+    } finally {
+      __resetLogRecordEmitterForTests();
+      unregister(NodeTelemetryProviderName);
+    }
   });
 });

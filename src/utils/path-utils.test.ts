@@ -10,6 +10,7 @@ import {
   getExtensionName,
   hasHashedFilename,
   isAbsolutePath,
+  isFrameworkSourcePath,
   isWithinDirectory,
   joinPath,
   normalizePath,
@@ -93,6 +94,23 @@ describe("path-utils", () => {
     it("should return false for parent traversal outside the root", () => {
       assertEquals(isWithinDirectory("/root", "/root/../../etc/passwd"), false);
     });
+
+    it("fails closed when the containment root is empty", () => {
+      assertEquals(isWithinDirectory("", "/etc/passwd"), false);
+      assertEquals(isWithinDirectory("", ""), false);
+    });
+
+    it("compares Windows paths case-insensitively", () => {
+      assertEquals(isWithinDirectory("C:\\Project", "c:\\project\\src\\file.ts"), true);
+      assertEquals(isWithinDirectory("C:\\Project", "c:\\project-other\\file.ts"), false);
+      assertEquals(
+        isWithinDirectory(
+          "\\\\Server\\Share\\Project",
+          "\\\\server\\share\\project\\src\\file.ts",
+        ),
+        true,
+      );
+    });
   });
 
   describe("getExtension", () => {
@@ -114,6 +132,16 @@ describe("path-utils", () => {
 
     it("should handle paths with directories", () => {
       assertEquals(getExtension("/path/to/file.tsx"), ".tsx");
+    });
+
+    it("does not treat a dot in a directory name as a file extension", () => {
+      assertEquals(getExtension("/path.with.dot/file"), "");
+      assertEquals(getExtensionName("/path.with.dot/file"), "");
+    });
+
+    it("does not treat a dotfile name as an extension", () => {
+      assertEquals(getExtension("/project/.env"), "");
+      assertEquals(getExtensionName("/project/.env"), "");
     });
   });
 
@@ -226,6 +254,11 @@ describe("path-utils", () => {
       assertEquals(fromBase64Url(toBase64Url(input)), input);
     });
 
+    it("roundtrips Unicode paths as UTF-8", () => {
+      const input = "/路線/📄.tsx";
+      assertEquals(fromBase64Url(toBase64Url(input)), input);
+    });
+
     it("should produce URL-safe output", () => {
       const encoded = toBase64Url("subjects?_d");
       assertEquals(encoded.includes("+"), false);
@@ -244,6 +277,21 @@ describe("path-utils", () => {
 
     it("should fail closed for impossible one-character base64url input", () => {
       assertEquals(fromBase64Url("a"), "");
+    });
+  });
+
+  describe("isFrameworkSourcePath", () => {
+    it("recognizes only explicit framework namespaces", () => {
+      assertEquals(isFrameworkSourcePath("_veryfront/react/component.tsx"), true);
+      assertEquals(
+        isFrameworkSourcePath("embedded:_veryfront/platform/runtime.ts"),
+        true,
+      );
+    });
+
+    it("does not misclassify user source directories as framework files", () => {
+      assertEquals(isFrameworkSourcePath("src/react/component.tsx"), false);
+      assertEquals(isFrameworkSourcePath("src/agent/runtime.ts"), false);
     });
   });
 });

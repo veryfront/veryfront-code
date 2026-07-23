@@ -37,6 +37,7 @@ export {
   assertThrows,
   fail,
 } from "./assert.ts";
+export type { ErrorClass } from "./assert.ts";
 
 export { deepEquals, safeStringify } from "./utils.ts";
 
@@ -49,9 +50,10 @@ export {
   it,
   test,
 } from "#veryfront/testing/bdd.ts";
-export type { BddTestContext, TestOptions } from "#veryfront/testing/bdd.ts";
+export type { BddTestContext, HookFn, TestFn, TestOptions } from "#veryfront/testing/bdd.ts";
 
 export { registerTestCleanup, resetAllTestState } from "./isolation.ts";
+export type { CleanupTask } from "./isolation.ts";
 
 export {
   chmod,
@@ -83,6 +85,7 @@ export {
   writeFile,
   writeTextFile,
 } from "./deno-compat.ts";
+export type { FileInfo, FileSystem, WaitForOptions } from "./deno-compat.ts";
 
 export { getTestTimeScale, scaleMs, testDelay } from "./timing.ts";
 

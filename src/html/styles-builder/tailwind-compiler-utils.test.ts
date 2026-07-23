@@ -39,6 +39,18 @@ describe("styles-builder/tailwind-compiler-utils", () => {
       assertEquals(entry.candidates, []);
       assertEquals(entry.stylesheet, "default");
     });
+
+    it("copies candidate arrays so callers cannot mutate cached inputs", () => {
+      const candidates = ["mt-4"];
+      const entry = buildCSSCacheEntry("body{}", {
+        candidates,
+        stylesheet: "custom",
+      }, "default");
+
+      candidates.push("hidden");
+
+      assertEquals(entry.candidates, ["mt-4"]);
+    });
   });
 
   describe("parseCSSCacheEntry", () => {
@@ -110,10 +122,10 @@ describe("styles-builder/tailwind-compiler-utils", () => {
       );
     });
 
-    it("classifies equal expiry timestamp as hit", () => {
+    it("classifies equal expiry timestamp as expired", () => {
       assertEquals(
         evaluateProjectCSSLocalCacheState({ expiresAt: 1000, candidatesHash: "abc" }, "abc", 1000),
-        "hit",
+        "expired",
       );
     });
   });

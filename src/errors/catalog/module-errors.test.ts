@@ -40,10 +40,13 @@ describe("errors/catalog/module-errors", () => {
       assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 7);
     });
 
-    it("cache-path-mismatch should have an example with curl command", () => {
+    it("cache-path-mismatch provides only public, project-scoped recovery", () => {
       const solution = MODULE_ERROR_CATALOG["cache-path-mismatch"];
-      assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example?.includes("curl"), true);
+      const serialized = JSON.stringify(solution);
+      assertEquals(serialized.includes("kubectl"), false);
+      assertEquals(serialized.includes("Authorization"), false);
+      assertEquals(serialized.includes("/internal/"), false);
+      assertEquals(serialized.includes("renderer pods"), false);
     });
 
     it("module-not-found should have an example with import map", () => {

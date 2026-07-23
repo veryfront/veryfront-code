@@ -12,17 +12,23 @@ import type { AgentResponse } from "../types.ts";
 
 /** Public API contract for AG-UI browser chunk encoder. */
 export interface AgUiBrowserChunkEncoder<TChunk> {
+  /** State value. */
   state: AgUiBrowserEncoderState;
+  /** Encodes one stream value. */
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
+  /** Finalizes the associated lifecycle. */
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
 }
 
 /** Options accepted by create AG-UI browser chunk encoder. */
 export interface CreateAgUiBrowserChunkEncoderOptions<TChunk> {
+  /** Callback that handles get runtime events. */
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
+  /** Get metadata from chunk value. */
   getMetadataFromChunk?: (
     chunk: TChunk,
   ) => Partial<AgUiBrowserRunFinishedMetadata> | null | undefined;
+  /** Initial metadata value. */
   initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
 }
 

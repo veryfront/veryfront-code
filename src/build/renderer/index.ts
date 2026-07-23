@@ -4,12 +4,8 @@
  * @module build/renderer
  */
 
-// Main bundler exports
-//
-// NOTE: This barrel has zero external consumers. All imports within build/
-// use direct deep paths (e.g. "../renderer/types/bundler-types.ts").
-// Wildcards replaced with selective exports for the symbols actually
-// used by sibling modules in src/build/.
+// Keep this compatibility barrel selective. Build implementations use direct
+// imports so adding an export here does not broaden their dependency graph.
 
 export type {
   BundleResult,
@@ -19,7 +15,7 @@ export type {
   MDXBundleResult,
 } from "./types/bundler-types.ts";
 
-export { bundleCss, extractCssVariables, processCssImports } from "./services/css-bundler.ts";
+export { bundleCss, extractCssVariables } from "./services/css-bundler.ts";
 export { bundleMdx, bundleMDXWithOptions } from "./services/mdx-bundler.ts";
 export { optimizeBundle } from "./services/optimizer.ts";
 export { bundleScript } from "./services/script-bundler.ts";

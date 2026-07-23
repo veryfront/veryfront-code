@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertRejects } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   appendMissingFallbackTextPart,
@@ -13,6 +13,7 @@ import {
   extractFinalStepText,
   extractFinalStepToolCalls,
   extractFinalStepToolResults,
+  getStreamSteps,
 } from "./final-step-fallback.ts";
 
 const formToolCall = {
@@ -27,6 +28,22 @@ const formToolResult = {
 };
 
 describe("chat/final-step-fallback", () => {
+  it("propagates rejected step promises instead of converting failures into empty history", async () => {
+    await assertRejects(
+      () => getStreamSteps({ steps: Promise.reject(new Error("step collection failed")) }),
+      Error,
+      "step collection failed",
+    );
+  });
+
+  it("rejects invalid finalization timeout configuration", async () => {
+    await assertRejects(
+      () => getStreamSteps({ steps: Promise.resolve([]) }, 0),
+      RangeError,
+      "timeoutMs must be a positive safe timer duration",
+    );
+  });
+
   it("extracts finish reason, text, tool calls, and tool results", () => {
     const step = {
       finishReason: "stop",
@@ -106,6 +123,42 @@ describe("chat/final-step-fallback", () => {
     ]);
   });
 
+  it("preserves provider error-text tool results as terminal errors", () => {
+    const step = {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "tool-failed",
+              toolName: "search",
+              input: { query: "status" },
+            }],
+          },
+          {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "tool-failed",
+              toolName: "search",
+              output: { type: "error-text", value: "Search failed" },
+            }],
+          },
+        ],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [{
+      type: "dynamic-tool",
+      toolName: "search",
+      toolCallId: "tool-failed",
+      input: { query: "status" },
+      state: "output-error",
+      errorText: "Search failed",
+    }]);
+  });
+
   it("preserves reasoning parts from response message content", () => {
     const step = {
       response: {
@@ -132,6 +185,34 @@ describe("chat/final-step-fallback", () => {
         signature: "sig_123",
       },
       { type: "text", text: "Use the saved draft." },
+    ]);
+  });
+
+  it("keeps final step text when ordered response messages contain only tools", () => {
+    const step = {
+      text: "The final answer is ready.",
+      response: {
+        messages: [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "tool-check",
+            toolName: "check",
+            input: {},
+          }],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [
+      {
+        type: "dynamic-tool",
+        toolName: "check",
+        toolCallId: "tool-check",
+        input: {},
+        state: "input-available",
+      },
+      { type: "text", text: "The final answer is ready." },
     ]);
   });
 
@@ -219,6 +300,218 @@ describe("chat/final-step-fallback", () => {
       },
       { type: "text", text: "Final text" },
     ]);
+  });
+
+  it("preserves terminal canonical UI tool states", () => {
+    const step = {
+      response: {
+        messages: [{
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolCallId: "tool-ok",
+              toolName: "search",
+              input: { query: "status" },
+              state: "output-available",
+              output: { found: true },
+            },
+            {
+              type: "dynamic-tool",
+              toolCallId: "tool-error",
+              toolName: "write",
+              input: { path: "notes.txt" },
+              state: "output-error",
+              errorText: "Write failed",
+            },
+          ],
+        }],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [
+      {
+        type: "dynamic-tool",
+        toolCallId: "tool-ok",
+        toolName: "search",
+        input: { query: "status" },
+        state: "output-available",
+        output: { found: true },
+      },
+      {
+        type: "dynamic-tool",
+        toolCallId: "tool-error",
+        toolName: "write",
+        input: { path: "notes.txt" },
+        state: "output-error",
+        errorText: "Write failed",
+      },
+    ]);
+  });
+
+  it("preserves legacy UI tool result errors", () => {
+    assertEquals(
+      buildFallbackUiMessageParts({
+        response: {
+          messages: [
+            {
+              role: "assistant",
+              parts: [{
+                type: "tool_call",
+                toolCallId: "tool-1",
+                toolName: "search",
+                input: { query: "status" },
+              }],
+            },
+            {
+              role: "tool",
+              parts: [{
+                type: "tool_result",
+                tool_call_id: "tool-1",
+                is_error: true,
+                output: "Search failed",
+              }],
+            },
+          ],
+        },
+      }),
+      [{
+        type: "dynamic-tool",
+        toolCallId: "tool-1",
+        toolName: "search",
+        input: { query: "status" },
+        state: "output-error",
+        errorText: "Search failed",
+      }],
+    );
+  });
+
+  it("does not attach fallback tool results across a later user turn", () => {
+    const step = {
+      response: {
+        messages: [
+          {
+            role: "assistant",
+            parts: [{
+              type: "dynamic-tool",
+              toolCallId: "tool-old",
+              toolName: "search",
+              input: { query: "old" },
+              state: "input-available",
+            }],
+          },
+          { role: "user", parts: [{ type: "text", text: "Start over." }] },
+          {
+            role: "tool",
+            parts: [{
+              type: "tool_result",
+              tool_call_id: "tool-old",
+              output: { stale: true },
+            }],
+          },
+          { role: "assistant", parts: [{ type: "text", text: "Fresh answer." }] },
+        ],
+      },
+    };
+
+    assertEquals(buildFallbackUiMessageParts(step), [
+      { type: "text", text: "Fresh answer." },
+    ]);
+  });
+
+  it("emits each fallback tool lifecycle transition at most once", () => {
+    assertEquals(
+      buildMissingFallbackToolChunks({
+        toolCalls: [formToolCall, formToolCall],
+        toolResults: [formToolResult, formToolResult],
+      }),
+      [
+        { type: "tool-input-start", toolCallId: "tool-1", toolName: "form_input" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-1",
+          toolName: "form_input",
+          input: { title: "Continue?" },
+        },
+        { type: "tool-output-available", toolCallId: "tool-1", output: { submitted: true } },
+      ],
+    );
+  });
+
+  it("does not execute tool input accessors while building fallback parts", () => {
+    let getterCalls = 0;
+    const input: Record<string, unknown> = {};
+    Object.defineProperty(input, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "hidden";
+      },
+    });
+
+    assertEquals(
+      buildFallbackUiMessageParts({
+        toolCalls: [{ toolCallId: "tool-1", toolName: "inspect", input }],
+      }),
+      [{
+        type: "dynamic-tool",
+        toolCallId: "tool-1",
+        toolName: "inspect",
+        input: {},
+        state: "input-available",
+      }],
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("keeps the global fallback entry budget across nested tool-input arrays", () => {
+    let descriptorReads = 0;
+    const trackDescriptors = (target: unknown[]) =>
+      new Proxy(target, {
+        getOwnPropertyDescriptor(target, key) {
+          if (typeof key === "string" && /^\d+$/u.test(key)) descriptorReads += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+    const inner = trackDescriptors(new Array(10_000).fill(null));
+    const outerValues = new Array(10_000).fill(null);
+    outerValues[0] = inner;
+    const outer = trackDescriptors(outerValues);
+
+    buildFallbackUiMessageParts({
+      toolCalls: [{
+        toolCallId: "tool-budget",
+        toolName: "inspect",
+        input: { nested: outer },
+      }],
+    });
+
+    assertEquals(descriptorReads <= 10_000, true);
+  });
+
+  it("retains output-streaming tools as incomplete fallback calls", () => {
+    assertEquals(
+      buildMissingFallbackToolChunksFromParts([{
+        type: "dynamic-tool",
+        toolName: "inspect",
+        toolCallId: "tool-streaming-output",
+        input: { path: "README.md" },
+        state: "output-streaming",
+      }]),
+      [
+        {
+          type: "tool-input-start",
+          toolCallId: "tool-streaming-output",
+          toolName: "inspect",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-streaming-output",
+          toolName: "inspect",
+          input: { path: "README.md" },
+        },
+      ],
+    );
   });
 
   it("builds text and tool chunks for durable fallback mirroring", () => {
@@ -322,6 +615,19 @@ describe("chat/final-step-fallback", () => {
         },
       }),
       { code: "RESOURCE_LIMIT_EXCEEDED", message: "Reduce request size and try again." },
+    );
+    assertEquals(
+      extractFinalStepTerminalError({
+        response: {
+          body: `${" ".repeat(1_048_576)}${
+            JSON.stringify({
+              slug: "resource-limit-exceeded",
+              suggestion: "This oversized body must not be parsed.",
+            })
+          }`,
+        },
+      }),
+      null,
     );
   });
 });

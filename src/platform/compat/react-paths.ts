@@ -9,14 +9,11 @@
  * @module
  */
 
-// Bun global type declaration for cross-runtime compatibility
-declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
-
-import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { cwd } from "./process.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
+const EMPTY_REACT_PATHS: Record<string, string> = Object.freeze({});
 let localReactPathsCache: Record<string, string> | null = null;
 
 const REACT_SPECIFIERS = [
@@ -30,20 +27,13 @@ const REACT_SPECIFIERS = [
 
 function resolveReactSpecifier(specifier: string): string | undefined {
   try {
-    if (isBun && typeof Bun?.resolveSync === "function") {
-      const resolved = Bun.resolveSync(specifier, cwd());
-      return `file://${resolved}`;
-    }
-
-    if (isNode) {
-      // Use createRequire to resolve React from veryfront's node_modules.
-      // import.meta.resolve's parentUrl argument doesn't work correctly in Node.js,
-      // so we use createRequire which properly resolves from the specified path.
-      const require = createRequire(import.meta.url);
-      const resolved = require.resolve(specifier);
-      return pathToFileURL(resolved).href;
-    }
-  } catch (_) {
+    if (!isBun) return undefined;
+    const bun = Reflect.get(globalThis, "Bun") as
+      | { resolveSync?: (specifier: string, dir: string) => string }
+      | undefined;
+    if (typeof bun?.resolveSync !== "function") return undefined;
+    return pathToFileURL(bun.resolveSync(specifier, cwd())).href;
+  } catch {
     /* expected: module resolution may fail in some runtimes */
   }
 
@@ -56,7 +46,7 @@ export function getLocalReactPaths(): Record<string, string> {
   // handle CJS/ESM interop naturally. Using file:// URLs for React's CJS
   // modules doesn't work because Node.js can't import CJS via file:// in ESM.
   // Bun handles this correctly, so we only resolve paths for Bun.
-  if (isDeno || isNode) return {};
+  if (isDeno || isNode) return EMPTY_REACT_PATHS;
   if (localReactPathsCache) return localReactPathsCache;
 
   const paths: Record<string, string> = {};
@@ -66,7 +56,7 @@ export function getLocalReactPaths(): Record<string, string> {
     if (resolved) paths[specifier] = resolved;
   }
 
-  localReactPathsCache = paths;
+  localReactPathsCache = Object.freeze(paths);
   return paths;
 }
 

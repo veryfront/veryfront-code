@@ -4,14 +4,17 @@ export type CachedRequestAuthResult<TAuth> = TAuth | Response;
 
 /** Options accepted by create request auth cache. */
 export interface CreateRequestAuthCacheOptions<TAuth> {
+  /** Authenticate value. */
   authenticate: (
     request: Request,
   ) => Promise<CachedRequestAuthResult<TAuth>> | CachedRequestAuthResult<TAuth>;
+  /** Callback that handles should cache. */
   shouldCache?: (result: CachedRequestAuthResult<TAuth>) => boolean;
 }
 
 /** Public API contract for request auth cache. */
 export interface RequestAuthCache<TAuth> {
+  /** Callback that handles authenticate. */
   authenticate: (request: Request) => Promise<CachedRequestAuthResult<TAuth>>;
 }
 

@@ -16,6 +16,7 @@ import {
   hasIncompleteToolParts,
   isRecord,
   isToolCallPart,
+  isUuid,
   mapToolState,
   markIncompleteToolPartsAsErrored,
   markIncompleteToolPartsAsStopped,
@@ -70,10 +71,50 @@ describe("chat/conversation schemas", () => {
       }).success,
       true,
     );
+    assertEquals(
+      apiConversationSchema.safeParse({
+        id: "conv-1",
+        type: "chat",
+        status: "active",
+        messageCount: -1,
+        createdBy: "user-1",
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      }).success,
+      false,
+    );
+    assertEquals(
+      apiMessageSchema.safeParse({
+        id: "msg-1",
+        conversationId: "conv-1",
+        parentId: null,
+        seq: 1.5,
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+        status: "completed",
+        model: null,
+        tokenUsage: { input: -1, output: 2 },
+        finishReason: null,
+        createdBy: "user-1",
+        metadata: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: null,
+      }).success,
+      false,
+    );
   });
 });
 
 describe("chat/conversation helpers", () => {
+  it("accepts only complete UUID values", () => {
+    const uuid = "123e4567-e89b-42d3-a456-426614174000";
+
+    assertEquals(isUuid(uuid), true);
+    assertEquals(isUuid(`prefix-${uuid}`), false);
+    assertEquals(isUuid(`${uuid}-suffix`), false);
+    assertEquals(extractUploadId(`https://files.example.com/uploads/${uuid}`), uuid);
+  });
+
   it("maps UI tool state and pushes persisted tool parts", () => {
     const parts: Array<ReturnType<typeof messagePartSchema.parse>> = [];
     pushToolParts(parts, "bash", "tc-1", "output-available", {
@@ -82,6 +123,8 @@ describe("chat/conversation helpers", () => {
     });
 
     assertEquals(mapToolState("approval-requested"), "pending");
+    assertEquals(mapToolState("output-streaming"), "streaming");
+    assertEquals(mapToolState("completed"), "completed");
     assertEquals(mapToolState("output-denied"), "error");
     assertEquals(parts, [
       { type: "tool_call", id: "tc-1", name: "bash", input: { command: "ls" }, state: "completed" },
@@ -292,6 +335,62 @@ describe("chat/conversation helpers", () => {
     ]);
   });
 
+  it("contains accessors and cycles in persisted data and tool payloads", () => {
+    let getterCalls = 0;
+    const input: Record<string, unknown> = { command: "inspect" };
+    Object.defineProperty(input, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted input getter");
+      },
+    });
+    const output: Record<string, unknown> = { ok: true };
+    output.self = output;
+    const dataPart = { type: "data-private" } as Record<string, unknown>;
+    Object.defineProperty(dataPart, "data", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted data getter");
+      },
+    });
+
+    const message = {
+      id: "assistant-safe-persistence",
+      role: "assistant",
+      parts: [
+        dataPart,
+        {
+          type: "dynamic-tool",
+          toolName: "inspect",
+          toolCallId: "tool-safe",
+          input,
+          state: "output-available",
+          output,
+        },
+      ],
+    } as unknown as ChatUiMessage;
+
+    assertEquals(toConversationPartsFromUiMessage(message), [
+      { type: "data", name: "private", value: null },
+      {
+        type: "tool_call",
+        id: "tool-safe",
+        name: "inspect",
+        input: { command: "inspect" },
+        state: "completed",
+      },
+      {
+        type: "tool_result",
+        tool_call_id: "tool-safe",
+        output: { ok: true, self: "[Circular]" },
+        is_error: false,
+      },
+    ]);
+    assertEquals(getterCalls, 0);
+  });
+
   it("marks incomplete UI tool parts as stopped or errored", () => {
     const message: ChatUiMessage = {
       id: "assistant-3",
@@ -354,6 +453,10 @@ describe("chat/conversation helpers", () => {
     assertEquals(isRecord({ ok: true }), true);
     assertEquals(isRecord([]), false);
     assertEquals(stringifyUnknown({ a: 1 }), '{"a":1}');
+
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    assertEquals(stringifyUnknown(revoked.proxy).includes("Unserializable"), true);
   });
 
   it("extracts text from provider model messages", () => {
@@ -371,6 +474,72 @@ describe("chat/conversation helpers", () => {
 });
 
 describe("convertUiMessagesToProviderModelMessages", () => {
+  it("does not pair tool results across a later user turn", () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "search",
+          toolCallId: "reused",
+          input: { query: "old" },
+          state: "input-available",
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "new turn" }],
+      },
+      {
+        id: "tool-2",
+        role: "tool",
+        parts: [{
+          type: "tool_result",
+          tool_call_id: "reused",
+          tool_name: "search",
+          output: { stale: true },
+        }],
+      },
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages).map((message) => message.role),
+      ["user"],
+    );
+  });
+
+  it("keeps the global JSON entry budget across nested tool-input arrays", () => {
+    let descriptorReads = 0;
+    const trackDescriptors = (target: unknown[]) =>
+      new Proxy(target, {
+        getOwnPropertyDescriptor(target, key) {
+          if (typeof key === "string" && /^\d+$/u.test(key)) descriptorReads += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+    const inner = trackDescriptors(new Array(10_000).fill(null));
+    const outerValues = new Array(10_000).fill(null);
+    outerValues[0] = inner;
+    const outer = trackDescriptors(outerValues);
+
+    convertUiMessagesToProviderModelMessages([{
+      id: "assistant-budget",
+      role: "assistant",
+      parts: [{
+        type: "dynamic-tool",
+        toolName: "inspect",
+        toolCallId: "tool-budget",
+        input: { nested: outer },
+        state: "output-available",
+        output: null,
+      }],
+    }]);
+
+    assertEquals(descriptorReads <= 10_000, true);
+  });
+
   it("converts assistant tool UI parts into assistant and tool provider model messages", () => {
     const messages: ChatUiMessage[] = [
       {
@@ -684,5 +853,148 @@ describe("convertUiMessagesToProviderModelMessages", () => {
         content: [{ type: "text", text: "I found today's updates." }],
       },
     ]);
+  });
+
+  it("converts cyclic tool output into bounded JSON-compatible data", () => {
+    let getterCalls = 0;
+    const nestedInput: Record<string, unknown> = {};
+    Object.defineProperty(nestedInput, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted nested input getter");
+      },
+    });
+    const output: Record<string, unknown> = { ok: true };
+    output.self = output;
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([{
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "inspect",
+          toolCallId: "tool-1",
+          input: { nested: nestedInput },
+          state: "output-available",
+          output,
+        }],
+      }]),
+      [
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "inspect",
+            input: { nested: {} },
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "inspect",
+            output: { type: "json", value: { ok: true, self: "[Circular]" } },
+          }],
+        },
+      ],
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("accepts the legacy result field and contains throwing object accessors", () => {
+    let getterCalls = 0;
+    const resultWithThrowingAccessor: Record<string, unknown> = {};
+    Object.defineProperty(resultWithThrowingAccessor, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted getter");
+      },
+    });
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([{
+        id: "assistant-legacy",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: "tool-legacy",
+            name: "inspect",
+            input: {},
+            state: "completed",
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-legacy",
+            tool_name: "inspect",
+            result: resultWithThrowingAccessor,
+          },
+        ],
+      }]),
+      [
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "tool-legacy",
+            toolName: "inspect",
+            input: {},
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "tool-legacy",
+            toolName: "inspect",
+            output: { type: "json", value: {} },
+          }],
+        },
+      ],
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("drops orphan and mismatched tool results without fabricating names", () => {
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([{
+        id: "orphan-result",
+        role: "tool",
+        parts: [{ type: "tool_result", tool_call_id: "missing", output: { ok: true } }],
+      }]),
+      [],
+    );
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{
+            type: "tool_call",
+            id: "tool-1",
+            name: "search",
+            input: {},
+            state: "completed",
+          }],
+        },
+        {
+          id: "tool-1-result",
+          role: "tool",
+          parts: [{
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            tool_name: "delete_all",
+            output: { ok: true },
+          }],
+        },
+      ]),
+      [],
+    );
   });
 });

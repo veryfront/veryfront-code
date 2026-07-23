@@ -1,4 +1,5 @@
 import {
+  extractGoogleUsage as extractSharedGoogleUsage,
   parseSseChunk,
   readRecord,
   type RuntimeUsage,
@@ -26,27 +27,7 @@ export function normalizeGoogleFinishReason(
 }
 
 export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usageMetadata);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.promptTokenCount;
-  const outputTokens = usage.candidatesTokenCount;
-  const totalTokens = usage.totalTokenCount;
-  const cachedContentTokenCount = usage.cachedContentTokenCount;
-  const thoughtsTokenCount = usage.thoughtsTokenCount;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedContentTokenCount === "number"
-      ? { cacheReadInputTokens: cachedContentTokenCount }
-      : {}),
-    ...(typeof thoughtsTokenCount === "number" ? { reasoningTokens: thoughtsTokenCount } : {}),
-  };
+  return extractSharedGoogleUsage(payload);
 }
 
 export function extractFirstGoogleCandidate(payload: unknown): Record<string, unknown> | undefined {
@@ -86,7 +67,7 @@ export async function* streamGoogleCompatibleParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
+    const parsed = parseSseChunk(buffer, { invalidEventPolicy: "ignore" });
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {
@@ -166,7 +147,7 @@ export async function* streamGoogleCompatibleParts(
   }
 
   if (buffer.trim().length > 0) {
-    const parsed = parseSseChunk(`${buffer}\n\n`);
+    const parsed = parseSseChunk(`${buffer}\n\n`, { invalidEventPolicy: "ignore" });
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;

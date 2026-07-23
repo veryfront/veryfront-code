@@ -6,6 +6,23 @@ import {
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { getProjectScopedKey } from "#veryfront/cache/cache-key-builder.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+
+function snapshotCacheEntry(entry: CacheEntry): CacheEntry {
+  try {
+    return structuredClone(entry);
+  } catch {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Static data results must be structured-cloneable before caching",
+    });
+  }
+}
+
+function canonicalizeParams(
+  params: DataContext["params"],
+): Array<[string, string | string[]]> {
+  return Object.keys(params).sort().map((key) => [key, params[key] as string | string[]]);
+}
 
 function isLruIntervalDisabled(): boolean {
   const globalFlag = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -19,11 +36,12 @@ export class CacheManager {
   });
 
   get(key: string): CacheEntry | null {
-    return this.cache.get(key) ?? null;
+    const entry = this.cache.get(key);
+    return entry === undefined ? null : snapshotCacheEntry(entry);
   }
 
   set(key: string, entry: CacheEntry): void {
-    this.cache.set(key, entry);
+    this.cache.set(key, snapshotCacheEntry(entry));
   }
 
   delete(key: string): void {
@@ -32,6 +50,10 @@ export class CacheManager {
 
   clear(): void {
     this.cache.clear();
+  }
+
+  destroy(): void {
+    this.cache.destroy();
   }
 
   clearPattern(pattern: string): void {
@@ -48,9 +70,13 @@ export class CacheManager {
     return Date.now() - entry.timestamp > entry.revalidate * 1000;
   }
 
-  createCacheKey(context: DataContext): string | null {
-    const params = JSON.stringify(context.params);
-    const resourceKey = `${context.url.pathname}::${params}`;
+  createCacheKey(context: DataContext, dataSource = "default"): string | null {
+    const resourceKey = JSON.stringify([
+      dataSource,
+      context.url.origin,
+      context.url.pathname,
+      canonicalizeParams(context.params),
+    ]);
     return getProjectScopedKey("veryfront:data", resourceKey);
   }
 }

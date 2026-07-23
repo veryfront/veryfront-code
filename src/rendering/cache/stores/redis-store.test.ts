@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisCacheStore } from "./redis-store.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import type { RedisCacheClient } from "./redis-store.ts";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -75,6 +76,12 @@ describe("RedisCacheStore", () => {
         true,
       );
     });
+
+    it("rejects invalid TTL and glob-bearing key prefixes", () => {
+      assertThrows(() => createStore({ ttlSeconds: 0 }), TypeError);
+      assertThrows(() => createStore({ ttlSeconds: Number.NaN }), TypeError);
+      assertThrows(() => createStore({ keyPrefix: "unsafe:*" }), TypeError);
+    });
   });
 
   describe("destroy", () => {
@@ -92,10 +99,12 @@ describe("RedisCacheStore", () => {
   describe("fallback cache", () => {
     it("expires fallback entries without payload expiresAt using store TTL", async () => {
       await withStoreTtlEnabled(async () => {
-        const store = createStore({ enableFallback: true, ttlSeconds: 1 });
+        const store = createStore({
+          enableFallback: true,
+          ttlSeconds: 1,
+          clientFactory: () => Promise.reject(new Error("Redis unavailable")),
+        });
         try {
-          (store as any).redisUnavailable = true;
-
           await store.set("fallback-ttl", {
             result: {
               html: "<p>fallback</p>",
@@ -114,6 +123,64 @@ describe("RedisCacheStore", () => {
           await store.destroy();
         }
       });
+    });
+  });
+
+  describe("Redis recovery", () => {
+    it("retries Redis after a transient command failure", async () => {
+      let setCalls = 0;
+      const values = new Map<string, string>();
+      const client: RedisCacheClient = {
+        connect: () => Promise.resolve(),
+        disconnect: () => Promise.resolve(),
+        get: (key) => Promise.resolve(values.get(key) ?? null),
+        set: (key, value) => {
+          setCalls++;
+          if (setCalls === 1) return Promise.reject(new Error("temporary Redis failure"));
+          values.set(key, value);
+          return Promise.resolve("OK");
+        },
+        del: () => Promise.resolve(0),
+        scan: () => Promise.resolve([0, []]),
+      };
+      const store = createStore({
+        enableFallback: false,
+        clientFactory: () => Promise.resolve(client),
+      });
+      const payload = {
+        result: { html: "<p>retry</p>", frontmatter: {}, stream: null },
+        storedAt: Date.now(),
+      } as any;
+
+      await store.set("entry", payload);
+      await store.set("entry", payload);
+
+      assertEquals(setCalls, 2);
+      assertEquals(values.size, 1);
+      await store.destroy();
+    });
+
+    it("escapes cache prefixes before using Redis glob matching", async () => {
+      let match = "";
+      const client: RedisCacheClient = {
+        connect: () => Promise.resolve(),
+        disconnect: () => Promise.resolve(),
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve("OK"),
+        del: () => Promise.resolve(0),
+        scan: (_cursor, options) => {
+          match = options?.MATCH ?? "";
+          return Promise.resolve([0, []]);
+        },
+      };
+      const store = createStore({
+        keyPrefix: "veryfront:render:",
+        clientFactory: () => Promise.resolve(client),
+      });
+
+      await store.deleteByPrefix("project[1]*");
+      assertEquals(match, "veryfront:render:project\\[1\\]\\**");
+      await store.destroy();
     });
   });
 });

@@ -29,4 +29,15 @@ describe("routing/flattenRouteParams", () => {
     // client normalizers so server and client agree on index routes.
     assertEquals(flattenRouteParams({ slug: [] }), { slug: "" });
   });
+
+  it("creates own properties for prototype-shaped parameter names", () => {
+    const input = Object.create(null) as Record<string, string>;
+    input.__proto__ = "safe";
+
+    const result = flattenRouteParams(input);
+
+    assertEquals(Object.prototype.hasOwnProperty.call(result, "__proto__"), true);
+    assertEquals(result.__proto__, "safe");
+    assertEquals(Object.getPrototypeOf(result), Object.prototype);
+  });
 });

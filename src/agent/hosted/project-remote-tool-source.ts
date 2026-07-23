@@ -257,7 +257,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
 ): RemoteToolSource {
   const policySource = createHostedMcpToolPolicySource(source, server.toolPolicy);
 
-  return createHostedProjectRemoteToolSource({
+  const projectSource = createHostedProjectRemoteToolSource({
     source: policySource,
     ...(input.defaultProjectId !== undefined ? { defaultProjectId: input.defaultProjectId } : {}),
     ...(input.getActiveBranchId !== undefined
@@ -292,6 +292,11 @@ function createHostedProjectRemoteToolSourceFromConfig(
       : {}),
     ...(onProjectSwitch !== undefined ? { onProjectSwitch } : {}),
   });
+
+  // Enforce the server policy before the project catalog resolves the tool.
+  // The inner policy source still protects retry tools selected after this
+  // boundary, while the catalog rejects policy-allowed names it never listed.
+  return createHostedMcpToolPolicySource(projectSource, server.toolPolicy);
 }
 
 function isHostedMcpToolAllowed(
@@ -320,14 +325,14 @@ function createHostedMcpToolPolicySource(
         isHostedMcpToolAllowed(toolDefinition.name, policy)
       );
     },
-    executeTool(toolName, args, context) {
+    async executeTool(toolName, args, context) {
       if (!isHostedMcpToolAllowed(toolName, policy)) {
         throw PERMISSION_DENIED.create({
           detail: `Tool "${toolName}" is not allowed for this MCP server`,
         });
       }
 
-      return source.executeTool(toolName, args, context);
+      return await source.executeTool(toolName, args, context);
     },
   };
 }

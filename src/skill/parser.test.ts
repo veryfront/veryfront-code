@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";
 
@@ -47,6 +47,29 @@ Body text.`;
       const result = await parseSkillFrontmatter("");
       assertEquals(result.body, "");
     });
+
+    it("should reject malformed YAML instead of applying weaker parsing rules", async () => {
+      const error = await assertRejects(
+        () =>
+          parseSkillFrontmatter(`---
+name: valid-name
+description: Valid description
+metadata: [
+---
+Instructions.`),
+        Error,
+        "Skill frontmatter contains invalid YAML",
+      );
+      assertEquals(error.message.includes("metadata"), false);
+    });
+
+    it("should reject oversized definitions before parsing YAML", async () => {
+      await assertRejects(
+        () => parseSkillFrontmatter("x".repeat(1_048_577)),
+        Error,
+        "must not exceed",
+      );
+    });
   });
 
   describe("validateSkillMetadata", () => {
@@ -59,12 +82,24 @@ Body text.`;
       assertEquals(result.description, "A skill");
     });
 
-    it("should fall back to directory name when name is missing", () => {
-      const result = validateSkillMetadata(
-        { description: "A skill" },
-        "dir-name",
+    it("should reject a missing name instead of applying a directory fallback", () => {
+      assertThrows(
+        () => validateSkillMetadata({ description: "A skill" }, "dir-name"),
+        Error,
+        'required "name"',
       );
-      assertEquals(result.name, "dir-name");
+    });
+
+    it("should require the skill name to match its directory", () => {
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "frontmatter-name", description: "A skill" },
+            "directory-name",
+          ),
+        Error,
+        "must match its directory",
+      );
     });
 
     it("should throw on missing description", () => {
@@ -101,9 +136,21 @@ Body text.`;
       }
     });
 
+    it("should reject consecutive hyphens in a name", () => {
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "invalid--name", description: "desc" },
+            "invalid--name",
+          ),
+        Error,
+        "Invalid skill name",
+      );
+    });
+
     it("should parse allowed-tools from space-delimited string", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": "Read Write Bash" },
+        { name: "test", description: "desc", "allowed-tools": "Read Write Bash" },
         "test",
       );
       assertEquals(result.allowedTools, ["Read", "Write", "Bash"]);
@@ -111,7 +158,7 @@ Body text.`;
 
     it("should parse allowed_tools as an alias for allowed-tools", () => {
       const result = validateSkillMetadata(
-        { description: "desc", allowed_tools: "Read Write Bash" },
+        { name: "test", description: "desc", allowed_tools: "Read Write Bash" },
         "test",
       );
       assertEquals(result.allowedTools, ["Read", "Write", "Bash"]);
@@ -119,7 +166,7 @@ Body text.`;
 
     it("should parse allowed-tools from array", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": ["Read", "Write"] },
+        { name: "test", description: "desc", "allowed-tools": ["Read", "Write"] },
         "test",
       );
       assertEquals(result.allowedTools, ["Read", "Write"]);
@@ -128,7 +175,7 @@ Body text.`;
     it("should reject non-string entries in allowed-tools array", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": ["Read", 123] },
+          { name: "test", description: "desc", "allowed-tools": ["Read", 123] },
           "test",
         );
         throw new Error("Should have thrown");
@@ -137,18 +184,69 @@ Body text.`;
       }
     });
 
+    it("should reject accessor-backed allowed-tools entries without invoking them", () => {
+      let invoked = false;
+      const patterns = Object.defineProperty(["Read"], "0", {
+        enumerable: true,
+        get() {
+          invoked = true;
+          return "Write";
+        },
+      });
+
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "test", description: "desc", "allowed-tools": patterns },
+            "test",
+          ),
+        Error,
+        "dense array",
+      );
+      assertEquals(invoked, false);
+    });
+
     it("should handle empty allowed-tools", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": "" },
+        { name: "test", description: "desc", "allowed-tools": "" },
         "test",
       );
-      assertEquals(result.allowedTools, undefined);
+      assertEquals(result.allowedTools, []);
+    });
+
+    it("should reject null allowed-tools instead of treating it as unrestricted", () => {
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "test", description: "desc", "allowed-tools": null },
+            "test",
+          ),
+        Error,
+        "expected a string or array",
+      );
+    });
+
+    it("should reject ambiguous allowed-tools aliases", () => {
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            {
+              name: "test",
+              description: "desc",
+              "allowed-tools": "Read",
+              allowed_tools: "Write",
+            },
+            "test",
+          ),
+        Error,
+        "must not define both",
+      );
     });
 
     it("should reject non-string non-array allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": 123 },
+          { name: "test", description: "desc", "allowed-tools": 123 },
           "test",
         );
         throw new Error("Should have thrown");
@@ -163,7 +261,7 @@ Body text.`;
     it("should reject object allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": { Read: true } },
+          { name: "test", description: "desc", "allowed-tools": { Read: true } },
           "test",
         );
         throw new Error("Should have thrown");
@@ -178,7 +276,7 @@ Body text.`;
     it("should reject boolean allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": true },
+          { name: "test", description: "desc", "allowed-tools": true },
           "test",
         );
         throw new Error("Should have thrown");
@@ -193,7 +291,7 @@ Body text.`;
     it("should reject false boolean allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": false },
+          { name: "test", description: "desc", "allowed-tools": false },
           "test",
         );
         throw new Error("Should have thrown");
@@ -208,7 +306,7 @@ Body text.`;
     it("should reject zero numeric allowed-tools (fail closed)", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": 0 },
+          { name: "test", description: "desc", "allowed-tools": 0 },
           "test",
         );
         throw new Error("Should have thrown");
@@ -223,7 +321,7 @@ Body text.`;
     it("should reject invalid allowed-tools pattern", () => {
       try {
         validateSkillMetadata(
-          { description: "desc", "allowed-tools": "Bash(git:*)" },
+          { name: "test", description: "desc", "allowed-tools": "Bash(git:*)" },
           "test",
         );
         throw new Error("Should have thrown");
@@ -234,36 +332,82 @@ Body text.`;
 
     it("should accept prefix wildcard patterns", () => {
       const result = validateSkillMetadata(
-        { description: "desc", "allowed-tools": "api:* Read" },
+        { name: "test", description: "desc", "allowed-tools": "api:* Read" },
         "test",
       );
       assertEquals(result.allowedTools, ["api:*", "Read"]);
     });
 
-    it("should parse metadata as string map", () => {
+    it("should parse metadata as a string map", () => {
       const result = validateSkillMetadata(
-        { description: "desc", metadata: { author: "test", version: 2 } },
+        {
+          name: "test",
+          description: "desc",
+          metadata: { author: "test", version: "2" },
+        },
         "test",
       );
       assertEquals(result.metadata, { author: "test", version: "2" });
     });
 
+    it("should reject metadata values that rely on implicit coercion", () => {
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "test", description: "desc", metadata: { version: 2 } },
+            "test",
+          ),
+        Error,
+        "string values",
+      );
+    });
+
     it("should pass through license and compatibility", () => {
       const result = validateSkillMetadata(
-        { description: "desc", license: "MIT", compatibility: ">=1.0" },
+        { name: "test", description: "desc", license: "MIT", compatibility: ">=1.0" },
         "test",
       );
       assertEquals(result.license, "MIT");
       assertEquals(result.compatibility, ">=1.0");
     });
 
-    it("should trim description to max length", () => {
+    it("should reject descriptions over the specification limit", () => {
       const longDesc = "x".repeat(2000);
-      const result = validateSkillMetadata(
-        { description: longDesc },
-        "test",
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "test", description: longDesc },
+            "test",
+          ),
+        Error,
+        "must not exceed 1024",
       );
-      assertEquals(result.description.length, 1024);
+    });
+
+    it("should enforce the compatibility field contract", () => {
+      assertThrows(
+        () =>
+          validateSkillMetadata(
+            { name: "test", description: "desc", compatibility: "x".repeat(501) },
+            "test",
+          ),
+        Error,
+        "1-500",
+      );
+    });
+
+    it("should reject accessor-backed frontmatter fields", () => {
+      const frontmatter = Object.defineProperty({}, "name", {
+        enumerable: true,
+        get() {
+          throw new Error("must not execute");
+        },
+      });
+      assertThrows(
+        () => validateSkillMetadata(frontmatter, "test"),
+        Error,
+        "data properties only",
+      );
     });
   });
 });

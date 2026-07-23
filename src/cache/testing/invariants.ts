@@ -190,7 +190,7 @@ export async function testKeyCollisionResistance<T = string>(
   t: Deno.TestContext,
   options: CacheInvariantTestOptions<T>,
 ): Promise<void> {
-  const { createCache, createValue, name = "cache" } = options;
+  const { createCache, createValue, isEqual, name = "cache" } = options;
 
   await t.step(`${name}: similar keys are distinct`, async () => {
     const cache = await createCache();
@@ -212,9 +212,14 @@ export async function testKeyCollisionResistance<T = string>(
     }
 
     // Verify each key returns its own value
-    for (const key of keys) {
+    for (const [key, expected] of values) {
       const result = await cache.get(key);
       assertExists(result, `Key ${key} should exist`);
+      if (isEqual) {
+        assertEquals(isEqual(result, expected), true, `Key ${key} returned the wrong value`);
+      } else {
+        assertEquals(result, expected, `Key ${key} returned the wrong value`);
+      }
     }
   });
 }
@@ -226,7 +231,7 @@ export async function testConcurrentAccess<T = string>(
   t: Deno.TestContext,
   options: CacheInvariantTestOptions<T>,
 ): Promise<void> {
-  const { createCache, createValue, name = "cache" } = options;
+  const { createCache, createValue, isEqual, name = "cache" } = options;
 
   await t.step(`${name}: concurrent sets don't corrupt data`, async () => {
     const cache = await createCache();
@@ -240,8 +245,12 @@ export async function testConcurrentAccess<T = string>(
         (async () => {
           await cache.set(key, value);
           const result = await cache.get(key);
-          // Result should be either the value we set or another concurrent value
           assertExists(result, `Key ${key} should have a value`);
+          if (isEqual) {
+            assertEquals(isEqual(result, value), true, `Key ${key} returned the wrong value`);
+          } else {
+            assertEquals(result, value, `Key ${key} returned the wrong value`);
+          }
         })(),
       );
     }

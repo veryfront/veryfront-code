@@ -5,6 +5,7 @@
 import { getErrorCollector } from "#veryfront/observability";
 import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import { extractNamedImports } from "./utils/stub-module.ts";
+import { fileLogLabel } from "../../shared/log-context.ts";
 
 type MissingModuleContext = {
   modulePath: string;
@@ -31,10 +32,10 @@ export function buildMissingModuleError(ctx: MissingModuleContext): Error {
     ? extractNamedImports(ctx.code, ctx.importStatement)
     : [];
 
+  const moduleFile = fileLogLabel(ctx.modulePath);
   const parts: string[] = [
-    `[MDX] Missing module: ${ctx.modulePath}.`,
-    ctx.importer ? `Imported by: ${ctx.importer}.` : "",
-    namedImports.length ? `Missing exports: ${namedImports.join(", ")}.` : "",
+    `[MDX] Missing module: ${moduleFile}.`,
+    namedImports.length ? `Missing export count: ${namedImports.length}.` : "",
     `Suggestion: ${getSuggestion(ctx.modulePath, namedImports)}`,
   ].filter(Boolean);
 
@@ -43,11 +44,8 @@ export function buildMissingModuleError(ctx: MissingModuleContext): Error {
   error.name = "MissingModuleError";
 
   try {
-    getErrorCollector().addModuleError(message, ctx.modulePath, {
-      importer: ctx.importer,
-      namedImports,
-      importStatement: ctx.importStatement,
-      projectSlug: ctx.projectSlug,
+    getErrorCollector().addModuleError(message, moduleFile, {
+      namedImportCount: namedImports.length,
     });
   } catch (_) {
     /* expected: error collector may not be initialized in all contexts */

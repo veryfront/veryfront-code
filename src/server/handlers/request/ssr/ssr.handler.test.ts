@@ -1,11 +1,26 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isProductionMode, SSRHandler } from "./ssr.handler.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
 import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/logger.ts";
+
+afterEach(() => {
+  Deno.env.delete("WORKER_ISOLATION_ENABLED");
+  Deno.env.delete("WORKER_ISOLATION_DATA");
+  Deno.env.delete("WORKER_ISOLATION_SSR");
+  __resetPoolForTests();
+  __resetLogRecordEmitterForTests();
+});
 
 describe("server/handlers/request/ssr/ssr.handler", () => {
   describe("SSRHandler metadata", () => {
@@ -95,6 +110,66 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - with mock SSRService", () => {
+    it("rejects remote rendering before the renderer even when worker flags are enabled", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      Deno.env.set("WORKER_ISOLATION_SSR", "1");
+      __resetPoolForTests();
+
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>unsafe</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "unsafe",
+          });
+        },
+      }));
+
+      const result = await handler.handle(
+        new Request("https://runtime.example.com/unsafe"),
+        makeCtx({ isLocalProject: false }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("cache-control")?.includes("no-store"), true);
+      assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff");
+      assertEquals(renderCalls, 0);
+    });
+
+    it("keeps explicitly local rendering available when isolation is disabled", async () => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_DATA");
+      Deno.env.delete("WORKER_ISOLATION_SSR");
+      __resetPoolForTests();
+
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>local</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "local",
+          });
+        },
+      }));
+
+      const result = await handler.handle(
+        new Request("http://localhost/local"),
+        makeCtx({ isLocalProject: true }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderCalls, 1);
+    });
+
     it("returns response from renderPage result", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
@@ -200,6 +275,22 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
       assertEquals(result.continue, false);
       assertEquals(result.response!.status, 500);
+    });
+
+    it("returns a sanitized 500 when local rendering rejects", async () => {
+      const privateCanary = "PRIVATE_LOCAL_RENDER_FAILURE";
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => Promise.reject(new Error(privateCanary)),
+      }));
+
+      const result = await handler.handle(
+        new Request("http://localhost/broken"),
+        makeCtx({ isLocalProject: true }),
+      );
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(result.response?.headers.get("cache-control")?.includes("no-store"), true);
+      assertEquals((await result.response!.text()).includes(privateCanary), false);
     });
 
     it("passes slug correctly from URL to service", async () => {
@@ -334,6 +425,74 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(opts.environmentName, "staging");
     });
 
+    it("does not log request paths or project identifiers", async () => {
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const handler = new SSRHandler(createMockSSRService());
+      const { ctx } = makeExtendedCtx({}, {
+        projectSlug: "PRIVATE_SSR_PROJECT_SLUG",
+        projectId: "PRIVATE_SSR_PROJECT_ID",
+        proxyToken: "test-token",
+        releaseId: "PRIVATE_SSR_RELEASE_ID",
+        debug: true,
+      });
+
+      try {
+        const result = await handler.handle(
+          new Request("http://localhost/customers/PRIVATE_SSR_PATH"),
+          ctx,
+        );
+        assertEquals(result.response instanceof Response, true);
+
+        const serialized = JSON.stringify(entries);
+        for (
+          const privateValue of [
+            "PRIVATE_SSR_PROJECT_SLUG",
+            "PRIVATE_SSR_PROJECT_ID",
+            "PRIVATE_SSR_RELEASE_ID",
+            "PRIVATE_SSR_PATH",
+          ]
+        ) {
+          assertEquals(serialized.includes(privateValue), false);
+        }
+      } finally {
+        __resetLogRecordEmitterForTests();
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        refreshLoggerConfig();
+      }
+    });
+
+    it("fails closed when multi-project context has no request token", async () => {
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>unexpected</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      const { ctx, calls } = makeExtendedCtx({}, {
+        projectSlug: "remote-project",
+        proxyToken: undefined,
+      });
+
+      const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(calls.runWithContext, undefined);
+      assertEquals(renderCalls, 0);
+    });
+
     it("skips runWithContext when projectSlug is missing", async () => {
       const mockService = createMockSSRService();
       const handler = new SSRHandler(mockService);
@@ -430,6 +589,35 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       // Should not throw — continues to render
       assertEquals(result.response instanceof Response, true);
     });
+
+    it("fails closed when production mode cannot be applied", async () => {
+      const { fs } = createContextualAdapter();
+      fs.setProductionMode = () => {
+        throw new Error("production mode setup failed");
+      };
+      const adapter = { ...createMockAdapter(), fs } as unknown as RuntimeAdapter;
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>unexpected</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      }));
+
+      const result = await handler.handle(
+        new Request("http://localhost/page"),
+        makeCtx({ adapter, resolvedEnvironment: "production" }),
+      );
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(renderCalls, 0);
+    });
   });
 
   describe("handle - server error with dev overlay", () => {
@@ -517,7 +705,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - context setup error", () => {
-    it("falls through to 404 when context setup throws", async () => {
+    it("returns a sanitized 500 when context setup throws", async () => {
       const throwingFs = {
         exists: () => Promise.resolve(false),
         readFile: () => Promise.resolve(""),
@@ -539,7 +727,9 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       const ctx = makeCtx({ adapter, projectSlug: "test" });
 
       const result = await handler.handle(new Request("http://localhost/page"), ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 500);
+      assertEquals((await result.response!.text()).includes("context setup failed"), false);
     });
   });
 
@@ -559,7 +749,10 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         },
       });
       const handler = new SSRHandler(mockService);
-      await handler.handle(new Request("http://localhost/page?studio_embed=true"), makeCtx());
+      await handler.handle(
+        new Request("http://localhost/page?studio_embed=true"),
+        makeCtx({ isLocalProject: true }),
+      );
 
       assertEquals(capturedOptions!.studioEmbed, true);
     });
@@ -579,7 +772,10 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         },
       });
       const handler = new SSRHandler(mockService);
-      await handler.handle(new Request("http://localhost/page?noHmr=1"), makeCtx());
+      await handler.handle(
+        new Request("http://localhost/page?noHmr=1"),
+        makeCtx({ isLocalProject: true }),
+      );
 
       assertEquals(capturedOptions!.noHmr, true);
     });
@@ -601,10 +797,42 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       const handler = new SSRHandler(mockService);
       await handler.handle(
         new Request("http://localhost/page?forceProductionScripts=1"),
-        makeCtx(),
+        makeCtx({ isLocalProject: true }),
       );
 
       assertEquals(capturedOptions!.forceProductionScripts, true);
+    });
+
+    it("ignores Studio and rendering overrides for production requests", async () => {
+      let capturedOptions: SSRRenderOptions | null = null;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: (_ctx, options) => {
+          capturedOptions = options;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>ok</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      }));
+
+      await handler.handle(
+        new Request(
+          "https://project.example/page?studio_embed=true&project_id=other-project&page_id=other-page&noHmr=1&forceProductionScripts=1",
+        ),
+        makeCtx({
+          resolvedEnvironment: "production",
+          projectSlug: "trusted-project",
+        }),
+      );
+
+      assertEquals(capturedOptions!.studioEmbed, false);
+      assertEquals(capturedOptions!.projectId, "trusted-project");
+      assertEquals(capturedOptions!.pageId, undefined);
+      assertEquals(capturedOptions!.noHmr, false);
+      assertEquals(capturedOptions!.forceProductionScripts, false);
     });
   });
 

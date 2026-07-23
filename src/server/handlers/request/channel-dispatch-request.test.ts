@@ -202,4 +202,21 @@ describe("server/handlers/request/channel-dispatch-request", () => {
       assertEquals(await result.response.json(), { error: "Invalid channel invoke request" });
     }
   });
+
+  it("rejects request bodies that are not valid UTF-8", async () => {
+    const result = await readFixture(
+      new Request("https://example.com/channels/invoke", {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": "invalid.signature.value" },
+        body: new Uint8Array([0xff]),
+      }),
+      createCtx("-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----"),
+    );
+
+    assertEquals(result.ok, false);
+    if (!result.ok) {
+      assertEquals(result.response.status, 400);
+      assertEquals(await result.response.json(), { error: "Invalid channel invoke request" });
+    }
+  });
 });

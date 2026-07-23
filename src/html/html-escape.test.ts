@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildAttributes,
@@ -59,6 +59,14 @@ describe("html-escape", () => {
     it("should handle string with no special characters", () => {
       assertEquals(escapeHTML("hello world"), "hello world");
     });
+
+    it("rejects escape inputs that can exceed the HTML output budget", () => {
+      assertThrows(
+        () => escapeHTML('"'.repeat(2 * 1024 * 1024 + 1)),
+        Error,
+        "size limit",
+      );
+    });
   });
 
   describe("escapeHtml alias", () => {
@@ -104,6 +112,66 @@ describe("html-escape", () => {
         'data-value="test &amp; value" aria-label="Say &quot;Hello&quot;"',
       );
     });
+
+    it("rejects malformed attribute names", () => {
+      for (const name of ['title" onclick', "x onmouseover", "<script", "data-value="]) {
+        assertThrows(
+          () => buildAttributes({ [name]: "value" }),
+          TypeError,
+          "attribute name",
+        );
+      }
+    });
+
+    it("rejects excessive attribute collections", () => {
+      const attributes = Object.fromEntries(
+        Array.from({ length: 129 }, (_, index) => [`data-value-${index}`, "value"]),
+      );
+
+      assertThrows(
+        () => buildAttributes(attributes),
+        Error,
+        "entry limit",
+      );
+    });
+
+    it("rejects oversized attribute values", () => {
+      assertThrows(
+        () => buildAttributes({ title: "x".repeat(64 * 1024 + 1) }),
+        Error,
+        "size limit",
+      );
+    });
+
+    it("converts inaccessible attribute collections into validation failures", () => {
+      const attributes = new Proxy({}, {
+        ownKeys() {
+          throw new Error("private implementation detail");
+        },
+      });
+
+      assertThrows(
+        () => buildAttributes(attributes),
+        Error,
+        "attributes cannot be inspected",
+      );
+    });
+
+    it("converts inaccessible attribute values into validation failures", () => {
+      const attributes = {} as Record<string, string>;
+      Object.defineProperty(attributes, "title", {
+        enumerable: true,
+        get() {
+          throw new Error("private implementation detail");
+        },
+      });
+
+      assertThrows(
+        () => buildAttributes(attributes),
+        Error,
+        "attribute value cannot be inspected",
+      );
+    });
   });
 
   describe("buildNonceAttribute", () => {
@@ -116,6 +184,14 @@ describe("html-escape", () => {
 
     it("should omit the attribute when nonce is missing", () => {
       assertEquals(buildNonceAttribute(undefined), "");
+    });
+
+    it("rejects oversized nonces", () => {
+      assertThrows(
+        () => buildNonceAttribute("n".repeat(4097)),
+        Error,
+        "nonce",
+      );
     });
   });
 

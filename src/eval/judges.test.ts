@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "veryfront/provider";
 import { judges } from "veryfront/eval";
@@ -228,5 +228,20 @@ describe("eval/judges", () => {
     assertEquals(result.score, 0);
     assertEquals(result.pass, false);
     assertStringIncludes(result.explanation ?? "", "valid JSON");
+  });
+
+  it("rejects malformed judge limits before invoking a model", () => {
+    for (
+      const options of [
+        { threshold: -0.1 },
+        { threshold: Number.NaN },
+        { maxEvidenceChars: -1 },
+        { maxOutputTokens: 0 },
+        { maxOutputTokens: 1.5 },
+        { temperature: Number.NaN },
+      ]
+    ) {
+      assertThrows(() => judges.llm.groundedness(options), Error);
+    }
   });
 });

@@ -15,11 +15,13 @@ import type { VeryfrontConfig } from "#veryfront/config";
 
 const logger = serverLogger.component("build");
 
+/** Pages Router and App Router routes selected for static generation. */
 export interface CollectedRoutes {
   pages: RouteInfo[];
   app: AppRouteInfo[];
 }
 
+/** Discover configured static routes when SSG is enabled. */
 export async function collectAllRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -51,10 +53,6 @@ export async function collectAllRoutes(
   ]);
 
   logger.info(`Collected routes: ${pages.length} pages, ${app.length} app`);
-
-  if (app.length > 0) {
-    logger.info(`App routes: ${app.map((r) => r.path).join(", ")}`);
-  }
 
   return { pages, app };
 }

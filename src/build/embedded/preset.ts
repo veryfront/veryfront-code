@@ -1,22 +1,46 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { BUILD_FAILED, createError, ensureError, toError } from "#veryfront/errors";
 import * as esbuild from "veryfront/extensions/bundler";
-import { join } from "#veryfront/compat/path/index.ts";
+import {
+  basename,
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "#veryfront/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
+import {
+  type BuildOutputTransaction,
+  commitBuildOutput,
+  createBuildOutputTransaction,
+  rollbackBuildOutput,
+} from "../production-build/build/build-setup.ts";
 
+/** Options for producing an embedded runtime bundle. */
 export interface BuildEmbeddedOptions {
+  /** Project root containing configured app and pages directories. */
   projectDir: string;
+  /** Parent directory that receives the transactional `embedded/` output. */
   outDir: string;
+  /** Runtime target used by the generated bundle. */
   runtime: "deno" | "node" | "bun";
+  /** Preloaded project config. Omit it to resolve config from `projectDir`. */
   config?: VeryfrontConfig;
 }
 
+/** Manifest returned after an embedded output transaction commits. */
+export interface EmbeddedBuildResult {
+  manifest: EmbeddedBundleManifest;
+}
+
 /**
- * Build the embedded preset bundle.
+ * Build and atomically commit an embedded preset bundle.
  * Outputs:
  * - outDir/embedded/manifest.json
  * - outDir/embedded/app.js (SSR entry)
@@ -24,24 +48,35 @@ export interface BuildEmbeddedOptions {
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
-): Promise<{ manifest: EmbeddedBundleManifest }> {
-  let buildResult: { manifest: EmbeddedBundleManifest } | undefined;
+): Promise<EmbeddedBuildResult> {
+  let buildResult: EmbeddedBuildResult | undefined;
   let buildFailed = false;
   let buildError: unknown;
+  let outputTransaction: BuildOutputTransaction | null = null;
 
   try {
-    const { projectDir, outDir } = options;
-    const embeddedDir = join(outDir, "embedded");
+    if (!options.projectDir?.trim()) throw new TypeError("projectDir must not be blank");
+    if (!options.outDir?.trim()) throw new TypeError("outDir must not be blank");
+    if (options.runtime !== "deno" && options.runtime !== "node" && options.runtime !== "bun") {
+      throw new TypeError(`Unsupported embedded runtime: ${String(options.runtime)}`);
+    }
+
+    const projectDir = resolve(options.projectDir);
+    const outDir = resolve(options.outDir);
+    outputTransaction = createBuildOutputTransaction(join(outDir, "embedded"), false);
+    const embeddedDir = outputTransaction.workingOutputDir;
     const fs = createFileSystem();
     const adapter = await runtime.get();
     const config = options.config ?? await getConfig(projectDir, adapter);
     const appDirectory = config.directories?.app ?? "app";
     const pagesDirectory = config.directories?.pages ?? "pages";
+    await assertProjectDirectory(fs, projectDir, appDirectory, "app");
+    await assertProjectDirectory(fs, projectDir, pagesDirectory, "pages");
 
     await fs.mkdir(embeddedDir, { recursive: true });
     await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
-    const entryPath = await findOrCreateEntryPath(
+    const entryPath = await findEntryPath(
       fs,
       projectDir,
       appDirectory,
@@ -52,7 +87,7 @@ export async function buildEmbeddedPreset(
       fs,
       entryPath,
       projectDir,
-      adapter: adapter as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+      adapter,
     });
 
     await fs.writeTextFile(appOut, bundledAppCode);
@@ -63,7 +98,12 @@ export async function buildEmbeddedPreset(
       ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
     ];
 
+    const routePaths = new Set(["/"]);
     for (const r of discovered) {
+      if (r.routePath === "/") continue;
+      if (routePaths.has(r.routePath)) {
+        throw new TypeError(`Duplicate embedded route path: ${r.routePath}`);
+      }
       try {
         const mdxContent = await fs.readTextFile(r.sourcePath);
         const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
@@ -72,7 +112,7 @@ export async function buildEmbeddedPreset(
           adapter,
         });
 
-        await fs.mkdir(presetDirname(r.filePath), { recursive: true });
+        await fs.mkdir(dirname(r.filePath), { recursive: true });
         await fs.writeTextFile(r.filePath, compiled.code);
 
         const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
@@ -81,11 +121,12 @@ export async function buildEmbeddedPreset(
           file: `embedded/${fileRel}`,
           type: "page",
         });
-      } catch (e) {
-        logger.warn("embedded: failed to compile route MDX", {
-          route: r.routePath,
-          error: String(e),
-        } as unknown);
+        routePaths.add(r.routePath);
+      } catch (error) {
+        throw BUILD_FAILED.create({
+          detail: `Failed to compile embedded route ${r.routePath}`,
+          cause: error,
+        });
       }
     }
 
@@ -97,19 +138,15 @@ export async function buildEmbeddedPreset(
     ];
 
     for (const url of rscFiles) {
-      try {
-        const srcPath = url.pathname;
-        const src = await fs.readTextFile(srcPath);
-        const res = await esbuild.transform(src, {
-          loader: "ts",
-          target: "es2020",
-          format: "esm",
-        });
-        const name = presetBasename(srcPath).replace(/\.tsx?$/, ".js");
-        await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
-      } catch (e) {
-        logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
-      }
+      const srcPath = fromFileUrl(url);
+      const src = await fs.readTextFile(srcPath);
+      const res = await esbuild.transform(src, {
+        loader: "ts",
+        target: "es2020",
+        format: "esm",
+      });
+      const name = basename(srcPath).replace(/\.tsx?$/, ".js");
+      await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
     }
 
     const manifest: EmbeddedBundleManifest = {
@@ -134,7 +171,7 @@ export async function buildEmbeddedPreset(
       JSON.stringify(manifest, null, 2),
     );
 
-    logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
+    logger.info("Embedded preset built");
 
     buildResult = { manifest };
   } catch (error) {
@@ -151,17 +188,39 @@ export async function buildEmbeddedPreset(
     stopError = error;
   }
 
-  if (buildFailed) {
-    if (stopFailed) {
-      logger.warn("Failed to stop esbuild after embedded preset build error", {
-        error: String(stopError),
-      } as unknown);
+  const failures: Error[] = [];
+  if (buildFailed) failures.push(ensureError(buildError));
+  if (stopFailed) failures.push(ensureError(stopError));
+
+  if (failures.length > 0) {
+    if (outputTransaction) {
+      try {
+        await rollbackBuildOutput(outputTransaction);
+      } catch (error) {
+        failures.push(ensureError(error));
+      }
     }
-    throw buildError;
+    if (failures.length === 1) throw failures[0];
+    throw new AggregateError(failures, "Embedded preset build and cleanup failed");
   }
 
-  if (stopFailed) throw stopError;
-  return buildResult!;
+  if (!buildResult) throw new Error("Embedded preset build completed without a result");
+  if (!outputTransaction) throw new Error("Embedded preset build has no output transaction");
+
+  try {
+    await commitBuildOutput(outputTransaction);
+  } catch (error) {
+    const commitFailures = [ensureError(error)];
+    try {
+      await rollbackBuildOutput(outputTransaction);
+    } catch (rollbackError) {
+      commitFailures.push(ensureError(rollbackError));
+    }
+    if (commitFailures.length === 1) throw commitFailures[0];
+    throw new AggregateError(commitFailures, "Embedded preset commit and rollback failed");
+  }
+
+  return buildResult;
 }
 
 /** @internal — exported for testing */
@@ -193,7 +252,38 @@ export function isPageFile(name: string): boolean {
   return (name.endsWith(".mdx") || name.endsWith(".md")) && !name.startsWith("_");
 }
 
-async function findOrCreateEntryPath(
+async function assertProjectDirectory(
+  fs: ReturnType<typeof createFileSystem>,
+  projectDir: string,
+  configuredPath: string,
+  label: string,
+): Promise<void> {
+  if (!configuredPath.trim()) {
+    throw new TypeError(`Embedded ${label} directory must not be blank`);
+  }
+
+  const sourceDir = resolve(projectDir, configuredPath);
+  const projectRelativePath = relative(projectDir, sourceDir);
+  if (projectRelativePath.split(/[\\/]/)[0] === ".." || isAbsolute(projectRelativePath)) {
+    throw new TypeError(`Embedded ${label} directory is outside projectDir: ${configuredPath}`);
+  }
+
+  if (!fs.realPath) return;
+  try {
+    const [realProjectDir, realSourceDir] = await Promise.all([
+      fs.realPath(projectDir),
+      fs.realPath(sourceDir),
+    ]);
+    const realRelativePath = relative(realProjectDir, realSourceDir);
+    if (realRelativePath.split(/[\\/]/)[0] === ".." || isAbsolute(realRelativePath)) {
+      throw new TypeError(`Embedded ${label} directory is outside projectDir: ${configuredPath}`);
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+}
+
+async function findEntryPath(
   fs: ReturnType<typeof createFileSystem>,
   projectDir: string,
   appDirectory: string,
@@ -211,17 +301,16 @@ async function findOrCreateEntryPath(
       const st = await fs.stat(c);
       if (st.isFile) return c;
     } catch (error) {
-      logger.debug(`Entry path not found: ${c}`, error);
+      if (!isNotFoundError(error)) throw error;
     }
   }
 
-  const entryPath = join(projectDir, ".veryfront", "__embedded_fallback__.tsx");
-  await fs.mkdir(join(projectDir, ".veryfront"), { recursive: true });
-  await fs.writeTextFile(
-    entryPath,
-    `export default function Page(){ return '<div>Veryfront</div>'; }`,
+  throw toError(
+    createError({
+      type: "build",
+      message: "No embedded entry route found in the configured app or pages directory",
+    }),
   );
-  return entryPath;
 }
 
 async function bundleEmbeddedApp(params: {
@@ -271,15 +360,11 @@ async function bundleEmbeddedApp(params: {
       }),
     );
   } catch (error) {
-    logger.error("Failed to bundle embedded app:", error);
-    throw toError(
-      createError({
-        type: "build",
-        message: `Failed to bundle embedded app: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      }),
-    );
+    logger.error("Failed to bundle embedded app");
+    throw BUILD_FAILED.create({
+      detail: "Failed to bundle embedded app",
+      cause: error,
+    });
   }
 }
 
@@ -314,8 +399,8 @@ async function discoverAppRoutes(
 
   try {
     await walk(base);
-  } catch (_) {
-    /* expected: no app directory */
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
   }
 
   return results;
@@ -351,8 +436,8 @@ async function discoverPagesRoutes(
 
   try {
     await walk(base);
-  } catch (_) {
-    /* expected: no pages directory */
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
   }
 
   return results;

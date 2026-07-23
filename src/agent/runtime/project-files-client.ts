@@ -1,22 +1,39 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
 
-export const getRuntimeProjectFileSchema = defineSchema((v) =>
+/** Project file returned by the runtime files API. */
+export interface RuntimeProjectFile {
+  /** Project-relative file path. */
+  path: string;
+  /** UTF-8 file contents. */
+  content: string;
+}
+
+/** Project file entry returned by a runtime files listing. */
+export interface RuntimeProjectFileListItem {
+  /** Project-relative file path. */
+  path: string;
+}
+
+/** Returns the runtime project file schema. */
+export const getRuntimeProjectFileSchema: () => Schema<RuntimeProjectFile> = defineSchema((v) =>
   v.object({
     path: v.string(),
     content: v.string(),
   })
 );
 
-export const getRuntimeProjectFileListItemSchema = defineSchema((v) =>
-  v.object({
-    path: v.string(),
-  })
-);
+/** Returns the runtime project file list item schema. */
+export const getRuntimeProjectFileListItemSchema: () => Schema<RuntimeProjectFileListItem> =
+  defineSchema((v) =>
+    v.object({
+      path: v.string(),
+    })
+  );
 
 const getRuntimeProjectFileListRestResponseSchema = defineSchema((v) =>
   v.object({
@@ -38,18 +55,15 @@ const getApiErrorBodySchema = defineSchema((v) =>
 /** Schema for runtime project file.
  * @deprecated Use getRuntimeProjectFileSchema()
  */
-export const runtimeProjectFileSchema = lazySchema(getRuntimeProjectFileSchema);
+export const runtimeProjectFileSchema: Schema<RuntimeProjectFile> = lazySchema(
+  getRuntimeProjectFileSchema,
+);
 /** Schema for runtime project file list item.
  * @deprecated Use getRuntimeProjectFileListItemSchema()
  */
-export const runtimeProjectFileListItemSchema = lazySchema(getRuntimeProjectFileListItemSchema);
-
-/** Public API contract for runtime project file. */
-export type RuntimeProjectFile = InferSchema<ReturnType<typeof getRuntimeProjectFileSchema>>;
-/** Public API contract for runtime project file list item. */
-export type RuntimeProjectFileListItem = InferSchema<
-  ReturnType<typeof getRuntimeProjectFileListItemSchema>
->;
+export const runtimeProjectFileListItemSchema: Schema<RuntimeProjectFileListItem> = lazySchema(
+  getRuntimeProjectFileListItemSchema,
+);
 
 /** Options accepted by runtime project files API. */
 export type RuntimeProjectFilesApiOptions = {
@@ -89,9 +103,12 @@ export type RuntimeProjectFilesClient = {
 
 /** Error shape for runtime project files API auth. */
 export class RuntimeProjectFilesApiAuthError extends Error {
+  /** Status code value. */
   readonly statusCode: number;
+  /** Error code value. */
   readonly errorCode: string;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(statusCode: number, message: string) {
     super(message);
     this.name = "RuntimeProjectFilesApiAuthError";

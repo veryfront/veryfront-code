@@ -164,6 +164,59 @@ describe("agent memory isolation (issue 2336)", () => {
     assertEquals((await stateful.getMemoryStats()).totalMessages, 4);
   });
 
+  it("configured mode preserves shared memory while isolated concurrent generate calls bypass it", async () => {
+    const configured = agent({
+      id: "echo-explicit-configured-memory",
+      model: "hosted/echo-explicit-configured-memory",
+      system: "Echo.",
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      resolveModelTransport: () => Promise.resolve({ model: echoModel("hosted/echo") }),
+    });
+
+    await configured.generate({ input: "configured", memoryMode: "configured" });
+    assertEquals((await configured.getMemoryStats()).totalMessages, 2);
+
+    const isolatedResults = await Promise.all(
+      WORDS.map((word) =>
+        configured.generate({
+          input: prompt(word),
+          memoryMode: "isolated",
+        })
+      ),
+    );
+
+    assertEquals(isolatedResults.map((result) => result.text), WORDS.map(prompt));
+    assertEquals(isolatedResults.map((result) => result.messages.length), [2, 2, 2]);
+    // Isolated calls neither read the configured history nor append to it.
+    assertEquals((await configured.getMemoryStats()).totalMessages, 2);
+  });
+
+  it("isolates concurrent stream calls from configured shared memory", async () => {
+    const configured = agent({
+      id: "echo-isolated-stream-configured-memory",
+      model: "hosted/echo-isolated-stream-configured-memory",
+      system: "Echo.",
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      resolveModelTransport: () => Promise.resolve({ model: echoModel("hosted/echo") }),
+    });
+
+    const texts = await Promise.all(WORDS.map(async (word) => {
+      let captured = "";
+      const result = await configured.stream({
+        input: prompt(word),
+        memoryMode: "isolated",
+        onFinish: (response) => (captured = response.text),
+      });
+      await result.toDataStreamResponse().text();
+      return captured;
+    }));
+
+    assertEquals(texts, WORDS.map(prompt));
+    assertEquals((await configured.getMemoryStats()).totalMessages, 0);
+  });
+
   it("memory.enabled === false ignores leftover maxTokens for the output limit", async () => {
     // A disabled memory config must behave exactly like omitting `memory`: its
     // maxTokens (a conversation-window size) must not cap model output.

@@ -39,7 +39,9 @@ const runtimeAgentDefinitionFileNameSchema = lazySchema(
 );
 
 /** Zod schema for resolve runtime agent definitions dir input. */
-export const resolveRuntimeAgentDefinitionsDirInputSchema = lazySchema(
+export const resolveRuntimeAgentDefinitionsDirInputSchema: Schema<
+  ResolveRuntimeAgentDefinitionsDirInput
+> = lazySchema(
   defineSchema<ResolveRuntimeAgentDefinitionsDirInput>((v) =>
     v.object({
       baseDir: v.string().min(1),
@@ -58,7 +60,9 @@ export const listRuntimeAgentMarkdownDefinitionIdsInputSchema = lazySchema(
 );
 
 /** Zod schema for load runtime agent markdown definition from file input. */
-export const loadRuntimeAgentMarkdownDefinitionFromFileInputSchema = lazySchema(
+export const loadRuntimeAgentMarkdownDefinitionFromFileInputSchema: Schema<
+  LoadRuntimeAgentMarkdownDefinitionFromFileInput
+> = lazySchema(
   defineSchema<LoadRuntimeAgentMarkdownDefinitionFromFileInput>((v) =>
     v.object({
       agentsDir: v.string().min(1),

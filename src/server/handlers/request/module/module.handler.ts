@@ -9,9 +9,17 @@ import { handleModuleServer } from "./module-server-handler.ts";
 import { handlePageModule } from "./page-module-handler.ts";
 import { handleDataEndpoint } from "./data-endpoint-handler.ts";
 import { handlePageDataEndpoint } from "./page-data-endpoint-handler.ts";
-import { handleVirtualModule } from "./virtual-module-handler.ts";
 import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
 import { PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  createProjectCodeUnavailableResponse,
+  shouldRejectUnisolatedProjectCode,
+} from "../../../utils/project-code-isolation.ts";
+import {
+  createDeprecatedModuleResponse,
+  isFrameworkOwnedModulePath,
+} from "./module-request-policy.ts";
 
 export class ModuleHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -28,8 +36,28 @@ export class ModuleHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
-    const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
+    const { createResponseBuilder, respond, logDebug } = this.helpers;
     const proxyOptions = { requireToken: true };
+
+    if (pathname.startsWith("/_veryfront/modules/")) {
+      return Promise.resolve(this.respond(createDeprecatedModuleResponse(req)));
+    }
+
+    const hasProjectToken = !!(ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN"));
+    const servesFrameworkWithoutProjectContext = ctx.isLocalProject === false &&
+      !!ctx.projectSlug && !hasProjectToken && isFrameworkOwnedModulePath(pathname);
+    if (
+      ctx.isLocalProject === false && ctx.projectSlug && !hasProjectToken &&
+      !servesFrameworkWithoutProjectContext
+    ) {
+      return Promise.resolve(this.respond(createProjectCodeUnavailableResponse(req, 502)));
+    }
+
+    const renderWorkload = pathname.startsWith("/_veryfront/pages/") ||
+      pathname.startsWith("/_veryfront/data/");
+    if (renderWorkload && shouldRejectUnisolatedProjectCode(ctx)) {
+      return Promise.resolve(this.respond(createProjectCodeUnavailableResponse(req)));
+    }
 
     if (pathname === "/_vf_modules/_batch") {
       return this.withProxyContext(
@@ -40,18 +68,11 @@ export class ModuleHandler extends BaseHandler {
     }
 
     if (pathname.startsWith("/_vf_modules/")) {
+      const execute = () => handleModuleServer(req, ctx, createResponseBuilder, respond, logDebug);
+      if (servesFrameworkWithoutProjectContext) return execute();
       return this.withProxyContext(
         ctx,
-        () =>
-          handleModuleServer(req, ctx, createResponseBuilder, respond, logDebug, getErrorMessage),
-        proxyOptions,
-      );
-    }
-
-    if (pathname.startsWith("/_veryfront/modules/")) {
-      return this.withProxyContext(
-        ctx,
-        () => handleVirtualModule(req, ctx, createResponseBuilder, respond, getErrorMessage),
+        execute,
         proxyOptions,
       );
     }
@@ -59,7 +80,7 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/pages/")) {
       return this.withProxyContext(
         ctx,
-        () => handlePageModule(req, pathname, ctx, createResponseBuilder, respond, getErrorMessage),
+        () => handlePageModule(req, pathname, ctx, createResponseBuilder, respond),
         proxyOptions,
       );
     }
@@ -67,8 +88,7 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/data/")) {
       return this.withProxyContext(
         ctx,
-        () =>
-          handleDataEndpoint(req, pathname, ctx, createResponseBuilder, respond, getErrorMessage),
+        () => handleDataEndpoint(req, pathname, ctx, createResponseBuilder, respond),
         proxyOptions,
       );
     }
@@ -83,7 +103,6 @@ export class ModuleHandler extends BaseHandler {
             ctx,
             createResponseBuilder,
             respond,
-            getErrorMessage,
           ),
         proxyOptions,
       );

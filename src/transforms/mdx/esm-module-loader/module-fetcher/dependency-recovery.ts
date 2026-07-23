@@ -7,7 +7,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery
  */
 
-import { basename, dirname } from "#veryfront/compat/path/index.ts";
+import { basename } from "#veryfront/compat/path/index.ts";
 import { detokenizeAllCachePaths } from "#veryfront/cache/paths.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import type { Logger } from "#veryfront/utils";
@@ -18,6 +18,8 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/local-fs.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 // Captures the filesystem path from `file://` URLs that point to veryfront-mdx-esm
 // cache entries.  The character class excludes only quote characters (the
@@ -60,7 +62,7 @@ async function ensureHttpBundleDependencies(code: string, log: Logger): Promise<
   if (failed.length === 0) return true;
 
   log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to recover HTTP bundles for vfmod dependency`, {
-    failed,
+    failedCount: failed.length,
     totalBundles: bundlePaths.length,
   });
   return false;
@@ -113,8 +115,7 @@ async function ensureModuleFileAndDeps(
   const portableCode = await distributedCache.get(recoveryKey);
   if (!portableCode) {
     options.log.debug(`${LOG_PREFIX_MDX_LOADER} No distributed vfmod recovery entry`, {
-      dependencyPath: absolutePath,
-      recoveryKey,
+      dependencyFile: fileLogLabel(absolutePath),
     });
     return false;
   }
@@ -136,13 +137,17 @@ async function ensureModuleFileAndDeps(
     }
   }
 
-  await localFs.mkdir(dirname(absolutePath), { recursive: true });
-  await localFs.writeTextFile(absolutePath, recoveredCode);
+  const written = await writeCacheFile(
+    localFs,
+    absolutePath,
+    recoveredCode,
+    "MDX-ESM-RECOVERY",
+  );
+  if (!written) return false;
   recovered.add(absolutePath);
 
   options.log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered vfmod dependency from distributed cache`, {
-    dependencyPath: absolutePath,
-    recoveryKey,
+    dependencyFile: fileLogLabel(absolutePath),
   });
 
   return true;

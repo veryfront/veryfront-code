@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateAppRouterCandidates,
@@ -73,6 +73,25 @@ describe("path-candidate-generator", () => {
 
       assertEquals(appRouter.length > 0, true);
       assertEquals(pagesRouter.length > 0, true);
+    });
+
+    it("should normalize repeated separators", () => {
+      const { appRouter } = getPathCandidates("/project", "//blog//post//");
+
+      assertEquals(
+        appRouter.some((candidate) => candidate.includes("/app/blog/post/page.tsx")),
+        true,
+      );
+    });
+
+    it("should reject path traversal and platform separators", () => {
+      for (const slug of ["../secret", "blog/../../secret", String.raw`..\secret`, "a\0b"]) {
+        assertThrows(
+          () => getPathCandidates("/project", slug),
+          Error,
+          "Route slug",
+        );
+      }
     });
   });
 

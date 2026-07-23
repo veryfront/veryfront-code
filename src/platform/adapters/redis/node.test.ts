@@ -2,12 +2,25 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeRedisAdapter } from "./node.ts";
+import type { NodeRedisClient } from "./types.ts";
 
-function createMockClient() {
-  const calls: Array<{ method: string; args: unknown[] }> = [];
+interface RecordedCall {
+  method: string;
+  args: unknown[];
+}
 
-  const client = {
+function createMockClient(): {
+  client: NodeRedisClient & { calls: RecordedCall[] };
+  calls: RecordedCall[];
+} {
+  const calls: RecordedCall[] = [];
+
+  const client: NodeRedisClient & { calls: RecordedCall[] } = {
     calls,
+    connect() {
+      calls.push({ method: "connect", args: [] });
+      return Promise.resolve();
+    },
     hSet(key: string, fields: Record<string, string>) {
       calls.push({ method: "hSet", args: [key, fields] });
       return Promise.resolve(Object.keys(fields).length);
@@ -73,7 +86,7 @@ function createMockClient() {
       consumer: string,
       streams: Array<{ key: string; id: string }>,
       options?: { BLOCK?: number; COUNT?: number },
-    ) {
+    ): ReturnType<NodeRedisClient["xReadGroup"]> {
       calls.push({ method: "xReadGroup", args: [group, consumer, streams, options] });
       return Promise.resolve([
         {
@@ -123,56 +136,56 @@ describe("platform/adapters/redis/node", () => {
   describe("NodeRedisAdapter", () => {
     it("should proxy hset to the camelCase client method (hSet)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.hset("key", { f: "v" });
-      assertEquals(calls[0].method, "hSet");
-      assertEquals(calls[0].args, ["key", { f: "v" }]);
+      assertEquals(calls[0]!.method, "hSet");
+      assertEquals(calls[0]!.args, ["key", { f: "v" }]);
     });
 
     it("should return the hgetall object as-is", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.hgetall("key");
       assertEquals(result, { field1: "value1", field2: "value2" });
     });
 
     it("should pass del keys as an array (not spread)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.del("k1", "k2");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, [["k1", "k2"]]);
+      assertEquals(calls[0]!.args, [["k1", "k2"]]);
     });
 
     it("should map mkstream to the MKSTREAM option on xgroupCreate", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.xgroupCreate("stream", "group", "0", true);
-      assertEquals(calls[0].args[3], { MKSTREAM: true });
+      assertEquals(calls[0]!.args[3], { MKSTREAM: true });
     });
 
     it("should reshape xreadgroup streams and responses (name->key, message->data)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.xreadgroup(
         [{ key: "stream1", xid: ">" }],
         { group: "g", consumer: "c", block: 100, count: 5 },
       );
       // request shape: xid -> id, group/consumer/BLOCK/COUNT forwarded
-      assertEquals(calls[0].args[0], "g");
-      assertEquals(calls[0].args[1], "c");
-      assertEquals(calls[0].args[2], [{ key: "stream1", id: ">" }]);
-      assertEquals(calls[0].args[3], { BLOCK: 100, COUNT: 5 });
+      assertEquals(calls[0]!.args[0], "g");
+      assertEquals(calls[0]!.args[1], "c");
+      assertEquals(calls[0]!.args[2], [{ key: "stream1", id: ">" }]);
+      assertEquals(calls[0]!.args[3], { BLOCK: 100, COUNT: 5 });
       // response shape: name -> key, message -> data
       assertEquals(result.length, 1);
-      assertEquals(result[0].key, "stream1");
-      assertEquals(result[0].messages[0].data, { f1: "v1", f2: "v2" });
+      assertEquals(result[0]!.key, "stream1");
+      assertEquals(result[0]!.messages[0]!.data, { f1: "v1", f2: "v2" });
     });
 
     it("should return an empty array when xreadgroup yields null", async () => {
       const { client } = createMockClient();
       client.xReadGroup = () => Promise.resolve(null);
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.xreadgroup(
         [{ key: "s", xid: ">" }],
         { group: "g", consumer: "c" },
@@ -182,139 +195,139 @@ describe("platform/adapters/redis/node", () => {
 
     it("should map lowercase set options (nx/px/ex) to redis NX/PX/EX", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.set("key", "val", { nx: true, px: 1000, ex: 60 });
-      assertEquals(calls[0].args[2], { NX: true, PX: 1000, EX: 60 });
+      assertEquals(calls[0]!.args[2], { NX: true, PX: 1000, EX: 60 });
     });
 
     it("should leave NX undefined when nx is falsy", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.set("key", "val");
-      assertEquals(calls[0].args[2], { NX: undefined, PX: undefined, EX: undefined });
+      assertEquals(calls[0]!.args[2], { NX: undefined, PX: undefined, EX: undefined });
     });
 
     it("should call client.close on quit (v5 rename)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.quit();
       assertEquals(calls.some((c) => c.method === "close"), true);
     });
 
     it("should call client.destroy on disconnect (v5 rename)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.disconnect();
       assertEquals(calls.some((c) => c.method === "destroy"), true);
     });
 
     it("should forward hdel fields as an array (hDel)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.hdel("key", "f1", "f2");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["key", ["f1", "f2"]]);
+      assertEquals(calls[0]!.args, ["key", ["f1", "f2"]]);
     });
 
     it("should forward sadd members as an array (sAdd)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.sadd("set", "m1", "m2");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["set", ["m1", "m2"]]);
+      assertEquals(calls[0]!.args, ["set", ["m1", "m2"]]);
     });
 
     it("should forward srem members as an array (sRem)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.srem("set", "m1");
       assertEquals(result, 1);
-      assertEquals(calls[0].args, ["set", ["m1"]]);
+      assertEquals(calls[0]!.args, ["set", ["m1"]]);
     });
 
     it("should proxy smembers (sMembers)", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.smembers("set"), ["m1", "m2"]);
     });
 
     it("should forward rpush values as an array (rPush)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.rpush("list", "a", "b");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["list", ["a", "b"]]);
+      assertEquals(calls[0]!.args, ["list", ["a", "b"]]);
     });
 
     it("should proxy lrange (lRange)", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.lrange("list", 0, -1), ["a", "b"]);
     });
 
     it("should proxy lindex (lIndex)", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.lindex("list", 0), "item");
     });
 
     it("should proxy lset (lSet)", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.lset("list", 0, "v"), "OK");
     });
 
     it("should proxy llen (lLen)", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.llen("list"), 5);
     });
 
     it("should proxy xadd (xAdd)", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.xadd("stream", "*", { k: "v" }), "1-0");
     });
 
     it("should forward xack ids as an array (xAck)", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.xack("stream", "group", "1-0", "1-1");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["stream", "group", ["1-0", "1-1"]]);
+      assertEquals(calls[0]!.args, ["stream", "group", ["1-0", "1-1"]]);
     });
 
     it("should proxy keys", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.keys("*"), ["k1", "k2"]);
     });
 
     it("should forward exists keys as an array", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       const result = await adapter.exists("k1", "k2");
       assertEquals(result, 1);
-      assertEquals(calls[0].args, [["k1", "k2"]]);
+      assertEquals(calls[0]!.args, [["k1", "k2"]]);
     });
 
     it("should proxy expire", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.expire("key", 60), 1);
     });
 
     it("should proxy get", async () => {
       const { client } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       assertEquals(await adapter.get("key"), "value");
     });
 
     it("should map eval keys/args into the redis options object", async () => {
       const { client, calls } = createMockClient();
-      const adapter = new NodeRedisAdapter(client as never);
+      const adapter = new NodeRedisAdapter(client);
       await adapter.eval("return 1", ["k1"], ["a1"]);
-      assertEquals(calls[0].args, ["return 1", { keys: ["k1"], arguments: ["a1"] }]);
+      assertEquals(calls[0]!.args, ["return 1", { keys: ["k1"], arguments: ["a1"] }]);
     });
   });
 });

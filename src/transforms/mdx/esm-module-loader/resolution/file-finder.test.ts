@@ -5,10 +5,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests ensure that framework files under _veryfront/ are
  * properly resolved from the framework source directory.
  */
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { resolveModuleFile } from "./file-finder.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 const mockAdapter = createMockAdapter();
 
@@ -90,6 +92,49 @@ describe("resolveModuleFile", () => {
 
     await resolveModuleFile("_vf_modules/components/Button.js", adapter as any, "/project");
     assertEquals(wasCalled(), true, "Should call adapter.fs.resolveFile for project paths");
+  });
+
+  it("rejects traversal before calling the project adapter", async () => {
+    const { adapter, wasCalled } = createResolveFileTrackingAdapter();
+
+    await assertRejects(
+      () =>
+        resolveModuleFile(
+          "_vf_modules/../private.js",
+          adapter as any,
+          "/project",
+        ),
+      TypeError,
+      "Module path must stay inside the virtual module root",
+    );
+    assertEquals(wasCalled(), false);
+  });
+
+  it("does not read traversal paths outside a local project directory", async () => {
+    const testRoot = await makeTempDir({ prefix: "vf-mdx-file-finder-containment-" });
+    const projectDir = join(testRoot, "project");
+    const outsidePath = join(testRoot, "private.ts");
+    const localAdapter = {
+      ...mockAdapter,
+      fs: { ...mockAdapter.fs, resolveFile: undefined },
+    };
+
+    try {
+      await writeTextFile(outsidePath, "export const privateValue = true;");
+
+      await assertRejects(
+        () =>
+          resolveModuleFile(
+            "_vf_modules/../private.js",
+            localAdapter as any,
+            projectDir,
+          ),
+        TypeError,
+        "Module path must stay inside the virtual module root",
+      );
+    } finally {
+      await remove(testRoot, { recursive: true });
+    }
   });
 
   it("resolves framework react/* files", async () => {

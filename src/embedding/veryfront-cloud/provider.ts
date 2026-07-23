@@ -15,7 +15,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
   const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken);
+  const fetch = createVeryfrontCloudFetch(apiToken, undefined, baseURL);
 
   switch (provider) {
     case "openai":

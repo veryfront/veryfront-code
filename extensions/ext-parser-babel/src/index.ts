@@ -1,11 +1,11 @@
 /**
- * ext-parser-babel — CodeParser implementation backed by @babel/parser,
+ * ext-parser-babel: CodeParser implementation backed by @babel/parser,
  * @babel/traverse, @babel/generator, @babel/types.
  *
  * Provides the `CodeParser` contract:
- *  - `parse/traverse/generate` — generic AST pipeline for callers that
+ *  - `parse/traverse/generate`: generic AST pipeline for callers that
  *    want to build custom transforms.
- *  - `injectJsxNodePositions(source, options)` — the Studio Navigator
+ *  - `injectJsxNodePositions(source, options)`: the Studio Navigator
  *    helper that stamps `data-node-*` attributes onto JSX elements.
  *
  * Core's `src/transforms/plugins/babel-node-positions.ts` is a shim that

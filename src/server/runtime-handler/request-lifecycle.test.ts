@@ -48,9 +48,8 @@ describe("server/runtime-handler/request-lifecycle", () => {
         headers: { "x-request-id": "custom-id" },
       });
       const ctx = startRequestLifecycle(req, "/test", false);
-      // The requestId should incorporate the incoming id
-      assertEquals(typeof ctx.requestId, "string");
-      ctx.stopTotal();
+      assertEquals(ctx.requestId, "custom-id");
+      endRequestLifecycle(ctx);
     });
   });
 
@@ -66,15 +65,29 @@ describe("server/runtime-handler/request-lifecycle", () => {
   describe("startRequestTracking / completeRequestTracking", () => {
     it("should track and complete a request", () => {
       const beforeCount = requestTracker.getInFlightCount();
-      startRequestTracking("lifecycle-req-1", "slug", "/path", "GET", "production", "rel-1");
+      const trackingKey = startRequestTracking(
+        "lifecycle-req-1",
+        "slug",
+        "/path",
+        "GET",
+        "production",
+        "rel-1",
+      );
       assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
-      completeRequestTracking("lifecycle-req-1", 200, false);
+      completeRequestTracking(trackingKey, 200, false);
       assertEquals(requestTracker.getInFlightCount(), beforeCount);
     });
 
     it("should handle timeout flag", () => {
-      startRequestTracking("lifecycle-req-2", "slug", "/path", "GET", undefined, undefined);
-      completeRequestTracking("lifecycle-req-2", 504, true);
+      const trackingKey = startRequestTracking(
+        "lifecycle-req-2",
+        "slug",
+        "/path",
+        "GET",
+        undefined,
+        undefined,
+      );
+      completeRequestTracking(trackingKey, 504, true);
     });
 
     it("should keep event streams in flight until their body closes", async () => {
@@ -86,7 +99,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         },
       });
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         "lifecycle-stream-close",
         "slug",
         "/api/control-plane/runs/test/stream",
@@ -95,7 +108,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         "rel-1",
       );
       const response = completeRequestTrackingOnResponseEnd(
-        "lifecycle-stream-close",
+        trackingKey,
         new Response(source, {
           status: 202,
           statusText: "Streaming",
@@ -134,7 +147,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         },
       });
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         "lifecycle-stream-cancel",
         "slug",
         "/api/control-plane/runs/test/stream",
@@ -143,7 +156,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         "rel-1",
       );
       const response = completeRequestTrackingOnResponseEnd(
-        "lifecycle-stream-cancel",
+        trackingKey,
         new Response(source, { headers: { "content-type": "text/event-stream; charset=utf-8" } }),
         false,
       );
@@ -159,7 +172,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
       const beforeCompleted = requestTracker.getStats().completed;
       const source = new ReadableStream<Uint8Array>();
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         "lifecycle-stream-cancel-race",
         "slug",
         "/api/control-plane/runs/test/stream",
@@ -168,7 +181,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         "rel-1",
       );
       const response = completeRequestTrackingOnResponseEnd(
-        "lifecycle-stream-cancel-race",
+        trackingKey,
         new Response(source, { headers: { "content-type": "text/event-stream" } }),
         false,
       );
@@ -190,7 +203,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         },
       });
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         "lifecycle-stream-error",
         "slug",
         "/api/control-plane/runs/test/stream",
@@ -199,7 +212,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
         "rel-1",
       );
       const response = completeRequestTrackingOnResponseEnd(
-        "lifecycle-stream-error",
+        trackingKey,
         new Response(source, { headers: { "content-type": "text/event-stream" } }),
         false,
       );
@@ -212,7 +225,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
 
     it("should complete non-streaming responses immediately", () => {
       const beforeCount = requestTracker.getInFlightCount();
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         "lifecycle-response",
         "slug",
         "/api/health",
@@ -222,7 +235,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
       );
 
       const response = completeRequestTrackingOnResponseEnd(
-        "lifecycle-response",
+        trackingKey,
         new Response("ok", { status: 200 }),
         false,
       );
@@ -237,7 +250,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
       const handlerSettled = new Promise<void>((resolve) => {
         settleHandler = resolve;
       });
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         "lifecycle-timeout-settlement",
         "slug",
         "/api/slow",
@@ -247,7 +260,7 @@ describe("server/runtime-handler/request-lifecycle", () => {
       );
 
       const response = completeRequestTrackingOnResponseEnd(
-        "lifecycle-timeout-settlement",
+        trackingKey,
         new Response("Request timeout", { status: 504 }),
         true,
         null,

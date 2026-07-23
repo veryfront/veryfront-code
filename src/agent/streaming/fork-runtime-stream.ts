@@ -67,8 +67,11 @@ export {
 
 /** Result returned from fork runtime stream. */
 export interface ForkRuntimeStreamResult {
+  /** Full stream value. */
   fullStream: AsyncIterable<ForkPart>;
+  /** Steps value. */
   steps: PromiseLike<readonly ForkRuntimeStep[]>;
+  /** Total usage value. */
   totalUsage: PromiseLike<
     | {
       inputTokens?: number;
@@ -81,14 +84,21 @@ export interface ForkRuntimeStreamResult {
 /** Default value for fork response promise timeout ms. */
 export const DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS = 1_000;
 
-type ForkRuntimeStepPreparationInput = {
+/** Input passed to a fork runtime step preparer. */
+export type ForkRuntimeStepPreparationInput = {
+  /** Conversation messages for the next step. */
   messages: AgentMessage[];
+  /** Builds system instructions for the next step. */
   buildInstructions: () => string;
+  /** Tool names currently available to the fork. */
   forkToolNames: readonly string[];
 };
 
-type ForkRuntimeStepPreparation = {
+/** Prepared messages, instructions, and tools for a fork runtime step. */
+export type ForkRuntimeStepPreparation = {
+  /** Conversation messages for the next step. */
   messages: AgentMessage[];
+  /** System instructions for the next step. */
   system: string;
   /**
    * When present (returned by a step preparer that reads from the live

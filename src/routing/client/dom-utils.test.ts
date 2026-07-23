@@ -83,6 +83,27 @@ describe("DOM Utils", () => {
       const anchor = createMockAnchor("http://example.com");
       assertEquals(isInternalLink(anchor), false, "Should recognize http links as external");
     });
+
+    it("should allow same-origin absolute links", () => {
+      const anchor = createMockAnchor("http://veryfront.local/about?tab=team");
+      assertEquals(isInternalLink(anchor), true);
+    });
+
+    it("should reject credential-bearing same-origin links", () => {
+      const anchor = createMockAnchor("http://user:password@veryfront.local/about");
+      assertEquals(isInternalLink(anchor), false);
+    });
+
+    it("should reject protocol-relative and active-content links", () => {
+      for (const href of ["//evil.example/page", "javascript:alert(1)", "data:text/html,test"]) {
+        assertEquals(isInternalLink(createMockAnchor(href)), false, href);
+      }
+    });
+
+    it("should reject links targeting another browsing context", () => {
+      assertEquals(isInternalLink(createMockAnchor("/page", { target: "sidebar" })), false);
+      assertEquals(isInternalLink(createMockAnchor("/page", { target: "_self" })), true);
+    });
   });
 
   describe("findAnchorElement", () => {

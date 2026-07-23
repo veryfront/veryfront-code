@@ -13,8 +13,11 @@
  * `better-sqlite3`'s `Statement` shape.
  */
 export interface SqliteStatement {
+  /** Return the first matching row. */
   get(...params: unknown[]): unknown;
+  /** Execute a statement that does not return rows. */
   run(...params: unknown[]): void;
+  /** Return all matching rows. */
   all(...params: unknown[]): unknown[];
 }
 
@@ -22,23 +25,26 @@ export interface SqliteStatement {
  * Minimal interface for a SQLite database connection, compatible with
  * `better-sqlite3`'s `Database` shape as consumed by `SqliteKv`.
  *
- * Mirrors `SqliteDatabase` in `src/platform/compat/kv/types.ts`. Kept
- * separate here so extensions can import from the public
- * `veryfront/extensions/compat` entrypoint without taking a dependency
- * on internal platform paths.
+ * Structurally compatible with the database shape consumed by Veryfront's
+ * portable key-value adapter. The public contract keeps extensions independent
+ * from runtime implementation modules.
  */
 export interface SqliteDatabase {
+  /** Execute one or more SQL statements. */
   exec(sql: string): void;
+  /** Prepare a reusable SQL statement. */
   prepare(sql: string): SqliteStatement;
+  /** Close the database connection. */
   close(): void;
 }
 
 /**
  * Shape returned by the kreuzberg document-extraction module.
  *
- * Matches the subset used by `importKreuzberg()` in `opaque-deps.ts`.
+ * Matches the subset used by the optional document extraction adapter.
  */
 export interface KreuzbergExtractor {
+  /** Extract text from document bytes. */
   extractBytes(
     data: Uint8Array,
     mimeType: string,
@@ -46,20 +52,30 @@ export interface KreuzbergExtractor {
   ): Promise<{ content: string }>;
 }
 
+/** Progress reported while a document is being extracted. */
 export interface DocumentExtractionProgressEvent {
+  /** Unit represented by the progress counters. */
   unit: "file" | "page" | "slide";
+  /** Number of completed units. */
   current: number;
+  /** Total units, when known. */
   total?: number;
+  /** Number of characters extracted so far, when available. */
   characters?: number;
 }
 
+/** Callback invoked when document extraction progress changes. */
 export type DocumentExtractionProgress = (
   event: DocumentExtractionProgressEvent,
 ) => void | Promise<void>;
 
+/** Controls document extraction progress and timeout behavior. */
 export interface DocumentExtractionOptions {
+  /** Receive extraction progress updates. */
   onProgress?: DocumentExtractionProgress;
+  /** Maximum time without progress before extraction stops. */
   idleTimeoutMs?: number;
+  /** Maximum total extraction time. */
   hardTimeoutMs?: number;
 }
 
@@ -68,10 +84,10 @@ export interface DocumentExtractionOptions {
  */
 export interface DocumentExtractor {
   /**
-   * Initialise and return the kreuzberg document-extraction module.
+   * Initialize and return the Kreuzberg document-extraction module.
    *
-   * Callers should fall back to a "no extraction" path when this
-   * method is absent or throws.
+   * Absence or failure means document extraction is unavailable. Callers must
+   * surface that failure instead of silently substituting document content.
    */
   importKreuzberg?(): Promise<KreuzbergExtractor>;
 
@@ -98,8 +114,9 @@ export interface SqliteStore {
    * Returns a database compatible with `SqliteKv`.
    * When `path` is omitted an in-memory database is created.
    *
-   * Callers should fall back to the in-memory KV when this method is
-   * absent or throws.
+   * Callers can select an in-memory store when this method is absent. A
+   * provider failure must remain terminal so persistent data is not silently
+   * replaced with process-local state.
    */
   openSqliteDatabase?(path?: string): Promise<SqliteDatabase>;
 }

@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import type { CreateSandboxBashTool, SandboxShellToolSet } from "./shell-tools.ts";
 import {
   createAgentServiceSandboxClient,
@@ -162,6 +167,34 @@ describe("sandbox/agent-service-tools", () => {
     });
   });
 
+  it("forwards supported exec options through the agent-service client", async () => {
+    mockFetch([
+      createSandboxSessionResponse(),
+      createOkResponse(),
+      ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+      createOkResponse(),
+    ]);
+
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+      projectId: "project-123",
+    });
+
+    await sandbox.executeCommand("pwd", {
+      cwd: "/workspace/subdirectory",
+      env: { MODE: "test" },
+    });
+
+    assertEquals(jsonBody(fetchCalls, 2), {
+      command: "pwd",
+      cwd: "/workspace/subdirectory",
+      env: { MODE: "test" },
+      projectReference: "project-123",
+    });
+    await sandbox.close();
+  });
+
   it("strips bash-tool workspace prefixes from async background command tool commands", async () => {
     mockFetch([
       createSandboxSessionResponse(),
@@ -198,5 +231,39 @@ describe("sandbox/agent-service-tools", () => {
       projectReference: "project-123",
     });
     assertEquals(createProjectScopedExecOptions(null), {});
+  });
+
+  it("rejects lossy byte conversion when adapting sandbox file writes", async () => {
+    mockFetch([]);
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+    });
+
+    await assertRejects(
+      async () => {
+        await sandbox.writeFiles?.([{ path: "binary.bin", content: new Uint8Array([0xff]) }]);
+      },
+      Error,
+      "UTF-8",
+    );
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("rejects shell providers that collide with reserved background tools", async () => {
+    await assertRejects(
+      () =>
+        createAgentServiceSandboxTools({
+          authToken: "test-token",
+          apiUrl: "https://api.example.com",
+          createBashTool: async () => ({
+            tools: {
+              start_background_command: { description: "collision" },
+            },
+          }),
+        }),
+      Error,
+      "reserved",
+    );
   });
 });

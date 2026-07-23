@@ -8,10 +8,13 @@ import {
   clearCSSCache,
   generateTailwindCSS,
   getCompilerCacheStats,
+  getCSSByHash,
   hashCSS,
   invalidateCompiler,
   regenerateCSSByHash,
 } from "./tailwind-compiler.ts";
+import { resolveRegenerationInputs } from "./css-hash-cache.ts";
+import { MAX_LOCAL_HASH_CSS_CACHE_BYTES } from "./resource-limits.ts";
 
 const MOCK_TAILWIND_BASE_CSS = "@layer theme, base, components, utilities;";
 
@@ -48,6 +51,25 @@ describe("styles-builder/tailwind-compiler regressions", () => {
   });
 
   describe("regenerateCSSByHash", () => {
+    it("bounds the local hash cache by retained CSS bytes", async () => {
+      const cssCharactersPerEntry = Math.floor(MAX_LOCAL_HASH_CSS_CACHE_BYTES / 7);
+      const hashes = Array.from({ length: 4 }, (_, index) => `byte-bound-${index}`);
+
+      for (const hash of hashes) {
+        await cacheCSSAsync("a".repeat(cssCharactersPerEntry), hash);
+      }
+
+      assertEquals(getCSSByHash(hashes[0]!), undefined);
+      assertEquals(getCSSByHash(hashes.at(-1)!)?.length, cssCharactersPerEntry);
+    });
+
+    it("updates an existing local hash entry instead of serving stale CSS", async () => {
+      await cacheCSSAsync(".first{color:red}", "same-hash");
+      await cacheCSSAsync(".second{color:blue}", "same-hash");
+
+      assertEquals(getCSSByHash("same-hash"), ".second{color:blue}");
+    });
+
     it("regenerates CSS when inputs exist in unified CSS cache entry", async () => {
       const restoreFetch = mockTailwindFetch();
 
@@ -93,6 +115,20 @@ describe("styles-builder/tailwind-compiler regressions", () => {
     it("returns undefined when cached inputs are missing", async () => {
       const regenerated = await regenerateCSSByHash("vf-missing-regeneration-hash", undefined);
       assertEquals(regenerated, undefined);
+    });
+
+    it("does not expose mutable candidate arrays from cached regeneration inputs", async () => {
+      const hash = "immutable-inputs";
+      await cacheCSSAsync(".cached{}", hash, {
+        candidates: ["block"],
+        stylesheet: '@import "tailwindcss";',
+      });
+
+      const first = await resolveRegenerationInputs(hash);
+      first?.candidates.push("injected");
+      const second = await resolveRegenerationInputs(hash);
+
+      assertEquals(second?.candidates, ["block"]);
     });
 
     it("isolates JIT regeneration by project to avoid cross-project compiler contamination", async () => {

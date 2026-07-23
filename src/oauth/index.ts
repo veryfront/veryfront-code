@@ -7,14 +7,13 @@
  *
  * @example
  * ```typescript
- * // Create OAuth routes with pre-configured providers
  * import { createOAuthInitHandler, createOAuthCallbackHandler, gmailConfig } from "veryfront/oauth";
+ * import { getSessionUserId } from "./auth.ts";
  *
- * // app/api/auth/gmail/route.ts
- * export const GET = createOAuthInitHandler(gmailConfig);
- *
- * // app/api/auth/gmail/callback/route.ts
- * export const GET = createOAuthCallbackHandler(gmailConfig);
+ * export const gmailOAuthInit = createOAuthInitHandler(gmailConfig, {
+ *   getUserId: (request) => getSessionUserId(request),
+ * });
+ * export const gmailOAuthCallback = createOAuthCallbackHandler(gmailConfig);
  * ```
  *
  * @module oauth
@@ -26,12 +25,25 @@ export type {
   OAuthServiceConfig,
   OAuthState,
   OAuthTokens,
+  StoredOAuthState,
   TokenExchangeOptions,
   TokenExchangeResult,
   TokenStore,
 } from "./types.ts";
 
+export {
+  AuthorizationUrlOptionsSchema,
+  OAuthProviderConfigSchema,
+  OAuthServiceConfigSchema,
+  OAuthStateSchema,
+  OAuthTokensSchema,
+  StoredOAuthStateSchema,
+  TokenExchangeOptionsSchema,
+  TokenExchangeResultSchema,
+} from "./schemas/index.ts";
+
 export { OAuthProvider, OAuthService } from "./providers/base.ts";
+export type { OAuthFetchOptions } from "./providers/base.ts";
 
 export {
   airtableConfig,
@@ -79,6 +91,9 @@ export {
   createOAuthDisconnectHandler,
   createOAuthInitHandler,
   createOAuthStatusHandler,
+  type GetUserIdFn,
   type OAuthCallbackHandlerOptions,
+  type OAuthDisconnectHandlerOptions,
   type OAuthInitHandlerOptions,
+  type OAuthStatusHandlerOptions,
 } from "./handlers/index.ts";

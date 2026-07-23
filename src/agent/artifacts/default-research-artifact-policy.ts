@@ -65,11 +65,17 @@ function extractResearchTopic(input: { description: string; prompt: string }): s
 
 /** Public API contract for default research artifact paths. */
 export interface DefaultResearchArtifactPaths {
+  /** Topic slug value. */
   topicSlug: string;
+  /** Topic root path value. */
   topicRootPath: string;
+  /** Current report path value. */
   currentReportPath: string;
+  /** Run report path value. */
   runReportPath: string;
+  /** Findings path value. */
   findingsPath: string;
+  /** Sources path value. */
   sourcesPath: string;
 }
 

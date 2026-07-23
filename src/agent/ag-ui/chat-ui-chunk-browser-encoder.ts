@@ -20,7 +20,9 @@ export type AgUiChatUiChunkBrowserEncoder = Pick<
 
 /** Options accepted by create AG-UI chat UI chunk browser encoder. */
 export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
+  /** Model ID value. */
   modelId?: string;
+  /** Callback that handles resolve provider. */
   resolveProvider?: (modelId: string) => string | undefined;
 }
 
@@ -30,7 +32,9 @@ export interface CreateAgUiChatUiTrackedBrowserResponseInput extends
     CreateAgUiTrackedBrowserResponseInput<ChatUiMessageChunk<ChatMessageMetadata>>,
     "chunkEncoder" | "finalizeTracker"
   > {
+  /** Model ID value. */
   modelId: string;
+  /** Resolve provider value. */
   resolveProvider?: CreateAgUiChatUiChunkBrowserEncoderOptions["resolveProvider"];
 }
 

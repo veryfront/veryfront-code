@@ -73,6 +73,7 @@ import {
 } from "./metrics-recorder.ts";
 import { createSnapshot, getRequestCount } from "./metrics-state.ts";
 
+/** Stable facade for the in-process metrics recording functions. */
 export const metrics = {
   incRequest,
   recordHttp,

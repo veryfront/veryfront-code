@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createCrypto } from "./crypto.ts";
 
@@ -19,6 +25,77 @@ describe("Crypto Compat", () => {
       assertExists(crypto.getRandomValues);
       assertExists(crypto.randomUUID);
       assertExists(crypto.subtle);
+    });
+
+    it("fails explicitly when native Web Crypto is unavailable", () => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+      try {
+        Reflect.deleteProperty(globalThis, "crypto");
+        assertThrows(() => createCrypto(), Error, "Web Crypto");
+      } finally {
+        if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+      }
+    });
+
+    it("sanitizes hostile native Web Crypto capability access", () => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+      const hostileCrypto = new Proxy({}, {
+        get() {
+          throw new Error("PRIVATE_CRYPTO_CAPABILITY_CANARY");
+        },
+      });
+
+      try {
+        Object.defineProperty(globalThis, "crypto", {
+          configurable: true,
+          value: hostileCrypto,
+        });
+        let caught: unknown;
+        try {
+          createCrypto();
+        } catch (error) {
+          caught = error;
+        }
+        assert(caught instanceof Error);
+        assertEquals(caught.message.includes("Web Crypto"), true);
+        assertEquals(caught.message.includes("PRIVATE_CRYPTO_CAPABILITY_CANARY"), false);
+      } finally {
+        if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+        else Reflect.deleteProperty(globalThis, "crypto");
+      }
+    });
+
+    it("snapshots validated native capabilities exactly once", () => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+      const nativeCrypto = globalThis.crypto;
+      let getRandomValuesReads = 0;
+      const unstableCrypto = {
+        get getRandomValues() {
+          getRandomValuesReads++;
+          if (getRandomValuesReads > 1) {
+            throw new Error("PRIVATE_CRYPTO_TOCTOU_CANARY");
+          }
+          return nativeCrypto.getRandomValues.bind(nativeCrypto);
+        },
+        randomUUID: nativeCrypto.randomUUID.bind(nativeCrypto),
+        subtle: nativeCrypto.subtle,
+      };
+
+      try {
+        Object.defineProperty(globalThis, "crypto", {
+          configurable: true,
+          value: unstableCrypto,
+        });
+        const crypto = createCrypto();
+        const values = crypto.getRandomValues(new Uint8Array(8));
+
+        assertEquals(getRandomValuesReads, 1);
+        assert(values.some((value) => value !== 0));
+        assertEquals(Object.isFrozen(crypto), true);
+      } finally {
+        if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+        else Reflect.deleteProperty(globalThis, "crypto");
+      }
     });
   });
 
@@ -45,6 +122,15 @@ describe("Crypto Compat", () => {
         assertEquals(array.length, size);
         assertHasNonZeroBytes(array, `Array of size ${size} should contain non-zero values`);
       }
+    });
+
+    it("preserves the native integer typed-array surface", () => {
+      const crypto = createCrypto();
+      const values = new Uint32Array(8);
+      const result = crypto.getRandomValues(values);
+
+      assertEquals(result, values);
+      assert(values.some((value) => value !== 0));
     });
 
     it("produces different values", () => {

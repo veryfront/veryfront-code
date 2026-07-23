@@ -81,6 +81,7 @@ export function getGithubEnvConfig(env: EnvironmentConfig = getEnvironmentConfig
   };
 }
 
+/** Return the process-wide Veryfront API token, if configured. */
 export function getApiTokenEnv(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): string | undefined {
@@ -127,10 +128,12 @@ export function isDebugEnvEnabled(env: EnvironmentConfig = getEnvironmentConfig(
   return env.debug;
 }
 
+/** Return whether the process is running in a continuous integration environment. */
 export function isCiEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.ci;
 }
 
+/** Return whether the Deno-specific test mode flag is enabled. */
 export function isDenoTestingEnv(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.denoTesting;
 }
@@ -145,6 +148,7 @@ export function getForceColorEnv(
   return toCliBooleanFlag(env.forceColor);
 }
 
+/** Return whether experimental React Server Components support is enabled. */
 export function isRscExperimentalEnabled(env: EnvironmentConfig = getEnvironmentConfig()): boolean {
   return env.experimentalRsc;
 }
@@ -178,7 +182,7 @@ export function getOtelTracingConfig(env: EnvironmentConfig = getEnvironmentConf
     tracesEndpoint: env.otelTracesEndpoint,
     exporter: env.otelTracesExporter,
     headers: env.otelHeaders,
-    tracesHeaders: undefined,
+    tracesHeaders: env.otelTracesHeaders,
   };
 }
 
@@ -188,11 +192,15 @@ export function getOtelMetricsConfig(env: EnvironmentConfig = getEnvironmentConf
   endpoint?: string;
   metricsEndpoint?: string;
   exporter?: string;
+  headers?: string;
+  metricsHeaders?: string;
 } {
   return {
     enabledFlag: toCliBooleanFlag(env.otelMetricsEnabled),
     ...getBaseOtelConfig(env),
     metricsEndpoint: env.otelMetricsEndpoint,
     exporter: env.otelMetricsExporter,
+    headers: env.otelHeaders,
+    metricsHeaders: env.otelMetricsHeaders,
   };
 }

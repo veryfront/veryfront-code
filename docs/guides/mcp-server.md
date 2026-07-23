@@ -111,13 +111,18 @@ import { prompt } from "veryfront/prompt";
 
 export default prompt({
   description: "Review code for quality issues",
+  arguments: [{
+    name: "code",
+    description: "Code to review",
+    required: true,
+  }],
   content: `Review the following code for:
 - Security vulnerabilities
 - Performance issues
 - Code style problems
 
 Code to review:
-{{code}}`,
+{code}`,
 });
 ```
 
@@ -128,16 +133,24 @@ Resources are data sources that MCP clients can read:
 ```ts
 // resources/docs.ts
 import { resource } from "veryfront/resource";
+import { defineSchema } from "veryfront/schemas";
+
+const projectDocs = "Veryfront project documentation";
 
 export default resource({
   description: "Project documentation",
   pattern: "docs://project",
-  load: async () => {
-    const docs = await loadDocs();
-    return { contents: docs };
+  paramsSchema: defineSchema((v) => v.object({}))(),
+  load: (_params, { signal }) => {
+    signal?.throwIfAborted();
+    return { contents: projectDocs };
   },
 });
 ```
+
+Pass `signal` to downstream APIs such as `fetch` so cancelled MCP reads stop
+their work promptly. Resource results exposed over MCP must be JSON-serializable
+and fit within the MCP output limit.
 
 ## Manual registration
 
@@ -151,6 +164,7 @@ import { tool } from "veryfront/tool";
 registerTool(
   "custom-tool",
   tool({
+    id: "custom-tool",
     description: "A custom tool",
     inputSchema: defineSchema((v) =>
       v.object({

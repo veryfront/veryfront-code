@@ -1,5 +1,4 @@
 import * as React from "react";
-import { serverLogger } from "#veryfront/utils";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { ClientComponentMeta, RSCNode } from "../types.ts";
 import {
@@ -11,8 +10,6 @@ import {
 } from "./component-detector.ts";
 import { escapeHtml, renderAttributes, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
-
-const logger = serverLogger.component("rsc");
 
 /** Recursively renders a component tree to RSC nodes */
 export async function renderTree<Props extends RSCComponentProps = RSCComponentProps>(
@@ -53,21 +50,16 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
     };
   }
 
-  try {
-    const element = Component.prototype?.render
-      ? React.createElement(Component as React.ComponentClass<Props>, props)
-      : await (Component as React.FC<Props>)(props);
+  const element = Component.prototype?.render
+    ? await new (Component as React.ComponentClass<Props>)(props).render()
+    : await (Component as React.FC<Props>)(props);
 
-    if (!element) return { type: "html", html: "" };
-    if (React.isValidElement(element)) {
-      return processElement(element, clientManifest, clientRefs, reactVersion);
-    }
-
-    return { type: "html", html: escapeHtml(String(element)) };
-  } catch (error) {
-    logger.error("Error rendering component:", error);
-    throw error;
+  if (element == null || typeof element === "boolean") return { type: "html", html: "" };
+  if (React.isValidElement(element)) {
+    return processElement(element, clientManifest, clientRefs, reactVersion);
   }
+
+  return { type: "html", html: escapeHtml(String(element)) };
 }
 
 /** Processes a React element into RSC node representation */
@@ -133,7 +125,7 @@ export function renderChildren(
   clientRefs: Map<string, string>,
   reactVersion?: string,
 ): Promise<RSCNode[]> {
-  if (!children) return Promise.resolve([]);
+  if (children == null || typeof children === "boolean") return Promise.resolve([]);
 
   return Promise.all(
     React.Children.toArray(children).map((child) => {

@@ -5,10 +5,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
-import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
-import { getErrorMessage } from "#veryfront/errors";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import {
   markRequestProfilePhase,
@@ -56,9 +55,14 @@ import {
   rememberReleaseModuleResponse,
 } from "./module-response-cache.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { HTTP_FETCH_TIMEOUT_MS, HTTP_METHOD_NOT_ALLOWED } from "#veryfront/utils/constants/http.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
+const MAX_MODULE_PATH_LENGTH = 2_048;
+const MAX_QUERY_IDENTITY_LENGTH = 512;
+const MAX_MODULE_SOURCE_BYTES = 5 * 1024 * 1024;
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -129,11 +133,70 @@ export default {};
 };
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
-const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
+const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js$/;
 // Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>
 const CROSS_PROJECT_VERSIONED_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
+
+function decodeAndValidateModulePathname(pathname: string): string | null {
+  if (pathname.length > MAX_MODULE_PATH_LENGTH + 64 || /%2f|%5c/i.test(pathname)) return null;
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+
+  if (!DEV_MODULE_PREFIX.test(decoded)) return decoded;
+  const modulePath = decoded.replace(DEV_MODULE_PREFIX, "");
+  if (
+    modulePath.length === 0 || modulePath.length > MAX_MODULE_PATH_LENGTH ||
+    modulePath.includes("\\") || modulePath.includes("%") ||
+    hasUnsafeControlCharacters(modulePath) || /[\u2028\u2029]/.test(modulePath)
+  ) {
+    return null;
+  }
+
+  const segments = modulePath.split("/");
+  return segments.some((segment) => segment === "" || segment === "." || segment === "..")
+    ? null
+    : decoded;
+}
+
+function hasInvalidQueryIdentity(value: string | null): boolean {
+  return value !== null &&
+    (value.length > MAX_QUERY_IDENTITY_LENGTH || hasUnsafeControlCharacters(value));
+}
+
+function assertModuleSourceSize(source: string): string {
+  if (new TextEncoder().encode(source).byteLength > MAX_MODULE_SOURCE_BYTES) {
+    throw new Error("Module source exceeds the supported size");
+  }
+  return source;
+}
+
+async function readBoundedModuleSource(
+  stat: () => Promise<{ isFile: boolean; size: number }>,
+  read: () => Promise<string>,
+): Promise<string> {
+  const info = await stat();
+  if (!info.isFile || info.size < 0 || info.size > MAX_MODULE_SOURCE_BYTES) {
+    throw new Error("Module source exceeds the supported size");
+  }
+  return assertModuleSourceSize(await read());
+}
+
+function readPlatformModuleSource(
+  platformFs: ReturnType<typeof createFileSystem>,
+  path: string,
+): Promise<string> {
+  return readBoundedModuleSource(
+    () => platformFs.stat(path),
+    () => platformFs.readTextFile(path),
+  );
+}
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
   if (
@@ -248,7 +311,40 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
       const effectiveProjectId = projectUUID ?? projectId;
       const method = req.method.toUpperCase();
-      const isHeadRequest = method === "HEAD";
+
+      const decodedPathname = decodeAndValidateModulePathname(url.pathname);
+      if (decodedPathname === null) {
+        return createModuleResponse(method, "Invalid module path", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      if (!DEV_MODULE_PREFIX.test(decodedPathname)) {
+        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      if (method !== "GET" && method !== "HEAD") {
+        return createModuleResponse(method, "Method not allowed", HTTP_METHOD_NOT_ALLOWED, {
+          "Allow": "GET, HEAD",
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      if (
+        hasInvalidQueryIdentity(url.searchParams.get("project")) ||
+        hasInvalidQueryIdentity(url.searchParams.get("branch")) ||
+        hasInvalidQueryIdentity(url.searchParams.get("t"))
+      ) {
+        return createModuleResponse(method, "Invalid query parameter", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
 
       const secureFs = createSecureFs({
         baseDir: projectDir,
@@ -256,31 +352,16 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         context: "module-loading",
         contextOptions: { allowedImportDirs },
         throwOnError: false,
-        onSecurityEvent: (event) => {
-          if (event.type !== "validation-failed") return;
-          logger.warn("Security validation failed", {
-            operation: event.operation,
-            path: event.path,
-            error: event.error,
-          });
-        },
       });
       const platformFs = createFileSystem();
 
-      const debugUserAgent = req.headers.get("user-agent") ?? "";
-      logger.debug("Request", {
-        pathname: url.pathname,
-        userAgent: debugUserAgent.slice(0, 50),
-      });
-
-      if (!DEV_MODULE_PREFIX.test(url.pathname)) {
-        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+      const snippetMatch = decodedPathname.match(SNIPPET_MODULE_PREFIX);
+      if (decodedPathname.startsWith("/_vf_modules/_snippets/") && !snippetMatch) {
+        return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-cache",
         });
       }
-
-      const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
       if (snippetMatch) {
         const hash = snippetMatch[1];
         if (!hash) {
@@ -293,26 +374,22 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const { getCompiledSnippetAsync } = await import(
           "#veryfront/rendering/snippet-renderer.ts"
         );
-        const snippetCode = await getCompiledSnippetAsync(hash);
+        const snippetCode = await getCompiledSnippetAsync(hash, effectiveProjectId);
 
         if (!snippetCode) {
-          logger.warn("Snippet not found in cache", { hash });
+          logger.warn("Snippet not found in cache");
           return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
             "Content-Type": "text/plain; charset=utf-8",
             "Cache-Control": "no-cache",
           });
         }
+        assertModuleSourceSize(snippetCode);
 
         const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
 
         const isSSR = isSSRModuleRequest(req, url);
 
-        logger.debug("Transforming snippet", {
-          hash,
-          isSSR,
-          snippetProjectSlug,
-          codeLength: snippetCode.length,
-        });
+        logger.debug("Transforming snippet", { isSSR, codeLength: snippetCode.length });
 
         try {
           let transformedCode = await profileModuleTransform(() =>
@@ -338,31 +415,29 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 branch: snippetBranch,
                 releaseId: options.releaseId,
                 reactVersion,
+                signal: req.signal,
               }),
             });
           } else {
             transformedCode = await rewriteReleaseDependencyImportsForModule(transformedCode, {
               releaseId: options.releaseId,
-              readDependencySource: (path) => platformFs.readTextFile(path),
+              readDependencySource: (path) => readPlatformModuleSource(platformFs, path),
             });
           }
 
-          logger.debug("Snippet transformed", {
-            hash,
-            isSSR,
-            transformedLength: transformedCode.length,
-          });
+          logger.debug("Snippet transformed", { isSSR, transformedLength: transformedCode.length });
 
           return createModuleResponse(method, transformedCode, HTTP_OK, {
             "Content-Type": "application/javascript; charset=utf-8",
             "Cache-Control": "no-cache",
           });
         } catch (error) {
-          const errorMsg = getErrorMessage(error);
-          logger.error("Snippet transform error", { hash, error: errorMsg });
+          logger.error("Snippet transform error", {
+            errorName: error instanceof Error ? error.name : "UnknownError",
+          });
           return createModuleResponse(
             method,
-            `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
+            `// Transform Error\nthrow new Error("Module transformation failed");`,
             HTTP_SERVER_ERROR,
             {
               "Content-Type": "application/javascript; charset=utf-8",
@@ -372,8 +447,15 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
       }
 
-      const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
-      const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
+      const versionedMatch = decodedPathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
+      const latestMatch = decodedPathname.match(CROSS_PROJECT_LATEST_PREFIX);
+
+      if (decodedPathname.startsWith("/_vf_modules/_cross/") && !versionedMatch && !latestMatch) {
+        return createModuleResponse(method, "Invalid cross-project import path", HTTP_BAD_REQUEST, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
 
       if (versionedMatch || latestMatch) {
         const crossProjectSlug = versionedMatch?.[1] ?? latestMatch?.[1];
@@ -391,18 +473,14 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           ? crossProjectSlug
           : `${crossProjectSlug}@${crossVersion}`;
 
-        logger.debug("Cross-project import", {
-          projectRef,
-          path: crossPath,
-          isLatest: crossVersion === "latest",
-        });
+        logger.debug("Cross-project import", { isLatest: crossVersion === "latest" });
 
         try {
-          const source = await fetchCrossProjectSource(projectRef, crossPath);
+          const source = await fetchCrossProjectSource(projectRef, crossPath, req.signal);
           if (!source) {
             return createModuleResponse(
               method,
-              `Cross-project module not found: ${projectRef}/@/${crossPath}`,
+              "Cross-project module not found",
               HTTP_NOT_FOUND,
               {
                 "Content-Type": "text/plain; charset=utf-8",
@@ -418,7 +496,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               projectId: effectiveProjectId,
               dev,
               ssr: isSSR,
-              moduleServerUrl: `http://${url.host}`,
+              moduleServerUrl: url.origin,
               reactVersion,
             })
           );
@@ -434,12 +512,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
                 projectId: effectiveProjectId,
                 releaseId: options.releaseId,
                 reactVersion,
+                signal: req.signal,
               }),
             });
           } else {
             code = await rewriteReleaseDependencyImportsForModule(code, {
               releaseId: options.releaseId,
-              readDependencySource: (path) => platformFs.readTextFile(path),
+              readDependencySource: (path) => readPlatformModuleSource(platformFs, path),
             });
           }
 
@@ -448,15 +527,22 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-cache",
           });
         } catch (error) {
-          logger.error("Cross-project error", { projectRef, error: String(error) });
-          return createModuleResponse(method, `// Error: ${String(error)}`, HTTP_SERVER_ERROR, {
-            "Content-Type": "application/javascript; charset=utf-8",
-            "Cache-Control": "no-cache",
+          logger.error("Cross-project transform error", {
+            errorName: error instanceof Error ? error.name : "UnknownError",
           });
+          return createModuleResponse(
+            method,
+            `throw new Error("Cross-project module transformation failed");`,
+            HTTP_SERVER_ERROR,
+            {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          );
         }
       }
 
-      let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
+      let modulePath = decodedPathname.replace(DEV_MODULE_PREFIX, "");
       modulePath = modulePath.replace(/^\/+/, "");
       if (modulePath.startsWith("_vf_modules/")) {
         modulePath = modulePath.slice("_vf_modules/".length);
@@ -545,12 +631,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             ),
         );
         if (!findResult) {
-          logger.warn("Module not found", {
-            modulePath,
-            filePathWithoutExt,
-            projectSlug,
-            projectDir,
-          });
+          logger.debug("Module source not found");
           return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
             "Content-Type": "text/plain",
           });
@@ -560,88 +641,79 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         let code = "";
 
-        if (!isHeadRequest) {
-          // Use embedded content for compiled polyfills (no filesystem I/O needed)
-          let source: string;
-          if (embeddedContent) {
-            source = embeddedContent;
-            logger.debug("Using embedded polyfill content", {
-              path: sourceFile,
-              contentLength: embeddedContent.length,
-            });
-          } else {
-            source = isFrameworkFile
-              ? await platformFs.readTextFile(sourceFile)
-              : await secureFs.readFile(sourceFile);
-          }
-
-          const userAgent = req.headers.get("user-agent") ?? "";
-
-          const studioEmbed = url.searchParams.get("studio_embed") === "true";
-          const shouldInjectPositions = dev || options.mode === "preview";
-          const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-          if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
-            const relativeFilePath = sourceFile.startsWith(projectDir)
-              ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
-              : sourceFile;
-            source = injectNodePositions(source, { filePath: relativeFilePath });
-          }
-
-          logger.debug("SSR mode check", {
-            isSSR,
-            isDenoRequest: userAgent.startsWith("Deno/"),
-            hasSSRParam: url.searchParams.get("ssr") === "true",
-            userAgent: userAgent.slice(0, 30),
+        // Transform HEAD requests too so their status and headers match GET.
+        let source: string;
+        if (embeddedContent) {
+          source = assertModuleSourceSize(embeddedContent);
+          logger.debug("Using embedded polyfill content", {
+            contentLength: embeddedContent.length,
           });
+        } else {
+          source = isFrameworkFile
+            ? await readPlatformModuleSource(platformFs, sourceFile)
+            : await readBoundedModuleSource(
+              () => secureFs.stat(sourceFile),
+              () => secureFs.readFile(sourceFile),
+            );
+        }
 
-          const transformOpts: TransformOptions = {
-            projectId: effectiveProjectId,
-            dev,
-            ssr: isSSR,
-            studioEmbed,
-            reactVersion,
-          };
+        const studioEmbed = url.searchParams.get("studio_embed") === "true";
+        const shouldInjectPositions = dev || options.mode === "preview";
+        const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+        if (shouldInjectPositions && !isFrameworkFile && isJsxFile) {
+          const relativeFilePath = sourceFile.startsWith(projectDir)
+            ? sourceFile.slice(projectDir.length).replace(/^\/+/, "")
+            : sourceFile;
+          source = injectNodePositions(source, { filePath: relativeFilePath });
+        }
 
-          code = await profileModuleTransform(() =>
-            transformToESM(source, sourceFile, projectDir, adapter, transformOpts)
-          );
-          code = ensureFilenameDefaultExport(modulePath, code);
+        logger.debug("SSR mode check", { isSSR });
 
-          if (isSSR) {
-            code = await applySSRImportRewritesAsync(code, {
+        const transformOpts: TransformOptions = {
+          projectId: effectiveProjectId,
+          dev,
+          ssr: isSSR,
+          studioEmbed,
+          reactVersion,
+        };
+
+        code = await profileModuleTransform(() =>
+          transformToESM(source, sourceFile, projectDir, adapter, transformOpts)
+        );
+        code = ensureFilenameDefaultExport(modulePath, code);
+
+        if (isSSR) {
+          code = await applySSRImportRewritesAsync(code, {
+            projectSlug,
+            branch,
+            resolveCacheBuster: createSSRTargetCacheBusterResolver({
+              secureFs,
+              projectDir,
+              currentModulePath: modulePath,
+              projectId: effectiveProjectId,
               projectSlug,
               branch,
-              resolveCacheBuster: createSSRTargetCacheBusterResolver({
-                secureFs,
-                projectDir,
-                currentModulePath: modulePath,
-                projectId: effectiveProjectId,
-                projectSlug,
-                branch,
-                releaseId: options.releaseId,
-                reactVersion,
-              }),
-            });
-          }
-
-          const hmrTimestamp = url.searchParams.get("t");
-          if (hmrTimestamp) {
-            code = await addHMRTimestamps(code, hmrTimestamp);
-            logger.debug("HMR timestamp injection", {
-              path: modulePath,
-              timestamp: hmrTimestamp,
-            });
-          }
-
-          if (!isSSR) {
-            code = await rewriteReleaseDependencyImportsForModule(code, {
               releaseId: options.releaseId,
-              manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
-              manifestReadOptions: { refreshCachedNull: true },
-              readDependencySource: (path) => platformFs.readTextFile(path),
-            });
-            code = await addReleaseVersionToFallbackImports(code, modulePath, options.releaseId);
-          }
+              reactVersion,
+              signal: req.signal,
+            }),
+          });
+        }
+
+        const hmrTimestamp = url.searchParams.get("t");
+        if (hmrTimestamp) {
+          code = await addHMRTimestamps(code, hmrTimestamp);
+          logger.debug("HMR timestamp injection applied");
+        }
+
+        if (!isSSR) {
+          code = await rewriteReleaseDependencyImportsForModule(code, {
+            releaseId: options.releaseId,
+            manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
+            manifestReadOptions: { refreshCachedNull: true },
+            readDependencySource: (path) => readPlatformModuleSource(platformFs, path),
+          });
+          code = await addReleaseVersionToFallbackImports(code, modulePath, options.releaseId);
         }
 
         const hasUnrewrittenReleaseDependencyImports = releaseDependencyRewriteEnabled &&
@@ -655,7 +727,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           cacheable: canCacheModuleResponse,
         });
         logger.debug("Request complete", {
-          path: modulePath,
           durationMs: (performance.now() - startTime).toFixed(1),
         });
 
@@ -670,16 +741,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         return createModuleResponse(method, code, HTTP_OK, headers);
       } catch (error) {
-        const errorMsg = getErrorMessage(error);
-        logger.error("Module transform error", { modulePath, error: errorMsg });
+        logger.error("Module transform error", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
 
         const headers = getModuleHeaders(modulePath);
-        const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
+        const errorBody = createDevModuleErrorBody(modulePath);
 
         return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
       }
     },
-    { "modules.path": url.pathname, "modules.projectSlug": options.projectSlug || "unknown" },
+    {},
   );
 }
 
@@ -694,12 +766,17 @@ async function readSourceFileForVersion(
   secureFs: ReturnType<typeof createSecureFs>,
   findResult: FindSourceFileResult,
 ): Promise<string> {
-  if (findResult.embeddedContent !== undefined) return findResult.embeddedContent;
+  if (findResult.embeddedContent !== undefined) {
+    return assertModuleSourceSize(findResult.embeddedContent);
+  }
 
   const platformFs = createFileSystem();
   return findResult.isFrameworkFile
-    ? await platformFs.readTextFile(findResult.path)
-    : await secureFs.readFile(findResult.path);
+    ? await readPlatformModuleSource(platformFs, findResult.path)
+    : await readBoundedModuleSource(
+      () => secureFs.stat(findResult.path),
+      () => secureFs.readFile(findResult.path),
+    );
 }
 
 function createSSRTargetCacheBusterResolver(options: {
@@ -712,6 +789,7 @@ function createSSRTargetCacheBusterResolver(options: {
   branch?: string | null;
   releaseId?: string | null;
   reactVersion?: string;
+  signal?: AbortSignal;
 }): (target: SSRImportRewriteTarget) => Promise<string | undefined> {
   const versions = new Map<string, Promise<string | undefined>>();
 
@@ -722,7 +800,11 @@ function createSSRTargetCacheBusterResolver(options: {
     if (!promise) {
       promise = (async () => {
         if (options.crossProjectRef) {
-          const source = await fetchCrossProjectSource(options.crossProjectRef, targetPath);
+          const source = await fetchCrossProjectSource(
+            options.crossProjectRef,
+            targetPath,
+            options.signal,
+          );
           return source === null ? undefined : await sha256Short(`${targetPath}\0${source}`);
         }
 
@@ -800,32 +882,30 @@ async function findFirstPlatformFile(
   fs: ReturnType<typeof createFileSystem>,
   paths: string[],
 ): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
+  for (const path of paths) {
     try {
       const stat = await fs.stat(path);
-      return stat.isFile ? path : null;
+      if (stat.isFile) return path;
     } catch {
-      return null;
+      // Try the next source extension.
     }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
+  }
+  return null;
 }
 
 async function findFirstSecureFile(
   secureFs: ReturnType<typeof createSecureFs>,
   paths: string[],
 ): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
+  for (const path of paths) {
     try {
       const stat = await secureFs.stat(path);
-      return stat.isFile ? path : null;
+      if (stat.isFile) return path;
     } catch {
-      return null;
+      // Try the next source extension.
     }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
+  }
+  return null;
 }
 
 async function findSourceFile(
@@ -852,8 +932,6 @@ async function findSourceFile(
     ".mdx",
     ".md", // Regular sources
   ];
-
-  logger.debug("findSourceFile called", { projectDir, basePath });
 
   const knownExtMatch = basePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
   const requestedExtMatch = requestedModulePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
@@ -892,9 +970,6 @@ async function findSourceFile(
     ? undefined
     : EMBEDDED_POLYFILLS[basePathWithoutExt];
   if (embeddedContent) {
-    logger.debug("Using embedded polyfill", {
-      basePath: basePathWithoutExt,
-    });
     return {
       path: `embedded:${basePath}`,
       isFrameworkFile: true,
@@ -933,19 +1008,10 @@ async function findSourceFile(
       },
     );
     if (frameworkResult) {
-      logger.debug("Found framework source file", {
-        basePath: basePathWithoutExt,
-        resolvedPath: frameworkResult.path,
-        lookupDir: frameworkResult.lookupDir,
-      });
       return { path: frameworkResult.path, isFrameworkFile: true };
     }
 
-    // Framework path not found locally - log warning and fall back to project lookups
-    logger.warn("Framework file not found locally", {
-      basePath: basePathWithoutExt,
-      frameworkRoot: FRAMEWORK_ROOT,
-    });
+    logger.warn("Framework source file not found locally");
   }
 
   if (hasKnownExt) {
@@ -953,10 +1019,6 @@ async function findSourceFile(
     try {
       const stat = await secureFs.stat(fullPath);
       if (stat?.isFile) {
-        logger.debug("Found file with existing extension", {
-          basePath,
-          resolvedPath: fullPath,
-        });
         return { path: fullPath, isFrameworkFile: false };
       }
     } catch (_) {
@@ -974,7 +1036,6 @@ async function findSourceFile(
     projectLookupExtensions.map((ext) => join(projectDir, basePathWithoutExt + ext)),
   );
   if (projectFilePath) {
-    logger.debug("Found file", { basePath, resolvedPath: projectFilePath });
     return { path: projectFilePath, isFrameworkFile: false };
   }
 
@@ -988,11 +1049,6 @@ async function findSourceFile(
       projectLookupExtensions.map((ext) => join(projectDir, strippedPath + ext)),
     );
     if (strippedFilePath) {
-      logger.debug("Found file after stripping prefix", {
-        originalPath: basePathWithoutExt,
-        strippedPath,
-        resolvedPath: strippedFilePath,
-      });
       return { path: strippedFilePath, isFrameworkFile: false };
     }
   }
@@ -1002,10 +1058,6 @@ async function findSourceFile(
     projectLookupExtensions.map((ext) => join(projectDir, basePathWithoutExt, `index${ext}`)),
   );
   if (indexFilePath) {
-    logger.debug("Found index file", {
-      basePath: basePathWithoutExt,
-      resolvedPath: indexFilePath,
-    });
     return { path: indexFilePath, isFrameworkFile: false };
   }
 
@@ -1017,19 +1069,12 @@ async function findSourceFile(
       projectLookupExtensions.map((ext) => join(projectDir, dir, basePathWithoutExt + ext)),
     );
     if (commonDirFilePath) {
-      logger.debug("Found file in common directory", {
-        basePath,
-        resolvedPath: commonDirFilePath,
-      });
       return { path: commonDirFilePath, isFrameworkFile: false };
     }
   }
 
   const projectFallbackEmbeddedContent = EMBEDDED_POLYFILLS[basePathWithoutExt];
   if (projectFallbackEmbeddedContent) {
-    logger.debug("Using embedded polyfill after project lookup", {
-      basePath: basePathWithoutExt,
-    });
     return {
       path: `embedded:${basePath}`,
       isFrameworkFile: true,
@@ -1083,19 +1128,18 @@ function getDevModuleContentType(modulePath: string): string {
   return detected ?? "application/javascript; charset=utf-8";
 }
 
-function createDevModuleErrorBody(modulePath: string, errorMessage: string): string {
+function createDevModuleErrorBody(modulePath: string): string {
   const normalizedPath = modulePath.toLowerCase();
 
   if (normalizedPath.endsWith(".css")) {
-    const sanitized = errorMessage.replace(/\*\//g, "*\\/");
-    return `/* Transform Error: ${sanitized} */`;
+    return "/* Module transformation failed */";
   }
 
   if (normalizedPath.endsWith(".json") || normalizedPath.endsWith(".map")) {
-    return JSON.stringify({ error: errorMessage });
+    return JSON.stringify({ error: "Module transformation failed" });
   }
 
-  return `// Transform Error\nthrow new Error(${JSON.stringify(errorMessage)});`;
+  return `// Transform Error\nthrow new Error("Module transformation failed");`;
 }
 
 async function profileModuleTransform<T>(fn: () => Promise<T>): Promise<T> {
@@ -1126,18 +1170,32 @@ function createModuleResponse(
 async function fetchCrossProjectSource(
   projectRef: string,
   filePath: string,
+  requestSignal?: AbortSignal,
 ): Promise<string | null> {
+  if (
+    projectRef.length === 0 || projectRef.length > MAX_QUERY_IDENTITY_LENGTH ||
+    filePath.length === 0 || filePath.length > MAX_MODULE_PATH_LENGTH ||
+    filePath.includes("\\") || filePath.includes("%") ||
+    hasUnsafeControlCharacters(filePath) ||
+    filePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+
   const apiBaseUrl = getApiBaseUrlEnv();
-  const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
-  const registryUrl = `${registryBaseUrl}/${projectRef}/@/${filePath}`;
+  const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "").replace(/\/+$/, "");
+  const encodedProjectRef = projectRef.split("@").map(encodeURIComponent).join("@");
+  const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
+  const registryUrl = `${registryBaseUrl}/${encodedProjectRef}/@/${encodedFilePath}`;
 
   const headers = new Headers();
   injectContext(headers);
 
-  const response = await fetch(registryUrl, { headers });
+  const timeoutSignal = AbortSignal.timeout(HTTP_FETCH_TIMEOUT_MS);
+  const signal = requestSignal ? AbortSignal.any([requestSignal, timeoutSignal]) : timeoutSignal;
+  const response = await fetch(registryUrl, { headers, signal });
   if (!response.ok) {
     logger.warn("Cross-project fetch failed", {
-      registryUrl,
       status: response.status,
     });
     return null;
@@ -1146,9 +1204,8 @@ async function fetchCrossProjectSource(
   try {
     return await readLimitedCrossProjectSource(response, registryUrl);
   } catch (error) {
-    logger.warn("Cross-project source too large", {
-      registryUrl,
-      error: error instanceof Error ? error.message : String(error),
+    logger.warn("Cross-project source rejected", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
     });
     return null;
   }

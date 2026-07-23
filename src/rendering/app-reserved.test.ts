@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { collectAncestorDirs, createErrorBoundary, RESERVED_COMPONENTS } from "./app-reserved.ts";
+import {
+  collectAncestorDirs,
+  createErrorBoundary,
+  RESERVED_COMPONENTS,
+  tryLoadReservedInDirs,
+} from "./app-reserved.ts";
 import * as React from "react";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 describe("rendering/app-reserved", () => {
   describe("RESERVED_COMPONENTS", () => {
@@ -59,6 +65,10 @@ describe("rendering/app-reserved", () => {
       assertEquals(dirs.length, 1);
       assertEquals(dirs[0], "/root");
     });
+
+    it("does not treat a sibling prefix as an ancestor", () => {
+      assertEquals(collectAncestorDirs("/project/application", "/project/app"), []);
+    });
   });
 
   describe("createErrorBoundary", () => {
@@ -98,6 +108,52 @@ describe("rendering/app-reserved", () => {
       const customReact = { createElement: React.createElement };
       const Boundary = createErrorBoundary(MockErrorComponent, customReact);
       assertEquals(typeof Boundary, "function");
+    });
+  });
+
+  describe("tryLoadReservedInDirs", () => {
+    it("propagates filesystem failures other than missing files", async () => {
+      const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+      const adapter = {
+        fs: { readFile: () => Promise.reject(failure) },
+      } as unknown as RuntimeAdapter;
+
+      await assertRejects(
+        () =>
+          tryLoadReservedInDirs(
+            ["/project/app"],
+            "loading",
+            "/project",
+            "production",
+            adapter,
+          ),
+        Error,
+        "permission denied",
+      );
+    });
+
+    it("does not read reserved components outside the project", async () => {
+      let reads = 0;
+      const adapter = {
+        fs: {
+          readFile: () => {
+            reads++;
+            return Promise.resolve("export default function Loading() { return null; }");
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      assertEquals(
+        await tryLoadReservedInDirs(
+          ["/other/app"],
+          "loading",
+          "/project",
+          "production",
+          adapter,
+        ),
+        null,
+      );
+      assertEquals(reads, 0);
     });
   });
 });

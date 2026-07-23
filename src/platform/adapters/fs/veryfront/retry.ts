@@ -7,7 +7,8 @@
  * @module platform/adapters/fs/veryfront/retry
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { classifyFilesystemError } from "./telemetry.ts";
 
 const logger = baseLogger.component("fs-retry");
 
@@ -66,8 +67,9 @@ export async function withRetryOnTransient<T>(
   } catch (error) {
     if (!isTransientError(error)) throw error;
 
-    logger.warn(`${context} — transient error, retrying once`, {
-      error: error instanceof Error ? error.message : String(error),
+    logger.warn("Transient filesystem API error, retrying once", {
+      operation: context.startsWith("getAllFilesRaw") ? "file-list" : "other",
+      errorClass: classifyFilesystemError(error),
     });
 
     // no cleanup needed: one-shot

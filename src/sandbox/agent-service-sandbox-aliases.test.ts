@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 import {
   type AgentServiceSandboxClientOptions,
   type AgentServiceSandboxToolsOptions,
@@ -9,17 +10,19 @@ import {
   createHostedSandboxTools,
 } from "./index.ts";
 
-Deno.test("hosted sandbox compatibility exports point at agent-service factories", () => {
-  assertEquals(createAgentServiceSandboxClient, createHostedSandboxClient);
-  assertEquals(createAgentServiceSandboxTools, createHostedSandboxTools);
-});
+describe("sandbox/agent-service compatibility aliases", () => {
+  it("points hosted factories at the agent-service factories", () => {
+    assertEquals(createAgentServiceSandboxClient, createHostedSandboxClient);
+    assertEquals(createAgentServiceSandboxTools, createHostedSandboxTools);
+  });
 
-Deno.test("agent-service sandbox aliases are available as types", () => {
-  const clientOptions: Partial<AgentServiceSandboxClientOptions> = {};
-  const toolsOptions: Partial<AgentServiceSandboxToolsOptions> = {};
-  const toolsResult: Partial<AgentServiceSandboxToolsResult> = {};
+  it("keeps agent-service aliases available as types", () => {
+    const clientOptions: Partial<AgentServiceSandboxClientOptions> = {};
+    const toolsOptions: Partial<AgentServiceSandboxToolsOptions> = {};
+    const toolsResult: Partial<AgentServiceSandboxToolsResult> = {};
 
-  assertEquals(clientOptions, {});
-  assertEquals(toolsOptions, {});
-  assertEquals(toolsResult, {});
+    assertEquals(clientOptions, {});
+    assertEquals(toolsOptions, {});
+    assertEquals(toolsResult, {});
+  });
 });

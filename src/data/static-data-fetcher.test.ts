@@ -5,6 +5,7 @@ import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
+import { REVALIDATION_PER_PROJECT_LIMIT } from "#veryfront/utils/constants/cache.ts";
 
 function withProductionContext<T>(fn: () => T): T {
   return runWithCacheKeyContext(
@@ -179,6 +180,36 @@ describe("StaticDataFetcher", () => {
       assertEquals(result.redirect?.permanent, true);
     });
 
+    it("normalizes static result precedence and nullish props", async () => {
+      const cache = new CacheManager();
+      const fetcher = new StaticDataFetcher(cache);
+      const context = createContext();
+
+      const redirectResult = await fetcher.fetch(
+        {
+          default: () => null,
+          getStaticData: () => ({
+            props: { ignored: true },
+            redirect: { destination: "/moved" },
+            notFound: true,
+          }),
+        },
+        context,
+      );
+      assertEquals(redirectResult, { redirect: { destination: "/moved" } });
+
+      const propsResult = await fetcher.fetch(
+        {
+          default: () => null,
+          getStaticData: () => ({
+            props: null as unknown as Record<string, unknown>,
+          }),
+        },
+        context,
+      );
+      assertEquals(propsResult, { props: {} });
+    });
+
     it("should handle notFound result", async () => {
       const { fetcher } = createFetcher();
       const pageModule: PageWithData = {
@@ -217,6 +248,33 @@ describe("StaticDataFetcher", () => {
       const result = await fetcher.fetch(pageModule, createContext());
 
       assertEquals((result.props as { sync: boolean }).sync, true);
+    });
+
+    it("rejects invalid static data without caching it", async () => {
+      await withProductionContext(async () => {
+        const { fetcher } = createFetcher();
+        let calls = 0;
+        const pageModule: PageWithData = {
+          default: () => null,
+          getStaticData: () => {
+            calls++;
+            return { props: {}, revalidate: Number.NaN };
+          },
+        };
+        const context = createContext({ url: new URL("http://localhost/invalid-static") });
+
+        await assertRejects(
+          () => fetcher.fetch(pageModule, context),
+          Error,
+          "invalid data result",
+        );
+        await assertRejects(
+          () => fetcher.fetch(pageModule, context),
+          Error,
+          "invalid data result",
+        );
+        assertEquals(calls, 2);
+      });
     });
 
     it("should cache with revalidate time in production mode", async () => {
@@ -337,6 +395,75 @@ describe("StaticDataFetcher", () => {
         assertExists(refreshedEntry);
         assertEquals((refreshedEntry.data.props as { version: number }).version, 2);
       });
+    });
+
+    it("retries a stale entry after per-project revalidation contention", async () => {
+      if (REVALIDATION_PER_PROJECT_LIMIT <= 0) return;
+
+      await runWithCacheKeyContext(
+        { projectId: "contention-project", mode: "production", versionId: "release-a" },
+        async () => {
+          const { cache, fetcher } = createFetcher();
+          const releaseBlockers: Array<() => void> = [];
+          const blockerPages: PageWithData[] = [];
+          const blockerContexts: DataContext[] = [];
+
+          for (let index = 0; index < REVALIDATION_PER_PROJECT_LIMIT; index++) {
+            let release!: () => void;
+            const blocker = new Promise<void>((resolve) => {
+              release = resolve;
+            });
+            releaseBlockers.push(release);
+            blockerPages.push({
+              default: () => null,
+              getStaticData: async () => {
+                await blocker;
+                return { props: { refreshed: true }, revalidate: 60 };
+              },
+            });
+            blockerContexts.push(
+              createContext({ url: new URL(`http://localhost/busy-${index}`) }),
+            );
+          }
+
+          const targetContext = createContext({ url: new URL("http://localhost/target") });
+          let targetCalls = 0;
+          const targetPage: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              targetCalls++;
+              return { props: { refreshed: true }, revalidate: 60 };
+            },
+          };
+
+          for (const context of [...blockerContexts, targetContext]) {
+            const cacheKey = cache.createCacheKey(context);
+            assertExists(cacheKey);
+            cache.set(cacheKey, {
+              data: { props: { stale: true }, revalidate: 0 },
+              timestamp: Date.now() - 10_000,
+              revalidate: 0,
+            });
+          }
+
+          try {
+            await Promise.all(
+              blockerPages.map((page, index) => fetcher.fetch(page, blockerContexts[index]!)),
+            );
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            await fetcher.fetch(targetPage, targetContext);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            assertEquals(targetCalls, 0);
+          } finally {
+            for (const release of releaseBlockers) release();
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          await fetcher.fetch(targetPage, targetContext);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          assertEquals(targetCalls, 1);
+        },
+      );
     });
   });
 });

@@ -3,26 +3,127 @@
  * Computes depsHash for transform cache keys.
  */
 
-import { computeHash, logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils";
 import { parseAllImports } from "#veryfront/transforms/import-rewriter/parse-cache.ts";
+import { CACHE_ERROR, INVALID_ARGUMENT, SERVICE_OVERLOADED } from "#veryfront/errors";
+import { containsUnsafeCacheStringCharacter } from "./validation.ts";
+import { sha256Hex } from "./hash.ts";
 
 const logger = baseLogger.component("dependency-graph");
+const DEFAULT_MAX_GRAPH_MODULES = 50_000;
+const DEFAULT_MAX_DEPENDENCIES_PER_MODULE = 512;
+const DEFAULT_MAX_GRAPH_EDGES = 500_000;
+const MAX_GRAPH_CAPACITY = 1_000_000;
+const MAX_DEPENDENCY_PATH_LENGTH = 4096;
+const MAX_INVALIDATION_PATHS = 10_000;
+const MAX_INVALIDATION_RETRIES = 3;
+
+export interface DependencyGraphOptions {
+  maxModules?: number;
+  maxDependenciesPerModule?: number;
+  maxEdges?: number;
+}
+
+function invalidArgument(message: string): never {
+  throw INVALID_ARGUMENT.create({ message });
+}
+
+function dependencyFailure(operation: string): never {
+  throw CACHE_ERROR.create({ detail: `Dependency graph ${operation} failed` });
+}
+
+function normalizeCapacity(value: unknown, fallback: number, label: string): number {
+  const normalized = value ?? fallback;
+  if (
+    typeof normalized !== "number" || !Number.isSafeInteger(normalized) || normalized < 1 ||
+    normalized > MAX_GRAPH_CAPACITY
+  ) {
+    invalidArgument(`${label} must be a positive safe integer within the supported range`);
+  }
+  return normalized;
+}
+
+function assertDependencyPath(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_DEPENDENCY_PATH_LENGTH || containsUnsafeCacheStringCharacter(value)
+  ) {
+    invalidArgument(
+      "Dependency path must be a bounded string without control characters or unpaired UTF-16 surrogates",
+    );
+  }
+}
 
 export class DependencyGraph {
   private dependencies = new Map<string, Set<string>>();
   private dependents = new Map<string, Set<string>>();
+  private readonly maxModules: number;
+  private readonly maxDependenciesPerModule: number;
+  private readonly maxEdges: number;
+  private edgeCount = 0;
+
+  constructor(options: DependencyGraphOptions = {}) {
+    if (typeof options !== "object" || options === null || Array.isArray(options)) {
+      invalidArgument("Dependency graph options must be an object");
+    }
+    let maxModules: unknown;
+    let maxDependenciesPerModule: unknown;
+    let maxEdges: unknown;
+    try {
+      maxModules = Reflect.get(options, "maxModules");
+      maxDependenciesPerModule = Reflect.get(options, "maxDependenciesPerModule");
+      maxEdges = Reflect.get(options, "maxEdges");
+    } catch {
+      invalidArgument("Dependency graph options must be readable");
+    }
+    this.maxModules = normalizeCapacity(
+      maxModules,
+      DEFAULT_MAX_GRAPH_MODULES,
+      "Dependency graph module capacity",
+    );
+    this.maxDependenciesPerModule = normalizeCapacity(
+      maxDependenciesPerModule,
+      DEFAULT_MAX_DEPENDENCIES_PER_MODULE,
+      "Dependency graph per-module dependency capacity",
+    );
+    this.maxEdges = normalizeCapacity(
+      maxEdges,
+      DEFAULT_MAX_GRAPH_EDGES,
+      "Dependency graph edge capacity",
+    );
+  }
 
   addModule(filePath: string, dependencies: string[]): void {
+    assertDependencyPath(filePath);
+    if (!Array.isArray(dependencies)) invalidArgument("Module dependencies must be an array");
+    if (dependencies.length > this.maxDependenciesPerModule) {
+      throw SERVICE_OVERLOADED.create({
+        message: "Module dependency capacity exceeded",
+      });
+    }
+    const dependencySnapshot = dependencies.map((dependency) => {
+      assertDependencyPath(dependency);
+      return dependency;
+    });
     // REPLACE the dependency set rather than unioning: when a module is edited
     // and re-added, imports it no longer has must be dropped, otherwise removed
     // edges linger and invalidation is computed against stale dependencies.
-    const nextDeps = new Set(dependencies);
+    const nextDeps = new Set(dependencySnapshot);
 
     const prevDeps = this.dependencies.get(filePath);
+    if (!prevDeps && this.dependencies.size >= this.maxModules) {
+      throw SERVICE_OVERLOADED.create({ message: "Dependency graph module capacity exceeded" });
+    }
+    const nextEdgeCount = this.edgeCount - (prevDeps?.size ?? 0) + nextDeps.size;
+    if (nextEdgeCount > this.maxEdges) {
+      throw SERVICE_OVERLOADED.create({ message: "Dependency graph edge capacity exceeded" });
+    }
     if (prevDeps) {
       for (const oldDep of prevDeps) {
         if (!nextDeps.has(oldDep)) {
-          this.dependents.get(oldDep)?.delete(filePath);
+          const previousDependents = this.dependents.get(oldDep);
+          previousDependents?.delete(filePath);
+          if (previousDependents?.size === 0) this.dependents.delete(oldDep);
         }
       }
     }
@@ -34,33 +135,32 @@ export class DependencyGraph {
     }
 
     this.dependencies.set(filePath, nextDeps);
+    this.edgeCount = nextEdgeCount;
   }
 
   getDirectDependencies(filePath: string): string[] {
+    assertDependencyPath(filePath);
     return Array.from(this.dependencies.get(filePath) ?? []);
   }
 
   getTransitiveDependencies(filePath: string): string[] {
-    const visited = new Set<string>();
-    const path = new Set<string>();
-
-    this.collectDeps(filePath, visited, path);
+    assertDependencyPath(filePath);
+    const visited = this.collectReachable(filePath, this.dependencies);
     visited.delete(filePath);
 
     return Array.from(visited);
   }
 
   getDependents(filePath: string): string[] {
-    const visited = new Set<string>();
-    const path = new Set<string>();
-
-    this.collectDependents(filePath, visited, path);
+    assertDependencyPath(filePath);
+    const visited = this.collectReachable(filePath, this.dependents);
     visited.delete(filePath);
 
     return Array.from(visited);
   }
 
   removeModule(filePath: string): void {
+    assertDependencyPath(filePath);
     const previousDeps = this.dependencies.get(filePath);
     if (previousDeps) {
       for (const dep of previousDeps) {
@@ -71,75 +171,57 @@ export class DependencyGraph {
     }
 
     this.dependencies.delete(filePath);
+    this.edgeCount -= previousDeps?.size ?? 0;
   }
 
   wouldCreateCycle(from: string, to: string): boolean {
-    return this.hasTransitiveDependency(to, from, new Set(), new Set());
+    assertDependencyPath(from);
+    assertDependencyPath(to);
+    if (from === to) return true;
+
+    const visited = new Set<string>();
+    const stack = [to];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const dependencies = Array.from(this.dependencies.get(current) ?? []);
+      for (let index = dependencies.length - 1; index >= 0; index--) {
+        const dependency = dependencies[index]!;
+        if (dependency === from) return true;
+        if (!visited.has(dependency)) stack.push(dependency);
+      }
+    }
+    return false;
   }
 
   clear(): void {
     this.dependencies.clear();
     this.dependents.clear();
+    this.edgeCount = 0;
   }
 
   getAllModules(): string[] {
     return Array.from(this.dependencies.keys());
   }
 
-  private collectDeps(
-    filePath: string,
-    visited: Set<string>,
-    path: Set<string>,
-  ): void {
-    if (path.has(filePath) || visited.has(filePath)) return;
-
-    visited.add(filePath);
-    path.add(filePath);
-
-    for (const dep of this.dependencies.get(filePath) ?? []) {
-      this.collectDeps(dep, visited, path);
-    }
-
-    path.delete(filePath);
-  }
-
-  private hasTransitiveDependency(
-    filePath: string,
-    target: string,
-    visited: Set<string>,
-    path: Set<string>,
-  ): boolean {
-    if (path.has(filePath) || visited.has(filePath)) return false;
-
-    visited.add(filePath);
-    path.add(filePath);
-
-    for (const dep of this.dependencies.get(filePath) ?? []) {
-      if (dep === target || this.hasTransitiveDependency(dep, target, visited, path)) {
-        path.delete(filePath);
-        return true;
+  private collectReachable(
+    start: string,
+    adjacency: Map<string, Set<string>>,
+  ): Set<string> {
+    const visited = new Set<string>();
+    const stack = [start];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const neighbors = Array.from(adjacency.get(current) ?? []);
+      for (let index = neighbors.length - 1; index >= 0; index--) {
+        const neighbor = neighbors[index]!;
+        if (!visited.has(neighbor)) stack.push(neighbor);
       }
     }
-
-    path.delete(filePath);
-    return false;
-  }
-
-  private collectDependents(
-    filePath: string,
-    visited: Set<string>,
-    path: Set<string>,
-  ): void {
-    if (path.has(filePath) || visited.has(filePath)) return;
-
-    visited.add(filePath);
-    path.add(filePath);
-
-    for (const dep of this.dependents.get(filePath) ?? []) {
-      this.collectDependents(dep, visited, path);
-    }
-
-    path.delete(filePath);
+    return visited;
   }
 }
 
@@ -149,6 +231,7 @@ export interface DependencyHashCache {
   completedModules: Set<string>;
   inProgressModules: Map<string, Promise<void>>;
   buildQueue: Promise<void>;
+  generation: number;
 }
 
 export function createDependencyHashCache(): DependencyHashCache {
@@ -158,6 +241,7 @@ export function createDependencyHashCache(): DependencyHashCache {
     completedModules: new Set<string>(),
     inProgressModules: new Map<string, Promise<void>>(),
     buildQueue: Promise.resolve(),
+    generation: 0,
   };
 }
 
@@ -165,9 +249,18 @@ export function invalidateDependencyHashCache(
   cache: DependencyHashCache,
   changedPaths: Iterable<string>,
 ): number {
+  const changedPathSnapshot: string[] = [];
+  for (const changedPath of changedPaths) {
+    assertDependencyPath(changedPath);
+    changedPathSnapshot.push(changedPath);
+    if (changedPathSnapshot.length > MAX_INVALIDATION_PATHS) {
+      throw SERVICE_OVERLOADED.create({ message: "Dependency invalidation capacity exceeded" });
+    }
+  }
+  cache.generation++;
   const modulesToInvalidate = new Set<string>();
 
-  for (const changedPath of changedPaths) {
+  for (const changedPath of changedPathSnapshot) {
     modulesToInvalidate.add(changedPath);
     for (const dependent of cache.graph.getDependents(changedPath)) {
       modulesToInvalidate.add(dependent);
@@ -243,21 +336,31 @@ export async function computeDepsHash(
   projectDir: string,
   cache: DependencyHashCache = createDependencyHashCache(),
 ): Promise<string> {
-  await enqueueDependencyGraphBuild(cache, () =>
-    buildDependencyGraph(
-      filePath,
-      cache,
-      getContent,
-      projectDir,
-    ));
+  assertDependencyPath(filePath);
+  assertDependencyPath(projectDir);
+  if (typeof getContent !== "function") {
+    invalidArgument("Dependency content reader must be a function");
+  }
 
-  const deps = [filePath, ...cache.graph.getTransitiveDependencies(filePath)].sort();
-  const combinedHash = deps
-    .map((dep) => cache.contentHashes.get(dep) ?? "")
-    .filter(Boolean)
-    .join(":");
+  for (let attempt = 0; attempt < MAX_INVALIDATION_RETRIES; attempt++) {
+    const generation = cache.generation;
+    await enqueueDependencyGraphBuild(cache, () =>
+      buildDependencyGraph(
+        filePath,
+        cache,
+        getContent,
+        projectDir,
+        new Set<string>(),
+        generation,
+      ));
+    if (generation !== cache.generation) continue;
 
-  return computeHash(combinedHash);
+    const deps = [filePath, ...cache.graph.getTransitiveDependencies(filePath)].sort();
+    const hashes = deps.map((dep) => cache.contentHashes.get(dep));
+    if (hashes.some((hash) => hash === undefined)) dependencyFailure("hash assembly");
+    return sha256Hex(hashes.join(":"));
+  }
+  dependencyFailure("invalidation retry");
 }
 
 async function enqueueDependencyGraphBuild(
@@ -268,7 +371,9 @@ async function enqueueDependencyGraphBuild(
   // Keep the queue chain alive for the next enqueue even if this build rejects,
   // but log rather than silently swallowing so build failures are observable.
   cache.buildQueue = queuedBuild.catch((error) => {
-    logger.debug("Dependency graph build failed", { error });
+    logger.debug("Dependency graph build failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
   });
   await queuedBuild;
 }
@@ -279,13 +384,15 @@ async function buildDependencyGraph(
   getContent: (path: string) => Promise<string>,
   projectDir: string,
   visited: Set<string> = new Set<string>(),
+  generation = cache.generation,
 ): Promise<void> {
+  if (generation !== cache.generation) return;
   if (cache.completedModules.has(filePath)) return;
   if (visited.has(filePath)) return;
   // NOTE: a completed module whose file is edited in place while the SAME cache
   // is reused keeps its stale content hash here. That staleness must be resolved
   // by evicting the edited file (and its dependents) from the cache at the
-  // watch/transform layer on the edit event — NOT by re-reading every completed
+  // watch/transform layer on the edit event, not by re-reading every completed
   // module on each traversal, which would defeat cross-root read de-duplication.
   // The stale-EDGE half of that hazard is handled in addModule() above, which
   // replaces (rather than unions) a module's dependency set when it is re-added.
@@ -304,11 +411,19 @@ async function buildDependencyGraph(
     getContent,
     projectDir,
     visited,
+    generation,
   );
   cache.inProgressModules.set(filePath, buildPromise);
 
   try {
     await buildPromise;
+  } catch (error) {
+    if (generation === cache.generation) {
+      cache.completedModules.delete(filePath);
+      cache.contentHashes.delete(filePath);
+      cache.graph.removeModule(filePath);
+    }
+    throw error;
   } finally {
     cache.inProgressModules.delete(filePath);
   }
@@ -320,21 +435,21 @@ async function buildDependencyGraphFresh(
   getContent: (path: string) => Promise<string>,
   projectDir: string,
   visited: Set<string>,
+  generation: number,
 ): Promise<void> {
   let content: string;
   try {
     content = await getContent(filePath);
   } catch (error) {
-    // A read failure may be transient (e.g., the file is mid-write during a hot
-    // reload). Record an empty dependency set for this traversal but do NOT mark
-    // the module completed, so the next computeDepsHash call re-scans it instead
-    // of permanently serving a wrong/empty dependency hash until process restart.
-    cache.graph.addModule(filePath, []);
-    logger.debug("Dependency read failed; will re-scan on next build", { filePath, error });
-    return;
+    logger.debug("Dependency read failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    dependencyFailure("read");
   }
+  if (generation !== cache.generation) return;
 
-  cache.contentHashes.set(filePath, await computeHash(content));
+  const contentHash = await sha256Hex(content);
+  if (generation !== cache.generation) return;
 
   let normalizedDeps: string[];
   try {
@@ -343,21 +458,21 @@ async function buildDependencyGraphFresh(
       normalizeSpecifierToPath(spec, filePath, projectDir)
     );
   } catch (error) {
-    // A parse failure is deterministic for this exact content, so recording empty
-    // deps and marking completed is safe — re-parsing identical bytes would fail
-    // the same way. (If the file later changes, its content hash changes and the
-    // transform cache key changes regardless.)
-    cache.graph.addModule(filePath, []);
-    cache.completedModules.add(filePath);
-    logger.debug("Dependency parse failed", { filePath, error });
-    return;
+    logger.debug("Dependency parse failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    dependencyFailure("parse");
   }
+  if (generation !== cache.generation) return;
 
+  cache.contentHashes.set(filePath, contentHash);
   cache.graph.addModule(filePath, normalizedDeps);
 
   await Promise.all(
-    normalizedDeps.map((dep) => buildDependencyGraph(dep, cache, getContent, projectDir, visited)),
+    normalizedDeps.map((dep) =>
+      buildDependencyGraph(dep, cache, getContent, projectDir, visited, generation)
+    ),
   );
 
-  cache.completedModules.add(filePath);
+  if (generation === cache.generation) cache.completedModules.add(filePath);
 }

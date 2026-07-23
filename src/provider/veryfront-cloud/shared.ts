@@ -1,4 +1,5 @@
 import { createError, toError } from "#veryfront/errors";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
   getCurrentVeryfrontCloudContext,
@@ -31,15 +32,27 @@ const GATEWAY_PATHS: Record<VeryfrontCloudProviderId, string> = {
 };
 
 function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw toError(createError({ type: "config", message: "Veryfront Cloud base URL is invalid." }));
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password ||
+    url.search || url.hash
+  ) {
+    throw toError(createError({ type: "config", message: "Veryfront Cloud base URL is invalid." }));
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/u, "")}/${path.replace(/^\/+/, "")}`;
+  return url.toString();
 }
 
-function createInvalidModelIdError(modelId: string): Error {
+function createInvalidModelIdError(): Error {
   return toError(
     createError({
       type: "config",
-      message: `Invalid veryfront-cloud model string: "${modelId}". Expected ` +
-        `"veryfront-cloud/provider/model".`,
+      message: 'Invalid veryfront-cloud model string. Expected "veryfront-cloud/provider/model".',
     }),
   );
 }
@@ -48,17 +61,25 @@ export function parseVeryfrontCloudModelId(
   modelId: string,
   kind: "language" | "embedding",
 ): ParsedVeryfrontCloudModelId {
+  if (
+    typeof modelId !== "string" || modelId.length === 0 || modelId.length > 4_096 ||
+    /\s/u.test(modelId) || hasUnsafeControlCharacters(modelId)
+  ) {
+    throw createInvalidModelIdError();
+  }
   const slashIndex = modelId.indexOf("/");
   if (slashIndex === -1) {
-    throw createInvalidModelIdError(modelId);
+    throw createInvalidModelIdError();
   }
 
   const rawProvider = modelId.slice(0, slashIndex);
-  const normalizedProvider = PROVIDER_ALIASES[rawProvider];
+  const normalizedProvider = Object.hasOwn(PROVIDER_ALIASES, rawProvider)
+    ? PROVIDER_ALIASES[rawProvider]
+    : undefined;
   const upstreamModelId = modelId.slice(slashIndex + 1);
 
   if (!normalizedProvider || !upstreamModelId) {
-    throw createInvalidModelIdError(modelId);
+    throw createInvalidModelIdError();
   }
 
   if (
@@ -68,8 +89,8 @@ export function parseVeryfrontCloudModelId(
     throw toError(
       createError({
         type: "config",
-        message: `Embedding provider "${rawProvider}" is not supported for veryfront-cloud. ` +
-          `Supported providers: openai, google.`,
+        message: "Embedding provider is not supported for veryfront-cloud. " +
+          "Supported providers: openai, google.",
       }),
     );
   }
@@ -81,7 +102,7 @@ export function parseVeryfrontCloudModelId(
     throw toError(
       createError({
         type: "config",
-        message: `Unsupported Mistral model "mistral/${upstreamModelId}"`,
+        message: "The requested Mistral model is not supported for veryfront-cloud.",
       }),
     );
   }
@@ -121,6 +142,9 @@ export function getVeryfrontCloudGatewayBaseUrl(
   apiBaseUrl: string,
   provider: VeryfrontCloudProviderId,
 ): string {
+  if (!Object.hasOwn(GATEWAY_PATHS, provider)) {
+    throw toError(createError({ type: "config", message: "Veryfront Cloud provider is invalid." }));
+  }
   return joinUrl(apiBaseUrl, GATEWAY_PATHS[provider]);
 }
 
@@ -135,10 +159,57 @@ export function getVeryfrontCloudGatewayBaseUrl(
  */
 export function createVeryfrontCloudFetch(
   apiToken: string,
-  projectSlug?: string,
+  projectSlug: string | undefined,
+  allowedBaseUrl: string,
 ): typeof fetch {
+  if (!allowedBaseUrl) {
+    throw toError(createError({
+      type: "config",
+      message: "Veryfront Cloud fetch requires an allowed base URL.",
+    }));
+  }
+  if (
+    typeof apiToken !== "string" || apiToken.length === 0 || apiToken.length > 16_384 ||
+    /\s/u.test(apiToken) || hasUnsafeControlCharacters(apiToken)
+  ) {
+    throw toError(
+      createError({ type: "config", message: "Veryfront Cloud API token is invalid." }),
+    );
+  }
+  if (
+    projectSlug !== undefined &&
+    (projectSlug.length === 0 || projectSlug.length > 1_024 ||
+      /\s/u.test(projectSlug) || hasUnsafeControlCharacters(projectSlug))
+  ) {
+    throw toError(createError({ type: "config", message: "Veryfront project slug is invalid." }));
+  }
+
+  let allowed: URL;
+  try {
+    allowed = new URL(allowedBaseUrl);
+  } catch {
+    throw toError(createError({ type: "config", message: "Veryfront Cloud base URL is invalid." }));
+  }
+  if (
+    (allowed.protocol !== "http:" && allowed.protocol !== "https:") || allowed.username ||
+    allowed.password || allowed.search || allowed.hash
+  ) {
+    throw toError(createError({ type: "config", message: "Veryfront Cloud base URL is invalid." }));
+  }
+  const allowedPath = allowed.pathname.replace(/\/+$/u, "");
+
   return (input, init) => {
     const request = new Request(input, init);
+    const target = new URL(request.url);
+    if (
+      target.origin !== allowed.origin ||
+      (target.pathname !== allowedPath && !target.pathname.startsWith(`${allowedPath}/`))
+    ) {
+      throw toError(createError({
+        type: "config",
+        message: "Veryfront Cloud request URL is outside the allowed base URL.",
+      }));
+    }
     const headers = new Headers(request.headers);
 
     headers.delete("x-api-key");
@@ -151,10 +222,16 @@ export function createVeryfrontCloudFetch(
 
     const billingGroupId = getCurrentVeryfrontCloudContext()?.billingGroupId?.trim();
     if (billingGroupId) {
+      if (billingGroupId.length > 1_024 || hasUnsafeControlCharacters(billingGroupId)) {
+        throw toError(createError({
+          type: "config",
+          message: "Veryfront billing group ID is invalid.",
+        }));
+      }
       headers.set("x-veryfront-billing-group-id", billingGroupId);
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
-    return fetch(new Request(request, { headers }));
+    return fetch(new Request(request, { headers, redirect: "error" }));
   };
 }

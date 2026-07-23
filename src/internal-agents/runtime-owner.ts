@@ -3,6 +3,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const DEFAULT_PROXY_RUNTIME_PORT = "20000";
 
+/** Response header that pins follow-up requests to the runtime owner. */
 export const RUNTIME_OWNER_INVOKE_URL_HEADER = "x-veryfront-runtime-owner-invoke-url";
 
 interface NetworkAddressInfo {
@@ -11,11 +12,15 @@ interface NetworkAddressInfo {
   internal?: boolean;
 }
 
-type DenoNetworkInterface = {
+/** Network interface fields used while resolving a runtime owner address. */
+export interface DenoNetworkInterface {
+  /** Interface IP address. */
   address: string;
+  /** Address family reported by the runtime. */
   family?: string | number;
+  /** Whether the interface is internal to the host. */
   internal?: boolean;
-};
+}
 
 type NodeOsModule = {
   networkInterfaces(): Record<string, NetworkAddressInfo[] | undefined>;
@@ -27,9 +32,13 @@ type RuntimeOwnerGlobal = typeof globalThis & {
   };
 };
 
-interface RuntimeOwnerResolverDeps {
-  getHostEnv?: typeof getHostEnv;
-  dynamicImport?: typeof dynamicImport;
+/** Injectable dependencies for runtime owner URL resolution. */
+export interface RuntimeOwnerResolverDeps {
+  /** Reads a host environment variable. */
+  getHostEnv?: (key: string) => string | undefined;
+  /** Imports a runtime compatibility module. */
+  dynamicImport?: <T>(specifier: string) => Promise<T>;
+  /** Returns network interfaces available through Deno. */
   getDenoNetworkInterfaces?: () => ReadonlyArray<DenoNetworkInterface>;
 }
 
@@ -71,7 +80,7 @@ function isIpv4Address(value: string | undefined): value is string {
   }
 
   return parts.every((part) => {
-    if (!/^\d+$/.test(part)) {
+    if (!/^\d+$/.test(part) || (part.length > 1 && part.startsWith("0"))) {
       return false;
     }
 
@@ -82,6 +91,45 @@ function isIpv4Address(value: string | undefined): value is string {
 
 function isLoopbackIpv4(address: string): boolean {
   return address.startsWith("127.");
+}
+
+function normalizeRuntimeOwnerHost(value: string | null | undefined): string | null {
+  const host = value?.trim();
+  if (!host || host.length > 253 || /[\s/@?#\\]/.test(host)) {
+    return null;
+  }
+
+  if (host.startsWith("[") || host.includes(":")) {
+    const ipv6 = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+    if (!ipv6 || ipv6.includes("[") || ipv6.includes("]") || ipv6.includes("%")) {
+      return null;
+    }
+    try {
+      return new URL(`http://[${ipv6}]/`).hostname;
+    } catch {
+      return null;
+    }
+  }
+
+  if (/^\d+(?:\.\d+){3}$/.test(host)) {
+    return isIpv4Address(host) ? host : null;
+  }
+
+  const labels = host.split(".");
+  if (
+    labels.some((label) =>
+      label.length === 0 || label.length > 63 ||
+      !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+    )
+  ) {
+    return null;
+  }
+  const normalized = host.toLowerCase();
+  try {
+    return new URL(`http://${normalized}/`).hostname === normalized ? normalized : null;
+  } catch {
+    return null;
+  }
 }
 
 function selectNetworkIpv4Address(
@@ -122,7 +170,7 @@ async function detectRuntimeOwnerHost(
     null;
 
   if (explicitHost?.trim()) {
-    return explicitHost.trim();
+    return normalizeRuntimeOwnerHost(explicitHost);
   }
 
   const denoInterfaces = getDenoNetworkInterfacesSafe(deps);
@@ -163,18 +211,20 @@ function resolveRuntimeOwnerPort(
 }
 
 function buildRuntimeOwnerInvokeUrl(host: string, port: string | null): string | null {
+  const normalizedHost = normalizeRuntimeOwnerHost(host);
+  if (!normalizedHost) {
+    return null;
+  }
   try {
-    const url = new URL("http://127.0.0.1/channels/invoke");
-    url.hostname = host;
-    if (port) {
-      url.port = port;
-    }
-    return url.toString();
+    return new URL(
+      `http://${normalizedHost}${port ? `:${port}` : ""}/channels/invoke`,
+    ).toString();
   } catch {
     return null;
   }
 }
 
+/** Resolves the private invoke URL that identifies the current runtime owner. */
 export async function resolveRuntimeOwnerInvokeUrl(
   req: Request,
   deps: RuntimeOwnerResolverDeps = {},

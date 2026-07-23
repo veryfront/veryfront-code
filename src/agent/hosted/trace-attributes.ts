@@ -1,5 +1,8 @@
-type TracePrimitive = string | number | boolean;
-type EnvReader = (name: string) => string | undefined;
+/** Primitive value accepted by the tracing attribute encoder. */
+export type TracePrimitive = string | number | boolean;
+
+/** Reads one environment variable without mutating process state. */
+export type EnvReader = (name: string) => string | undefined;
 /** Public API contract for a value can be used as an agent trace attribute. */
 export type AgentTraceAttributeValue =
   | TracePrimitive

@@ -78,6 +78,29 @@ describe("timeout-manager", () => {
       assertEquals(didSettle, true);
     });
 
+    it("does not expose the request path in timeout responses", async () => {
+      let releaseHandler!: () => void;
+      const { response, settled } = await withRequestTimeout(
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseHandler = () => resolve(new Response("late response"));
+          }),
+        "/customers/private-record?token=<REDACTED>",
+        "GET",
+        { timeoutMs: 1 },
+      );
+
+      const body = await response.text();
+      assertEquals(response.status, HTTP_GATEWAY_TIMEOUT);
+      assertEquals(body.includes("customers"), false);
+      assertEquals(body.includes("token"), false);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+
+      releaseHandler();
+      await settled;
+    });
+
     it("preserves cancellation from the inbound request signal", async () => {
       const parentController = new AbortController();
       let handlerSignal: AbortSignal | undefined;
@@ -109,6 +132,18 @@ describe("timeout-manager", () => {
       assertEquals(response.status, 500);
       assertExists(error);
       assertEquals(error.message, "string error");
+    });
+
+    it("marks internal error responses as non-cacheable", async () => {
+      const { response } = await withRequestTimeout(
+        () => Promise.reject(new Error("private upstream detail")),
+        "/private",
+        "POST",
+      );
+
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+      assertEquals((await response.text()).includes("private upstream detail"), false);
     });
   });
 

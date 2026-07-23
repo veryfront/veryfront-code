@@ -18,3 +18,10 @@ export {
   UNRESOLVED_VF_MODULES_PATTERN,
   VF_MODULE_IMPORT_PATTERN,
 } from "./patterns.ts";
+
+export {
+  findModuleSpecifierSpans,
+  type ModuleSpecifierSpan,
+  rewriteModuleSpecifiers,
+  rewriteModuleSpecifiersAsync,
+} from "./import-specifiers.ts";

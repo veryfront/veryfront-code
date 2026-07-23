@@ -1,7 +1,10 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { dirname, join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
+import { symlink } from "#veryfront/platform/compat/fs.ts";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { FS_ADAPTER_KIND } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import {
   getEntityBySlug,
   getEntityInfo,
@@ -86,6 +89,77 @@ Layout content`,
     assertEquals(info, null);
   });
 
+  it("propagates adapter failures without falling through to the host filesystem", async () => {
+    await withTestContext("entity-adapter-isolation", async (context) => {
+      const testFile = join(context.projectDir, "adapter-only.mdx");
+      await createTestFile(testFile, "# Host filesystem content");
+
+      const adapter = {
+        fs: {
+          stat: () => Promise.resolve({ isFile: true }),
+          readFile: () => Promise.reject(new Error("adapter read failed")),
+        },
+      } as unknown as RuntimeAdapter;
+
+      await assertRejects(
+        () => getEntityInfo(testFile, adapter),
+        Error,
+        "adapter read failed",
+      );
+    });
+  });
+
+  it("extracts entity metadata from Windows-style paths", async () => {
+    const windowsPath = "C:\\project\\pages\\about.mdx";
+    const adapter = {
+      fs: {
+        stat: () => Promise.resolve({ isFile: true }),
+        readFile: () => Promise.resolve("# About"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityInfo(windowsPath, adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.slug, "about");
+    assertEquals(info.entity.type, "page");
+    assertEquals(info.entity.isPage, true);
+  });
+
+  it("leaves hosted filesystem path normalization to the adapter", async () => {
+    const projectDir = "/workspace/pages/project";
+    const filePath = `${projectDir}/pages/about.mdx`;
+    const reads: string[] = [];
+    const entityLookups: string[] = [];
+    const normalize = (path: string): string =>
+      path.startsWith(projectDir) ? path.slice(projectDir.length).replace(/^\/+/, "") : path;
+    const underlyingAdapter = {
+      getEntityIdForPath(path: string): string {
+        const normalized = normalize(path);
+        entityLookups.push(normalized);
+        return `id:${normalized}`;
+      },
+    };
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        readFile: (path: string) => {
+          reads.push(normalize(path));
+          return Promise.resolve("# About");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityInfo(filePath, adapter);
+
+    assertExists(info);
+    assertEquals(reads, ["pages/about.mdx"]);
+    assertEquals(entityLookups, ["pages/about.mdx"]);
+    assertEquals(info.entity.id, "id:pages/about.mdx");
+  });
+
   it("extracts slug correctly", async () => {
     await withTestContext("entity-slug-extraction", async (context) => {
       const file1 = join(context.projectDir, "about.mdx");
@@ -128,6 +202,26 @@ Content`,
       const info = await getEntityInfo(testFile);
       assertExists(info);
       assertEquals(info.entity.content.includes("---"), true);
+    });
+  });
+
+  it("rejects non-record YAML roots as frontmatter", async () => {
+    await withTestContext("entity-frontmatter-root", async (context) => {
+      const testFile = join(context.projectDir, "array-frontmatter.mdx");
+      await createTestFile(
+        testFile,
+        `---
+- private
+- draft
+---
+# Content`,
+      );
+
+      const info = await getEntityInfo(testFile);
+
+      assertExists(info);
+      assertEquals(info.entity.frontmatter, {});
+      assertEquals(info.entity.content, "# Content");
     });
   });
 
@@ -222,6 +316,190 @@ describe("getEntityBySlug", () => {
 
       assertExists(info);
       assertEquals(info.entity.content.includes("# About"), true);
+
+      const relativeInfo = await getEntityBySlug(context.projectDir, "./about");
+      assertExists(relativeInfo);
+      assertEquals(relativeInfo.entity.content.includes("# About"), true);
+    });
+  });
+
+  it("does not resolve slugs outside the pages directory", async () => {
+    await withTestContext("entity-byslug-traversal", async (context) => {
+      await createTestFile(join(context.projectDir, "outside.mdx"), "# Outside");
+
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "../outside"),
+        null,
+      );
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "nested/../../outside"),
+        null,
+      );
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "..\\outside"),
+        null,
+      );
+    });
+  });
+
+  it("rejects pages directories that escape the project", async () => {
+    await withTestContext("entity-pages-directory-traversal", async (context) => {
+      const projectDir = join(context.projectDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await createTestFile(
+        join(context.projectDir, "outside", "secret.mdx"),
+        "# Outside",
+      );
+
+      assertEquals(
+        await getEntityBySlug(projectDir, "secret", undefined, "../outside"),
+        null,
+      );
+    });
+  });
+
+  it("does not follow page symlinks outside the project", async () => {
+    await withTestContext("entity-page-symlink", async (context) => {
+      const projectDir = join(context.projectDir, "project");
+      const outsideFile = join(context.projectDir, "outside.mdx");
+      const linkedPage = join(projectDir, "pages", "linked.mdx");
+      await createTestFile(outsideFile, "# Outside");
+      await mkdir(dirname(linkedPage), { recursive: true });
+      await symlink(outsideFile, linkedPage);
+
+      assertEquals(await getEntityBySlug(projectDir, "linked"), null);
+    });
+  });
+
+  it("does not follow a pages directory symlink outside the project", async () => {
+    await withTestContext("entity-pages-directory-symlink", async (context) => {
+      const projectDir = join(context.projectDir, "project");
+      const outsidePages = join(context.projectDir, "outside-pages");
+      await mkdir(projectDir, { recursive: true });
+      await createTestFile(join(outsidePages, "secret.mdx"), "# Outside");
+      await symlink(outsidePages, join(projectDir, "pages"));
+
+      assertEquals(await getEntityBySlug(projectDir, "secret"), null);
+    });
+  });
+
+  it("rejects absolute paths returned outside an adapter project root", async () => {
+    const adapter = {
+      fs: {
+        resolveFile: () => Promise.resolve("/tenant-b/secret.mdx"),
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => Promise.resolve("# Tenant B"),
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    assertEquals(await getEntityBySlug("/tenant-a", "secret", adapter), null);
+  });
+
+  it("accepts project-relative paths from virtual filesystem adapters", async () => {
+    const underlyingAdapter = { [FS_ADAPTER_KIND]: "github" as const };
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        resolveFile: () => Promise.resolve("pages/about.mdx"),
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => Promise.resolve("# About"),
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityBySlug("/project", "about", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "# About");
+  });
+
+  it("reads a root index candidate once", async () => {
+    const underlyingAdapter = { [FS_ADAPTER_KIND]: "github" as const };
+    let readCount = 0;
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        stat: (path: string) =>
+          Promise.resolve({
+            isFile: path.endsWith("/pages/index.mdx"),
+            isDirectory: false,
+          }),
+        readFile: () => {
+          readCount++;
+          return Promise.resolve("# Home");
+        },
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityBySlug("/project", "index", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "# Home");
+    assertEquals(readCount, 1);
+  });
+
+  it("resolves an explicit index base once", async () => {
+    const underlyingAdapter = { [FS_ADAPTER_KIND]: "github" as const };
+    let resolveCount = 0;
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        resolveFile: () => {
+          resolveCount++;
+          return Promise.resolve("pages/index.mdx");
+        },
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => Promise.resolve("# Home"),
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityBySlug("/project", "index", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "# Home");
+    assertEquals(resolveCount, 1);
+  });
+
+  it("fails closed when an adapter cannot canonicalize local paths", async () => {
+    let readCount = 0;
+    const adapter = {
+      fs: {
+        resolveFile: () => Promise.resolve("/project/pages/linked.mdx"),
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => {
+          readCount++;
+          return Promise.resolve("# Outside through symlink");
+        },
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    assertEquals(await getEntityBySlug("/project", "linked", adapter), null);
+    assertEquals(readCount, 0);
+  });
+
+  it("resolves page names that contain layout", async () => {
+    await withTestContext("entity-layout-page-name", async (context) => {
+      await createTestFile(
+        join(context.projectDir, "pages", "layout-guide.mdx"),
+        "# Layout guide",
+      );
+
+      const info = await getEntityBySlug(context.projectDir, "layout-guide");
+
+      assertExists(info);
+      assertEquals(info.entity.type, "page");
+      assertEquals(info.entity.content, "# Layout guide");
     });
   });
 
@@ -248,6 +526,42 @@ describe("getEntityBySlug", () => {
       const contactInfo = await getEntityBySlug(context.projectDir, "contact");
       assertExists(contactInfo);
       assertEquals(contactInfo.entity.content, "// Contact JSX");
+    });
+  });
+
+  it("matches dynamic pages according to segment arity", async () => {
+    await withTestContext("entity-slug-dynamic-arity", async (context) => {
+      const pagesDir = join(context.projectDir, "pages");
+      await createTestFile(join(pagesDir, "blog", "[slug].mdx"), "# Single segment");
+      await createTestFile(join(pagesDir, "docs", "[...slug].mdx"), "# Catch all");
+      await createTestFile(
+        join(pagesDir, "optional", "[[...slug]].mdx"),
+        "# Optional catch all",
+      );
+
+      const single = await getEntityBySlug(context.projectDir, "blog/one");
+      assertExists(single);
+      assertEquals(single.entity.content, "# Single segment");
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "blog/one/two"),
+        null,
+      );
+
+      const catchAll = await getEntityBySlug(context.projectDir, "docs/one/two");
+      assertExists(catchAll);
+      assertEquals(catchAll.entity.content, "# Catch all");
+      assertEquals(await getEntityBySlug(context.projectDir, "docs"), null);
+
+      const optionalBase = await getEntityBySlug(context.projectDir, "optional");
+      assertExists(optionalBase);
+      assertEquals(optionalBase.entity.content, "# Optional catch all");
+
+      const optionalNested = await getEntityBySlug(
+        context.projectDir,
+        "optional/one/two",
+      );
+      assertExists(optionalNested);
+      assertEquals(optionalNested.entity.content, "# Optional catch all");
     });
   });
 
@@ -437,6 +751,35 @@ Default nested layout`,
       assertExists(layout);
       assertEquals(layout.entity.isLayout, true);
       assertEquals(layout.entity.content.includes("Default nested layout"), true);
+
+      const relativeLayout = await getLayoutEntity(
+        context.projectDir,
+        "./components/layouts/DefaultLayout.mdx",
+      );
+      assertExists(relativeLayout);
+      assertEquals(relativeLayout.entity.isLayout, true);
+    });
+  });
+
+  it("does not resolve layout names outside layout directories", async () => {
+    await withTestContext("entity-layout-traversal", async (context) => {
+      await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+      await createTestFile(
+        join(context.projectDir, "RootLayout.mdx"),
+        `---
+isLayout: true
+---
+Root layout`,
+      );
+
+      assertEquals(
+        await getLayoutEntity(context.projectDir, "../RootLayout"),
+        null,
+      );
+      assertEquals(
+        await getLayoutEntity(context.projectDir, "..\\RootLayout"),
+        null,
+      );
     });
   });
 });

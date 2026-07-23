@@ -1,5 +1,5 @@
 /**
- * CSS category barrel — CSS processor and compiler contracts.
+ * CSS category barrel for CSS processor and compiler contracts.
  *
  * @module extensions/css
  */

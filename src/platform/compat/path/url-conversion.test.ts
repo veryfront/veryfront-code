@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl, toFileUrl } from "./url-conversion.ts";
 
@@ -23,6 +23,12 @@ describe("url-conversion", () => {
         "/path/to/\u65E5\u672C\u8A9E.ts",
       );
     });
+
+    it("should reject non-file URLs and encoded separators", () => {
+      assertThrows(() => fromFileUrl("https://example.com/file.ts"), TypeError);
+      assertThrows(() => fromFileUrl("file:///path%2Ffile.ts"), TypeError);
+      assertThrows(() => fromFileUrl("file:///path%5Cfile.ts"), TypeError);
+    });
   });
 
   describe("toFileUrl", () => {
@@ -42,7 +48,17 @@ describe("url-conversion", () => {
 
     it("should handle paths with spaces", () => {
       const result = toFileUrl("/path/with spaces/file.ts");
-      assertEquals(result.href.includes("spaces"), true);
+      assertEquals(result.href, "file:///path/with%20spaces/file.ts");
+    });
+
+    it("should encode URL control characters without changing the path", () => {
+      for (const path of ["/path/hash#name.ts", "/path/query?name.ts", "/path/percent%name.ts"]) {
+        assertEquals(fromFileUrl(toFileUrl(path)), path);
+      }
+    });
+
+    it("should round-trip Windows drive paths", () => {
+      assertEquals(fromFileUrl(toFileUrl("D:/project/my file.ts")), "D:/project/my file.ts");
     });
 
     it("should handle relative path by resolving", () => {

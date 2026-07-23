@@ -86,6 +86,50 @@ describe("tool/result", () => {
     );
   });
 
+  it("rejects active-content authentication URLs", () => {
+    for (
+      const connectUrl of [
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "https://user:password@example.test/oauth/connect",
+        "https://example.test/oauth/connect\nunsafe",
+      ]
+    ) {
+      const result = {
+        error: "authentication_required",
+        integration: "gmail",
+        connectUrl,
+      };
+      assertEquals(isIntegrationAuthenticationActionResult(result), false);
+      assertEquals(
+        getToolResultError(result),
+        "Integration authentication response is incomplete",
+      );
+    }
+
+    for (
+      const connectUrl of [
+        "/api/auth/gmail",
+        "//auth.example.test/oauth/connect/gmail",
+        "https://auth.example.test/oauth/connect/gmail",
+      ]
+    ) {
+      assertEquals(
+        isIntegrationAuthenticationActionResult({
+          error: "authentication_required",
+          integration: "gmail",
+          connectUrl,
+        }),
+        true,
+      );
+    }
+  });
+
+  it("uses a stable diagnostic for empty error markers", () => {
+    assertEquals(getToolResultError({ error: "" }), "Tool execution failed");
+    assertEquals(getToolResultError({ error: "   " }), "Tool execution failed");
+  });
+
   it("keeps ordinary structured errors on the error path", () => {
     assertEquals(
       getToolResultError({
@@ -95,5 +139,30 @@ describe("tool/result", () => {
       }),
       "Too many requests.",
     );
+  });
+
+  it("does not invoke accessor-backed result markers", () => {
+    let getterCalled = false;
+    const result = Object.defineProperties({}, {
+      error: {
+        enumerable: true,
+        get() {
+          getterCalled = true;
+          throw new Error("must not execute");
+        },
+      },
+      output: {
+        enumerable: true,
+        get() {
+          getterCalled = true;
+          throw new Error("must not execute");
+        },
+      },
+    });
+
+    assertEquals(hasToolExecutionErrorMarker(result), false);
+    assertEquals(isErroredToolExecutionResult(result), false);
+    assertEquals(getToolResultError(result), undefined);
+    assertEquals(getterCalled, false);
   });
 });

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type { AgentMessage } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
@@ -7,13 +8,17 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+} from "#veryfront/utils/logger/index.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
-import { AgentStreamHandler } from "./agent-stream.handler.ts";
+import { InProcessAgentStreamTestHandler } from "./agent-stream-in-process-runtime.test.ts";
 import type { HandlerContext } from "../types.ts";
 import {
   createAgent,
   createAgentWithConfig,
-  createControlPlaneSignature,
+  createControlPlaneSignature as signControlPlaneRequest,
   createCtx as createSingleProjectCtx,
   createInjectedToolRuntime,
   encodeDataStreamEvent,
@@ -21,17 +26,30 @@ import {
   readUntil,
 } from "./internal-agent-run.test-helpers.ts";
 import {
+  AGENT_STREAM_TEST_PROJECT_ID,
+  AGENT_STREAM_TEST_PROJECT_SLUG,
   createAgentStreamRequestBody,
   createNoopEnvAdapter,
   createNoopFsAdapter,
   createSourceCapableAgentStreamContext as createCtx,
   TrackingSessionManager,
-} from "./agent-stream.handler.test-helpers.ts";
+} from "./agent-stream-test-fixtures.ts";
 import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
 import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+
+async function createControlPlaneSignature(
+  body: string,
+  overrides: Parameters<typeof signControlPlaneRequest>[1] = {},
+) {
+  return await signControlPlaneRequest(body, {
+    audience: AGENT_STREAM_TEST_PROJECT_SLUG,
+    projectId: AGENT_STREAM_TEST_PROJECT_ID,
+    ...overrides,
+  });
+}
 
 function createRuntimeAgentRunInvocationBody() {
   return JSON.stringify({
@@ -75,11 +93,22 @@ function createRuntimeAgentRunInvocationBody() {
   });
 }
 
+function createAgentStreamRequestBodyForTarget(
+  target: Record<string, unknown>,
+  overrides: Record<string, unknown> = {},
+): string {
+  const invocation = JSON.parse(createAgentStreamRequestBody(overrides)) as {
+    run: { project: Record<string, unknown> };
+  };
+  invocation.run.project = { ...invocation.run.project, ...target };
+  return JSON.stringify(invocation);
+}
+
 describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -193,7 +222,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for the signed runtime agent invocation envelope", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -240,7 +269,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createRuntimeAgentRunInvocationBody();
-    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: "incident-responder-cwy27d",
+      projectId: "10000000-1000-4000-8000-100000000005",
+      requestId: "run_1",
+    });
 
     const result = await handler.handle(
       new Request("https://example.com/api/control-plane/runs/run_1/stream", {
@@ -251,7 +284,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         body,
       }),
-      createCtx(publicKeyPem),
+      {
+        ...createCtx(publicKeyPem),
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "incident-responder-cwy27d",
+      },
     );
 
     assertExists(result.response);
@@ -267,7 +304,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("accepts the public control-plane stream route", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -325,7 +362,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let runtimeAgentId: string | undefined;
     let runtimeToolNames: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => agents.get(id),
       getAllAgentIds: () => [...agents.keys()],
@@ -400,7 +437,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("rejects the removed internal AG-UI request shape on the public stream route", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls++;
       },
@@ -452,9 +489,153 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
+  it("rejects signed invocation project mismatches before entering project source context", async () => {
+    for (
+      const mismatchedProject of [
+        { projectId: "20000000-2000-4000-8000-200000000005" },
+        { projectSlug: "other-project" },
+      ]
+    ) {
+      let discoveryCalls = 0;
+      let agentLookups = 0;
+      let runtimeCreations = 0;
+      const sourceContextCalls: Parameters<typeof createNoopFsAdapter>[0] = [];
+      const handler = new InProcessAgentStreamTestHandler({
+        ensureProjectDiscovery: async () => {
+          discoveryCalls += 1;
+        },
+        getAgent: () => {
+          agentLookups += 1;
+          return createAgent("assistant-1");
+        },
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => {
+          runtimeCreations += 1;
+          throw new Error("runtime must not be created for a mismatched project");
+        },
+      });
+      const invocation = JSON.parse(createAgentStreamRequestBody()) as {
+        run: { project: Record<string, unknown> };
+      };
+      invocation.run.project = { ...invocation.run.project, ...mismatchedProject };
+      const body = JSON.stringify(invocation);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem, sourceContextCalls),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 401);
+      assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
+      assertEquals(sourceContextCalls, []);
+      assertEquals(discoveryCalls, 0);
+      assertEquals(agentLookups, 0);
+      assertEquals(runtimeCreations, 0);
+    }
+  });
+
+  it("does not expose mismatched project identifiers in logs or responses", async () => {
+    const privateProjectId = "20000000-2000-4000-8000-200000000005";
+    const privateProjectSlug = "private-project-slug-canary";
+    const records: unknown[] = [];
+    __registerLogRecordEmitter((record) => records.push(record));
+
+    let response: Response | undefined;
+    try {
+      const handler = new InProcessAgentStreamTestHandler({
+        ensureProjectDiscovery: async () => {
+          throw new Error("discovery must not run for a mismatched project");
+        },
+        getAgent: () => {
+          throw new Error("agent lookup must not run for a mismatched project");
+        },
+        getAllAgentIds: () => [],
+        sessionManager: new AgentRunSessionManager(),
+      });
+      const body = createAgentStreamRequestBody({
+        projectId: privateProjectId,
+        projectSlug: privateProjectSlug,
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+      response = result.response;
+    } finally {
+      __resetLogRecordEmitterForTests();
+    }
+
+    assertExists(response);
+    const responseText = await response.text();
+    const emittedLogs = JSON.stringify(records);
+    assertEquals(response.status, 401);
+    for (const canary of [privateProjectId, privateProjectSlug]) {
+      assertEquals(responseText.includes(canary), false);
+      assertEquals(emittedLogs.includes(canary), false);
+    }
+  });
+
+  it("rejects malformed encoded run ids before project source access", async () => {
+    let discoveryCalls = 0;
+    const sourceContextCalls: Parameters<typeof createNoopFsAdapter>[0] = [];
+    const handler = new InProcessAgentStreamTestHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/%/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem, sourceContextCalls),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "CONTROL_PLANE_RUN_ID_MISMATCH" });
+    assertEquals(sourceContextCalls, []);
+    assertEquals(discoveryCalls, 0);
+  });
+
   it("accepts canonical runtime invocation payloads from the API executor", async () => {
     let streamContext: Record<string, unknown> | undefined;
-    let streamMessages: Array<Record<string, unknown>> | undefined;
+    let streamMessages: AgentMessage[] | undefined;
     let injectedToolSchema: unknown;
 
     const inputSchema = {
@@ -465,7 +646,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       required: ["query"],
     };
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "incident-responder" ? createAgent("incident-responder") : undefined,
       getAllAgentIds: () => ["incident-responder"],
@@ -476,7 +657,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
         return {
           stream: async (messages, context, callbacks) => {
-            streamMessages = messages as Array<Record<string, unknown>>;
+            streamMessages = messages;
             streamContext = context;
             callbacks?.onFinish?.({
               text: "hello from runtime",
@@ -553,7 +734,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       },
     });
-    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: "incident-responder-cwy27d",
+      projectId: "40000000-4000-4000-8000-400000000001",
+      requestId: "run_1",
+    });
 
     const result = await handler.handle(
       new Request("https://example.com/api/control-plane/runs/run_1/stream", {
@@ -564,7 +749,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         body,
       }),
-      createCtx(publicKeyPem),
+      {
+        ...createCtx(publicKeyPem),
+        projectId: "40000000-4000-4000-8000-400000000001",
+        projectSlug: "incident-responder-cwy27d",
+      },
     );
 
     assertExists(result.response);
@@ -629,6 +818,23 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       if (String(url) === "https://api.veryfront.org/projects/demo-project/environments") {
         return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ id: "env-production-agent-config", name: "production" }],
+            }),
+            {
+              headers: { "content-type": "application/json" },
+            },
+          ),
+        );
+      }
+
+      if (
+        String(url).includes(
+          "/projects/demo-project/environment-variables?environment_id=env-production-agent-config",
+        )
+      ) {
+        return Promise.resolve(
           new Response(JSON.stringify({ data: [] }), {
             headers: { "content-type": "application/json" },
           }),
@@ -639,7 +845,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = new InProcessAgentStreamTestHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
@@ -724,7 +930,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("does not pass undeclared forwarded remote tool allowlists into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -787,9 +993,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async (ctx) => {
-        discoveryConfig = ctx.config;
+        discoveryConfig = (ctx as unknown as HandlerContext).config;
       },
       getAgent: (id) =>
         id === "assistant-1"
@@ -893,7 +1099,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("fails closed before discovery when the runtime cannot select the signed source", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -913,7 +1119,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         body,
       }),
-      createSingleProjectCtx(publicKeyPem),
+      {
+        ...createSingleProjectCtx(publicKeyPem),
+        projectId: AGENT_STREAM_TEST_PROJECT_ID,
+      },
     );
 
     assertEquals(result.response?.status, 500);
@@ -922,7 +1131,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("rejects a missing source before discovery", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -951,7 +1160,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("does not use an outer config when the exact source config cannot load", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -989,7 +1198,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("drops undeclared Studio runtime tool allowlists for untrusted clients", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1060,7 +1269,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(String(url), "https://studio.veryfront.org/mcp");
       const headers = new Headers(init?.headers);
       assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
-      assertEquals(headers.get("x-project-id"), "proj-1");
+      assertEquals(headers.get("x-project-id"), AGENT_STREAM_TEST_PROJECT_ID);
       assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
 
       return Promise.resolve(
@@ -1089,7 +1298,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = new InProcessAgentStreamTestHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
@@ -1101,7 +1310,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
               & RuntimeRemoteToolConfig;
             capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
             capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
-              projectId: "proj-1",
+              projectId: AGENT_STREAM_TEST_PROJECT_ID,
             }))?.map((tool) => tool.name) ?? [];
             callbacks?.onFinish?.({
               text: "ok",
@@ -1168,7 +1377,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("fails closed for malformed runtime integration tool allowlists from forwarded props", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1239,7 +1448,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     };
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = new InProcessAgentStreamTestHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) =>
           id === "assistant-1"
@@ -1338,7 +1547,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = new InProcessAgentStreamTestHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) =>
           id === "assistant-1"
@@ -1361,7 +1570,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
               & RuntimeRemoteToolConfig;
             capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
             capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
-              projectId: "proj-1",
+              projectId: AGENT_STREAM_TEST_PROJECT_ID,
             }))?.map((tool) => tool.name) ?? [];
             callbacks?.onFinish?.({
               text: "ok",
@@ -1385,6 +1594,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       });
 
       const body = createAgentStreamRequestBody({
+        projectSlug: "support-agent-fork",
         credentials: { authToken: "request-scoped-user-token" },
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1433,7 +1643,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       tools: { search_knowledge: true, list_projects: true },
     });
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1456,7 +1666,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             & RuntimeRemoteToolConfig;
           capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
           capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
-            projectId: "proj-1",
+            projectId: AGENT_STREAM_TEST_PROJECT_ID,
           }))?.map((tool) => tool.name) ?? [];
           callbacks?.onFinish?.({
             text: "ok",
@@ -1480,6 +1690,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      projectSlug: "support-agent-fork",
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1612,14 +1823,380 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
     assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
     assertEquals(fetchUrls, [
-      "https://api.veryfront.org/mcp",
       "https://api.veryfront.org/projects/support-agent-fork/environments",
       "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
+      "https://api.veryfront.org/mcp",
     ]);
+  });
+
+  it("fails before agent execution when production environment selection is missing or ambiguous", async () => {
+    const cases = [
+      {
+        slug: "missing-production-agent-stream",
+        environments: [
+          { id: "env-staging", name: "staging" },
+          { id: "env-preview", name: "preview" },
+        ],
+      },
+      {
+        slug: "ambiguous-production-agent-stream",
+        environments: [
+          { id: "env-production-a", name: "production" },
+          { id: "env-production-b", name: "production" },
+        ],
+      },
+    ];
+    let agentExecutions = 0;
+    let environmentVariableRequests = 0;
+    const handler = new InProcessAgentStreamTestHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async () => {
+          agentExecutions++;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+
+    try {
+      for (const [index, testCase] of cases.entries()) {
+        globalThis.fetch = ((url) => {
+          const requestUrl = String(url);
+          if (requestUrl.endsWith(`/projects/${testCase.slug}/environments`)) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ data: testCase.environments }), {
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }
+          if (requestUrl.includes("/environment-variables?")) {
+            environmentVariableRequests++;
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  data: [{ key: "CUSTOM_PROJECT_ENV", value: "wrong-environment-secret" }],
+                }),
+                { headers: { "content-type": "application/json" } },
+              ),
+            );
+          }
+          return Promise.reject(new Error(`unexpected fetch: ${url}`));
+        }) as typeof fetch;
+
+        const runId = `run_environment_selection_${index}`;
+        const body = createAgentStreamRequestBody({
+          runId,
+          projectSlug: testCase.slug,
+          credentials: { authToken: "request-scoped-user-token" },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          audience: testCase.slug,
+          requestId: runId,
+        });
+        const result = await handler.handle(
+          new Request(`https://example.com/api/control-plane/runs/${runId}/stream`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          { ...createCtx(publicKeyPem), projectSlug: testCase.slug },
+        );
+
+        assertExists(result.response);
+        assertEquals(result.response.status, 503);
+        assertEquals(await result.response.json(), {
+          error: "A unique production environment is required for this agent stream",
+        });
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+
+    assertEquals(environmentVariableRequests, 0);
+    assertEquals(agentExecutions, 0);
+  });
+
+  it("loads secrets only from the environment ID in the signed target", async () => {
+    const selectedEnvironmentId = "60000000-6000-4000-8000-600000000001";
+    const otherEnvironmentId = "60000000-6000-4000-8000-600000000002";
+    let capturedProjectValue: string | undefined;
+    const requestedEnvironmentIds: string[] = [];
+    const handler = new InProcessAgentStreamTestHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          capturedProjectValue = getEnv("CUSTOM_PROJECT_ENV");
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const projectSlug = "explicit-environment-agent-stream";
+    const body = createAgentStreamRequestBodyForTarget(
+      {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: selectedEnvironmentId,
+      },
+      {
+        projectSlug,
+        credentials: { authToken: "request-scoped-user-token" },
+      },
+    );
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: projectSlug,
+      requestId: "run_1",
+    });
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+    globalThis.fetch = ((url) => {
+      const requestUrl = new URL(String(url));
+      if (requestUrl.pathname.endsWith("/environment-variables")) {
+        const environmentId = requestUrl.searchParams.get("environment_id") ?? "";
+        requestedEnvironmentIds.push(environmentId);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{
+                key: "CUSTOM_PROJECT_ENV",
+                value: environmentId === selectedEnvironmentId
+                  ? "selected-environment-secret"
+                  : environmentId === otherEnvironmentId
+                  ? "other-environment-secret"
+                  : "unknown-environment-secret",
+              }],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    }) as typeof fetch;
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), projectSlug },
+      );
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      await result.response.text();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+
+    assertEquals(requestedEnvironmentIds, [selectedEnvironmentId]);
+    assertEquals(capturedProjectValue, "selected-environment-secret");
+  });
+
+  it("rejects conflicting context and signed environment IDs before fetching secrets", async () => {
+    const signedEnvironmentId = "70000000-7000-4000-8000-700000000001";
+    let fetchCalls = 0;
+    let agentExecutions = 0;
+    const handler = new InProcessAgentStreamTestHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async () => {
+          agentExecutions++;
+          return new ReadableStream<Uint8Array>();
+        },
+      }),
+    });
+    const projectSlug = "conflicting-environment-agent-stream";
+    const body = createAgentStreamRequestBodyForTarget(
+      {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: signedEnvironmentId,
+      },
+      {
+        projectSlug,
+        credentials: { authToken: "request-scoped-user-token" },
+      },
+    );
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: projectSlug,
+      requestId: "run_1",
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.reject(new Error("fetch must not run"));
+    }) as typeof fetch;
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          projectSlug,
+          environmentId: "70000000-7000-4000-8000-700000000002",
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 409);
+    assertEquals(await result.response.json(), {
+      error: "Agent stream environment selection conflicts with the signed target",
+    });
+    assertEquals(fetchCalls, 0);
+    assertEquals(agentExecutions, 0);
+  });
+
+  it("does not inject project environment secrets into preview-branch streams", async () => {
+    let capturedProjectValue: string | undefined;
+    const fetchUrls: string[] = [];
+    const handler = new InProcessAgentStreamTestHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          capturedProjectValue = getEnv("CUSTOM_PROJECT_ENV");
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const projectSlug = "preview-secret-isolation-agent-stream";
+    const body = createAgentStreamRequestBodyForTarget(
+      {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "80000000-8000-4000-8000-800000000001",
+      },
+      {
+        projectSlug,
+        credentials: { authToken: "request-scoped-user-token" },
+      },
+    );
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: projectSlug,
+      requestId: "run_1",
+    });
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    Deno.env.delete("VERYFRONT_API_BASE_URL");
+    globalThis.fetch = ((url) => {
+      fetchUrls.push(String(url));
+      if (String(url).endsWith(`/projects/${projectSlug}/environments`)) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ data: [{ id: "env-production", name: "production" }] }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [{ key: "CUSTOM_PROJECT_ENV", value: "production-secret" }],
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), projectSlug },
+      );
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      await result.response.text();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    }
+
+    assertEquals(fetchUrls, []);
+    assertEquals(capturedProjectValue, undefined);
   });
 
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
     const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
+    const canonicalApiBaseUrl = new URL(apiBaseUrl).origin;
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
 
@@ -1628,7 +2205,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       tools: { list_projects: true },
     });
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1666,6 +2243,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      projectSlug: "base-url-agent-fork",
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1690,7 +2268,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         "Bearer request-scoped-user-token",
       );
 
-      if (String(url) === `${apiBaseUrl}/mcp`) {
+      if (String(url) === `${canonicalApiBaseUrl}/mcp`) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1711,7 +2289,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url) === `${apiBaseUrl}/projects/base-url-agent-fork/environments`) {
+      if (String(url) === `${canonicalApiBaseUrl}/projects/base-url-agent-fork/environments`) {
+        assertEquals(init?.signal instanceof AbortSignal, true);
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1725,7 +2304,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }
 
       if (
-        String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
+        String(url).includes(
+          `${canonicalApiBaseUrl}/projects/base-url-agent-fork/environment-variables?`,
+        )
       ) {
         assertEquals(String(url).includes("environment_id=env-production-base-url"), true);
         return Promise.resolve(
@@ -1766,20 +2347,20 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(capturedEnv, {
       VERYFRONT_API_TOKEN: "request-scoped-user-token",
-      VERYFRONT_API_URL: apiBaseUrl,
+      VERYFRONT_API_URL: canonicalApiBaseUrl,
       VERYFRONT_PROJECT_SLUG: "base-url-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value-from-base-url",
     });
-    assertEquals(capturedSystem, `api=${apiBaseUrl}`);
+    assertEquals(capturedSystem, `api=${canonicalApiBaseUrl}`);
     assertEquals(fetchUrls, [
-      `${apiBaseUrl}/mcp`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
+      `${canonicalApiBaseUrl}/projects/base-url-agent-fork/environments`,
+      `${canonicalApiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
+      `${canonicalApiBaseUrl}/mcp`,
     ]);
   });
 
   it("rejects oversized internal agent stream payloads before parsing", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
@@ -1809,7 +2390,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 404 when the requested agent is not available", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -1837,7 +2418,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 400 for malformed internal agent stream payloads", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
@@ -1865,7 +2446,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 400 when the runtime input exceeds the message limit", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
@@ -1899,7 +2480,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("accepts generic control-plane tool names like invoke_agent", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1980,7 +2561,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       environmentName?: string | null;
     }> = [];
 
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
       },
@@ -2087,7 +2668,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(runWithContextCalls[1]?.productionMode, false);
     assertEquals(observedCacheCredential, {
       token: "request-scoped-user-token",
-      projectId: "proj-1",
+      projectId: AGENT_STREAM_TEST_PROJECT_ID,
       projectSlug: "demo-project",
     });
     assertEquals(getVerifiedCacheApiCredential(), undefined);
@@ -2097,7 +2678,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
       },
@@ -2144,7 +2725,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2180,14 +2761,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
       const secondResult = await handler.handle(request, createCtx(publicKeyPem));
       assertExists(secondResult.response);
       assertEquals(secondResult.response.status, 409);
-      assertEquals(await secondResult.response.json(), { error: 'Run "run_1" is already active' });
+      assertEquals(await secondResult.response.json(), { error: "Agent run is already active" });
     } finally {
       await firstResult.response.body?.cancel();
     }
   });
 
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2219,7 +2800,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
     const sessionManager = new TrackingSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2268,7 +2849,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("keeps a waiting run resumable after the client disconnects", async () => {
     const sessionManager = new TrackingSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2353,7 +2934,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("accepts an early resume before the runtime registers the tool wait", async () => {
     const sessionManager = new TrackingSessionManager();
     const resumeHandler = new AgentRunResumeHandler(sessionManager);
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2485,7 +3066,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("rejects new agent stream requests with 503 while the runtime is shutting down", async () => {
     let discoveryCalls = 0;
     let resolveOwnerCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = new InProcessAgentStreamTestHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },

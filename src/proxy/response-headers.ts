@@ -1,5 +1,27 @@
 const STICKY_COOKIE_NAME = "lb";
 
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+] as const;
+
+/** Remove headers scoped to one transport connection before proxy forwarding. */
+export function stripHopByHopHeaders(headers: Headers): void {
+  const connectionTokens = headers.get("connection")?.split(",") ?? [];
+  for (const token of connectionTokens) {
+    const headerName = token.trim().toLowerCase();
+    if (/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(headerName)) headers.delete(headerName);
+  }
+  for (const header of HOP_BY_HOP_HEADERS) headers.delete(header);
+}
+
 function parseCacheControl(cacheControl: string | null): Map<string, string | true> {
   const directives = new Map<string, string | true>();
   if (!cacheControl) return directives;
@@ -21,21 +43,22 @@ function readPositiveDirectiveSeconds(
   name: string,
 ): number {
   const value = directives.get(name);
-  if (typeof value !== "string") return 0;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return 0;
   const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
 }
 
 function isPublicCacheable(headers: Headers): boolean {
   const directives = parseCacheControl(headers.get("cache-control"));
-  if (!directives.has("public")) return false;
+  if (directives.get("public") !== true) return false;
   if (directives.has("private") || directives.has("no-store") || directives.has("no-cache")) {
     return false;
   }
 
-  return directives.has("immutable") ||
-    readPositiveDirectiveSeconds(directives, "s-maxage") > 0 ||
-    readPositiveDirectiveSeconds(directives, "max-age") > 0;
+  if (directives.has("s-maxage")) {
+    return readPositiveDirectiveSeconds(directives, "s-maxage") > 0;
+  }
+  return readPositiveDirectiveSeconds(directives, "max-age") > 0;
 }
 
 function readSetCookies(headers: Headers): string[] {
@@ -61,6 +84,7 @@ function isStickyCookie(setCookie: string): boolean {
   return name?.trim().toLowerCase() === STICKY_COOKIE_NAME;
 }
 
+/** Remove the internal load-balancer cookie only from explicitly public, fresh responses. */
 export function removeStickyCookieFromPublicCacheableResponse(response: Response): Response {
   if (!isPublicCacheable(response.headers)) return response;
 

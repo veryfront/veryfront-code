@@ -44,5 +44,15 @@ describe("workflow/dsl/map", () => {
       const node = map("conc-map", { items: [1], processor, concurrency: 5 });
       assertEquals((node.config as { concurrency: number }).concurrency, 5);
     });
+
+    it("should reject invalid concurrency", () => {
+      for (const concurrency of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => map("conc-map", { items: [1], processor, concurrency }),
+          Error,
+          "positive safe integer",
+        );
+      }
+    });
   });
 });

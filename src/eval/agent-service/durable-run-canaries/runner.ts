@@ -2,8 +2,26 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { API_CLIENT_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import {
+  assertRequestTimeoutMs,
+  createRequestTimeoutSignal,
+  encodeApiPathSegment,
+  readBoundedJsonResponse,
+  stringifyBoundedJsonRequest,
+  waitForDelay,
+} from "../http-safety.ts";
+import { formatEvalPublicError } from "../../validation.ts";
 
 ensureBuiltinSchemaValidator();
+
+const MAX_DURABLE_CANARY_TEXT_LENGTH = 16_384;
+const MAX_DURABLE_CANARY_MESSAGES = 100;
+const MAX_DURABLE_CANARY_MESSAGE_PARTS = 10_000;
+const MAX_DURABLE_CANARY_CHILD_CONVERSATIONS = 100;
+const MAX_DURABLE_CANARY_TRAVERSAL_NODES = 100_000;
+const MAX_DURABLE_CANARY_TOTAL_MESSAGES = 1_000;
+const MAX_DURABLE_CANARY_TOTAL_MESSAGE_PARTS = 100_000;
+const MAX_DURABLE_CANARY_ARTIFACT_PATHS = 1_000;
 
 /** Configuration used by durable run canary API. */
 export interface DurableRunCanaryApiConfig {
@@ -38,10 +56,14 @@ export interface DurableRunCanaryStartRunInput extends DurableRunCanaryCreateRoo
 /** Zod schema for get durable run canary message. */
 export const getDurableRunCanaryMessageSchema = defineSchema((v) =>
   v.object({
-    id: v.string(),
+    id: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
     role: v.enum(["user", "assistant", "system", "tool"] as const),
-    status: v.string().optional(),
-    parts: v.array(v.object({ type: v.string() }).passthrough()).default([]),
+    status: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).optional(),
+    parts: v.array(
+      v.object({
+        type: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
+      }).passthrough(),
+    ).max(MAX_DURABLE_CANARY_MESSAGE_PARTS).default([]),
   }).passthrough()
 );
 
@@ -69,43 +91,43 @@ export interface DurableRunCanaryRunSummary {
 
 const getSnakeRunSummarySchema = defineSchema((v) =>
   v.object({
-    run_id: v.string(),
+    run_id: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
     conversation_id: v.string().uuid(),
     message_id: v.string().uuid(),
-    agent_id: v.string(),
-    status: v.string(),
+    agent_id: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
+    status: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
     latest_event_id: v.number().int().nonnegative(),
-    latest_external_event_sequence: v.number().int().nonnegative().optional(),
-    waiting_tool_call_id: v.string().nullable().optional(),
-    waiting_tool_name: v.string().nullable().optional(),
-    terminal_error_code: v.string().nullable().optional(),
-    terminal_error_message: v.string().nullable().optional(),
-    started_at: v.string().nullable().optional(),
-    finished_at: v.string().nullable().optional(),
+    latest_external_event_sequence: v.number().int().nonnegative().nullable().optional(),
+    waiting_tool_call_id: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    waiting_tool_name: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    terminal_error_code: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    terminal_error_message: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    started_at: v.string().max(256).nullable().optional(),
+    finished_at: v.string().max(256).nullable().optional(),
   }).passthrough()
 );
 
 const getCamelRunSummarySchema = defineSchema((v) =>
   v.object({
-    runId: v.string(),
+    runId: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
     conversationId: v.string().uuid(),
     messageId: v.string().uuid(),
-    agentId: v.string(),
-    status: v.string(),
+    agentId: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
+    status: v.string().min(1).max(MAX_DURABLE_CANARY_TEXT_LENGTH),
     latestEventId: v.number().int().nonnegative(),
-    latestExternalEventSequence: v.number().int().nonnegative().optional(),
-    waitingToolCallId: v.string().nullable().optional(),
-    waitingToolName: v.string().nullable().optional(),
-    terminalErrorCode: v.string().nullable().optional(),
-    terminalErrorMessage: v.string().nullable().optional(),
-    startedAt: v.string().nullable().optional(),
-    finishedAt: v.string().nullable().optional(),
+    latestExternalEventSequence: v.number().int().nonnegative().nullable().optional(),
+    waitingToolCallId: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    waitingToolName: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    terminalErrorCode: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    terminalErrorMessage: v.string().max(MAX_DURABLE_CANARY_TEXT_LENGTH).nullable().optional(),
+    startedAt: v.string().max(256).nullable().optional(),
+    finishedAt: v.string().max(256).nullable().optional(),
   }).passthrough()
 );
 
 const getDurableRunCanaryMessageListSchema = defineSchema((v) =>
   v.object({
-    data: v.array(getDurableRunCanaryMessageSchema()),
+    data: v.array(getDurableRunCanaryMessageSchema()).max(MAX_DURABLE_CANARY_MESSAGES),
   })
 );
 
@@ -259,6 +281,7 @@ export interface DurableRunCanaryApiClient {
 export function createDurableRunCanaryApiClient(
   config: DurableRunCanaryApiConfig,
 ): DurableRunCanaryApiClient {
+  assertRequestTimeoutMs(config.requestTimeoutMs);
   const request = createFetch(config);
 
   async function apiFetch<T>(
@@ -275,26 +298,30 @@ export function createDurableRunCanaryApiClient(
     const response = await request(createApiUrl(config, path), {
       ...init,
       headers: createJsonHeaders(config, init?.headers),
-      signal: AbortSignal.timeout(config.requestTimeoutMs),
+      signal: createRequestTimeoutSignal(config.requestTimeoutMs),
     });
 
     if (!response.ok) {
+      await response.body?.cancel();
       throw API_CLIENT_ERROR.create({
-        detail: `API ${init?.method ?? "GET"} ${path} failed: ${response.status} ${await response
-          .text()}`,
+        detail: `API ${init?.method ?? "GET"} ${path} failed: HTTP ${response.status}`,
       });
     }
 
-    const payload: unknown = await response.json();
-    return parse ? parse(payload) : payload;
+    if (!parse) {
+      await response.body?.cancel();
+      return undefined;
+    }
+    const payload = await readBoundedJsonResponse(response);
+    return parse(payload);
   }
 
   async function sendUserMessageForCanary(input: DurableRunCanarySendUserMessageInput) {
     return apiFetch(
-      `/conversations/${input.conversationId}/messages`,
+      `/conversations/${encodeApiPathSegment(input.conversationId, "conversationId")}/messages`,
       {
         method: "POST",
-        body: JSON.stringify({
+        body: stringifyBoundedJsonRequest({
           role: "user",
           parts: [{ type: "text", text: input.prompt }],
         }),
@@ -306,25 +333,33 @@ export function createDurableRunCanaryApiClient(
   async function createDurableRootRun(input: DurableRunCanaryCreateRootRunInput): Promise<void> {
     await apiFetch("/runs", {
       method: "POST",
-      body: JSON.stringify(buildCreateRootRunBody(config, input)),
+      body: stringifyBoundedJsonRequest(buildCreateRootRunBody(config, input)),
     });
   }
 
   async function startDurableRun(input: DurableRunCanaryStartRunInput): Promise<void> {
     await apiFetch("/runs", {
       method: "POST",
-      body: JSON.stringify(buildStartRunBody(config, input)),
+      body: stringifyBoundedJsonRequest(buildStartRunBody(config, input)),
     });
   }
 
   async function getRunSummary(input: DurableRunCanaryCreateRootRunInput) {
-    const response = await apiFetch(`/conversations/${input.conversationId}/runs/${input.runId}`);
+    const response = await apiFetch(
+      `/conversations/${encodeApiPathSegment(input.conversationId, "conversationId")}/runs/${
+        encodeApiPathSegment(input.runId, "runId")
+      }`,
+      undefined,
+      (value) => value,
+    );
     return parseDurableRunCanaryRunSummary(response);
   }
 
   async function listMessagesForCanary(input: { conversationId: string }) {
     const payload = await apiFetch(
-      `/conversations/${input.conversationId}/messages?limit=100`,
+      `/conversations/${
+        encodeApiPathSegment(input.conversationId, "conversationId")
+      }/messages?limit=100`,
       undefined,
       (value) => getDurableRunCanaryMessageListSchema().parse(value),
     );
@@ -387,6 +422,7 @@ interface RunSummaryLocator {
 
 interface WaitForRunInput extends RunSummaryLocator {
   getRunSummary: (input: RunSummaryLocator) => Promise<DurableRunCanaryRunSummary>;
+  requestTimeoutMs: number;
 }
 
 interface ExecuteDurableRunPromptInput {
@@ -409,14 +445,25 @@ function collectChildConversationIdsFromValue(
   value: unknown,
   childConversationIds: Set<string>,
   depth = 0,
+  state: { nodes: number } = { nodes: 0 },
 ): void {
+  state.nodes += 1;
+  if (state.nodes > MAX_DURABLE_CANARY_TRAVERSAL_NODES) {
+    throw new TypeError("Durable canary tool output contains too many values");
+  }
   if (depth > 8) {
     return;
   }
 
   if (typeof value === "string") {
+    if (value.length > MAX_DURABLE_CANARY_TEXT_LENGTH) return;
     try {
-      collectChildConversationIdsFromValue(JSON.parse(value), childConversationIds, depth + 1);
+      collectChildConversationIdsFromValue(
+        JSON.parse(value),
+        childConversationIds,
+        depth + 1,
+        state,
+      );
     } catch {
       return;
     }
@@ -425,7 +472,7 @@ function collectChildConversationIdsFromValue(
 
   if (Array.isArray(value)) {
     for (const entry of value) {
-      collectChildConversationIdsFromValue(entry, childConversationIds, depth + 1);
+      collectChildConversationIdsFromValue(entry, childConversationIds, depth + 1, state);
     }
     return;
   }
@@ -437,17 +484,24 @@ function collectChildConversationIdsFromValue(
   for (const key of ["childConversationId", "child_conversation_id"]) {
     const childConversationId = value[key];
     if (typeof childConversationId === "string" && UUID_PATTERN.test(childConversationId)) {
+      if (
+        !childConversationIds.has(childConversationId) &&
+        childConversationIds.size >= MAX_DURABLE_CANARY_CHILD_CONVERSATIONS
+      ) {
+        throw new TypeError("Durable canary references too many child conversations");
+      }
       childConversationIds.add(childConversationId);
     }
   }
 
   for (const nestedValue of Object.values(value)) {
-    collectChildConversationIdsFromValue(nestedValue, childConversationIds, depth + 1);
+    collectChildConversationIdsFromValue(nestedValue, childConversationIds, depth + 1, state);
   }
 }
 
 function collectReferencedChildConversationIds(messages: DurableRunCanaryMessage[]): string[] {
   const childConversationIds = new Set<string>();
+  const state = { nodes: 0 };
 
   for (const message of messages) {
     for (const part of message.parts) {
@@ -455,17 +509,11 @@ function collectReferencedChildConversationIds(messages: DurableRunCanaryMessage
         continue;
       }
 
-      collectChildConversationIdsFromValue(part.output, childConversationIds);
+      collectChildConversationIdsFromValue(part.output, childConversationIds, 0, state);
     }
   }
 
   return [...childConversationIds];
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function isTerminalRunStatus(status: string): boolean {
@@ -504,7 +552,7 @@ function isNotFoundError(error: unknown): boolean {
 async function waitForRunSummaryVisibility(
   input: WaitForRunInput,
 ): Promise<DurableRunCanaryRunSummary> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + input.requestTimeoutMs;
 
   while (Date.now() < deadline) {
     try {
@@ -515,7 +563,7 @@ async function waitForRunSummaryVisibility(
       }
     }
 
-    await sleep(500);
+    await waitForDelay(Math.min(500, Math.max(0, deadline - Date.now())));
   }
 
   throw TIMEOUT_ERROR.create({ detail: `Run ${input.runId} did not become visible in time` });
@@ -532,7 +580,7 @@ async function waitForTerminalRun(
       return run;
     }
 
-    await sleep(1_500);
+    await waitForDelay(Math.min(1_500, Math.max(0, deadline - Date.now())));
   }
 
   throw TIMEOUT_ERROR.create({
@@ -545,20 +593,41 @@ export function createDurableRunCanaryRunner(
   config: DurableRunCanaryRunnerConfig,
   apiClient: DurableRunCanaryApiClient = createDurableRunCanaryApiClient(config),
 ) {
+  assertRequestTimeoutMs(config.requestTimeoutMs);
   const getRunSummary = apiClient.getRunSummary;
 
   async function listMessagesWithReferencedChildren(
     conversationId: string,
   ): Promise<DurableRunCanaryMessage[]> {
     const messages = await apiClient.listMessagesForCanary({ conversationId });
+    if (messages.length > MAX_DURABLE_CANARY_TOTAL_MESSAGES) {
+      throw new TypeError("Durable canary returned too many messages");
+    }
+    let totalParts = messages.reduce((total, message) => total + message.parts.length, 0);
+    if (totalParts > MAX_DURABLE_CANARY_TOTAL_MESSAGE_PARTS) {
+      throw new TypeError("Durable canary returned too many message parts");
+    }
     const childConversationIds = collectReferencedChildConversationIds(messages);
-    const childMessages = await Promise.all(
-      childConversationIds.map((childConversationId) =>
-        apiClient.listMessagesForCanary({ conversationId: childConversationId })
-      ),
-    );
+    const collectedMessages = [...messages];
+    for (const childConversationId of childConversationIds) {
+      const childMessages = await apiClient.listMessagesForCanary({
+        conversationId: childConversationId,
+      });
+      const childPartCount = childMessages.reduce(
+        (total, message) => total + message.parts.length,
+        0,
+      );
+      if (collectedMessages.length + childMessages.length > MAX_DURABLE_CANARY_TOTAL_MESSAGES) {
+        throw new TypeError("Durable canary returned too many messages");
+      }
+      if (totalParts + childPartCount > MAX_DURABLE_CANARY_TOTAL_MESSAGE_PARTS) {
+        throw new TypeError("Durable canary returned too many message parts");
+      }
+      collectedMessages.push(...childMessages);
+      totalParts += childPartCount;
+    }
 
-    return [...messages, ...childMessages.flat()];
+    return collectedMessages;
   }
 
   async function executeDurableRunPrompt(
@@ -577,6 +646,7 @@ export function createDurableRunCanaryRunner(
     const visibleRun = await waitForRunSummaryVisibility({
       conversationId: input.conversationId,
       getRunSummary,
+      requestTimeoutMs: config.requestTimeoutMs,
       runId: currentRunId,
     });
 
@@ -601,17 +671,36 @@ export function createDurableRunCanaryRunner(
     };
   }
 
-  async function runCase(testCase: DurableRunCanaryCase): Promise<DurableRunCanaryResult> {
-    const startedAt = Date.now();
+  async function runCaseUnsafe(
+    testCase: DurableRunCanaryCase,
+    startedAt: number,
+  ): Promise<DurableRunCanaryResult> {
     const prepared = await testCase.prepare();
     let runId = "unknown";
-    const stopSidecar = await prepared.startSidecar?.();
-    const resolveArtifactPaths = (currentRunId: string): string[] | undefined =>
-      typeof prepared.artifactPaths === "function"
+    let stopSidecar: (() => Promise<void>) | void = undefined;
+    let result: DurableRunCanaryResult | undefined;
+    let artifactPaths: string[] | undefined;
+    let cleanupFailure: { error: unknown } | undefined;
+    const resolveArtifactPaths = (currentRunId: string): string[] | undefined => {
+      const paths = typeof prepared.artifactPaths === "function"
         ? prepared.artifactPaths(currentRunId)
         : prepared.artifactPaths;
+      if (paths === undefined) return undefined;
+      if (!Array.isArray(paths) || paths.length > MAX_DURABLE_CANARY_ARTIFACT_PATHS) {
+        throw new TypeError(
+          `Durable canary artifactPaths must contain at most ${MAX_DURABLE_CANARY_ARTIFACT_PATHS} entries`,
+        );
+      }
+      return paths.map((path) => {
+        if (typeof path !== "string" || path.length === 0) {
+          throw new TypeError("Durable canary artifact paths must be non-empty strings");
+        }
+        return formatEvalPublicError(path);
+      });
+    };
 
     try {
+      stopSidecar = await prepared.startSidecar?.();
       const initialRun = await executeDurableRunPrompt({
         conversationId: prepared.conversationId,
         prompt: prepared.prompt,
@@ -634,37 +723,79 @@ export function createDurableRunCanaryRunner(
         run: terminalRun.run,
       });
 
-      const artifactPaths = resolveArtifactPaths(runId);
+      artifactPaths = resolveArtifactPaths(runId);
 
       if (!config.keepSuccessfulEvidence) {
         await prepared.cleanup({ runId });
       }
 
-      return {
+      result = {
         id: testCase.id,
         label: testCase.label,
         status: "pass",
         details: "OK",
-        durationMs: Date.now() - startedAt,
+        durationMs: Math.max(0, Date.now() - startedAt),
         conversationId: prepared.conversationId,
         runId,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     } catch (error) {
-      const artifactPaths = resolveArtifactPaths(runId);
+      const errors = [formatEvalPublicError(error)];
+      try {
+        artifactPaths = resolveArtifactPaths(runId);
+      } catch (artifactError) {
+        errors.push(`Artifact resolution failed: ${formatEvalPublicError(artifactError)}`);
+      }
 
-      return {
+      result = {
         id: testCase.id,
         label: testCase.label,
         status: "fail",
-        details: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - startedAt,
+        details: formatEvalPublicError(errors.join("; ")),
+        durationMs: Math.max(0, Date.now() - startedAt),
         conversationId: prepared.conversationId,
         runId,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     } finally {
-      await stopSidecar?.();
+      try {
+        await stopSidecar?.();
+      } catch (error) {
+        if (result) {
+          result = {
+            ...result,
+            status: "fail",
+            details: formatEvalPublicError(
+              `${result.details}; Sidecar cleanup failed: ${formatEvalPublicError(error)}`,
+            ),
+          };
+        } else {
+          cleanupFailure = { error };
+        }
+      }
+    }
+
+    if (!result) {
+      if (cleanupFailure) throw cleanupFailure.error;
+      throw new TypeError("Durable canary completed without a result");
+    }
+    return result;
+  }
+
+  async function runCase(testCase: DurableRunCanaryCase): Promise<DurableRunCanaryResult> {
+    const startedAt = Date.now();
+    try {
+      return await runCaseUnsafe(testCase, startedAt);
+    } catch (error) {
+      return {
+        id: testCase.id,
+        label: testCase.label,
+        status: "fail",
+        details: formatEvalPublicError(error),
+        durationMs: Math.max(0, Date.now() - startedAt),
+        conversationId: "unknown",
+        runId: "unknown",
+      };
     }
   }
 

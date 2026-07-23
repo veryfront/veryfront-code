@@ -40,7 +40,10 @@ export function parallel(
     }
 
     const childId = node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`;
-    return { ...node, id: childId };
+    const dependsOn = (node.dependsOn ?? []).map((dependency) =>
+      dependency.startsWith(prefix) ? dependency : `${prefix}${dependency}`
+    );
+    return { ...node, id: childId, dependsOn };
   });
 
   const config: ParallelNodeConfig = {

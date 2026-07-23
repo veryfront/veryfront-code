@@ -1,12 +1,103 @@
 import { assertEquals } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
+import { register, reset } from "#veryfront/extensions/contracts.ts";
 import {
+  __resetCachedAuthProviderForTests,
   buildProxyAuthRedirectUrl,
   checkProtectedProxyAccess,
+  extractUserIdFromToken,
   isProjectMember,
 } from "./proxy-access-control.ts";
 
 describe("proxy/proxy-access-control", () => {
+  let previousJwtSecret: string | undefined;
+
+  beforeEach(() => {
+    previousJwtSecret = Deno.env.get("JWT_SECRET");
+  });
+
+  afterEach(() => {
+    reset();
+    __resetCachedAuthProviderForTests();
+    if (previousJwtSecret === undefined) Deno.env.delete("JWT_SECRET");
+    else Deno.env.set("JWT_SECRET", previousJwtSecret);
+  });
+
+  it("resolves the current auth provider and contains decoder failures", async () => {
+    Deno.env.set("JWT_SECRET", "test-secret");
+    const provider = (userId: string, decodeThrows = false) =>
+      ({
+        decode() {
+          if (decodeThrows) throw new Error("malformed token");
+          return { alg: "HS256" };
+        },
+        verify: () => Promise.resolve({ sub: userId, userId } as TokenPayload),
+      }) as unknown as AuthProvider;
+
+    register("AuthProvider", provider("first-user"));
+    assertEquals(
+      await extractUserIdFromToken("first", "https://api.example.test"),
+      "first-user",
+    );
+
+    reset();
+    register("AuthProvider", provider("second-user"));
+    assertEquals(
+      await extractUserIdFromToken("second", "https://api.example.test"),
+      "second-user",
+    );
+
+    reset();
+    register("AuthProvider", provider("unused", true));
+    assertEquals(
+      await extractUserIdFromToken("malformed", "https://api.example.test"),
+      undefined,
+    );
+  });
+
+  it("does not invoke accessors on a verified token payload", async () => {
+    Deno.env.set("JWT_SECRET", "test-secret");
+    let accessorInvoked = false;
+    const payload = Object.defineProperty({}, "userId", {
+      enumerable: true,
+      get() {
+        accessorInvoked = true;
+        return "accessor-user";
+      },
+    });
+    register("AuthProvider", {
+      decode: () => ({ alg: "HS256" }),
+      verify: () => Promise.resolve(payload as unknown as TokenPayload),
+    } as unknown as AuthProvider);
+
+    assertEquals(
+      await extractUserIdFromToken("accessor-payload", "https://api.example.test"),
+      undefined,
+    );
+    assertEquals(accessorInvoked, false);
+
+    reset();
+    let headerAccessorInvoked = false;
+    const header = Object.defineProperty({}, "alg", {
+      enumerable: true,
+      get() {
+        headerAccessorInvoked = true;
+        return "HS256";
+      },
+    });
+    register("AuthProvider", {
+      decode: () => header,
+      verify: () => Promise.resolve({ sub: "unused", userId: "unused" } as TokenPayload),
+    } as unknown as AuthProvider);
+
+    assertEquals(
+      await extractUserIdFromToken("accessor-header", "https://api.example.test"),
+      undefined,
+    );
+    assertEquals(headerAccessorInvoked, false);
+  });
+
   it("builds sign-in redirect URLs without allowing protocol-relative return paths", () => {
     assertEquals(
       buildProxyAuthRedirectUrl(new URL("https://app.preview.veryfront.com//evil.com?a=1")),

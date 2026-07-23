@@ -62,7 +62,7 @@ describe("platform/compat/std/front-matter-yaml", () => {
 
     it("should handle complex YAML values", () => {
       const input = "---\ntags:\n  - one\n  - two\nnested:\n  key: value\n---\nBody";
-      const result = extract(input);
+      const result = extract<{ tags: string[]; nested: { key: string } }>(input);
 
       assertEquals(Array.isArray(result.attrs.tags), true);
       assertEquals(result.attrs.tags[0], "one");
@@ -74,6 +74,38 @@ describe("platform/compat/std/front-matter-yaml", () => {
       const input = "---\ntitle: Hello\n---\nBody";
       const result = extract(input);
       assertEquals(typeof result.frontMatter, "string");
+    });
+
+    it("only treats a delimiter on its own line as the closing delimiter", () => {
+      const input = "---\ndescription: value---\nBody without a closing delimiter";
+      const result = extract(input);
+
+      assertEquals(result.attrs, {});
+      assertEquals(result.body, input);
+      assertEquals(result.frontMatter, "");
+    });
+
+    it("keeps delimiter text inside YAML values until a closing delimiter line", () => {
+      const input = "---\ndescription: value---inside\n---\nBody";
+      const result = extract(input);
+
+      assertEquals(result.attrs.description, "value---inside");
+      assertEquals(result.body, "Body");
+    });
+
+    it("accepts a UTF-8 BOM before the opening delimiter", () => {
+      const result = extract("\ufeff---\ntitle: BOM\n---\nBody");
+
+      assertEquals(result.attrs.title, "BOM");
+      assertEquals(result.body, "Body");
+      assertEquals(test("\ufeff---\ntitle: BOM\n---\nBody"), true);
+    });
+
+    it("accepts trailing horizontal whitespace on a closing delimiter line", () => {
+      const result = extract("---\ntitle: Spaced\n--- \t\nBody");
+
+      assertEquals(result.attrs.title, "Spaced");
+      assertEquals(result.body, "Body");
     });
   });
 });

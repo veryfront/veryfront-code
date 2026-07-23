@@ -1,4 +1,11 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
+import { isSafeHttpUrl, isSafeRenderableFileUrl } from "./ag-ui-helpers.ts";
+
+const MAX_PUBLIC_ERROR_TEXT_LENGTH = 2_048;
+const DOM_EXCEPTION_MESSAGE_GETTER = Object.getOwnPropertyDescriptor(
+  DOMException.prototype,
+  "message",
+)?.get;
 
 /** Options accepted by hosted UI chunk mapping. */
 export type HostedUiChunkMappingOptions = {
@@ -141,8 +148,52 @@ export type HostedStreamPartForUiChunkMapping =
     type: "raw";
   };
 
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return undefined;
+  }
+
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function defaultOnError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (typeof error === "string") return error;
+  if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") {
+    return String(error);
+  }
+
+  const message = readOwnDataProperty(error, "message");
+  if (typeof message === "string") return message;
+
+  if (DOM_EXCEPTION_MESSAGE_GETTER) {
+    try {
+      const domExceptionMessage = DOM_EXCEPTION_MESSAGE_GETTER.call(error);
+      if (typeof domExceptionMessage === "string") return domExceptionMessage;
+    } catch {
+      // The Web IDL getter rejects values that are not genuine DOMExceptions.
+    }
+  }
+
+  return "Stream processing failed";
+}
+
+function normalizePublicErrorText(value: unknown): string {
+  const raw = typeof value === "string" ? value : defaultOnError(value);
+  let withoutControls = "";
+  for (const character of raw) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    withoutControls += codePoint <= 31 || codePoint === 127 ? " " : character;
+  }
+  const normalized = withoutControls.trim().replace(/\s+/gu, " ");
+  if (!normalized) return "Stream processing failed";
+  return normalized.length <= MAX_PUBLIC_ERROR_TEXT_LENGTH
+    ? normalized
+    : `${normalized.slice(0, MAX_PUBLIC_ERROR_TEXT_LENGTH - 1)}\u2026`;
 }
 
 function mapHostedStreamSourceToUiChunks(
@@ -154,6 +205,7 @@ function mapHostedStreamSourceToUiChunks(
   }
 
   if (part.sourceType === "url") {
+    if (!isSafeHttpUrl(part.url)) return [];
     return [{
       type: "source-url",
       sourceId: part.id,
@@ -220,7 +272,14 @@ export function mapHostedStreamPartToChatUiChunks(
   part: HostedStreamPartForUiChunkMapping,
   options: HostedUiChunkMappingOptions = {},
 ): ChatUiMessageChunk<ChatMessageMetadata>[] {
-  const onError = options.onError ?? defaultOnError;
+  const errorFormatter = options.onError ?? defaultOnError;
+  const onError = (error: unknown): string => {
+    try {
+      return normalizePublicErrorText(errorFormatter(error));
+    } catch {
+      return "Stream processing failed";
+    }
+  };
   const sendReasoning = options.sendReasoning ?? true;
   const sendSources = options.sendSources ?? true;
 
@@ -244,7 +303,9 @@ export function mapHostedStreamPartToChatUiChunks(
       return [{ type: "abort" }];
 
     case "reasoning-start":
-      return [{ type: "reasoning-start", id: options.reasoningMessageId ?? part.id }];
+      return sendReasoning
+        ? [{ type: "reasoning-start", id: options.reasoningMessageId ?? part.id }]
+        : [];
 
     case "reasoning-delta":
       return sendReasoning
@@ -252,12 +313,14 @@ export function mapHostedStreamPartToChatUiChunks(
         : [];
 
     case "reasoning-end":
-      return [{
-        type: "reasoning-end",
-        id: options.reasoningMessageId ?? part.id,
-        ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
-        ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
-      }];
+      return sendReasoning
+        ? [{
+          type: "reasoning-end",
+          id: options.reasoningMessageId ?? part.id,
+          ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+          ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
+        }]
+        : [];
 
     case "text-start":
       return [{ type: "text-start", id: options.messageId ?? part.id }];
@@ -271,12 +334,18 @@ export function mapHostedStreamPartToChatUiChunks(
     case "source":
       return mapHostedStreamSourceToUiChunks(part, sendSources);
 
-    case "file":
+    case "file": {
+      const normalizedMediaType = part.file.mediaType.trim().toLowerCase().split(";", 1)[0] ?? "";
+      const url = `data:${normalizedMediaType};base64,${part.file.base64}`;
+      if (!isSafeRenderableFileUrl(url, normalizedMediaType)) {
+        return [];
+      }
       return [{
         type: "file",
-        mediaType: part.file.mediaType,
-        url: `data:${part.file.mediaType};base64,${part.file.base64}`,
+        mediaType: normalizedMediaType,
+        url,
       }];
+    }
 
     case "tool-input-start":
       return [{ type: "tool-input-start", toolCallId: part.id, toolName: part.toolName }];

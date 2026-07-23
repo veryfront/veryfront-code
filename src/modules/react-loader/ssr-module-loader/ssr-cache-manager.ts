@@ -13,12 +13,12 @@ import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { globalModuleCache, globalTmpDirs } from "./cache/index.ts";
 import {
+  buildVerifiedHttpBundleKey,
   extractAllFilePathsRecursive,
   extractAllHttpBundlePathsRecursive,
   verifiedHttpBundlePaths,
@@ -26,16 +26,26 @@ import {
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
+import { sha256Short } from "#veryfront/cache/hash.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+const MAX_CACHE_IDENTITY_LENGTH = 8_192;
+const MAX_CACHED_MODULE_BYTES = 10 * 1024 * 1024;
 
-/** Content length threshold: below this, use fast sync hash; above, use async SHA-256 */
-const SYNC_HASH_THRESHOLD = 10_000;
+function validateCacheIdentity(value: string, label: string): void {
+  if (
+    value.length === 0 || value.length > MAX_CACHE_IDENTITY_LENGTH ||
+    hasUnsafeControlCharacters(value)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} is invalid` });
+  }
+}
 
 /**
  * Manages caching concerns for SSR module loading:
  * - Cache key computation and config hashing
- * - Content hashing (sync for small content, async SHA-256 for large)
+ * - Content hashing with SHA-256
  * - Temp file path management
  * - Cached code validation (HTTP bundles, local paths, VF module imports)
  * - Cache entry invalidation
@@ -51,45 +61,44 @@ export class SSRCacheManager {
     if (!this.cachedConfigHash) {
       this.cachedConfigHash = computeConfigHashSync({
         reactVersion: this.options.reactVersion,
-        dev: this.options.dev,
+        dev: this.options.dev || this.options.mode === "preview",
       });
     }
     return this.cachedConfigHash;
   }
 
   getCacheKey(filePath: string): string {
+    return this.buildCacheKey(["path", filePath], filePath);
+  }
+
+  getContentCacheKey(filePath: string, contentHash: string): string {
+    validateCacheIdentity(contentHash, "contentHash");
+    return this.buildCacheKey(["content", filePath, contentHash], filePath);
+  }
+
+  private buildCacheKey(identity: readonly string[], filePath: string): string {
     if (!this.options.contentSourceId) {
       throw INVALID_ARGUMENT.create({
-        detail:
-          `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
+        detail: "Missing contentSourceId for SSR module cache",
       });
     }
 
     const reactVersion = this.options.reactVersion ?? "default";
     const configHash = this.getConfigHash();
+    validateCacheIdentity(this.options.projectId, "projectId");
+    validateCacheIdentity(this.options.contentSourceId, "contentSourceId");
+    validateCacheIdentity(reactVersion, "reactVersion");
+    validateCacheIdentity(filePath, "filePath");
 
     return buildSSRModuleCacheKey(
       RUNTIME_VERSION,
       this.options.projectId,
-      `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      JSON.stringify([this.options.contentSourceId, reactVersion, configHash, identity]),
     );
   }
 
   async hashContentAsync(content: string): Promise<string> {
-    if (content.length < SYNC_HASH_THRESHOLD) return hashCodeHex(content);
-
-    try {
-      const data = new TextEncoder().encode(content);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray
-        .slice(0, 8)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    } catch (_) {
-      /* expected: WebCrypto may not be available, fall back to sync hash */
-      return hashCodeHex(content);
-    }
+    return await sha256Short(content);
   }
 
   async getTempPath(filePath: string, contentHash?: string): Promise<string> {
@@ -104,55 +113,39 @@ export class SSRCacheManager {
   }
 
   isProductionContentSource(): boolean {
-    const sourceId = this.options.contentSourceId;
-    if (!sourceId) return !this.options.dev;
-
-    if (sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft") {
-      return false;
-    }
-
-    if (
-      sourceId.startsWith("release-") ||
-      sourceId.startsWith("production-") ||
-      sourceId.startsWith("prod-") ||
-      sourceId === "production"
-    ) {
-      return true;
-    }
-
+    if (this.options.mode === "production") return true;
+    if (this.options.mode === "preview" || this.options.mode === "development") return false;
     return !this.options.dev;
   }
 
   async validateCachedCode(
     code: string,
-    filePath: string,
+    _filePath: string,
     source: "memory-cache" | "redis-cache",
     options: { checkLocalPaths: boolean; checkInvalidEsmShPath: boolean },
   ): Promise<boolean> {
-    if (options.checkInvalidEsmShPath && /esm\.sh\/_?vf_modules\//.test(code)) {
-      logger.warn(
-        "[SSR-MODULE-LOADER] Redis cache has invalid esm.sh/_vf_modules URL, re-transforming",
-        {
-          file: filePath.slice(-40),
-        },
-      );
+    if (new TextEncoder().encode(code).byteLength > MAX_CACHED_MODULE_BYTES) {
+      logger.warn("SSR module cache entry exceeds size limit", { source });
+      return false;
+    }
+    if (options.checkInvalidEsmShPath && await this.hasInvalidEsmShVfModuleImport(code)) {
+      logger.warn("Distributed cache contains an invalid runtime module URL");
       return false;
     }
 
-    if (await this.hasMissingHttpBundles(code, filePath, source)) {
+    if (await this.hasMissingHttpBundles(code, source)) {
       return false;
     }
 
-    if (options.checkLocalPaths && await this.hasMissingLocalPaths(code, filePath)) {
+    if (options.checkLocalPaths && await this.hasMissingLocalPaths(code)) {
       return false;
     }
 
     if (await this.hasUnresolvedVfModuleImports(code)) {
       logger.warn(
         source === "memory-cache"
-          ? "[SSR-MODULE-LOADER] Memory cache has unresolved _vf_modules imports, invalidating"
-          : "[SSR-MODULE-LOADER] Redis cache has unresolved _vf_modules imports, re-transforming",
-        { file: filePath.slice(-40) },
+          ? "Memory cache contains unresolved runtime module imports"
+          : "Distributed cache contains unresolved runtime module imports",
       );
       return false;
     }
@@ -166,7 +159,10 @@ export class SSRCacheManager {
     filePathCacheKey: string,
     filePath: string,
   ): Promise<boolean> {
-    const verifyKey = `${cachedEntry.tempPath}:${cachedEntry.contentHash}`;
+    const verifyKey = buildVerifiedHttpBundleKey(
+      cachedEntry.tempPath,
+      cachedEntry.contentHash,
+    );
     if (verifiedHttpBundlePaths.get(verifyKey)) return globalModuleCache.has(contentCacheKey);
 
     try {
@@ -182,7 +178,9 @@ export class SSRCacheManager {
       verifiedHttpBundlePaths.set(verifyKey, true);
       return globalModuleCache.has(contentCacheKey);
     } catch (error) {
-      logger.debug("Failed to validate memory cache entry, invalidating", { error });
+      logger.debug("Failed to validate memory cache entry, invalidating", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
       this.invalidateContentAndFileCacheEntries(contentCacheKey, filePathCacheKey, cachedEntry);
       return false;
     }
@@ -192,7 +190,9 @@ export class SSRCacheManager {
     globalModuleCache.delete(this.getCacheKey(filePath));
     if (cacheEntry) {
       this.invalidateMatchingCacheEntries(cacheEntry);
-      verifiedHttpBundlePaths.delete(`${cacheEntry.tempPath}:${cacheEntry.contentHash}`);
+      verifiedHttpBundlePaths.delete(
+        buildVerifiedHttpBundleKey(cacheEntry.tempPath, cacheEntry.contentHash),
+      );
     }
   }
 
@@ -204,7 +204,9 @@ export class SSRCacheManager {
     globalModuleCache.delete(contentCacheKey);
     globalModuleCache.delete(filePathCacheKey);
     if (cacheEntry) {
-      verifiedHttpBundlePaths.delete(`${cacheEntry.tempPath}:${cacheEntry.contentHash}`);
+      verifiedHttpBundlePaths.delete(
+        buildVerifiedHttpBundleKey(cacheEntry.tempPath, cacheEntry.contentHash),
+      );
     }
   }
 
@@ -240,9 +242,26 @@ export class SSRCacheManager {
     });
   }
 
+  private async hasInvalidEsmShVfModuleImport(code: string): Promise<boolean> {
+    const imports = await parseImports(code);
+    return imports.some((importSpecifier) => {
+      const specifier = importSpecifier.n;
+      if (!specifier?.startsWith("https://") && !specifier?.startsWith("http://")) {
+        return false;
+      }
+      try {
+        const url = new URL(specifier);
+        return url.hostname === "esm.sh" &&
+          (url.pathname.startsWith("/_vf_modules/") ||
+            url.pathname.startsWith("/vf_modules/"));
+      } catch {
+        return false;
+      }
+    });
+  }
+
   private async hasMissingHttpBundles(
     code: string,
-    filePath: string,
     source: "memory-cache" | "redis-cache",
   ): Promise<boolean> {
     const bundlePaths = await extractAllHttpBundlePathsRecursive(code);
@@ -253,16 +272,14 @@ export class SSRCacheManager {
     if (failed.length === 0) return false;
 
     logger.warn("Unrecoverable HTTP bundles, re-transforming", {
-      file: filePath.slice(-40),
-      failed,
+      failedCount: failed.length,
       totalBundles: bundlePaths.length,
-      cacheDir,
       source,
     });
     return true;
   }
 
-  private async hasMissingLocalPaths(code: string, filePath: string): Promise<boolean> {
+  private async hasMissingLocalPaths(code: string): Promise<boolean> {
     const allPaths = await extractAllFilePathsRecursive(code);
     let firstMissingPathIndex = -1;
 
@@ -276,9 +293,7 @@ export class SSRCacheManager {
         }
       } catch (error) {
         logger.debug("Redis cache has invalid local path, re-transforming", {
-          file: filePath.slice(-40),
-          missingPath: path.slice(-60),
-          error,
+          errorName: error instanceof Error ? error.name : "UnknownError",
         });
         firstMissingPathIndex = index;
         break;
@@ -298,8 +313,7 @@ export class SSRCacheManager {
       });
       if (recovered.recovered.length > 0) {
         logger.debug("Recovered missing local vfmod dependencies for SSR cache entry", {
-          file: filePath.slice(-40),
-          recovered: recovered.recovered.slice(0, 5),
+          recoveredCount: recovered.recovered.length,
         });
       }
     }
@@ -322,12 +336,12 @@ export class SSRCacheManager {
 
     if (!projectId) {
       throw INVALID_ARGUMENT.create({
-        detail: `Missing projectId for SSR temp directory (projectDir: ${this.options.projectDir})`,
+        detail: "Missing projectId for SSR temp directory",
       });
     }
     if (!contentSourceId) {
       throw INVALID_ARGUMENT.create({
-        detail: `Missing contentSourceId for SSR temp directory (project: ${projectId})`,
+        detail: "Missing contentSourceId for SSR temp directory",
       });
     }
 

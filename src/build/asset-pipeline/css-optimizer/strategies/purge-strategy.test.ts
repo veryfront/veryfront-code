@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PurgeStrategy } from "./purge-strategy.ts";
 
@@ -57,6 +57,18 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
     });
 
     describe("process", () => {
+      it("rejects purge patterns that match no source files", async () => {
+        const strategy = new PurgeStrategy();
+        await assertRejects(
+          () =>
+            strategy.process(".used { color: red; }", "test.css", {
+              purgeContent: [".veryfront/does-not-exist/**/*.tsx"],
+            }),
+          TypeError,
+          "did not match",
+        );
+      });
+
       it("should process CSS when used selectors are pre-populated", async () => {
         const strategy = new PurgeStrategy();
         strategy.getUsedSelectors().add(".used-class");
@@ -86,6 +98,35 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
         assertEquals(result.code.includes("body"), true);
         assertEquals(result.code.includes(".keep"), true);
         assertEquals(result.code.includes(".remove"), false);
+      });
+
+      it("preserves nested at-rules and quoted closing braces", async () => {
+        const strategy = new PurgeStrategy();
+        strategy.getUsedSelectors().add(".used");
+        const css = `
+@media (min-width: 40rem) {
+  .used { content: "}"; color: red; }
+  .unused { color: blue; }
+}
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(1turn); } }
+`;
+
+        const result = await strategy.process(css, "test.css", {});
+
+        assertEquals(result.code.includes("@media"), true);
+        assertEquals(result.code.includes('content: "}"'), true);
+        assertEquals(result.code.includes(".unused"), false);
+        assertEquals(result.code.includes("@keyframes spin"), true);
+      });
+
+      it("rejects malformed CSS rather than returning a partial purge", async () => {
+        const strategy = new PurgeStrategy();
+        strategy.getUsedSelectors().add(".used");
+        await assertRejects(
+          () => strategy.process(".used { color: red", "test.css", {}),
+          SyntaxError,
+          "Unterminated",
+        );
       });
     });
   });

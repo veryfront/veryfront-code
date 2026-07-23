@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
@@ -14,8 +19,9 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
+import { findActiveDocumentOpeningTag } from "#veryfront/html/html-injection.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
-import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
+import { buildHeadElements, mergeFrontmatter, resolveDocumentMetadata } from "./html-head.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
 import {
   createHTMLContext,
@@ -72,12 +78,13 @@ describe("HTMLGenerator helpers", () => {
 
   describe("buildHeadElements", () => {
     it("should return empty string for undefined head", () => {
-      assertEquals(buildHeadElements(undefined), { scripts: "", other: "" });
+      assertEquals(buildHeadElements(undefined), { scripts: "", moduleScripts: "", other: "" });
     });
 
     it("should return empty string for empty head", () => {
       assertEquals(buildHeadElements({ metas: [], links: [], styles: [], scripts: [] } as any), {
         scripts: "",
+        moduleScripts: "",
         other: "",
       });
     });
@@ -88,7 +95,28 @@ describe("HTMLGenerator helpers", () => {
         links: [],
         styles: [],
       };
-      assertEquals(buildHeadElements({ ...head, scripts: [] } as any), { scripts: "", other: "" });
+      assertEquals(buildHeadElements({ ...head, scripts: [] } as any), {
+        scripts: "",
+        moduleScripts: "",
+        other: "",
+      });
+    });
+
+    it("separates module scripts from classic blocking scripts", () => {
+      const result = buildHeadElements({
+        metas: [],
+        links: [],
+        styles: [],
+        scripts: [
+          { src: "/blocking.js" },
+          { src: "/module.js", type: " MODULE " },
+        ],
+      } as any);
+
+      assertStringIncludes(result.scripts, 'src="/blocking.js"');
+      assertEquals(result.scripts.includes('src="/module.js"'), false);
+      assertStringIncludes(result.moduleScripts, 'src="/module.js"');
+      assertEquals(result.moduleScripts.includes('src="/blocking.js"'), false);
     });
 
     it("should render meta tags with name attribute", () => {
@@ -238,6 +266,32 @@ describe("HTMLGenerator helpers", () => {
     });
   });
 
+  describe("resolveDocumentMetadata", () => {
+    it("applies head precedence and includes fields needed to clear stale metadata", () => {
+      const result = resolveDocumentMetadata(
+        { title: "Frontmatter title", custom: "value" },
+        { title: "Head title" },
+      );
+
+      assertEquals(result, {
+        title: "Head title",
+        description: "",
+        frontmatter: {
+          title: "Head title",
+          description: "",
+          custom: "value",
+        },
+      });
+    });
+
+    it("uses the same default title as initial HTML", () => {
+      const result = resolveDocumentMetadata({});
+
+      assertEquals(result.title, "Veryfront App");
+      assertEquals(result.frontmatter, { title: "Veryfront App", description: "" });
+    });
+  });
+
   describe("HTMLGeneratorConfig type", () => {
     it("should accept valid config", () => {
       const config: Partial<HTMLGeneratorConfig> = {
@@ -325,6 +379,7 @@ describe("HTMLGenerator helpers", () => {
         ],
         options: {
           environment: "production",
+          projectId: "project-1",
           clientPageIsland: {
             clientLayoutPaths: [clientLayoutPath],
             hasServerLayouts: true,
@@ -502,6 +557,56 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(calls.includes("underlyingReadFile:/project/globals.css"), false);
     });
 
+    it("rejects a configured stylesheet path outside the project before reading", async () => {
+      let reads = 0;
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            readFile: () => {
+              reads++;
+              return Promise.resolve("");
+            },
+            exists: () => Promise.resolve(false),
+          },
+        } as any,
+        config: { tailwind: { stylesheet: "../outside.css" } } as any,
+        mode: "production",
+      });
+
+      await assertRejects(
+        () => generator.generateFullHTML(createHTMLContext()),
+        TypeError,
+        "must stay inside the project",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("propagates operational errors from optional stylesheet reads", async () => {
+      const failure = Object.assign(new Error("stylesheet permission denied"), {
+        code: "EACCES",
+      });
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            readFile: (path: string) =>
+              Promise.resolve(path.endsWith("/app/page.tsx") ? "'use client';" : ""),
+            readOptionalTextFile: () => Promise.reject(failure),
+            exists: () => Promise.resolve(false),
+          },
+        } as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      await assertRejects(
+        () => generator.generateFullHTML(createHTMLContext()),
+        Error,
+        "stylesheet permission denied",
+      );
+    });
+
     it("preserves full-document layout head/body output for explicit dark-mode requests", async () => {
       const mockAdapter = createMockAdapter(async () => `'use client';`);
 
@@ -539,8 +644,200 @@ describe("HTMLGenerator helpers", () => {
         true,
       );
       assertEquals(html.includes('data-theme="dark"'), true);
-      assertEquals(html.includes("color-scheme: dark;"), true);
+      assertEquals(html.includes("color-scheme: dark !important;"), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("applies explicit themes to the active html element after inert comment text", async () => {
+      const generator = createHTMLGenerator({ readFile: async () => "" });
+      const inertComment =
+        '<!-- inert example: <html data-theme="comment-only" style="color-scheme: light"> -->';
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          `<!DOCTYPE html>${inertComment}<html><head><title>Layout</title></head><body><main>Hello</main></body></html>`,
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      const activeTag = findActiveDocumentOpeningTag(html, "html");
+      assertExists(activeTag);
+      const openingTag = html.slice(activeTag.start, activeTag.end);
+
+      assertStringIncludes(html, inertComment);
+      assertEquals(
+        openingTag,
+        '<html data-theme="dark" style="color-scheme: dark !important;">',
+      );
+    });
+
+    it("injects theme persistence when inert content contains the script text", async () => {
+      const generator = createHTMLGenerator({ readFile: async () => "" });
+      const inertComment = "<!-- localStorage.setItem('theme','dark') -->";
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          `<!DOCTYPE html><html><head>${inertComment}<title>Layout</title></head><body><main>Hello</main></body></html>`,
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      const inertEnd = html.indexOf(inertComment) + inertComment.length;
+      const injectedScript = html.indexOf("localStorage.setItem('theme','dark')", inertEnd);
+
+      assertStringIncludes(html, inertComment);
+      assertEquals(injectedScript > inertEnd, true);
+    });
+
+    it("normalizes quoted, unquoted, and valueless theme attributes", async () => {
+      const generator = createHTMLGenerator({ readFile: async () => "" });
+      const cases = [
+        {
+          name: "quoted",
+          attributes: `data-theme='light' style='font-family:"A&B"; color-scheme: light'`,
+          expectedOpeningTag:
+            `<html data-theme="dark" style='font-family:"A&B"; color-scheme: light; color-scheme: dark !important;'>`,
+        },
+        {
+          name: "unquoted",
+          attributes: "data-theme=light style=color-scheme:light",
+          expectedOpeningTag:
+            '<html data-theme="dark" style="color-scheme:light; color-scheme: dark !important;">',
+        },
+        {
+          name: "valueless",
+          attributes: "data-theme style",
+          expectedOpeningTag: '<html data-theme="dark" style="color-scheme: dark !important;">',
+        },
+        {
+          name: "entity escaped",
+          attributes:
+            `lang="en" data-note='literal > marker &amp; intact' data-theme="light" style="font-family:&quot;A&amp;B&quot;; color-scheme:light"`,
+          expectedOpeningTag:
+            `<html lang="en" data-note='literal > marker &amp; intact' data-theme="dark" style="font-family:&quot;A&amp;B&quot;; color-scheme:light; color-scheme: dark !important;">`,
+        },
+        {
+          name: "semicolonless entity",
+          attributes: `data-theme=light style='content:&amp red'`,
+          expectedOpeningTag:
+            `<html data-theme="dark" style='content:&amp red; color-scheme: dark !important;'>`,
+        },
+        {
+          name: "trailing legacy entity",
+          attributes: `data-theme=light style='content:&notin'`,
+          expectedOpeningTag:
+            `<html data-theme="dark" style='content:&notin ; color-scheme: dark !important;'>`,
+        },
+        {
+          name: "important existing scheme",
+          attributes: `data-theme=light style="color-scheme: light !important"`,
+          expectedOpeningTag:
+            `<html data-theme="dark" style="color-scheme: light !important; color-scheme: dark !important;">`,
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const html = await generator.generateFullHTML(createHTMLContext({
+          html:
+            `<!DOCTYPE html><html ${testCase.attributes}><head><title>Layout</title></head><body><main>Hello</main></body></html>`,
+          options: {
+            colorScheme: "dark",
+            colorSchemeFromParam: true,
+          },
+        }));
+
+        const activeTag = findActiveDocumentOpeningTag(html, "html");
+        assertExists(activeTag);
+        const openingTag = html.slice(activeTag.start, activeTag.end);
+        const themeAttributes = openingTag.match(/\bdata-theme(?=\s|=|>)/gi) ?? [];
+        const styleAttributes = openingTag.match(/\bstyle(?=\s|=|>)/gi) ?? [];
+
+        assertEquals(openingTag, testCase.expectedOpeningTag, testCase.name);
+        assertEquals(themeAttributes.length, 1, testCase.name);
+        assertEquals(styleAttributes.length, 1, testCase.name);
+        assertStringIncludes(openingTag, 'data-theme="dark"', testCase.name);
+        assertStringIncludes(openingTag, "color-scheme: dark !important;", testCase.name);
+        assertEquals(openingTag.includes("data-theme=light"), false, testCase.name);
+        assertEquals(openingTag.includes("&amp;quot;"), false, testCase.name);
+        assertEquals(openingTag.includes("&amp;amp;"), false, testCase.name);
+      }
+    });
+
+    it("rejects excessive repeated theme attributes without collecting the full tag", async () => {
+      const generator = createHTMLGenerator({ readFile: async () => "" });
+      const repeatedAttributes = Array.from(
+        { length: 1025 },
+        () => "data-theme",
+      ).join(" ");
+
+      await assertRejects(
+        () =>
+          generator.generateFullHTML(createHTMLContext({
+            html: `<!DOCTYPE html><html ${repeatedAttributes}><head></head><body></body></html>`,
+            options: {
+              colorScheme: "dark",
+              colorSchemeFromParam: true,
+            },
+          })),
+        RangeError,
+        "too many theme attributes",
+      );
+    });
+
+    it("inserts theme persistence after raw-text head-like content", async () => {
+      const generator = createHTMLGenerator({
+        readFile: async () => "",
+      });
+      const sourceScript = '<script>globalThis.template="</head>";</script>';
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          `<!DOCTYPE html><html><head>${sourceScript}<title>Layout</title></head><body><main>Hello</main></body></html>`,
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      const sourceStart = html.indexOf(sourceScript);
+      const sourceEnd = sourceStart + sourceScript.length;
+      const persistenceIndex = html.indexOf(`localStorage.setItem('theme','dark')`);
+      const documentHeadEnd = html.indexOf("</head>", persistenceIndex);
+
+      assertEquals(sourceStart >= 0, true);
+      assertEquals(persistenceIndex > sourceEnd, true);
+      assertEquals(documentHeadEnd > persistenceIndex, true);
+    });
+
+    it("places collected module scripts after the shell import map", async () => {
+      const generator = createHTMLGenerator({ readFile: async () => "" });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html: "<main>Hello</main>",
+        collectedHead: {
+          title: "",
+          description: "",
+          metas: [],
+          links: [],
+          styles: [],
+          scripts: [
+            { src: "/blocking.js" },
+            { src: "/module.js", type: "module" },
+          ],
+        },
+      }));
+
+      const blockingScriptIndex = html.indexOf('src="/blocking.js"');
+      const importMapIndex = html.indexOf('<script type="importmap"');
+      const moduleScriptIndex = html.indexOf('src="/module.js"');
+
+      assertEquals(blockingScriptIndex >= 0, true);
+      assertEquals(importMapIndex > blockingScriptIndex, true);
+      assertEquals(moduleScriptIndex > importMapIndex, true);
     });
 
     it("escapes nonce values before injecting theme persistence scripts", async () => {
@@ -759,6 +1056,48 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateHTMLStream", () => {
+    it("emits a source hash for an empty Studio source file", async () => {
+      const mockAdapter = createMockAdapter(async () => "");
+      const generator = createHTMLGenerator({ readFile: mockAdapter.fs.readFile });
+      const responseStream = await generator.generateHTMLStream(
+        createSingleChunkStream("<main>Empty source</main>"),
+        createHTMLContext({
+          pageInfo: {
+            entity: {
+              path: "/project/app/page.tsx",
+              frontmatter: {},
+              content: "",
+            },
+          } as any,
+          options: { studioEmbed: true, environment: "preview" },
+        }),
+      );
+      const html = await new Response(responseStream).text();
+
+      assertEquals(html.includes("window.__VERYFRONT_SOURCE_HASH__"), true);
+    });
+
+    it("leaves Studio selector assignment to the browser bridge", async () => {
+      const mockAdapter = createMockAdapter(async () => "");
+      const generator = createHTMLGenerator({ readFile: mockAdapter.fs.readFile });
+      const inputs = [
+        '<!DOCTYPE html><html><head></head><body><div id="root"><main>Document</main></div></body></html>',
+        "<main>Fragment</main>",
+      ];
+
+      for (const input of inputs) {
+        const responseStream = await generator.generateHTMLStream(
+          createSingleChunkStream(input),
+          createHTMLContext({ options: { studioEmbed: true, environment: "preview" } }),
+        );
+        const html = await new Response(responseStream).text();
+
+        assertEquals(html.includes("/_veryfront/studio-bridge.js"), true);
+        assertEquals(html.includes("data-vf-selector"), false);
+        assertEquals(html.includes("<main>"), true);
+      }
+    });
+
     it("preserves full-document layout output when streaming app-router pages", async () => {
       const mockAdapter = createMockAdapter(async () => `'use client';`);
 
@@ -931,6 +1270,50 @@ describe("HTMLGenerator helpers", () => {
       );
       assertEquals(merged?.includes(".a_root__"), true);
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
+    });
+
+    it("rejects imported stylesheets outside the project before reading them", async () => {
+      let reads = 0;
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () => {
+                reads++;
+                return Promise.resolve(".outside {}");
+              },
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/project-other/private.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "outside the project",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("propagates operational imported stylesheet read failures", async () => {
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () =>
+                Promise.reject(Object.assign(new Error("css permission denied"), {
+                  code: "EACCES",
+                })),
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/project/private.css"],
+            stylesheetPath: "globals.css",
+          }),
+        Error,
+        "css permission denied",
+      );
     });
   });
 });

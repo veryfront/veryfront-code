@@ -34,3 +34,10 @@ export type {
 } from "./types.ts";
 export { isWebhookDefinition } from "./types.ts";
 export type { WebhookDiscoveryOptions, WebhookDiscoveryResult } from "./discovery.ts";
+export type { TriggerTarget, TriggerTargetKind } from "#veryfront/trigger/target.ts";
+export type {
+  SourceTriggerDiscoveryError,
+  SourceTriggerDiscoveryErrorCode,
+  SourceTriggerDiscoveryResult,
+  SourceTriggerKind,
+} from "#veryfront/trigger/discovery.ts";

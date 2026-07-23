@@ -2,18 +2,20 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
+import { SECURITY_VIOLATION, VeryfrontError } from "#veryfront/errors";
+import { PathValidationError, validatePath } from "#veryfront/security";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { getSafeErrorName } from "../../utils/error-name.ts";
+import { createProjectCodeUnavailableResponse } from "../../utils/project-code-isolation.ts";
 import {
-  createErrorResponse,
-  FILE_NOT_FOUND,
-  getErrorMessage,
-  SECURITY_VIOLATION,
-  VeryfrontError,
-} from "#veryfront/errors";
-import { validatePathSync } from "#veryfront/security";
+  resolveSnippetFilePath,
+  resolveSnippetModuleServerUrl,
+} from "./snippet-request.ts";
 
 const logger = serverLogger.component("snippet-handler");
 
 const PRIORITY_SNIPPET = 450;
+const MAX_SNIPPET_SOURCE_BYTES = 4 * 1024 * 1024;
 
 export class SnippetHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -22,52 +24,71 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+    if (req.method.toUpperCase() !== "GET") return this.continue();
+
     const url = new URL(req.url);
     const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
-      return Promise.resolve(this.continue());
+      return this.continue();
     }
 
-    logger.debug("Handling snippet request", {
-      pathname,
-      projectSlug: ctx.projectSlug,
-    });
+    if (ctx.isLocalProject === false) {
+      return this.respond(createProjectCodeUnavailableResponse(req));
+    }
 
-    const filePath = this.resolveFilePath(pathname);
-
-    const pathResult = validatePathSync(filePath, {
-      baseDir: ctx.projectDir,
-    });
+    const filePath = resolveSnippetFilePath(pathname);
+    let pathResult;
+    try {
+      pathResult = await validatePath(filePath, {
+        adapter: ctx.adapter,
+        baseDir: ctx.projectDir,
+        checkExists: true,
+        level: "strict",
+      });
+    } catch (error) {
+      logger.error("Snippet path validation failed", { errorName: getSafeErrorName(error) });
+      return this.respondError(req, ctx, 500, "Snippet is unavailable");
+    }
 
     if (!pathResult.valid) {
-      logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
+      if (pathResult.code === PathValidationError.FILE_NOT_FOUND) {
+        return this.respondNotFound(req, ctx);
+      }
+      logger.warn("Invalid snippet path rejected", { reason: pathResult.code ?? "INVALID_PATH" });
       const error = SECURITY_VIOLATION.create({
         detail: "Invalid snippet path",
       });
-      return Promise.resolve({ response: createErrorResponse(error) });
+      return this.respondError(req, ctx, error.status, "Invalid snippet path");
     }
-
-    logger.debug("Resolved file path", { filePath });
+    const canonicalPath = pathResult.canonicalPath!;
 
     return this.withProxyContext(ctx, async () => {
       try {
-        const content = await ctx.adapter.fs.readFile(filePath);
-
-        if (!content) {
-          logger.debug("File not found or empty", { filePath });
-          return this.respondNotFound(ctx, filePath);
+        const stat = await ctx.adapter.fs.stat(canonicalPath);
+        if (!stat.isFile) return this.respondNotFound(req, ctx);
+        if (stat.size > MAX_SNIPPET_SOURCE_BYTES) {
+          return this.respondError(req, ctx, 413, "Snippet source is too large");
+        }
+        const content = await ctx.adapter.fs.readFile(canonicalPath);
+        if (new TextEncoder().encode(content).byteLength > MAX_SNIPPET_SOURCE_BYTES) {
+          return this.respondError(req, ctx, 413, "Snippet source is too large");
         }
 
-        const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
-        const pageId = url.searchParams.get("page_id") ?? undefined;
+        const moduleServerUrl = resolveSnippetModuleServerUrl(ctx.moduleServerUrl, url);
+        const rawPageId = url.searchParams.get("page_id");
+        if (rawPageId && rawPageId.length > 256) {
+          return this.respondError(req, ctx, 400, "Invalid page identifier");
+        }
+        const pageId = rawPageId ?? undefined;
         const isDev = !!ctx.isLocalProject;
 
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
+          projectId: ctx.projectId ?? ctx.projectDir,
           projectDir: ctx.projectDir,
-          filePath,
+          filePath: canonicalPath,
           moduleServerUrl,
           projectSlug: ctx.projectSlug,
           config: ctx.config,
@@ -97,44 +118,33 @@ export class SnippetHandler extends BaseHandler {
         );
       } catch (error) {
         if (
-          error instanceof VeryfrontError && error.slug === "api-client-error" &&
-          error.status === 404
+          isNotFoundError(error) ||
+          (error instanceof VeryfrontError && error.status === 404)
         ) {
-          logger.debug("Snippet file not found", { filePath });
-        } else {
-          logger.error("Error rendering snippet", {
-            filePath,
-            error: getErrorMessage(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          });
+          return this.respondNotFound(req, ctx);
         }
 
-        return this.respondNotFound(ctx, filePath);
+        logger.error("Snippet rendering failed", { errorName: getSafeErrorName(error) });
+        return this.respondError(req, ctx, 500, "Snippet rendering failed");
       }
     });
   }
 
-  private resolveFilePath(pathname: string): string {
-    if (!pathname.startsWith("/@components/")) return pathname.replace("/@/", "");
-
-    let filePath = pathname.replace("/@components/", "components/");
-    if (!filePath.endsWith(".snippet.mdx")) filePath += ".snippet.mdx";
-    return filePath;
+  private respondNotFound(req: Request, ctx: HandlerContext): HandlerResult {
+    return this.respondError(req, ctx, 404, "Snippet not found");
   }
 
-  private getModuleServerUrl(moduleServerUrl: string | undefined, url: URL): string {
-    const isFullUrl = moduleServerUrl?.startsWith("http://") ||
-      moduleServerUrl?.startsWith("https://");
-    return isFullUrl ? moduleServerUrl! : `${url.protocol}//${url.host}`;
-  }
-
-  private respondNotFound(_ctx: HandlerContext, filePath: string): HandlerResult {
-    const error = FILE_NOT_FOUND.create({
-      detail: `Snippet file not found: ${filePath}`,
-      context: { path: filePath },
-    });
-    const response = createErrorResponse(error);
-    response.headers.set("Cache-Control", "no-cache");
-    return { response };
+  private respondError(
+    req: Request,
+    ctx: HandlerContext,
+    status: number,
+    message: string,
+  ): HandlerResult {
+    const response = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache("no-cache")
+      .json({ error: message }, status);
+    return this.respond(response);
   }
 }

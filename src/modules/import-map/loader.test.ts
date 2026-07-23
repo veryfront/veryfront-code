@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { loadImportMap } from "./loader.ts";
@@ -69,14 +69,15 @@ describe("modules/import-map/loader", () => {
       assert("react" in imports, "should include default react");
     });
 
-    it("should handle malformed deno.json gracefully", async () => {
+    it("rejects malformed deno.json instead of silently using defaults", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/loader-bad-json/deno.json", "not valid json{");
 
-      const { imports } = await loadImportMap("/loader-bad-json", adapter);
-
-      assertExists(imports);
-      assert("react" in imports, "should include default react");
+      await assertRejects(
+        () => loadImportMap("/loader-bad-json", adapter),
+        Error,
+        "Import-map configuration is not valid JSON",
+      );
     });
 
     it("should use esm.sh URLs for React", async () => {
@@ -183,6 +184,36 @@ describe("modules/import-map/loader", () => {
       assertExists(appScope);
       assert(!("relative" in appScope), "relative path in scope should be filtered");
       assert("absolute" in appScope, "absolute path in scope should be kept");
+    });
+
+    it("enforces one React mapping inside scopes", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-with-scoped-react/deno.json",
+        JSON.stringify({
+          scopes: {
+            "/app/": { react: "https://esm.sh/react@17" },
+          },
+        }),
+      );
+
+      const result = await loadImportMap("/project-with-scoped-react", adapter);
+      assertEquals(result.scopes?.["/app/"]?.react, result.imports?.react);
+    });
+
+    it("rejects malformed import-map shapes without prototype pollution", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-with-malformed-map/deno.json",
+        '{"imports":{"__proto__":{"polluted":true},"bad":42}}',
+      );
+
+      await assertRejects(
+        () => loadImportMap("/project-with-malformed-map", adapter),
+        Error,
+        "Import-map configuration has an invalid shape",
+      );
+      assertEquals(({} as { polluted?: boolean }).polluted, undefined);
     });
   });
 });

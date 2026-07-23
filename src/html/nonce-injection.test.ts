@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { addNonceToHtmlStream, addNonceToHtmlTags } from "./nonce-injection.ts";
 
@@ -67,6 +67,20 @@ describe("html/nonce-injection", () => {
     assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}'), false);
   });
 
+  it("keeps raw-text closing-tag indexes aligned around Unicode lowercase expansion", () => {
+    const expandingText = "İ".repeat(32);
+    const html = addNonceToHtmlTags(
+      `<script>window.value="${expandingText}";</script><style>.chat{color:red}</style>`,
+      "nonce-123",
+    );
+
+    assertEquals(
+      html,
+      `<script nonce="nonce-123">window.value="${expandingText}";</script>` +
+        `<style nonce="nonce-123">.chat{color:red}</style>`,
+    );
+  });
+
   it("does not terminate raw-text mode on lookalike closing-tag prefixes inside script literals", () => {
     const html = addNonceToHtmlTags(
       `<script>window.tpl="</scripture><style>.x{color:red}</style>";</script><style>.chat{color:red}</style>`,
@@ -81,6 +95,23 @@ describe("html/nonce-injection", () => {
     );
     assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
     assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}</style>'), false);
+  });
+
+  it("treats self-closing syntax on script tags as HTML raw text", () => {
+    const html = addNonceToHtmlTags(
+      `<script/>window.tpl="<style>.x{color:red}</style>";</script>` +
+        `<style>.real{color:blue}</style>`,
+      "nonce-123",
+    );
+
+    assertEquals(
+      html.includes(
+        `<script nonce="nonce-123"/>window.tpl="<style>.x{color:red}</style>";</script>`,
+      ),
+      true,
+    );
+    assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}</style>'), false);
+    assertEquals(html.includes('<style nonce="nonce-123">.real{color:blue}</style>'), true);
   });
 
   it("does not treat data-nonce as an existing nonce attribute", () => {
@@ -134,7 +165,7 @@ describe("html/nonce-injection", () => {
     );
   });
 
-  it("keeps streamed lowercase tracking aligned after expanding lowercase characters", async () => {
+  it("keeps streamed parsing aligned after Unicode case expansion", async () => {
     const encoder = new TextEncoder();
     const chunks = [
       "İ<div></div>",
@@ -157,7 +188,29 @@ describe("html/nonce-injection", () => {
     );
   });
 
-  it("lowercases only newly received stream text while a tag is incomplete", async () => {
+  it("keeps streamed raw-text closing tags aligned after Unicode expansion", async () => {
+    const encoder = new TextEncoder();
+    const expandingText = "İ".repeat(32);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `<script>window.value="${expandingText}";</script><style>x</style>`,
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const html = await readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123"));
+    assertEquals(
+      html,
+      `<script nonce="nonce-123">window.value="${expandingText}";</script>` +
+        `<style nonce="nonce-123">x</style>`,
+    );
+  });
+
+  it("limits case folding to bounded closing-tag candidates", async () => {
     const originalToLowerCase = String.prototype.toLowerCase;
     let lowercasedChars = 0;
 
@@ -192,12 +245,73 @@ describe("html/nonce-injection", () => {
       const html = await readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123"));
 
       assertEquals(html, `<script${" ".repeat(5_000)} nonce="nonce-123">x</script>`);
-      assertEquals(lowercasedChars < 10_000, true);
+      assertEquals(lowercasedChars < 100, true);
     } finally {
       Object.defineProperty(String.prototype, "toLowerCase", {
         configurable: true,
         value: originalToLowerCase,
       });
     }
+  });
+
+  it("rejects oversized unterminated streamed markup tokens", async () => {
+    for (const prefix of ["<script ", "<!--"]) {
+      const payload = prefix + "x".repeat(70_000);
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(payload));
+          controller.close();
+        },
+      });
+
+      await assertRejects(
+        () => readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123")),
+        TypeError,
+        "HTML token",
+      );
+    }
+  });
+
+  it("rejects oversized complete streamed markup tokens", async () => {
+    for (
+      const payload of [
+        `<script data-value="${"x".repeat(70_000)}">x</script>`,
+        `<!--${"x".repeat(70_000)}-->`,
+      ]
+    ) {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(payload));
+          controller.close();
+        },
+      });
+
+      await assertRejects(
+        () => readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123")),
+        TypeError,
+        "HTML token",
+      );
+    }
+  });
+
+  it("cancels the source after a streaming transformation failure", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(`<script ${"x".repeat(70_000)}`),
+        );
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await assertRejects(
+      () => readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123")),
+      TypeError,
+      "HTML token",
+    );
+    assertEquals(cancelled, true);
   });
 });

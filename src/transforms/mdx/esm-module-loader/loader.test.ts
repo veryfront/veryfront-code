@@ -65,6 +65,7 @@ function findVfModuleImports(code: string): Array<{ original: string; path: stri
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
     const [original, , path] = match;
+    if (!original || !path) continue;
     imports.push({ original, path });
   }
 

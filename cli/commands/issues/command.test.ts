@@ -1,8 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseState } from "#veryfront/issues/index.ts";
 import type { Issue } from "#veryfront/issues/index.ts";
+import { createIssuesManager } from "#veryfront/issues/index.ts";
+import { issuesCommand } from "./command.ts";
+
+async function withTempWorkingDirectory(fn: (dir: string) => Promise<void>): Promise<void> {
+  const originalDirectory = Deno.cwd();
+  const directory = await Deno.makeTempDir({ prefix: "issues-command-test-" });
+  try {
+    Deno.chdir(directory);
+    await fn(directory);
+  } finally {
+    Deno.chdir(originalDirectory);
+    await Deno.remove(directory, { recursive: true });
+  }
+}
 
 function parseLabels(arg: string | undefined): string[] | undefined {
   if (!arg) return undefined;
@@ -257,6 +271,77 @@ describe("cli/commands/issues", () => {
 
     it("should return string at first position", () => {
       assertEquals(getId({ _: ["issues", "create"] }, 1), "create");
+    });
+  });
+
+  describe("command behavior", () => {
+    it("rejects unknown list and update states", async () => {
+      await assertRejects(
+        () => issuesCommand({ _: ["issues", "list"], state: "unknown" }),
+        Error,
+        "Issue state must be open, closed, or a supported alias",
+      );
+      await assertRejects(
+        () =>
+          issuesCommand({
+            _: ["issues", "edit", "ISSUE-001"],
+            state: "unknown",
+          }),
+        Error,
+        "Issue state must be open, closed, or a supported alias",
+      );
+      await assertRejects(
+        () => issuesCommand({ _: ["issues", "list"], state: "" }),
+        Error,
+        "Issue state must be open, closed, or a supported alias",
+      );
+    });
+
+    it("rejects unsupported and empty issue prefixes", async () => {
+      await withTempWorkingDirectory(async () => {
+        for (const prefix of ["BUG", ""] as const) {
+          await assertRejects(
+            () =>
+              issuesCommand({
+                _: ["issues", "create"],
+                title: "Invalid prefix",
+                prefix,
+              }),
+            Error,
+            "Issue prefix must be ISSUE, TASK, or PLAN",
+          );
+        }
+      });
+    });
+
+    it("emits JSON envelopes and permits clearing the issue body", async () => {
+      await withTempWorkingDirectory(async (directory) => {
+        const output: string[] = [];
+        const originalLog = console.log;
+        console.log = (...values: unknown[]) => output.push(values.map(String).join(" "));
+        try {
+          await issuesCommand({
+            _: ["issues", "create"],
+            title: "Body",
+            body: "Original",
+            json: true,
+          });
+          await issuesCommand({
+            _: ["issues", "edit", "ISSUE-001"],
+            body: "",
+            json: true,
+          });
+        } finally {
+          console.log = originalLog;
+        }
+
+        const envelopes = output.map((entry) => JSON.parse(entry));
+        assertEquals(envelopes[0]?.success, true);
+        assertEquals(envelopes[0]?.command, "issues");
+        assertEquals(envelopes[1]?.success, true);
+        assertEquals(envelopes[1]?.command, "issues");
+        assertEquals((await createIssuesManager(directory).get("ISSUE-001"))?.body, "");
+      });
     });
   });
 });

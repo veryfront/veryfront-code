@@ -9,9 +9,13 @@ export interface DurableRunSink<
   TEvent = unknown,
   TTerminalState = unknown,
 > {
+  /** Starts run. */
   startRun(input: TStartInput): Promise<TRun> | TRun;
+  /** Appends events. */
   appendEvents(run: TRun, events: TEvent[]): Promise<void> | void;
+  /** Performs the finalize run operation. */
   finalizeRun(run: TRun, terminalState: TTerminalState): Promise<void> | void;
+  /** Performs the cancel run operation. */
   cancelRun(run: TRun, terminalState: TTerminalState): Promise<void> | void;
 }
 
@@ -22,50 +26,70 @@ export type AgentServiceRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE
 
 /** Configuration used by agent service cors. */
 export interface AgentServiceCorsConfig {
+  /** Origins value. */
   origins?: string[];
+  /** Whether credentials. */
   credentials?: boolean;
+  /** Whether methods. */
   allowMethods?: AgentServiceRouteMethod[];
+  /** Whether headers. */
   allowHeaders?: string[];
+  /** Max age seconds value. */
   maxAgeSeconds?: number;
 }
 
 /** Configuration used by agent service server. */
 export interface AgentServiceServerConfig {
+  /** Port value. */
   port?: number;
+  /** Base path value. */
   basePath?: string;
+  /** Whether cors. */
   cors?: boolean | AgentServiceCorsConfig;
 }
 
 /** Public API contract for agent service route. */
 export interface AgentServiceRoute {
+  /** Method value. */
   method: AgentServiceRouteMethod;
+  /** Path value. */
   path: string;
+  /** Callback that handles handler. */
   handler: (request: Request, params: Record<string, string>) => Promise<Response> | Response;
 }
 
+/** Transport-neutral runtime created from an agent service contract. */
 export interface AgentServiceRuntime<
   TStartInput = void,
   TRun = unknown,
   TEvent = unknown,
   TTerminalState = unknown,
 > {
+  /** Normalized service contract used by this runtime. */
   readonly contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>;
+  /** Handles an already constructed web request. */
   fetch(request: Request): Promise<Response>;
+  /** Constructs and handles a request from standard fetch input. */
   request(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+  /** Enables or clears graceful-shutdown request rejection. */
   setShuttingDown(shuttingDown?: boolean): void;
 }
 
 /** Public API contract for agent registry. */
 export type AgentRegistry = Record<string, Agent>;
 
+/** Fields shared by single-agent and registry service contracts. */
 export interface AgentServiceContractBase<
   TStartInput = void,
   TRun = unknown,
   TEvent = unknown,
   TTerminalState = unknown,
 > {
+  /** Stable service name. */
   serviceName: string;
+  /** Optional HTTP server configuration. */
   server?: AgentServiceServerConfig;
+  /** Optional durable run persistence adapter. */
   durableRunSink?: DurableRunSink<TStartInput, TRun, TEvent, TTerminalState>;
 }
 
@@ -79,7 +103,9 @@ export interface AgentServiceRegistryContract<
   TEvent = unknown,
   TTerminalState = unknown,
 > extends AgentServiceContractBase<TStartInput, TRun, TEvent, TTerminalState> {
+  /** Agents value. */
   agents: AgentRegistry;
+  /** Default agent ID value. */
   defaultAgentId: string;
 }
 
@@ -94,7 +120,9 @@ export interface AgentServiceSingleAgentContract<
   TEvent = unknown,
   TTerminalState = unknown,
 > extends AgentServiceContractBase<TStartInput, TRun, TEvent, TTerminalState> {
+  /** Agent used to execute requests. */
   agent: Agent;
+  /** Default agent ID value. */
   defaultAgentId?: string;
 }
 
@@ -117,7 +145,9 @@ export interface NormalizedAgentServiceContract<
   TEvent = unknown,
   TTerminalState = unknown,
 > extends AgentServiceContractBase<TStartInput, TRun, TEvent, TTerminalState> {
+  /** Agents value. */
   agents: AgentRegistry;
+  /** Default agent ID value. */
   defaultAgentId: string;
 }
 
@@ -130,7 +160,9 @@ export interface AgentServiceDefinition<
   TEvent = unknown,
   TTerminalState = unknown,
 > {
+  /** Contract value. */
   contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>;
+  /** Creates runtime. */
   createRuntime(options?: { routes?: AgentServiceRoute[] }): AgentServiceRuntime<
     TStartInput,
     TRun,

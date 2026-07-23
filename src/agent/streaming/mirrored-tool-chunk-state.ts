@@ -27,11 +27,17 @@ export function isDurableMirroredOutputChunk(
 
 /** State for mirrored tool chunk. */
 export interface MirroredToolChunkState {
+  /** Started tool call IDs value. */
   startedToolCallIds: Set<string>;
+  /** Input available tool call IDs value. */
   inputAvailableToolCallIds: Set<string>;
+  /** Output available tool call IDs value. */
   outputAvailableToolCallIds: Set<string>;
+  /** Output error tool call IDs value. */
   outputErrorToolCallIds: Set<string>;
+  /** Output denied tool call IDs value. */
   outputDeniedToolCallIds: Set<string>;
+  /** Tool call names value. */
   toolCallNames: Map<string, string>;
 }
 
@@ -107,45 +113,61 @@ export function recordMirroredToolChunkState(
 
 /** Public API contract for open tool calls. */
 export interface OpenToolCalls {
+  /** Needs input close value. */
   needsInputClose: Array<{ toolCallId: string; toolName: string }>;
+  /** Needs output close value. */
   needsOutputClose: Array<{ toolCallId: string; toolName: string }>;
 }
 
 /** Public API contract for hosted mirrored open tool call logger. */
 export interface HostedMirroredOpenToolCallLogger {
+  /** Writes a warning log entry. */
   warn: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
 /** Public API contract for hosted mirrored UI stream logger. */
 export interface HostedMirroredUiStreamLogger extends HostedMirroredOpenToolCallLogger {
+  /** Writes an error log entry. */
   error: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
 /** Public API contract for hosted mirrored UI stream watchdog. */
 export interface HostedMirroredUiStreamWatchdog {
+  /** Callback that handles observe. */
   observe: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => void;
+  /** Callback that handles dispose. */
   dispose: () => void;
 }
 
 /** Input payload for create hosted mirrored UI stream. */
 export interface CreateHostedMirroredUiStreamInput {
+  /** Source stream value. */
   sourceStream: AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>>;
+  /** Root stream watchdog value. */
   rootStreamWatchdog: HostedMirroredUiStreamWatchdog;
+  /** Mirrored tool chunk state value. */
   mirroredToolChunkState: MirroredToolChunkState;
+  /** Append chunk value. */
   appendChunk?: (
     chunk: ChatUiMessageChunk<ChatMessageMetadata>,
   ) => Promise<void> | void;
+  /** Callback that handles set mirrored output. */
   setMirroredOutput?: (value: boolean) => void;
+  /** Logger value. */
   logger?: HostedMirroredUiStreamLogger;
 }
 
 /** Input payload for close hosted mirrored open tool calls. */
 export interface CloseHostedMirroredOpenToolCallsInput {
+  /** Mirrored tool chunk state value. */
   mirroredToolChunkState: MirroredToolChunkState;
+  /** Error text value. */
   errorText: string;
+  /** Append chunk value. */
   appendChunk: (
     chunk: ChatUiMessageChunk<ChatMessageMetadata>,
   ) => Promise<void> | void;
+  /** Logger value. */
   logger?: HostedMirroredOpenToolCallLogger;
 }
 

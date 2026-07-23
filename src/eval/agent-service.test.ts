@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgUiRequestSchema } from "veryfront/agent";
 import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
@@ -109,6 +114,56 @@ describe("eval/agent-service", () => {
     });
   });
 
+  it("validates request inputs and preserves the authoritative eval case id", () => {
+    const body = buildAgentServiceEvalRequestBody({
+      exampleId: "authoritative-case",
+      input: {
+        prompt: "hello",
+        metadata: { evalCase: "spoofed-case" },
+      },
+    });
+    assertEquals(body.state.evalCase, "authoritative-case");
+
+    assertThrows(
+      () => buildAgentServiceEvalRequestBody({ exampleId: "case", input: undefined }),
+      Error,
+      "JSON-serializable",
+    );
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "case",
+          input: "hello",
+          maxSteps: -1,
+        }),
+      Error,
+      "maxSteps",
+    );
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "case",
+          input: "hello",
+          metadata: [] as unknown as Record<string, unknown>,
+        }),
+      Error,
+      "metadata",
+    );
+
+    let promptReads = 0;
+    const statefulBody = buildAgentServiceEvalRequestBody({
+      exampleId: "case",
+      input: {
+        get prompt() {
+          promptReads += 1;
+          return promptReads === 1 ? "stable prompt" : "changed prompt";
+        },
+      },
+    });
+    assertEquals(statefulBody.messages[0]?.parts[0]?.text, "stable prompt");
+    assertEquals(promptReads, 1);
+  });
+
   it("does not clear allowed tools for maxSteps-only runtime overrides", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",
@@ -197,13 +252,14 @@ describe("eval/agent-service", () => {
     assertEquals(requests.length, 1);
     assertEquals(requests[0]?.url, "http://127.0.0.1:4311/api/ag-ui");
     assertEquals(requests[0]?.init.method, "POST");
+    assertEquals(requests[0]?.init.signal instanceof AbortSignal, true);
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>).Authorization,
       "Bearer token",
     );
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>)["x-token"],
-      "token",
+      undefined,
     );
     assertEquals(
       (requests[0]?.init.headers as Record<string, string>)["x-project-slug"],
@@ -350,6 +406,36 @@ describe("eval/agent-service", () => {
     }]);
     assertEquals(record.metrics?.[0]?.pass, false);
     assertEquals(record.metrics?.[0]?.evidence, { failedTools: ["search"] });
+  });
+
+  it("reports missing tool errors and incomplete successful streams explicitly", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "ToolCallResult",
+            data: { toolCallId: "tool_1", toolCallName: "search", isError: true },
+          },
+        ]),
+    });
+    const definition = evalAgent({
+      target: "agent:test",
+      dataset: [{ id: "case", input: "hello" }],
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "case", input: "hello", metadata: {} },
+      repetition: 1,
+    });
+
+    assertEquals(typeof result === "string", false);
+    if (typeof result === "string") return;
+    assertEquals(result.completed, false);
+    assertEquals(result.error, "AG-UI run did not emit RUN_FINISHED");
+    assertEquals(result.trace?.toolCalls?.[0]?.error, "Tool call failed");
   });
 
   it("normalizes AG-UI tool arguments and results into eval traces", async () => {
@@ -615,6 +701,29 @@ describe("eval/agent-service", () => {
     assertEquals(result.status, "fail");
     assertStringIncludes(result.details, "setup failed");
     assertEquals(startRunInputs.map((input) => input.prompt), ["setup"]);
+  });
+
+  it("returns a failed durable canary result when preparation throws", async () => {
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      {} as DurableRunCanaryApiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "prepare-failure",
+      label: "Prepare failure",
+      prepare: () => Promise.reject(new Error("fixture unavailable")),
+    });
+    assertEquals(result.status, "fail");
+    assertEquals(result.conversationId, "unknown");
+    assertStringIncludes(result.details, "fixture unavailable");
   });
 
   it("does not revive the legacy agent testing import path", async () => {

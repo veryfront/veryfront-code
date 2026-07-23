@@ -1,5 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 
@@ -18,7 +18,16 @@ export const conversationRunEventTypes = {
   toolCallResult: "TOOL_CALL_RESULT",
 } as const;
 
-export const getConversationRunEventSchema = defineSchema((v) =>
+/** Durable event stored for a conversation run. */
+export interface ConversationRunEvent {
+  /** Event type identifier. */
+  type: string;
+  /** Event-specific payload fields. */
+  [key: string]: unknown;
+}
+
+/** Returns the conversation run event schema. */
+export const getConversationRunEventSchema: () => Schema<ConversationRunEvent> = defineSchema((v) =>
   v.object({
     type: v.string().min(1),
   }).passthrough()
@@ -27,12 +36,9 @@ export const getConversationRunEventSchema = defineSchema((v) =>
 /** Schema for conversation run event.
  * @deprecated Use getConversationRunEventSchema()
  */
-export const ConversationRunEventSchema = lazySchema(getConversationRunEventSchema);
-
-/** Event emitted for conversation run. */
-export type ConversationRunEvent =
-  & InferSchema<ReturnType<typeof getConversationRunEventSchema>>
-  & Record<string, unknown>;
+export const ConversationRunEventSchema: Schema<ConversationRunEvent> = lazySchema(
+  getConversationRunEventSchema,
+);
 
 function serializeToolInput(input: unknown): string {
   try {
@@ -65,15 +71,17 @@ export class ConversationRunEventEncoder {
   private activeTextContentId: string | null = null;
   private textContentIndex = 0;
 
-  private getToolResultMessageId(toolCallId: string) {
+  /** Returns tool result message ID. */
+  private getToolResultMessageId(toolCallId: string): string {
     return this.activeMessageId
       ? `${this.activeMessageId}:tool:${toolCallId}`
       : `tool:${toolCallId}`;
   }
 
+  /** Returns text message payload. */
   private getTextMessagePayload(
     chunk: Extract<ChatStreamEvent, { type: "text-start" | "text-delta" | "text-end" }>,
-  ) {
+  ): { messageId: string; contentId: string } {
     const explicitMessageId = typeof chunk.messageId === "string" && chunk.messageId.length > 0
       ? chunk.messageId
       : null;
@@ -94,11 +102,13 @@ export class ConversationRunEventEncoder {
 
   // Tool call state is only needed until the call resolves; keeping it for the
   // whole run would grow unbounded over long agent sessions.
+  /** Performs the release tool call state operation. */
   private releaseToolCallState(toolCallId: string): void {
     this.toolInputs.delete(toolCallId);
     this.streamedToolInputs.delete(toolCallId);
   }
 
+  /** Performs the serialize tool result content operation. */
   private serializeToolResultContent(value: unknown): string {
     if (typeof value === "string") {
       return value;
@@ -111,6 +121,7 @@ export class ConversationRunEventEncoder {
     }
   }
 
+  /** Performs the encode operation. */
   encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
     switch (chunk.type) {
       case "start":

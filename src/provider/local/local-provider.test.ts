@@ -15,7 +15,13 @@ import {
   assertThrows,
 } from "#std/assert";
 import { afterEach, describe, it } from "#std/testing/bdd";
-import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
+import {
+  DEFAULT_LOCAL_MODEL,
+  getLocalModelIds,
+  resolveLocalEmbeddingModel,
+  resolveLocalModel,
+} from "./model-catalog.ts";
+import { createLocalEmbeddingModel } from "./embedding-runtime-adapter.ts";
 import { createLocalModel } from "./model-runtime-adapter.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
@@ -57,6 +63,7 @@ describe("model-catalog", () => {
     assertEquals(info.hfId, "onnx-community/Qwen3.5-0.8B-ONNX");
     assertEquals(info.engine, "conditional-generation");
     assertEquals(info.modelClass, "qwen3_5");
+    assertEquals(Object.isFrozen(info), true);
   });
 
   it("rejects unknown local model IDs", () => {
@@ -65,8 +72,28 @@ describe("model-catalog", () => {
     assertEquals(vfError?.type, "config");
     assertEquals(
       vfError?.message,
-      'Unsupported local model "custom-org/custom-model". Supported local models: qwen3.5-0.8b, gemma4-e2b-it, gemma4-e4b-it.',
+      "Unsupported local model. Supported local models: qwen3.5-0.8b, gemma4-e2b-it, gemma4-e4b-it.",
     );
+    assertThrows(() => resolveLocalModel("__proto__"), Error, "Unsupported local model");
+    assertThrows(() => resolveLocalModel("constructor"), Error, "Unsupported local model");
+  });
+
+  it("validates custom HuggingFace embedding model IDs", () => {
+    assertEquals(
+      resolveLocalEmbeddingModel("custom-org/custom-model").hfId,
+      "custom-org/custom-model",
+    );
+    for (
+      const modelId of [
+        "",
+        "../private-model",
+        "/absolute/model",
+        "https://example.com/model",
+        "__proto__",
+      ]
+    ) {
+      assertThrows(() => resolveLocalEmbeddingModel(modelId), Error, "embedding model");
+    }
   });
 
   it("has a default model set", () => {
@@ -101,6 +128,16 @@ describe("model-runtime-adapter", () => {
     assertEquals((model as any).modelId, "local/qwen3.5-0.8b");
   });
 
+  it("rejects explicit invalid model IDs when creating a runtime", () => {
+    assertThrows(() => createLocalModel(""), Error, "Unsupported local model");
+    assertThrows(() => createLocalModel("unknown-model"), Error, "Unsupported local model");
+    assertThrows(
+      () => createLocalEmbeddingModel(""),
+      Error,
+      "embedding model",
+    );
+  });
+
   it("sets _isVfLocalModel marker for ensureModelReady detection", () => {
     const model = createLocalModel("qwen3.5-0.8b");
     const m = model as Record<string, unknown>;
@@ -125,6 +162,59 @@ describe("model-runtime-adapter", () => {
       if (prev === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
       else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", prev);
     }
+  });
+
+  it("rejects invalid generation options before starting inference", async () => {
+    const model = createLocalModel("qwen3.5-0.8b");
+    await assertRejects(
+      () => model.doGenerate({ prompt: [], maxOutputTokens: Number.POSITIVE_INFINITY }),
+      RangeError,
+      "maxNewTokens",
+    );
+    await assertRejects(
+      () => model.doStream({ prompt: [], temperature: Number.NaN }),
+      RangeError,
+      "temperature",
+    );
+  });
+
+  it("rejects unsupported tool history instead of silently dropping it", async () => {
+    const previous = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
+    Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");
+    try {
+      const model = createLocalModel();
+      await assertRejects(
+        () =>
+          model.doGenerate({
+            prompt: [{
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId: "tool-1",
+                toolName: "lookup",
+                output: { type: "json", value: { ok: true } },
+              }],
+            }],
+          }),
+        TypeError,
+        "does not support tool messages",
+      );
+    } finally {
+      if (previous === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
+      else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", previous);
+    }
+  });
+
+  it("honors an already-aborted local embedding request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const model = createLocalEmbeddingModel();
+
+    await assertRejects(
+      () => model.doEmbed({ values: ["hello"], abortSignal: controller.signal }),
+      DOMException,
+      "aborted",
+    );
   });
 });
 

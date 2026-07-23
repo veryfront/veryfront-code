@@ -4,14 +4,18 @@ import {
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
-  type AgentRunSessionManager,
-  agentRunSessionManager,
   RunNotActiveError,
   ToolResultConflictError,
   ToolResultNotWaitingError,
 } from "#veryfront/internal-agents/session-manager.ts";
 import {
+  type AgentRunControl,
+  AgentRunControlBindingError,
+} from "#veryfront/internal-agents/run-control.ts";
+import { agentRunControl } from "#veryfront/internal-agents/agent-run-control-runtime.ts";
+import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyEncodingError,
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
@@ -19,12 +23,9 @@ import { getResumeSignalSchema } from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { parseControlPlaneRunPath } from "./control-plane-run-path.ts";
 
 const RESUME_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/resume$/;
-
-function getRunId(pathname: string): string | null {
-  return RESUME_PATH_REGEX.exec(pathname)?.[1] ?? null;
-}
 
 export class AgentRunResumeHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -35,7 +36,7 @@ export class AgentRunResumeHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly sessionManager: AgentRunSessionManager = agentRunSessionManager) {
+  constructor(private readonly runControl: AgentRunControl = agentRunControl) {
     super();
   }
 
@@ -44,9 +45,16 @@ export class AgentRunResumeHandler extends BaseHandler {
       return this.continue();
     }
 
-    const runId = getRunId(new URL(req.url).pathname);
-    if (!runId) {
+    const pathMatch = parseControlPlaneRunPath(new URL(req.url).pathname, RESUME_PATH_REGEX);
+    if (!pathMatch.matched) {
       return this.continue();
+    }
+    const runId = pathMatch.runId;
+    if (!runId) {
+      const builder = this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req);
+      return this.respond(builder.json({ error: "Invalid run id" }, 400));
     }
 
     return this.withProxyContext(ctx, async () => {
@@ -59,16 +67,19 @@ export class AgentRunResumeHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        await verifyControlPlaneRequest(req, ctx, rawBody, {
+        const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
         });
 
         const signal = getResumeSignalSchema().parse(JSON.parse(rawBody));
-        const outcome = this.sessionManager.submitToolResult(runId, {
+        const outcome = await this.runControl.submitToolResult(runId, {
           toolCallId: signal.toolCallId,
           result: signal.result,
           isError: signal.isError,
+        }, {
+          projectId: verifiedClaims.project_id,
+          projectSlug: verifiedClaims.aud,
         });
 
         return this.respond(builder.json(outcome, 200));
@@ -81,7 +92,15 @@ export class AgentRunResumeHandler extends BaseHandler {
           return this.respond(builder.json({ error: error.message }, error.status));
         }
 
-        if (error instanceof SyntaxError || (error instanceof Error && error.name === "ZodError")) {
+        if (error instanceof AgentRunControlBindingError) {
+          return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
+        }
+
+        if (
+          error instanceof InternalAgentRequestBodyEncodingError ||
+          error instanceof SyntaxError ||
+          (error instanceof Error && error.name === "ZodError")
+        ) {
           return this.respond(builder.json({ error: "Invalid resume request" }, 400));
         }
 
@@ -98,10 +117,7 @@ export class AgentRunResumeHandler extends BaseHandler {
         }
 
         this.logWarn("Internal agent run resume failed", {
-          error: error instanceof Error ? error.message : String(error),
-          runId,
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
+          failureCategory: "handler-error",
         });
         return this.respond(builder.json({ error: "Internal resume failed" }, 500));
       }

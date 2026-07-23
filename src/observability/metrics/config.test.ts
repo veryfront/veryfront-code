@@ -30,6 +30,11 @@ describe("observability/metrics/config", () => {
       assertEquals(result.prefix, "veryfront");
     });
 
+    it("normalizes missing and non-object runtime config", () => {
+      assertEquals(loadConfig(undefined, emptyEnvAdapter), DEFAULT_CONFIG);
+      assertEquals(loadConfig(null as never, emptyEnvAdapter), DEFAULT_CONFIG);
+    });
+
     it("should merge user config", () => {
       const result = loadConfig({ enabled: true, prefix: "myapp" }, emptyEnvAdapter);
       assertEquals(result.enabled, true);
@@ -85,9 +90,45 @@ describe("observability/metrics/config", () => {
       };
 
       const result = loadConfig({}, adapterWithEnv(mockEnv));
-      // Both are provided; the general endpoint is applied first,
-      // then metrics endpoint overrides if truthy
-      assertEquals(result.endpoint !== undefined, true);
+      assertEquals(result.endpoint, "http://metrics:4318");
+    });
+
+    it("normalizes invalid runtime configuration to safe defaults", () => {
+      const result = loadConfig(
+        {
+          enabled: "yes" as unknown as boolean,
+          exporter: "custom" as unknown as "console",
+          prefix: "invalid prefix",
+          collectInterval: Number.POSITIVE_INFINITY,
+          debug: "yes" as unknown as boolean,
+        },
+        emptyEnvAdapter,
+      );
+
+      assertEquals(result.enabled, false);
+      assertEquals(result.exporter, "console");
+      assertEquals(result.prefix, "veryfront");
+      assertEquals(result.collectInterval, DEFAULT_CONFIG.collectInterval);
+      assertEquals(result.debug, false);
+    });
+
+    it("bounds the collection interval", () => {
+      const result = loadConfig({ collectInterval: 86_400_001 }, emptyEnvAdapter);
+      assertEquals(result.collectInterval, DEFAULT_CONFIG.collectInterval);
+    });
+
+    it("does not let a failing environment adapter break metrics setup", () => {
+      const result = loadConfig(
+        { enabled: true, prefix: "application" },
+        adapterWithEnv({
+          get: () => {
+            throw new Error("adapter unavailable");
+          },
+        }),
+      );
+
+      assertEquals(result.enabled, true);
+      assertEquals(result.prefix, "application");
     });
   });
 });

@@ -22,14 +22,53 @@ function getEnvString(key: string): string | undefined {
   }
 }
 
-function getEnvNumber(key: string, fallback: number): number {
+const MAX_CACHE_ENTRY_COUNT = 1_000_000;
+const MAX_CACHE_SIZE_MB = 4_096;
+const MAX_CACHE_TTL_SECONDS = 365 * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
+const MAX_CACHE_TTL_MS = MAX_CACHE_TTL_SECONDS * MS_PER_SECOND;
+const MAX_CACHE_CONCURRENCY = 100_000;
+
+function getEnvInteger(
+  key: string,
+  fallback: number,
+  bounds: { min: number; max: number },
+): number {
   const value = getEnvString(key);
   if (value == null) return fallback;
 
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) return fallback;
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return fallback;
+
+  const parsed = Number(normalized);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < bounds.min ||
+    parsed > bounds.max
+  ) {
+    return fallback;
+  }
 
   return parsed;
+}
+
+function getEnvEntryCount(key: string, fallback: number): number {
+  return getEnvInteger(key, fallback, { min: 1, max: MAX_CACHE_ENTRY_COUNT });
+}
+
+function getEnvSizeMb(key: string, fallback: number): number {
+  return getEnvInteger(key, fallback, { min: 1, max: MAX_CACHE_SIZE_MB });
+}
+
+function getEnvTtlSeconds(key: string, fallback: number): number {
+  return getEnvInteger(key, fallback, { min: 1, max: MAX_CACHE_TTL_SECONDS });
+}
+
+function getEnvTtlMs(key: string, fallback: number): number {
+  return getEnvInteger(key, fallback, { min: 1, max: MAX_CACHE_TTL_MS });
+}
+
+function getEnvConcurrency(key: string, fallback: number): number {
+  return getEnvInteger(key, fallback, { min: 1, max: MAX_CACHE_CONCURRENCY });
 }
 
 function isProductionMode(): boolean {
@@ -42,19 +81,22 @@ function isProductionMode(): boolean {
 
 // Cache entry limits (override via env vars)
 /** Default value for lru max entries. */
-export const DEFAULT_LRU_MAX_ENTRIES = getEnvNumber("LRU_DEFAULT_MAX_ENTRIES", 100);
+export const DEFAULT_LRU_MAX_ENTRIES = getEnvEntryCount("LRU_DEFAULT_MAX_ENTRIES", 100);
 
-export const COMPONENT_LOADER_MAX_ENTRIES = getEnvNumber("COMPONENT_LOADER_MAX_ENTRIES", 200);
+export const COMPONENT_LOADER_MAX_ENTRIES = getEnvEntryCount(
+  "COMPONENT_LOADER_MAX_ENTRIES",
+  200,
+);
 export const COMPONENT_LOADER_TTL_MS = 10 * MS_PER_MINUTE;
 
-export const MDX_RENDERER_MAX_ENTRIES = getEnvNumber("MDX_RENDERER_MAX_ENTRIES", 500);
+export const MDX_RENDERER_MAX_ENTRIES = getEnvEntryCount("MDX_RENDERER_MAX_ENTRIES", 500);
 export const MDX_RENDERER_TTL_MS = 10 * MS_PER_MINUTE;
 
-export const RENDERER_CORE_MAX_ENTRIES = getEnvNumber("RENDERER_CORE_MAX_ENTRIES", 200);
+export const RENDERER_CORE_MAX_ENTRIES = getEnvEntryCount("RENDERER_CORE_MAX_ENTRIES", 200);
 export const RENDERER_CORE_TTL_MS = 5 * MS_PER_MINUTE;
 
 /** Shared TSX layout max entries value. */
-export const TSX_LAYOUT_MAX_ENTRIES = getEnvNumber("TSX_LAYOUT_MAX_ENTRIES", 100);
+export const TSX_LAYOUT_MAX_ENTRIES = getEnvEntryCount("TSX_LAYOUT_MAX_ENTRIES", 100);
 export const TSX_LAYOUT_TTL_MS = 10 * MS_PER_MINUTE;
 
 /**
@@ -64,12 +106,13 @@ export const TSX_LAYOUT_TTL_MS = 10 * MS_PER_MINUTE;
  * one project consumes more than ~10 % of the global budget.
  * Set via TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES env var.
  */
-export const TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES = getEnvNumber(
+export const TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES = getEnvInteger(
   "TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES",
   Math.ceil(TSX_LAYOUT_MAX_ENTRIES / 10),
+  { min: 1, max: TSX_LAYOUT_MAX_ENTRIES },
 );
 
-export const DATA_FETCHING_MAX_ENTRIES = getEnvNumber("DATA_FETCHING_MAX_ENTRIES", 500);
+export const DATA_FETCHING_MAX_ENTRIES = getEnvEntryCount("DATA_FETCHING_MAX_ENTRIES", 500);
 export const DATA_FETCHING_TTL_MS = 10 * MS_PER_MINUTE;
 
 export const MDX_CACHE_TTL_PRODUCTION_MS = ONE_DAY_MS;
@@ -90,38 +133,38 @@ export const SERVER_ACTION_DEFAULT_TTL_SEC = MINUTES_PER_HOUR * SECONDS_PER_MINU
 // Production: longer TTLs (release content is immutable)
 // Preview: shorter TTLs (branch content changes frequently)
 
-export const DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC = getEnvNumber(
+export const DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_SSR_MODULE_TTL_SEC",
   6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE,
 );
-export const DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC = getEnvNumber(
+export const DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC",
   10 * SECONDS_PER_MINUTE,
 );
 
-export const DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC = getEnvNumber(
+export const DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_TRANSFORM_TTL_SEC",
   6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE,
 );
-export const DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC = getEnvNumber(
+export const DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC",
   10 * SECONDS_PER_MINUTE,
 );
 
-export const DISTRIBUTED_FILE_TTL_PRODUCTION_SEC = getEnvNumber(
+export const DISTRIBUTED_FILE_TTL_PRODUCTION_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_FILE_TTL_SEC",
   MINUTES_PER_HOUR * SECONDS_PER_MINUTE,
 );
-export const DISTRIBUTED_FILE_TTL_PREVIEW_SEC = getEnvNumber(
+export const DISTRIBUTED_FILE_TTL_PREVIEW_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_FILE_TTL_PREVIEW_SEC",
   5 * SECONDS_PER_MINUTE,
 );
 
-export const DISTRIBUTED_CSS_TTL_PRODUCTION_SEC = getEnvNumber(
+export const DISTRIBUTED_CSS_TTL_PRODUCTION_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_CSS_TTL_SEC",
   6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE,
 );
-export const DISTRIBUTED_CSS_TTL_PREVIEW_SEC = getEnvNumber(
+export const DISTRIBUTED_CSS_TTL_PREVIEW_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_CSS_TTL_PREVIEW_SEC",
   10 * SECONDS_PER_MINUTE,
 );
@@ -152,13 +195,13 @@ export function getDistributedCacheTTL(
 
 // Size limits (override via env vars)
 export const DENO_KV_SAFE_SIZE_LIMIT_BYTES = 64_000;
-export const LRU_DEFAULT_MAX_ENTRIES_V2 = getEnvNumber("LRU_MAX_ENTRIES", 2000);
-export const LRU_DEFAULT_MAX_SIZE_BYTES = getEnvNumber("LRU_MAX_SIZE_MB", 200) * 1024 * 1024;
-export const MEMORY_CACHE_MAX_ENTRIES = getEnvNumber("MEMORY_CACHE_MAX_ENTRIES", 2000);
-export const MEMORY_CACHE_MAX_SIZE_BYTES = getEnvNumber("MEMORY_CACHE_MAX_SIZE_MB", 50) * 1024 *
+export const LRU_DEFAULT_MAX_ENTRIES_V2 = getEnvEntryCount("LRU_MAX_ENTRIES", 2000);
+export const LRU_DEFAULT_MAX_SIZE_BYTES = getEnvSizeMb("LRU_MAX_SIZE_MB", 200) * 1024 * 1024;
+export const MEMORY_CACHE_MAX_ENTRIES = getEnvEntryCount("MEMORY_CACHE_MAX_ENTRIES", 2000);
+export const MEMORY_CACHE_MAX_SIZE_BYTES = getEnvSizeMb("MEMORY_CACHE_MAX_SIZE_MB", 50) * 1024 *
   1024;
-export const FILE_CACHE_MAX_ENTRIES = getEnvNumber("FILE_CACHE_MAX_ENTRIES", 1000);
-export const FILE_CACHE_MAX_SIZE_MB = getEnvNumber("FILE_CACHE_MAX_SIZE_MB", 100);
+export const FILE_CACHE_MAX_ENTRIES = getEnvEntryCount("FILE_CACHE_MAX_ENTRIES", 1000);
+export const FILE_CACHE_MAX_SIZE_MB = getEnvSizeMb("FILE_CACHE_MAX_SIZE_MB", 100);
 
 // HTTP cache headers
 export const HTTP_CACHE_SHORT_MAX_AGE_SEC = 60;
@@ -170,30 +213,34 @@ export const CACHE_CLEANUP_INTERVAL_MS = 60000;
 export const CLEANUP_INTERVAL_MULTIPLIER = 2;
 
 // Concurrency limits (override via env vars)
-export const MAX_CONCURRENT_REVALIDATIONS = getEnvNumber("MAX_CONCURRENT_REVALIDATIONS", 32);
-export const MAX_CONCURRENT_HTTP_FETCHES = getEnvNumber("MAX_CONCURRENT_HTTP_FETCHES", 50);
-export const REVALIDATION_TIMEOUT_MS = getEnvNumber("REVALIDATION_TIMEOUT_MS", 15000);
+export const MAX_CONCURRENT_REVALIDATIONS = getEnvConcurrency("MAX_CONCURRENT_REVALIDATIONS", 32);
+export const MAX_CONCURRENT_HTTP_FETCHES = getEnvConcurrency("MAX_CONCURRENT_HTTP_FETCHES", 50);
+export const REVALIDATION_TIMEOUT_MS = getEnvTtlMs("REVALIDATION_TIMEOUT_MS", 15000);
 
 // Per-project fairness limit for revalidations (prevents one project from starving others)
-export const REVALIDATION_PER_PROJECT_LIMIT = getEnvNumber(
+export const REVALIDATION_PER_PROJECT_LIMIT = getEnvInteger(
   "REVALIDATION_PER_PROJECT_LIMIT",
   Math.ceil(MAX_CONCURRENT_REVALIDATIONS / 3),
+  { min: 0, max: MAX_CONCURRENT_REVALIDATIONS },
 );
 
 // Bundle manifest for atomic HTTP bundle group validation
-export const BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC = getEnvNumber(
+export const BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC = getEnvTtlSeconds(
   "BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC",
   HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
 );
-export const BUNDLE_MANIFEST_LRU_MAX_ENTRIES = getEnvNumber(
+export const BUNDLE_MANIFEST_LRU_MAX_ENTRIES = getEnvEntryCount(
   "BUNDLE_MANIFEST_LRU_MAX_ENTRIES",
   5000,
 );
 
 // HTTP module cache (esm.sh, CDN bundles)
 // These bundles are immutable once fetched, so long TTLs are safe
-export const HTTP_MODULE_CACHE_MAX_ENTRIES = getEnvNumber("HTTP_MODULE_CACHE_MAX_ENTRIES", 2000);
-export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber(
+export const HTTP_MODULE_CACHE_MAX_ENTRIES = getEnvEntryCount(
+  "HTTP_MODULE_CACHE_MAX_ENTRIES",
+  2000,
+);
+export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvTtlSeconds(
   "HTTP_MODULE_DISTRIBUTED_TTL_SEC",
   HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
 );
@@ -202,22 +249,22 @@ export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber(
 // MUST be shorter than HTTP_MODULE_DISTRIBUTED_TTL_SEC (24h) so that
 // HTTP bundles always outlive the transforms that reference them.
 // 6h matches DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC used by the SSR loader.
-export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvNumber(
+export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvTtlSeconds(
   "TRANSFORM_DISTRIBUTED_TTL_SEC",
   6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 6 hours (21600)
 );
 
 // Pod-level module cache (shared across all RenderPipeline instances)
 // These caches map module paths to transformed temp file paths
-export const MODULE_CACHE_MAX_ENTRIES = getEnvNumber("MODULE_CACHE_MAX_ENTRIES", 10000);
-export const MODULE_CACHE_TTL_MS = getEnvNumber(
+export const MODULE_CACHE_MAX_ENTRIES = getEnvEntryCount("MODULE_CACHE_MAX_ENTRIES", 10000);
+export const MODULE_CACHE_TTL_MS = getEnvTtlMs(
   "MODULE_CACHE_TTL_MS",
   5 * MS_PER_MINUTE, // 5 minutes - short enough to pick up changes, long enough to cache
 );
 
 // ESM cache for external module mappings
-export const ESM_CACHE_MAX_ENTRIES = getEnvNumber("ESM_CACHE_MAX_ENTRIES", 5000);
-export const ESM_CACHE_TTL_MS = getEnvNumber(
+export const ESM_CACHE_MAX_ENTRIES = getEnvEntryCount("ESM_CACHE_MAX_ENTRIES", 5000);
+export const ESM_CACHE_TTL_MS = getEnvTtlMs(
   "ESM_CACHE_TTL_MS",
   10 * MS_PER_MINUTE, // 10 minutes - external modules change less frequently
 );

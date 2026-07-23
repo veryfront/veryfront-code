@@ -6,6 +6,7 @@ import { bundlerLogger as logger } from "#veryfront/utils";
 import * as esbuild from "veryfront/extensions/bundler";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
+import { ensureError } from "#veryfront/errors";
 
 export function optimizeBundle(
   result: BundleResult,
@@ -17,7 +18,8 @@ export function optimizeBundle(
     "build.renderer.optimizeBundle",
     async (): Promise<void> => {
       try {
-        for (const [, output] of result.outputs) {
+        const optimized = new Map<string, string>();
+        for (const [path, output] of result.outputs) {
           if (output.type !== "js") continue;
 
           const transformed = await esbuild.transform(output.content, {
@@ -26,7 +28,12 @@ export function optimizeBundle(
             loader: "js",
           });
 
-          output.content = transformed.code;
+          optimized.set(path, transformed.code);
+        }
+
+        for (const [path, content] of optimized) {
+          const output = result.outputs.get(path);
+          if (output) output.content = content;
         }
 
         logger.info("Bundle optimized", {
@@ -34,7 +41,8 @@ export function optimizeBundle(
           mode: options.mode,
         });
       } catch (error) {
-        logger.error("Bundle optimization failed", { error });
+        logger.error("Bundle optimization failed");
+        result.errors.push(ensureError(error));
       }
     },
     {

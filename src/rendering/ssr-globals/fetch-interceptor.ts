@@ -15,6 +15,7 @@ import {
 } from "./context.ts";
 import { setActiveSpanAttributes, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 
 function isProjectDomain(hostname: string): boolean {
   const projectDomain = getSSRProjectDomain();
@@ -61,21 +62,23 @@ function createSSRFetch(): typeof fetch {
     const url = extractUrl(input);
     const rewrittenUrl = rewriteFetchUrlForSSR(url);
     const clientOnly = isSSRClientOnlyFetching() && isClientOnlyApiUrl(rewrittenUrl);
+    const safeRewrittenUrl = sanitizeUrlForSpan(rewrittenUrl);
 
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const spanAttributes: Record<string, string | number | boolean> = {
       "http.method": method,
-      "http.url": rewrittenUrl,
+      "http.url": safeRewrittenUrl,
       "veryfront.fetch_client_only": clientOnly,
       "veryfront.fetch_rewritten": rewrittenUrl !== url,
     };
 
-    if (rewrittenUrl !== url) spanAttributes["http.original_url"] = url;
+    if (rewrittenUrl !== url) {
+      spanAttributes["http.original_url"] = sanitizeUrlForSpan(url);
+    }
 
     try {
       const parsed = new URL(rewrittenUrl);
-      spanAttributes["http.target"] = `${parsed.pathname}${parsed.search}`;
-      spanAttributes["http.host"] = parsed.host;
+      spanAttributes["http.target"] = parsed.pathname;
       spanAttributes["http.scheme"] = parsed.protocol.replace(":", "");
     } catch (_) {
       /* expected: non-absolute URLs won't provide host/scheme */
@@ -123,23 +126,61 @@ function createSSRFetch(): typeof fetch {
   };
 }
 
+let installedSSRFetch: typeof fetch | undefined;
+let persistentInterceptionEnabled = false;
+let fetchInterceptionLeaseCount = 0;
+
+function installSSRFetchInterception(): void {
+  if (installedSSRFetch) {
+    if (globalThis.fetch !== installedSSRFetch) {
+      throw new Error("SSR fetch interceptor ownership changed while active");
+    }
+    return;
+  }
+  if (globalThis.fetch !== originalFetch) {
+    throw new Error("SSR fetch interceptor cannot replace another fetch implementation");
+  }
+  installedSSRFetch = createSSRFetch();
+  (globalThis as Record<string, unknown>).fetch = installedSSRFetch;
+}
+
+function restoreOriginalFetch(): void {
+  if (installedSSRFetch && globalThis.fetch === installedSSRFetch) {
+    (globalThis as Record<string, unknown>).fetch = originalFetch;
+  }
+  installedSSRFetch = undefined;
+}
+
 /**
  * Install the SSR fetch interceptor as a process-global patch.
  *
- * CONCURRENCY CONSTRAINT: this mutates `globalThis.fetch` for the entire
- * process. In the multi-tenant renderer, all concurrent SSR renders share the
- * same patched fetch. The URL-rewrite logic reads `getSSRServerPort()` /
- * `getSSRProjectDomain()` which are themselves process-wide globals set once at
- * server startup (see context.ts). As long as those values do not change between
- * requests this is safe; if they do, the last writer wins and cross-tenant
- * request bleed is possible. Per-request scoping (e.g. AsyncLocalStorage) would
- * eliminate the hazard but requires broader refactoring.
+ * The function mutates `globalThis.fetch` for the entire process. URL rewriting
+ * reads request-scoped settings when a server handler provides them, which
+ * keeps concurrent production server instances isolated.
  */
 export function enableSSRFetchInterception(): void {
   if (!getSSRServerPort()) return;
-  (globalThis as Record<string, unknown>).fetch = createSSRFetch();
+  installSSRFetchInterception();
+  persistentInterceptionEnabled = true;
 }
 
 export function disableSSRFetchInterception(): void {
-  (globalThis as Record<string, unknown>).fetch = originalFetch;
+  persistentInterceptionEnabled = false;
+  if (fetchInterceptionLeaseCount === 0) restoreOriginalFetch();
+}
+
+/** Acquire process-wide fetch interception without replacing another server's lease. */
+export function acquireSSRFetchInterception(): () => void {
+  installSSRFetchInterception();
+  fetchInterceptionLeaseCount++;
+
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    fetchInterceptionLeaseCount--;
+    if (fetchInterceptionLeaseCount === 0 && !persistentInterceptionEnabled) {
+      restoreOriginalFetch();
+    }
+  };
 }

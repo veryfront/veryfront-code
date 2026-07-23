@@ -7,7 +7,7 @@ import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { createLoadSkillReferenceTool } from "#veryfront/skill/tools.ts";
+import { ensureAgentSkillToolsRegistered } from "../factory.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
@@ -112,7 +112,7 @@ function getRuntimeAgent(
 
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
   try {
-    toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    ensureAgentSkillToolsRegistered();
     toolRegistry.registerShared(
       "shared_echo",
       tool({

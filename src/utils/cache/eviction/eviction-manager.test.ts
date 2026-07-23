@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { EvictionManager, type LRUTrackerInterface } from "./eviction-manager.ts";
+import {
+  EvictionManager,
+  type EvictionManagerOptions,
+  type LRUTrackerInterface,
+} from "./eviction-manager.ts";
 
 function createMockTracker(keys: string[]): LRUTrackerInterface {
   const queue = [...keys];
@@ -22,6 +27,46 @@ function createMockTracker(keys: string[]): LRUTrackerInterface {
 }
 
 describe("EvictionManager", () => {
+  describe("validation", () => {
+    it("should reject invalid constructor options", () => {
+      const invalidOptions = [
+        null,
+        [],
+        { onEvict: "not-a-function" },
+        { loggerContext: 42 },
+      ];
+
+      for (const options of invalidOptions) {
+        const error = assertThrows(
+          () => new EvictionManager(options as unknown as EvictionManagerOptions),
+          VeryfrontError,
+        );
+        assertEquals(error.slug, "invalid-argument");
+      }
+    });
+
+    it("should reject invalid eviction limits and sizes", () => {
+      const em = new EvictionManager();
+      const cache = new Map<string, { size: number }>();
+      const tracker = createMockTracker([]);
+      const invalidInputs = [
+        { newEntrySize: -1, maxSize: 1, maxMemory: 1 },
+        { newEntrySize: 0.5, maxSize: 1, maxMemory: 1 },
+        { newEntrySize: 0, maxSize: 0, maxMemory: 1 },
+        { newEntrySize: 0, maxSize: 1, maxMemory: 0 },
+        { newEntrySize: 0, maxSize: 1, maxMemory: Number.POSITIVE_INFINITY },
+      ];
+
+      for (const { newEntrySize, maxSize, maxMemory } of invalidInputs) {
+        const error = assertThrows(
+          () => em.evictIfNeeded(cache, tracker, newEntrySize, maxSize, maxMemory),
+          VeryfrontError,
+        );
+        assertEquals(error.slug, "invalid-argument");
+      }
+    });
+  });
+
   describe("isExpired", () => {
     it("should return true when entry expiry is in the past", () => {
       const em = new EvictionManager();
@@ -68,6 +113,15 @@ describe("EvictionManager", () => {
       assertEquals(em.evictLRU(cache, tracker), 0);
     });
 
+    it("should evict an entry whose key is an empty string", () => {
+      const em = new EvictionManager();
+      const cache = new Map([["", { size: 5 }]]);
+      const tracker = createMockTracker([""]);
+
+      assertEquals(em.evictLRU(cache, tracker), 5);
+      assertEquals(cache.size, 0);
+    });
+
     it("should call onEvict callback", () => {
       let evictedKey = "";
       const em = new EvictionManager({
@@ -80,6 +134,19 @@ describe("EvictionManager", () => {
 
       em.evictLRU(cache, tracker);
       assertEquals(evictedKey, "a");
+    });
+
+    it("should preserve eviction when onEvict throws", () => {
+      const em = new EvictionManager({
+        onEvict: () => {
+          throw new Error("private callback failure");
+        },
+      });
+      const cache = new Map([["private-key", { size: 5, value: "val" }]]);
+      const tracker = createMockTracker(["private-key"]);
+
+      assertEquals(em.evictLRU(cache, tracker), 5);
+      assertEquals(cache.size, 0);
     });
   });
 
@@ -106,6 +173,50 @@ describe("EvictionManager", () => {
 
       em.evictIfNeeded(cache, tracker, 10, 100, 80);
       assertEquals(cache.size < 2, true);
+    });
+
+    it("should fail when count eviction cannot make progress", () => {
+      const em = new EvictionManager();
+      const cache = new Map([["stored", { size: 10 }]]);
+      let getLruCalls = 0;
+      const tracker: LRUTrackerInterface = {
+        getLRU() {
+          getLruCalls += 1;
+          if (getLruCalls > 1) throw new Error("tracker called after failed eviction");
+          return "missing";
+        },
+        remove() {},
+      };
+
+      const error = assertThrows(
+        () => em.evictIfNeeded(cache, tracker, 0, 1, 100),
+        VeryfrontError,
+      );
+      assertEquals(error.slug, "cache-invariant-violation");
+      assertEquals(getLruCalls, 1);
+      assertEquals(cache.size, 1);
+    });
+
+    it("should fail when memory eviction cannot make progress", () => {
+      const em = new EvictionManager();
+      const cache = new Map([["stored", { size: 10 }]]);
+      let getLruCalls = 0;
+      const tracker: LRUTrackerInterface = {
+        getLRU() {
+          getLruCalls += 1;
+          if (getLruCalls > 1) throw new Error("tracker called after failed eviction");
+          return "missing";
+        },
+        remove() {},
+      };
+
+      const error = assertThrows(
+        () => em.evictIfNeeded(cache, tracker, 10, 100, 10),
+        VeryfrontError,
+      );
+      assertEquals(error.slug, "cache-invariant-violation");
+      assertEquals(getLruCalls, 1);
+      assertEquals(cache.size, 1);
     });
   });
 

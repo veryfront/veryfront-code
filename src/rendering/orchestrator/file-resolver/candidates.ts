@@ -17,9 +17,10 @@ export async function findFirstExisting(
     try {
       await statFn(fullPath);
       return fullPath;
-    } catch (_) {
-      /* expected: file may not exist at this candidate path */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
   }
   return null;
 }
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";

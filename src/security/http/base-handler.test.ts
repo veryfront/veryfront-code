@@ -8,7 +8,12 @@ import {
   setGlobalMetricsAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  createWebSocketUpgradeResponse,
+  type RuntimeResponse,
+} from "#veryfront/platform/adapters/base.ts";
 import { metrics } from "#veryfront/metrics";
+import { resetMetricsForTests } from "../../metrics/testing.ts";
 import { BaseHandler } from "./base-handler.ts";
 import type {
   HandlerContext,
@@ -17,15 +22,22 @@ import type {
   HandlerResult,
 } from "#veryfront/types";
 
-class TestHandler extends BaseHandler {
+class TestHandler extends BaseHandler<RuntimeResponse> {
   metadata: HandlerMetadata = {
     name: "TestHandler",
     priority: 50 as HandlerPriority,
     patterns: [],
   };
 
-  async handle(_req: Request, _ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(
+    _req: Request,
+    _ctx: HandlerContext,
+  ): Promise<HandlerResult<RuntimeResponse>> {
     return this.continue();
+  }
+
+  testRespond(response: RuntimeResponse): HandlerResult<RuntimeResponse> {
+    return this.respond(response);
   }
 
   // Expose withProxyContext for testing
@@ -52,6 +64,17 @@ function createMinimalCtx(
   } as unknown as HandlerContext;
 }
 
+describe("BaseHandler.respond", () => {
+  it("preserves WebSocket upgrade response identity", () => {
+    const handler = new TestHandler();
+    const upgradeResponse = createWebSocketUpgradeResponse();
+
+    const result = handler.testRespond(upgradeResponse);
+
+    assertEquals(Object.is(result.response, upgradeResponse), true);
+  });
+});
+
 describe("BaseHandler.withProxyContext", () => {
   afterEach(() => {
     try {
@@ -60,7 +83,7 @@ describe("BaseHandler.withProxyContext", () => {
       // expected
     }
     _resetShimForTests();
-    metrics.__resetForTests();
+    resetMetricsForTests();
   });
 
   it("runs fn() in local dev mode (no projectSlug)", async () => {

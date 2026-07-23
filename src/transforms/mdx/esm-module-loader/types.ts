@@ -66,7 +66,7 @@ export interface ModuleFetcherContext {
   inFlightModules?: Map<string, Promise<string | null>>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
-  /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */
+  /** Request-scoped logger. Do not attach project identity or source paths. */
   logger?: Logger;
   /**
    * If true, missing modules fail fast instead of being stubbed.

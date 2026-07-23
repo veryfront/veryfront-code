@@ -1,5 +1,6 @@
-import { createError, toError } from "#veryfront/errors";
-import { logger } from "#veryfront/utils";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import {
   buildGitHubResolveCacheKey,
   buildGitHubStatCacheKey,
@@ -24,6 +25,7 @@ export class GitHubStatOperations {
   private directoryIndex = new Set<string>();
   private buildingIndex: Promise<void> | null = null;
   private indexBuilt = false;
+  private indexGeneration = 0;
 
   constructor(
     config: ResolvedGitHubConfig,
@@ -41,36 +43,34 @@ export class GitHubStatOperations {
     if (this.buildingIndex) return this.buildingIndex;
     if (this.indexBuilt) return;
 
-    this.buildingIndex = this.doBuildIndex();
+    const generation = this.indexGeneration;
+    const pending = this.doBuildIndex(generation);
+    this.buildingIndex = pending;
 
     try {
-      await this.buildingIndex;
+      await pending;
     } finally {
-      this.buildingIndex = null;
+      if (this.buildingIndex === pending) this.buildingIndex = null;
     }
   }
 
-  private async doBuildIndex(): Promise<void> {
+  private async doBuildIndex(generation: number): Promise<void> {
     const cacheKey = buildGitHubTreeCacheKey(this.client.repoId, this.config.ref);
     const cached = this.cache.get<GitHubTreeEntry[]>(cacheKey);
 
     if (cached) {
       logger.debug(`${LOG_PREFIX} Using cached tree`);
-      this.buildIndexFromEntries(cached);
-      this.indexBuilt = true;
+      this.commitIndex(cached, generation);
       return;
     }
 
-    logger.debug(`${LOG_PREFIX} Fetching repository tree`, {
-      repo: this.client.repoId,
-      ref: this.config.ref,
-    });
+    logger.debug(`${LOG_PREFIX} Fetching repository tree`);
 
     const tree = await this.client.getTree();
-    this.cache.set(cacheKey, tree.tree);
+    if (generation !== this.indexGeneration) return;
 
-    this.buildIndexFromEntries(tree.tree);
-    this.indexBuilt = true;
+    this.cache.set(cacheKey, tree.tree);
+    this.commitIndex(tree.tree, generation);
 
     logger.debug(`${LOG_PREFIX} Index built`, {
       files: this.fileIndex.size,
@@ -78,28 +78,36 @@ export class GitHubStatOperations {
     });
   }
 
-  private buildIndexFromEntries(entries: GitHubTreeEntry[]): void {
-    this.fileIndex.clear();
-    this.directoryIndex.clear();
-    this.directoryIndex.add("");
+  private commitIndex(entries: GitHubTreeEntry[], generation: number): void {
+    if (generation !== this.indexGeneration) return;
+
+    const fileIndex = new Map<string, FileIndexEntry>();
+    const directoryIndex = new Set<string>([""]);
 
     for (const entry of entries) {
       if (entry.type === "blob") {
-        this.fileIndex.set(entry.path, {
+        fileIndex.set(entry.path, {
           path: entry.path,
           sha: entry.sha,
           size: entry.size ?? 0,
           type: "blob",
         });
-        this.addDirectoryHierarchy(entry.path);
+        this.addDirectoryHierarchy(entry.path, directoryIndex);
         continue;
       }
 
-      if (entry.type === "tree") this.directoryIndex.add(entry.path);
+      if (entry.type === "tree") {
+        directoryIndex.add(entry.path);
+        this.addDirectoryHierarchy(entry.path, directoryIndex);
+      }
     }
+
+    this.fileIndex = fileIndex;
+    this.directoryIndex = directoryIndex;
+    this.indexBuilt = true;
   }
 
-  private addDirectoryHierarchy(filePath: string): void {
+  private addDirectoryHierarchy(filePath: string, directoryIndex: Set<string>): void {
     const parts = filePath.split("/");
     let current = "";
 
@@ -108,7 +116,7 @@ export class GitHubStatOperations {
       if (!part) continue;
 
       current = current ? `${current}/${part}` : part;
-      this.directoryIndex.add(current);
+      directoryIndex.add(current);
     }
   }
 
@@ -117,12 +125,7 @@ export class GitHubStatOperations {
 
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
 
-    logger.debug(`${LOG_PREFIX} stat called`, {
-      inputPath: path,
-      normalizedPath,
-      projectDir: this.projectDir,
-      indexSize: this.fileIndex.size,
-    });
+    logger.debug(`${LOG_PREFIX} stat called`, { indexSize: this.fileIndex.size });
 
     const cacheKey = buildGitHubStatCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<FileInfo>(cacheKey);
@@ -153,27 +156,17 @@ export class GitHubStatOperations {
       return info;
     }
 
-    logger.debug(`${LOG_PREFIX} File not found`, {
-      path: normalizedPath,
-      indexSize: this.fileIndex.size,
-    });
-
-    throw toError(
-      createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-        context: { path: normalizedPath, operation: "read" },
-      }),
-    );
+    logger.debug(`${LOG_PREFIX} File not found`, { indexSize: this.fileIndex.size });
+    throw FILE_NOT_FOUND.create({ message: "File not found" });
   }
 
   async exists(path: string): Promise<boolean> {
     try {
       await this.stat(path);
       return true;
-    } catch (_) {
-      /* expected: stat throws when file does not exist */
-      return false;
+    } catch (error) {
+      if (error instanceof VeryfrontError && error.slug === "file-not-found") return false;
+      throw error;
     }
   }
 
@@ -181,7 +174,10 @@ export class GitHubStatOperations {
     await this.ensureIndex();
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
-    const cacheKey = buildGitHubResolveCacheKey(this.config.ref, normalizedPath);
+    const pagesPrefixMode = options?.allowPagesPrefix === false ? "without-pages" : "with-pages";
+    const cacheKey = `${
+      buildGitHubResolveCacheKey(this.config.ref, normalizedPath)
+    }:${pagesPrefixMode}`;
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) return cached;
 
@@ -253,6 +249,7 @@ export class GitHubStatOperations {
   }
 
   clearIndex(): void {
+    this.indexGeneration++;
     this.fileIndex.clear();
     this.directoryIndex.clear();
     this.indexBuilt = false;

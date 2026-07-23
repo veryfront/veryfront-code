@@ -16,6 +16,11 @@ import {
   type NodeAgentServiceTelemetryProcessTarget,
   resolveNodeAgentServiceTelemetryConfig,
 } from "./node-telemetry.ts";
+import type { NodeTelemetryLogRecordEmitter } from "#veryfront/extensions/observability/index.ts";
+
+function registerNodeTelemetryLogRecordEmitter(emitter: NodeTelemetryLogRecordEmitter): void {
+  __registerLogRecordEmitter((entry) => emitter({ ...entry }));
+}
 
 /** Options accepted by create node agent service runtime infrastructure. */
 export type CreateNodeAgentServiceRuntimeInfrastructureOptions = {
@@ -68,11 +73,11 @@ export function createNodeAgentServiceRuntimeInfrastructure(
         ...telemetryConfig,
         logger: options.telemetryLogger,
         processTarget: options.processTarget,
-        registerLogRecordEmitter: __registerLogRecordEmitter,
+        registerLogRecordEmitter: registerNodeTelemetryLogRecordEmitter,
       }),
   };
 }
 
 /** Create node hosted agent service runtime infrastructure. */
-export const createNodeHostedAgentServiceRuntimeInfrastructure =
-  createNodeAgentServiceRuntimeInfrastructure;
+export const createNodeHostedAgentServiceRuntimeInfrastructure:
+  typeof createNodeAgentServiceRuntimeInfrastructure = createNodeAgentServiceRuntimeInfrastructure;

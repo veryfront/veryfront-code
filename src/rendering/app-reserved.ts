@@ -2,6 +2,8 @@ import * as BundledReact from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { dirname, isAbsolute, normalize, relative } from "#veryfront/compat/path";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -12,17 +14,16 @@ export const RESERVED_COMPONENTS = {
 };
 
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const getDirname = (p: string) => normalizePath(p).replace(/\/?[^/]+\/?$/, "");
-
   const dirs: string[] = [];
-  let current = normalizePath(segmentDir);
-  const root = normalizePath(appRootDir);
+  let current = normalize(normalizePath(segmentDir));
+  const root = normalize(normalizePath(appRootDir));
+  if (!isPathWithinRoot(current, root)) return dirs;
 
-  while (current.startsWith(root)) {
+  while (isPathWithinRoot(current, root)) {
     dirs.push(current);
 
-    const parent = getDirname(current) || "/";
-    if (parent === current || parent.length < root.length) break;
+    const parent = dirname(current);
+    if (parent === current || current === root) break;
 
     current = parent;
   }
@@ -59,7 +60,10 @@ export function createErrorBoundary(
     }
 
     override componentDidCatch(error: Error, errorInfo: BundledReact.ErrorInfo): void {
-      logger.error("Error boundary caught error:", error, errorInfo);
+      logger.error("Error boundary caught an error", {
+        errorName: error.name,
+        hasComponentStack: Boolean(errorInfo.componentStack),
+      });
     }
 
     override render(): BundledReact.ReactNode {
@@ -77,7 +81,7 @@ export async function tryLoadReservedInDirs(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
-  _mode: "development" | "production",
+  mode: "development" | "production",
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
@@ -90,22 +94,30 @@ export async function tryLoadReservedInDirs(
   );
 
   for (const dir of dirs) {
+    if (!isPathWithinRoot(dir, projectDir)) continue;
     for (const ext of [".tsx", ".jsx"]) {
       const file = join(dir, candidateName.replace(/\.tsx$/, ext));
       try {
         const src = await adapter.fs.readFile(file);
         const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
           projectId: projectId ?? projectDir,
-          dev: true,
+          dev: mode === "development",
           contentSourceId,
           reactVersion,
         });
         if (typeof Cmp === "function") return Cmp as ReservedComponent;
-      } catch (_) {
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
         /* expected: component not found in this path, continue to next */
       }
     }
   }
 
   return null;
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  const relativePath = relative(normalize(root), normalize(path));
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
 }

@@ -19,6 +19,8 @@ export interface APICacheStoreOptions {
   localMaxEntries?: number;
   /** Disable local memory cache (no in-memory fallback) */
   enableLocalCache?: boolean;
+  /** Backend factory override for embedding and deterministic tests. */
+  backendFactory?: () => Promise<CacheBackend>;
 }
 
 /**
@@ -50,10 +52,16 @@ export class APICacheStore implements CacheStore {
   private readonly localCache: MemoryCacheStore | null;
   private readonly keyPrefix: string;
   private readonly ttlSeconds: number;
+  private readonly backendFactory: () => Promise<CacheBackend>;
 
   constructor(options: APICacheStoreOptions = {}) {
     this.keyPrefix = options.keyPrefix ?? "render";
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    this.backendFactory = options.backendFactory ?? (() =>
+      createCacheBackend({
+        keyPrefix: this.keyPrefix,
+        preferredBackend: "api",
+      }));
 
     const enableLocalCache = options.enableLocalCache ?? true;
     this.localCache = enableLocalCache
@@ -68,12 +76,9 @@ export class APICacheStore implements CacheStore {
     if (this.backend) return Promise.resolve(this.backend);
     if (this.backendInitPromise) return this.backendInitPromise;
 
-    this.backendInitPromise = (async () => {
+    const initialization = (async () => {
       try {
-        const backend = await createCacheBackend({
-          keyPrefix: this.keyPrefix,
-          preferredBackend: "api",
-        });
+        const backend = await this.backendFactory();
         this.backend = backend;
         logger.debug("Distributed cache initialized", {
           type: backend.type,
@@ -81,15 +86,19 @@ export class APICacheStore implements CacheStore {
         return backend;
       } catch (error) {
         logger.warn(
-          "[APICacheStore] Failed to init distributed cache, skipping fallback",
-          { error },
+          "Distributed cache initialization failed",
+          { errorName: error instanceof Error ? error.name : typeof error },
         );
         this.backend = null;
         throw error;
       }
     })();
+    this.backendInitPromise = initialization;
+    void initialization.catch(() => {
+      if (this.backendInitPromise === initialization) this.backendInitPromise = null;
+    });
 
-    return this.backendInitPromise;
+    return initialization;
   }
 
   private serialize(payload: CachePayload): string {
@@ -220,7 +229,15 @@ export class APICacheStore implements CacheStore {
 
   async clear(): Promise<void> {
     await this.localCache?.clear();
-    logger.debug("Local cache cleared");
+    try {
+      const backend = await this.getBackend();
+      if (backend.delByPattern) await backend.delByPattern("*");
+      logger.debug("Local and distributed caches cleared");
+    } catch (error) {
+      logger.debug("Failed to clear distributed cache", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
   }
 
   async destroy(): Promise<void> {

@@ -18,6 +18,9 @@ import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-for
 import { hasUnresolvedImports } from "./nested-imports.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { assertSafeNormalizedModulePath } from "./module-path.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
@@ -25,15 +28,24 @@ import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/fi
 export function normalizePath(modulePath: string, parentModulePath?: string): string {
   // Strip query parameters (e.g., ?ssr=true) as they're not part of the file path
   // and cause issues with cache key validation (? is not an allowed character)
-  let normalizedPath = modulePath.replace(/\?.*$/, "").replace(/^\//, "");
+  let normalizedPath = modulePath.replace(/\?.*$/, "").replace(/^\/+/, "");
 
-  if (!parentModulePath) return normalizedPath;
-  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) return normalizedPath;
+  if (!parentModulePath) {
+    assertSafeNormalizedModulePath(normalizedPath);
+    return normalizedPath;
+  }
+  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) {
+    assertSafeNormalizedModulePath(normalizedPath);
+    return normalizedPath;
+  }
 
-  const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
+  const normalizedParentPath = parentModulePath.replace(/\?.*$/, "").replace(/^\/+/, "");
+  assertSafeNormalizedModulePath(normalizedParentPath);
+  const parentDir = normalizedParentPath.replace(/\/[^/]+$/, "");
   normalizedPath = posix.normalize(posix.join(parentDir, modulePath));
 
   if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
+  assertSafeNormalizedModulePath(normalizedPath);
   return normalizedPath;
 }
 
@@ -58,7 +70,7 @@ export async function cacheModule(
   if (unresolved.count > 0) {
     log.warn(
       `${LOG_PREFIX_MDX_LOADER} Module has ${unresolved.count} unresolved imports, skipping cache`,
-      { path: normalizedPath, unresolved: unresolved.paths },
+      { moduleFile: fileLogLabel(normalizedPath), unresolvedCount: unresolved.count },
     );
     return null;
   }
@@ -72,7 +84,9 @@ export async function cacheModule(
     const stat = await localFs.stat(cachePath);
     if (stat?.isFile) {
       pathCache.set(pathCacheKey, cachePath);
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit`, {
+        moduleFile: fileLogLabel(normalizedPath),
+      });
       recordModuleToSession(normalizedPath);
       return cachePath;
     }
@@ -80,11 +94,14 @@ export async function cacheModule(
     /* expected: cached file may not exist yet */
   }
 
-  await localFs.mkdir(esmCacheDir, { recursive: true });
-  await localFs.writeTextFile(cachePath, moduleCode);
+  const written = await writeCacheFile(localFs, cachePath, moduleCode, "MDX-ESM-LOADER");
+  if (!written) return null;
   pathCache.set(pathCacheKey, cachePath);
   await saveModulePathCache(esmCacheDir);
-  log.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
+  log.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module`, {
+    moduleFile: fileLogLabel(normalizedPath),
+    cacheFile: fileLogLabel(cachePath),
+  });
 
   recordModuleToSession(normalizedPath);
   return cachePath;

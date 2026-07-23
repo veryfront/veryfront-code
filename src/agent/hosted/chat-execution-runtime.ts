@@ -67,20 +67,27 @@ const DEFAULT_STREAM_BOOTSTRAP_TIMEOUT_MS = DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIM
 
 /** Public API contract for hosted chat execution runtime. */
 export interface HostedChatExecutionRuntime {
+  /** Agent UI stream value. */
   agentUIStream: AsyncIterable<ChatUiMessageChunk<MessageMetadata>>;
+  /** Marks the execution as failed. */
   fail: (error: unknown) => Promise<void>;
+  /** Resolves after execution finishes. */
   waitForFinish: () => Promise<void>;
 }
 
 /** Public API contract for hosted chat execution runtime logger. */
 export interface HostedChatExecutionRuntimeLogger {
+  /** Writes an error log entry. */
   error: (message: string, metadata?: Record<string, unknown>) => void;
+  /** Writes a warning log entry. */
   warn: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
 /** Context for hosted chat execution run. */
 export interface HostedChatExecutionRunContext {
+  /** Callback that handles with context. */
   withContext: <T>(fn: () => T) => T;
+  /** Callback that handles set message ID. */
   setMessageId?: (messageId: string) => void;
 }
 
@@ -89,83 +96,143 @@ export type HostedChatExecutionRootStreamWatchdog = ReturnType<typeof createChat
 
 /** Public API contract for hosted chat execution runtime bootstrap. */
 export interface HostedChatExecutionRuntimeBootstrap {
+  /** Releases resources held by the execution. */
   cleanup: () => Promise<void>;
+  /** Lifecycle adapter value. */
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
+  /** Root stream watchdog value. */
   rootStreamWatchdog: HostedChatExecutionRootStreamWatchdog;
+  /** Stream result value. */
   streamResult: HostedChatRuntimeStreamResult;
+  /** Streaming message ID value. */
   streamingMessageId: string | null;
+  /** Captured message ID value. */
   capturedMessageId: string | null;
+  /** Captured conversation ID value. */
   capturedConversationId?: string;
+  /** Mirrored tool chunk state value. */
   mirroredToolChunkState: MirroredToolChunkState;
 }
 
 /** Input payload for create hosted chat execution runtime bootstrap. */
 export interface CreateHostedChatExecutionRuntimeBootstrapInput {
+  /** Agent used to execute requests. */
   agent: HostedChatRuntimeAgent;
+  /** Releases resources held by the execution. */
   cleanup: () => Promise<void>;
+  /** Lifecycle adapter value. */
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
+  /** Final messages value. */
   finalMessages: HostedChatRuntimeStreamInput["messages"];
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Abort signal value. */
   abortSignal: AbortSignal;
+  /** Callback that handles trace stream. */
   traceStream?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** Callback that handles create root stream watchdog. */
   createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
+  /** Stream bootstrap keepalive interval ms value. */
   streamBootstrapKeepaliveIntervalMs?: number;
+  /** Stream bootstrap timeout ms value. */
   streamBootstrapTimeoutMs?: number;
 }
 
 /** Input payload for create hosted chat execution runtime. */
 export interface CreateHostedChatExecutionRuntimeInput {
+  /** Agent ID value. */
   agentId: string;
+  /** Agent name value. */
   agentName?: string;
+  /** Agent avatar URL value. */
   agentAvatarUrl?: string;
+  /** Model ID value. */
   modelId: string;
+  /** Original messages value. */
   originalMessages: ChatUiMessage[];
+  /** Response message ID value. */
   responseMessageId?: string;
+  /** Run context value. */
   runContext: HostedChatExecutionRunContext;
+  /** Abort signal value. */
   abortSignal: AbortSignal;
+  /** Bootstrap value. */
   bootstrap: HostedChatExecutionRuntimeBootstrap;
+  /** Logger value. */
   logger?: HostedChatExecutionRuntimeLogger;
+  /** Incomplete tool calls part error text value. */
   incompleteToolCallsPartErrorText?: string;
 }
 
 /** Input payload for create bootstrapped hosted chat execution runtime. */
 export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Agent used to execute requests. */
   agent: HostedChatRuntimeAgent;
+  /** Agent ID value. */
   agentId: string;
+  /** Agent name value. */
   agentName?: string;
+  /** Agent avatar URL value. */
   agentAvatarUrl?: string;
+  /** Model ID value. */
   modelId: string;
+  /** Releases resources held by the execution. */
   cleanup: () => Promise<void>;
+  /** Messages associated with the operation. */
   messages: ChatUiMessage[];
+  /** Final messages value. */
   finalMessages: HostedChatRuntimeStreamInput["messages"];
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Project ID value. */
   projectId: string | null;
+  /** User ID value. */
   userId: string;
+  /** Root run context value. */
   rootRunContext: HostedConversationRootRunContext;
+  /** Abort signal value. */
   abortSignal: AbortSignal;
+  /** Response message ID value. */
   responseMessageId?: string;
+  /** Upstream parent conversation ID value. */
   upstreamParentConversationId?: string;
+  /** Upstream parent run ID value. */
   upstreamParentRunId?: string;
+  /** Spawned from tool call ID value. */
   spawnedFromToolCallId?: string;
+  /** Trace attributes value. */
   traceAttributes?: Parameters<HostedAgentRunSpanController["setAttributes"]>[0];
+  /** Tracer value. */
   tracer: HostedAgentRunTracer;
+  /** Callback that handles resolve provider. */
   resolveProvider: (modelId: string) => string;
+  /** Trace stream value. */
   traceStream?: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"];
+  /** Logger value. */
   logger?: HostedChatExecutionRuntimeLogger;
+  /** Span name value. */
   spanName?: string;
+  /** Terminal error code value. */
   terminalErrorCode?: string;
+  /** Incomplete tool calls part error text value. */
   incompleteToolCallsPartErrorText?: string;
+  /** Create root stream watchdog value. */
   createRootStreamWatchdog?: CreateHostedChatExecutionRuntimeBootstrapInput[
     "createRootStreamWatchdog"
   ];
+  /** Stream bootstrap keepalive interval ms value. */
   streamBootstrapKeepaliveIntervalMs?: CreateHostedChatExecutionRuntimeBootstrapInput[
     "streamBootstrapKeepaliveIntervalMs"
   ];
+  /** Stream bootstrap timeout ms value. */
   streamBootstrapTimeoutMs?: CreateHostedChatExecutionRuntimeBootstrapInput[
     "streamBootstrapTimeoutMs"
   ];
+  /** Create terminal adapter value. */
   createTerminalAdapter?: CreateHostedRootRunLifecycleRuntimeAdapterInput[
     "createTerminalAdapter"
   ];
@@ -173,11 +240,14 @@ export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
 
 /** Public API contract for bootstrapped hosted chat execution runtime. */
 export interface BootstrappedHostedChatExecutionRuntime {
+  /** Agent run span value. */
   agentRunSpan: HostedAgentRunSpanController;
+  /** Execution value. */
   execution: HostedChatExecutionRuntime;
 }
 
-type SharedFinalizationHooks = Pick<
+/** Finalization hooks shared by streamed and detached hosted execution. */
+export type SharedFinalizationHooks = Pick<
   FinalizeHostedResponseOptions<ChatUiMessage, ChatUiMessageChunk<MessageMetadata>>,
   | "resolveEmptyTerminalError"
   | "appendFallbackChunk"

@@ -64,13 +64,17 @@ export interface ImageOptimizationOptions {
   quality?: number;
   inputDir?: string;
   outputDir?: string;
+  /** Public URL prefix used by generated srcset values. */
+  publicPath?: string;
   preserveOriginal?: boolean;
 }
 
 export interface OptimizedImageMetadata {
   original: string;
+  /** Source file size in bytes. Older manifests may omit this field. */
+  originalSize?: number;
   variants: ImageVariant[];
-  defaultFormat: string;
+  defaultFormat: ImageFormat;
   aspectRatio: number;
 }
 

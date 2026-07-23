@@ -20,6 +20,20 @@ describe("platform/compat/console/ansi", () => {
         assertEquals(fn(input), expected);
       });
     }
+
+    it("reopens an outer color after a nested color closes", () => {
+      assertEquals(
+        red(`before ${green("inside")} after`),
+        "\x1b[31mbefore \x1b[32minside\x1b[31m after\x1b[39m",
+      );
+    });
+
+    it("reopens an outer modifier after a nested modifier closes", () => {
+      assertEquals(
+        bold(`before ${dim("inside")} after`),
+        "\x1b[1mbefore \x1b[2minside\x1b[1m after\x1b[22m",
+      );
+    });
   });
 
   describe("colors object", () => {

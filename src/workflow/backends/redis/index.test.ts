@@ -9,7 +9,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/backends/redis/index.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -131,11 +136,95 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve(this.store.get(key) ?? null);
   }
 
-  // Emulates the two Redlock Lua scripts used by the backend. Both are
-  // compare-against-token guards on KEYS[1] / ARGV[1]: release deletes the key
-  // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
+  // Emulates the backend's Lua scripts atomically with respect to the JS event loop.
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
+
+    if (script.includes("atomic-run-create-or-replace")) {
+      const runId = args[0]!;
+      const statusPrefix = args[1]!;
+      const workflowPrefix = args[2]!;
+      const status = args[3]!;
+      const workflowId = args[4]!;
+      const allRunsKey = args[5]!;
+      const ttl = args[6]!;
+      const oldHash = this.hashes.get(key);
+      const oldStatus = oldHash?.get("status");
+      const oldWorkflowId = oldHash?.get("workflowId");
+
+      if (oldStatus) this.sets.get(statusPrefix + oldStatus)?.delete(runId);
+      if (oldWorkflowId) this.sets.get(workflowPrefix + oldWorkflowId)?.delete(runId);
+
+      const replacement = new Map<string, string>();
+      for (let i = 7; i < args.length; i += 2) {
+        replacement.set(args[i]!, args[i + 1]!);
+      }
+      this.hashes.set(key, replacement);
+
+      for (const indexKey of [statusPrefix + status, workflowPrefix + workflowId, allRunsKey]) {
+        let members = this.sets.get(indexKey);
+        if (!members) {
+          members = new Set();
+          this.sets.set(indexKey, members);
+        }
+        members.add(runId);
+      }
+
+      this.expiries.delete(key);
+      if (ttl) this.expiries.set(key, Number(ttl));
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("atomic-run-update")) {
+      const claimKey = keys[1]!;
+      const runId = args[0]!;
+      const statusPrefix = args[1]!;
+      const nextStatus = args[2]!;
+      const hash = this.hashes.get(key);
+      const oldStatus = hash?.get("status");
+      if (!hash || !oldStatus) return Promise.resolve(0);
+
+      for (let i = 3; i < args.length; i += 2) {
+        hash.set(args[i]!, args[i + 1]!);
+      }
+      if (nextStatus && oldStatus !== nextStatus) {
+        hash.set("status", nextStatus);
+        this.sets.get(statusPrefix + oldStatus)?.delete(runId);
+        let nextSet = this.sets.get(statusPrefix + nextStatus);
+        if (!nextSet) {
+          nextSet = new Set();
+          this.sets.set(statusPrefix + nextStatus, nextSet);
+        }
+        nextSet.add(runId);
+      }
+      if (nextStatus && nextStatus !== "running") {
+        this.store.delete(claimKey);
+        this.expiries.delete(claimKey);
+      }
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("atomic-run-delete")) {
+      const runId = args[0]!;
+      const statusPrefix = args[1]!;
+      const workflowPrefix = args[2]!;
+      const allRunsKey = args[3]!;
+      const hash = this.hashes.get(key);
+      const status = hash?.get("status");
+      const workflowId = hash?.get("workflowId");
+
+      for (const deleteKey of keys) {
+        this.store.delete(deleteKey);
+        this.hashes.delete(deleteKey);
+        this.lists.delete(deleteKey);
+        this.sets.delete(deleteKey);
+        this.expiries.delete(deleteKey);
+      }
+      this.sets.get(allRunsKey)?.delete(runId);
+      if (status) this.sets.get(statusPrefix + status)?.delete(runId);
+      if (workflowId) this.sets.get(workflowPrefix + workflowId)?.delete(runId);
+      return Promise.resolve(status || workflowId ? 1 : 0);
+    }
 
     if (script.includes("conditional-stalled-run-claim")) {
       const claimKey = keys[1]!;
@@ -251,30 +340,10 @@ class MockRedisAdapter implements RedisAdapter {
       for (let i = expectedCount + 5; i < args.length; i += 2) {
         hash.set(args[i]!, args[i + 1]!);
       }
-      return Promise.resolve(1);
-    }
-
-    // Atomic status-move script: reads old status from the run hash, then moves
-    // the run between status index sets and writes the new status.
-    // KEYS[1]=runKey, ARGV[1]=runId, ARGV[2]=newStatus, ARGV[3]=statusIndexPrefix
-    if (script.includes("hget") && script.includes("srem") && script.includes("sadd")) {
-      const runId = args[0]!;
-      const newStatus = args[1]!;
-      const statusPrefix = args[2]!;
-      const hash = this.hashes.get(key);
-      const old = hash?.get("status");
-
-      if (old === newStatus) return Promise.resolve(0);
-      if (hash) hash.set("status", newStatus);
-
-      if (old && old !== "") this.sets.get(statusPrefix + old)?.delete(runId);
-
-      let newSet = this.sets.get(statusPrefix + newStatus);
-      if (!newSet) {
-        newSet = new Set();
-        this.sets.set(statusPrefix + newStatus, newSet);
+      if (nextStatus && nextStatus !== "running") {
+        this.store.delete(keys[1]!);
+        this.expiries.delete(keys[1]!);
       }
-      newSet.add(runId);
       return Promise.resolve(1);
     }
 
@@ -483,6 +552,24 @@ describe("RedisBackend", () => {
       await backend.initialize();
       await backend.initialize();
     });
+
+    it("fails initialization when consumer-group creation fails", async () => {
+      mockRedis.xgroupCreate = () => Promise.reject(new Error("redis unavailable"));
+
+      await assertRejects(
+        () => backend.initialize(),
+        Error,
+        "Failed to initialize the Redis workflow queue",
+      );
+    });
+
+    it("treats an existing consumer group as successful initialization", async () => {
+      mockRedis.xgroupCreate = () =>
+        Promise.reject(new Error("BUSYGROUP Consumer Group name already exists"));
+
+      await backend.initialize();
+      await backend.initialize();
+    });
   });
 
   describe("createRun / getRun", () => {
@@ -504,6 +591,40 @@ describe("RedisBackend", () => {
       assertEquals(retrieved.id, "run-1");
       assertEquals(retrieved.workflowId, "wf-1");
       assertEquals(retrieved.status, "pending");
+    });
+
+    it("atomically replaces duplicate run IDs without leaving stale indexes", async () => {
+      await backend.createRun(createTestRun("run-replaced", {
+        workflowId: "old-workflow",
+        status: "pending",
+        output: { stale: true },
+      }));
+      await backend.createRun(createTestRun("run-replaced", {
+        workflowId: "new-workflow",
+        status: "running",
+      }));
+
+      const retrieved = await backend.getRun("run-replaced");
+      assertEquals(retrieved?.workflowId, "new-workflow");
+      assertEquals(retrieved?.status, "running");
+      assertEquals(retrieved?.output, undefined);
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:workflow:old-workflow")?.has("run-replaced") ??
+          false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:pending")?.has("run-replaced") ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:workflow:new-workflow")?.has("run-replaced"),
+        true,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:running")?.has("run-replaced"),
+        true,
+      );
     });
 
     it("should persist the source integration policy snapshot", async () => {
@@ -609,6 +730,24 @@ describe("RedisBackend", () => {
 
       const updated = await backend.getRun("run-u2");
       assertEquals(updated?.output, { value: 42 });
+    });
+
+    it("does not create a partial hash when the run is missing", async () => {
+      await assertRejects(
+        () =>
+          backend.updateRun("missing-run", {
+            status: "running",
+            output: { invalid: true },
+          }),
+        Error,
+        "Run not found",
+      );
+
+      assertEquals(mockRedis.hashes.has("test:schema-v1:run:missing-run"), false);
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:running")?.has("missing-run") ?? false,
+        false,
+      );
     });
 
     it("should atomically reject a patch when the current status is not expected", async () => {
@@ -783,6 +922,30 @@ describe("RedisBackend", () => {
 
     it("should no-op for non-existent run", async () => {
       await backend.deleteRun("missing");
+    });
+
+    it("deletes the run and every secondary index in one atomic operation", async () => {
+      const runId = "run-atomic-delete";
+      await backend.createRun(
+        createTestRun(runId, { workflowId: "delete-workflow", status: "waiting" }),
+      );
+      mockRedis.hgetall = () => Promise.reject(new Error("non-atomic read attempted"));
+
+      await backend.deleteRun(runId);
+
+      assertEquals(mockRedis.hashes.has(`test:schema-v1:run:${runId}`), false);
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:status:waiting")?.has(runId) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:workflow:delete-workflow")?.has(runId) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sets.get("test:schema-v1:index:runs")?.has(runId) ?? false,
+        false,
+      );
     });
   });
 
@@ -1514,6 +1677,20 @@ describe("RedisBackend", () => {
   });
 
   describe("runTtl config", () => {
+    it("rejects invalid run TTL values", () => {
+      for (const runTtl of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () =>
+            new RedisBackend({
+              client: mockRedis as unknown as RedisAdapter,
+              runTtl,
+            }),
+          Error,
+          "runTtl must be a positive safe integer",
+        );
+      }
+    });
+
     it("should set expire when runTtl is configured", async () => {
       const ttlBackend = new RedisBackend({
         client: mockRedis as unknown as RedisAdapter,

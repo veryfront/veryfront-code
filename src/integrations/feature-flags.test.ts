@@ -10,6 +10,7 @@ import {
   SUPPORTED_INTEGRATION_NAMES,
 } from "./feature-flags.ts";
 import { ALL_INTEGRATION_NAMES } from "./schema.ts";
+import { connectors } from "./_data.ts";
 
 function setFlag(value: string | undefined): void {
   if (value === undefined) {
@@ -59,6 +60,18 @@ describe("integration feature flags", () => {
       ["figma"],
     );
   });
+
+  it("fails closed for an oversized experimental integration flag", () => {
+    setFlag(`salesforce,${"x".repeat(16_384)}`);
+
+    assertEquals(isVisibleIntegration("salesforce"), false);
+  });
+
+  it("keeps the exported name registries immutable", () => {
+    assertEquals(Object.isFrozen(SUPPORTED_INTEGRATION_NAMES), true);
+    assertEquals(Object.isFrozen(DECLARED_INTEGRATION_NAMES), true);
+    assertEquals(Object.isFrozen(ALL_INTEGRATION_NAMES), true);
+  });
 });
 
 describe("integration name registry", () => {
@@ -73,5 +86,13 @@ describe("integration name registry", () => {
     const registry = new Set<string>(ALL_INTEGRATION_NAMES);
     const missing = SUPPORTED_INTEGRATION_NAMES.filter((name) => !registry.has(name));
     assertEquals(missing, []);
+  });
+
+  it("documents the compatibility-reserved name that has no connector source", () => {
+    const connectorNames = new Set(connectors.map((connector) => connector.name));
+    assertEquals(
+      ALL_INTEGRATION_NAMES.filter((name) => !connectorNames.has(name)),
+      ["twitter"],
+    );
   });
 });

@@ -8,6 +8,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 
 const PUBLIC_AGENT_METADATA_PATH = /^\/api\/agents\/([^/]+)$/;
+const MAX_AGENT_ID_LENGTH = 256;
 
 function getAgentIdFromPath(pathname: string): string | null {
   const match = PUBLIC_AGENT_METADATA_PATH.exec(pathname);
@@ -15,7 +16,7 @@ function getAgentIdFromPath(pathname: string): string | null {
 
   try {
     const agentId = decodeURIComponent(match[1]).trim();
-    return agentId.length > 0 ? agentId : null;
+    return agentId.length > 0 && agentId.length <= MAX_AGENT_ID_LENGTH ? agentId : null;
   } catch {
     return null;
   }

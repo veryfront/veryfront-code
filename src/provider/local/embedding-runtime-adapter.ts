@@ -8,9 +8,15 @@
  * @module provider/local
  */
 
-import { embedTexts } from "./local-embedding-engine.ts";
-import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "./model-catalog.ts";
+import { embedTexts, MAX_LOCAL_EMBEDDINGS_PER_CALL } from "./local-embedding-engine.ts";
+import { DEFAULT_LOCAL_EMBEDDING_MODEL, resolveLocalEmbeddingModel } from "./model-catalog.ts";
 import type { EmbeddingRuntime } from "../types.ts";
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new DOMException("Local embedding request was aborted", "AbortError");
+  }
+}
 
 /**
  * Create a local embedding runtime for the given model ID.
@@ -20,17 +26,23 @@ import type { EmbeddingRuntime } from "../types.ts";
  * embedding/RAG primitives.
  */
 export function createLocalEmbeddingModel(modelId?: string): EmbeddingRuntime {
-  const resolvedId = modelId || DEFAULT_LOCAL_EMBEDDING_MODEL;
+  const resolvedId = modelId === undefined ? DEFAULT_LOCAL_EMBEDDING_MODEL : modelId;
+  resolveLocalEmbeddingModel(resolvedId);
 
   return {
     specificationVersion: "v2",
     provider: "local",
     modelId: `local/${resolvedId}`,
-    maxEmbeddingsPerCall: undefined,
+    maxEmbeddingsPerCall: MAX_LOCAL_EMBEDDINGS_PER_CALL,
     supportsParallelCalls: false,
 
-    async doEmbed({ values }: { values: string[] }) {
+    async doEmbed({ values, abortSignal }: { values: string[]; abortSignal?: AbortSignal }) {
+      throwIfAborted(abortSignal);
+      if (Array.isArray(values) && values.length === 0) {
+        return { embeddings: [], usage: { tokens: 0 }, warnings: [] };
+      }
       const embeddings = await embedTexts(resolvedId, values);
+      throwIfAborted(abortSignal);
       return { embeddings, usage: { tokens: 0 }, rawResponse: undefined, warnings: [] };
     },
   };

@@ -228,6 +228,32 @@ describe("transforms/esm/bundle-recovery", () => {
       }
     });
 
+    it("publishes batch-recovered bundles to the local cache", async () => {
+      const cacheDir = await Deno.makeTempDir();
+      const hash = "abc123";
+      __setDistributedCacheAccessorForTests(() =>
+        Promise.resolve(createSuffixCacheBackend({
+          [`code:${hash}`]: "export const batchRecovered = true;\n",
+        }))
+      );
+
+      try {
+        const failed = await ensureHttpBundlesExist(
+          [{ path: join(cacheDir, `http-${hash}.mjs`), hash }],
+          cacheDir,
+          () => Promise.resolve(null),
+        );
+
+        assertEquals(failed, []);
+        assertEquals(
+          await Deno.readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+          "export const batchRecovered = true;\n",
+        );
+      } finally {
+        await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
     it("treats already-present local bundles as satisfied (not failed)", async () => {
       const cacheDir = await Deno.makeTempDir();
       try {

@@ -16,19 +16,25 @@ import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 
 /** Public API contract for conversation root run lifecycle. */
 export interface ConversationRootRunLifecycle<TMirror> extends ConversationRootRunContext {
+  /** Mirror value. */
   mirror: TMirror | null;
 }
 
 /** Options accepted by prepare conversation root run lifecycle. */
 export interface PrepareConversationRootRunLifecycleOptions<TMirror> {
+  /** Start run value. */
   startRun: (
     input: { abortSignal: AbortSignal },
   ) => Promise<{ run: ConversationRunProjection | null }> | {
     run: ConversationRunProjection | null;
   };
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Parent message ID value. */
   parentMessageId?: string;
+  /** Callback that handles append parent run events. */
   appendParentRunEvents?: ((events: unknown[]) => Promise<void> | void) | undefined;
+  /** Create mirror value. */
   createMirror?: (
     run: ConversationRunProjection,
   ) => Promise<TMirror> | TMirror;
@@ -55,41 +61,67 @@ export async function prepareConversationRootRunLifecycle<TMirror>(
 
 /** State for hosted conversation root run. */
 export interface HostedConversationRootRunState {
+  /** Run ID value. */
   runId: string;
+  /** Conversation ID value. */
   conversationId: string;
+  /** Message ID value. */
   messageId: string;
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
 }
 
 /** Context for hosted conversation root run. */
 export interface HostedConversationRootRunContext {
+  /** Durable root run value. */
   durableRootRun: HostedConversationRootRunState | null;
+  /** Durable run mirror value. */
   durableRunMirror: ConversationRunChunkMirror | null;
+  /** Effective parent run ID value. */
   effectiveParentRunId?: string;
+  /** Effective parent message ID value. */
   effectiveParentMessageId?: string;
+  /** Callback that handles publish parent run events. */
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
 }
 
 /** Input payload for prepare hosted conversation root run context. */
 export interface PrepareHostedConversationRootRunContextInput {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Project ID value. */
   projectId?: string | null;
+  /** Branch ID value. */
   branchId?: string | null;
+  /** Agent ID value. */
   agentId: string;
+  /** Implementation kind value. */
   implementationKind?: string | null;
+  /** Messages associated with the operation. */
   messages: ChatUiMessage[];
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Parent message ID value. */
   parentMessageId?: string;
+  /** Provided run value. */
   providedRun?: ConversationRootRunDescriptor;
+  /** Whether persist latest user message before run. */
   persistLatestUserMessageBeforeRun: boolean;
+  /** Persist latest user message operation value. */
   persistLatestUserMessageOperation?: string;
+  /** Missing user message error message value. */
   missingUserMessageErrorMessage?: string;
+  /** On persist latest user message failure value. */
   onPersistLatestUserMessageFailure?: Parameters<
     typeof persistLatestConversationUserMessage
   >[0]["onFailure"];
+  /** Instrumentation value. */
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
 }
 

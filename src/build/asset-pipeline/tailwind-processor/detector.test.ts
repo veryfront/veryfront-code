@@ -1,7 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { autoDetectContentPaths } from "./detector.ts";
+import { autoDetectContentPaths, hasTailwindV4Import } from "./detector.ts";
+
+describe("hasTailwindV4Import", () => {
+  it("detects top-level Tailwind imports", () => {
+    assertEquals(hasTailwindV4Import('@import "tailwindcss";'), true);
+    assertEquals(hasTailwindV4Import("@import url('tailwindcss/theme');"), true);
+  });
+
+  it("ignores comments and quoted text", () => {
+    assertEquals(hasTailwindV4Import('/* @import "tailwindcss"; */'), false);
+    assertEquals(
+      hasTailwindV4Import(".label::before { content: '@import \"tailwindcss\"'; }"),
+      false,
+    );
+  });
+});
 
 describe("build/asset-pipeline/tailwind-processor/detector", () => {
   describe("autoDetectContentPaths", () => {

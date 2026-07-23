@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createRemoteMCPToolSource } from "./remote-mcp.ts";
@@ -10,6 +16,7 @@ describe("tool/remote-mcp", () => {
     let requestMethod = "";
     let projectHeader = "";
     let acceptHeader = "";
+    let requestRedirect = "";
     let requestBody: Record<string, unknown> | undefined;
 
     const source = createRemoteMCPToolSource({
@@ -28,6 +35,7 @@ describe("tool/remote-mcp", () => {
         requestMethod = request.method;
         projectHeader = request.headers.get("x-project-id") ?? "";
         acceptHeader = request.headers.get("accept") ?? "";
+        requestRedirect = request.redirect;
         requestBody = await request.json();
 
         return Response.json({
@@ -51,6 +59,7 @@ describe("tool/remote-mcp", () => {
     assertEquals(requestMethod, "POST");
     assertEquals(projectHeader, "proj_123");
     assertEquals(acceptHeader, "application/json, text/event-stream");
+    assertEquals(requestRedirect, "error");
     assertEquals(requestBody, {
       jsonrpc: "2.0",
       id: "docs:tools:list",
@@ -63,6 +72,65 @@ describe("tool/remote-mcp", () => {
       title: "Search docs",
       annotations: { readOnlyHint: true },
     }]);
+  });
+
+  it("uses a stable fallback when a remote tool omits its optional description", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const tools = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:list",
+        result: {
+          tools: [{
+            name: "search_docs",
+            annotations: {
+              title: "Search docs",
+              readOnlyHint: true,
+            },
+            inputSchema: { type: "object" },
+          }],
+        },
+      }), async () => await source.listTools());
+
+    assertEquals(tools, [{
+      name: "search_docs",
+      description: "Search docs",
+      parameters: { type: "object" },
+      title: "Search docs",
+      annotations: { readOnlyHint: true },
+    }]);
+  });
+
+  it("rejects non-formatting control characters in remote descriptions", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: {
+                tools: [{
+                  name: "search_docs",
+                  description: "Search\vdocs",
+                  inputSchema: { type: "object" },
+                }],
+              },
+            }),
+          async () => await source.listTools(),
+        ),
+      Error,
+      "invalid description",
+    );
   });
 
   it("returns structured MCP tool errors instead of throwing for callTool isError results", async () => {
@@ -242,6 +310,26 @@ describe("tool/remote-mcp", () => {
       error: "tool_error",
       message: "Try again later",
     });
+  });
+
+  it("preserves non-text and mixed MCP content instead of discarding it", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    const content = [
+      { type: "text", text: "Generated diagram" },
+      { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+    ];
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:render_docs",
+        result: { content },
+      }), async () => await source.executeTool("render_docs", {}));
+
+    assertEquals(result, content);
   });
 
   it("normalizes OAuth invalid_grant refresh failures into reconnect-required tool output", async () => {
@@ -434,5 +522,300 @@ describe("tool/remote-mcp", () => {
       Error,
       "upstream unavailable",
     );
+  });
+
+  it("rejects a JSON-RPC response for a different request", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(async () =>
+          Response.json({
+            jsonrpc: "2.0",
+            id: "different-request",
+            result: { tools: [] },
+          }), async () => await source.listTools()),
+      Error,
+      "response id did not match the request",
+    );
+  });
+
+  it("rejects malformed tool input schemas", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(async () =>
+          Response.json({
+            jsonrpc: "2.0",
+            id: "docs:tools:list",
+            result: {
+              tools: [{
+                name: "search_docs",
+                description: "Search documentation",
+                inputSchema: { type: "string" },
+              }],
+            },
+          }), async () => await source.listTools()),
+      Error,
+      "inputSchema must describe an object",
+    );
+  });
+
+  it("rejects repeated pagination cursors", async () => {
+    let calls = 0;
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(async () => {
+          calls += 1;
+          return Response.json({
+            jsonrpc: "2.0",
+            id: "docs:tools:list",
+            result: { tools: [], nextCursor: "same-cursor" },
+          });
+        }, async () => await source.listTools()),
+      Error,
+      "repeated pagination cursor",
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("bounds successful response bodies", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      maxResponseBytes: 128,
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(async () =>
+          Response.json({
+            jsonrpc: "2.0",
+            id: "docs:tools:list",
+            result: {
+              tools: [{
+                name: "search_docs",
+                description: "x".repeat(256),
+                inputSchema: {},
+              }],
+            },
+          }), async () => await source.listTools()),
+      Error,
+      "response exceeded 128 bytes",
+    );
+  });
+
+  it("bounds outbound JSON-RPC request bodies", async () => {
+    let fetchCalls = 0;
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      maxRequestBytes: 256,
+      fetch: async () => {
+        fetchCalls += 1;
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "docs:tools:call:search_docs",
+          result: {},
+        });
+      },
+    });
+
+    await assertRejects(
+      () => source.executeTool("search_docs", { query: "x".repeat(512) }),
+      Error,
+      "request exceeded 256 bytes",
+    );
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("rejects accessor-backed request arguments without invoking getters", async () => {
+    let getterCalled = false;
+    let fetchCalls = 0;
+    const args = Object.defineProperty({}, "query", {
+      enumerable: true,
+      get() {
+        getterCalled = true;
+        return "secret";
+      },
+    });
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: async () => {
+        fetchCalls += 1;
+        return Response.json({});
+      },
+    });
+
+    await assertRejects(
+      () => source.executeTool("search_docs", args),
+      Error,
+      "data properties",
+    );
+    assertEquals(getterCalled, false);
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("does not start a request after caller cancellation", async () => {
+    let fetchCalls = 0;
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: async () => {
+        fetchCalls += 1;
+        return Response.json({});
+      },
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("request cancelled"));
+
+    await assertRejects(
+      () => source.listTools({ abortSignal: controller.signal }),
+      Error,
+      "request cancelled",
+    );
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("does not turn an invalid_grant abort reason into a successful reconnect result", async () => {
+    const controller = new AbortController();
+    const reason = new Error("invalid_grant");
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: async () => await new Promise<Response>(() => {}),
+    });
+    const abortTimer = setTimeout(() => controller.abort(reason), 20);
+
+    try {
+      const rejection = await assertRejects(
+        () =>
+          source.executeTool("calendar__list_events", {}, {
+            abortSignal: controller.signal,
+          }),
+        Error,
+        "invalid_grant",
+      );
+      assertStrictEquals(rejection, reason);
+    } finally {
+      clearTimeout(abortTimer);
+    }
+  });
+
+  it("stops waiting for endpoint resolvers after caller cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("resolver cancelled");
+    let resolverCalls = 0;
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: async () => {
+        resolverCalls += 1;
+        return await new Promise<string>(() => {});
+      },
+    });
+    const abortTimer = setTimeout(() => controller.abort(reason), 20);
+    const startedAt = Date.now();
+
+    try {
+      await assertRejects(
+        () => source.listTools({ abortSignal: controller.signal }),
+        Error,
+        "resolver cancelled",
+      );
+    } finally {
+      clearTimeout(abortTimer);
+    }
+
+    assertEquals(resolverCalls, 1);
+    assertEquals(Date.now() - startedAt < 150, true);
+  });
+
+  it("enforces request timeouts when a fetch implementation ignores abort", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      requestTimeoutMs: 1,
+      fetch: () => new Promise<Response>(() => {}),
+    });
+
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "request timed out after 1ms",
+    );
+  });
+
+  it("does not invoke an accessor-backed error message from fetch", async () => {
+    let messageReads = 0;
+    const hostileError = Object.defineProperty(new Error(), "message", {
+      configurable: true,
+      get() {
+        messageReads += 1;
+        throw new Error("message getter executed");
+      },
+    });
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: () => Promise.reject(hostileError),
+    });
+
+    let thrown: unknown;
+    try {
+      await source.executeTool("search_docs", {});
+    } catch (error) {
+      thrown = error;
+    }
+
+    assertStrictEquals(thrown, hostileError);
+    assertEquals(messageReads, 0);
+  });
+
+  it("rejects invalid client configuration", () => {
+    assertThrows(
+      () =>
+        createRemoteMCPToolSource({
+          endpoint: "https://mcp.test",
+          requestTimeoutMs: 0,
+        }),
+      Error,
+      "requestTimeoutMs must be a positive safe integer",
+    );
+    assertThrows(
+      () =>
+        createRemoteMCPToolSource({
+          endpoint: "file:///tmp/mcp.sock",
+        }),
+      Error,
+      "endpoint must use http or https",
+    );
+
+    let endpointReads = 0;
+    const accessorConfig = Object.defineProperty({}, "endpoint", {
+      enumerable: true,
+      get() {
+        endpointReads += 1;
+        return "https://mcp.test";
+      },
+    });
+    assertThrows(
+      () => createRemoteMCPToolSource(accessorConfig as never),
+      Error,
+      "configuration must use data properties",
+    );
+    assertEquals(endpointReads, 0);
   });
 });

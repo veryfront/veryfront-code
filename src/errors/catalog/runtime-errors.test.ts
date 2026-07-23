@@ -14,6 +14,8 @@ describe("errors/catalog/runtime-errors", () => {
         "page-not-found",
         "api-error",
         "middleware-error",
+        "missing-extension",
+        "extension-setup-timeout",
       ];
 
       for (const slug of expectedSlugs) {
@@ -36,8 +38,8 @@ describe("errors/catalog/runtime-errors", () => {
       }
     });
 
-    it("should have 7 entries", () => {
-      assertEquals(Object.keys(RUNTIME_ERROR_CATALOG).length, 7);
+    it("should have 12 entries", () => {
+      assertEquals(Object.keys(RUNTIME_ERROR_CATALOG).length, 12);
     });
 
     it("hydration-mismatch should have example and relatedErrors", () => {

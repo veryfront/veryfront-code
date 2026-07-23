@@ -1,4 +1,4 @@
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CompileOptions } from "./types.ts";
 
@@ -9,13 +9,19 @@ export async function writeCompiledFile(
   code: string,
   options: CompileOptions,
 ): Promise<string> {
-  const relativePath = filePath
-    .replace(options.projectDir, "")
-    .replace(/^\//, "");
+  const relativePath = relative(resolve(options.projectDir), resolve(filePath));
+  if (
+    relativePath === "" || relativePath.split(/[\\/]/)[0] === ".." || isAbsolute(relativePath)
+  ) {
+    throw new TypeError("MDX source path is outside projectDir");
+  }
+  if (!/\.mdx$/i.test(relativePath)) {
+    throw new TypeError("MDX source path must end with .mdx");
+  }
 
   const outputPath = join(
     options.outputDir,
-    relativePath.replace(".mdx", ".js"),
+    relativePath.replace(/\.mdx$/i, ".js"),
   );
 
   await fs.mkdir(dirname(outputPath), { recursive: true });

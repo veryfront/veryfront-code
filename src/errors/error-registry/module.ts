@@ -1,6 +1,7 @@
-import { defineError } from "../types.ts";
+import { defineError, type ErrorRegistryFragment, type RegisteredError } from "../types.ts";
 
-export const MODULE_NOT_FOUND = defineError({
+/** Registered error definition for the module-not-found slug. */
+export const MODULE_NOT_FOUND: RegisteredError = defineError({
   slug: "module-not-found",
   category: "MODULE",
   status: 404,
@@ -8,7 +9,8 @@ export const MODULE_NOT_FOUND = defineError({
   suggestion: "Check the import path and ensure the module is installed",
 });
 
-export const IMPORT_RESOLUTION_ERROR = defineError({
+/** Registered error definition for the import-resolution-error slug. */
+export const IMPORT_RESOLUTION_ERROR: RegisteredError = defineError({
   slug: "import-resolution-error",
   category: "MODULE",
   status: 500,
@@ -16,7 +18,8 @@ export const IMPORT_RESOLUTION_ERROR = defineError({
   suggestion: "Verify import paths and module configuration",
 });
 
-export const CIRCULAR_DEPENDENCY = defineError({
+/** Registered error definition for the circular-dependency slug. */
+export const CIRCULAR_DEPENDENCY: RegisteredError = defineError({
   slug: "circular-dependency",
   category: "MODULE",
   status: 500,
@@ -24,7 +27,8 @@ export const CIRCULAR_DEPENDENCY = defineError({
   suggestion: "Refactor imports to break the circular dependency",
 });
 
-export const INVALID_IMPORT = defineError({
+/** Registered error definition for the invalid-import slug. */
+export const INVALID_IMPORT: RegisteredError = defineError({
   slug: "invalid-import",
   category: "MODULE",
   status: 400,
@@ -32,7 +36,8 @@ export const INVALID_IMPORT = defineError({
   suggestion: "Fix import syntax or path",
 });
 
-export const DEPENDENCY_MISSING = defineError({
+/** Registered error definition for the dependency-missing slug. */
+export const DEPENDENCY_MISSING: RegisteredError = defineError({
   slug: "dependency-missing",
   category: "MODULE",
   status: 404,
@@ -40,7 +45,8 @@ export const DEPENDENCY_MISSING = defineError({
   suggestion: "Install the missing dependency with your package manager",
 });
 
-export const VERSION_MISMATCH = defineError({
+/** Registered error definition for the version-mismatch slug. */
+export const VERSION_MISMATCH: RegisteredError = defineError({
   slug: "version-mismatch",
   category: "MODULE",
   status: 409,
@@ -49,11 +55,20 @@ export const VERSION_MISMATCH = defineError({
 });
 
 /** Registry fragment for MODULE errors (slug → definition). */
-export const MODULE_REGISTRY = {
-  "module-not-found": MODULE_NOT_FOUND,
-  "import-resolution-error": IMPORT_RESOLUTION_ERROR,
-  "circular-dependency": CIRCULAR_DEPENDENCY,
-  "invalid-import": INVALID_IMPORT,
-  "dependency-missing": DEPENDENCY_MISSING,
-  "version-mismatch": VERSION_MISMATCH,
-} as const;
+export const MODULE_REGISTRY: ErrorRegistryFragment<
+  | "module-not-found"
+  | "import-resolution-error"
+  | "circular-dependency"
+  | "invalid-import"
+  | "dependency-missing"
+  | "version-mismatch"
+> = Object.freeze(
+  {
+    "module-not-found": MODULE_NOT_FOUND,
+    "import-resolution-error": IMPORT_RESOLUTION_ERROR,
+    "circular-dependency": CIRCULAR_DEPENDENCY,
+    "invalid-import": INVALID_IMPORT,
+    "dependency-missing": DEPENDENCY_MISSING,
+    "version-mismatch": VERSION_MISMATCH,
+  } as const,
+);

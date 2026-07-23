@@ -20,7 +20,13 @@ export {
   resolveModel,
 } from "./model-registry.ts";
 export type { ModelProviderFactory } from "./model-registry.ts";
-export type { ModelRuntime } from "./types.ts";
+export type {
+  EmbeddingRuntime,
+  ModelRuntime,
+  ModelRuntimeGenerateResult,
+  ModelRuntimeStreamResult,
+  RuntimeMetadata,
+} from "./types.ts";
 export {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,

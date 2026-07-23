@@ -3,6 +3,8 @@
   "minimumDependencyAge": "P2D",
   "imports": {
     "#dnt": "jsr:@deno/dnt@0.42.3",
+    "esbuild": "npm:esbuild@0.28.1",
+    "veryfront/extensions/bundler": "../src/extensions/bundler/bundler.ts",
     "#std/assert": "jsr:@std/assert@1.0.19",
     "#std/flags": "jsr:@std/cli@1.0.28/parse-args",
     "#std/fs": "jsr:@std/fs@1.0.23",

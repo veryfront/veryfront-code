@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryKv } from "./memory-adapter.ts";
+import { KV_PORTABLE_LIMITS } from "./types.ts";
 
 async function collectEntries<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const entries: T[] = [];
@@ -80,16 +81,29 @@ describe("MemoryKv", () => {
       const entries = await collectEntries(kv.list({ limit: 2 }));
       assertEquals(entries.length, 2);
     });
+
+    it("enforces the default scan bound when no list limit is supplied", async () => {
+      const kv = new MemoryKv();
+      for (let index = 0; index <= KV_PORTABLE_LIMITS.defaultListScanEntries; index++) {
+        await kv.set(["entry", String(index)], index);
+      }
+
+      await assertRejects(
+        () => collectEntries(kv.list()),
+        Error,
+        "KV list scan exceeded",
+      );
+      kv.close();
+    });
   });
 
   describe("close", () => {
-    it("should clear the store on close", async () => {
+    it("should reject reads after close", async () => {
       const kv = new MemoryKv();
       await kv.set(["test"], "value");
       kv.close();
 
-      const result = await kv.get(["test"]);
-      assertEquals(result.value, undefined);
+      await assertRejects(() => kv.get(["test"]), Error, "KV store is closed");
     });
   });
 });

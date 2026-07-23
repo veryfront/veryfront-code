@@ -1,5 +1,13 @@
-import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { parallelMap, rendererLogger } from "#veryfront/utils";
 import {
   findStaticImportFromSpans,
@@ -71,31 +79,28 @@ async function resolveAliasImport(
   adapter: RuntimeAdapter,
 ): Promise<ResolvedModuleDependency> {
   const relativePath = imp.path.substring(2); // Remove @/ prefix.
-
-  const depFilePath = (await findSourceFile(relativePath, projectDir, adapter)) ??
-    (await findSourceFile(`components/${relativePath}`, projectDir, adapter));
+  const depFilePath = await findSourceFile(relativePath, projectDir, adapter);
 
   return { ...imp, relativePath, depFilePath, isLocalLib: false };
 }
 
 async function resolveRelativeImport(
   imp: RelativeImport,
+  projectDir: string,
+  canonicalProjectDir: string | undefined,
   adapter: RuntimeAdapter,
 ): Promise<ResolvedModuleDependency> {
   const basePath = normalize(join(imp.fromDir, imp.path));
-
-  logger.debug("Resolving relative import:", {
-    path: imp.path,
-    fromDir: imp.fromDir,
-    basePath,
-  });
+  if (!isPathWithinRoot(basePath, projectDir)) {
+    throw new TypeError("Relative module import must stay inside the project");
+  }
 
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
   let depFilePath: string | null = null;
 
-  if (await adapter.fs.exists(basePath)) {
-    const stat = await adapter.fs.stat(basePath);
-    if (!stat.isDirectory) {
+  const baseStat = await getSafePathInfo(basePath, canonicalProjectDir, adapter);
+  if (baseStat) {
+    if (baseStat.isFile) {
       depFilePath = basePath;
     }
   }
@@ -103,7 +108,7 @@ async function resolveRelativeImport(
   if (!depFilePath) {
     for (const ext of extensions) {
       const pathWithExt = basePath + ext;
-      if (await adapter.fs.exists(pathWithExt)) {
+      if ((await getSafePathInfo(pathWithExt, canonicalProjectDir, adapter))?.isFile) {
         depFilePath = pathWithExt;
         break;
       }
@@ -113,7 +118,7 @@ async function resolveRelativeImport(
   if (!depFilePath) {
     for (const ext of extensions) {
       const indexPath = join(basePath, `index${ext}`);
-      if (await adapter.fs.exists(indexPath)) {
+      if ((await getSafePathInfo(indexPath, canonicalProjectDir, adapter))?.isFile) {
         depFilePath = indexPath;
         break;
       }
@@ -135,16 +140,20 @@ async function resolveRelativeImport(
 export async function resolveModuleDependencies(
   input: ResolveModuleDependenciesInput,
 ): Promise<ResolvedModuleDependency[]> {
+  if (!isPathWithinRoot(input.filePath, input.projectDir)) {
+    throw new TypeError("Module source path must stay inside the project");
+  }
+
   const fileDir = dirname(input.filePath);
   const aliasImports = collectAliasImports(input.fileContent);
   const relativeImports = collectRelativeImports(input.fileContent, fileDir);
+  const canonicalProjectDir = input.adapter.fs.realPath && relativeImports.length > 0
+    ? await input.adapter.fs.realPath(input.projectDir)
+    : undefined;
 
-  logger.debug("Processing file:", {
-    filePath: input.filePath,
+  logger.debug("Resolving local module dependencies", {
     aliasImportsCount: aliasImports.length,
     relativeImportsCount: relativeImports.length,
-    aliasImports: aliasImports.map((i) => i.path),
-    relativeImports: relativeImports.map((i) => i.path),
   });
 
   const resolvedAliasDeps = await parallelMap(
@@ -153,7 +162,7 @@ export async function resolveModuleDependencies(
   );
   const resolvedRelativeDeps = await parallelMap(
     relativeImports,
-    (imp) => resolveRelativeImport(imp, input.adapter),
+    (imp) => resolveRelativeImport(imp, input.projectDir, canonicalProjectDir, input.adapter),
   );
 
   return [...resolvedAliasDeps, ...resolvedRelativeDeps];
@@ -168,7 +177,38 @@ export function rewriteResolvedDependencyImports(
     start: dep.start,
     end: dep.end,
     expected: dep.full,
-    replacement: `from "file://${dep.depTempPath}"`,
+    replacement: `from ${JSON.stringify(toFileUrl(dep.depTempPath).href)}`,
   }));
   return replaceSourceSpans(fileContent, replacements);
+}
+
+async function getSafePathInfo(
+  path: string,
+  canonicalProjectDir: string | undefined,
+  adapter: RuntimeAdapter,
+): Promise<{ isFile: boolean; isDirectory: boolean }> {
+  try {
+    const info = adapter.fs.lstat ? await adapter.fs.lstat(path) : await adapter.fs.stat(path);
+    if (info.isSymlink) {
+      throw new TypeError("Local module dependency cannot be a symbolic link");
+    }
+
+    if (adapter.fs.realPath && canonicalProjectDir) {
+      const canonicalPath = await adapter.fs.realPath(path);
+      if (!isPathWithinRoot(canonicalPath, canonicalProjectDir)) {
+        throw new TypeError("Local module dependency must stay inside the project");
+      }
+    }
+
+    return { isFile: info.isFile, isDirectory: info.isDirectory };
+  } catch (error) {
+    if (isNotFoundError(error)) return { isFile: false, isDirectory: false };
+    throw error;
+  }
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  const relativePath = relative(normalize(root), normalize(path));
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
 }

@@ -1,4 +1,5 @@
 import type { OAuthServiceConfig } from "../types.ts";
+import { freezeOAuthServiceConfigs } from "./freeze-config.ts";
 
 const googleBase = {
   providerId: "google",
@@ -25,8 +26,8 @@ export const gmailConfig: OAuthServiceConfig = {
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.labels",
+    "https://www.googleapis.com/auth/gmail.compose",
     "https://mail.google.com/",
   ],
 };
@@ -50,8 +51,9 @@ export const sheetsConfig: OAuthServiceConfig = {
   displayName: "Google Sheets",
   apiBaseUrl: "https://sheets.googleapis.com/v4",
   defaultScopes: [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
   ],
 };
 
@@ -61,10 +63,7 @@ export const driveConfig: OAuthServiceConfig = {
   serviceId: "drive",
   displayName: "Google Drive",
   apiBaseUrl: "https://www.googleapis.com/drive/v3",
-  defaultScopes: [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/drive.file",
-  ],
+  defaultScopes: ["https://www.googleapis.com/auth/drive"],
 };
 
 export const googleServices = {
@@ -73,3 +72,5 @@ export const googleServices = {
   sheets: sheetsConfig,
   drive: driveConfig,
 } as const;
+
+freezeOAuthServiceConfigs(googleServices);

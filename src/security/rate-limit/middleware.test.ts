@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRateLimiter, RateLimitPresets } from "./middleware.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
@@ -23,6 +28,64 @@ async function withStore(test: (store: MemoryRateLimitStore) => Promise<void>): 
 }
 
 describe("Rate Limiting Middleware", () => {
+  it("rejects invalid limits synchronously", () => {
+    for (
+      const config of [
+        { maxRequests: 0, windowMs: 60_000 },
+        { maxRequests: 1.5, windowMs: 60_000 },
+        { maxRequests: 1, windowMs: 0 },
+        { maxRequests: 1, windowMs: Number.NaN },
+        { maxRequests: 1, windowMs: Number.POSITIVE_INFINITY },
+      ]
+    ) {
+      assertThrows(
+        () => createRateLimiter(config),
+        TypeError,
+        "positive safe integer",
+      );
+    }
+  });
+
+  it("does not silently downgrade stateful strategies for custom stores", () => {
+    const store: RateLimitStore = {
+      increment: () => Promise.resolve(1),
+      get: () => Promise.resolve(0),
+      reset: () => Promise.resolve(),
+      resetAll: () => Promise.resolve(),
+    };
+
+    assertThrows(
+      () =>
+        createRateLimiter({
+          maxRequests: 10,
+          windowMs: 60_000,
+          strategy: "sliding-window",
+          store,
+        }),
+      TypeError,
+      "MemoryRateLimitStore",
+    );
+  });
+
+  it("rejects empty and unbounded generated client keys", async () => {
+    await withStore(async (store) => {
+      for (const key of ["", "x".repeat(513)]) {
+        const limiter = createRateLimiter({
+          maxRequests: 1,
+          windowMs: 60_000,
+          keyGenerator: () => key,
+          store,
+        });
+
+        await assertRejects(
+          () => limiter(createRequest(), createNext()),
+          TypeError,
+          "client key",
+        );
+      }
+    });
+  });
+
   it("should allow requests within limit", async () => {
     await withStore(async (store) => {
       const limiter = createRateLimiter({
@@ -64,6 +127,43 @@ describe("Rate Limiting Middleware", () => {
       assertEquals(blockedResponse.status, 429);
       assertExists(blockedResponse.headers.get("X-RateLimit-Limit"));
       assertExists(blockedResponse.headers.get("Retry-After"));
+    });
+  });
+
+  it("should calculate Retry-After from the configured window", async () => {
+    await withStore(async (store) => {
+      const limiter = createRateLimiter({
+        maxRequests: 1,
+        windowMs: 900_000,
+        store,
+      });
+      const request = createRequest();
+
+      await limiter(request, createNext());
+      const blocked = await limiter(request, createNext());
+
+      assertEquals(blocked.headers.get("Retry-After"), "900");
+    });
+  });
+
+  it("uses the next token time for token-bucket Retry-After", async () => {
+    await withStore(async (store) => {
+      const limiter = createRateLimiter({
+        maxRequests: 10,
+        windowMs: 10_000,
+        strategy: "token-bucket",
+        keyGenerator: () => "client",
+        store,
+      });
+
+      for (let index = 0; index < 10; index++) {
+        assertEquals((await limiter(createRequest(), createNext())).status, 200);
+      }
+
+      const blocked = await limiter(createRequest(), createNext());
+      const retryAfter = Number(blocked.headers.get("Retry-After"));
+      assertEquals(blocked.status, 429);
+      assertEquals(retryAfter >= 1 && retryAfter <= 2, true);
     });
   });
 

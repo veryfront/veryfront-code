@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateHydrationData } from "./hydration-data-generator.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { HydrationDataSchema } from "../schemas/index.ts";
+import { HTMLGenerationOptionsSchema, HydrationDataSchema } from "../schemas/index.ts";
 
 function parseHydrationData(
   slug: string,
@@ -45,6 +45,40 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.params, params);
     });
 
+    it("does not execute route-param accessors", () => {
+      let paramAccessorCalls = 0;
+      const params: Record<string, string> = {};
+      Object.defineProperty(params, "id", {
+        enumerable: true,
+        get() {
+          paramAccessorCalls++;
+          return "123";
+        },
+      });
+      assertThrows(
+        () => generateHydrationData("page", params, {}, baseOptions),
+        Error,
+        "Hydration params cannot be inspected",
+      );
+      assertEquals(paramAccessorCalls, 0);
+
+      let itemAccessorCalls = 0;
+      const values = ["one"];
+      Object.defineProperty(values, 0, {
+        enumerable: true,
+        get() {
+          itemAccessorCalls++;
+          return "one";
+        },
+      });
+      assertThrows(
+        () => generateHydrationData("page", { id: values }, {}, baseOptions),
+        Error,
+        "Hydration params cannot be inspected",
+      );
+      assertEquals(itemAccessorCalls, 0);
+    });
+
     it("should include props in output", () => {
       const props = { title: "Hello", count: 42 };
       const parsed = parseHydrationData("page", {}, props, baseOptions) as {
@@ -73,16 +107,93 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.layouts.length, 2);
     });
 
-    it("should filter out layouts without paths", () => {
+    it("rejects layouts without paths", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,
         nestedLayouts: [{ kind: "tsx", path: "/project/layouts/main.tsx" }, { kind: "tsx" }],
         projectDir: "/project",
       };
-      const parsed = parseHydrationData("page", {}, {}, options) as {
-        layouts: unknown[];
-      };
-      assertEquals(parsed.layouts.length, 1);
+      assertThrows(
+        () => parseHydrationData("page", {}, {}, options),
+        TypeError,
+        "layout path",
+      );
+    });
+
+    it("does not execute accessors in generation options or layouts", () => {
+      let optionAccessorCalls = 0;
+      const accessorOptions: Record<string, unknown> = { config: {} };
+      Object.defineProperty(accessorOptions, "mode", {
+        enumerable: true,
+        get() {
+          optionAccessorCalls++;
+          return "development";
+        },
+      });
+      assertThrows(
+        () => generateHydrationData("page", {}, {}, accessorOptions as never),
+        TypeError,
+        "Hydration options must not contain accessor properties",
+      );
+      assertEquals(optionAccessorCalls, 0);
+
+      let layoutAccessorCalls = 0;
+      const layout: Record<string, unknown> = { kind: "tsx" };
+      Object.defineProperty(layout, "path", {
+        enumerable: true,
+        get() {
+          layoutAccessorCalls++;
+          return "layouts/main.tsx";
+        },
+      });
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            nestedLayouts: [layout] as never,
+          }),
+        TypeError,
+        "Hydration layouts must not contain accessor properties",
+      );
+      assertEquals(layoutAccessorCalls, 0);
+    });
+
+    it("does not execute nested config or serialization-option accessors", () => {
+      let configAccessorCalls = 0;
+      const directories: Record<string, unknown> = {};
+      Object.defineProperty(directories, "app", {
+        enumerable: true,
+        get() {
+          configAccessorCalls++;
+          return "app";
+        },
+      });
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            config: { directories },
+          } as never),
+        TypeError,
+        "Hydration config directories must not contain accessor properties",
+      );
+      assertEquals(configAccessorCalls, 0);
+
+      let serializationAccessorCalls = 0;
+      const serializeOptions: Record<string, unknown> = {};
+      Object.defineProperty(serializeOptions, "pretty", {
+        enumerable: true,
+        get() {
+          serializationAccessorCalls++;
+          return false;
+        },
+      });
+      assertThrows(
+        () => generateHydrationData("page", {}, {}, baseOptions, serializeOptions as never),
+        TypeError,
+        "Hydration serialization options must not contain accessor properties",
+      );
+      assertEquals(serializationAccessorCalls, 0);
     });
 
     it("should include appPath when provided", () => {
@@ -109,25 +220,38 @@ describe("hydration-data-generator", () => {
       assertEquals(typeof parsed.pagePath, "string");
     });
 
-    it("should omit filesystem paths outside the project root", () => {
-      const parsed = parseHydrationData("page", {}, {}, {
-        ...baseOptions,
-        projectDir: "/project",
-        pagePath: "/private/tenant/page.tsx",
-        appPath: "/private/tenant/app.tsx",
-        nestedLayouts: [
-          { kind: "tsx", path: "/private/tenant/layout.tsx" },
-          { kind: "tsx", path: "/project/app/layout.tsx" },
-        ],
-      }) as {
-        pagePath?: string;
-        appPath?: string;
-        layouts: Array<{ kind: string; path: string }>;
-      };
+    it("rejects filesystem paths outside the project root", () => {
+      for (
+        const options of [
+          { pagePath: "/private/tenant/page.tsx" },
+          { appPath: "/private/tenant/app.tsx" },
+          { nestedLayouts: [{ kind: "tsx" as const, path: "/private/tenant/layout.tsx" }] },
+        ]
+      ) {
+        assertThrows(
+          () =>
+            parseHydrationData("page", {}, {}, {
+              ...baseOptions,
+              projectDir: "/project",
+              ...options,
+            }),
+          TypeError,
+          "path",
+        );
+      }
+    });
 
-      assertEquals(parsed.pagePath, undefined);
-      assertEquals(parsed.appPath, undefined);
-      assertEquals(parsed.layouts, [{ kind: "tsx", path: "app/layout.tsx" }]);
+    it("rejects normalized paths that traverse outside the project root", () => {
+      assertThrows(
+        () =>
+          parseHydrationData("page", {}, {}, {
+            ...baseOptions,
+            projectDir: "/project",
+            pagePath: "/project/pages/../../private/page.tsx",
+          }),
+        TypeError,
+        "page path",
+      );
     });
 
     it("publishes the configured App Router root", () => {
@@ -139,6 +263,30 @@ describe("hydration-data-generator", () => {
       }) as { appRouterRoot?: string };
 
       assertEquals(parsed.appRouterRoot, "src/app");
+    });
+
+    it("honors an explicit App Router root over the configured directory", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        projectDir: "/project",
+        appRouterRoot: "routes/app",
+        config: { directories: { app: "src/app" } },
+      }) as { appRouterRoot?: string };
+
+      assertEquals(parsed.appRouterRoot, "routes/app");
+    });
+
+    it("rejects an explicit App Router root that escapes the project", () => {
+      assertThrows(
+        () =>
+          parseHydrationData("page", {}, {}, {
+            ...baseOptions,
+            projectDir: "/project",
+            appRouterRoot: "../private/app",
+          }),
+        TypeError,
+        "App Router root",
+      );
     });
 
     it("publishes isolated client-page ownership", () => {
@@ -211,6 +359,97 @@ describe("hydration-data-generator", () => {
       );
     });
 
+    it("rejects malformed release asset module entries", () => {
+      const manifest = {
+        modules: {
+          "pages/index.tsx": {
+            contentHash: 'hash"><script>alert(1)</script>',
+          },
+        },
+      } as unknown as ReleaseAssetManifest;
+      assertThrows(
+        () =>
+          parseHydrationData(
+            "page",
+            {},
+            {},
+            {
+              ...baseOptions,
+              releaseAssetManifest: manifest,
+            } as HTMLGenerationOptions & { releaseAssetManifest: ReleaseAssetManifest },
+          ),
+        TypeError,
+        "asset module",
+      );
+    });
+
+    it("does not execute release-manifest accessors", () => {
+      let manifestAccessorCalls = 0;
+      const manifest: Record<string, unknown> = {};
+      Object.defineProperty(manifest, "modules", {
+        enumerable: true,
+        get() {
+          manifestAccessorCalls++;
+          return {};
+        },
+      });
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            releaseAssetManifest: manifest as never,
+          } as never),
+        TypeError,
+        "module map must not contain accessor properties",
+      );
+      assertEquals(manifestAccessorCalls, 0);
+
+      let entryAccessorCalls = 0;
+      const entry: Record<string, unknown> = {};
+      Object.defineProperty(entry, "contentHash", {
+        enumerable: true,
+        get() {
+          entryAccessorCalls++;
+          return "a".repeat(64);
+        },
+      });
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            releaseAssetManifest: {
+              modules: { "pages/index.tsx": entry },
+            } as never,
+          } as never),
+        TypeError,
+        "module entry must not contain accessor properties",
+      );
+      assertEquals(entryAccessorCalls, 0);
+    });
+
+    it("rejects oversized release asset module maps before serialization", () => {
+      const modules: Record<string, { contentHash: string }> = {};
+      for (let index = 0; index <= 10_000; index++) {
+        modules[`pages/${index}.tsx`] = { contentHash: "a".repeat(64) };
+      }
+      const manifest = { modules } as unknown as ReleaseAssetManifest;
+
+      assertThrows(
+        () =>
+          parseHydrationData(
+            "page",
+            {},
+            {},
+            {
+              ...baseOptions,
+              releaseAssetManifest: manifest,
+            } as HTMLGenerationOptions & { releaseAssetManifest: ReleaseAssetManifest },
+          ),
+        TypeError,
+        "entry limit",
+      );
+    });
+
     it("includes release id for production fallback module versioning", () => {
       const parsed = parseHydrationData(
         "page",
@@ -244,11 +483,22 @@ describe("hydration-data-generator", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,
         pagePath: "/project/pages/index.tsx",
+        projectDir: "/project",
       };
       const parsed = parseHydrationData("page", {}, {}, options) as {
         pageType?: unknown;
       };
       assertEquals(parsed.pageType, "tsx");
+    });
+
+    it("infers Markdown page type from pagePath", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        pagePath: "/project/pages/index.md",
+        projectDir: "/project",
+      }) as { pageType?: unknown };
+
+      assertEquals(parsed.pageType, "md");
     });
 
     it("should choose fs client modules for local projects", () => {
@@ -264,7 +514,7 @@ describe("hydration-data-generator", () => {
 
     it("should choose rsc module client loading for remote preview pages", () => {
       // Preview pods (accessed via trusted proxy with environment=preview) do
-      // not expose the dev-only `/_veryfront/fs/` handler — that surface is
+      // not expose the dev-only `/_veryfront/fs/` handler. That surface is
       // gated on `isLocalProject` under VULN-SRV-1/2. Preview clients load
       // compiled modules via the RSC module endpoint, the same as production.
       const options: HTMLGenerationOptions = {
@@ -328,6 +578,280 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.layoutProps, {
         "layouts/main.tsx": { theme: "dark" },
       });
+    });
+
+    it("preserves all generated optional fields when schema-parsed", () => {
+      const generated = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        pageType: "mdx",
+        releaseId: "release-1",
+        frontmatter: { title: "Page" },
+        headings: [{ id: "intro", text: "Intro", level: 2 }],
+        studioEmbed: true,
+      });
+      const parsed = HydrationDataSchema.parse(generated) as Record<string, unknown>;
+
+      assertEquals(parsed.pageType, "mdx");
+      assertEquals(parsed.releaseId, "release-1");
+      assertEquals(parsed.frontmatter, { title: "Page" });
+      assertEquals(parsed.dev, true);
+      assertEquals(parsed.headings, [{ id: "intro", text: "Intro", level: 2 }]);
+      assertEquals(parsed.studioEmbed, true);
+    });
+
+    it("rejects unsupported nested layout kinds at the schema boundary", () => {
+      assertThrows(
+        () =>
+          HTMLGenerationOptionsSchema.parse({
+            mode: "production",
+            config: {},
+            nestedLayouts: [{ kind: "html", path: "layouts/main.html" }],
+          }),
+        Error,
+      );
+    });
+
+    it("rejects unsupported nested layout kinds at the runtime boundary", () => {
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            projectDir: "/project",
+            nestedLayouts: [{ kind: "html", path: "/project/layout.html" }],
+          } as never),
+        TypeError,
+        "layout kind",
+      );
+    });
+
+    it("rejects excessive nested layout counts", () => {
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            projectDir: "/project",
+            nestedLayouts: Array.from({ length: 65 }, (_, index) => ({
+              kind: "tsx" as const,
+              path: `/project/layouts/${index}.tsx`,
+            })),
+          }),
+        TypeError,
+        "too many layouts",
+      );
+    });
+
+    it("rejects hydration fields that exceed client-side count limits", () => {
+      assertThrows(
+        () =>
+          generateHydrationData(
+            "page",
+            Object.fromEntries(
+              Array.from({ length: 101 }, (_, index) => [`param-${index}`, "value"]),
+            ),
+            {},
+            baseOptions,
+          ),
+        Error,
+        "params",
+      );
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            headings: Array.from({ length: 1_001 }, (_, index) => ({
+              id: `heading-${index}`,
+              text: "Heading",
+              level: 2,
+            })),
+          }),
+        TypeError,
+        "headings",
+      );
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            headings: [{ id: "invalid", text: "Invalid", level: 7 }],
+          }),
+        TypeError,
+        "headings",
+      );
+    });
+
+    it("rejects object fields that would produce client-invalid page data", () => {
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            frontmatter: [] as never,
+          }),
+        TypeError,
+        "frontmatter",
+      );
+      assertThrows(
+        () =>
+          generateHydrationData("page", {}, {}, {
+            ...baseOptions,
+            layoutProps: { "layouts/main.tsx": [] as never },
+          }),
+        TypeError,
+        "layout props",
+      );
+      assertThrows(
+        () =>
+          generateHydrationData(
+            "page",
+            {},
+            Object.fromEntries(
+              Array.from({ length: 10_001 }, (_, index) => [`prop-${index}`, true]),
+            ),
+            baseOptions,
+          ),
+        TypeError,
+        "props",
+      );
+    });
+
+    it("rejects unsupported JSON values instead of silently changing them", () => {
+      for (const value of [undefined, () => undefined, Symbol("value"), 1n, NaN, Infinity]) {
+        assertThrows(
+          () => generateHydrationData("page", {}, { value }, baseOptions),
+          TypeError,
+          "JSON-serializable",
+        );
+      }
+    });
+
+    it("rejects cyclic and excessively deep hydration values", () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+      assertThrows(
+        () => generateHydrationData("page", {}, cyclic, baseOptions),
+        TypeError,
+        "cycles",
+      );
+
+      const deeplyNested: Record<string, unknown> = {};
+      let cursor = deeplyNested;
+      for (let depth = 0; depth < 65; depth++) {
+        const next: Record<string, unknown> = {};
+        cursor.next = next;
+        cursor = next;
+      }
+      assertThrows(
+        () => generateHydrationData("page", {}, deeplyNested, baseOptions),
+        TypeError,
+        "depth limit",
+      );
+    });
+
+    it("bounds nested hydration entries before serialization", () => {
+      assertThrows(
+        () =>
+          generateHydrationData(
+            "page",
+            {},
+            { nested: Array.from({ length: 10_001 }, () => true) },
+            baseOptions,
+          ),
+        TypeError,
+        "entry limit",
+      );
+    });
+
+    it("does not execute hydration accessors or custom serializers", () => {
+      let accessorCalls = 0;
+      const accessorProps: Record<string, unknown> = {};
+      Object.defineProperty(accessorProps, "value", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("private accessor detail");
+        },
+      });
+      assertThrows(
+        () => generateHydrationData("page", {}, accessorProps, baseOptions),
+        TypeError,
+        "accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
+
+      let serializerCalls = 0;
+      const customSerializer = {
+        toJSON() {
+          serializerCalls++;
+          return "custom";
+        },
+      };
+      assertThrows(
+        () =>
+          generateHydrationData(
+            "page",
+            {},
+            { value: customSerializer },
+            baseOptions,
+          ),
+        TypeError,
+        "JSON-serializable",
+      );
+      assertEquals(serializerCalls, 0);
+    });
+
+    it("converts valid dates to their standard JSON representation", () => {
+      const parsed = parseHydrationData(
+        "page",
+        {},
+        { publishedAt: new Date("2026-01-02T03:04:05.000Z") },
+        baseOptions,
+      ) as { props: { publishedAt: string } };
+
+      assertEquals(parsed.props.publishedAt, "2026-01-02T03:04:05.000Z");
+    });
+
+    it("converts inaccessible hydration records into typed failures", () => {
+      const props = new Proxy({}, {
+        ownKeys() {
+          throw new Error("private proxy detail");
+        },
+      });
+      const error = assertThrows(
+        () => generateHydrationData("page", {}, props, baseOptions),
+        TypeError,
+        "cannot be inspected",
+      );
+
+      assertEquals(error.message.includes("private proxy detail"), false);
+    });
+
+    it("rejects module paths containing malformed or unsafe Unicode", () => {
+      for (
+        const options of [
+          { pagePath: `pages/invalid-\ud800.tsx` },
+          { appPath: `app/invalid-\udfff.tsx` },
+          { nestedLayouts: [{ kind: "tsx" as const, path: "layouts/%e2%80%ae.tsx" }] },
+        ]
+      ) {
+        assertThrows(
+          () => parseHydrationData("page", {}, {}, { ...baseOptions, ...options }),
+          TypeError,
+          "path",
+        );
+      }
+    });
+
+    it("rejects hydration payloads larger than the client limit", () => {
+      assertThrows(
+        () =>
+          generateHydrationData(
+            "page",
+            {},
+            { value: "x".repeat(4 * 1024 * 1024) },
+            baseOptions,
+            { pretty: false },
+          ),
+        TypeError,
+        "size limit",
+      );
     });
 
     it("should set dev=true in development mode", () => {

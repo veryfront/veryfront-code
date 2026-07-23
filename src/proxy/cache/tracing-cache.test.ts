@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { TracingTokenCache } from "./tracing-cache.ts";
+import { TokenCacheOperationError, TracingTokenCache } from "./tracing-cache.ts";
 import type { CacheStats, TokenCache, TokenCacheEntry } from "./types.ts";
 
 type CallRecord = { method: string; args: unknown[] };
@@ -127,9 +127,9 @@ describe("TracingTokenCache", () => {
     assertEquals(fake.calls, [{ method: "close", args: [] }]);
   });
 
-  it("propagates errors thrown by the inner cache", async () => {
+  it("sanitizes errors thrown by the inner cache before tracing or propagation", async () => {
     const fake: TokenCache = {
-      get: () => Promise.reject(new Error("boom")),
+      get: () => Promise.reject(new Error("redis://user:password@private-host")),
       set: () => Promise.resolve(),
       delete: () => Promise.resolve(),
       clear: () => Promise.resolve(),
@@ -139,15 +139,12 @@ describe("TracingTokenCache", () => {
     };
     const traced = new TracingTokenCache(fake);
 
-    let caught: unknown = null;
-    try {
-      await traced.get("k");
-    } catch (error) {
-      caught = error;
-    }
-
-    assertEquals(caught instanceof Error, true);
-    assertEquals((caught as Error).message, "boom");
+    const error = await assertRejects(
+      () => traced.get("k"),
+      TokenCacheOperationError,
+      "get failed",
+    );
+    assertEquals((error as Error).message.includes("password"), false);
   });
 
   it("accepts a custom spanPrefix without altering behavior", async () => {
@@ -160,5 +157,26 @@ describe("TracingTokenCache", () => {
     await traced.get("k5");
 
     assertEquals(fake.calls, [{ method: "get", args: ["k5"] }]);
+  });
+
+  it("rejects unsafe or unbounded span prefixes", () => {
+    for (const spanPrefix of ["", "cache token", "cache/token", "x".repeat(129)]) {
+      assertThrows(
+        () => new TracingTokenCache(new FakeCache(), { spanPrefix }),
+        TypeError,
+        "spanPrefix",
+      );
+    }
+  });
+
+  it("closes the inner cache once and rejects subsequent operations", async () => {
+    const fake = new FakeCache();
+    const traced = new TracingTokenCache(fake);
+
+    await traced.close();
+    await traced.close();
+
+    assertEquals(fake.calls, [{ method: "close", args: [] }]);
+    await assertRejects(() => traced.get("key"), Error, "closed");
   });
 });

@@ -15,6 +15,7 @@ import type { FSAdapter } from "../types.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveFileWithExtension } from "../resolution/file-finder.ts";
 import { parseImports, replaceSpecifiers } from "../../../esm/lexer.ts";
+import { errorLogName, fileLogLabel } from "../../../shared/log-context.ts";
 
 type ImportType = "project-alias" | "vf-modules";
 
@@ -71,12 +72,6 @@ function createFileReader(fs: FSAdapter): (path: string) => Promise<string | nul
   };
 }
 
-function getPathDesc(imp: AliasImport): string {
-  return imp.type === "project-alias"
-    ? `@/${imp.relativePath}`
-    : `/_vf_modules/${imp.relativePath}`;
-}
-
 function getEsbuildLoader(extension: string): "tsx" | "jsx" | "ts" | null {
   if (extension === ".tsx") return "tsx";
   if (extension === ".jsx") return "jsx";
@@ -99,7 +94,9 @@ async function transformImport(
   const resolved = await resolveFileWithExtension(imp.relativePath, readFile);
 
   if (!resolved) {
-    logger.warn(`${LOG_PREFIX_MDX_LOADER} Could not resolve ${getPathDesc(imp)}`);
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Could not resolve import`, {
+      moduleFile: fileLogLabel(imp.relativePath),
+    });
     return null;
   }
 
@@ -132,11 +129,17 @@ async function transformImport(
     const transformedPath = join(esmCacheDir, transformedFileName);
     await fs.writeFile(transformedPath, transformed);
 
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${getPathDesc(imp)} -> ${transformedPath}`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed import`, {
+      moduleFile: fileLogLabel(imp.relativePath),
+      cacheFile: fileLogLabel(transformedPath),
+    });
 
     return { specifier: imp.specifier, replacement: `file://${transformedPath}` };
   } catch (error) {
-    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform ${getPathDesc(imp)}`, error);
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform import`, {
+      moduleFile: fileLogLabel(imp.relativePath),
+      errorName: errorLogName(error),
+    });
     return null;
   }
 }

@@ -4,7 +4,12 @@ import * as React from "react";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
@@ -17,6 +22,11 @@ import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 function createMockAdapter(
   overrides: {
@@ -44,7 +54,7 @@ function createMockAdapter(
       readDir: () => Promise.resolve([]),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
-      stat: overrides.stat ?? (() => Promise.reject(new Error("not found"))),
+      stat: overrides.stat ?? (() => Promise.reject(new Deno.errors.NotFound("not found"))),
     },
     env: {
       get: () => undefined,
@@ -78,12 +88,13 @@ describe(
     afterEach(() => {
       resetReactCache();
       __setServerModuleLoaderForTests(null);
+      __resetLogRecordEmitterForTests();
     });
 
     describe("tryNotFoundFallback", () => {
       it("returns null when app directory does not exist", async () => {
         const adapter = createMockAdapter({
-          stat: () => Promise.reject(new Error("ENOENT")),
+          stat: () => Promise.reject(new Deno.errors.NotFound("not found")),
         });
         const ctx = makeCtx({ adapter });
         const req = new Request("http://localhost/not-found");
@@ -107,7 +118,7 @@ describe(
 
       it("returns null when slug is empty and app directory doesn't exist", async () => {
         const adapter = createMockAdapter({
-          stat: () => Promise.reject(new Error("ENOENT")),
+          stat: () => Promise.reject(new Deno.errors.NotFound("not found")),
         });
         const ctx = makeCtx({ adapter });
         const req = new Request("http://localhost/");
@@ -117,7 +128,44 @@ describe(
         assertEquals(result, null);
       });
 
-      it("renders the nearest ancestor app not-found component", async () => {
+      it("propagates app directory permission failures", async () => {
+        const adapter = createMockAdapter({
+          stat: () => Promise.reject(new Deno.errors.PermissionDenied("private-permission-canary")),
+        });
+
+        await assertRejects(
+          () =>
+            tryNotFoundFallback(
+              new Request("http://localhost/missing"),
+              "missing",
+              makeCtx({ adapter }),
+              new ResponseBuilder(),
+            ),
+          Deno.errors.PermissionDenied,
+          "private-permission-canary",
+        );
+      });
+
+      it("propagates custom page read permission failures", async () => {
+        const adapter = createMockAdapter({
+          stat: () => Promise.resolve({ isFile: false, isDirectory: true, size: 0, mtime: null }),
+          readFile: () => Promise.reject(new Deno.errors.PermissionDenied("private-read-canary")),
+        });
+
+        await assertRejects(
+          () =>
+            tryNotFoundFallback(
+              new Request("http://localhost/missing"),
+              "missing",
+              makeCtx({ adapter }),
+              new ResponseBuilder(),
+            ),
+          Deno.errors.PermissionDenied,
+          "private-read-canary",
+        );
+      });
+
+      it("renders the nearest ancestor app not-found component without source metadata", async () => {
         const adapter = await getAdapter();
 
         await withTestContext("not-found-fallback-success", async (context) => {
@@ -144,7 +192,7 @@ describe(
           assertEquals(result.status, 404);
           const html = await result.text();
           assertStringIncludes(html, "Missing B");
-          assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
+          assertEquals(html.includes("data-node-file"), false);
           assertEquals(html.includes("Root Missing"), false);
         });
       });
@@ -193,6 +241,55 @@ describe(
           assertExists(result);
           assertStringIncludes(await result.text(), "project-react-18");
           assertEquals(loadedVersions, ["18.3.1"]);
+        });
+      });
+
+      it("uses a generic 404 when the custom component fails to render", async () => {
+        const adapter = await getAdapter();
+        const entries: LogEntry[] = [];
+        __registerLogRecordEmitter((entry) => entries.push(entry));
+
+        await withTestContext("not-found-fallback-render-failure", async (context) => {
+          const appDir = join(context.projectDir, "app");
+          await mkdir(appDir, { recursive: true });
+          await writeTextFile(
+            join(appDir, "not-found.tsx"),
+            `export default function NotFound() { return <p>private-source-canary</p>; }`,
+          );
+          __injectReactDOMServerForTests({
+            renderToString: () => {
+              throw new Error("private-render-error-canary");
+            },
+            renderToStaticMarkup: () => {
+              throw new Error("private-render-error-canary");
+            },
+          });
+
+          const result = await tryNotFoundFallback(
+            new Request("http://localhost/private-route-canary"),
+            "private-route-canary",
+            makeCtx({
+              projectDir: context.projectDir,
+              adapter,
+              isLocalProject: true,
+            }),
+            new ResponseBuilder(),
+          );
+
+          assertExists(result);
+          assertEquals(result.status, 404);
+          const html = await result.text();
+          assertStringIncludes(html, "Not Found");
+          assertEquals(html.includes("private-source-canary"), false);
+          assertEquals(html.includes("private-route-canary"), false);
+          assertEquals(html.includes("private-render-error-canary"), false);
+
+          const failure = entries.find((entry) =>
+            entry.message === "Custom not-found page render failed"
+          );
+          assertEquals(failure?.context, { errorCategory: "error" });
+          assertEquals(JSON.stringify(entries).includes("private-render-error-canary"), false);
+          assertEquals(JSON.stringify(entries).includes(context.projectDir), false);
         });
       });
     });

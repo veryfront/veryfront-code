@@ -173,6 +173,124 @@ describe("source integration policy", () => {
     );
   });
 
+  it("contains hostile process-boundary objects without invoking callers twice", () => {
+    const throwing = new Proxy({}, {
+      ownKeys() {
+        throw new Error("PRIVATE_POLICY_CANARY");
+      },
+    });
+    let modeReads = 0;
+    const changing = {
+      schemaVersion: 1,
+      get mode() {
+        modeReads++;
+        return modeReads === 1 ? "unrestricted" : "allowlist";
+      },
+    };
+
+    assertEquals(isSourceIntegrationPolicyManifest(throwing), false);
+    assertEquals(isSourceIntegrationPolicyManifest(changing), true);
+    assertEquals(modeReads, 1);
+    assertThrows(
+      () => parseSourceIntegrationPolicyManifest(throwing),
+      TypeError,
+      "Invalid source integration policy manifest",
+    );
+  });
+
+  it("bounds policy manifests and rejects unknown integration identities", () => {
+    const excessiveToolIds = Array.from({ length: 513 }, (_, index) => `tool_${index}`);
+    const excessiveIntegrations = Object.fromEntries(
+      Array.from({ length: 257 }, (_, index) => [`integration-${index}`, {
+        allowedToolIds: null,
+      }]),
+    );
+
+    for (
+      const malformed of [
+        {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: { unknown: { allowedToolIds: null } },
+        },
+        {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: { github: { allowedToolIds: excessiveToolIds } },
+        },
+        {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: excessiveIntegrations,
+        },
+        {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: { github: { allowedToolIds: ["x".repeat(129)] } },
+        },
+      ]
+    ) {
+      assertEquals(isSourceIntegrationPolicyManifest(malformed), false);
+    }
+  });
+
+  it("fails closed for malformed typed policies and non-string tool identities", () => {
+    const inheritedRestriction = {
+      schemaVersion: 1 as const,
+      mode: "allowlist" as const,
+      integrations: {},
+    };
+
+    assertEquals(
+      isIntegrationToolAllowedBySourcePolicy("constructor__call", inheritedRestriction),
+      false,
+    );
+    assertEquals(parseIntegrationToolIdentity(undefined as unknown as string), null);
+    assertEquals(parseIntegrationToolIdentity("github__" + "x".repeat(129)), null);
+  });
+
+  it("rejects malformed direct config instead of constructing an unsafe manifest", () => {
+    assertThrows(
+      () => normalizeSourceIntegrationPolicy(null as never),
+      TypeError,
+      "Invalid source integration policy config",
+    );
+    assertThrows(
+      () =>
+        normalizeSourceIntegrationPolicy({
+          allow: { unknown: {} },
+        } as never),
+      TypeError,
+      "Invalid source integration policy config",
+    );
+    assertThrows(
+      () =>
+        normalizeSourceIntegrationPolicy({
+          allow: {
+            github: { allowedTools: Array.from({ length: 513 }, (_, index) => `tool_${index}`) },
+          },
+        }),
+      TypeError,
+      "Invalid source integration policy config",
+    );
+    assertThrows(
+      () => normalizeSourceIntegrationPolicy({ allow: { unknown: undefined } } as never),
+      TypeError,
+      "Invalid source integration policy config",
+    );
+
+    const allowWithHiddenState = { github: {} } as Record<PropertyKey, unknown>;
+    Object.defineProperty(allowWithHiddenState, "hidden", {
+      value: {},
+      enumerable: false,
+    });
+    assertThrows(
+      () => normalizeSourceIntegrationPolicy({ allow: allowWithHiddenState } as never),
+      TypeError,
+      "Invalid source integration policy config",
+    );
+  });
+
   it("intersects independent restrictions without allowing either side to widen access", () => {
     const left = normalizeSourceIntegrationPolicy({
       allow: {

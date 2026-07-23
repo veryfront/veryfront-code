@@ -467,17 +467,31 @@ describe("RenderPipeline behavior", () => {
     );
   });
 
-  it("resolvePageData includes mdx frontmatter and headings from prepared bundles", async () => {
+  it("resolvePageData uses SSR metadata precedence for MDX navigation data", async () => {
     const slug = "/behavior-mdx-metadata";
     const projectId = "proj-mdx-metadata";
-    const pipeline = createPipeline("/project/pages/behavior-mdx-metadata.mdx");
+    const pagePath = "/project/pages/behavior-mdx-metadata.mdx";
+    const pipeline = createPipeline(pagePath, {
+      pageResolver: {
+        resolvePage: async () => ({
+          entity: {
+            path: pagePath,
+            frontmatter: { title: "Entity Title", category: "docs" },
+          },
+        }),
+      } as any,
+    });
     primeCssCache(slug, projectId);
 
     (pipeline as any).loadModule = async () => ({});
     (pipeline as any).config.pageRenderer.preparePageBundles = async () => ({
       pageBundle: {
-        frontmatter: { title: "MDX Title", author: "Veryfront" },
+        frontmatter: { title: "Bundle Title", author: "Veryfront" },
         headings: [{ id: "intro", text: "Intro", level: 2 }],
+      },
+      collectedMetadata: {
+        title: "Generated Title",
+        description: "Generated description",
       },
     });
 
@@ -487,8 +501,80 @@ describe("RenderPipeline behavior", () => {
       url: new URL(`http://localhost${slug}`),
     });
 
-    assertEquals(pageData.frontmatter, { title: "MDX Title", author: "Veryfront" });
+    assertEquals(pageData.frontmatter, {
+      title: "Generated Title",
+      description: "Generated description",
+      category: "docs",
+      author: "Veryfront",
+    });
     assertEquals(pageData.headings, [{ id: "intro", text: "Intro", level: 2 }]);
+  });
+
+  it("resolvePageData extracts metadata from Markdown pages", async () => {
+    const slug = "/behavior-markdown-metadata";
+    const projectId = "proj-markdown-metadata";
+    const pipeline = createPipeline("/project/pages/behavior-markdown-metadata.md");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).config.pageRenderer.preparePageBundles = async () => ({
+      pageBundle: {
+        frontmatter: { title: "Markdown Title" },
+        headings: [{ id: "overview", text: "Overview", level: 2 }],
+      },
+      collectedMetadata: {},
+    });
+
+    const pageData = await pipeline.resolvePageData(slug, { projectId });
+
+    assertEquals(pageData.frontmatter.title, "Markdown Title");
+    assertEquals(pageData.frontmatter.description, "");
+    assertEquals(pageData.headings, [{ id: "overview", text: "Overview", level: 2 }]);
+  });
+
+  it("resolvePageData provides document metadata defaults for component pages", async () => {
+    const slug = "/behavior-component-metadata-defaults";
+    const projectId = "proj-component-metadata-defaults";
+    const pipeline = createPipeline("/project/pages/behavior-component-metadata-defaults.tsx");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+
+    const pageData = await pipeline.resolvePageData(slug, { projectId });
+
+    assertEquals(pageData.frontmatter.title, "Veryfront App");
+    assertEquals(pageData.frontmatter.description, "");
+  });
+
+  it("resolvePageData surfaces MDX metadata preparation failures", async () => {
+    const slug = "/behavior-metadata-failure";
+    const projectId = "proj-metadata-failure";
+    const pipeline = createPipeline("/project/pages/behavior-metadata-failure.mdx");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).config.pageRenderer.preparePageBundles = async () => {
+      throw new Error("metadata preparation failed");
+    };
+
+    await assertRejects(
+      () => pipeline.resolvePageData(slug, { projectId }),
+      Error,
+      "metadata preparation failed",
+    );
+  });
+
+  it("resolvePageData requires document navigation for script pages", async () => {
+    const slug = "/behavior-script-page";
+    const projectId = "proj-script-page";
+    const pipeline = createPipeline("/project/pages/behavior-script-page.ts");
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+
+    const pageData = await pipeline.resolvePageData(slug, { projectId });
+
+    assertEquals(pageData.requiresFullDocumentNavigation, true);
   });
 
   it("resolvePageData includes appPath when an app component exists", async () => {
@@ -745,6 +831,23 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.css, undefined);
     assertEquals(pageData.cssAction, "clear");
     assertEquals(pageData.cssError, undefined);
+  });
+
+  it("resolvePageData does not expose CSS generation details to the browser", async () => {
+    const slug = "/behavior-css-error";
+    const projectId = "proj-css-error";
+    const pipeline = createPipeline("/project/pages/behavior-css-error.tsx");
+
+    (pipeline as any).loadModule = async () => ({});
+    (pipeline as any).renderPage = async () => {
+      throw new Error("failed while reading /private/project/styles.css");
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, { projectId });
+
+    assertEquals(pageData.css, undefined);
+    assertEquals(pageData.cssAction, undefined);
+    assertEquals(pageData.cssError, "CSS generation failed");
   });
 
   it("resolvePageData ignores stale cached SPA CSS when ready release CSS is authoritative", async () => {

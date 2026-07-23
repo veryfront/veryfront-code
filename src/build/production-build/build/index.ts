@@ -1,24 +1,18 @@
 /**
- * Build Orchestration Module
+ * Production build orchestration, execution, output, and cleanup stages.
  *
- * Core build system orchestration, execution, and cleanup.
- * Provides the main build workflow coordination and production build entry points.
+ * @example Run validation and rendering without materializing output.
+ * ```ts
+ * import { buildProduction } from "#veryfront/build/production-build/build/index.ts";
  *
- * @example
- * ```typescript
- * import { buildProduction, type BuildOptions } from "#veryfront/server/build/build'
- *
- * // Run production build
  * const stats = await buildProduction({
- *   projectDir: '/path/to/project',
- *   outDir: 'dist',
- *   adapter: denoAdapter
- * })
- *
- * console.log(`Built ${stats.totalPages} pages`)
+ *   projectDir: ".",
+ *   outputDir: ".veryfront/output",
+ *   dryRun: true,
+ * });
  * ```
  *
- * @module server/build/build
+ * @module build/production-build/build
  */
 
 export {

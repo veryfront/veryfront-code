@@ -1,10 +1,10 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
 import { extract } from "#std/front-matter/yaml.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { extname, isAbsolute, relative, resolve } from "#veryfront/compat/path/index.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentPlugin, ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import { ensureError, MODULE_NOT_FOUND } from "#veryfront/errors";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type {
   BundleResult,
@@ -17,6 +17,14 @@ import { getSlugFromPath } from "../utils/loader-utils.ts";
 import { normalizePlugins } from "../utils/plugin-utils.ts";
 
 const fs = createFileSystem();
+
+function projectRelativeSourcePath(path: string, projectDir: string): string {
+  const relativePath = relative(resolve(projectDir), resolve(path)).replaceAll("\\", "/");
+  if (relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+    throw new TypeError("MDX source must stay inside projectDir");
+  }
+  return relativePath;
+}
 
 function extractFrontmatter(
   content: string,
@@ -34,30 +42,56 @@ function extractFrontmatter(
 
 async function validateLocalImport(
   importPath: string,
-  sourcePath: string,
   projectDir: string,
-  result: BundleResult,
-): Promise<void> {
-  if (!importPath.startsWith(".") && !importPath.startsWith("/")) return;
+): Promise<string | null> {
+  if (!isAbsolute(importPath)) return null;
 
-  const basePath = importPath.startsWith("/")
-    ? join(projectDir, importPath)
-    : join(dirname(sourcePath), importPath);
-
-  const extensions = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs"];
+  const extensions = [
+    "",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".mts",
+    ".cts",
+    ".json",
+    ".css",
+    ".mdx",
+    ".md",
+  ];
 
   for (const ext of extensions) {
+    const candidate = `${importPath}${ext}`;
     try {
-      const stat = await fs.stat(basePath + ext);
-      if (stat.isFile) return;
-    } catch (_) {
-      /* expected: file may not exist with this extension */
+      const stat = fs.lstat ? await fs.lstat(candidate) : await fs.stat(candidate);
+      if (stat.isSymlink) {
+        throw new TypeError("Local imports must not resolve through a symbolic link");
+      }
+      if (!stat.isFile) continue;
+      await assertCanonicalImportWithinProject(candidate, projectDir);
+      return candidate;
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
     }
   }
 
-  result.errors.push(
-    MODULE_NOT_FOUND.create({ detail: `Cannot find module '${importPath}' from '${sourcePath}'` }),
-  );
+  const projectRelativePath = relative(resolve(projectDir), importPath).replaceAll("\\", "/");
+  throw MODULE_NOT_FOUND.create({ detail: `Cannot find local module '${projectRelativePath}'` });
+}
+
+async function assertCanonicalImportWithinProject(path: string, projectDir: string): Promise<void> {
+  if (!fs.realPath) return;
+  const [canonicalProjectDir, canonicalPath] = await Promise.all([
+    fs.realPath(resolve(projectDir)),
+    fs.realPath(path),
+  ]);
+  const relativePath = relative(canonicalProjectDir, canonicalPath).replaceAll("\\", "/");
+  if (relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+    throw new TypeError("Local import resolves outside projectDir");
+  }
 }
 
 /**
@@ -73,6 +107,12 @@ export function bundleMdx(
     "build.renderer.bundleMDX",
     async () => {
       try {
+        const sourceRelativePath = projectRelativeSourcePath(source.path, options.projectDir);
+        const pendingOutputs = new Map<
+          string,
+          BundleResult["outputs"] extends Map<string, infer T> ? T
+            : never
+        >();
         const { body, frontmatter } = extractFrontmatter(source.content);
 
         const processedContent = await processImports(
@@ -80,27 +120,18 @@ export function bundleMdx(
           source.path,
           options.projectDir,
           async (importPath) => {
-            if (importPath.endsWith(".mdx")) {
-              try {
-                const importContent = await fs.readTextFile(importPath);
-                const compiledImport = await compileMDXForImport(importContent, options);
+            const resolvedImport = await validateLocalImport(importPath, options.projectDir);
+            if (!resolvedImport || ![".md", ".mdx"].includes(extname(resolvedImport))) return null;
 
-                const outputPath = importPath.replace(/\.mdx$/, ".js");
-                result.outputs.set(outputPath, {
-                  path: outputPath,
-                  content: compiledImport,
-                  type: "js",
-                });
-
-                return outputPath;
-              } catch (error) {
-                logger.debug("Failed to compile MDX import", { importPath, error });
-                return null;
-              }
-            }
-
-            await validateLocalImport(importPath, source.path, options.projectDir, result);
-            return null;
+            const importContent = await fs.readTextFile(resolvedImport);
+            const compiledImport = await compileMDXForImport(importContent, options);
+            const outputPath = resolvedImport.replace(/\.mdx?$/, ".js");
+            pendingOutputs.set(outputPath, {
+              path: outputPath,
+              content: compiledImport,
+              type: "js",
+            });
+            return outputPath;
           },
         );
 
@@ -112,10 +143,10 @@ export function bundleMdx(
           filePath: source.path,
           mode: options.mode,
           target: "server",
-          outputFormat: "function-body",
+          outputFormat: "program",
         });
 
-        const slug = getSlugFromPath(source.path);
+        const slug = getSlugFromPath(sourceRelativePath);
         const meta = {
           slug,
           title: frontmatter.title ?? slug,
@@ -123,38 +154,29 @@ export function bundleMdx(
           ...frontmatter,
         };
 
-        const moduleCode = `
-import React from 'react';
-import { useMDXComponents } from '../shared/components/MDXProvider.tsx';
+        const moduleCode = `${compiled.compiledCode}\nexport const meta = ${
+          JSON.stringify(meta)
+        };\n`;
 
-${compiled.compiledCode}
-
-export default function MDXContent(props) {
-  const components = useMDXComponents();
-  return MDXContentWrapper({ ...props, components });
-}
-
-export const meta = ${JSON.stringify(meta)};
-`;
-
-        const outputPath = source.path.replace(/\.mdx$/, ".js");
-        result.outputs.set(outputPath, {
+        const outputPath = source.path.replace(/\.mdx?$/i, ".js");
+        pendingOutputs.set(outputPath, {
           path: outputPath,
           content: moduleCode,
           type: "js",
           meta: frontmatter,
         });
 
-        result.dependencies.set(source.path, extractImports(moduleCode));
+        const dependencies = await extractImports(moduleCode);
+        for (const [path, output] of pendingOutputs) result.outputs.set(path, output);
+        result.dependencies.set(source.path, dependencies);
 
-        logger.debug(`Bundled MDX: ${source.path} -> ${outputPath}`);
+        logger.debug("Bundled MDX source");
       } catch (error) {
-        logger.error(`Failed to bundle MDX ${source.path}`, error);
+        logger.error("Failed to bundle MDX source");
         result.errors.push(ensureError(error));
       }
     },
     {
-      "source.path": source.path,
       "options.mode": options.mode,
     },
   );
@@ -176,9 +198,10 @@ export function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBund
         rehypePlugins = [],
       } = options;
 
-      logger.info(`Bundling MDX file: ${filePath}`);
+      logger.info("Bundling MDX file");
 
       try {
+        projectRelativeSourcePath(filePath, options.projectDir);
         const { body, frontmatter } = extractFrontmatter(content);
 
         const processor = resolveContract<ContentProcessor>("ContentProcessor");
@@ -189,33 +212,30 @@ export function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBund
           filePath,
           mode,
           target: "server",
-          outputFormat: "function-body",
+          outputFormat: "program",
           remarkPlugins: normalizePlugins(remarkPlugins as ContentPlugin[]),
           rehypePlugins: normalizePlugins(rehypePlugins as ContentPlugin[]),
         });
 
         const compiledStr = compiled.compiledCode;
-        const dependencies = extractImports(compiledStr);
+        const dependencies = await extractImports(compiledStr);
 
-        const globalKeys = Object.keys(globals);
-        const globalsImport = globalKeys.length
-          ? `const { ${globalKeys.join(", ")} } = globalThis;`
+        const globalEntries = Object.entries(globals);
+        const invalidGlobal = globalEntries.find(([key, globalName]) =>
+          !isSafeBindingName(key) || typeof globalName !== "string" || !globalName.trim()
+        );
+        if (invalidGlobal) {
+          throw new TypeError(`Invalid MDX global binding: ${invalidGlobal[0]}`);
+        }
+        const globalsImport = globalEntries.length
+          ? globalEntries.map(([key, globalName]) =>
+            `const ${key} = globalThis[${JSON.stringify(globalName)}];`
+          ).join("\n")
           : "";
 
-        const code = `
-import * as React from "react";
-import { useMDXComponents } from "#veryfront/mdx-components';
-${globalsImport}
-
-${compiledStr}
-
-export default function MDXContent(props) {
-  const components = useMDXComponents();
-  return MDXContentWrapper({ ...props, components });
-}
-
-export const meta = ${JSON.stringify(frontmatter)};
-`;
+        const code = `${globalsImport}\n${compiledStr}\nexport const meta = ${
+          JSON.stringify(frontmatter)
+        };\n`;
 
         return {
           code,
@@ -223,7 +243,7 @@ export const meta = ${JSON.stringify(frontmatter)};
           dependencies,
         };
       } catch (error) {
-        logger.error(`Failed to bundle MDX: ${filePath}`, error);
+        logger.error("Failed to bundle MDX");
         return {
           code: "",
           frontmatter: {},
@@ -233,8 +253,54 @@ export const meta = ${JSON.stringify(frontmatter)};
       }
     },
     {
-      "file.path": options.filePath,
       "options.mode": options.mode ?? "production",
     },
   );
+}
+
+const RESERVED_BINDING_NAMES = new Set([
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "let",
+  "new",
+  "null",
+  "return",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+function isSafeBindingName(name: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && !RESERVED_BINDING_NAMES.has(name);
 }

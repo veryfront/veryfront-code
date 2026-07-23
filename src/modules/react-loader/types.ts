@@ -15,6 +15,8 @@ export interface LoadComponentOptions {
   reactVersion?: string;
   /** Request mode ("preview" | "production") for studio features */
   mode?: string;
+  /** Cancels outbound module requests when the owning request is aborted. */
+  signal?: AbortSignal;
 }
 
 export interface ComponentSource {

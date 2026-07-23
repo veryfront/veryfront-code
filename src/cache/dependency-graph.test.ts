@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import {
+  computeDepsHash,
+  createDependencyHashCache,
   DependencyGraph,
   extractImports,
   filterLocalImports,
@@ -20,6 +22,32 @@ describe("DependencyGraph", () => {
     it("should return empty array for unknown module", () => {
       const graph = new DependencyGraph();
       expect(graph.getDirectDependencies("/unknown.ts")).toEqual([]);
+    });
+
+    it("enforces configured module and edge bounds atomically", () => {
+      const graph = new DependencyGraph({
+        maxModules: 1,
+        maxDependenciesPerModule: 1,
+        maxEdges: 1,
+      });
+      graph.addModule("/a.ts", ["/b.ts"]);
+
+      expect(() => graph.addModule("/c.ts", [])).toThrow();
+      expect(() => graph.addModule("/a.ts", ["/b.ts", "/c.ts"])).toThrow();
+      expect(graph.getDirectDependencies("/a.ts")).toEqual(["/b.ts"]);
+    });
+
+    it("removes empty reverse-index entries when dependencies change", () => {
+      const graph = new DependencyGraph();
+      graph.addModule("/entry.ts", ["/old.ts"]);
+
+      graph.addModule("/entry.ts", ["/new.ts"]);
+
+      const internals = graph as unknown as {
+        dependents: Map<string, Set<string>>;
+      };
+      expect(internals.dependents.has("/old.ts")).toBe(false);
+      expect(internals.dependents.get("/new.ts")).toEqual(new Set(["/entry.ts"]));
     });
   });
 
@@ -115,6 +143,54 @@ describe("DependencyGraph", () => {
 
       expect(graph.wouldCreateCycle("/target.ts", "/entry.ts")).toBe(true);
     });
+
+    it("detects a new self-cycle", () => {
+      const graph = new DependencyGraph();
+      expect(graph.wouldCreateCycle("/self.ts", "/self.ts")).toBe(true);
+    });
+  });
+});
+
+describe("computeDepsHash failure semantics", () => {
+  it("rejects dependency reads instead of caching an incomplete graph", async () => {
+    const cache = createDependencyHashCache();
+    let error: unknown;
+    try {
+      await computeDepsHash(
+        "/project/entry.js",
+        () => Promise.reject(new Error("PRIVATE_READ_ERROR_CANARY")),
+        "/project",
+        cache,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeDefined();
+    expect(String(error)).not.toContain("PRIVATE_READ_ERROR_CANARY");
+    expect(cache.completedModules.has("/project/entry.js")).toBe(false);
+    expect(cache.contentHashes.has("/project/entry.js")).toBe(false);
+  });
+
+  it("rolls back a parent graph entry when a transitive dependency fails", async () => {
+    const cache = createDependencyHashCache();
+    await expect(
+      computeDepsHash(
+        "/project/entry.js",
+        (path) => {
+          if (path === "/project/entry.js") {
+            return Promise.resolve('import "./missing.js"; export const value = 1;');
+          }
+          return Promise.reject(new Error("missing dependency"));
+        },
+        "/project",
+        cache,
+      ),
+    ).rejects.toThrow();
+
+    expect(cache.graph.getDirectDependencies("/project/entry.js")).toEqual([]);
+    expect(cache.contentHashes.has("/project/entry.js")).toBe(false);
+    expect(cache.completedModules.has("/project/entry.js")).toBe(false);
   });
 });
 

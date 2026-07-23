@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { findImages } from "./image-finder.ts";
 
@@ -8,6 +8,10 @@ describe("build/asset-pipeline/image-optimizer/image-finder", () => {
     it("should return empty array for non-existent directory", async () => {
       const result = await findImages("/tmp/nonexistent-dir-" + Date.now());
       assertEquals(result, []);
+    });
+
+    it("rejects a blank input directory", () => {
+      assertThrows(() => findImages(" "), TypeError, "must not be blank");
     });
 
     it("should find images in a directory with supported extensions", async () => {

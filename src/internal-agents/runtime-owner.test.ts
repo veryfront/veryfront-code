@@ -115,4 +115,52 @@ describe("internal-agents/runtime-owner", () => {
 
     assertEquals(ownerUrl, null);
   });
+
+  it("rejects malformed explicit hosts instead of retaining the loopback placeholder", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
+    );
+
+    const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+      getHostEnv: (key) => key === "VERYFRONT_RUNTIME_OWNER_HOST" ? "user@host" : undefined,
+      getDenoNetworkInterfaces: () => [],
+      dynamicImport: createDynamicImportStub({ networkInterfaces: () => ({}) }),
+    });
+
+    assertEquals(ownerUrl, null);
+  });
+
+  it("rejects non-canonical numeric hosts that URL parsing can reinterpret", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
+    );
+
+    for (const host of ["2130706433", "0177.0.0.1", "0x7f000001"]) {
+      const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+        getHostEnv: (key) => key === "VERYFRONT_RUNTIME_OWNER_HOST" ? host : undefined,
+        getDenoNetworkInterfaces: () => [],
+        dynamicImport: createDynamicImportStub({ networkInterfaces: () => ({}) }),
+      });
+
+      assertEquals(ownerUrl, null);
+    }
+  });
+
+  it("formats an explicit IPv6 runtime owner host", async () => {
+    const request = new Request(
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
+    );
+
+    const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
+      getHostEnv: (key) => {
+        if (key === "VERYFRONT_RUNTIME_OWNER_HOST") return "2001:db8::1";
+        if (key === "VERYFRONT_RUNTIME_OWNER_PORT") return "20000";
+        return undefined;
+      },
+      getDenoNetworkInterfaces: () => [],
+      dynamicImport: createDynamicImportStub({ networkInterfaces: () => ({}) }),
+    });
+
+    assertEquals(ownerUrl, "http://[2001:db8::1]:20000/channels/invoke");
+  });
 });

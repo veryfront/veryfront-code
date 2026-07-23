@@ -121,6 +121,7 @@ function createMockInstruments(): MetricsInstruments & {
     dataFetchErrorCounter: dataFetchErrorCounter as never,
     corsRejectionCounter: corsRejectionCounter as never,
     securityHeadersCounter: securityHeadersCounter as never,
+    errorCounter: createMockCounter() as never,
     memoryUsageGauge: null,
     heapUsageGauge: null,
     heapTotalGauge: null,
@@ -211,6 +212,12 @@ describe("observability/metrics/recorder", () => {
       recorder.recordHttpRequestComplete(100, attrs);
       assertEquals(instruments._httpRequestDuration._lastAttributes, attrs);
     });
+
+    it("does not underflow active request state", () => {
+      recorder.recordHttpRequestComplete(100);
+      assertEquals(runtimeState.activeRequests, 0);
+      assertEquals(instruments._httpActiveRequests._value, 0);
+    });
   });
 
   describe("recordCacheGet", () => {
@@ -268,6 +275,13 @@ describe("observability/metrics/recorder", () => {
     it("should set cache size to zero", () => {
       runtimeState.cacheSize = 100;
       recorder.setCacheSize(0);
+      assertEquals(runtimeState.cacheSize, 0);
+    });
+
+    it("normalizes invalid cache sizes", () => {
+      recorder.setCacheSize(-1);
+      assertEquals(runtimeState.cacheSize, 0);
+      recorder.setCacheSize(Number.NaN);
       assertEquals(runtimeState.cacheSize, 0);
     });
   });
@@ -416,6 +430,7 @@ describe("observability/metrics/recorder", () => {
         dataFetchErrorCounter: null,
         corsRejectionCounter: null,
         securityHeadersCounter: null,
+        errorCounter: null,
         memoryUsageGauge: null,
         heapUsageGauge: null,
         heapTotalGauge: null,
@@ -445,6 +460,48 @@ describe("observability/metrics/recorder", () => {
       nullRecorder.recordDataFetchError();
       nullRecorder.recordCorsRejection();
       nullRecorder.recordSecurityHeaders();
+    });
+  });
+
+  describe("telemetry isolation", () => {
+    it("does not let instrument failures affect application state", () => {
+      instruments.httpRequestCounter = {
+        add: () => {
+          throw new Error("exporter failed");
+        },
+      };
+      instruments.httpActiveRequests = {
+        add: () => {
+          throw new Error("exporter failed");
+        },
+      };
+
+      recorder.recordHttpRequest();
+
+      assertEquals(runtimeState.activeRequests, 1);
+    });
+
+    it("bounds metric attributes before handing them to an exporter", () => {
+      const attributes = Object.fromEntries(
+        Array.from({ length: 40 }, (_, index) => [`dimension.${index}`, "x".repeat(500)]),
+      );
+
+      recorder.recordHttpRequest(attributes);
+
+      const recorded = instruments._httpRequestCounter._lastAttributes;
+      assertEquals(Object.keys(recorded ?? {}).length, 32);
+      assertEquals(Object.values(recorded ?? {}).every((value) => value.length <= 256), true);
+    });
+
+    it("normalizes invalid numeric observations", () => {
+      recorder.recordRender(Number.NaN);
+      recorder.recordBundle(-10);
+      recorder.recordCacheInvalidate(-5);
+
+      assertEquals(instruments._renderDuration._value, 0);
+      assertEquals(instruments._bundleSizeHistogram._value, 0);
+      assertEquals(instruments._cacheInvalidateCounter._value, 0);
+      assertEquals(runtimeState.cacheSize, 0);
     });
   });
 });

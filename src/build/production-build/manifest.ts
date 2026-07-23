@@ -1,19 +1,10 @@
 import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
-import { bundlerLogger } from "#veryfront/utils";
+import { type ChunkManifest, isChunkManifest } from "#veryfront/build/bundler/index.ts";
 
-export interface ManifestChunkInfo {
-  file: string;
-  css?: string;
-  imports?: string[];
-}
+export const BUILD_MANIFEST_VERSION = "2.0.0";
+export type ManifestChunkInfo = ChunkManifest["chunks"][string];
 
-interface ChunkManifest {
-  version: string;
-  routes: Record<string, { chunks: string[] }>;
-  chunks: Record<string, ManifestChunkInfo>;
-  shared: string[];
-}
-
+/** Versioned description of generated routes, chunks, features, and statistics. */
 export interface BuildManifest {
   version: string;
   buildTime: string;
@@ -38,6 +29,7 @@ export interface BuildManifest {
   };
 }
 
+/** Inputs used to assemble and validate a build manifest. */
 export interface ManifestOptions {
   routes: RouteInfo[];
   appRoutes: AppRouteInfo[];
@@ -48,20 +40,34 @@ export interface ManifestOptions {
   chunkManifest: ChunkManifest | null;
 }
 
-function isValidChunkManifest(manifest: unknown): manifest is ChunkManifest {
-  if (!manifest || typeof manifest !== "object") return false;
-
-  const m = manifest as Record<string, unknown>;
-  return (
-    typeof m.version === "string" &&
-    typeof m.routes === "object" &&
-    m.routes !== null &&
-    typeof m.chunks === "object" &&
-    m.chunks !== null &&
-    Array.isArray(m.shared)
-  );
+function validateBuildStats(stats: BuildStats): void {
+  for (
+    const [name, value] of Object.entries({
+      pages: stats.pages,
+      chunks: stats.chunks,
+      assets: stats.assets,
+      totalSize: stats.totalSize,
+    })
+  ) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new TypeError(`Build statistic ${name} must be a non-negative integer`);
+    }
+  }
 }
 
+function validateRoute(path: string, slug: string): void {
+  if (
+    !path.startsWith("/") || path.includes("\0") || path.includes("\\") ||
+    path.split("/").some((segment) => segment === "..")
+  ) {
+    throw new TypeError("Build manifest routes must use safe absolute URL paths");
+  }
+  if (!slug || slug.includes("\0")) {
+    throw new TypeError("Build manifest route slugs must not be blank");
+  }
+}
+
+/** Validate build metadata and create a detached build manifest. */
 export function generateManifest(options: ManifestOptions): BuildManifest {
   const {
     routes,
@@ -73,9 +79,11 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
     chunkManifest,
   } = options;
 
-  const validatedManifest = chunkManifest && isValidChunkManifest(chunkManifest)
-    ? chunkManifest
-    : null;
+  validateBuildStats(stats);
+  if (chunkManifest && !isChunkManifest(chunkManifest)) {
+    throw new TypeError("Invalid chunk manifest structure");
+  }
+  const validatedManifest = chunkManifest ?? null;
   const generatedPaths = stats.ssgPaths ? new Set(stats.ssgPaths) : null;
   const generatedRoutes = generatedPaths
     ? routes.filter((route) => generatedPaths.has(route.path))
@@ -84,21 +92,39 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
     ? appRoutes.filter((route) => generatedPaths.has(route.path))
     : appRoutes;
 
-  if (chunkManifest && !validatedManifest) {
-    bundlerLogger.warn("Invalid chunk manifest structure, chunks will be disabled");
+  const routePaths = new Set<string>();
+  for (const route of generatedRoutes) {
+    validateRoute(route.path, route.slug);
+    if (routePaths.has(route.path)) {
+      throw new TypeError(`Duplicate build manifest route: ${route.path}`);
+    }
+    routePaths.add(route.path);
+  }
+  for (const route of generatedAppRoutes) {
+    const slug = route.path === "/" ? "index" : route.path.slice(1);
+    validateRoute(route.path, slug);
+    if (routePaths.has(route.path)) {
+      throw new TypeError(`Duplicate build manifest route: ${route.path}`);
+    }
+    routePaths.add(route.path);
   }
 
+  const activeChunkManifest = enableSplitting ? validatedManifest : null;
+
   function getChunksForRoute(path: string): string[] {
-    if (!enableSplitting || !validatedManifest) return [];
-    return validatedManifest.routes[path]?.chunks ?? [];
+    if (!activeChunkManifest) return [];
+    const route = Object.hasOwn(activeChunkManifest.routes, path)
+      ? activeChunkManifest.routes[path]
+      : undefined;
+    return route ? [...route.chunks] : [];
   }
 
   return {
-    version: "2.0.0",
+    version: BUILD_MANIFEST_VERSION,
     buildTime: new Date().toISOString(),
     features: {
       streaming: true,
-      codeSplitting: enableSplitting,
+      codeSplitting: activeChunkManifest !== null,
       clientRouting: true,
       prefetching: enablePrefetch,
       compression: enableCompression,
@@ -115,7 +141,7 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
         chunks: [],
       })),
     ],
-    chunks: validatedManifest,
+    chunks: activeChunkManifest,
     stats: {
       pages: stats.pages,
       chunks: stats.chunks,
@@ -125,6 +151,7 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
   };
 }
 
+/** Return the static-host redirect rule used for client-side routing. */
 export function generateRedirects(): string {
   return `
 # SPA support - all routes go to index.html

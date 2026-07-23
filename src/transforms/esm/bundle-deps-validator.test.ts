@@ -3,8 +3,14 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { extractBundleDeps, findParentBundleWithEmbeddedUrl } from "./bundle-deps-validator.ts";
+import {
+  extractBundleDeps,
+  findParentBundleWithEmbeddedUrl,
+  validateBundleDepsExist,
+} from "./bundle-deps-validator.ts";
 import { embedSourceUrl } from "./source-url-embed.ts";
+import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
 
 describe("transforms/esm/bundle-deps-validator", () => {
   describe("extractBundleDeps", () => {
@@ -117,6 +123,35 @@ describe("transforms/esm/bundle-deps-validator", () => {
         { path: parentPath, sourceUrl },
       );
     } finally {
+      await Deno.remove(cacheDir, { recursive: true });
+    }
+  });
+
+  it("publishes dependencies recovered from the distributed cache", async () => {
+    const cacheDir = await Deno.makeTempDir();
+    const hash = "abc123";
+    const backend: CacheBackend = {
+      type: "memory",
+      get: (key) =>
+        Promise.resolve(
+          key.endsWith(`:code:${hash}`) ? "export const recoveredDependency = true;\n" : null,
+        ),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+
+    try {
+      assertEquals(
+        await validateBundleDepsExist([{ path: `http-${hash}.mjs`, hash }], cacheDir),
+        true,
+      );
+      assertEquals(
+        await Deno.readTextFile(join(cacheDir, `http-${hash}.mjs`)),
+        "export const recoveredDependency = true;\n",
+      );
+    } finally {
+      __setDistributedCacheAccessorForTests(null);
       await Deno.remove(cacheDir, { recursive: true });
     }
   });

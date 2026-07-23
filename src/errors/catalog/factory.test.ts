@@ -6,16 +6,61 @@ import type { ErrorSlug } from "../error-registry.ts";
 
 describe("factory", () => {
   describe("createErrorSolution", () => {
+    it("rejects unregistered slugs and unsafe public guidance", () => {
+      expect(() =>
+        createErrorSolution("not-registered" as never, {
+          title: "Unknown",
+          message: "Unknown",
+        })
+      ).toThrow(TypeError);
+      expect(() =>
+        createErrorSolution("unknown-error", {
+          title: "Unknown",
+          message: "Unknown",
+          relatedErrors: ["not-registered" as never],
+        })
+      ).toThrow(TypeError);
+      expect(() =>
+        createErrorSolution("unknown-error", {
+          title: "Unknown\u0000title",
+          message: "Unknown",
+        })
+      ).toThrow(TypeError);
+      expect(() =>
+        createErrorSolution("unknown-error", {
+          title: "Unknown",
+          message: "Unknown",
+          docs: "javascript:alert(1)",
+        })
+      ).toThrow(TypeError);
+    });
+
+    it("returns an immutable snapshot", () => {
+      const config = {
+        title: "Stable title",
+        message: "Stable message",
+        steps: ["Stable step"],
+      };
+      const solution = createErrorSolution("config-not-found", config);
+      config.title = "Mutated title";
+      config.steps[0] = "Mutated step";
+
+      expect(solution.title).toBe("Stable title");
+      expect(solution.steps?.[0]).toBe("Stable step");
+      expect(Object.isFrozen(solution)).toBe(true);
+      expect(Object.isFrozen(solution.steps)).toBe(true);
+    });
+
     it("should create error solution with all required fields", () => {
       const solution = createErrorSolution("config-not-found", {
         title: "Configuration file not found",
-        message: "Veryfront could not find veryfront.config.js",
+        message: "Veryfront could not find veryfront.config.ts",
       });
 
       expect(solution).toMatchObject({
         slug: "config-not-found",
         title: "Configuration file not found",
-        message: "Veryfront could not find veryfront.config.js",
+        message: "Veryfront could not find veryfront.config.ts",
         docs: "https://veryfront.com/docs/errors/config-not-found",
       });
     });
@@ -296,11 +341,11 @@ describe("factory", () => {
       const solution = createSimpleError(
         "file-not-found",
         "File not found",
-        "Cannot find file at path: /home/user/project/file.tsx",
+        "Cannot find file at path: app/file.tsx",
         ["Check file path"],
       );
 
-      expect(solution.message).toContain("/home/user/project/file.tsx");
+      expect(solution.message).toContain("app/file.tsx");
     });
 
     it("should handle special characters in steps", () => {
@@ -374,9 +419,9 @@ describe("factory", () => {
     it("should handle real-world error scenarios", () => {
       const configError = createErrorSolution("config-not-found", {
         title: "Configuration file not found",
-        message: "Veryfront could not find veryfront.config.js in your project root",
+        message: "Veryfront could not find veryfront.config.ts in your project root",
         steps: [
-          "Create veryfront.config.js in your project root",
+          "Create veryfront.config.ts in your project root",
           'Run "veryfront init" to generate a default configuration',
           "Or specify a custom config path with --config flag",
         ],

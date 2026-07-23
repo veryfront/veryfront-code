@@ -7,6 +7,7 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
+import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -50,16 +51,18 @@ function warnUnversionedImport(specifier: string, projectId?: string): void {
   if (unversionedImportsWarned.size >= MAX_WARNED_ENTRIES) unversionedImportsWarned.clear();
   unversionedImportsWarned.add(key);
 
-  const isScoped = specifier.startsWith("@");
-  const parts = specifier.split("/");
-  const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
+  const packageName = parseBarePackageSpecifier(specifier)?.packageName;
 
-  logger.warn("Unversioned import may cause reproducibility issues", {
-    import: specifier,
-    projectId,
-    suggestion: `Pin version: import '${packageName}@x.y.z'`,
-    help: `Run 'npm info ${packageName} version' to find current version`,
-  });
+  logger.warn(
+    "Unversioned import may cause reproducibility issues",
+    packageName
+      ? {
+        package: packageName,
+        suggestion: `Pin version: import '${packageName}@x.y.z'`,
+        help: `Run 'npm info ${packageName} version' to find current version`,
+      }
+      : undefined,
+  );
 }
 
 function normalizeVersionedSpecifier(specifier: string): string {
@@ -79,6 +82,7 @@ function shouldSkipRewrite(specifier: string): boolean {
   );
 }
 
+/** Rewrite legacy bare package imports to pinned runtime URLs. */
 export function rewriteBareImports(
   code: string,
   _moduleServerUrl?: string,
@@ -109,7 +113,6 @@ export function rewriteBareImports(
       }),
     {
       "transforms.code_length": code.length,
-      ...(projectId ? { "transforms.project_id": projectId } : {}),
     },
   );
 }
@@ -123,6 +126,7 @@ const REACT_PACKAGES = new Set([
   "react/jsx-dev-runtime",
 ]);
 
+/** Rewrite React imports to a configured browser vendor bundle. */
 export function rewriteVendorImports(
   code: string,
   moduleServerUrl: string,

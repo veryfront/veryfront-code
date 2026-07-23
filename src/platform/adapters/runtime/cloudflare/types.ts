@@ -1,5 +1,7 @@
-export interface CloudflareWebSocket extends WebSocket {
-  accept(): void;
+import type { WebSocketConnection } from "../../base.ts";
+
+export interface CloudflareWebSocket extends WebSocketConnection {
+  accept(options?: { allowHalfOpen?: boolean }): void;
 }
 
 export declare class WebSocketPair {
@@ -11,9 +13,12 @@ export interface CloudflareResponseInit extends ResponseInit {
   webSocket?: CloudflareWebSocket;
 }
 
-export interface KVMetadata {
-  [key: string]: string | number | boolean | null;
+export interface CloudflareServerRuntime {
+  createWebSocketPair(): { 0: CloudflareWebSocket; 1: CloudflareWebSocket };
+  createResponse(init: CloudflareResponseInit): Response;
 }
+
+export type KVMetadata = Record<string, unknown>;
 
 export interface KVListKey {
   name: string;
@@ -26,12 +31,52 @@ export interface KVGetWithMetadataResult<T = string> {
   metadata: KVMetadata | null;
 }
 
+export interface KVListOptions {
+  prefix?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export type KVListResult =
+  | {
+    keys: KVListKey[];
+    list_complete: true;
+    cursor?: string;
+  }
+  | {
+    keys: KVListKey[];
+    list_complete: false;
+    cursor: string;
+  };
+
+export type KVValueType = "text" | "arrayBuffer";
+
+export type KVValueForType<Type extends KVValueType> = Type extends "arrayBuffer" ? ArrayBuffer
+  : string;
+
+export interface KVGetOptions<Type extends KVValueType = KVValueType> {
+  cacheTtl?: number;
+  type?: Type;
+}
+
+export interface KVPutOptions {
+  expiration?: number;
+  expirationTtl?: number;
+  metadata?: KVMetadata;
+}
+
 export interface KVNamespace {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, options?: { metadata?: KVMetadata }): Promise<void>;
+  get<Type extends KVValueType = "text">(
+    key: string,
+    typeOrOptions?: Type | KVGetOptions<Type>,
+  ): Promise<KVValueForType<Type> | null>;
+  put(key: string, value: string | ArrayBuffer, options?: KVPutOptions): Promise<void>;
   delete(key: string): Promise<void>;
-  list(options?: { prefix?: string; limit?: number }): Promise<{ keys: KVListKey[] }>;
-  getWithMetadata(key: string): Promise<KVGetWithMetadataResult>;
+  list(options?: KVListOptions): Promise<KVListResult>;
+  getWithMetadata<Type extends KVValueType = "text">(
+    key: string,
+    typeOrOptions?: Type | KVGetOptions<Type>,
+  ): Promise<KVGetWithMetadataResult<KVValueForType<Type>>>;
 }
 
 export interface DurableObjectNamespace {
@@ -43,5 +88,5 @@ export interface R2Bucket {
 }
 
 export interface CloudflareEnv {
-  [key: string]: string | KVNamespace | DurableObjectNamespace | R2Bucket | unknown;
+  readonly [key: string]: string | KVNamespace | DurableObjectNamespace | R2Bucket | unknown;
 }

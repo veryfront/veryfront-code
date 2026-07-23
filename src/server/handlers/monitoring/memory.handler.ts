@@ -1,24 +1,32 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
+  HTTP_METHOD_NOT_ALLOWED,
   HTTP_OK,
+  HTTP_UNAUTHORIZED,
   PRIORITY_HIGH,
 } from "#veryfront/utils/constants/index.ts";
-import {
-  checkMemoryPressure,
-  forceGC,
-  getCacheStats,
-  getHeapStats,
-  getMemorySnapshot,
-} from "#veryfront/utils/memory/index.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { isAuthorizedDevControlRequest } from "../dev/access-policy.ts";
+import {
+  collectGarbageSnapshot,
+  getCacheSnapshot,
+  getFullMemorySnapshot,
+  getHeapSnapshot,
+  getMemoryPressureSnapshot,
+} from "./memory-debug-service.ts";
 
 const logger = rendererLogger.component("memory-debug-handler");
 
-/** Delay after forcing GC before re-measuring heap, so the runtime can settle */
-const GC_SETTLE_DELAY_MS = 200;
+const MEMORY_ROOT_PATHS = new Set(["/_debug/memory", "/_debug/memory/"]);
+const MEMORY_READ_PATHS = new Set([
+  ...MEMORY_ROOT_PATHS,
+  "/_debug/memory/heap",
+  "/_debug/memory/caches",
+  "/_debug/memory/pressure",
+]);
+const MEMORY_GC_PATH = "/_debug/memory/gc";
 
 export class MemoryDebugHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -35,143 +43,72 @@ export class MemoryDebugHandler extends BaseHandler {
       return this.continue();
     }
 
-    if (!pathname.startsWith("/_debug/memory")) {
+    if (!MEMORY_READ_PATHS.has(pathname) && pathname !== MEMORY_GC_PATH) {
       return this.continue();
+    }
+
+    if (!isAuthorizedDevControlRequest(req, ctx)) {
+      const response = this.createPrivateResponseBuilder(req, ctx).text(
+        "Unauthorized",
+        HTTP_UNAUTHORIZED,
+      );
+      return this.respond(response);
+    }
+
+    const allowedMethod = pathname === MEMORY_GC_PATH ? "POST" : "GET";
+    if (req.method !== allowedMethod) {
+      const response = this.createPrivateResponseBuilder(req, ctx)
+        .withAllow(allowedMethod)
+        .text("Method Not Allowed", HTTP_METHOD_NOT_ALLOWED);
+      return this.respond(response);
     }
 
     try {
       switch (pathname) {
         case "/_debug/memory":
         case "/_debug/memory/":
-          return this.handleFullSnapshot(req, ctx);
+          return this.jsonResponse(getFullMemorySnapshot(), req, ctx);
         case "/_debug/memory/heap":
-          return this.handleHeapStats(req, ctx);
+          return this.jsonResponse(getHeapSnapshot(), req, ctx);
         case "/_debug/memory/caches":
-          return this.handleCacheStats(req, ctx);
+          return this.jsonResponse(getCacheSnapshot(), req, ctx);
         case "/_debug/memory/gc":
-          return this.handleGC(req, ctx);
+          return this.jsonResponse(
+            await collectGarbageSnapshot(undefined, req.signal),
+            req,
+            ctx,
+          );
         case "/_debug/memory/pressure":
-          return this.handlePressureCheck(req, ctx);
+          return this.jsonResponse(getMemoryPressureSnapshot(), req, ctx);
         default:
           return this.continue();
       }
     } catch (error) {
-      logger.error("Error", { error });
+      logger.error("Memory debug request failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
 
-      const response = ResponseBuilder.error(
-        HTTP_INTERNAL_SERVER_ERROR,
+      const response = this.createPrivateResponseBuilder(req, ctx).text(
         "Failed to get memory info",
-        req,
-        this.getSecurityOptions(ctx),
+        HTTP_INTERNAL_SERVER_ERROR,
       );
 
       return this.respond(response);
     }
   }
 
-  private getSecurityOptions(ctx: HandlerContext): {
-    securityConfig: NonNullable<HandlerContext["securityConfig"]> | undefined;
-    corsConfig: NonNullable<HandlerContext["securityConfig"]>["cors"] | undefined;
-  } {
-    return {
-      securityConfig: ctx.securityConfig ?? undefined,
-      corsConfig: ctx.securityConfig?.cors,
-    };
+  private createPrivateResponseBuilder(req: Request, ctx: HandlerContext) {
+    const builder = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withCache("no-store")
+      .withHeaders({ "X-Content-Type-Options": "nosniff" });
+    if (ctx.securityConfig) builder.withSecurity(ctx.securityConfig, req);
+    return builder;
   }
 
   private jsonResponse(data: unknown, req: Request, ctx: HandlerContext): HandlerResult {
-    const response = ResponseBuilder.json(data, req, {
-      ...this.getSecurityOptions(ctx),
-      status: HTTP_OK,
-    });
+    const response = this.createPrivateResponseBuilder(req, ctx).json(data, HTTP_OK);
 
     return this.respond(response);
-  }
-
-  private handleFullSnapshot(req: Request, ctx: HandlerContext): HandlerResult {
-    return this.jsonResponse(getMemorySnapshot(), req, ctx);
-  }
-
-  private handleHeapStats(req: Request, ctx: HandlerContext): HandlerResult {
-    return this.jsonResponse(
-      {
-        timestamp: new Date().toISOString(),
-        heap: getHeapStats(),
-      },
-      req,
-      ctx,
-    );
-  }
-
-  private handleCacheStats(req: Request, ctx: HandlerContext): HandlerResult {
-    const caches = getCacheStats();
-    const totalEntries = caches.reduce((sum, c) => sum + Math.max(0, c.entries), 0);
-
-    return this.jsonResponse(
-      {
-        timestamp: new Date().toISOString(),
-        caches,
-        totalEntries,
-      },
-      req,
-      ctx,
-    );
-  }
-
-  private async handleGC(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const beforeHeap = getHeapStats();
-    const gcTriggered = await forceGC();
-
-    await new Promise((resolve) => setTimeout(resolve, GC_SETTLE_DELAY_MS)); // no cleanup needed: one-shot
-
-    const afterHeap = getHeapStats();
-    const freedMB = Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100;
-
-    return this.jsonResponse(
-      {
-        timestamp: new Date().toISOString(),
-        gcTriggered,
-        before: beforeHeap,
-        after: afterHeap,
-        freedMB,
-      },
-      req,
-      ctx,
-    );
-  }
-
-  private handlePressureCheck(req: Request, ctx: HandlerContext): HandlerResult {
-    const pressure = checkMemoryPressure();
-
-    return this.jsonResponse(
-      {
-        timestamp: new Date().toISOString(),
-        ...pressure,
-        heap: getHeapStats(),
-        recommendations: this.getRecommendations(pressure),
-      },
-      req,
-      ctx,
-    );
-  }
-
-  private getRecommendations(pressure: { critical: boolean; warning: boolean }): string[] {
-    if (pressure.critical) {
-      return [
-        "CRITICAL: Consider restarting the pod",
-        "Clear all caches immediately",
-        "Check for memory leaks in recent deployments",
-      ];
-    }
-
-    if (pressure.warning) {
-      return [
-        "Monitor memory usage closely",
-        "Consider clearing large caches",
-        "Review cache TTL settings",
-      ];
-    }
-
-    return ["Memory usage is healthy"];
   }
 }

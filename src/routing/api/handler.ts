@@ -2,11 +2,18 @@ import { serverLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createError, toError } from "#veryfront/errors";
-import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
+import { createError, toError, VeryfrontError } from "#veryfront/errors";
+import {
+  badGateway,
+  internalServerError,
+  notFound,
+  serviceUnavailable,
+} from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
+import { isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import { type APIContext } from "./context-builder.ts";
 import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
@@ -29,6 +36,8 @@ interface APIRouteHandlerDeps {
   discoverPagesRoutes?: typeof discoverPagesRoutes;
   discoverAppRoutes?: typeof discoverAppRoutes;
   getConfig?: typeof getConfig;
+  executeAppRoute?: typeof executeAppRoute;
+  executePagesRoute?: typeof executePagesRoute;
 }
 
 let injectedDeps: APIRouteHandlerDeps | null = null;
@@ -46,6 +55,8 @@ function getDeps(): Required<APIRouteHandlerDeps> {
     discoverPagesRoutes: injectedDeps?.discoverPagesRoutes ?? discoverPagesRoutes,
     discoverAppRoutes: injectedDeps?.discoverAppRoutes ?? discoverAppRoutes,
     getConfig: injectedDeps?.getConfig ?? getConfig,
+    executeAppRoute: injectedDeps?.executeAppRoute ?? executeAppRoute,
+    executePagesRoute: injectedDeps?.executePagesRoute ?? executePagesRoute,
   };
 }
 
@@ -62,7 +73,6 @@ export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
-  private lastErrorMessage: string | null = null;
   private activeRequests = 0;
   private destroyRequested = false;
   private destroyed = false;
@@ -76,37 +86,41 @@ export class APIRouteHandler {
 
   private config: Awaited<ReturnType<typeof getConfig>> | null = null;
   private configPromise: Promise<void> | null = null;
+  private initializePromise: Promise<void> | null = null;
 
   constructor(
     private projectDir: string,
     adapter?: RuntimeAdapter,
+    config?: VeryfrontConfig,
   ) {
     this.adapter = adapter ?? null;
     this.adapterPromise = adapter ? Promise.resolve(adapter) : null;
+    this.config = config ?? null;
+    this.configPromise = config ? Promise.resolve() : null;
   }
 
   initialize(): Promise<void> {
-    return withSpan(
+    if (this.initializePromise) return this.initializePromise;
+
+    const initialization = withSpan(
       "api.initialize",
       async () => {
         const adapter = await this.ensureAdapter();
         await this.ensureConfig(adapter);
 
-        logger.debug("Initializing route handler", { projectDir: this.projectDir });
+        logger.debug("Initializing route handler");
 
         const pagesDir = this.config?.directories?.pages ?? "pages";
         const apiDir = join(this.projectDir, pagesDir, "api");
         const apiDirExists = await adapter.fs.exists(apiDir);
 
-        logger.debug("Checking API directory", { apiDir, exists: apiDirExists });
+        logger.debug("Checked Pages API directory", { exists: apiDirExists });
 
         if (apiDirExists) {
           const deps = getDeps();
           await deps.discoverPagesRoutes(this.router, apiDir, "/api", adapter);
-          const discoveredRoutes = this.router.listRoutes();
           logger.debug("Discovered Pages API routes", {
-            count: discoveredRoutes.length,
-            routes: discoveredRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
+            count: this.router.listRoutes().length,
           });
         }
 
@@ -114,23 +128,27 @@ export class APIRouteHandler {
         const appDir = join(this.projectDir, appDirName);
         const appDirExists = await adapter.fs.exists(appDir);
 
-        logger.debug("Checking App directory", { appDir, exists: appDirExists });
+        logger.debug("Checked App directory", { exists: appDirExists });
 
         if (appDirExists) {
           const deps = getDeps();
           await deps.discoverAppRoutes(this.router, appDir, "", adapter);
-          const allRoutes = this.router.listRoutes();
           logger.debug("All discovered routes after App Router", {
-            count: allRoutes.length,
-            routes: allRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
+            count: this.router.listRoutes().length,
           });
         }
 
         await this.ensureCorsConfig(adapter);
         logger.debug("Route handler initialized");
       },
-      { "api.projectDir": this.projectDir },
+      { "api.hasProjectDirectory": Boolean(this.projectDir) },
     );
+
+    this.initializePromise = initialization.catch((error) => {
+      this.initializePromise = null;
+      throw error;
+    });
+    return this.initializePromise;
   }
 
   handle(request: Request, ctx?: HandlerContext): Promise<Response | null> {
@@ -143,13 +161,15 @@ export class APIRouteHandler {
         const adapter = await this.ensureAdapter();
 
         logger.debug("Handling request", {
-          pathname,
           method: request.method,
           registeredRouteCount: this.router.listRoutes().length,
         });
 
-        await this.ensureCorsConfig(adapter);
+        const match = this.router.match(pathname);
+        const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+        if (!match && !isApiPath) return null;
 
+        await this.ensureCorsConfig(adapter);
         if (request.method.toUpperCase() === "OPTIONS") {
           return handleCORSPreflight({
             request,
@@ -157,36 +177,50 @@ export class APIRouteHandler {
           });
         }
 
-        const match = this.router.match(pathname);
         if (!match) {
-          logger.debug("No route match", {
-            pathname,
-            isApiPath: pathname.startsWith("/api/"),
-            availableRoutes: this.router.listRoutes().map((r) => r.pattern),
-          });
+          logger.debug("No API route match", { isApiPath });
 
-          if (pathname === "/api" || pathname.startsWith("/api/")) return notFound();
-          return null;
+          return notFound();
         }
 
-        logger.debug("Route matched", {
-          pathname,
-          pattern: match.route.pattern,
-          page: match.route.page,
-          params: match.params,
-        });
+        logger.debug("API route matched");
 
-        const handler = await this.loadHandler(match);
-        if (!handler) {
+        const isRemoteProject = ctx?.isLocalProject === false;
+        if (isRemoteProject && !isWorkerIsolationEnabled()) {
+          logger.error("Remote API route rejected because worker isolation is disabled");
+
+          const response = serviceUnavailable(undefined, {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
+          const corsResponse = await applyCORSHeaders({
+            request,
+            response,
+            config: this.corsConfig ?? undefined,
+          });
+          return corsResponse ?? response;
+        }
+
+        let handler: APIRoute | null = null;
+        if (!isRemoteProject) {
           try {
-            logger.error(`handler module failed to load: ${match.route.page}`);
-          } catch (e) {
-            logger.warn("API error log failed", e);
+            handler = await this.loadHandler(match);
+          } catch (error) {
+            logger.error("handler module failed to load", {
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+            if (error instanceof VeryfrontError && error.slug === "security-violation") {
+              return badGateway("API route is unavailable");
+            }
+            return internalServerError("Handler not found");
           }
 
-          const msg = this.lastErrorMessage ?? "Handler not found";
-          if (msg.includes("Remote import blocked by allow-list")) return badGateway(msg);
-          return internalServerError("Handler not found");
+          if (!handler) {
+            logger.error("handler module did not export an HTTP method");
+            return internalServerError("Handler not found");
+          }
         }
 
         // App Router routes are always named route.ts/js/tsx/jsx
@@ -200,9 +234,10 @@ export class APIRouteHandler {
           isLocalProject: ctx?.isLocalProject,
         };
 
+        const deps = getDeps();
         const response = isAppRoute
-          ? await executeAppRoute(handler, request, match, pathname, adapter, isolationOptions)
-          : await executePagesRoute(
+          ? await deps.executeAppRoute(handler, request, match, pathname, adapter, isolationOptions)
+          : await deps.executePagesRoute(
             handler,
             request,
             match,
@@ -220,7 +255,7 @@ export class APIRouteHandler {
 
         return corsResponse ?? response;
       },
-      { "http.method": request.method, "http.path": pathname },
+      { "http.method": request.method },
     ).finally(() => this.completeRequest());
   }
 
@@ -236,30 +271,21 @@ export class APIRouteHandler {
         const cached = this.routeCache.get(modulePath);
         if (cached) return cached;
 
-        try {
-          const deps = getDeps();
-          const handler = await deps.loadHandlerModule({
-            projectDir: this.projectDir,
-            modulePath,
-            adapter,
-            config: this.config ?? undefined,
-          });
+        const deps = getDeps();
+        const handler = await deps.loadHandlerModule({
+          projectDir: this.projectDir,
+          modulePath,
+          adapter,
+          config: this.config ?? undefined,
+        });
 
-          // Only cache handlers that export at least one HTTP method.
-          // Empty objects ({}) from failed imports are truthy but useless —
-          // caching them would prevent retry after the user fixes the import.
-          if (handler && Object.keys(handler).length > 0) {
-            this.routeCache.set(modulePath, handler);
-          }
-          return handler && Object.keys(handler).length > 0 ? handler : null;
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          this.lastErrorMessage = msg;
-          logger.error(`[API] Failed to load handler for ${modulePath}: ${msg}`);
-          return null;
+        // Only cache handlers that export at least one HTTP method. Empty
+        // modules remain retryable so a fixed route is visible without restart.
+        if (handler && Object.keys(handler).length > 0) {
+          this.routeCache.set(modulePath, handler);
         }
+        return handler && Object.keys(handler).length > 0 ? handler : null;
       },
-      { "api.modulePath": modulePath },
     );
   }
 
@@ -323,14 +349,10 @@ export class APIRouteHandler {
 
   private async loadCorsConfig(adapter: RuntimeAdapter): Promise<void> {
     try {
-      const deps = getDeps();
-      const config = await deps.getConfig(this.projectDir, adapter);
-      this.corsConfig = config.security?.cors ?? null;
-    } catch (error) {
-      this.corsConfig = null;
-      logger.warn("Failed to load CORS configuration", error);
-    } finally {
+      await this.ensureConfig(adapter);
+      this.corsConfig = this.config?.security?.cors ?? null;
       this.corsConfigLoaded = true;
+    } finally {
       this.corsConfigPromise = null;
     }
   }
@@ -346,9 +368,6 @@ export class APIRouteHandler {
     try {
       const deps = getDeps();
       this.config = await deps.getConfig(this.projectDir, adapter);
-    } catch (error) {
-      this.config = null;
-      logger.warn("Failed to load config", error);
     } finally {
       this.configPromise = null;
     }

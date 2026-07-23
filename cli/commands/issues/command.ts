@@ -6,8 +6,18 @@
 
 import { cwd } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
-import { createIssuesManager, type Issue, type IssuePrefix, parseState } from "veryfront/issues";
+import {
+  createIssuesManager,
+  type Issue,
+  ISSUE_PREFIXES,
+  type IssuePrefix,
+  type IssueState,
+  parseState,
+} from "veryfront/issues";
 import { bold, muted, success } from "#cli/ui";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
+import { showCommandHelp } from "../../help/command-help.ts";
+import { issuesHelp } from "./command-help.ts";
 
 import type { ParsedArgs } from "#cli/shared/types";
 import { getNumberArg, getStringArg } from "../../shared/parsed-args.ts";
@@ -92,19 +102,36 @@ function getId(args: ParsedArgs, index: number): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
+function getProvidedStringArg(args: ParsedArgs, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
+function parseIssueState(value: string): IssueState {
+  const state = parseState(value);
+  if (!state) throw new Error("Issue state must be open, closed, or a supported alias");
+  return state;
+}
+
+async function printJson(value: unknown): Promise<void> {
+  await outputJson(createSuccessEnvelope("issues", value));
 }
 
 function getPrefix(prefix: string | undefined, fallback?: IssuePrefix): IssuePrefix | undefined {
-  const value = prefix?.toUpperCase() as IssuePrefix | undefined;
-  return value ?? fallback;
+  if (prefix === undefined) return fallback;
+  const normalized = prefix.toUpperCase();
+  const value = ISSUE_PREFIXES.find((candidate) => candidate === normalized);
+  if (!value) throw new Error("Issue prefix must be ISSUE, TASK, or PLAN");
+  return value;
 }
 
 export async function issuesCommand(args: ParsedArgs): Promise<void> {
   const subcommand = getId(args, 1);
   const manager = createIssuesManager(cwd());
-  const json = getJsonFlag(args);
+  const json = getJsonFlag(args) || isJsonMode();
   const verbose = Boolean(args.verbose || args.v);
 
   switch (subcommand) {
@@ -120,11 +147,11 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
         labels: parseLabels(getStringArg(args, "labels", "l")),
         milestone: getStringArg(args, "milestone", "m"),
         assignees: parseLabels(getStringArg(args, "assignees", "a")),
-        prefix: getPrefix(getStringArg(args, "prefix"), "ISSUE")!,
+        prefix: getPrefix(getProvidedStringArg(args, "prefix"), "ISSUE")!,
       });
 
       if (json) {
-        printJson(issue);
+        await printJson(issue);
         return;
       }
 
@@ -135,13 +162,13 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
 
     case "list":
     case "ls": {
-      const stateArg = getStringArg(args, "state");
+      const stateArg = getProvidedStringArg(args, "state");
       const result = await manager.list({
-        state: stateArg ? parseState(stateArg) ?? undefined : undefined,
+        state: stateArg !== undefined ? parseIssueState(stateArg) : undefined,
         labels: parseLabels(getStringArg(args, "labels", "l")),
         milestone: getStringArg(args, "milestone", "m"),
         assignee: getStringArg(args, "assignee"),
-        prefix: getPrefix(getStringArg(args, "prefix")),
+        prefix: getPrefix(getProvidedStringArg(args, "prefix")),
         sortBy: (getStringArg(args, "sort") as "created_at" | "updated_at" | "id") ||
           "created_at",
         sortDirection: (getStringArg(args, "dir") as "asc" | "desc") || "desc",
@@ -149,7 +176,7 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
       });
 
       if (json) {
-        printJson(result);
+        await printJson(result);
         return;
       }
 
@@ -182,7 +209,7 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
       }
 
       if (json) {
-        printJson(issue);
+        await printJson(issue);
         return;
       }
 
@@ -202,32 +229,33 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
       if (bool(args, "delete", "d")) {
         const deleted = await manager.delete(id);
         if (!deleted) throw new Error(`Failed to delete ${id}`);
+        if (json) {
+          await printJson({ deleted: true, id });
+          return;
+        }
         cliLogger.info(`Deleted ${id}`);
         return;
       }
 
       const updates: Parameters<typeof manager.update>[1] = {};
 
-      const title = getStringArg(args, "title", "t");
-      if (title) updates.title = title;
+      const title = getProvidedStringArg(args, "title", "t");
+      if (title !== undefined) updates.title = title;
 
-      const body = getStringArg(args, "body", "b");
-      if (body) updates.body = body;
+      const body = getProvidedStringArg(args, "body", "b");
+      if (body !== undefined) updates.body = body;
 
-      const stateArg = getStringArg(args, "state");
-      if (stateArg) {
-        const state = parseState(stateArg);
-        if (state) updates.state = state;
-      }
+      const stateArg = getProvidedStringArg(args, "state");
+      if (stateArg !== undefined) updates.state = parseIssueState(stateArg);
 
-      const labels = parseLabels(getStringArg(args, "labels", "l"));
-      if (labels) updates.labels = labels;
+      const labelsArg = getProvidedStringArg(args, "labels", "l");
+      if (labelsArg !== undefined) updates.labels = parseLabels(labelsArg) ?? [];
 
-      const assignees = parseLabels(getStringArg(args, "assignees", "a"));
-      if (assignees) updates.assignees = assignees;
+      const assigneesArg = getProvidedStringArg(args, "assignees", "a");
+      if (assigneesArg !== undefined) updates.assignees = parseLabels(assigneesArg) ?? [];
 
-      const milestone = getStringArg(args, "milestone", "m");
-      if (milestone) updates.milestone = milestone;
+      const milestone = getProvidedStringArg(args, "milestone", "m");
+      if (milestone !== undefined) updates.milestone = milestone || null;
 
       if (!Object.keys(updates).length) {
         throw new Error("No updates provided. Use --title, --state, --labels, etc.");
@@ -239,7 +267,7 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
       }
 
       if (json) {
-        printJson(issue);
+        await printJson(issue);
         return;
       }
 
@@ -260,7 +288,7 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
       }
 
       if (json) {
-        printJson(issue);
+        await printJson(issue);
         return;
       }
 
@@ -280,7 +308,7 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
       }
 
       if (json) {
-        printJson(issue);
+        await printJson(issue);
         return;
       }
 
@@ -297,61 +325,20 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
 
       const deleted = await manager.delete(id);
       if (!deleted) throw new Error(`Issue not found: ${id}`);
+      if (json) {
+        await printJson({ deleted: true, id });
+        return;
+      }
       cliLogger.info(`Deleted ${id}`);
       return;
     }
 
     default: {
-      console.log(`
-Veryfront Issues - File-based issue tracking
-
-Usage: veryfront issues <command> [options]
-
-Commands:
-  create     Create a new issue
-  list, ls   List issues with filtering
-  view       View issue details
-  edit       Update an issue
-  close      Close an issue
-  reopen     Reopen a closed issue
-  delete     Delete an issue
-
-Create Options:
-  --title, -t <title>      Issue title (required)
-  --body, -b <body>        Issue description
-  --labels, -l <labels>    Comma-separated labels
-  --milestone, -m <name>   Milestone name
-  --assignees, -a <users>  Comma-separated assignees
-  --prefix <type>          ID prefix: ISSUE, TASK, or PLAN
-
-List Options:
-  --state <state>          Filter by state (open/closed)
-  --labels, -l <labels>    Filter by labels (comma-separated)
-  --milestone, -m <name>   Filter by milestone
-  --assignee <user>        Filter by assignee
-  --prefix <type>          Filter by prefix (ISSUE/TASK/PLAN)
-  --sort <field>           Sort by: created_at, updated_at, id
-  --dir <direction>        Sort direction: asc, desc
-  --limit <n>              Maximum results
-
-Edit Options:
-  --title, -t <title>      New title
-  --body, -b <body>        New body content
-  --state <state>          New state (open/closed)
-  --labels, -l <labels>    Labels to set
-  --delete, -d             Delete the issue
-
-Global Options:
-  --json, -j               Output as JSON
-  --verbose                Show more details
-
-Examples:
-  veryfront issues create --title "Fix login bug" --labels bug,priority:high
-  veryfront issues list --state open --labels bug
-  veryfront issues view ISSUE-001
-  veryfront issues edit ISSUE-001 --state closed
-  veryfront issues close TASK-042
-`);
+      if (json) {
+        await printJson(issuesHelp);
+        return;
+      }
+      showCommandHelp("issues");
       return;
     }
   }

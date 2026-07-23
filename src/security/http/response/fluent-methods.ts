@@ -98,8 +98,23 @@ export function withHeaders<T extends FluentMethodsContext>(
   const entries: Iterable<[string, string]> = headers instanceof Headers || Array.isArray(headers)
     ? headers
     : Object.entries(headers);
+  let copiedSetCookies = false;
+
+  if (headers instanceof Headers) {
+    const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+    if (typeof getSetCookie === "function") {
+      for (const cookie of getSetCookie.call(headers)) {
+        this.headers.append("Set-Cookie", cookie);
+        copiedSetCookies = true;
+      }
+    }
+  }
 
   for (const [key, value] of entries) {
+    if (key.toLowerCase() === "set-cookie") {
+      if (!copiedSetCookies) this.headers.append(key, value);
+      continue;
+    }
     this.headers.set(key, value);
   }
 

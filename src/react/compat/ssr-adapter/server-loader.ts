@@ -8,6 +8,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 
 const logger = rendererLogger.component("server-loader");
 
@@ -30,6 +31,8 @@ export function resetReactCache(): void {
   projectReactCache.clear();
   reactDOMServerCache.clear();
 }
+
+registerProcessStateReset("React server loader", resetReactCache);
 
 function resolveReactVersion(version?: string): string {
   return normalizeReactVersion(version ? stripSemverRange(version) : undefined);

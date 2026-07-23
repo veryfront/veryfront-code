@@ -2,36 +2,55 @@ import type { ChildRunResultSummary } from "./result-summary.ts";
 
 /** Public API contract for child run execution usage. */
 export interface ChildRunExecutionUsage {
+  /** Input tokens value. */
   inputTokens: number;
+  /** Output tokens value. */
   outputTokens: number;
+  /** Total tokens value. */
   totalTokens: number;
 }
 
 /** Public API contract for child run tool call snapshot. */
 export interface ChildRunToolCallSnapshot {
+  /** Tool name value. */
   toolName: string;
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Input supplied to the operation. */
   input?: unknown;
 }
 
 /** Public API contract for child run tool result snapshot. */
 export interface ChildRunToolResultSnapshot {
+  /** Tool name value. */
   toolName: string;
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Input supplied to the operation. */
   input: unknown;
+  /** Output produced by the operation. */
   output: unknown;
 }
 
 /** Public API contract for child run execution snapshot. */
 export interface ChildRunExecutionSnapshot {
+  /** Whether success. */
   success: boolean;
+  /** Description value. */
   description: string;
+  /** Full result text value. */
   fullResultText: string | null;
+  /** Error associated with the operation. */
   error: string | null;
+  /** Steps value. */
   steps: number;
+  /** Tool calls value. */
   toolCalls: ChildRunToolCallSnapshot[];
+  /** Tool results value. */
   toolResults: ChildRunToolResultSnapshot[];
+  /** Usage value. */
   usage?: ChildRunExecutionUsage;
+  /** Duration ms value. */
   durationMs: number;
 }
 
@@ -60,11 +79,17 @@ export type ChildRunExecutionResult =
 
 /** Public API contract for child run result common. */
 export interface ChildRunResultCommon {
+  /** Description value. */
   description: string;
+  /** Steps value. */
   steps: number;
+  /** Tool calls value. */
   toolCalls: ChildRunToolCallSnapshot[];
+  /** Tool results value. */
   toolResults: ChildRunToolResultSnapshot[];
+  /** Usage value. */
   usage?: ChildRunExecutionUsage;
+  /** Duration ms value. */
   durationMs: number;
 }
 

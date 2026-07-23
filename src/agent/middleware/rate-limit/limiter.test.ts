@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import { createRateLimiter, rateLimitMiddleware } from "./limiter.ts";
@@ -99,6 +99,71 @@ describe("createRateLimiter", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  it("implements sliding-window limits without token refills", () => {
+    const originalNow = Date.now;
+    let now = 10_000;
+    Date.now = () => now;
+
+    try {
+      const limiter = createRateLimiter({
+        strategy: "sliding-window",
+        maxRequests: 2,
+        windowMs: 1_000,
+      });
+
+      assertEquals(limiter.check().allowed, true);
+      now += 500;
+      assertEquals(limiter.check().allowed, true);
+      assertEquals(limiter.check().allowed, false);
+
+      now += 501;
+      const afterOldestRequestExpires = limiter.check();
+      assertEquals(afterOldestRequestExpires.allowed, true);
+      assertEquals(afterOldestRequestExpires.remaining, 0);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
+  it("rejects invalid limiter configuration", () => {
+    assertThrows(
+      () =>
+        createRateLimiter({
+          strategy: "fixed-window",
+          maxRequests: 0,
+          windowMs: 1_000,
+        }),
+      Error,
+      "maxRequests must be a positive safe integer",
+    );
+    assertThrows(
+      () =>
+        createRateLimiter({
+          strategy: "fixed-window",
+          maxRequests: 1,
+          windowMs: Number.POSITIVE_INFINITY,
+        }),
+      Error,
+      "windowMs must be a positive safe integer",
+    );
+  });
+
+  it("bounds tracked identifier state", () => {
+    const limiter = createRateLimiter({
+      strategy: "fixed-window",
+      maxRequests: 1,
+      windowMs: 60_000,
+      maxIdentifiers: 2,
+      identify: (context) => String(context.userId),
+    });
+
+    limiter.check({ userId: "user-a" });
+    limiter.check({ userId: "user-b" });
+    limiter.check({ userId: "user-c" });
+
+    assertEquals(limiter.check({ userId: "user-a" }).allowed, true);
   });
 });
 

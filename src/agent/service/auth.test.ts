@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -37,7 +38,7 @@ function encodeBase64UrlBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-function decodeBase64UrlBytes(input: string): Uint8Array {
+function decodeBase64UrlBytes(input: string): Uint8Array<ArrayBuffer> {
   const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
   const paddingLength = (4 - (normalized.length % 4)) % 4;
   const binary = atob(`${normalized}${"=".repeat(paddingLength)}`);
@@ -58,7 +59,7 @@ function spkiDerToPem(der: ArrayBuffer): string {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 }
 
-function pemToSpkiDer(publicKeyPem: string): Uint8Array {
+function pemToSpkiDer(publicKeyPem: string): Uint8Array<ArrayBuffer> {
   const base64 = publicKeyPem
     .replace("-----BEGIN PUBLIC KEY-----", "")
     .replace("-----END PUBLIC KEY-----", "")
@@ -178,6 +179,9 @@ describe("agent/agent-service-auth", () => {
     const forbidden = new HostedServiceAuthError(403, "No access");
     assertEquals(forbidden.statusCode, 403);
     assertEquals(forbidden.errorCode, "FORBIDDEN");
+
+    assertEquals(new HostedServiceAuthError(404, "Missing").errorCode, "NOT_FOUND");
+    assertEquals(new HostedServiceAuthError(500, "Broken").errorCode, "SERVER_ERROR");
   });
 
   it("extracts auth tokens from cookies before bearer headers", () => {
@@ -197,6 +201,14 @@ describe("agent/agent-service-auth", () => {
     });
 
     assertEquals(getHostedServiceTokenFromRequest(request), "bearer-token");
+  });
+
+  it("accepts case-insensitive bearer schemes and horizontal whitespace", () => {
+    const request = new Request("https://agent.test/run", {
+      headers: { authorization: "bearer\tcase-insensitive-token" },
+    });
+
+    assertEquals(getHostedServiceTokenFromRequest(request), "case-insensitive-token");
   });
 
   it("returns null when no auth token exists", () => {
@@ -430,6 +442,25 @@ describe("agent/agent-service-auth", () => {
     assertEquals(await result.json(), { errorCode: "UNAUTHENTICATED" });
   });
 
+  it("preserves server error status when authentication is misconfigured", async () => {
+    const auth = createHostedServiceAuth({
+      getConfig: () => ({
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    const result = await auth.authenticateRequest(
+      new Request("https://agent.test/api/ag-ui", {
+        headers: { authorization: "Bearer token" },
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 500);
+    assertEquals(await result.json(), { errorCode: "SERVER_ERROR" });
+  });
+
   it("checks project access against the configured API origin", async () => {
     const fetchMock = createFetchMock(new Response("{}", { status: 200 }));
     const auth = createHostedServiceAuth({
@@ -450,6 +481,39 @@ describe("agent/agent-service-auth", () => {
     assertEquals(String(call.input), "https://api.example.test/projects/project-1");
     assertEquals(call.init?.method, "GET");
     assertEquals(getAuthorizationHeader(call), "Bearer token-1");
+  });
+
+  it("encodes project identifiers as one URL path segment", async () => {
+    const fetchMock = createFetchMock(new Response("{}", { status: 200 }));
+    const auth = createHostedServiceAuth({
+      fetch: fetchMock.fetch,
+      getConfig: () => ({
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    await auth.verifyProjectAccess("project/with#delimiters", "token-1");
+
+    assertEquals(
+      String(getOnlyFetchCall(fetchMock.calls).input),
+      "https://api.example.test/projects/project%2Fwith%23delimiters",
+    );
+  });
+
+  it("rejects invalid project access timeouts at construction", () => {
+    assertThrows(
+      () =>
+        createHostedServiceAuth({
+          projectAccessTimeoutMs: 0,
+          getConfig: () => ({
+            NODE_ENV: "production",
+            VERYFRONT_API_URL: "https://api.example.test",
+          }),
+        }),
+      Error,
+      "projectAccessTimeoutMs must be a positive safe integer",
+    );
   });
 
   it("omits authorization on project access checks without a token", async () => {

@@ -6,43 +6,42 @@
  * locally via `veryfront task <name>` or in the cloud as runs and schedules.
  */
 
-/**
- * Context passed to task run() function
- */
+import { normalizeTaskDefinition } from "./definition.ts";
+
+/** Context passed to a task's `run` function. */
 export interface TaskContext {
-  /** Environment variables */
+  /** Validated environment variables available to this invocation. */
   env: Record<string, string>;
-  /** Run config (when executed by the platform) */
+  /** Private mutable snapshot of the invocation configuration. */
   config: Record<string, unknown>;
-  /** Project ID (when executed by the platform) */
+  /** Project identifier when the platform supplies one. */
   projectId?: string;
-  /** Environment ID for the runtime target executing this task */
+  /** Environment identifier for the runtime target executing this task. */
   environmentId?: string;
 }
 
-/**
- * Task definition exported from a tasks/ file
- */
+/** Task definition exported from a file under `tasks/`. */
 export interface TaskDefinition {
-  /** Human-readable name */
+  /** Human-readable task name. */
   name?: string;
-  /** Task description */
+  /** Human-readable task description. */
   description?: string;
-  /** Optional JSON-schema-like input contract surfaced in APIs/UIs */
+  /** Optional JSON-shaped input contract surfaced in APIs and UIs. */
   inputSchema?: Record<string, unknown>;
-  /** Optional JSON-schema-like output contract surfaced in APIs/UIs */
+  /** Optional JSON-shaped output contract surfaced in APIs and UIs. */
   outputSchema?: Record<string, unknown>;
-  /** Whether this task can be scheduled */
+  /** Whether a schedule can target this task. */
   schedulable?: boolean;
-  /** The function to execute */
+  /** Execute the task with an invocation-scoped context. */
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
 }
 
-/**
- * Type guard: checks if a value looks like a TaskDefinition
- */
+/** Return whether a value satisfies the complete task definition contract. */
 export function isTaskDefinition(value: unknown): value is TaskDefinition {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return typeof obj.run === "function";
+  try {
+    normalizeTaskDefinition(value);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -1,11 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
 import { detectAppRouter } from "./router-detection.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
 const failingAdapter: RuntimeAdapter = {
   id: "node",
@@ -104,19 +102,45 @@ const failingAdapter: RuntimeAdapter = {
 };
 
 describe("detectAppRouter", () => {
-  it("falls back to compat fs when adapter fails", async () => {
-    const tmpDir = await makeTempDir();
-    const appDir = join(tmpDir, "app");
-
-    await mkdir(appDir, { recursive: true });
-    await writeTextFile(
-      join(appDir, "page.tsx"),
-      "export default function Page() { return null; }",
-    );
-
+  it("propagates adapter failures instead of inspecting the host filesystem", async () => {
     const config = {} as VeryfrontConfig;
-    const result = await detectAppRouter(tmpDir, config, failingAdapter);
+    await assertRejects(
+      () => detectAppRouter("/project", config, failingAdapter, { projectId: "failure" }),
+      Error,
+      "adapter stat failure",
+    );
+  });
 
-    assertEquals(result, true, "should detect app router using compat fs fallback");
+  it("treats genuinely missing router directories as absent", async () => {
+    const missingAdapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        stat() {
+          throw Object.assign(new Error("missing"), { code: "ENOENT" });
+        },
+      },
+    } as RuntimeAdapter;
+
+    assertEquals(
+      await detectAppRouter("/project", {} as VeryfrontConfig, missingAdapter, {
+        projectId: "missing",
+      }),
+      true,
+    );
+  });
+
+  it("rejects router directory settings that escape the project", async () => {
+    await assertRejects(
+      () =>
+        detectAppRouter(
+          "/project",
+          { directories: { app: "../app" } } as VeryfrontConfig,
+          failingAdapter,
+          { projectId: "traversal" },
+        ),
+      Error,
+      "Router directories must stay inside the project",
+    );
   });
 });

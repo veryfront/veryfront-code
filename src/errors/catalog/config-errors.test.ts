@@ -20,6 +20,9 @@ describe("errors/catalog/config-errors", () => {
         "config-type-error",
         "import-map-invalid",
         "cors-config-invalid",
+        "extension-validation",
+        "extension-circular-dependency",
+        "extension-conflict",
       ];
 
       for (const slug of expectedSlugs) {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
@@ -8,7 +8,8 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
-import { cacheModule } from "./module-cache.ts";
+import { cacheModule, normalizePath } from "./module-cache.ts";
+import { getLocalFs } from "../cache/index.ts";
 
 const noopLog = {
   debug: () => {},
@@ -16,6 +17,63 @@ const noopLog = {
 } as never;
 
 describe("module-cache", () => {
+  it("normalizes parent imports without allowing virtual-root traversal", () => {
+    assertEquals(
+      normalizePath("../lib/helper.js", "_vf_modules/pages/index.js"),
+      "_vf_modules/lib/helper.js",
+    );
+
+    assertThrows(
+      () => normalizePath("../../../private.js", "_vf_modules/pages/index.js"),
+      TypeError,
+      "Module path must stay inside the virtual module root",
+    );
+    assertThrows(
+      () => normalizePath("_vf_modules/../private.js"),
+      TypeError,
+      "Module path must stay inside the virtual module root",
+    );
+  });
+
+  it("atomically publishes module cache files", async () => {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-module-cache-atomic-" });
+    const localFs = getLocalFs();
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    const originalRename = localFs.rename?.bind(localFs);
+    if (!originalRename) throw new Error("Test filesystem must support rename");
+
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
+    localFs.writeTextFile = async (path, data) => {
+      writes.push(path);
+      await originalWriteTextFile(path, data);
+    };
+    localFs.rename = async (from, to) => {
+      renames.push([from, to]);
+      await originalRename(from, to);
+    };
+
+    try {
+      const cachedPath = await cacheModule(
+        "_vf_modules/components/AtomicCache.js",
+        "export default function AtomicCache() {}",
+        esmCacheDir,
+        new Map(),
+        noopLog,
+      );
+      if (!cachedPath) throw new Error("Expected module to be cached");
+
+      const temporaryWrite = writes.find((path) => path.startsWith(`${cachedPath}.tmp-`));
+      assertEquals(typeof temporaryWrite, "string");
+      assertEquals(renames, [[temporaryWrite!, cachedPath]]);
+      assertEquals(await readTextFile(cachedPath), "export default function AtomicCache() {}");
+    } finally {
+      localFs.writeTextFile = originalWriteTextFile;
+      localFs.rename = originalRename;
+      await remove(esmCacheDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("adds a default export for filename-matched named component exports", async () => {
     const esmCacheDir = await makeTempDir({ prefix: "vf-module-cache-default-" });
     const projectDir = await makeTempDir({ prefix: "vf-module-cache-entry-" });

@@ -3,29 +3,47 @@ import type { AgentMcpToolPolicy } from "../types.ts";
 import { buildStudioMcpHeaders } from "../project/live-studio-mcp-tools.ts";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
 
+/** Veryfront API MCP server configuration for an agent service. */
 export type AgentServiceVeryfrontApiMcpServerConfig = {
+  /** Server kind discriminator. */
   kind: "veryfront-api";
+  /** Optional stable source identifier. */
   id?: string;
+  /** Tool allow, deny, and approval policy. */
   toolPolicy?: AgentMcpToolPolicy;
 };
 
+/** Veryfront Studio MCP server configuration for an agent service. */
 export type AgentServiceVeryfrontStudioMcpServerConfig = {
+  /** Server kind discriminator. */
   kind: "veryfront-studio";
+  /** Optional stable source identifier. */
   id?: string;
+  /** Tool allow, deny, and approval policy. */
   toolPolicy?: AgentMcpToolPolicy;
 };
 
+/** Generic remote MCP server configuration for an agent service. */
 export type AgentServiceGenericMcpServerConfig = {
+  /** Optional generic server discriminator. */
   kind?: "generic";
+  /** Optional stable source identifier. */
   id?: string;
+  /** Remote MCP endpoint. */
   endpoint: RemoteMCPToolSourceConfig["endpoint"];
+  /** Static or request-derived HTTP headers. */
   headers?: RemoteMCPToolSourceConfig["headers"];
+  /** Optional fetch implementation. */
   fetch?: RemoteMCPToolSourceConfig["fetch"];
+  /** Optional JSON-RPC method used to list tools. */
   listMethod?: RemoteMCPToolSourceConfig["listMethod"];
+  /** Optional JSON-RPC method used to call a tool. */
   callMethod?: RemoteMCPToolSourceConfig["callMethod"];
+  /** Tool allow, deny, and approval policy. */
   toolPolicy?: AgentMcpToolPolicy;
 };
 
+/** MCP server configurations accepted by an agent service. */
 export type AgentServiceMcpServerConfig =
   | AgentServiceVeryfrontApiMcpServerConfig
   | AgentServiceVeryfrontStudioMcpServerConfig

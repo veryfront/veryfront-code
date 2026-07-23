@@ -112,6 +112,18 @@ describe("isRetryableConnectionError", () => {
     assertEquals(isRetryableConnectionError(error), false);
     assertEquals(isConnectionRefusedError(error), false);
   });
+
+  it("contains hostile error cause accessors", () => {
+    const error = new Error("fetch failed");
+    Object.defineProperty(error, "cause", {
+      get() {
+        throw new Error("hostile cause getter");
+      },
+    });
+
+    assertEquals(isRetryableConnectionError(error), false);
+    assertEquals(isConnectionRefusedError(error), false);
+  });
 });
 
 describe("getUpstreamRetryCount", () => {
@@ -176,6 +188,24 @@ describe("getUpstreamRetryCount", () => {
     for (const request of requests) {
       assertEquals(getUpstreamRetryCount(request, RUN_STREAM_PATH, 1), 0);
     }
+  });
+
+  it("normalizes invalid and excessive retry counts", () => {
+    const request = new Request("http://proxy.test/");
+    assertEquals(getUpstreamRetryCount(request, "/", Number.NaN), 0);
+    assertEquals(getUpstreamRetryCount(request, "/", Number.POSITIVE_INFINITY), 0);
+    assertEquals(getUpstreamRetryCount(request, "/", 1.5), 0);
+    assertEquals(getUpstreamRetryCount(request, "/", 1000), 10);
+  });
+
+  it("does not classify a request with a body and zero content length as bodyless", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "0" },
+      body: "{}",
+    });
+
+    assertEquals(getUpstreamRetryCount(request, RUN_STREAM_PATH, 1), 0);
   });
 });
 

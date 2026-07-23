@@ -139,7 +139,7 @@ describe("Auto-Instrumentation", () => {
       assertExists(instrumented);
     });
 
-    it("should record HTTP method and URL attributes", async () => {
+    it("should record bounded HTTP method attributes", async () => {
       const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
@@ -201,7 +201,7 @@ describe("Auto-Instrumentation", () => {
       assertExists(instrumented);
     });
 
-    it("should record error type and message", async () => {
+    it("should record a bounded error category", async () => {
       class CustomError extends Error {
         constructor(message: string) {
           super(message);
@@ -287,7 +287,7 @@ describe("Auto-Instrumentation", () => {
       }
     });
 
-    it("should record host and scheme attributes", async () => {
+    it("should record a bounded scheme without the host", async () => {
       const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
@@ -452,7 +452,7 @@ describe("Auto-Instrumentation", () => {
       assertEquals(result, "<div>Async</div>");
     });
 
-    it("should record component name", async () => {
+    it("should accept a component compatibility label", async () => {
       const renderFn = (): string => "output";
       await instrumentReactRender(renderFn, "MyComponent");
 
@@ -532,7 +532,7 @@ describe("Auto-Instrumentation", () => {
       assertExists(response);
     });
 
-    it("should record error type and message", async () => {
+    it("should record a bounded error category", async () => {
       const handler = (_error: Error): Response => new Response("Error handled", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
@@ -542,7 +542,7 @@ describe("Auto-Instrumentation", () => {
       assertExists(instrumented);
     });
 
-    it("should record error stack trace", async () => {
+    it("should omit the error stack trace", async () => {
       const handler = (): Response => new Response("OK", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
@@ -552,7 +552,7 @@ describe("Auto-Instrumentation", () => {
       assertExists(instrumented);
     });
 
-    it("should include request context when provided", async () => {
+    it("should accept request context without recording identity", async () => {
       const handler = (): Response => new Response("Error", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
@@ -563,7 +563,7 @@ describe("Auto-Instrumentation", () => {
       assertExists(instrumented);
     });
 
-    it("should record HTTP method and URL from request", async () => {
+    it("should record the HTTP method without the request URL", async () => {
       const handler = (): Response => new Response("Error", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
@@ -584,7 +584,7 @@ describe("Auto-Instrumentation", () => {
       assertEquals(result, 10);
     });
 
-    it("should record custom attributes from function args", async () => {
+    it("should accept the legacy async attributes option", async () => {
       const fn = (userId: string, action: string): Promise<{ userId: string; action: string }> =>
         Promise.resolve({ userId, action });
 
@@ -645,7 +645,7 @@ describe("Auto-Instrumentation", () => {
       assertEquals(result, 15);
     });
 
-    it("should record custom attributes", () => {
+    it("should accept the legacy sync attributes option", () => {
       const fn = (name: string): string => `Hello, ${name}`;
       const instrumented = instrumentSync(fn, "greet", {
         attributes: ([name]: unknown[]) => ({ name }),

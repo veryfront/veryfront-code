@@ -7,11 +7,14 @@ import type { InferSchema, SchemaValidator } from "veryfront/extensions/schema";
 // These take a `SchemaValidator` and return either a `Schema<T>` or a plain
 // shape object whose values are `Schema<T>` instances. They exist because the
 // SchemaValidator contract is only available inside a `defineSchema` factory
-// — fragments cannot be materialized at module scope.
+// because fragments cannot be materialized at module scope.
 // ---------------------------------------------------------------------------
 
 const fileTypeEnum = (v: SchemaValidator) =>
   v.enum(["page", "function", "component", "file"] as const);
+
+const fileSizeSchema = (v: SchemaValidator) => v.number().int().nonnegative();
+const manifestVersionSchema = (v: SchemaValidator) => v.number().int().positive();
 
 const linkValueSchema = (v: SchemaValidator) =>
   v.union([
@@ -35,7 +38,7 @@ const linksSchema = (v: SchemaValidator) =>
 const baseFileFields = (v: SchemaValidator) => ({
   path: v.string(),
   type: fileTypeEnum(v),
-  size: v.number(),
+  size: fileSizeSchema(v),
   updated_at: v.string(),
   _links: linksSchema(v).optional(),
 });
@@ -95,7 +98,7 @@ export const getProjectFileSchema = defineSchema((v) =>
     version_id: v.string().optional(),
     path: v.string(),
     content: v.string().optional(),
-    size: v.number(),
+    size: fileSizeSchema(v),
     type: fileTypeEnum(v),
     updated_at: v.string(),
   })
@@ -206,7 +209,7 @@ export const getStyleArtifactResolveResponseSchema = defineSchema((v) =>
 export const getReleaseAssetManifestBuildResponseSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
-    manifest_version: v.number(),
+    manifest_version: manifestVersionSchema(v),
     state: v.enum(
       [
         "queued",
@@ -239,7 +242,7 @@ export const getReleaseAssetManifestStateResponseSchema = defineSchema((v) =>
         "superseded",
       ] as const,
     ),
-    manifest_version: v.number().optional(),
+    manifest_version: manifestVersionSchema(v).optional(),
   })
 );
 
@@ -255,13 +258,13 @@ export const getReleaseAssetManifestResponseSchema = defineSchema((v) =>
         "superseded",
       ] as const,
     ),
-    manifest_version: v.number(),
+    manifest_version: manifestVersionSchema(v),
     manifest: v.union([v.record(v.string(), v.unknown()), v.null()]),
   })
 );
 
 /**
- * Project schema extended with the `environments` array — used by the
+ * Project schema extended with the `environments` array, used by the
  * domain-lookup endpoint which returns a project plus its environments.
  *
  * Lifted out of `operations.ts` so the inline `extend()` no longer needs to
@@ -386,5 +389,35 @@ export const API_ENDPOINTS = {
     path: "/projects/{projectRef}/style-artifacts/current/builds",
     description:
       "Ensure a background style artifact build exists for a branch, environment, or release selector",
+  },
+  upsertStyleArtifact: {
+    method: "PUT" as const,
+    path: "/projects/{projectRef}/style-artifacts/current",
+    description: "Create or update style artifact metadata for a project selector",
+  },
+  beginReleaseAssetManifestBuild: {
+    method: "POST" as const,
+    path: "/projects/{projectRef}/releases/{version}/asset-manifest/builds",
+    description: "Begin a release asset manifest build",
+  },
+  uploadReleaseAsset: {
+    method: "POST" as const,
+    path: "/projects/{projectRef}/releases/{version}/asset-manifest/assets",
+    description: "Upload a content-addressed release asset",
+  },
+  putReleaseAssetManifest: {
+    method: "PUT" as const,
+    path: "/projects/{projectRef}/releases/{version}/asset-manifest",
+    description: "Store a release asset manifest",
+  },
+  reportReleaseAssetManifestState: {
+    method: "POST" as const,
+    path: "/projects/{projectRef}/releases/{version}/asset-manifest/state",
+    description: "Report a partial or failed release asset manifest state",
+  },
+  getReleaseAssetManifest: {
+    method: "GET" as const,
+    path: "/projects/{projectRef}/releases/{version}/asset-manifest",
+    description: "Get a release asset manifest",
   },
 } as const;

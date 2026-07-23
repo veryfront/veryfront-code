@@ -16,10 +16,9 @@ const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
 
 /** Patterns for dynamic segment detection */
 const DYNAMIC_SEGMENT_PATTERNS = {
-  standard: /^\[[\w]+\]$/, // [id]
-  catchAll: /^\[\.\.\.[\w]+\]$/, // [...slug]
-  optionalCatchAll: /^\[\[\.\.\.[\w]+\]\]$/, // [[...slug]]
-  withExtension: /^\[\.{0,3}\w+\]\.\w+$/, // [id].tsx or [...slug].ts
+  standard: /^\[[A-Za-z0-9_-]+\]$/, // [id]
+  catchAll: /^\[\.\.\.[A-Za-z0-9_-]+\]$/, // [...slug]
+  optionalCatchAll: /^\[\[\.\.\.[A-Za-z0-9_-]+\]\]$/, // [[...slug]]
 } as const;
 
 /**
@@ -28,30 +27,30 @@ const DYNAMIC_SEGMENT_PATTERNS = {
  */
 export function isDynamicSegment(name: string): boolean {
   if (!name.startsWith("[")) return false;
-
-  if (name.endsWith("]")) {
-    return (
-      DYNAMIC_SEGMENT_PATTERNS.standard.test(name) ||
-      DYNAMIC_SEGMENT_PATTERNS.catchAll.test(name) ||
-      DYNAMIC_SEGMENT_PATTERNS.optionalCatchAll.test(name)
-    );
-  }
-
-  return DYNAMIC_SEGMENT_PATTERNS.withExtension.test(name);
+  const segment = removeFileExtension(name);
+  return DYNAMIC_SEGMENT_PATTERNS.standard.test(segment) ||
+    DYNAMIC_SEGMENT_PATTERNS.catchAll.test(segment) ||
+    DYNAMIC_SEGMENT_PATTERNS.optionalCatchAll.test(segment);
 }
 
 /**
  * Check if a route pattern contains any dynamic segments
  */
 export function isDynamicRoute(pattern: string): boolean {
-  return /\[[\w.]+\]/.test(pattern);
+  return pattern.split("/").some((segment) => isDynamicSegment(segment));
 }
 
 /**
  * Check if a segment is a catch-all segment ([...slug] or [[...slug]])
  */
 export function isCatchAllSegment(name: string): boolean {
-  return name.startsWith("[...") || name.startsWith("[[...");
+  const segment = removeFileExtension(name);
+  return DYNAMIC_SEGMENT_PATTERNS.catchAll.test(segment) ||
+    DYNAMIC_SEGMENT_PATTERNS.optionalCatchAll.test(segment);
+}
+
+function isOptionalCatchAllSegment(name: string): boolean {
+  return DYNAMIC_SEGMENT_PATTERNS.optionalCatchAll.test(removeFileExtension(name));
 }
 
 /**
@@ -68,7 +67,7 @@ export function removeFileExtension(path: string): string {
  * "[[...params]]" -> "params"
  */
 export function extractParamName(segment: string): string {
-  return segment.replace(/\[\[\.\.\.|\[\.\.\.|\[|\]\]|\]/g, "");
+  return removeFileExtension(segment).replace(/\[\[\.\.\.|\[\.\.\.|\[|\]\]|\]/g, "");
 }
 
 /**
@@ -85,12 +84,16 @@ export interface RouterDirectories {
 }
 
 function extractPathBelowRoot(pageEntityId: string, root: string): string | null {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(pageEntityId) ||
+    /^(?:\\\\|\/\/)/.test(pageEntityId);
   const normalizedPath = `/${pageEntityId.replaceAll("\\", "/").replace(/^\/+/, "")}`;
   const normalizedRoot = root.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
   if (!normalizedRoot) return null;
 
   const marker = `/${normalizedRoot}/`;
-  const rootIndex = normalizedPath.lastIndexOf(marker);
+  const rootIndex = isWindowsPath
+    ? normalizedPath.toLowerCase().lastIndexOf(marker.toLowerCase())
+    : normalizedPath.lastIndexOf(marker);
   return rootIndex === -1 ? null : normalizedPath.substring(rootIndex + marker.length);
 }
 
@@ -129,7 +132,7 @@ interface ExtractedRouteParams {
  *
  * @param pageEntityId - The page entity ID (file path)
  * @param slug - The URL slug to match against
- * @returns Extracted parameters and whether matching succeeded
+ * @returns Extracted parameters and whether at least one dynamic parameter was extracted
  */
 export function extractRouteParams(
   pageEntityId: string,
@@ -138,31 +141,31 @@ export function extractRouteParams(
 ): ExtractedRouteParams {
   const params: Record<string, string | string[]> = {};
 
-  const { relativePath } = extractRouterBasePath(pageEntityId, directories);
-  if (!relativePath) return { params, matched: false };
+  const { relativePath, type } = extractRouterBasePath(pageEntityId, directories);
+  if (!relativePath || !type) return { params, matched: false };
 
-  const pathSegments = relativePath
-    .split("/")
-    .map(removeFileExtension)
-    .filter((segment) => segment.length > 0 && segment !== "page" && segment !== "route");
+  const pathSegments = relativePath.split("/").filter(Boolean);
+  const lastIndex = pathSegments.length - 1;
+  if (lastIndex >= 0) pathSegments[lastIndex] = removeFileExtension(pathSegments[lastIndex]!);
 
-  const slugSegments = slug.split("/").filter(Boolean);
-
-  for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
-    const pathSegment = pathSegments[i];
-    if (!pathSegment || !isDynamicSegment(pathSegment)) continue;
-
-    const paramName = extractParamName(pathSegment);
-
-    if (isCatchAllSegment(pathSegment)) {
-      params[paramName] = slugSegments.slice(i);
-      break;
-    }
-
-    params[paramName] = slugSegments[i]!;
+  if (
+    (type === "app" && ["page", "route"].includes(pathSegments.at(-1) ?? "")) ||
+    (type === "pages" && pathSegments.at(-1) === "index")
+  ) {
+    pathSegments.pop();
   }
 
-  return { params, matched: Object.keys(params).length > 0 };
+  const routeSegments = type === "app"
+    ? pathSegments.filter((segment) =>
+      !(segment.startsWith("(") && segment.endsWith(")")) && !segment.startsWith("@")
+    )
+    : pathSegments;
+  const extracted = extractParamsFromPattern(routeSegments.join("/"), slug);
+
+  if (extracted === null || Object.keys(extracted).length === 0) {
+    return { params, matched: false };
+  }
+  return { params: extracted, matched: true };
 }
 
 /**
@@ -173,11 +176,36 @@ export function extractRouteParams(
  * @returns The relative path within the project
  */
 export function extractRelativePath(absolutePath: string, projectDir: string): string {
-  const path = absolutePath.startsWith(projectDir)
-    ? absolutePath.slice(projectDir.length)
-    : absolutePath;
+  const normalizedPath = absolutePath.replaceAll("\\", "/");
+  const normalizedProjectDir = projectDir.replaceAll("\\", "/").replace(/\/+$/, "");
+  const isWindowsPath = (
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedPath) &&
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedProjectDir)
+  ) || (normalizedPath.startsWith("//") && normalizedProjectDir.startsWith("//"));
+  const comparablePath = isWindowsPath ? normalizedPath.toLowerCase() : normalizedPath;
+  const comparableProjectDir = isWindowsPath
+    ? normalizedProjectDir.toLowerCase()
+    : normalizedProjectDir;
+  const path = comparablePath === comparableProjectDir
+    ? ""
+    : comparablePath.startsWith(`${comparableProjectDir}/`)
+    ? normalizedPath.slice(normalizedProjectDir.length + 1)
+    : normalizedPath;
 
   return path.replace(/^\//, "");
+}
+
+function setRouteParam(
+  params: Record<string, string | string[]>,
+  name: string,
+  value: string | string[],
+): void {
+  Object.defineProperty(params, name, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
 }
 
 /**
@@ -197,20 +225,24 @@ export function extractParamsFromPattern(
 
   const params: Record<string, string | string[]> = {};
 
-  const hasCatchAll = patternParts.some(isCatchAllSegment);
+  const catchAllIndex = patternParts.findIndex(isCatchAllSegment);
+  const hasCatchAll = catchAllIndex !== -1;
+  if (hasCatchAll && catchAllIndex !== patternParts.length - 1) return null;
   if (!hasCatchAll && patternParts.length !== slugParts.length) return null;
 
   let slugIndex = 0;
 
   for (const patternPart of patternParts) {
     if (isCatchAllSegment(patternPart)) {
-      params[extractParamName(patternPart)] = slugParts.slice(slugIndex);
+      const remaining = slugParts.slice(slugIndex);
+      if (remaining.length === 0 && !isOptionalCatchAllSegment(patternPart)) return null;
+      setRouteParam(params, extractParamName(patternPart), remaining);
       return params;
     }
 
     if (isDynamicSegment(patternPart)) {
       if (slugIndex >= slugParts.length) return null;
-      params[extractParamName(patternPart)] = slugParts[slugIndex]!;
+      setRouteParam(params, extractParamName(patternPart), slugParts[slugIndex]!);
       slugIndex++;
       continue;
     }

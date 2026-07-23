@@ -1,5 +1,5 @@
 /**
- * Markdown rendering with syntax highlighting and diagrams.
+ * Markdown rendering with GFM, syntax highlighting, and Mermaid diagrams.
  *
  * @module markdown
  *
@@ -13,6 +13,8 @@
 
 export {
   type CodeBlockProps,
+  type Components,
   Markdown,
   type MarkdownProps,
+  type PluggableList,
 } from "#veryfront/react/components/chat/markdown.tsx";

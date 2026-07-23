@@ -19,50 +19,75 @@ import {
 
 /** Input payload for build finalized message state. */
 export interface BuildFinalizedMessageStateInput {
+  /** Response message value. */
   responseMessage: ChatUiMessage;
+  /** Whether aborted. */
   isAborted: boolean;
+  /** Final step value. */
   finalStep: unknown;
+  /** Incomplete tool calls part error text value. */
   incompleteToolCallsPartErrorText: string;
 }
 
 /** Input payload for build detached fallback message. */
 export interface BuildDetachedFallbackMessageInput {
+  /** Captured message ID value. */
   capturedMessageId: string | null;
+  /** Final step value. */
   finalStep: unknown;
+  /** Whether aborted. */
   isAborted: boolean;
+  /** Incomplete tool calls part error text value. */
   incompleteToolCallsPartErrorText: string;
 }
 
 /** State for finalized message. */
 export interface FinalizedMessageState {
+  /** Persisted message value. */
   persistedMessage: ChatUiMessage;
+  /** Sanitized finalized message value. */
   sanitizedFinalizedMessage: ChatUiMessage;
+  /** Whether incomplete finalized tool parts. */
   hasIncompleteFinalizedToolParts: boolean;
 }
 
 /** State for detached fallback message. */
 export interface DetachedFallbackMessageState {
+  /** Finalized fallback message value. */
   finalizedFallbackMessage: ChatUiMessage;
+  /** Whether incomplete fallback tool parts. */
   hasIncompleteFallbackToolParts: boolean;
 }
 
 /** Input payload for build finalized message fallback chunks. */
 export interface BuildFinalizedMessageFallbackChunksInput {
+  /** Persisted message value. */
   persistedMessage: ChatUiMessage;
+  /** Sanitized finalized message value. */
   sanitizedFinalizedMessage: ChatUiMessage;
+  /** Final step value. */
   finalStep: unknown;
+  /** Mirrored tool chunk state value. */
   mirroredToolChunkState: MirroredToolChunkState;
+  /** Captured message ID value. */
   capturedMessageId: string | null;
+  /** Whether incomplete finalized tool parts. */
   hasIncompleteFinalizedToolParts: boolean;
 }
 
 /** Input payload for build detached fallback chunks. */
 export interface BuildDetachedFallbackChunksInput {
+  /** Fallback parts value. */
   fallbackParts: ChatUiMessage["parts"];
+  /** Final step value. */
   finalStep: unknown;
+  /** Mirrored tool chunk state value. */
   mirroredToolChunkState: MirroredToolChunkState;
+  /** Whether mirrored durable output. */
   mirroredDurableOutput: boolean;
+  /** Captured message ID value. */
   capturedMessageId: string;
+  /** Whether incomplete fallback tool parts. */
   hasIncompleteFallbackToolParts: boolean;
 }
 

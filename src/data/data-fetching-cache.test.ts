@@ -239,7 +239,10 @@ describe("CacheManager", () => {
       const key = withProductionContext(() => cache.createCacheKey(context));
 
       assertExists(key);
-      assertEquals(key.includes('/posts/123::{"id":"123"}'), true);
+      assertEquals(
+        key.includes('["default","http://localhost","/posts/123",[["id","123"]]]'),
+        true,
+      );
       assertEquals(key.includes("test-project"), true);
     });
 
@@ -250,7 +253,7 @@ describe("CacheManager", () => {
       const key = withProductionContext(() => cache.createCacheKey(context));
 
       assertExists(key);
-      assertEquals(key.includes("/about::{}"), true);
+      assertEquals(key.includes('["default","http://localhost","/about",[]]'), true);
     });
 
     it("should create unique keys for different params", () => {

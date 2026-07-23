@@ -2,8 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __registerLogRecordEmitter,
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
   __resetTraceContextGetterForTests,
   createRunUserLogger,
   getBaseLogger,
@@ -14,6 +16,7 @@ import {
   serverLogger,
 } from "./logger.ts";
 import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
+import { LogComponents } from "./components.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import { VERSION } from "../version.ts";
 
@@ -49,6 +52,10 @@ function withJsonLogFormat<T>(fn: () => T): T {
 }
 
 describe("logger", () => {
+  it("exposes an immutable canonical component registry", () => {
+    assertEquals(Object.isFrozen(LogComponents), true);
+  });
+
   describe("getDefaultLevel", () => {
     // Note: Pass explicit values to avoid reading process env in parallel tests.
 
@@ -394,6 +401,143 @@ describe("logger", () => {
       }
     });
 
+    it("scrubs credentials embedded in the log message", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info(
+            "Connection failed for postgres://admin:message-secret@db.example.test/app",
+          );
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("message-secret"), false);
+          assertEquals(entry.message.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("scrubs authorization and cookie headers before emitting structured records", () => {
+      const { restore } = captureConsoleLog();
+      let emitted: LogEntry | undefined;
+
+      try {
+        withJsonLogFormat(() => {
+          __registerLogRecordEmitter((entry) => {
+            emitted = entry;
+          });
+
+          const error = new Error("Set-Cookie: session=error-cookie; HttpOnly");
+          error.stack =
+            'Error: rejected\nProxy-Authorization: Digest username="alice", response="stack-secret"';
+          serverLogger.info(
+            "Authorization: Basic message-secret",
+            { detail: "Cookie: session=context-cookie; theme=dark" },
+            error,
+          );
+
+          const serialized = JSON.stringify(emitted);
+          for (
+            const secret of [
+              "message-secret",
+              "context-cookie",
+              "error-cookie",
+              "stack-secret",
+            ]
+          ) {
+            assertEquals(serialized.includes(secret), false);
+          }
+          assertEquals(serialized.includes("Authorization: Basic [REDACTED]"), true);
+          assertEquals(serialized.includes("Cookie: [REDACTED]"), true);
+        });
+      } finally {
+        __resetLogRecordEmitterForTests();
+        restore();
+      }
+    });
+
+    it("does not let malformed context prevent logging", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const context: Record<string, unknown> = { password: "must-not-leak" };
+      Object.defineProperty(context, "broken", {
+        enumerable: true,
+        get() {
+          throw new Error("context getter failed");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Still emitted", context);
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(entry.message, "Still emitted");
+          assertEquals(line.includes("must-not-leak"), false);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("bounds context traversal before reading excess field values", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const context: Record<string, unknown> = {};
+      for (let index = 0; index < 100; index++) context[`field_${index}`] = index;
+      let excessGetterRead = false;
+      Object.defineProperty(context, "excess", {
+        enumerable: true,
+        get() {
+          excessGetterRead = true;
+          throw new Error("excess getter must not be read");
+        },
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Bounded context", context);
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(excessGetterRead, false);
+          assertEquals(entry.context?.field_99, 99);
+          assertEquals(entry.context?.__truncated__, "[REDACTED]");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("serializes BigInt context without throwing", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Big count", { count: 42n });
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.context?.count, "42");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("omits invalid numeric routing fields instead of violating the log schema", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Invalid duration", { duration_ms: "not-a-number" });
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.duration_ms, undefined);
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("scrubs credentials from lifted request_url (#1989)", () => {
       const { getOutput, restore } = captureConsoleLog();
 
@@ -480,6 +624,20 @@ describe("logger", () => {
           const entry = JSON.parse(getOutput()) as LogEntry;
           assertEquals(entry.component, "cors");
           assertEquals(entry.message, "CORS check");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("bounds component names before writing them to log entries", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          getBaseLogger("SERVER").component("x".repeat(200)).info("Bounded component");
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.component, "x".repeat(128));
         });
       } finally {
         restore();
@@ -594,6 +752,23 @@ describe("logger", () => {
   });
 
   describe("trace context bridge", () => {
+    it("continues logging when the trace context provider throws", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      __registerTraceContextGetter(() => {
+        throw new Error("trace provider failed");
+      });
+
+      try {
+        withJsonLogFormat(() => {
+          getBaseLogger("SERVER").info("Trace optional");
+          assertEquals((JSON.parse(getOutput()) as LogEntry).message, "Trace optional");
+        });
+      } finally {
+        __resetTraceContextGetterForTests();
+        restore();
+      }
+    });
+
     it("should auto-inject traceId and spanId from getter", () => {
       const { getOutput, restore } = captureConsoleLog();
 
@@ -938,6 +1113,29 @@ describe("logger", () => {
         });
       } finally {
         restore();
+      }
+    });
+
+    it("does not let project env force ANSI color into process logs", () => {
+      const previousFormat = Deno.env.get("LOG_FORMAT");
+      const previousForceColor = Deno.env.get("FORCE_COLOR");
+      const { getOutput, restore } = captureConsoleLog();
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("FORCE_COLOR", "0");
+      refreshLoggerConfig();
+
+      try {
+        runWithProjectEnv({ FORCE_COLOR: "1" }, () => {
+          getBaseLogger("SERVER").info("No project-controlled color");
+        });
+        assertEquals(getOutput().includes("\x1b"), false);
+      } finally {
+        restore();
+        if (previousFormat === undefined) Deno.env.delete("LOG_FORMAT");
+        else Deno.env.set("LOG_FORMAT", previousFormat);
+        if (previousForceColor === undefined) Deno.env.delete("FORCE_COLOR");
+        else Deno.env.set("FORCE_COLOR", previousForceColor);
+        refreshLoggerConfig();
       }
     });
   });

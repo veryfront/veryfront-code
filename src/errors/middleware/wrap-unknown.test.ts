@@ -4,11 +4,15 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert";
 import { wrapUnknownError, wrapWithContext } from "./wrap-unknown.ts";
 import { isVeryfrontError } from "../http-error.ts";
 import { VeryfrontError } from "../types.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
+
+function contextOf(error: VeryfrontError): Record<string, unknown> {
+  return (error.context ?? {}) as Record<string, unknown>;
+}
 
 describe("wrap-unknown", () => {
   describe("wrapUnknownError", () => {
@@ -64,8 +68,8 @@ describe("wrap-unknown", () => {
       const error = new Error("Test");
       const wrapped = wrapUnknownError(error, { userId: 123, action: "fetch" });
 
-      assertEquals(wrapped.context?.userId, 123);
-      assertEquals(wrapped.context?.action, "fetch");
+      assertEquals(contextOf(wrapped).userId, 123);
+      assertEquals(contextOf(wrapped).action, "fetch");
     });
 
     it("should preserve Error cause", () => {
@@ -79,6 +83,23 @@ describe("wrap-unknown", () => {
       const wrapped = wrapUnknownError("string");
 
       assertEquals(wrapped.cause, undefined);
+    });
+
+    it("bounds oversized thrown values", () => {
+      const wrapped = wrapUnknownError("x".repeat(100_000));
+      assertEquals((wrapped.detail?.length ?? 0) < 20_000, true);
+    });
+
+    it("fails closed for hostile context properties", () => {
+      const context = Object.defineProperty({}, "payload", {
+        enumerable: true,
+        get() {
+          throw new Error("password=<TOKEN>");
+        },
+      });
+
+      const wrapped = wrapUnknownError(new Error("failed"), context);
+      assertEquals((JSON.stringify(wrapped.context) ?? "").includes("<TOKEN>"), false);
     });
   });
 
@@ -107,6 +128,16 @@ describe("wrap-unknown", () => {
   });
 
   describe("wrapWithContext", () => {
+    it("rejects an invalid wrapper message", () => {
+      for (const message of [null, "", "x".repeat(4_097)]) {
+        assertThrows(
+          () => wrapWithContext(new Error("failed"), message as never),
+          TypeError,
+          "message must be a non-empty string",
+        );
+      }
+    });
+
     it("should wrap plain Error with additional message", () => {
       const error = new Error("Original error");
       const wrapped = wrapWithContext(error, "Failed to process");
@@ -127,7 +158,7 @@ describe("wrap-unknown", () => {
       const error = new Error("Test");
       const wrapped = wrapWithContext(error, "Operation failed", { step: "init" });
 
-      assertEquals(wrapped.context?.step, "init");
+      assertEquals(contextOf(wrapped).step, "init");
     });
 
     it("should preserve existing context in VeryfrontError", () => {
@@ -141,17 +172,17 @@ describe("wrap-unknown", () => {
 
       const wrapped = wrapWithContext(error, "Wrapped", { added: true });
 
-      assertEquals(wrapped.context?.original, true);
-      assertEquals(wrapped.context?.added, true);
+      assertEquals(contextOf(wrapped).original, true);
+      assertEquals(contextOf(wrapped).added, true);
     });
 
     it("should store original error information in context", () => {
       const error = CONFIG_NOT_FOUND.create();
       const wrapped = wrapWithContext(error, "Wrapper");
 
-      assertExists(wrapped.context?.originalError);
+      assertExists(contextOf(wrapped).originalError);
       assertEquals(
-        (wrapped.context?.originalError as { slug?: string })?.slug,
+        (contextOf(wrapped).originalError as { slug?: string })?.slug,
         "config-not-found",
       );
     });
@@ -168,6 +199,50 @@ describe("wrap-unknown", () => {
       const wrapped = wrapWithContext(originalError, "Wrapped");
 
       assertEquals(wrapped.cause, originalError);
+    });
+
+    it("handles non-record and hostile existing contexts", () => {
+      const primitiveContext = new VeryfrontError("failed", {
+        slug: "test",
+        category: "GENERAL",
+        status: 500,
+        title: "Test",
+        context: "not-a-record",
+      });
+      const hostileContext = new VeryfrontError("failed", {
+        slug: "test",
+        category: "GENERAL",
+        status: 500,
+        title: "Test",
+        context: Object.defineProperty({}, "payload", {
+          enumerable: true,
+          get() {
+            throw new Error("password=<TOKEN>");
+          },
+        }),
+      });
+
+      assertEquals(wrapWithContext(primitiveContext, "Wrapped").context !== null, true);
+      assertEquals(
+        JSON.stringify(wrapWithContext(hostileContext, "Wrapped").context).includes(
+          "<TOKEN>",
+        ),
+        false,
+      );
+    });
+
+    it("fails closed for hostile mutable error identity", () => {
+      const error = CONFIG_NOT_FOUND.create();
+      Object.defineProperty(error, "slug", {
+        get() {
+          throw new Error("getter leaked password=<TOKEN>");
+        },
+      });
+
+      const wrapped = wrapWithContext(error, "Wrapped");
+
+      assertEquals(wrapped.slug, "unknown-error");
+      assertEquals(JSON.stringify(wrapped.context).includes("<TOKEN>"), false);
     });
   });
 });

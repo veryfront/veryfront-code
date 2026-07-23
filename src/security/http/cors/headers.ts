@@ -8,6 +8,8 @@ function applyValidatedHeaders(
 ): Response | void {
   const { response, headers: headersObj, config } = options;
 
+  if (response?.status === 101) return response;
+
   if (!validation.allowedOrigin) {
     return response;
   }
@@ -56,7 +58,7 @@ export function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response |
       const validation = await validateOrigin(origin, options.config);
       return applyValidatedHeaders(validation, options);
     },
-    { "cors.origin": origin ?? "unknown" },
+    {},
   );
 }
 

@@ -3,6 +3,21 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { StaticHandler } from "./static.handler.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/logger.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+} from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "npm:@opentelemetry/sdk-trace-base@2.8.0";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -114,6 +129,37 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(await result.response.text(), "export const react = true;");
   });
 
+  it("preserves the static cache policy on not-modified responses", async () => {
+    const handler = new StaticHandler();
+    (handler as any).staticService = {
+      resolveFile: async () => ({
+        path: "/tmp/test-project/dist/app.js",
+        data: new TextEncoder().encode("export const app = true;"),
+        etag: 'W/"asset-etag"',
+        contentType: "application/javascript; charset=utf-8",
+        cacheStrategy: "immutable",
+        source: "dist",
+      }),
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/app.js", {
+        headers: { "If-None-Match": '"asset-etag"' },
+      }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 304);
+    assertEquals(result.response.headers.get("etag"), 'W/"asset-etag"');
+    assertEquals(
+      result.response.headers.get("cache-control"),
+      "public, max-age=31536000, immutable",
+    );
+    assertEquals(await result.response.text(), "");
+  });
+
   it("lets missing generated page modules fall through to ModuleHandler", async () => {
     const handler = new StaticHandler();
     let resolvedPath = "";
@@ -207,5 +253,66 @@ describe("server/handlers/request/static.handler", () => {
     );
     assertEquals(body.includes(`<script nonce="${nonce}">alert(1)`), false);
     assertEquals(response.headers.get("etag") === '"stale-etag"', false);
+  });
+
+  it("keeps request, project, and filesystem paths out of logs and traces", async () => {
+    const previousLogLevel = Deno.env.get("LOG_LEVEL");
+    Deno.env.set("LOG_LEVEL", "DEBUG");
+    refreshLoggerConfig();
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setGlobalTracerProvider(
+      provider as unknown as Parameters<typeof setGlobalTracerProvider>[0],
+    );
+    const handler = new StaticHandler();
+    (handler as any).staticService = {
+      resolveFile: async () => ({
+        path: "/private/customer/project/dist/PRIVATE_FILE_CANARY.js",
+        data: new TextEncoder().encode("export default true;"),
+        etag: '"asset-etag"',
+        contentType: "application/javascript; charset=utf-8",
+        cacheStrategy: "immutable",
+        source: "dist",
+      }),
+      isAssetRequest: () => true,
+    };
+
+    try {
+      const result = await handler.handle(
+        new Request("http://localhost/private/PRIVATE_REQUEST_PATH.js"),
+        makeCtx({ projectSlug: "PRIVATE_PROJECT_SLUG", debug: true }),
+      );
+      assertEquals(result.response?.status, 200);
+      await provider.forceFlush();
+
+      const diagnosticPayload = JSON.stringify({
+        entries,
+        spans: exporter.getFinishedSpans().map((span) => ({
+          name: span.name,
+          attributes: span.attributes,
+        })),
+      });
+      for (
+        const privateValue of [
+          "PRIVATE_FILE_CANARY",
+          "PRIVATE_REQUEST_PATH",
+          "PRIVATE_PROJECT_SLUG",
+          "/private/customer/project",
+        ]
+      ) {
+        assertEquals(diagnosticPayload.includes(privateValue), false);
+      }
+    } finally {
+      __resetLogRecordEmitterForTests();
+      _resetShimForTests();
+      await provider.shutdown();
+      if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", previousLogLevel);
+      refreshLoggerConfig();
+    }
   });
 });

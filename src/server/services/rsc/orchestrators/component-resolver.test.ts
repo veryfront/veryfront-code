@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -10,7 +10,21 @@ function createMockFs(existingFiles: Set<string>): FileSystemAdapter {
       if (existingFiles.has(path)) {
         return { isFile: true, isDirectory: false, size: 100 };
       }
-      throw new Error("ENOENT");
+      throw new Deno.errors.NotFound("not found");
+    },
+    readFile: async () => "",
+    exists: async (path: string) => existingFiles.has(path),
+  } as unknown as FileSystemAdapter;
+}
+
+function createRecordingFs(existingFiles: Set<string>, probedPaths: string[]): FileSystemAdapter {
+  return {
+    stat: async (path: string) => {
+      probedPaths.push(path);
+      if (existingFiles.has(path)) {
+        return { isFile: true, isDirectory: false, size: 100 };
+      }
+      throw new Deno.errors.NotFound("not found");
     },
     readFile: async () => "",
     exists: async (path: string) => existingFiles.has(path),
@@ -66,6 +80,18 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
       assertEquals(result, null);
     });
 
+    it("propagates unexpected filesystem failures instead of reporting a false miss", async () => {
+      const fs = {
+        stat: () => Promise.reject(new Error("private storage failure marker")),
+      } as unknown as FileSystemAdapter;
+
+      await assertRejects(
+        () => resolveComponentPath("/dashboard", "/project", fs),
+        Error,
+        "private storage failure marker",
+      );
+    });
+
     it("should resolve .jsx files", async () => {
       const fs = createMockFs(new Set(["/project/app/legacy/page.jsx"]));
       const result = await resolveComponentPath("/legacy", "/project", fs);
@@ -101,6 +127,40 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
       const fs = createMockFs(new Set(["/project/frontend/about/page.tsx"]));
       const result = await resolveComponentPath("/about", "/project", fs, "frontend");
       assertEquals(result, "/project/frontend/about/page.tsx");
+    });
+
+    it("rejects traversal and unsafe route syntax before probing the filesystem", async () => {
+      const unsafeRoutes = [
+        "/../../secret",
+        "/safe/../secret",
+        "/safe\\..\\secret",
+        "/safe/\0secret",
+        "//server/share",
+        "/safe?next=secret",
+        "/safe#secret",
+      ];
+
+      for (const route of unsafeRoutes) {
+        const probedPaths: string[] = [];
+        const fs = createRecordingFs(new Set(["/secret/page.mdx"]), probedPaths);
+        const result = await resolveComponentPath(route, "/project", fs);
+
+        assertEquals(result, null, `Expected ${JSON.stringify(route)} to be rejected`);
+        assertEquals(
+          probedPaths,
+          [],
+          `Unsafe route ${JSON.stringify(route)} probed the filesystem`,
+        );
+      }
+    });
+
+    it("rejects configured app directories that resolve outside the project", async () => {
+      const probedPaths: string[] = [];
+      const fs = createRecordingFs(new Set(["/outside/page.tsx"]), probedPaths);
+      const result = await resolveComponentPath("/", "/project", fs, "../outside");
+
+      assertEquals(result, null);
+      assertEquals(probedPaths, []);
     });
   });
 

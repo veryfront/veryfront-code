@@ -80,12 +80,17 @@ export {
   buildContentHashCacheKey,
   buildModuleResolveCacheKey,
   buildModuleTransformCacheKey,
+  buildPodModuleCacheKey,
   buildRedisFileCacheKey,
   buildRedisSSRModuleKey,
   buildRedisTransformKey,
   buildSSRModuleCacheKey,
   buildSSRModuleProjectKey,
   buildTransformCacheKey,
+  getPodModuleCacheProjectId,
+  isModuleResolveCacheKeyForSpecifier,
+  type ParsedModuleResolveCacheKey,
+  parseModuleResolveCacheKey,
 } from "./builders/module.ts";
 
 // Render/layout/component cache key builders

@@ -2,6 +2,15 @@
  * Pure helper utilities for Tailwind compiler cache parsing and error classification.
  */
 
+import {
+  MAX_CSS_CANDIDATE_BYTES,
+  MAX_CSS_CANDIDATES,
+  MAX_GENERATED_CSS_BYTES,
+  MAX_STYLESHEET_BYTES,
+  MAX_TOTAL_CSS_CANDIDATE_BYTES,
+  utf8ByteLength,
+} from "./resource-limits.ts";
+
 interface ParsedCSSCacheEntry {
   css: string;
   candidates: string[];
@@ -59,12 +68,21 @@ export function buildCSSCacheEntry(
 }
 
 function normalizeCandidates(candidates: string[] | Set<string>): string[] {
-  return Array.isArray(candidates) ? candidates : [...candidates];
+  return [...candidates];
 }
 
 export function parseCSSCacheEntry(raw: string, defaultStylesheet: string): ParsedCSSCacheEntry {
+  if (
+    utf8ByteLength(raw) >
+      MAX_GENERATED_CSS_BYTES + MAX_STYLESHEET_BYTES + MAX_TOTAL_CSS_CANDIDATE_BYTES + 4096
+  ) {
+    throw new TypeError("CSS cache entry exceeds the size limit");
+  }
   const parsed = tryParseStructuredCSSCacheEntry(raw, defaultStylesheet);
   if (parsed) return parsed;
+  if (utf8ByteLength(raw) > MAX_GENERATED_CSS_BYTES) {
+    throw new TypeError("CSS cache entry exceeds the size limit");
+  }
 
   // Legacy format: plain CSS string (no inputs available)
   return {
@@ -82,12 +100,17 @@ function tryParseStructuredCSSCacheEntry(
 
   try {
     const parsed = JSON.parse(raw) as RawCSSCacheEntry;
-    if (typeof parsed.css !== "string") return undefined;
+    if (
+      typeof parsed.css !== "string" || utf8ByteLength(parsed.css) > MAX_GENERATED_CSS_BYTES
+    ) return undefined;
 
     return {
       css: parsed.css,
       candidates: isStringArray(parsed.candidates) ? parsed.candidates : [],
-      stylesheet: typeof parsed.stylesheet === "string" ? parsed.stylesheet : defaultStylesheet,
+      stylesheet: typeof parsed.stylesheet === "string" &&
+          utf8ByteLength(parsed.stylesheet) <= MAX_STYLESHEET_BYTES
+        ? parsed.stylesheet
+        : defaultStylesheet,
     };
   } catch (_) {
     /* expected: malformed JSON in CSS cache entry */
@@ -96,12 +119,16 @@ function tryParseStructuredCSSCacheEntry(
 }
 
 export function parseProjectCSSCacheEntry(raw: string): ParsedProjectCSSCacheEntry | undefined {
+  if (utf8ByteLength(raw) > MAX_GENERATED_CSS_BYTES + 4096) return undefined;
   try {
     const parsed = JSON.parse(raw) as RawProjectCSSCacheEntry;
     if (
       typeof parsed.css !== "string" ||
+      utf8ByteLength(parsed.css) > MAX_GENERATED_CSS_BYTES ||
       typeof parsed.hash !== "string" ||
-      typeof parsed.candidatesHash !== "string"
+      !/^[A-Za-z0-9_-]{1,128}$/.test(parsed.hash) ||
+      typeof parsed.candidatesHash !== "string" ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(parsed.candidatesHash)
     ) {
       return undefined;
     }
@@ -118,7 +145,16 @@ export function parseProjectCSSCacheEntry(raw: string): ParsedProjectCSSCacheEnt
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (!Array.isArray(value) || value.length > MAX_CSS_CANDIDATES) return false;
+  let totalBytes = 0;
+  for (const item of value) {
+    if (typeof item !== "string") return false;
+    const itemBytes = utf8ByteLength(item);
+    if (itemBytes > MAX_CSS_CANDIDATE_BYTES) return false;
+    totalBytes += itemBytes;
+    if (totalBytes > MAX_TOTAL_CSS_CANDIDATE_BYTES) return false;
+  }
+  return true;
 }
 
 export function evaluateProjectCSSLocalCacheState(
@@ -127,7 +163,7 @@ export function evaluateProjectCSSLocalCacheState(
   now = Date.now(),
 ): ProjectCSSLocalCacheState {
   if (!entry) return "miss";
-  if (now > entry.expiresAt) return "expired";
+  if (now >= entry.expiresAt) return "expired";
   if (entry.candidatesHash !== candidatesHash) return "mismatch";
   return "hit";
 }

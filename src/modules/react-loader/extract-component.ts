@@ -1,33 +1,31 @@
 import type * as React from "react";
-import { createError, toError } from "#veryfront/errors";
+import { COMPONENT_ERROR } from "#veryfront/errors";
+
+export function isReactComponent(
+  value: unknown,
+): value is React.ComponentType<Record<string, unknown>> {
+  if (typeof value === "function") return true;
+  if (typeof value !== "object" || value === null) return false;
+
+  const marker = (value as { $$typeof?: unknown }).$$typeof;
+  return typeof marker === "symbol" && Symbol.keyFor(marker)?.startsWith("react.") === true;
+}
 
 export function extractComponent(
   mod: unknown,
   filePath: string,
 ): React.ComponentType<Record<string, unknown>> {
+  const fileName = filePath.replace(/\\/g, "/").split("/").pop() || "module";
   if (!mod || typeof mod !== "object") {
-    throw toError(
-      createError({
-        type: "build",
-        message: `No component exported from ${filePath}`,
-        context: { file: filePath, phase: "transform" },
-      }),
-    );
+    throw COMPONENT_ERROR.create({ detail: `No component exported from ${fileName}` });
   }
 
   const moduleObj = mod as Record<string, unknown>;
-  const firstKey = Object.keys(moduleObj)[0];
-  const component = moduleObj.default ?? (firstKey ? moduleObj[firstKey] : undefined);
+  if (isReactComponent(moduleObj.default)) return moduleObj.default;
 
-  if (!component) {
-    throw toError(
-      createError({
-        type: "build",
-        message: `No component exported from ${filePath}`,
-        context: { file: filePath, phase: "transform" },
-      }),
-    );
+  for (const [name, value] of Object.entries(moduleObj)) {
+    if (name !== "default" && isReactComponent(value)) return value;
   }
 
-  return component as React.ComponentType<Record<string, unknown>>;
+  throw COMPONENT_ERROR.create({ detail: `No component exported from ${fileName}` });
 }

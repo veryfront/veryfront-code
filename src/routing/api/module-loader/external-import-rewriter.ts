@@ -1,11 +1,13 @@
 import { isCompiledBinary, serverLogger } from "#veryfront/utils";
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import { rewriteModuleSpecifiers } from "#veryfront/modules/loader-shared/import-specifiers.ts";
 
 const logger = serverLogger.component("api");
 
@@ -50,14 +52,36 @@ export async function readProjectDependencies(
   projectDir: string,
   fs: FileSystem,
 ): Promise<Map<string, string>> {
+  let content: string;
   try {
-    const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
-    const pkg = JSON.parse(content) as { dependencies?: Record<string, string> };
-    return new Map(Object.entries(pkg.dependencies ?? {}));
-  } catch (_) {
-    /* expected: package.json may not exist */
+    content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     return new Map();
   }
+
+  const pkg = JSON.parse(content) as { dependencies?: unknown };
+  if (pkg.dependencies === undefined) return new Map();
+  if (
+    !pkg.dependencies || typeof pkg.dependencies !== "object" || Array.isArray(pkg.dependencies)
+  ) {
+    throw new TypeError("package.json dependencies must be an object");
+  }
+
+  const dependencies = new Map<string, string>();
+  for (const [name, version] of Object.entries(pkg.dependencies)) {
+    const parsed = parseBarePackageSpecifier(name);
+    if (
+      !parsed || parsed.packageName !== name || parsed.subpath !== null || parsed.version !== null
+    ) {
+      throw new TypeError(`Invalid dependency package name: ${name}`);
+    }
+    if (typeof version !== "string" || version.length === 0) {
+      throw new TypeError(`Dependency version for ${name} must be a non-empty string`);
+    }
+    dependencies.set(name, version);
+  }
+  return dependencies;
 }
 
 /**
@@ -172,22 +196,27 @@ export async function resolveNodePackageToFileUrl(
   const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
   const packageJsonPath = pathHelper.join(packagePath, "package.json");
 
+  let packageJson: string;
   try {
-    const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-    let entryPoint: string | undefined;
-
-    if (pkgJson.exports) {
-      entryPoint = resolveExportEntry(pkgJson.exports["."]);
-    }
-
-    entryPoint ||= pkgJson.module || pkgJson.main || "index.js";
-    if (!entryPoint) return null;
-
-    return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-  } catch (_) {
-    /* expected: package.json may not exist or be invalid */
-    return null;
+    packageJson = await fs.readTextFile(packageJsonPath);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
+
+  const pkgJson = JSON.parse(packageJson) as Record<string, unknown>;
+  let entryPoint = pkgJson.exports && typeof pkgJson.exports === "object"
+    ? resolveExportEntry((pkgJson.exports as Record<string, unknown>)["."])
+    : undefined;
+  entryPoint ||= typeof pkgJson.module === "string"
+    ? pkgJson.module
+    : typeof pkgJson.main === "string"
+    ? pkgJson.main
+    : "index.js";
+
+  const resolvedEntry = pathHelper.resolve(pathHelper.join(packagePath, entryPoint));
+  if (!isWithinDirectory(pathHelper.resolve(packagePath), resolvedEntry)) return null;
+  return pathToFileURL(resolvedEntry).href;
 }
 
 /** Location of an ESM-only user dependency, used to rewrite imports to real ES module URLs. */
@@ -247,33 +276,34 @@ export async function resolveEsmUserDependencies(
 
   for (const name of userDeps.keys()) {
     const packageDir = pathHelper.resolve(pathHelper.join(projectDir, "node_modules", name));
+    let packageJson: string;
     try {
-      const pkgJson = JSON.parse(
-        await fs.readTextFile(pathHelper.join(packageDir, "package.json")),
-      ) as Record<string, unknown>;
-
-      const entry = resolveEsmEntry(pkgJson);
-      if (!entry || !isEsmPackage(pkgJson, entry)) continue;
-
-      // The entry path comes from the dependency's own package.json, which is
-      // attacker-influenceable (a malicious/compromised package could set
-      // "main": "../../../etc/passwd"). Reject entries that resolve outside the
-      // package directory so a crafted package.json cannot turn into a file://
-      // import that escapes node_modules. This mirrors the containment guard the
-      // CJS loader shim enforces via __vf_assertContained.
-      const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
-      if (!isWithinDirectory(packageDir, entryPath)) {
-        logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
-        continue;
-      }
-
-      esmDeps.set(name, {
-        entryUrl: pathHelper.toFileUrl(entryPath).href,
-        packageDir,
-      });
-    } catch (_) {
-      /* expected: package.json missing/invalid → treat as CJS */
+      packageJson = await fs.readTextFile(pathHelper.join(packageDir, "package.json"));
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
     }
+    const pkgJson = JSON.parse(packageJson) as Record<string, unknown>;
+
+    const entry = resolveEsmEntry(pkgJson);
+    if (!entry || !isEsmPackage(pkgJson, entry)) continue;
+
+    // The entry path comes from the dependency's own package.json, which is
+    // attacker-influenceable (a malicious/compromised package could set
+    // "main": "../../../etc/passwd"). Reject entries that resolve outside the
+    // package directory so a crafted package.json cannot turn into a file://
+    // import that escapes node_modules. This mirrors the containment guard the
+    // CJS loader shim enforces via __vf_assertContained.
+    const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
+    if (!isWithinDirectory(packageDir, entryPath)) {
+      logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory`);
+      continue;
+    }
+
+    esmDeps.set(name, {
+      entryUrl: pathHelper.toFileUrl(entryPath).href,
+      packageDir,
+    });
   }
 
   return esmDeps;
@@ -286,13 +316,20 @@ export async function loadVeryfrontExportsMap(
   const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
   const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
 
+  let packageJson: string;
   try {
-    const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-    return pkgJson.exports || {};
-  } catch (_error) {
+    packageJson = await fs.readTextFile(vfPackageJsonPath);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     logger.debug("Could not read veryfront package.json");
     return {};
   }
+  const pkgJson = JSON.parse(packageJson) as { exports?: unknown };
+  if (pkgJson.exports === undefined) return {};
+  if (!pkgJson.exports || typeof pkgJson.exports !== "object" || Array.isArray(pkgJson.exports)) {
+    throw new TypeError("veryfront package exports must be an object");
+  }
+  return pkgJson.exports as Record<string, { import?: string }>;
 }
 
 export async function rewriteNodeExternalImports(
@@ -304,7 +341,7 @@ export async function rewriteNodeExternalImports(
   const { pathToFileURL } = await import("node:url");
   const replacements = new Map<string, string>();
 
-  logger.debug(`Rewriting external imports for Node.js, projectDir: ${projectDir}`);
+  logger.debug("Rewriting external API imports for Node.js");
 
   const importedSpecifiers = new Set(
     (await parseImports(code))
@@ -314,21 +351,21 @@ export async function rewriteNodeExternalImports(
   const packages = getNodeExternalPackagesToResolve(userDeps);
 
   for (const specifier of importedSpecifiers) {
-    const pkg = packages.find((name) => specifier === name || specifier.startsWith(`${name}/`));
+    const parsed = parseBarePackageSpecifier(specifier);
+    const pkg = parsed && packages.includes(parsed.packageName) ? parsed.packageName : undefined;
     if (!pkg) continue;
 
-    const subpath = specifier.slice(pkg.length);
+    const subpath = parsed?.subpath;
     if (subpath) {
-      const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
-      const resolvedSubpath = `${packageDir}${subpath}`;
-      logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
-      replacements.set(specifier, resolvedSubpath);
+      const packageDir = pathHelper.resolve(pathHelper.join(projectDir, "node_modules", pkg));
+      const resolvedSubpath = pathHelper.resolve(pathHelper.join(packageDir, subpath));
+      if (!isWithinDirectory(packageDir, resolvedSubpath)) continue;
+      replacements.set(specifier, pathToFileURL(resolvedSubpath).href);
       continue;
     }
 
     const resolvedUrl = await resolveNodePackageToFileUrl(projectDir, pkg, fs, pathToFileURL);
     if (!resolvedUrl) continue;
-    logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
     replacements.set(specifier, resolvedUrl);
   }
 
@@ -341,7 +378,9 @@ export async function rewriteNodeExternalImports(
       if (!exportEntry?.import) continue;
 
       const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-      logger.debug(`Resolved veryfront -> ${resolvedPath}`);
+      if (!isWithinDirectory(pathHelper.resolve(vfPackagePath), pathHelper.resolve(resolvedPath))) {
+        throw new Error("Veryfront package export escapes its package directory");
+      }
       replacements.set(specifier, pathToFileURL(resolvedPath).href);
       continue;
     }
@@ -355,7 +394,9 @@ export async function rewriteNodeExternalImports(
       }
 
       const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-      logger.debug(`Resolved ${specifier} -> ${resolvedPath}`);
+      if (!isWithinDirectory(pathHelper.resolve(vfPackagePath), pathHelper.resolve(resolvedPath))) {
+        throw new Error("Veryfront package export escapes its package directory");
+      }
       replacements.set(specifier, pathToFileURL(resolvedPath).href);
     }
   }
@@ -365,27 +406,28 @@ export async function rewriteNodeExternalImports(
   return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
 }
 
+export function encodeVeryfrontSubpath(subpath: string): string {
+  return Array.from(new TextEncoder().encode(subpath), (byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export function decodeVeryfrontSubpath(encoded: string): string {
+  if (!/^(?:[0-9a-f]{2})+$/.test(encoded)) throw new Error("Invalid Veryfront shim name");
+  const bytes = new Uint8Array(encoded.length / 2);
+  for (let index = 0; index < bytes.length; index++) {
+    bytes[index] = Number.parseInt(encoded.slice(index * 2, index * 2 + 2), 16);
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
 export function rewriteCompiledBinaryVeryfrontImports(code: string): string {
-  let transformed = code;
-
-  transformed = transformed.replace(
-    /from\s+["']veryfront["']/g,
-    'from "./_vf_runtime.mjs"',
-  );
-  transformed = transformed.replace(
-    /import\s*\(\s*["']veryfront["']\s*\)/g,
-    'import("./_vf_runtime.mjs")',
-  );
-  transformed = transformed.replace(
-    /from\s+["']veryfront\/([^"']+)["']/g,
-    (_match, subpath: string) => `from "./_vf_${subpath.replace(/\//g, "_")}.mjs"`,
-  );
-  transformed = transformed.replace(
-    /import\s*\(\s*["']veryfront\/([^"']+)["']\s*\)/g,
-    (_match, subpath: string) => `import("./_vf_${subpath.replace(/\//g, "_")}.mjs")`,
-  );
-
-  return transformed;
+  return rewriteModuleSpecifiers(code, (specifier) => {
+    if (specifier === "veryfront") return "./_vf_runtime.mjs";
+    if (!specifier.startsWith("veryfront/") || specifier.length === "veryfront/".length) {
+      return undefined;
+    }
+    return `./_vf_${encodeVeryfrontSubpath(specifier.slice("veryfront/".length))}.mjs`;
+  });
 }
 
 export function rewriteCompiledBinaryUserDependencyImports(
@@ -504,23 +546,24 @@ export async function rewriteDenoNpmDependencyImports(
   const replacements = new Map<string, string>();
 
   for (const specifier of importedSpecifiers) {
-    const entry = [...userDeps].find(([name]) =>
-      specifier === name || specifier.startsWith(`${name}/`)
-    );
-    if (!entry) continue;
+    const parsed = parseBarePackageSpecifier(specifier);
+    if (!parsed) continue;
+    const declaredVersion = userDeps.get(parsed.packageName);
+    if (declaredVersion === undefined) continue;
 
-    const [name, version] = entry;
-    let resolvedVersion = version;
+    const name = parsed.packageName;
+    let resolvedVersion = declaredVersion;
     try {
       const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
       const pkgContent = await fs.readTextFile(pkgPath);
       const pkg = JSON.parse(pkgContent) as { version?: string };
-      if (pkg.version) resolvedVersion = pkg.version;
-    } catch (_) {
-      /* expected: installed package.json may not exist, fall back to declared range */
+      if (typeof pkg.version === "string" && pkg.version.length > 0) resolvedVersion = pkg.version;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      /* expected: installed package.json may not exist, use the declared range */
     }
 
-    const subpath = specifier.slice(name.length);
+    const subpath = parsed.subpath ?? "";
     replacements.set(specifier, `npm:${name}@${resolvedVersion}${subpath}`);
   }
 
@@ -530,21 +573,11 @@ export async function rewriteDenoNpmDependencyImports(
 }
 
 export function rewriteDenoNodeBuiltinImports(code: string): string {
-  let transformed = code;
-
-  for (const mod of NODE_BUILTINS) {
-    const escaped = mod.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    transformed = transformed.replace(
-      new RegExp(`from\\s+["']${escaped}["']`, "g"),
-      `from "node:${mod}"`,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
-      `import("node:${mod}")`,
-    );
-  }
-
-  return transformed;
+  const builtins = new Set<string>(NODE_BUILTINS);
+  return rewriteModuleSpecifiers(
+    code,
+    (specifier) => builtins.has(specifier) ? `node:${specifier}` : undefined,
+  );
 }
 
 export async function rewriteExternalImports(
@@ -552,15 +585,12 @@ export async function rewriteExternalImports(
   projectDir: string,
   fs: FileSystem,
   userDeps: Map<string, string> = new Map(),
+  options: { preserveVeryfrontImports?: boolean } = {},
 ): Promise<string> {
   let transformed = code;
 
   if (isNode) {
-    try {
-      transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
-    } catch (e) {
-      logger.warn(`Failed to import node:module: ${e}`);
-    }
+    transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
   }
 
   if (isDeno) {
@@ -581,7 +611,7 @@ export async function rewriteExternalImports(
 
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
     // imported from external temp files. Rewrite to use local runtime shims.
-    if (isCompiledBinary()) {
+    if (isCompiledBinary() && !options.preserveVeryfrontImports) {
       transformed = rewriteCompiledBinaryVeryfrontImports(transformed);
     }
   }

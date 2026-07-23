@@ -4,23 +4,22 @@ import {
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
-  type AgentRunSessionManager,
-  agentRunSessionManager,
-} from "#veryfront/internal-agents/session-manager.ts";
+  type AgentRunControl,
+  AgentRunControlBindingError,
+} from "#veryfront/internal-agents/run-control.ts";
+import { agentRunControl } from "#veryfront/internal-agents/agent-run-control-runtime.ts";
 import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyEncodingError,
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { parseControlPlaneRunPath } from "./control-plane-run-path.ts";
 
 const CANCEL_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)$/;
-
-function getRunId(pathname: string): string | null {
-  return CANCEL_PATH_REGEX.exec(pathname)?.[1] ?? null;
-}
 
 export class AgentRunCancelHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -31,7 +30,7 @@ export class AgentRunCancelHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly sessionManager: AgentRunSessionManager = agentRunSessionManager) {
+  constructor(private readonly runControl: AgentRunControl = agentRunControl) {
     super();
   }
 
@@ -40,9 +39,16 @@ export class AgentRunCancelHandler extends BaseHandler {
       return this.continue();
     }
 
-    const runId = getRunId(new URL(req.url).pathname);
-    if (!runId) {
+    const pathMatch = parseControlPlaneRunPath(new URL(req.url).pathname, CANCEL_PATH_REGEX);
+    if (!pathMatch.matched) {
       return this.continue();
+    }
+    const runId = pathMatch.runId;
+    if (!runId) {
+      const builder = this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req);
+      return this.respond(builder.json({ error: "Invalid run id" }, 400));
     }
 
     return this.withProxyContext(ctx, async () => {
@@ -55,12 +61,15 @@ export class AgentRunCancelHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        await verifyControlPlaneRequest(req, ctx, rawBody, {
+        const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
         });
 
-        const accepted = this.sessionManager.cancelRun(runId);
+        const accepted = await this.runControl.cancelRun(runId, {
+          projectId: verifiedClaims.project_id,
+          projectSlug: verifiedClaims.aud,
+        });
         if (accepted) {
           return this.respond(builder.json({ accepted: true }, 202));
         }
@@ -75,11 +84,16 @@ export class AgentRunCancelHandler extends BaseHandler {
           return this.respond(builder.json({ error: error.message }, error.status));
         }
 
+        if (error instanceof AgentRunControlBindingError) {
+          return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
+        }
+
+        if (error instanceof InternalAgentRequestBodyEncodingError) {
+          return this.respond(builder.json({ error: "Invalid cancel request" }, error.status));
+        }
+
         this.logWarn("Internal agent run cancel failed", {
-          error: error instanceof Error ? error.message : String(error),
-          runId,
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
+          failureCategory: "handler-error",
         });
         return this.respond(builder.json({ error: "Internal cancel failed" }, 500));
       }

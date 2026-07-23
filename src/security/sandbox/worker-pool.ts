@@ -16,6 +16,8 @@ import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerEnvAllowlist, buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPoolConfig, WorkerRequest, WorkerResponse } from "./worker-types.ts";
 import { DEFAULT_WORKER_POOL_CONFIG } from "./worker-types.ts";
+import { isWithinDirectory, resolvePathSegments } from "../path-validation/normalization.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 
 const logger = serverLogger.component("worker-pool");
 
@@ -24,6 +26,7 @@ interface PoolEntry {
   lastAccessedAt: number;
   createdAt: number;
   projectEnvKeys: string[];
+  readPaths: string[];
 }
 
 function extractProjectEnvKeys(request: WorkerRequest): string[] {
@@ -42,16 +45,35 @@ function sameEnvKeySet(left: readonly string[], right: readonly string[]): boole
   return left.every((key) => rightSet.has(key));
 }
 
+function normalizeReadPaths(paths: readonly string[]): string[] {
+  return [...new Set(paths.map((path) => resolvePathSegments(path)))].sort();
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function validateWorkerPoolConfig(config: WorkerPoolConfig): void {
+  for (const [name, value] of Object.entries(config)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new TypeError(`${name} must be a positive safe integer`);
+    }
+  }
+}
+
 export class WorkerPool {
   private pool = new Map<string, PoolEntry>();
   private recycling = new Set<string>();
   private config: WorkerPoolConfig;
+  private closed = false;
+  private healthCheckRunning = false;
 
   private cleanupInterval: ReturnType<typeof setInterval> | undefined;
   private healthCheckInterval: ReturnType<typeof setInterval> | undefined;
 
   constructor(config: Partial<WorkerPoolConfig> = {}) {
     this.config = { ...DEFAULT_WORKER_POOL_CONFIG, ...config };
+    validateWorkerPoolConfig(this.config);
     this.startCleanup();
     this.startHealthChecks();
   }
@@ -64,12 +86,22 @@ export class WorkerPool {
     readPaths: string[],
     projectEnvKeys: Iterable<string | undefined> = [],
   ): ProjectWorker {
+    this.assertOpen();
     const normalizedProjectEnvKeys = normalizeProjectEnvKeys(projectEnvKeys);
+    const normalizedReadPaths = normalizeReadPaths(readPaths);
     const existing = this.pool.get(projectId);
     if (
       existing && existing.worker.status !== "crashed" && existing.worker.status !== "terminated"
     ) {
-      if (!sameEnvKeySet(existing.projectEnvKeys, normalizedProjectEnvKeys)) {
+      if (
+        !sameEnvKeySet(existing.projectEnvKeys, normalizedProjectEnvKeys) ||
+        !sameStringSet(existing.readPaths, normalizedReadPaths)
+      ) {
+        if (existing.worker.hasPendingRequests) {
+          throw SECURITY_VIOLATION.create({
+            detail: "Worker permissions cannot change while requests are active",
+          });
+        }
         existing.worker.terminate();
         this.pool.delete(projectId);
       } else {
@@ -87,7 +119,7 @@ export class WorkerPool {
     // Evict LRU if at capacity
     this.evictIfNeeded();
 
-    const permissions = buildWorkerPermissions(readPaths, {
+    const permissions = buildWorkerPermissions(normalizedReadPaths, {
       projectEnvKeys: normalizedProjectEnvKeys,
     });
     const worker = new ProjectWorker({
@@ -104,12 +136,10 @@ export class WorkerPool {
       lastAccessedAt: now,
       createdAt: now,
       projectEnvKeys: normalizedProjectEnvKeys,
+      readPaths: normalizedReadPaths,
     });
 
-    logger.debug("Worker created", {
-      projectId,
-      poolSize: this.pool.size,
-    });
+    logger.debug("Worker created", { poolSize: this.pool.size });
 
     return worker;
   }
@@ -123,15 +153,18 @@ export class WorkerPool {
     readPaths: string[],
     request: WorkerRequest,
   ): Promise<WorkerResponse> {
+    if (this.closed) return Promise.reject(new Error("Worker pool has been shut down"));
+
     // Validate modulePath is within allowed read paths (defense-in-depth)
     if ("modulePath" in request && request.modulePath) {
-      const modulePath = request.modulePath;
-      const isAllowed = readPaths.some((p) => modulePath.startsWith(p));
+      const modulePath = resolvePathSegments(request.modulePath);
+      const isAllowed = normalizeReadPaths(readPaths).some((path) =>
+        isWithinDirectory(path, modulePath)
+      );
       if (!isAllowed) {
         return Promise.reject(
           SECURITY_VIOLATION.create({
-            detail:
-              `Module path "${modulePath}" is outside allowed read paths for project "${projectId}"`,
+            detail: "Module path is outside allowed read paths",
           }),
         );
       }
@@ -152,7 +185,6 @@ export class WorkerPool {
           this.recycling.add(projectId);
 
           logger.debug("Recycling worker", {
-            projectId,
             requestCount: worker.requestCount,
             ageMs: entry ? Date.now() - entry.createdAt : 0,
             reason: worker.requestCount >= this.config.maxRequestsPerWorker
@@ -166,25 +198,27 @@ export class WorkerPool {
           // old worker from being terminated while it still has pending work.
           const result = worker.execute(request);
 
-          void result.then(
-            () => {
+          const replaceWorker = () => {
+            try {
+              if (this.closed) return;
+              const current = this.pool.get(projectId);
+              if (!current || current.worker !== worker) return;
               this.evictWorker(projectId);
-              this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
+              if (!this.closed) this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
+            } catch {
+              logger.error("Worker replacement failed");
+            } finally {
               this.recycling.delete(projectId);
-            },
-            () => {
-              this.evictWorker(projectId);
-              this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
-              this.recycling.delete(projectId);
-            },
-          );
+            }
+          };
+          void result.then(replaceWorker, replaceWorker);
 
           return result;
         }
 
         return worker.execute(request);
       },
-      { "workerPool.projectId": projectId },
+      {},
     );
   }
 
@@ -198,7 +232,7 @@ export class WorkerPool {
     entry.worker.terminate();
     this.pool.delete(projectId);
 
-    logger.debug("Worker evicted", { projectId, poolSize: this.pool.size });
+    logger.debug("Worker evicted", { poolSize: this.pool.size });
   }
 
   /**
@@ -281,14 +315,19 @@ export class WorkerPool {
    * Shutdown the pool. Terminates all workers and stops timers.
    */
   shutdown(): void {
+    if (this.closed) return;
+    this.closed = true;
     if (this.cleanupInterval) clearInterval(this.cleanupInterval);
     if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
+    this.cleanupInterval = undefined;
+    this.healthCheckInterval = undefined;
 
     for (const [, entry] of this.pool) {
       entry.worker.terminate();
     }
 
     this.pool.clear();
+    this.recycling.clear();
     logger.debug("Worker pool shut down");
   }
 
@@ -307,7 +346,13 @@ export class WorkerPool {
 
   private startHealthChecks(): void {
     this.healthCheckInterval = setInterval(() => {
-      void this.checkHealth();
+      if (this.closed || this.healthCheckRunning) return;
+      this.healthCheckRunning = true;
+      void this.checkHealth()
+        .catch(() => logger.error("Worker health check failed"))
+        .finally(() => {
+          this.healthCheckRunning = false;
+        });
     }, this.config.healthCheckIntervalMs);
 
     unrefTimer(this.healthCheckInterval);
@@ -324,7 +369,6 @@ export class WorkerPool {
         this.pool.delete(projectId);
 
         logger.debug("Evicted idle worker", {
-          projectId,
           idleMs: idleTime,
           poolSize: this.pool.size,
         });
@@ -349,14 +393,7 @@ export class WorkerPool {
     if (lruId) {
       this.evictWorker(lruId);
     } else {
-      // All workers have pending requests — force evict the oldest
-      for (const [projectId, entry] of this.pool) {
-        if (entry.lastAccessedAt < lruTime) {
-          lruTime = entry.lastAccessedAt;
-          lruId = projectId;
-        }
-      }
-      if (lruId) this.evictWorker(lruId);
+      throw new Error("Worker pool is at capacity with active requests");
     }
   }
 
@@ -369,50 +406,15 @@ export class WorkerPool {
 
       const healthy = await entry.worker.isHealthy();
       if (!healthy) {
-        logger.warn("Worker failed health check", { projectId });
+        logger.warn("Worker failed health check");
         entry.worker.terminate();
         this.pool.delete(projectId);
       }
     }
-
-    // Evict oldest workers when under memory pressure
-    this.evictUnderMemoryPressure();
   }
 
-  /**
-   * Evict workers when the process is under memory pressure.
-   * Uses the global heap stats — if heap usage is above a threshold,
-   * evict idle workers starting with the oldest to free memory.
-   */
-  private evictUnderMemoryPressure(): void {
-    // Lazy import to avoid circular deps — this is only called during health checks
-    try {
-      // deno-lint-ignore no-explicit-any
-      const { getHeapStats } = (globalThis as any).__veryfront_heap_stats ?? {};
-      if (!getHeapStats) return;
-
-      const { heapUsedPercent } = getHeapStats();
-      if (heapUsedPercent < 70) return; // Only act above 70%
-
-      // Sort workers by last access time (oldest first)
-      const entries = [...this.pool.entries()]
-        .filter(([, e]) => !e.worker.hasPendingRequests)
-        .sort(([, a], [, b]) => a.lastAccessedAt - b.lastAccessedAt);
-
-      // Evict up to 25% of idle workers
-      const toEvict = Math.max(1, Math.ceil(entries.length * 0.25));
-      for (let i = 0; i < toEvict && i < entries.length; i++) {
-        const projectId = entries[i]![0];
-        this.evictWorker(projectId);
-        logger.debug("Evicted worker due to memory pressure", {
-          projectId,
-          heapUsedPercent,
-          poolSize: this.pool.size,
-        });
-      }
-    } catch {
-      // getHeapStats may not be available in all environments
-    }
+  private assertOpen(): void {
+    if (this.closed) throw new Error("Worker pool has been shut down");
   }
 }
 
@@ -484,12 +486,20 @@ export function getWorkerPool(): WorkerPool {
   return _pool;
 }
 
+/** Shut down and release the process-owned pool without changing feature flags. */
+export function shutdownWorkerPool(): void {
+  const pool = _pool;
+  _pool = null;
+  pool?.shutdown();
+}
+
 /** Reset the singleton and cached flags — for testing only */
 export function __resetPoolForTests(): void {
-  _pool?.shutdown();
-  _pool = null;
+  shutdownWorkerPool();
   _flagsResolved = false;
   _apiIsolation = false;
   _dataIsolation = false;
   _ssrIsolation = false;
 }
+
+registerProcessStateReset("sandbox worker pool", __resetPoolForTests);

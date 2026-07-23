@@ -14,6 +14,7 @@
 import {
   type AgentConfig,
   type AgentContext,
+  type AgentInvocationMemoryMode,
   type AgentResponse,
   type AgentStatus,
   getTextFromParts,
@@ -65,14 +66,11 @@ import {
   shouldContinueAfterStreamStep,
 } from "./tool-result-continuation.ts";
 import {
+  createInactiveSkillState,
+  createRuntimeLoadedSkillState,
   enforceSkillPolicy,
-  extractSkillId,
-  extractSkillPolicy,
-  extractSkillToolAvailability,
   FORM_INPUT_TOOL_ID,
   hasSubmittedFormInputResult,
-  hydrateActiveSkillStateFromMessages,
-  INACTIVE_SKILL_TOOL_AVAILABILITY,
   LOAD_SKILL_TOOL_ID,
   removeFormInputAfterSubmission,
   SUBMITTED_FORM_INPUT_CONTEXT_KEY,
@@ -185,10 +183,7 @@ import { resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
-import {
-  applySkillDelegationOverridesToToolInput,
-  extractSkillDelegationOverrides,
-} from "./skill-delegation-overrides.ts";
+import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 
@@ -504,6 +499,11 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
   );
 }
 
+function getConfiguredMemoryMaxTokens(memory: AgentConfig["memory"]): number | undefined {
+  if (!memory || "add" in memory || memory.enabled === false) return undefined;
+  return memory.maxTokens;
+}
+
 type RuntimeStepState = {
   systemPrompt: string;
   context?: Record<string, unknown>;
@@ -516,6 +516,7 @@ export class AgentRuntime {
   private memory: Memory<Message>;
   private status: AgentStatus = "idle";
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(id: string, config: AgentConfig) {
     this.id = id;
     this.config = config;
@@ -535,12 +536,21 @@ export class AgentRuntime {
    * generate() calls on a shared instance isolated instead of interleaving into
    * one conversation.
    */
-  private async prepareTurnMessages(inputMessages: Message[]): Promise<Message[]> {
-    for (const msg of inputMessages) await this.memory.add(msg);
-    const persisted = await this.memory.getMessages();
+  private async prepareTurnMessages(
+    inputMessages: Message[],
+    memory: Memory<Message>,
+  ): Promise<Message[]> {
+    for (const msg of inputMessages) await memory.add(msg);
+    const persisted = await memory.getMessages();
     return persisted.length > 0 ? persisted : inputMessages;
   }
 
+  /** Resolves the memory store used by one invocation. */
+  private resolveInvocationMemory(mode: AgentInvocationMemoryMode): Memory<Message> {
+    return mode === "isolated" ? createAgentMemory<Message>() : this.memory;
+  }
+
+  /** Resolves model transport. */
   private async resolveModelTransport(
     context: Record<string, unknown> | undefined,
     modelOverride: string | undefined,
@@ -555,6 +565,7 @@ export class AgentRuntime {
     });
   }
 
+  /** Resolves runtime state. */
   private async resolveRuntimeState(
     messages: Message[],
     context: Record<string, unknown> | undefined,
@@ -577,6 +588,7 @@ export class AgentRuntime {
     };
   }
 
+  /** Performs the notify tool result operation. */
   private async notifyToolResult(
     request: Omit<ToolExecutionResultRequest, "agentId">,
   ): Promise<void> {
@@ -595,6 +607,7 @@ export class AgentRuntime {
     modelOverride?: string,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
+    memoryMode: AgentInvocationMemoryMode = "configured",
   ): Promise<AgentResponse> {
     throwIfAborted(abortSignal);
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
@@ -613,9 +626,16 @@ export class AgentRuntime {
       });
 
       const inputMessages = normalizeInput(input);
-      const messages = await this.prepareTurnMessages(inputMessages);
+      const invocationMemory = this.resolveInvocationMemory(memoryMode);
+      const messages = await this.prepareTurnMessages(inputMessages, invocationMemory);
 
       const systemPrompt = await this.resolveSystemPrompt();
+
+      const trustedToolContext: ToolExecutionContext = {
+        agentId: this.id,
+        projectId: tryGetCacheKeyContext()?.projectId,
+        ...(typeof context?.authToken === "string" ? { authToken: context.authToken } : {}),
+      };
 
       const agentContext: AgentContext = {
         agentId: this.id,
@@ -632,10 +652,7 @@ export class AgentRuntime {
           this.executeAgentLoop(
             systemPrompt,
             messages,
-            {
-              agentId: this.id,
-              projectId: tryGetCacheKeyContext()?.projectId,
-            },
+            trustedToolContext,
             context,
             resolvedModelString,
             transport.languageModel,
@@ -645,6 +662,7 @@ export class AgentRuntime {
             maxOutputTokensOverride,
             requestedModel,
             abortSignal,
+            invocationMemory,
           ),
       );
     });
@@ -665,6 +683,7 @@ export class AgentRuntime {
     modelOverride?: string,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
+    memoryMode: AgentInvocationMemoryMode = "configured",
   ): Promise<ReadableStream<Uint8Array>> {
     const transport = await this.resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
@@ -675,7 +694,8 @@ export class AgentRuntime {
       );
     }
 
-    const memoryMessages = await this.prepareTurnMessages(messages);
+    const invocationMemory = this.resolveInvocationMemory(memoryMode);
+    const memoryMessages = await this.prepareTurnMessages(messages, invocationMemory);
 
     const systemPrompt = await this.resolveSystemPrompt();
 
@@ -694,10 +714,10 @@ export class AgentRuntime {
     const streamAbortSignal = streamAbortController.signal;
     const streamCacheCtx = tryGetCacheKeyContext();
     const toolContext = {
-      agentId: this.id,
-      abortSignal: streamAbortSignal,
       projectId: streamCacheCtx?.projectId,
       ...context,
+      agentId: this.id,
+      abortSignal: streamAbortSignal,
     };
     const textPartId = generateId("text");
 
@@ -770,6 +790,7 @@ export class AgentRuntime {
                 maxOutputTokensOverride,
                 streamAbortSignal,
                 requestedModel,
+                invocationMemory,
               ),
           );
           const response = await inFlight;
@@ -835,6 +856,7 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
     temperatureModelString?: string,
     abortSignal?: AbortSignal,
+    memory: Memory<Message> = this.memory,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -853,11 +875,11 @@ export class AgentRuntime {
       }
 
       // Request-scoped skill policy (not class-level mutable state)
-      const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
-      let activeSkillId = hydratedSkillState.activeSkillId;
-      let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
-      let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
-      let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+      const initialSkillState = createInactiveSkillState();
+      let activeSkillId = initialSkillState.activeSkillId;
+      let activeSkillPolicy = initialSkillState.activeSkillPolicy;
+      let activeSkillToolAvailability = initialSkillState.activeSkillToolAvailability;
+      let activeSkillDelegationOverrides = initialSkillState.activeSkillDelegationOverrides;
       let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
         runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
@@ -892,6 +914,7 @@ export class AgentRuntime {
           isLocalModel: isLocal,
           messages: currentMessages,
           mode: "generate",
+          providerTools,
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -909,7 +932,9 @@ export class AgentRuntime {
             !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
           )
           : preparedStep.tools;
-        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+        const stepProviderTools = agentWriteFinalResponseToolGuardEnabled
+          ? []
+          : preparedStep.providerTools;
 
         const temperature = this.resolveTemperature(
           temperatureModelString ?? effectiveModel,
@@ -991,7 +1016,7 @@ export class AgentRuntime {
           timestamp: Date.now(),
         };
         currentMessages.push(assistantMessage);
-        await this.memory.add(assistantMessage);
+        await memory.add(assistantMessage);
         throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
 
@@ -1007,7 +1032,7 @@ export class AgentRuntime {
             generatedToolResult.providerExecuted === true,
           );
           currentMessages.push(toolResultMessage);
-          await this.memory.add(toolResultMessage);
+          await memory.add(toolResultMessage);
           throwIfAborted(abortSignal);
         };
 
@@ -1142,7 +1167,7 @@ export class AgentRuntime {
                 timestamp: Date.now(),
               };
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await memory.add(errorMessage);
               toolCalls.push(toolCall);
               return;
             }
@@ -1215,11 +1240,11 @@ export class AgentRuntime {
                 }
                 // Track skill policy from successful load_skill results
                 if (tc.toolName === LOAD_SKILL_TOOL_ID) {
-                  activeSkillId = extractSkillId(result);
-                  activeSkillPolicy = extractSkillPolicy(result);
-                  activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                    INACTIVE_SKILL_TOOL_AVAILABILITY;
-                  activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+                  const loadedSkillState = createRuntimeLoadedSkillState(result);
+                  activeSkillId = loadedSkillState.activeSkillId;
+                  activeSkillPolicy = loadedSkillState.activeSkillPolicy;
+                  activeSkillToolAvailability = loadedSkillState.activeSkillToolAvailability;
+                  activeSkillDelegationOverrides = loadedSkillState.activeSkillDelegationOverrides;
                   mustLoadSkillFirst = false;
                 }
                 activeSkillPolicy = removeFormInputAfterSubmission(
@@ -1242,7 +1267,7 @@ export class AgentRuntime {
                 result,
               );
               currentMessages.push(toolResultMessage);
-              await this.memory.add(toolResultMessage);
+              await memory.add(toolResultMessage);
             } catch (error) {
               throwIfAborted(abortSignal);
               toolCall.status = "error";
@@ -1260,7 +1285,7 @@ export class AgentRuntime {
                 toolCall.error,
               );
               currentMessages.push(errorMessage);
-              await this.memory.add(errorMessage);
+              await memory.add(errorMessage);
             }
 
             toolCalls.push(toolCall);
@@ -1312,6 +1337,7 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
     temperatureModelString?: string,
+    memory: Memory<Message> = this.memory,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -1329,11 +1355,11 @@ export class AgentRuntime {
     }
 
     // Request-scoped skill policy (not class-level mutable state)
-    const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
-    let activeSkillId = hydratedSkillState.activeSkillId;
-    let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
-    let activeSkillToolAvailability = hydratedSkillState.activeSkillToolAvailability;
-    let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
+    const initialSkillState = createInactiveSkillState();
+    let activeSkillId = initialSkillState.activeSkillId;
+    let activeSkillPolicy = initialSkillState.activeSkillPolicy;
+    let activeSkillToolAvailability = initialSkillState.activeSkillToolAvailability;
+    let activeSkillDelegationOverrides = initialSkillState.activeSkillDelegationOverrides;
     let hasSubmittedFormInputInLoop = hasSubmittedFormInputResult(currentMessages) ||
       runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
     let finalFinishReason: string | undefined;
@@ -1370,6 +1396,7 @@ export class AgentRuntime {
         isLocalModel: isLocalStreaming,
         messages: currentMessages,
         mode: "stream",
+        providerTools,
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1386,7 +1413,9 @@ export class AgentRuntime {
           !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
         )
         : preparedStep.tools;
-      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled ? [] : providerTools;
+      const stepProviderTools = agentWriteFinalResponseToolGuardEnabled
+        ? []
+        : preparedStep.providerTools;
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
@@ -1482,7 +1511,7 @@ export class AgentRuntime {
 
       latestAssistantText = getTextFromParts(assistantMessage.parts);
       currentMessages.push(assistantMessage);
-      await this.memory.add(assistantMessage);
+      await memory.add(assistantMessage);
 
       if (state.suppressedToolCalls.length > 0) {
         const unavailableNames = [
@@ -1517,7 +1546,7 @@ export class AgentRuntime {
           toolResult.providerExecuted === true,
         );
         currentMessages.push(toolResultMessage);
-        await this.memory.add(toolResultMessage);
+        await memory.add(toolResultMessage);
         currentStepToolResults.set(
           toolResult.toolCallId,
           toolResultMessage.parts[0] as ToolResultPart,
@@ -1569,6 +1598,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            memory,
             { emitSse: tc.inputAnnounced === true },
           );
           continue;
@@ -1597,16 +1627,6 @@ export class AgentRuntime {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
             }
-            if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(matchingResult.output);
-              activeSkillPolicy = extractSkillPolicy(matchingResult.output);
-              activeSkillToolAvailability = extractSkillToolAvailability(matchingResult.output) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                matchingResult.output,
-              );
-              mustLoadSkillFirst = false;
-            }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               matchingResult.output,
@@ -1630,16 +1650,6 @@ export class AgentRuntime {
           if (persistedError === undefined) {
             if (shouldHideProjectToolAfterAgentWriteSuccess(tc.name)) {
               agentWriteFinalResponseToolGuardEnabled = true;
-            }
-            if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(persistedResult.result);
-              activeSkillPolicy = extractSkillPolicy(persistedResult.result);
-              activeSkillToolAvailability = extractSkillToolAvailability(persistedResult.result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(
-                persistedResult.result,
-              );
-              mustLoadSkillFirst = false;
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
@@ -1694,6 +1704,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            memory,
           );
           continue;
         }
@@ -1715,6 +1726,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            memory,
           );
           continue;
         }
@@ -1769,11 +1781,11 @@ export class AgentRuntime {
           if (resultError === undefined) {
             // Track skill policy from successful load_skill results
             if (tc.name === LOAD_SKILL_TOOL_ID) {
-              activeSkillId = extractSkillId(result);
-              activeSkillPolicy = extractSkillPolicy(result);
-              activeSkillToolAvailability = extractSkillToolAvailability(result) ??
-                INACTIVE_SKILL_TOOL_AVAILABILITY;
-              activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
+              const loadedSkillState = createRuntimeLoadedSkillState(result);
+              activeSkillId = loadedSkillState.activeSkillId;
+              activeSkillPolicy = loadedSkillState.activeSkillPolicy;
+              activeSkillToolAvailability = loadedSkillState.activeSkillToolAvailability;
+              activeSkillDelegationOverrides = loadedSkillState.activeSkillDelegationOverrides;
               mustLoadSkillFirst = false;
             }
             activeSkillPolicy = removeFormInputAfterSubmission(
@@ -1811,7 +1823,7 @@ export class AgentRuntime {
           const toolResultMessage = createToolResultMessage(tc.id, tc.name, result);
           if (!currentStepToolResults.has(tc.id)) {
             currentMessages.push(toolResultMessage);
-            await this.memory.add(toolResultMessage);
+            await memory.add(toolResultMessage);
             currentStepToolResults.set(tc.id, toolResultMessage.parts[0] as ToolResultPart);
           }
         } catch (error) {
@@ -1823,6 +1835,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            memory,
           );
         }
       }
@@ -1856,6 +1869,7 @@ export class AgentRuntime {
     encoder: TextEncoder,
     currentMessages: Message[],
     toolCalls: ToolCall[],
+    memory: Memory<Message>,
     options: { emitSse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
@@ -1878,7 +1892,7 @@ export class AgentRuntime {
       errorStr,
     );
     currentMessages.push(errorMessage);
-    await this.memory.add(errorMessage);
+    await memory.add(errorMessage);
   }
 
   /**
@@ -1894,11 +1908,12 @@ export class AgentRuntime {
   /**
    * Compute max steps considering edge config and platform limits.
    */
-  private computeMaxSteps(platformLimit: number): number {
+  private computeMaxSteps(platformLimit: number | null): number {
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
-    return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
+    return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit ?? Infinity);
   }
 
+  /** Resolves temperature. */
   private resolveTemperature(
     modelString?: string,
     providerOptions?: Record<string, unknown>,
@@ -1911,6 +1926,7 @@ export class AgentRuntime {
     );
   }
 
+  /** Resolves max output tokens. */
   private resolveMaxOutputTokens(modelString?: string, maxOutputTokensOverride?: number): number {
     if (
       typeof maxOutputTokensOverride === "number" &&
@@ -1923,9 +1939,7 @@ export class AgentRuntime {
     // A disabled memory config contributes nothing, exactly like omitting
     // `memory`, so its maxTokens (a conversation-window size) must not cap
     // model output.
-    const memoryMaxTokens = this.config.memory?.enabled === false
-      ? undefined
-      : this.config.memory?.maxTokens;
+    const memoryMaxTokens = getConfiguredMemoryMaxTokens(this.config.memory);
     return memoryMaxTokens ??
       (modelString ? getModelMaxOutputTokens(modelString) : undefined) ??
       DEFAULT_MAX_TOKENS;

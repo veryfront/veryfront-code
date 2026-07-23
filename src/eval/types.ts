@@ -28,8 +28,13 @@ export interface EvalReportExportRedaction {
   includeOutputs?: boolean;
   includeReferences?: boolean;
   includeTraces?: boolean;
+  includeRetrievedContext?: boolean;
+  includeCitations?: boolean;
   includeMetricExplanations?: boolean;
   includeMetricEvidence?: boolean;
+  includeDatasetPath?: boolean;
+  includeContextPaths?: boolean;
+  includeErrors?: boolean;
   metadataAllowlist?: string[];
 }
 
@@ -60,6 +65,7 @@ export interface EvalReportExportContext {
 /** Optional receipt returned by a vendor exporter. */
 export interface EvalReportExportReceipt {
   externalRunId?: string;
+  /** Absolute HTTP(S) URL for the exported run or report. */
   url?: string;
   metadata?: Record<string, unknown>;
 }

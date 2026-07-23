@@ -1,6 +1,7 @@
 import { ensureBuiltinSchemaValidator } from "../../extensions/builtin-extensions.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   createHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
@@ -31,7 +32,9 @@ export type HostedAgentProjectSteeringOptionsData = {
 };
 
 /** Zod schema for hosted agent project steering options. */
-export const hostedAgentProjectSteeringOptionsSchema = lazySchema(
+export const hostedAgentProjectSteeringOptionsSchema: Schema<
+  HostedAgentProjectSteeringOptionsData
+> = lazySchema(
   defineSchema<HostedAgentProjectSteeringOptionsData>((v) => {
     const runtimeAgentFileIdSchema = v.string().min(1).regex(/^[A-Za-z0-9._-]+$/);
     const runtimeAgentDefinitionFileNameSchema = v.string().min(1).regex(

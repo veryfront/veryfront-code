@@ -11,6 +11,8 @@ describe("veryfront-api-client/index.ts exports", () => {
       ["VeryfrontApiClient", "function"],
       ["VeryfrontAPIOperations", "function"],
       ["requestWithRetry", "function"],
+      ["DEFAULT_VERYFRONT_API_REQUEST_POLICY", "object"],
+      ["RELEASE_ASSET_MAX_SIZE_BYTES", "number"],
       ["API_CLIENT_ERROR", "object"],
       ["VeryfrontError", "function"],
       ["API_ENDPOINTS", "object"],
@@ -29,6 +31,10 @@ describe("veryfront-api-client/index.ts exports", () => {
       "getListProjectsResponseSchema",
       "getProjectFileSchema",
       "getProjectSchema",
+      "getReleaseAssetManifestBuildResponseSchema",
+      "getReleaseAssetManifestResponseSchema",
+      "getReleaseAssetManifestStateResponseSchema",
+      "getReleaseAssetUploadResponseSchema",
     ] as const;
 
     for (const key of schemas) {

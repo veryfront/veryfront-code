@@ -14,7 +14,12 @@ export function flattenRouteParams(
   const flat: Record<string, string> = {};
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined) continue;
-    flat[key] = Array.isArray(value) ? value.join("/") : value;
+    Object.defineProperty(flat, key, {
+      configurable: true,
+      enumerable: true,
+      value: Array.isArray(value) ? value.join("/") : value,
+      writable: true,
+    });
   }
   return flat;
 }

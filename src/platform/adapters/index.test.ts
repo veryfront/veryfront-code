@@ -65,6 +65,11 @@ describe("adapters/index.ts exports", () => {
     it("should export VeryfrontError", async () => {
       await assertExport("VeryfrontError", "function");
     });
+
+    it("should export API request and release asset limits", async () => {
+      await assertExport("DEFAULT_VERYFRONT_API_REQUEST_POLICY", "object");
+      await assertExport("RELEASE_ASSET_MAX_SIZE_BYTES");
+    });
   });
 
   describe("Token Storage", () => {

@@ -7,11 +7,15 @@ const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
 
 /** Options accepted by provider native tool inventory. */
 export interface ProviderNativeToolInventoryOptions {
+  /** Model value. */
   model?: string;
+  /** Provider value. */
   provider?: string;
 }
 
-interface ExpandAllowedRemoteToolNamesOptions extends ProviderNativeToolInventoryOptions {
+/** Options for expanding an allowlist with provider-native tools. */
+export interface ExpandAllowedRemoteToolNamesOptions extends ProviderNativeToolInventoryOptions {
+  /** Remote tool names to preserve or expand. */
   toolNames: readonly string[];
 }
 

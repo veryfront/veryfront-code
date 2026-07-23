@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { executeMiddlewarePipeline } from "./executor.ts";
 import type { MiddlewareHandler } from "../types.ts";
@@ -35,6 +35,17 @@ describe("middleware/core/pipeline/executor", () => {
       assertEquals(res.status, 404);
     });
 
+    it("returns 500 when runtime JavaScript middleware returns an invalid value", async () => {
+      const handler = (() => ({ status: 200 })) as unknown as MiddlewareHandler;
+      const response = await executeMiddlewarePipeline(
+        new Request("http://localhost/"),
+        handler,
+      );
+
+      assertEquals(response.status, 500);
+      assertEquals((await response.json()).error, "Internal Server Error");
+    });
+
     it("should return 500 when middleware throws", async () => {
       const handler: MiddlewareHandler = () => {
         throw new Error("middleware error");
@@ -47,10 +58,10 @@ describe("middleware/core/pipeline/executor", () => {
       const body = await res.json();
       assertEquals(body.error, "Internal Server Error");
       assertEquals(body.method, "GET");
-      assertEquals(body.url, "http://localhost/");
+      assertEquals(body.url, "[REDACTED]");
     });
 
-    it("should include error details in development mode", async () => {
+    it("does not expose raw error details in development mode", async () => {
       const handler: MiddlewareHandler = () => {
         throw new Error("dev error details");
       };
@@ -69,8 +80,9 @@ describe("middleware/core/pipeline/executor", () => {
       );
       assertEquals(res.status, 500);
       const body = await res.json();
-      assertEquals(body.message, "dev error details");
-      assert(Array.isArray(body.stack));
+      assertEquals(body.message, undefined);
+      assertEquals(body.stack, undefined);
+      assertEquals(JSON.stringify(body).includes("dev error details"), false);
     });
 
     it("should not include error details in production mode", async () => {
@@ -95,6 +107,76 @@ describe("middleware/core/pipeline/executor", () => {
       assertEquals(body.error, "Internal Server Error");
       assertEquals(body.message, undefined);
       assertEquals(body.stack, undefined);
+    });
+
+    it("omits request targets and raw error details from responses and logs", async () => {
+      const originalError = console.error;
+      const logLines: string[] = [];
+      console.error = (...args: unknown[]) => logLines.push(args.map(String).join(" "));
+      const privateHost = "private-host.example";
+      const privatePath = "PRIVATE_CUSTOMER_PATH";
+      const privateError = "PRIVATE_ARBITRARY_ERROR_DETAIL";
+      const handler: MiddlewareHandler = () => {
+        const error = new Error(privateError);
+        error.name = "PRIVATE_ERROR_NAME";
+        throw error;
+      };
+      const adapter = {
+        env: {
+          get: (key: string) => (key === "NODE_ENV" ? "development" : undefined),
+        },
+      };
+
+      try {
+        const res = await executeMiddlewarePipeline(
+          new Request(`http://${privateHost}/${privatePath}?customer_note=private-value`),
+          handler,
+          undefined,
+          undefined,
+          // deno-lint-ignore no-explicit-any
+          adapter as any,
+        );
+        const body = await res.json();
+        const serialized = JSON.stringify(body);
+
+        assertEquals(body.url, "[REDACTED]");
+        assertEquals(serialized.includes("private-value"), false);
+        assertEquals(serialized.includes(privateHost), false);
+        assertEquals(serialized.includes(privatePath), false);
+        assertEquals(serialized.includes(privateError), false);
+        assertEquals(logLines.join("\n").includes("private-value"), false);
+        assertEquals(logLines.join("\n").includes(privateHost), false);
+        assertEquals(logLines.join("\n").includes(privatePath), false);
+        assertEquals(logLines.join("\n").includes(privateError), false);
+        assertEquals(logLines.join("\n").includes("PRIVATE_ERROR_NAME"), false);
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    it("does not depend on environment lookup for safe error responses", async () => {
+      const handler: MiddlewareHandler = () => {
+        throw new Error("middleware failure");
+      };
+      const adapter = {
+        env: {
+          get: () => {
+            throw new Error("environment unavailable");
+          },
+        },
+      };
+
+      const response = await executeMiddlewarePipeline(
+        new Request("http://localhost/"),
+        handler,
+        undefined,
+        undefined,
+        // deno-lint-ignore no-explicit-any
+        adapter as any,
+      );
+
+      assertEquals(response.status, 500);
+      assertEquals((await response.json()).message, undefined);
     });
 
     it("should pass env to the context", async () => {
@@ -139,6 +221,37 @@ describe("middleware/core/pipeline/executor", () => {
         handler,
       );
       assertEquals(res.headers.get("content-type"), "application/json");
+      assertEquals(res.headers.get("cache-control"), "no-store");
+      assertEquals(res.headers.get("x-content-type-options"), "nosniff");
+    });
+
+    it("returns a bodyless error response for HEAD requests", async () => {
+      const handler: MiddlewareHandler = () => {
+        throw new Error("private failure");
+      };
+      const response = await executeMiddlewarePipeline(
+        new Request("http://localhost/private", { method: "HEAD" }),
+        handler,
+      );
+
+      assertEquals(response.status, 500);
+      assertEquals(await response.text(), "");
+      assertEquals(response.headers.get("cache-control"), "no-store");
+    });
+
+    it("bounds untrusted HTTP methods in error contracts", async () => {
+      const method = "X".repeat(1_000);
+      const handler: MiddlewareHandler = () => {
+        throw new Error("failure");
+      };
+      const response = await executeMiddlewarePipeline(
+        new Request("http://localhost/", { method }),
+        handler,
+      );
+      const body = await response.json();
+
+      assertEquals(body.method, "UNKNOWN");
+      assertEquals(JSON.stringify(body).includes(method), false);
     });
 
     it("should handle non-Error thrown values", async () => {

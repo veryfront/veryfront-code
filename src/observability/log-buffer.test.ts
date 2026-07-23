@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { interceptConsole, LogBuffer } from "./log-buffer.ts";
 
@@ -30,7 +30,9 @@ describe("observability/log-buffer", () => {
       assertEquals(entry.data?.apiKey, "[REDACTED]");
       assertEquals(entry.data?.userId, "u-1");
       // Subscribers (incl. the file writer) only ever see the redacted copy.
-      assertEquals(seen[0].apiKey, "[REDACTED]");
+      const subscriberData = seen[0];
+      assertExists(subscriberData);
+      assertEquals(subscriberData.apiKey, "[REDACTED]");
       assertEquals(JSON.stringify(entry).includes("sk-secret"), false);
     });
 
@@ -43,7 +45,9 @@ describe("observability/log-buffer", () => {
         restore();
       }
 
-      const message = buf.tail(1)[0].message;
+      const entry = buf.tail(1)[0];
+      assertExists(entry);
+      const message = entry.message;
       assertEquals(message.includes("sk-secret"), false);
       assertEquals(message.includes("[REDACTED]"), true);
       assertEquals(message.includes("u-1"), true);
@@ -77,6 +81,51 @@ describe("observability/log-buffer", () => {
       const first = buf.getAll()[0];
       assertExists(first);
       assertEquals(first.message, "2");
+    });
+
+    it("rejects unsafe buffer bounds", () => {
+      for (const maxSize of [0, -1, Number.POSITIVE_INFINITY, 100_001]) {
+        assertThrows(() => new LogBuffer({ maxSize }));
+      }
+    });
+
+    it("does not expose mutable buffered entries", () => {
+      const buf = new LogBuffer();
+      const appended = buf.info("original", "test", { nested: { value: "original" } });
+      appended.message = "changed";
+      (appended.data?.nested as { value: string }).value = "changed";
+
+      const [stored] = buf.getAll();
+      assertExists(stored);
+      assertEquals(stored.message, "original");
+      assertEquals((stored.data?.nested as { value: string }).value, "original");
+
+      stored.message = "changed again";
+      assertEquals(buf.getAll()[0]?.message, "original");
+    });
+
+    it("redacts credential text and normalizes line breaks", () => {
+      const buf = new LogBuffer();
+      const entry = buf.info("request\nAuthorization: Bearer secret-value");
+
+      assertEquals(entry.message.includes("secret-value"), false);
+      assertEquals(entry.message.includes("\n"), false);
+      assertEquals(entry.message.includes("[REDACTED]"), true);
+    });
+
+    it("stores only declared fields from runtime inputs", () => {
+      const buf = new LogBuffer();
+      const entry = buf.append(
+        {
+          level: "info",
+          message: "safe",
+          source: "test",
+          password: "private-value",
+        } as unknown as Parameters<LogBuffer["append"]>[0],
+      );
+
+      assertEquals(JSON.stringify(entry).includes("private-value"), false);
+      assertEquals(Object.hasOwn(entry, "password"), false);
     });
 
     it("should query by level", () => {
@@ -117,6 +166,17 @@ describe("observability/log-buffer", () => {
       assertEquals(results.length, 1);
     });
 
+    it("keeps stateful regular expression filters deterministic", () => {
+      const buf = new LogBuffer();
+      buf.info("error");
+      const pattern = /error/g;
+      pattern.lastIndex = 2;
+
+      assertEquals(buf.query({ pattern }).length, 1);
+      assertEquals(buf.query({ pattern }).length, 1);
+      assertEquals(pattern.lastIndex, 2);
+    });
+
     it("should query with limit", () => {
       const buf = new LogBuffer();
       buf.info("1");
@@ -139,6 +199,12 @@ describe("observability/log-buffer", () => {
       assertExists(first);
       assertExists(second);
       assertEquals(first.message, "2");
+    });
+
+    it("rejects invalid read limits", () => {
+      const buf = new LogBuffer();
+      assertThrows(() => buf.query({ limit: -1 }));
+      assertThrows(() => buf.tail(Number.NaN));
     });
 
     it("should clear entries", () => {
@@ -169,6 +235,46 @@ describe("observability/log-buffer", () => {
       assertEquals(formatted.includes("INFO"), true);
       assertEquals(formatted.includes("myapp"), true);
       assertEquals(formatted.includes("hello"), true);
+    });
+
+    it("does not overwrite a console method replaced after interception", () => {
+      const buf = new LogBuffer();
+      const originalInfo = console.info;
+      const restore = interceptConsole(buf);
+      const replacement = () => {};
+      console.info = replacement;
+
+      try {
+        restore();
+        assertEquals(console.info, replacement);
+      } finally {
+        console.info = originalInfo;
+      }
+    });
+
+    it("deactivates nested console interceptors restored out of order", () => {
+      const originalInfo = console.info;
+      console.info = () => {};
+      const first = new LogBuffer();
+      const second = new LogBuffer();
+      const restoreFirst = interceptConsole(first);
+      const restoreSecond = interceptConsole(second);
+
+      try {
+        restoreFirst();
+        console.info("first message");
+        assertEquals(first.count, 0);
+        assertEquals(second.count, 1);
+
+        restoreSecond();
+        console.info("second message");
+        assertEquals(first.count, 0);
+        assertEquals(second.count, 1);
+      } finally {
+        restoreSecond();
+        restoreFirst();
+        console.info = originalInfo;
+      }
     });
   });
 });

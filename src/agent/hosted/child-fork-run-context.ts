@@ -35,45 +35,69 @@ import { type HostedChildRunIdentifiers, HostedChildTerminalStateError } from ".
 
 /** Public API contract for hosted child fork tool call snapshot. */
 export interface HostedChildForkToolCallSnapshot {
+  /** Tool name value. */
   toolName: string;
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Input supplied to the operation. */
   input?: unknown;
 }
 
 /** Public API contract for hosted child fork tool result snapshot. */
 export interface HostedChildForkToolResultSnapshot {
+  /** Tool name value. */
   toolName: string;
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Input supplied to the operation. */
   input: unknown;
+  /** Output produced by the operation. */
   output: unknown;
 }
 
 /** State for hosted child fork stream. */
 export interface HostedChildForkStreamState {
+  /** Final text value. */
   finalText: string;
 }
 
 /** Context for hosted child fork stream mirror. */
 export interface HostedChildForkStreamMirrorContext {
+  /** Whether durable run mirror. */
   durableRunMirror: boolean;
+  /** Durable message ID value. */
   durableMessageId: string | null;
+  /** Durable reasoning message ID value. */
   durableReasoningMessageId: string | null;
+  /** Durable mirror state value. */
   durableMirrorState: HostedChildMirrorContext["state"];
+  /** Callback that handles append durable mirror chunk. */
   appendDurableMirrorChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void>;
+  /** Callback that handles close durable mirror reasoning. */
   closeDurableMirrorReasoning: () => Promise<void>;
+  /** Callback that handles close durable mirror text. */
   closeDurableMirrorText: () => Promise<void>;
+  /** Callback that handles mark durable step started. */
   markDurableStepStarted: () => void;
+  /** Callback that handles has started step. */
   hasStartedStep: () => boolean;
+  /** Callback that handles has emitted progress. */
   hasEmittedProgress: () => boolean;
 }
 
 /** Context for hosted child fork run. */
 export interface HostedChildForkRunContext {
+  /** Mirror context value. */
   mirrorContext: HostedChildMirrorContext;
+  /** Stream mirror context value. */
   streamMirrorContext: HostedChildForkStreamMirrorContext;
+  /** Pending tool lifecycle value. */
   pendingToolLifecycle: HostedChildForkPendingToolLifecycle;
+  /** Tool calls value. */
   toolCalls: HostedChildForkToolCallSnapshot[];
+  /** Tool results value. */
   toolResults: HostedChildForkToolResultSnapshot[];
+  /** Stream state value. */
   streamState: HostedChildForkStreamState;
 }
 
@@ -84,44 +108,71 @@ export type HostedDurableChildForkRunContext = HostedChildForkRunContext & {
 
 /** Input payload for hosted child fork run context. */
 export interface HostedChildForkRunContextInput {
+  /** Mirror value. */
   mirror: HostedChildChunkMirror | null;
+  /** Message ID value. */
   messageId?: string | null;
+  /** Reasoning message ID value. */
   reasoningMessageId?: string | null;
+  /** Pending tool log context value. */
   pendingToolLogContext: HostedChildPendingToolLifecycleLogContext;
+  /** Pending tool log writer value. */
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
 }
 
 /** Input payload for hosted durable child fork run context. */
 export interface HostedDurableChildForkRunContextInput {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Durable child run value. */
   durableChildRun?: HostedChildRunIdentifiers;
+  /** Instrumentation value. */
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+  /** Pending tool log context value. */
   pendingToolLogContext: HostedChildPendingToolLifecycleLogContext;
+  /** Pending tool log writer value. */
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
 }
 
 /** Input payload for handle hosted child fork run context error. */
 export interface HandleHostedChildForkRunContextErrorInput {
+  /** Error associated with the operation. */
   error: unknown;
+  /** Abort signal value. */
   abortSignal?: AbortSignal;
+  /** Description value. */
   description: string;
+  /** Kind value. */
   kind: string;
+  /** Run context value. */
   runContext: HostedChildForkRunContext;
+  /** Usage value. */
   usage?: ChildRunExecutionSnapshot["usage"];
+  /** Start time value. */
   startTime: number;
+  /** Callback invoked when settled. */
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
+  /** Callback that handles should rethrow error. */
   shouldRethrowError?: (error: unknown) => boolean;
+  /** Write log value. */
   writeLog?: HandleHostedChildForkFailureInput["writeLog"];
 }
 
 /** Input payload for finalize hosted child fork run context resources. */
 export interface FinalizeHostedChildForkRunContextResourcesInput {
+  /** Run context value. */
   runContext: HostedChildForkRunContext;
+  /** Monitor abort controller value. */
   monitorAbortController?: AbortController | null;
+  /** Monitor promise value. */
   monitorPromise?: Promise<void>;
+  /** Callback that handles flush mirror. */
   flushMirror?: () => Promise<void>;
+  /** Callback that handles close tooling. */
   closeTooling?: () => Promise<void>;
+  /** Callback that handles close runtime. */
   closeRuntime?: () => Promise<void>;
 }
 
@@ -223,7 +274,7 @@ export type ExecuteHostedChildForkRunContextStreamInput =
 /** Execute hosted child fork run context stream. */
 export function executeHostedChildForkRunContextStream(
   input: ExecuteHostedChildForkRunContextStreamInput,
-) {
+): Promise<ChildRunExecutionResult> {
   const { streamMirrorContext, pendingToolLifecycle, toolCalls, toolResults, streamState } =
     input.runContext;
 

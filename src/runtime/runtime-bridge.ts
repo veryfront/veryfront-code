@@ -19,6 +19,7 @@ import type {
   ModelRuntimeGenerateResult,
 } from "#veryfront/provider/types.ts";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -258,120 +259,84 @@ function toRuntimePrompt(
   return prompt;
 }
 
+function readUsageNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
   if (!usage || typeof usage !== "object") {
     return undefined;
   }
 
-  if ("inputTokens" in usage && typeof usage.inputTokens === "object" && usage.inputTokens) {
-    const inputTokens = "total" in usage.inputTokens && typeof usage.inputTokens.total === "number"
-      ? usage.inputTokens.total
+  const usageRecord = usage as Record<string, unknown>;
+
+  if (usageRecord.inputTokens && typeof usageRecord.inputTokens === "object") {
+    const inputUsage = usageRecord.inputTokens as Record<string, unknown>;
+    const outputUsage = usageRecord.outputTokens && typeof usageRecord.outputTokens === "object"
+      ? usageRecord.outputTokens as Record<string, unknown>
       : undefined;
-    const cacheReadInputTokens =
-      "cached" in usage.inputTokens && typeof usage.inputTokens.cached === "number"
-        ? usage.inputTokens.cached
-        : "cacheRead" in usage.inputTokens && typeof usage.inputTokens.cacheRead === "number"
-        ? usage.inputTokens.cacheRead
-        : undefined;
-    const cacheCreationInputTokens =
-      "cacheCreation" in usage.inputTokens && typeof usage.inputTokens.cacheCreation === "number"
-        ? usage.inputTokens.cacheCreation
-        : undefined;
-    const outputTokens =
-      "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
-        "total" in usage.outputTokens && typeof usage.outputTokens.total === "number"
-        ? usage.outputTokens.total
-        : undefined;
-    const reasoningTokens =
-      "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
-        "reasoning" in usage.outputTokens && typeof usage.outputTokens.reasoning === "number"
-        ? usage.outputTokens.reasoning
-        : undefined;
-    return {
-      inputTokens,
-      outputTokens,
-      totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+    const inputTokens = readUsageNumber(inputUsage.total);
+    const cacheReadInputTokens = readUsageNumber(inputUsage.cached) ??
+      readUsageNumber(inputUsage.cacheRead);
+    const cacheCreationInputTokens = readUsageNumber(inputUsage.cacheCreation);
+    const outputTokens = readUsageNumber(outputUsage?.total);
+    const reasoningTokens = readUsageNumber(outputUsage?.reasoning);
+    const normalizedUsage: DirectGenerateUsage = {
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+      ...(outputTokens !== undefined ? { outputTokens } : {}),
+      ...(inputTokens !== undefined || outputTokens !== undefined
+        ? { totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0) }
+        : {}),
       ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
       ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
       ...(cacheReadInputTokens !== undefined ? { cachedInputTokens: cacheReadInputTokens } : {}),
       ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     };
+
+    return Object.keys(normalizedUsage).length > 0 ? normalizedUsage : undefined;
   }
 
-  const flatUsage = usage as {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-    cacheCreationInputTokens?: number;
-    cacheReadInputTokens?: number;
-    cachedInputTokens?: number;
-    reasoningTokens?: number;
-    billableInputTokens?: number;
-    billableOutputTokens?: number;
-    costUsd?: number;
-    providerInputCostUsd?: number;
-    providerOutputCostUsd?: number;
-    providerCostUsd?: number;
-    veryfrontInputChargeUsd?: number;
-    veryfrontOutputChargeUsd?: number;
-    veryfrontChargeUsd?: number;
-    veryfrontBilledUsd?: number;
-    costCredits?: number;
-    costSource?: unknown;
-    billingMode?: unknown;
-    usageCaptureStatus?: unknown;
-  };
-  const costSource = flatUsage.costSource;
-  const billingMode = flatUsage.billingMode;
-  const usageCaptureStatus = flatUsage.usageCaptureStatus;
+  const inputTokens = readUsageNumber(usageRecord.inputTokens);
+  const outputTokens = readUsageNumber(usageRecord.outputTokens);
+  const totalTokens = readUsageNumber(usageRecord.totalTokens);
+  const cacheCreationInputTokens = readUsageNumber(usageRecord.cacheCreationInputTokens);
+  const cacheReadInputTokens = readUsageNumber(usageRecord.cacheReadInputTokens);
+  const cachedInputTokens = readUsageNumber(usageRecord.cachedInputTokens) ?? cacheReadInputTokens;
+  const reasoningTokens = readUsageNumber(usageRecord.reasoningTokens);
+  const billableInputTokens = readUsageNumber(usageRecord.billableInputTokens);
+  const billableOutputTokens = readUsageNumber(usageRecord.billableOutputTokens);
+  const costUsd = readUsageNumber(usageRecord.costUsd);
+  const providerInputCostUsd = readUsageNumber(usageRecord.providerInputCostUsd);
+  const providerOutputCostUsd = readUsageNumber(usageRecord.providerOutputCostUsd);
+  const providerCostUsd = readUsageNumber(usageRecord.providerCostUsd);
+  const veryfrontInputChargeUsd = readUsageNumber(usageRecord.veryfrontInputChargeUsd);
+  const veryfrontOutputChargeUsd = readUsageNumber(usageRecord.veryfrontOutputChargeUsd);
+  const veryfrontChargeUsd = readUsageNumber(usageRecord.veryfrontChargeUsd);
+  const veryfrontBilledUsd = readUsageNumber(usageRecord.veryfrontBilledUsd);
+  const costCredits = readUsageNumber(usageRecord.costCredits);
+  const costSource = usageRecord.costSource;
+  const billingMode = usageRecord.billingMode;
+  const usageCaptureStatus = usageRecord.usageCaptureStatus;
 
-  return {
-    inputTokens: flatUsage.inputTokens,
-    outputTokens: flatUsage.outputTokens,
-    totalTokens: flatUsage.totalTokens,
-    ...(typeof flatUsage.cacheCreationInputTokens === "number"
-      ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
-      : {}),
-    ...(typeof flatUsage.cacheReadInputTokens === "number"
-      ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
-      : {}),
-    ...(typeof flatUsage.cachedInputTokens === "number"
-      ? { cachedInputTokens: flatUsage.cachedInputTokens }
-      : typeof flatUsage.cacheReadInputTokens === "number"
-      ? { cachedInputTokens: flatUsage.cacheReadInputTokens }
-      : {}),
-    ...(typeof flatUsage.reasoningTokens === "number"
-      ? { reasoningTokens: flatUsage.reasoningTokens }
-      : {}),
-    ...(typeof flatUsage.billableInputTokens === "number"
-      ? { billableInputTokens: flatUsage.billableInputTokens }
-      : {}),
-    ...(typeof flatUsage.billableOutputTokens === "number"
-      ? { billableOutputTokens: flatUsage.billableOutputTokens }
-      : {}),
-    ...(typeof flatUsage.costUsd === "number" ? { costUsd: flatUsage.costUsd } : {}),
-    ...(typeof flatUsage.providerInputCostUsd === "number"
-      ? { providerInputCostUsd: flatUsage.providerInputCostUsd }
-      : {}),
-    ...(typeof flatUsage.providerOutputCostUsd === "number"
-      ? { providerOutputCostUsd: flatUsage.providerOutputCostUsd }
-      : {}),
-    ...(typeof flatUsage.providerCostUsd === "number"
-      ? { providerCostUsd: flatUsage.providerCostUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontInputChargeUsd === "number"
-      ? { veryfrontInputChargeUsd: flatUsage.veryfrontInputChargeUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontOutputChargeUsd === "number"
-      ? { veryfrontOutputChargeUsd: flatUsage.veryfrontOutputChargeUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontChargeUsd === "number"
-      ? { veryfrontChargeUsd: flatUsage.veryfrontChargeUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontBilledUsd === "number"
-      ? { veryfrontBilledUsd: flatUsage.veryfrontBilledUsd }
-      : {}),
-    ...(typeof flatUsage.costCredits === "number" ? { costCredits: flatUsage.costCredits } : {}),
+  const normalizedUsage: DirectGenerateUsage = {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
+    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
+    ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),
+    ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
+    ...(veryfrontInputChargeUsd !== undefined ? { veryfrontInputChargeUsd } : {}),
+    ...(veryfrontOutputChargeUsd !== undefined ? { veryfrontOutputChargeUsd } : {}),
+    ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
+    ...(costCredits !== undefined ? { costCredits } : {}),
     ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
       ? { costSource }
       : {}),
@@ -382,6 +347,8 @@ function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
       ? { usageCaptureStatus }
       : {}),
   };
+
+  return Object.keys(normalizedUsage).length > 0 ? normalizedUsage : undefined;
 }
 
 function normalizeFinishReason(finishReason: unknown): string | null {
@@ -736,7 +703,11 @@ async function buildGenerateResultFromStream(
         break;
 
       case "tool-result": {
-        const result = part.result ?? part.output ?? part.error;
+        const result = Object.hasOwn(part, "result")
+          ? part.result
+          : Object.hasOwn(part, "output")
+          ? part.output
+          : part.error;
         toolResults.push({
           toolCallId: part.toolCallId,
           toolName: part.toolName,
@@ -948,33 +919,74 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   };
 }
 
+function assertValidEmbeddingResponse(
+  embeddings: unknown,
+  expectedCount: number,
+): asserts embeddings is number[][] {
+  if (!Array.isArray(embeddings)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Embedding response must contain an embeddings array",
+    });
+  }
+
+  if (embeddings.length !== expectedCount) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Embedding response count must match input count: expected ${expectedCount}, received ${embeddings.length}`,
+    });
+  }
+
+  for (const [index, vector] of embeddings.entries()) {
+    if (
+      !Array.isArray(vector) ||
+      !vector.every((value) => typeof value === "number" && Number.isFinite(value))
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Embedding response vector ${index} must contain only finite numbers`,
+      });
+    }
+  }
+}
+
 export function embed(options: EmbedOptions) {
   return options.model.doEmbed({
     values: [options.value],
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embedding: result.embeddings[0] ?? [],
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertValidEmbeddingResponse(result.embeddings, 1);
+
+    return {
+      embedding: result.embeddings[0]!,
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
 
 export function embedMany(options: EmbedManyOptions) {
   return options.model.doEmbed({
     values: options.values,
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertValidEmbeddingResponse(result.embeddings, options.values.length);
+
+    return {
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
 /** Compute cosine similarity between two numeric vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length === 0 || b.length === 0 || a.length !== b.length) {
+  if (a.length !== b.length) {
+    throw INVALID_ARGUMENT.create({ detail: "Vectors must have the same length" });
+  }
+
+  if (a.length === 0) {
     return 0;
   }
 

@@ -84,16 +84,25 @@ export type HostedChildForkExecutionInstrumentation<
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Input used to create a hosted child-fork run context. */
 export type HostedChildForkExecutionRunContextFactoryInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
+  /** Bearer token used for control-plane requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Existing durable child identifiers, when persistence is enabled. */
   durableChildRun?: HostedChildRunIdentifiers;
+  /** Parent conversation identifier. */
   conversationId?: string;
+  /** Parent run identifier. */
   parentRunId?: string;
+  /** Human-readable child task description. */
   description: string;
+  /** Optional child execution instrumentation. */
   instrumentation?: HostedChildForkExecutionInstrumentation<TAttributes>;
+  /** Optional warning sink for pending tool lifecycle events. */
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
 };
 

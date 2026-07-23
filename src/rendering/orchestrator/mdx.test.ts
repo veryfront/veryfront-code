@@ -157,6 +157,50 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
 
       assertEquals(setCacheCount, 2);
     });
+
+    it("does not coalesce identical content compiled with different frontmatter", async () => {
+      let compileCount = 0;
+      let releaseCompiles!: () => void;
+      let markCompileStarted!: () => void;
+      const compileGate = new Promise<void>((resolve) => {
+        releaseCompiles = resolve;
+      });
+      const compileStarted = new Promise<void>((resolve) => {
+        markCompileStarted = resolve;
+      });
+
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: async (options: Record<string, unknown>) => {
+          compileCount++;
+          markCompileStarted();
+          await compileGate;
+          const frontmatter = options["frontmatter"] as Record<string, unknown>;
+          return makeResult(`theme:${frontmatter["theme"]}`);
+        },
+      });
+
+      const adapter = makeMissAdapter();
+      adapter.computeHash = () => Promise.resolve("fixed-frontmatter-hash");
+      const compiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: adapter,
+      });
+
+      const light = compiler.compileMDX("# Page", { theme: "light" }, "page.mdx");
+      const dark = compiler.compileMDX("# Page", { theme: "dark" }, "page.mdx");
+      await compileStarted;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      releaseCompiles();
+
+      const [lightResult, darkResult] = await Promise.all([light, dark]);
+      assertEquals(lightResult.compiledCode, "theme:light");
+      assertEquals(darkResult.compiledCode, "theme:dark");
+      assertEquals(compileCount, 2);
+    });
   });
 
   describe("after a failed compile, a retry recompiles", () => {
@@ -223,6 +267,83 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
 
       assertEquals(r1.compiledCode, "compiled:# Page A");
       assertEquals(r2.compiledCode, "compiled:# Page B");
+      assertEquals(compileCount, 2);
+    });
+  });
+
+  describe("Studio compilation", () => {
+    it("forwards studioEmbed to the content processor", async () => {
+      let capturedOptions: Record<string, unknown> | undefined;
+
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: (options: Record<string, unknown>) => {
+          capturedOptions = options;
+          return Promise.resolve(makeResult());
+        },
+      });
+
+      const compiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: makeMissAdapter(),
+        studioEmbed: true,
+      });
+
+      await compiler.compileMDX("# Studio", {}, "studio.mdx");
+
+      assertEquals(capturedOptions?.["studioEmbed"], true);
+    });
+
+    it("does not coalesce Studio and standard compilations", async () => {
+      let compileCount = 0;
+      let releaseCompiles!: () => void;
+      let markCompileStarted!: () => void;
+      const compileGate = new Promise<void>((resolve) => {
+        releaseCompiles = resolve;
+      });
+      const compileStarted = new Promise<void>((resolve) => {
+        markCompileStarted = resolve;
+      });
+
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: async (options: Record<string, unknown>) => {
+          compileCount++;
+          markCompileStarted();
+          await compileGate;
+          return makeResult(options["studioEmbed"] === true ? "studio-result" : "standard-result");
+        },
+      });
+
+      const adapter = makeMissAdapter();
+      adapter.computeHash = () => Promise.resolve("fixed-studio-mode-hash");
+
+      const standardCompiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: adapter,
+      });
+      const studioCompiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: adapter,
+        studioEmbed: true,
+      });
+
+      const standard = standardCompiler.compileMDX("# Page", {}, "page.mdx");
+      const studio = studioCompiler.compileMDX("# Page", {}, "page.mdx");
+      await compileStarted;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      releaseCompiles();
+
+      const [standardResult, studioResult] = await Promise.all([standard, studio]);
+      assertEquals(standardResult.compiledCode, "standard-result");
+      assertEquals(studioResult.compiledCode, "studio-result");
       assertEquals(compileCount, 2);
     });
   });

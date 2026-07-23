@@ -69,7 +69,7 @@ describe(
         const result = createBundleResult();
         const fileCache = new Map<string, string>();
 
-        const code = `import React from "react";\nexport const x = 1;`;
+        const code = `import React from "react";\nexport const x = React.createElement("div");`;
         await bundleScript(
           { path: "comp.tsx", content: code, type: "tsx" },
           { mode: "development", projectDir: "/tmp", external: ["react"], sources: [] },
@@ -167,6 +167,111 @@ describe(
         );
 
         assertEquals(result.outputs.has("app.js"), true);
+      });
+
+      it("resolves nested relative imports from the in-memory file cache", async () => {
+        const result = createBundleResult();
+        const fileCache = new Map<string, string>([
+          ["/project/src/value.ts", "export const value = 42;"],
+        ]);
+
+        await bundleScript(
+          {
+            path: "/project/src/app.ts",
+            content: 'import { value } from "./value.ts"; export { value };',
+            type: "ts",
+          },
+          { mode: "production", projectDir: "/project", external: [], sources: [] },
+          result,
+          esbuild,
+          fileCache,
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(result.outputs.has("/project/src/app.js"), true);
+      });
+
+      it("resolves modern module extensions and always emits a JavaScript path", async () => {
+        const result = createBundleResult();
+        const fileCache = new Map<string, string>([
+          ["/project/src/value.mts", "export const value = 42;"],
+        ]);
+
+        await bundleScript(
+          {
+            path: "/project/src/app.mts",
+            content: 'import { value } from "./value"; export { value };',
+            type: "ts",
+          },
+          { mode: "production", projectDir: "/project", external: [], sources: [] },
+          result,
+          esbuild,
+          fileCache,
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(result.outputs.has("/project/src/app.js"), true);
+        assertEquals(result.outputs.has("/project/src/app.mts"), false);
+      });
+
+      it("rejects source paths outside the configured project", async () => {
+        const result = createBundleResult();
+        const fileCache = new Map<string, string>();
+
+        await bundleScript(
+          { path: "/outside/app.ts", content: "export const value = 1;", type: "ts" },
+          { mode: "production", projectDir: "/project", external: [], sources: [] },
+          result,
+          esbuild,
+          fileCache,
+        );
+
+        assertEquals(result.outputs.size, 0);
+        assertEquals(result.errors.length, 1);
+        assertEquals(fileCache.has("/outside/app.ts"), false);
+      });
+
+      it("reports a missing bundler output as an error", async () => {
+        const result = createBundleResult();
+        const fileCache = new Map<string, string>();
+        const withoutOutput = {
+          ...esbuild,
+          build: () => Promise.resolve({ outputFiles: [], warnings: [], errors: [] }),
+        } as unknown as typeof esbuild;
+
+        await bundleScript(
+          { path: "app.ts", content: "export const value = 1;", type: "ts" },
+          { mode: "production", projectDir: "/project", external: [], sources: [] },
+          result,
+          withoutOutput,
+          fileCache,
+        );
+
+        assertEquals(result.outputs.size, 0);
+        assertEquals(result.errors.length, 1);
+        assertEquals(fileCache.has("app.ts"), false);
+      });
+
+      it("rejects cached imports that escape the configured project", async () => {
+        const result = createBundleResult();
+        const fileCache = new Map<string, string>([
+          ["/outside/secret.ts", "export const secret = true;"],
+        ]);
+
+        await bundleScript(
+          {
+            path: "/project/src/app.ts",
+            content: 'import { secret } from "../../outside/secret.ts"; export { secret };',
+            type: "ts",
+          },
+          { mode: "production", projectDir: "/project", external: [], sources: [] },
+          result,
+          esbuild,
+          fileCache,
+        );
+
+        assertEquals(result.outputs.size, 0);
+        assertEquals(result.errors.length > 0, true);
       });
     });
   },

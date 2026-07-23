@@ -15,6 +15,9 @@ describe("GitHubDirectoryOperations", () => {
       maxRetries: 3,
       initialDelay: 1000,
       maxDelay: 30000,
+      requestTimeout: 30000,
+      totalTimeout: 120000,
+      maxResponseBytes: 67108864,
     },
     cache: { enabled: true, ttl: 60000, maxSize: 1000, maxMemory: 104857600 },
   };

@@ -1,8 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { resource, resourceRegistry } from "#veryfront/resource";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import type { Agent } from "#veryfront/agent/types.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getDashboardApiRoutePaths, handleDashboardAPI } from "./api.ts";
 import type { HandlerContext } from "../../types.ts";
+import { ReloadNotifier } from "../../../reload-notifier.ts";
 
 // Minimal mock adapter with fs that tracks readDir/readFile calls
 function createMockCtx(): HandlerContext {
@@ -39,6 +44,28 @@ describe("Dashboard API - auth", () => {
     const req = new Request("http://localhost/_dev/api/stats");
     const res = await handleDashboardAPI(req, ctx);
     assertEquals(res?.status, 401);
+  });
+
+  it("returns 401 when a local project is addressed through a non-loopback host", async () => {
+    const req = new Request("http://devbox.example/_dev/api/stats");
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 401);
+  });
+
+  it("returns 401 for a cross-origin browser request to the local endpoint", async () => {
+    const req = new Request("http://localhost/_dev/api/stats", {
+      headers: { origin: "https://attacker.example" },
+    });
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 401);
+  });
+
+  it("allows an explicitly local browser request", async () => {
+    const req = new Request("http://127.0.0.1:8080/_dev/api/stats", {
+      headers: { origin: "http://localhost:3000" },
+    });
+    const res = await handleDashboardAPI(req, createMockCtx());
+    assertEquals(res?.status, 200);
   });
 });
 
@@ -120,6 +147,47 @@ describe("Dashboard API - GET endpoints", () => {
     const body = await res!.json();
     assertEquals("agents" in body, true);
     assertEquals("count" in body, true);
+  });
+
+  it("/_dev/api/agents returns safe metadata without prompts or credentials", async () => {
+    const agentId = `dashboard-private-${crypto.randomUUID()}`;
+    const privatePrompt = "private-system-prompt-canary";
+    const privateCredential = "private-memory-credential-canary";
+    const privateToolDetail = "private-tool-detail-canary";
+    agentRegistry.register(agentId, {
+      id: agentId,
+      config: {
+        model: "test/model",
+        system: privatePrompt,
+        tools: {
+          safeTool: { description: privateToolDetail },
+          disabledTool: false,
+        },
+        memory: {
+          type: "redis",
+          maxTokens: 123,
+          url: privateCredential,
+        },
+      },
+    } as unknown as Agent);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/agents");
+      const res = await handleDashboardAPI(req, createMockCtx());
+      assertEquals(res?.status, 200);
+      const body = await res!.json();
+      const listedAgent = body.agents.find((entry: { id?: string }) => entry.id === agentId);
+      const serialized = JSON.stringify(listedAgent);
+
+      assertEquals(serialized.includes(privatePrompt), false);
+      assertEquals(serialized.includes(privateCredential), false);
+      assertEquals(serialized.includes(privateToolDetail), false);
+      assertEquals(listedAgent.system, "(configured)");
+      assertEquals(listedAgent.tools, { safeTool: true, disabledTool: false });
+      assertEquals(listedAgent.memory, { type: "redis", maxTokens: 123 });
+    } finally {
+      agentRegistry.delete(agentId);
+    }
   });
 
   it("/_dev/api/workflows returns workflows list", async () => {
@@ -224,6 +292,8 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals("featureFlags" in body, true);
     assertEquals("environment" in body, true);
     assertEquals(body.isLocalProject, true);
+    assertEquals(body.projectDir, ".");
+    assertEquals(JSON.stringify(body).includes("/my/project"), false);
   });
 
   it("/_dev/api/live-errors returns collected errors", async () => {
@@ -297,6 +367,8 @@ describe("Dashboard API - GET endpoints", () => {
     const body = await res!.json();
     assertEquals(body.files, []);
     assertEquals("error" in body, true);
+    assertEquals(body.projectDir, ".");
+    assertEquals(JSON.stringify(body).includes("/project"), false);
   });
 
   it("/_dev/api/files lists directory entries sorted", async () => {
@@ -312,6 +384,8 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals(res?.status, 200);
     const body = await res!.json();
     assertEquals(body.count, 3);
+    assertEquals(body.projectDir, ".");
+    assertEquals(JSON.stringify(body).includes("/project"), false);
     // Directories first, then files alphabetically
     assertEquals(body.files[0].type, "directory");
     assertEquals(body.files[0].name, "a-dir");
@@ -363,6 +437,36 @@ describe("Dashboard API - POST endpoints", () => {
     });
     const res = await handleDashboardAPI(req, createMockCtx());
     assertEquals(res?.status, 404);
+  });
+
+  it("/_dev/api/read-resource passes the request signal to the loader", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const definition = resource({
+      id: "dashboard-signal",
+      pattern: "resource://dashboard-signal",
+      description: "Dashboard signal",
+      paramsSchema: defineSchema((v) => v.object({}))(),
+      load: (_params, context) => {
+        observedSignal = context.signal;
+        return { ok: true };
+      },
+    });
+    resourceRegistry.register(definition.id, definition);
+    try {
+      const req = new Request("http://localhost/_dev/api/read-resource", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uri: definition.pattern }),
+        signal: controller.signal,
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 200);
+      assertStrictEquals(observedSignal, req.signal);
+    } finally {
+      resourceRegistry.delete(definition.id);
+    }
   });
 
   it("/_dev/api/render-prompt returns 400 without promptId", async () => {
@@ -427,6 +531,60 @@ describe("Dashboard API - POST endpoints", () => {
     });
     const res = await handleDashboardAPI(req, createMockCtx());
     assertEquals(res?.status, 200);
+  });
+
+  it("/_dev/api/hmr-trigger waits for cache invalidation", async () => {
+    const release = Promise.withResolvers<void>();
+    const invalidationStarted = Promise.withResolvers<void>();
+    const unsubscribeReload = ReloadNotifier.subscribe(() => {});
+    const unsubscribeInvalidate = ReloadNotifier.subscribeInvalidate(() => {
+      invalidationStarted.resolve();
+      return release.promise;
+    });
+    let settled = false;
+    try {
+      const req = new Request("http://localhost/_dev/api/hmr-trigger", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "src/index.ts" }),
+      });
+      const response = Promise.resolve(handleDashboardAPI(req, createMockCtx())).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await invalidationStarted.promise;
+      assertEquals(settled, false);
+      release.resolve();
+      assertEquals((await response)?.status, 200);
+    } finally {
+      release.resolve();
+      unsubscribeInvalidate();
+      unsubscribeReload();
+      ReloadNotifier.reset();
+    }
+  });
+
+  it("/_dev/api/hmr-trigger rejects malformed and oversized bodies", async () => {
+    const malformed = await handleDashboardAPI(
+      new Request("http://localhost/_dev/api/hmr-trigger", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      }),
+      createMockCtx(),
+    );
+    const oversized = await handleDashboardAPI(
+      new Request("http://localhost/_dev/api/hmr-trigger", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "x".repeat(20_000) }),
+      }),
+      createMockCtx(),
+    );
+
+    assertEquals(malformed?.status, 400);
+    assertEquals(oversized?.status, 413);
   });
 
   it("returns null for unknown POST path", async () => {
@@ -511,6 +669,109 @@ describe("Dashboard API path validation", () => {
     assertEquals(res?.status, 400);
     const body = await res!.json();
     assertEquals(body.error, "path parameter is required");
+  });
+
+  for (
+    const sensitivePath of [
+      ".env",
+      ".env.local",
+      ".git/config",
+      ".npmrc",
+      "credentials.json",
+      "certificates/private.key",
+    ]
+  ) {
+    it(`denies sensitive file content without reading ${sensitivePath}`, async () => {
+      const readCalls: string[] = [];
+      const ctx = createMockCtxWithFs({
+        readFile: (path: string) => {
+          readCalls.push(path);
+          return Promise.resolve("sensitive value");
+        },
+      });
+      const req = new Request(
+        `http://localhost/_dev/api/file-content?path=${encodeURIComponent(sensitivePath)}`,
+      );
+
+      const res = await handleDashboardAPI(req, ctx);
+
+      assertEquals(res?.status, 403);
+      assertEquals(readCalls, []);
+    });
+  }
+
+  it("filters sensitive entries from directory listings", async () => {
+    const ctx = createMockCtxWithFs({
+      readDir: async function* () {
+        yield { name: ".env", isDirectory: false, isFile: true, isSymlink: false };
+        yield { name: ".git", isDirectory: true, isFile: false, isSymlink: false };
+        yield { name: "src", isDirectory: true, isFile: false, isSymlink: false };
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files");
+
+    const res = await handleDashboardAPI(req, ctx);
+    const body = await res!.json();
+
+    assertEquals(res?.status, 200);
+    assertEquals(body.files.map((entry: { name: string }) => entry.name), ["src"]);
+  });
+
+  it("rejects a file symlink whose physical target escapes the project", async () => {
+    const readCalls: string[] = [];
+    const ctx = createMockCtxWithFs({
+      realPath: (path: string) =>
+        Promise.resolve(path === "/project/link/secret.txt" ? "/outside/secret.txt" : path),
+      readFile: (path: string) => {
+        readCalls.push(path);
+        return Promise.resolve("outside content");
+      },
+    });
+    const req = new Request(
+      "http://localhost/_dev/api/file-content?path=link%2Fsecret.txt",
+    );
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 400);
+    assertEquals(readCalls, []);
+  });
+
+  it("denies a safe-looking symlink to a sensitive in-project file", async () => {
+    const readCalls: string[] = [];
+    const ctx = createMockCtxWithFs({
+      realPath: (path: string) =>
+        Promise.resolve(path === "/project/config.json" ? "/project/.env" : path),
+      readFile: (path: string) => {
+        readCalls.push(path);
+        return Promise.resolve("sensitive value");
+      },
+    });
+    const req = new Request(
+      "http://localhost/_dev/api/file-content?path=config.json",
+    );
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 403);
+    assertEquals(readCalls, []);
+  });
+
+  it("rejects a directory symlink whose physical target escapes the project", async () => {
+    const readDirCalls: string[] = [];
+    const ctx = createMockCtxWithFs({
+      realPath: (path: string) => Promise.resolve(path === "/project/link" ? "/outside" : path),
+      readDir: async function* (path: string) {
+        readDirCalls.push(path);
+        yield* [];
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files?path=link");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 400);
+    assertEquals(readDirCalls, []);
   });
 });
 

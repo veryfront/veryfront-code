@@ -1,24 +1,45 @@
-import React, { createContext, useContext } from "react";
+import * as React from "react";
 import type { MDXComponents } from "#veryfront/types";
 
-const MDXContext = createContext<MDXComponents>({});
+export type { MDXComponents } from "#veryfront/types";
+
+const EMPTY_MDX_COMPONENTS = Object.freeze({}) as MDXComponents;
+const MDXContext = React.createContext<MDXComponents>(EMPTY_MDX_COMPONENTS);
+
+function mergeComponents(
+  inherited: MDXComponents,
+  overrides?: MDXComponents,
+): MDXComponents {
+  return { ...inherited, ...(overrides ?? {}) };
+}
 
 /** Props accepted by MDX provider. */
 export interface MDXProviderProps {
+  /** Component overrides applied within this provider. */
   components?: MDXComponents;
-  children: React.ReactNode;
+  /** MDX content rendered within the provider. */
+  children?: React.ReactNode;
 }
 
-/** Render MDX provider. */
+/** Provide inherited MDX component overrides to descendant content. */
 export function MDXProvider({
-  components = {},
+  components,
   children,
-}: MDXProviderProps): React.ReactNode {
-  return <MDXContext.Provider value={components}>{children}</MDXContext.Provider>;
+}: MDXProviderProps): React.ReactElement {
+  const inherited = React.useContext(MDXContext);
+  const value = React.useMemo(
+    () => mergeComponents(inherited, components),
+    [inherited, components],
+  );
+
+  return <MDXContext.Provider value={value}>{children}</MDXContext.Provider>;
 }
 
-/** React hook for mdxcomponents. */
+/** Return inherited MDX component overrides merged with local overrides. */
 export function useMDXComponents(components?: MDXComponents): MDXComponents {
-  const contextComponents = useContext(MDXContext);
-  return { ...contextComponents, ...(components ?? {}) };
+  const inherited = React.useContext(MDXContext);
+  return React.useMemo(
+    () => mergeComponents(inherited, components),
+    [inherited, components],
+  );
 }

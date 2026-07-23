@@ -60,6 +60,7 @@ const BASE_MOCK_ENV: EnvironmentConfig = {
   port: 3000,
   requestTimeoutMs: undefined,
   httpFetchTimeoutMs: undefined,
+  extensionSetupTimeoutMs: undefined,
   ssrMaxConcurrentTransforms: 3,
   otelEnabled: false,
   otelServiceName: undefined,
@@ -69,6 +70,8 @@ const BASE_MOCK_ENV: EnvironmentConfig = {
   otelTracesExporter: undefined,
   otelMetricsExporter: undefined,
   otelHeaders: undefined,
+  otelTracesHeaders: undefined,
+  otelMetricsHeaders: undefined,
   otelMetricsEnabled: false,
   openaiApiKey: undefined,
   openaiBaseUrl: undefined,
@@ -372,7 +375,8 @@ describe("config/env", () => {
           otelEndpoint: "http://localhost:4318",
           otelTracesEndpoint: "http://traces:4318",
           otelTracesExporter: "otlp",
-          otelHeaders: "Authorization=Bearer test-token",
+          otelHeaders: "Authorization=Bearer <TOKEN>",
+          otelTracesHeaders: "x-signal=traces",
         }),
       );
       assertEquals(config.enabledFlag, "true");
@@ -381,8 +385,8 @@ describe("config/env", () => {
       assertEquals(config.endpoint, "http://localhost:4318");
       assertEquals(config.tracesEndpoint, "http://traces:4318");
       assertEquals(config.exporter, "otlp");
-      assertEquals(config.headers, "Authorization=Bearer test-token");
-      assertEquals(config.tracesHeaders, undefined);
+      assertEquals(config.headers, "Authorization=Bearer <TOKEN>");
+      assertEquals(config.tracesHeaders, "x-signal=traces");
     });
   });
 
@@ -399,12 +403,16 @@ describe("config/env", () => {
           otelEndpoint: "http://localhost:4318",
           otelMetricsEndpoint: "http://metrics:4318",
           otelMetricsExporter: "otlp",
+          otelHeaders: "x-shared=metrics",
+          otelMetricsHeaders: "x-signal=metrics",
         }),
       );
       assertEquals(config.enabledFlag, "1");
       assertEquals(config.endpoint, "http://localhost:4318");
       assertEquals(config.metricsEndpoint, "http://metrics:4318");
       assertEquals(config.exporter, "otlp");
+      assertEquals(config.headers, "x-shared=metrics");
+      assertEquals(config.metricsHeaders, "x-signal=metrics");
     });
 
     it("should only set veryfrontFlag when OTEL is globally enabled", () => {

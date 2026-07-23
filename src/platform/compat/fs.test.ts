@@ -5,8 +5,9 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests verify the cross-runtime filesystem abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   chmod,
   createFileSystem,
@@ -19,7 +20,9 @@ import {
   readDir,
   readFile,
   readTextFile,
+  realPath,
   remove,
+  rename,
   stat,
   symlink,
   writeFile,
@@ -54,6 +57,8 @@ describe("Filesystem Compat", () => {
         "mkdir",
         "remove",
         "chmod",
+        "realPath",
+        "rename",
       ] as const;
 
       for (const method of methods) {
@@ -99,6 +104,20 @@ describe("Filesystem Compat", () => {
     });
   });
 
+  describe("rename", () => {
+    it("replaces an existing file without exposing an intermediate target", async () => {
+      const sourcePath = join(testDir, "rename-source.txt");
+      const targetPath = join(testDir, "rename-target.txt");
+      await writeTextFile(sourcePath, "new content");
+      await writeTextFile(targetPath, "old content");
+
+      await rename(sourcePath, targetPath);
+
+      assertEquals(await exists(sourcePath), false);
+      assertEquals(await readTextFile(targetPath), "new content");
+    });
+  });
+
   describe("exists", () => {
     it("should return true for existing file", async () => {
       const filePath = join(testDir, "exists-test.txt");
@@ -114,6 +133,13 @@ describe("Filesystem Compat", () => {
 
     it("should return true for existing directory", async () => {
       assertEquals(await exists(testDir), true);
+    });
+
+    it("should return false when an ancestor is not a directory", async () => {
+      const filePath = join(testDir, "exists-nondirectory-ancestor.txt");
+      await writeTextFile(filePath, "test");
+
+      assertEquals(await exists(join(filePath, "child")), false);
     });
   });
 
@@ -195,6 +221,10 @@ describe("Filesystem Compat", () => {
       await remove(dirPath, { recursive: true });
       assertEquals(await exists(dirPath), false);
     });
+
+    it("should reject when a recursively removed path does not exist", async () => {
+      await assertRejects(() => remove(join(testDir, "missing-recursive"), { recursive: true }));
+    });
   });
 
   describe("makeTempDir", () => {
@@ -207,6 +237,13 @@ describe("Filesystem Compat", () => {
 
       await remove(tempDir, { recursive: true });
     });
+
+    it("should reject a prefix that could escape the temp root", async () => {
+      await assertRejects(
+        () => makeTempDir({ prefix: "../escape-" }),
+        VeryfrontError,
+      );
+    });
   });
 
   describe("chmod", () => {
@@ -216,6 +253,17 @@ describe("Filesystem Compat", () => {
 
       // Should not throw (may be no-op on Windows)
       await chmod(filePath, 0o600);
+    });
+
+    it("should preserve filesystem errors", async () => {
+      await assertRejects(() => chmod(join(testDir, "missing-chmod.txt"), 0o600));
+    });
+  });
+
+  describe("realPath", () => {
+    it("should resolve a path to its canonical absolute form", async () => {
+      const canonicalTestDir = await realPath(testDir);
+      assertEquals(await realPath(join(testDir, ".")), canonicalTestDir);
     });
   });
 
@@ -245,6 +293,12 @@ describe("Filesystem Compat", () => {
     it("should return true for Node ENOENT errors", () => {
       const error = new Error("ENOENT") as Error & { code: string };
       error.code = "ENOENT";
+      assertEquals(isNotFoundError(error), true);
+    });
+
+    it("should return true for an ENOTDIR path error", () => {
+      const error = new Error("ENOTDIR") as Error & { code: string };
+      error.code = "ENOTDIR";
       assertEquals(isNotFoundError(error), true);
     });
 

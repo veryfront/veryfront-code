@@ -1,6 +1,6 @@
-# GitHub FS Adapter
+# GitHub filesystem adapter
 
-Serves Veryfront projects directly from a GitHub repository. Read-only access via GitHub API.
+The GitHub filesystem adapter provides read-only project access through the GitHub API.
 
 ## Configuration
 
@@ -15,40 +15,61 @@ export default {
       repo: "myrepo", // Required
       ref: "main", // Optional (default: "main")
       cache: {
-        enabled: true, // Optional (default: true)
-        ttl: 60000, // Optional (default: 60s)
+        enabled: true,
+        ttl: 60000,
+        maxSize: 1000,
+        maxMemory: 104857600,
+      },
+      retry: {
+        maxRetries: 3,
+        initialDelay: 1000,
+        maxDelay: 10000,
+        requestTimeout: 30000,
+        totalTimeout: 120000,
+        maxResponseBytes: 67108864,
       },
     },
   },
 };
 ```
 
-## Environment Variables
+All cache durations, retry delays, and timeouts use milliseconds. `maxRetries` is the number of
+retries after the initial request. `maxResponseBytes` limits each decoded GitHub API response.
+
+## Environment variables
 
 | Variable       | Required | Description                                  |
 | -------------- | -------- | -------------------------------------------- |
-| `GITHUB_TOKEN` | Yes      | Personal Access Token with repo read access  |
+| `GITHUB_TOKEN` | No       | Access token fallback when config omits one  |
 | `GITHUB_OWNER` | No       | Repository owner (fallback if not in config) |
 | `GITHUB_REPO`  | No       | Repository name (fallback if not in config)  |
 | `GITHUB_REF`   | No       | Branch/tag/SHA (fallback, default: "main")   |
 
-## How It Works
+## Behavior
 
-1. On initialization, fetches the full repository tree via Git Trees API
-2. Builds an in-memory index of all files and directories
-3. File reads use Contents API (or Blob API for files >1MB)
-4. Results are cached with configurable TTL
+- Initialization fetches the repository tree and builds an in-memory file index.
+- If GitHub truncates a recursive tree response, the adapter walks each subtree to build a
+  complete index.
+- File reads use the Contents API. Files larger than 1 MB use the Blob API.
+- `refreshSourceSnapshot()` clears cached content and rebuilds the repository index.
+- Requests retry transient failures up to `maxRetries`. Exponential backoff does not exceed
+  `maxDelay`.
+- A GitHub `Retry-After` value is a server-required minimum and can exceed `maxDelay`. The adapter
+  fails instead of waiting when the delay does not fit within `totalTimeout`.
+- Each request attempt aborts after `requestTimeout`.
+- Each tree, content, or blob operation aborts after `totalTimeout`, including retries and tree
+  traversal.
+- Each successful response is cancelled when it exceeds `maxResponseBytes`.
+- `GitHubApiClient` methods accept an optional `{ signal }` argument for caller cancellation.
 
-## Rate Limits
+## Rate limits
 
-GitHub API allows 5,000 requests/hour for authenticated requests. The adapter:
-
-- Caches aggressively to minimize API calls
-- Warns when approaching rate limit
-- Includes rate limit info in errors
+The adapter tracks GitHub rate-limit response headers. `getRateLimitInfo()` returns the most recent
+valid limit, used and remaining request counts, and reset time. Invalid or incomplete headers are
+ignored.
 
 ## Limitations
 
-- **Read-only**: No write operations supported
-- **Single repo**: One repository per adapter instance
-- **No webhooks**: Cache invalidation is TTL-based only
+- The adapter is read-only.
+- Each adapter instance accesses one repository and one configured ref.
+- The adapter does not subscribe to repository webhooks.

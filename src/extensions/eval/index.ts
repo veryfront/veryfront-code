@@ -11,10 +11,12 @@ export {
   redactEvalReportForExport,
 } from "./eval-report-exporter.ts";
 export type {
+  EvalReport,
   EvalReportExportContext,
   EvalReportExporter,
   EvalReportExporterRegistry,
   EvalReportExportFailure,
+  EvalReportExportMaybePromise,
   EvalReportExportReceipt,
   EvalReportExportRedaction,
   EvalReportExportResult,

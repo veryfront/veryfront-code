@@ -150,7 +150,7 @@ export function validateAllowedDirs(
   if (!isWithinDirectory(normalizedBase, normalizedPath)) {
     return {
       valid: false,
-      error: `Path is outside base directory: ${baseDir}`,
+      error: "Path is outside base directory",
       code: PathValidationError.OUTSIDE_BASE,
     };
   }

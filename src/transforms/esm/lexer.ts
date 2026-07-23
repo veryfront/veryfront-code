@@ -1,57 +1,13 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ImportSpecifier, ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
+import { maskHttpUrls, unmaskHttpUrls } from "./http-url-mask.ts";
 
 export type { ImportSpecifier };
 
 const logger = baseLogger.component("es-module-lexer");
 
 let initPromise: Promise<void> | null = null;
-
-// Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes).
-// Uses negative lookbehind to avoid matching URLs inside escaped quotes (like \").
-//
-// Template literals with ${} interpolation: the pattern captures from the
-// opening backtick to the closing backtick, treating `${…}` as part of the
-// URL text.  This is intentional — mask/unmask is atomic, so the interpolation
-// is preserved verbatim.  Template literals with dynamic expressions are
-// correctly passed through; es-module-lexer will report their `n` field as
-// undefined, so the replacer skips them.
-const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
-
-// Placeholder prefix for masked HTTP URLs.  The hex suffix makes it
-// unlikely to collide with any identifier or string in user-supplied code.
-// Placeholders are session-local (never written to disk) so uniqueness only
-// needs to hold for the lifetime of a single parse call.
-const VFURL_PLACEHOLDER_PREFIX = "__VF_HTTP_MASK_e3c2_";
-
-type UrlMaskResult = {
-  masked: string;
-  urlMap: Map<string, string>;
-};
-
-function maskHttpUrls(code: string): UrlMaskResult {
-  const urlMap = new Map<string, string>();
-  let counter = 0;
-
-  const masked = code.replace(HTTP_URL_PATTERN, (_match, quote: string, url: string) => {
-    const placeholder = `${VFURL_PLACEHOLDER_PREFIX}${counter++}__`;
-    urlMap.set(placeholder, url);
-    return `${quote}${placeholder}${quote}`;
-  });
-
-  return { masked, urlMap };
-}
-
-function unmaskHttpUrls(code: string, urlMap: Map<string, string>): string {
-  let result = code;
-
-  for (const [placeholder, url] of urlMap) {
-    result = result.replaceAll(placeholder, url);
-  }
-
-  return result;
-}
 
 function getLexer(): ModuleLexer {
   return resolveContract<ModuleLexer>("ModuleLexer");
@@ -68,27 +24,14 @@ export async function initLexer(): Promise<void> {
   await initPromise;
 }
 
-function logParseError(error: unknown, code: string): void {
+function logParseError(error: unknown): void {
   const errorMsg = error instanceof Error ? error.message : String(error);
   const match = errorMsg.match(/@:(\d+):(\d+)/);
   if (!match) return;
 
   const line = Number.parseInt(match[1] ?? "", 10);
   const col = Number.parseInt(match[2] ?? "", 10);
-  const lines = code.split("\n");
-  const start = Math.max(0, line - 3);
-
-  const context = lines
-    .slice(start, line + 2)
-    .map((l, i) => {
-      const lineNum = start + i + 1;
-      const prefix = lineNum === line ? ">>> " : "    ";
-      const snippet = l.length > 200 ? `${l.substring(0, 200)}...` : l;
-      return `${prefix}${lineNum}: ${snippet}`;
-    })
-    .join("\n");
-
-  logger.error("Parse error", { line, col, context });
+  logger.error("Parse error", { line, col });
 }
 
 export async function parseImports(code: string): Promise<readonly ImportSpecifier[]> {
@@ -100,7 +43,7 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
   try {
     imports = getLexer().parse(masked);
   } catch (error) {
-    logParseError(error, masked);
+    logParseError(error);
     throw error;
   }
 

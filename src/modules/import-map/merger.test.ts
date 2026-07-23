@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mergeImportMaps } from "./merger.ts";
 
@@ -51,6 +51,59 @@ describe("modules/import-map/merger", () => {
     it("should handle single map", () => {
       const result = mergeImportMaps({ imports: { a: "b" } });
       assertEquals(result.imports?.a, "b");
+    });
+
+    it("treats prototype-looking specifiers as ordinary own properties", () => {
+      const imports = JSON.parse('{"__proto__":"https://example.com/module.js"}');
+      const result = mergeImportMaps({ imports });
+
+      assertEquals(result.imports?.["__proto__"], "https://example.com/module.js");
+      assertEquals(Object.getPrototypeOf(result.imports), Object.prototype);
+    });
+
+    it("rejects malformed runtime values", () => {
+      assertThrows(
+        () => mergeImportMaps({ imports: { broken: 42 } } as never),
+        TypeError,
+        "Invalid import map",
+      );
+    });
+
+    it("bounds empty scope collections", () => {
+      const scopes = Object.fromEntries(
+        Array.from({ length: 5_001 }, (_, index) => [`/scope-${index}/`, {}]),
+      );
+
+      assertThrows(
+        () => mergeImportMaps({ scopes }),
+        TypeError,
+        "Invalid import map",
+      );
+    });
+
+    it("bounds the combined output across multiple maps", () => {
+      const first = {
+        imports: Object.fromEntries(
+          Array.from({ length: 2_501 }, (_, index) => [
+            `first-${index}`,
+            `/first/${index}.js`,
+          ]),
+        ),
+      };
+      const second = {
+        imports: Object.fromEntries(
+          Array.from({ length: 2_501 }, (_, index) => [
+            `second-${index}`,
+            `/second/${index}.js`,
+          ]),
+        ),
+      };
+
+      assertThrows(
+        () => mergeImportMaps(first, second),
+        TypeError,
+        "Merged import map exceeds entry limit",
+      );
     });
   });
 });

@@ -44,7 +44,7 @@ export function getNativeDenoFromHost(host: NativeDenoHost): typeof Deno | undef
  * shim transform (dnt rewrites bare `Response` to undici's polyfill).
  */
 export function getNativeResponse(): typeof Response {
-  return getNativeResponseFromHost(self);
+  return typeof self === "undefined" ? Response : getNativeResponseFromHost(self);
 }
 
 /**
@@ -61,7 +61,7 @@ export function getNativeResponse(): typeof Response {
  * Deno runtime can use a non-null assertion on the result.
  */
 export function getNativeDeno(): typeof Deno | undefined {
-  return getNativeDenoFromHost(self);
+  return typeof self === "undefined" ? undefined : getNativeDenoFromHost(self);
 }
 
 /**

@@ -12,7 +12,7 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { createError, fromError, toError } from "#veryfront/errors";
 import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
 import {
@@ -21,12 +21,20 @@ import {
   type LocalAIDevice,
   throwIfLocalAIDisabled,
 } from "./env.ts";
-import { createPipelineCache } from "./pipeline-cache.ts";
+import { createPipelineCache, type PipelineLease } from "./pipeline-cache.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 const logger = serverLogger.component("local-llm");
 
 /** Default maximum new tokens for local model generation */
 const DEFAULT_MAX_NEW_TOKENS = 512;
+const MAX_NEW_TOKENS = 32_768;
+const MAX_CHAT_MESSAGES = 1_024;
+const MAX_CHAT_MESSAGE_CHARACTERS = 4 * 1_024 * 1_024;
+const MAX_STOP_SEQUENCES = 16;
+const MAX_STOP_SEQUENCE_LENGTH = 1_024;
+const LOCAL_MODEL_CACHE_DIR = join(getCacheBaseDir(), "models");
 
 /** Chat message format expected by Transformers.js */
 export interface ChatMessage {
@@ -41,6 +49,91 @@ export interface GenerateOptions {
   topP?: number;
   topK?: number;
   stopSequences?: string[];
+  abortSignal?: AbortSignal;
+}
+
+/** Validate direct local-engine messages before model loading or inference. */
+export function assertValidChatMessages(value: unknown): asserts value is ChatMessage[] {
+  if (!Array.isArray(value) || value.length > MAX_CHAT_MESSAGES) {
+    throw new RangeError(`Local model prompt must contain at most ${MAX_CHAT_MESSAGES} messages`);
+  }
+  if (value.length === 0) {
+    throw new RangeError("Local model prompt must contain at least one message");
+  }
+
+  let totalCharacters = 0;
+  for (const message of value) {
+    if (typeof message !== "object" || message === null || Array.isArray(message)) {
+      throw new TypeError("Local model prompt contains an invalid message");
+    }
+    const candidate = message as { role?: unknown; content?: unknown };
+    if (
+      candidate.role !== "system" && candidate.role !== "user" &&
+      candidate.role !== "assistant"
+    ) {
+      throw new TypeError("Local model prompt contains an invalid role");
+    }
+    if (typeof candidate.content !== "string") {
+      throw new TypeError("Local model prompt content must be text");
+    }
+    totalCharacters += candidate.content.length;
+    if (totalCharacters > MAX_CHAT_MESSAGE_CHARACTERS) {
+      throw new RangeError("Local model prompt exceeded the supported size");
+    }
+  }
+}
+
+/** Validate local generation options before loading a model. */
+export function assertValidGenerateOptions(options: GenerateOptions): void {
+  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+    throw new TypeError("Local generation options must be an object");
+  }
+  if (
+    options.maxNewTokens !== undefined &&
+    (!Number.isSafeInteger(options.maxNewTokens) || options.maxNewTokens < 1 ||
+      options.maxNewTokens > MAX_NEW_TOKENS)
+  ) {
+    throw new RangeError(`maxNewTokens must be an integer from 1 to ${MAX_NEW_TOKENS}`);
+  }
+  if (
+    options.temperature !== undefined &&
+    (!Number.isFinite(options.temperature) || options.temperature < 0 || options.temperature > 2)
+  ) {
+    throw new RangeError("temperature must be a finite number from 0 to 2");
+  }
+  if (
+    options.topP !== undefined &&
+    (!Number.isFinite(options.topP) || options.topP < 0 || options.topP > 1)
+  ) {
+    throw new RangeError("topP must be a finite number from 0 to 1");
+  }
+  if (
+    options.topK !== undefined &&
+    (!Number.isSafeInteger(options.topK) || options.topK < 1 || options.topK > 10_000)
+  ) {
+    throw new RangeError("topK must be an integer from 1 to 10000");
+  }
+  if (options.stopSequences !== undefined) {
+    if (
+      !Array.isArray(options.stopSequences) || options.stopSequences.length > MAX_STOP_SEQUENCES ||
+      options.stopSequences.some((value) =>
+        typeof value !== "string" || value.length === 0 || value.length > MAX_STOP_SEQUENCE_LENGTH
+      )
+    ) {
+      throw new RangeError(
+        `stopSequences must contain at most ${MAX_STOP_SEQUENCES} non-empty strings of at most ${MAX_STOP_SEQUENCE_LENGTH} characters`,
+      );
+    }
+  }
+  if (options.abortSignal !== undefined && !(options.abortSignal instanceof AbortSignal)) {
+    throw new TypeError("abortSignal must be an AbortSignal");
+  }
+}
+
+function throwIfGenerationAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new DOMException("Local model generation was aborted", "AbortError");
+  }
 }
 
 interface TransformersEnv {
@@ -128,6 +221,64 @@ interface DecodingTokenizer {
   decode(tokens: number[]): string;
 }
 
+/** Bounded state shared by the text streamer and generation stopping criterion. */
+export interface StopSequenceController {
+  readonly stopped: boolean;
+  push(text: string): string;
+  finish(): string;
+}
+
+/** Create a bounded filter that removes the first configured stop sequence. */
+export function createStopSequenceController(
+  stopSequences: readonly string[],
+): StopSequenceController {
+  if (
+    !Array.isArray(stopSequences) || stopSequences.length === 0 ||
+    stopSequences.length > MAX_STOP_SEQUENCES ||
+    stopSequences.some((value) =>
+      typeof value !== "string" || value.length === 0 || value.length > MAX_STOP_SEQUENCE_LENGTH
+    )
+  ) {
+    throw new RangeError("Stop sequence configuration is invalid");
+  }
+  const sequences = [...stopSequences];
+  const retainedSuffixLength = Math.max(...sequences.map((value) => value.length)) - 1;
+  let pending = "";
+  let stopped = false;
+
+  return {
+    get stopped() {
+      return stopped;
+    },
+    push(text: string): string {
+      if (stopped || text.length === 0) return "";
+      pending += text;
+      let firstMatch = -1;
+      for (const sequence of sequences) {
+        const index = pending.indexOf(sequence);
+        if (index >= 0 && (firstMatch < 0 || index < firstMatch)) firstMatch = index;
+      }
+      if (firstMatch >= 0) {
+        const output = pending.slice(0, firstMatch);
+        pending = "";
+        stopped = true;
+        return output;
+      }
+      if (pending.length <= retainedSuffixLength) return "";
+      const outputLength = pending.length - retainedSuffixLength;
+      const output = pending.slice(0, outputLength);
+      pending = pending.slice(outputLength);
+      return output;
+    },
+    finish(): string {
+      if (stopped) return "";
+      const output = pending;
+      pending = "";
+      return output;
+    },
+  };
+}
+
 /** Options object forwarded to the Transformers.js text-generation pipeline. */
 export interface PipeOptions {
   max_new_tokens: number;
@@ -139,50 +290,29 @@ export interface PipeOptions {
   stopping_criteria?: StoppingCriteriaListInstance;
 }
 
-/**
- * Build a StoppingCriteriaList that halts generation as soon as any of the
- * provided stop strings appears in the *newly generated* output.
- *
- * Transformers.js (>=3.x) does not expose a `stop_strings` generate option,
- * so we decode the running sequence with the tokenizer and match the stop
- * strings against the suffix through the documented `stopping_criteria` mechanism.
- *
- * Transformers.js passes the full sequence (prompt + generated tokens) to
- * `_call` on every step. We must scan only the generated suffix: if a system
- * or user message contains a configured stop string (e.g. an instruction that
- * mentions "END"), scanning the whole sequence would return `true` on the very
- * first generation step and truncate the response to empty.
- *
- * The prompt token length is not cheaply known where this list is built (the
- * pipeline tokenizes `messages` internally), so per batch item we self-calibrate
- * on the first `_call`: the sequence length seen on the first invocation is
- * recorded as the prompt boundary, and only tokens at or after that boundary are
- * decoded and matched on subsequent steps.
- */
-function buildStopStringCriteria(
+function buildStoppingCriteria(
+  options: GenerateOptions,
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
-  tokenizer: DecodingTokenizer,
-  stopSequences: string[],
-): StoppingCriteriaListInstance {
-  const list = new transformers.StoppingCriteriaList();
-  const base = new transformers.StoppingCriteria();
-  const criterion = base as StoppingCriteriaInstance;
-  // Per-batch-item prompt token length, captured on the first invocation.
-  const promptLengths: number[] = [];
-  criterion._call = (inputIds: number[][]): boolean[] =>
-    inputIds.map((ids, item) => {
-      if (promptLengths[item] === undefined) {
-        // First step for this item: everything seen so far is prompt. Record the
-        // boundary and never trip on the prompt itself.
-        promptLengths[item] = ids.length;
-        return false;
-      }
-      const generated = ids.slice(promptLengths[item]);
-      if (generated.length === 0) return false;
-      const text = tokenizer.decode(generated);
-      return stopSequences.some((stop) => stop.length > 0 && text.includes(stop));
-    });
-  list.push(criterion);
+  stopController: StopSequenceController | undefined,
+): StoppingCriteriaListInstance | undefined {
+  let list: StoppingCriteriaListInstance | undefined;
+  if (options.stopSequences && options.stopSequences.length > 0) {
+    if (!stopController) {
+      throw new TypeError("Stop sequence controller is required");
+    }
+    list = new transformers.StoppingCriteriaList();
+    const stopCriterion = new transformers.StoppingCriteria();
+    stopCriterion._call = (inputIds: number[][]): boolean[] =>
+      inputIds.map(() => stopController.stopped);
+    list.push(stopCriterion);
+  }
+  if (options.abortSignal) {
+    list ??= new transformers.StoppingCriteriaList();
+    const abortCriterion = new transformers.StoppingCriteria();
+    abortCriterion._call = (inputIds: number[][]): boolean[] =>
+      inputIds.map(() => options.abortSignal?.aborted === true);
+    list.push(abortCriterion);
+  }
   return list;
 }
 
@@ -196,15 +326,16 @@ function buildStopStringCriteria(
 export function buildPipeOptions(
   options: GenerateOptions,
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
-  tokenizer: DecodingTokenizer,
+  _tokenizer: DecodingTokenizer,
   streamer: unknown,
+  stopController?: StopSequenceController,
 ): PipeOptions {
+  assertValidGenerateOptions(options);
   const {
     maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
     temperature = 0.7,
     topP,
     topK,
-    stopSequences,
   } = options;
 
   const pipeOptions: PipeOptions = {
@@ -216,12 +347,9 @@ export function buildPipeOptions(
     streamer,
   };
 
-  if (stopSequences && stopSequences.length > 0) {
-    pipeOptions.stopping_criteria = buildStopStringCriteria(
-      transformers,
-      tokenizer,
-      stopSequences,
-    );
+  const stoppingCriteria = buildStoppingCriteria(options, transformers, stopController);
+  if (stoppingCriteria) {
+    pipeOptions.stopping_criteria = stoppingCriteria;
   }
 
   return pipeOptions;
@@ -268,7 +396,7 @@ export async function getTransformers(): Promise<TransformersModule> {
   }
 
   // Configure cache directory for model files
-  mod.env.cacheDir = "./.cache/models";
+  mod.env.cacheDir = LOCAL_MODEL_CACHE_DIR;
   // Disable browser-specific features in Node/Deno
   mod.env.useBrowserCache = false;
 
@@ -334,7 +462,7 @@ function getConditionalModelConstructor(
 
 /**
  * Returns true when an error message matches known ONNX Runtime / native-addon
- * failure patterns. These substrings are heuristic — ONNX Runtime does not
+ * failure patterns. These substrings are heuristic - ONNX Runtime does not
  * expose a structured error type, so message scanning is the only viable
  * approach. Fail-safe: unrecognized errors are NOT matched and propagate as-is.
  */
@@ -344,6 +472,29 @@ function isOnnxUnavailableError(msg: string): boolean {
     msg.includes("dlopen") || msg.includes("dynamic linking") ||
     msg.includes("native module") || msg.includes("SharedArrayBuffer")
   );
+}
+
+function toSafeLocalLoadError(error: unknown): Error {
+  if (fromError(error)) return error instanceof Error ? error : new Error("Local AI model failed");
+  const message = error instanceof Error && typeof error.message === "string" ? error.message : "";
+  const nativeRuntimeUnavailable = isOnnxUnavailableError(message);
+  return toError(
+    createError({
+      type: "no_ai_available",
+      message: nativeRuntimeUnavailable
+        ? "Local AI model unavailable. Native ONNX Runtime is not supported in this environment. " +
+          "Use a supported runtime or configure a cloud provider."
+        : "Local AI model could not be loaded. Check network access and the model cache, then retry.",
+    }),
+  );
+}
+
+function toSafeLocalGenerationError(error: unknown): Error {
+  if (error instanceof DOMException && error.name === "AbortError") return error;
+  if (fromError(error)) {
+    return error instanceof Error ? error : new Error("Local AI request failed");
+  }
+  return toError(createError({ type: "agent", message: "Local AI generation failed." }));
 }
 
 /**
@@ -374,23 +525,15 @@ const textGenerationPipelines = createPipelineCache<TextGenerationPipeline, Loca
       logger.info(`Model loaded: ${modelInfo.hfId}`);
       return pipe;
     } catch (error) {
-      // Convert ONNX / native-addon errors to no_ai_available so they propagate
-      // correctly through the chat handler (503) instead of being swallowed as
-      // in-band SSE errors inside a 200 response stream.
-      const msg = error instanceof Error ? error.message : String(error);
-      if (isOnnxUnavailableError(msg)) {
+      if (
+        !fromError(error) &&
+        isOnnxUnavailableError(
+          error instanceof Error && typeof error.message === "string" ? error.message : "",
+        )
+      ) {
         transformersModule = null;
-        throw toError(
-          createError({
-            type: "no_ai_available",
-            message:
-              "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
-              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
-              "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
-          }),
-        );
       }
-      throw error;
+      throw toSafeLocalLoadError(error);
     }
   },
 );
@@ -421,20 +564,15 @@ const conditionalGenerationRuntimes = createPipelineCache<
       logger.info(`Model loaded: ${modelInfo.hfId}`);
       return { processor, model };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (isOnnxUnavailableError(msg)) {
+      if (
+        !fromError(error) &&
+        isOnnxUnavailableError(
+          error instanceof Error && typeof error.message === "string" ? error.message : "",
+        )
+      ) {
         transformersModule = null;
-        throw toError(
-          createError({
-            type: "no_ai_available",
-            message:
-              "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
-              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
-              "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
-          }),
-        );
       }
-      throw error;
+      throw toSafeLocalLoadError(error);
     }
   },
 );
@@ -444,12 +582,37 @@ function getModelCacheKey(modelInfo: ModelInfo, device: LocalAIDevice): string {
 }
 
 async function loadLocalRuntime(modelInfo: ModelInfo): Promise<unknown> {
+  throwIfLocalAIDisabled();
   const device = await getLocalInferenceDevice();
   const loadInfo: LocalModelLoadInfo = { ...modelInfo, device };
   const cacheKey = getModelCacheKey(modelInfo, device);
   return modelInfo.engine === "conditional-generation"
     ? conditionalGenerationRuntimes.load(cacheKey, loadInfo)
     : textGenerationPipelines.load(cacheKey, loadInfo);
+}
+
+async function acquireConditionalRuntime(
+  modelInfo: ModelInfo,
+): Promise<PipelineLease<ConditionalGenerationRuntime>> {
+  throwIfLocalAIDisabled();
+  const device = await getLocalInferenceDevice();
+  const loadInfo: LocalModelLoadInfo = { ...modelInfo, device };
+  return await conditionalGenerationRuntimes.acquire(
+    getModelCacheKey(modelInfo, device),
+    loadInfo,
+  );
+}
+
+async function acquireTextGenerationPipeline(
+  modelInfo: ModelInfo,
+): Promise<PipelineLease<TextGenerationPipeline>> {
+  throwIfLocalAIDisabled();
+  const device = await getLocalInferenceDevice();
+  const loadInfo: LocalModelLoadInfo = { ...modelInfo, device };
+  return await textGenerationPipelines.acquire(
+    getModelCacheKey(modelInfo, device),
+    loadInfo,
+  );
 }
 
 function toConditionalMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
@@ -462,15 +625,16 @@ function toConditionalMessages(messages: ChatMessage[]): Array<Record<string, un
 export function buildConditionalGenerateOptions(
   options: GenerateOptions,
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
-  tokenizer: DecodingTokenizer,
+  _tokenizer: DecodingTokenizer,
   streamer: unknown,
+  stopController?: StopSequenceController,
 ): PipeOptions {
+  assertValidGenerateOptions(options);
   const {
     maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
     temperature = 0.7,
     topP,
     topK,
-    stopSequences,
   } = options;
 
   const generateOptions: PipeOptions = {
@@ -482,12 +646,9 @@ export function buildConditionalGenerateOptions(
     streamer,
   };
 
-  if (stopSequences && stopSequences.length > 0) {
-    generateOptions.stopping_criteria = buildStopStringCriteria(
-      transformers,
-      tokenizer,
-      stopSequences,
-    );
+  const stoppingCriteria = buildStoppingCriteria(options, transformers, stopController);
+  if (stoppingCriteria) {
+    generateOptions.stopping_criteria = stoppingCriteria;
   }
 
   return generateOptions;
@@ -526,32 +687,46 @@ async function* generateConditionalStream(
   messages: ChatMessage[],
   options: GenerateOptions,
 ): AsyncGenerator<string, void, undefined> {
-  const runtime = await loadLocalRuntime(modelInfo) as ConditionalGenerationRuntime;
-  const transformers = await getTransformers();
-  const inputs = await prepareConditionalInputs(runtime, modelInfo, messages);
+  const lease = await acquireConditionalRuntime(modelInfo);
+  let releaseOnGenerationCompletion = false;
+  try {
+    throwIfGenerationAborted(options.abortSignal);
+    const runtime = lease.value;
+    const transformers = await getTransformers();
+    throwIfGenerationAborted(options.abortSignal);
+    const inputs = await prepareConditionalInputs(runtime, modelInfo, messages);
+    throwIfGenerationAborted(options.abortSignal);
 
-  const tokenQueue: string[] = [];
-  let resolveWaiting: (() => void) | null = null;
-  let done = false;
+    const tokenQueue: string[] = [];
+    let tokenQueueIndex = 0;
+    const stopController = options.stopSequences?.length
+      ? createStopSequenceController(options.stopSequences)
+      : undefined;
+    let resolveWaiting: (() => void) | null = null;
+    let done = false;
+    let generationError: unknown;
+    let generationFailed = false;
 
-  function flushWaiting(): void {
-    if (resolveWaiting) {
-      resolveWaiting();
-      resolveWaiting = null;
-    }
-  }
+    const flushWaiting = (): void => {
+      if (resolveWaiting) {
+        resolveWaiting();
+        resolveWaiting = null;
+      }
+    };
 
-  const streamer = new transformers.TextStreamer(runtime.processor.tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function: (text: string) => {
-      tokenQueue.push(text);
-      flushWaiting();
-    },
-  });
+    const streamer = new transformers.TextStreamer(runtime.processor.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: (text: string) => {
+        const output = stopController?.push(text) ?? text;
+        if (output) {
+          tokenQueue.push(output);
+          flushWaiting();
+        }
+      },
+    });
 
-  const generatePromise = (async () => {
-    try {
+    const generatePromise = (async () => {
       await runtime.model.generate({
         ...inputs,
         ...buildConditionalGenerateOptions(
@@ -559,35 +734,43 @@ async function* generateConditionalStream(
           transformers,
           runtime.processor.tokenizer as DecodingTokenizer,
           streamer,
+          stopController,
         ),
       });
-    } finally {
+      const trailing = stopController?.finish();
+      if (trailing) tokenQueue.push(trailing);
+    })().catch((error) => {
+      generationFailed = true;
+      generationError = error;
+    }).finally(() => {
       done = true;
+      lease.release();
       flushWaiting();
-    }
-  })();
-
-  while (true) {
-    while (tokenQueue.length > 0) {
-      yield tokenQueue.shift()!;
-    }
-
-    if (done) break;
-
-    await new Promise<void>((resolve) => {
-      resolveWaiting = resolve;
     });
+    releaseOnGenerationCompletion = true;
+
+    while (true) {
+      while (tokenQueueIndex < tokenQueue.length) {
+        yield tokenQueue[tokenQueueIndex++]!;
+      }
+      if (tokenQueueIndex > 0) {
+        tokenQueue.length = 0;
+        tokenQueueIndex = 0;
+      }
+
+      if (done) break;
+
+      await new Promise<void>((resolve) => {
+        resolveWaiting = resolve;
+      });
+    }
+
+    await generatePromise;
+    if (generationFailed) throw toSafeLocalGenerationError(generationError);
+    throwIfGenerationAborted(options.abortSignal);
+  } finally {
+    if (!releaseOnGenerationCompletion) lease.release();
   }
-
-  await generatePromise;
-}
-
-/**
- * Load a text-generation pipeline for the given model.
- * Returns a cached pipeline if already loaded.
- */
-async function loadPipeline(modelInfo: ModelInfo): Promise<TextGenerationPipeline> {
-  return await loadLocalRuntime(modelInfo) as TextGenerationPipeline;
 }
 
 /**
@@ -607,7 +790,7 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<TextGenerationPipelin
  * cached after the first successful call, so subsequent checks are instant.
  */
 export async function verifyLocalRuntime(modelId?: string): Promise<void> {
-  const modelInfo = resolveLocalModel(modelId || DEFAULT_LOCAL_MODEL);
+  const modelInfo = resolveLocalModel(modelId === undefined ? DEFAULT_LOCAL_MODEL : modelId);
   await loadLocalRuntime(modelInfo);
 }
 
@@ -616,74 +799,123 @@ export async function verifyLocalRuntime(modelId?: string): Promise<void> {
  *
  * Yields individual tokens as they are generated by the model.
  */
-export async function* generateStream(
+async function* generateStreamWithLifecycle(
   modelId: string,
   messages: ChatMessage[],
-  options: GenerateOptions = {},
+  options: GenerateOptions,
 ): AsyncGenerator<string, void, undefined> {
+  throwIfGenerationAborted(options.abortSignal);
+  throwIfLocalAIDisabled();
   const modelInfo = resolveLocalModel(modelId);
   if (modelInfo.engine === "conditional-generation") {
     yield* generateConditionalStream(modelInfo, messages, options);
     return;
   }
 
-  const pipe = await loadPipeline(modelInfo);
-  const transformers = await getTransformers();
+  const lease = await acquireTextGenerationPipeline(modelInfo);
+  let releaseOnGenerationCompletion = false;
+  try {
+    throwIfGenerationAborted(options.abortSignal);
+    const pipe = lease.value;
+    const transformers = await getTransformers();
+    throwIfGenerationAborted(options.abortSignal);
 
-  // Use a queue to bridge TextStreamer callbacks to an async generator.
-  const tokenQueue: string[] = [];
-  let resolveWaiting: (() => void) | null = null;
-  let done = false;
+    // Use a queue to bridge TextStreamer callbacks to an async generator.
+    const tokenQueue: string[] = [];
+    let tokenQueueIndex = 0;
+    const stopController = options.stopSequences?.length
+      ? createStopSequenceController(options.stopSequences)
+      : undefined;
+    let resolveWaiting: (() => void) | null = null;
+    let done = false;
+    let generationError: unknown;
+    let generationFailed = false;
 
-  function flushWaiting(): void {
-    if (resolveWaiting) {
-      resolveWaiting();
-      resolveWaiting = null;
-    }
-  }
+    const flushWaiting = (): void => {
+      if (resolveWaiting) {
+        resolveWaiting();
+        resolveWaiting = null;
+      }
+    };
 
-  const streamer = new transformers.TextStreamer(pipe.tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function: (text: string) => {
-      tokenQueue.push(text);
-      flushWaiting();
-    },
-  });
-
-  const pipeOptions = buildPipeOptions(
-    options,
-    transformers,
-    pipe.tokenizer as DecodingTokenizer,
-    streamer,
-  );
-
-  // Start generation in the background
-  const generatePromise = (async () => {
-    try {
-      await pipe(messages, pipeOptions);
-    } finally {
-      done = true;
-      flushWaiting();
-    }
-  })();
-
-  // Yield tokens as they arrive
-  while (true) {
-    while (tokenQueue.length > 0) {
-      yield tokenQueue.shift()!;
-    }
-
-    if (done) break;
-
-    // Wait for more tokens
-    await new Promise<void>((resolve) => {
-      resolveWaiting = resolve;
+    const streamer = new transformers.TextStreamer(pipe.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: (text: string) => {
+        const output = stopController?.push(text) ?? text;
+        if (output) {
+          tokenQueue.push(output);
+          flushWaiting();
+        }
+      },
     });
-  }
 
-  // Ensure generation has completed
-  await generatePromise;
+    const pipeOptions = buildPipeOptions(
+      options,
+      transformers,
+      pipe.tokenizer as DecodingTokenizer,
+      streamer,
+      stopController,
+    );
+
+    // Start generation in the background.
+    const generatePromise = (async () => {
+      await pipe(messages, pipeOptions);
+      const trailing = stopController?.finish();
+      if (trailing) tokenQueue.push(trailing);
+    })().catch((error) => {
+      generationFailed = true;
+      generationError = error;
+    }).finally(() => {
+      done = true;
+      lease.release();
+      flushWaiting();
+    });
+    releaseOnGenerationCompletion = true;
+
+    // Yield tokens as they arrive.
+    while (true) {
+      while (tokenQueueIndex < tokenQueue.length) {
+        yield tokenQueue[tokenQueueIndex++]!;
+      }
+      if (tokenQueueIndex > 0) {
+        tokenQueue.length = 0;
+        tokenQueueIndex = 0;
+      }
+
+      if (done) break;
+
+      await new Promise<void>((resolve) => {
+        resolveWaiting = resolve;
+      });
+    }
+
+    await generatePromise;
+    if (generationFailed) throw toSafeLocalGenerationError(generationError);
+    throwIfGenerationAborted(options.abortSignal);
+  } finally {
+    if (!releaseOnGenerationCompletion) lease.release();
+  }
+}
+
+export async function* generateStream(
+  modelId: string,
+  messages: ChatMessage[],
+  options: GenerateOptions = {},
+): AsyncGenerator<string, void, undefined> {
+  assertValidChatMessages(messages);
+  assertValidGenerateOptions(options);
+  throwIfGenerationAborted(options.abortSignal);
+  const lifecycleController = new AbortController();
+  const abortSignal = options.abortSignal
+    ? AbortSignal.any([options.abortSignal, lifecycleController.signal])
+    : lifecycleController.signal;
+
+  try {
+    yield* generateStreamWithLifecycle(modelId, messages, { ...options, abortSignal });
+  } finally {
+    lifecycleController.abort();
+  }
 }
 
 /**

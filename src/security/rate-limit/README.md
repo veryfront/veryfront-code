@@ -1,325 +1,98 @@
-# Rate Limiting Middleware
+# Internal rate limiter reference
 
-Protection against abuse and DoS attacks through configurable rate limiting.
+This directory contains a framework-internal rate limiter. It is not exported
+as `veryfront/security/rate-limit`. Application middleware is available from
+`veryfront/middleware` through `rateLimit` and `authRateLimit`.
 
-## Features
+## Internal exports
 
-- ✅ **Multiple Strategies**: Fixed window, sliding window, token bucket
-- ✅ **Flexible Storage**: Memory store (default), or custom implementations
-- ✅ **Custom Key Generation**: Rate limit by IP, API key, user ID, etc.
-- ✅ **Skip Logic**: Bypass rate limiting for specific requests
-- ✅ **Rate Limit Headers**: Standard `X-RateLimit-*` headers
-- ✅ **Preset Configurations**: Ready-to-use configs for common use cases
+| Export                  | Contract                                                                         |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `createRateLimiter`     | Builds middleware with a fixed-window, sliding-window, or token-bucket strategy. |
+| `RateLimitPresets`      | Provides `strict`, `moderate`, `lenient`, and `auth` configurations.             |
+| `MemoryRateLimitStore`  | Stores counters and timestamps in the current process.                           |
+| `fixedWindowStrategy`   | Uses the `RateLimitStore` counter interface.                                     |
+| `slidingWindowStrategy` | Tracks bounded request timestamps in `MemoryRateLimitStore`.                     |
+| `tokenBucketStrategy`   | Refills tokens over time in `MemoryRateLimitStore`.                              |
 
-## Quick Start
+## Configuration
 
-```typescript
-import { RateLimitPresets } from "veryfront/security/rate-limit";
+`RateLimitConfig` requires `maxRequests` and `windowMs`. Both values must be
+positive safe integers.
 
-// Use a preset
-const rateLimiter = RateLimitPresets.moderate(); // 100 req/min
+| Field                 | Contract                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `strategy`            | `fixed-window`, `sliding-window`, or `token-bucket`. Defaults to `fixed-window`.   |
+| `keyGenerator`        | Returns a non-empty client key of at most 512 characters.                          |
+| `skip`                | Returns whether the request bypasses limiting.                                     |
+| `onRateLimitExceeded` | Builds the response for a denied request.                                          |
+| `message`             | Replaces the default 429 response message.                                         |
+| `store`               | Stores rate-limit state. Custom stores support fixed-window only.                  |
+| `trustProxy`          | Trusts `X-Forwarded-For` and `X-Real-IP` for client identity. Defaults to `false`. |
 
-// Apply in your handler
-export async function handler(request: Request) {
-  return await rateLimiter(request, async (req) => {
-    // Your handler logic
-    return new Response("OK");
-  });
+`sliding-window` and `token-bucket` require `MemoryRateLimitStore`. The factory
+rejects a custom store for either strategy instead of silently changing the
+requested behavior.
+
+## Client identity
+
+Forwarded client-address headers are ignored unless `trustProxy` is `true`.
+Enable proxy trust only when a trusted reverse proxy replaces or appends those
+headers. The trusted path uses the rightmost `X-Forwarded-For` address, then
+`X-Real-IP`.
+
+Without proxy trust or a custom `keyGenerator`, the internal fallback key is
+`unknown`, so all requests share one bucket. Callers that have a peer address,
+authenticated principal, or API key should provide a stable key generator.
+Keys are not written to rate-limit logs or trace attributes.
+
+## Storage and lifecycle
+
+`MemoryRateLimitStore` is process-local and is not suitable for enforcement
+across multiple servers. It schedules an unreferenced cleanup timer only while
+entries exist. Long-lived owners should call `destroy()` during shutdown. Tests
+and short-lived owners must also dispose stores they create.
+
+A custom fixed-window store implements:
+
+```ts
+interface RateLimitStore {
+  increment(key: string, windowMs?: number): Promise<number>;
+  get(key: string): Promise<number>;
+  reset(key: string): Promise<void>;
+  resetAll(): Promise<void>;
 }
 ```
 
-## Strategies
+## Response behavior
 
-### Fixed Window
+Allowed responses receive `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and
+`X-RateLimit-Reset`. Denied requests return status 429 by default and include a
+dynamic `Retry-After` value.
 
-Simple counter that resets at fixed intervals. Fast but allows bursts at boundaries.
-
-```typescript
-import { createRateLimiter } from "veryfront/security/rate-limit";
-
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000, // 1 minute
-  strategy: "fixed-window",
-});
-```
-
-### Sliding Window
-
-More accurate, prevents burst attacks by tracking individual timestamps.
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  strategy: "sliding-window",
-});
-```
-
-### Token Bucket
-
-Allows controlled bursts. Tokens refill at constant rate.
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  strategy: "token-bucket",
-});
-```
-
-## Custom Configuration
-
-### Rate Limit by API Key
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 1000,
-  windowMs: 3600000, // 1 hour
-  keyGenerator: (request) => {
-    return request.headers.get("x-api-key") || "anonymous";
-  },
-});
-```
-
-### Skip Admin Users
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  skip: async (request) => {
-    const apiKey = request.headers.get("x-api-key");
-    return apiKey === process.env.ADMIN_API_KEY;
-  },
-});
-```
-
-### Custom Error Response
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 10,
-  windowMs: 60000,
-  onRateLimitExceeded: (request, key) => {
-    return new Response(
-      JSON.stringify({
-        error: "Rate limit exceeded",
-        key,
-        message: "Please upgrade to premium for higher limits",
-      }),
-      {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  },
-});
-```
+Store and strategy failures return status 503 with `Retry-After: 60`. The
+limiter fails closed so a storage outage does not disable abuse protection.
+Errors from downstream handlers and caller-provided callbacks remain visible to
+the normal error handler.
 
 ## Presets
 
-### Strict (10 req/min)
+| Preset     | Limit |     Window | Strategy       |
+| ---------- | ----: | ---------: | -------------- |
+| `strict`   |    10 |   1 minute | Sliding window |
+| `moderate` |   100 |   1 minute | Fixed window   |
+| `lenient`  | 1,000 |     1 hour | Fixed window   |
+| `auth`     |     5 | 15 minutes | Sliding window |
 
-For sensitive operations.
+Each preset accepts a store or a `RateLimitPresetOptions` object containing a
+store, key generator, and proxy-trust setting.
 
-```typescript
-RateLimitPresets.strict();
+## Verification
+
+```sh
+deno test --no-check --allow-all \
+  src/security/rate-limit/client-key.test.ts \
+  src/security/rate-limit/memory-store.test.ts \
+  src/security/rate-limit/middleware.test.ts \
+  src/security/rate-limit/strategies.test.ts
 ```
-
-### Moderate (100 req/min)
-
-For general web pages.
-
-```typescript
-RateLimitPresets.moderate();
-```
-
-### Lenient (1000 req/hour)
-
-For public APIs.
-
-```typescript
-RateLimitPresets.lenient();
-```
-
-### Auth (5 req/15min)
-
-For authentication endpoints.
-
-```typescript
-RateLimitPresets.auth();
-```
-
-Preset proxy headers remain untrusted by default, so rotating
-`X-Forwarded-For` values cannot bypass the limit. If a trusted reverse proxy
-sets the client address, enable proxy trust explicitly:
-
-```typescript
-const limiter = RateLimitPresets.auth({ trustProxy: true });
-```
-
-You can also provide a custom key generator, for example to limit by API key or
-authenticated user ID:
-
-```typescript
-const limiter = RateLimitPresets.auth({
-  keyGenerator: (request) => request.headers.get("x-api-key") ?? "anonymous",
-});
-```
-
-Existing store-only calls remain supported. Use
-`RateLimitPresets.auth(store)` or include the store in the options object as
-`RateLimitPresets.auth({ store })`.
-
-## Custom Store
-
-For distributed systems, implement the `RateLimitStore` interface:
-
-```typescript
-import type { RateLimitStore } from "veryfront/security/rate-limit";
-
-class RedisRateLimitStore implements RateLimitStore {
-  async increment(key: string): Promise<number> {
-    // Implement with Redis
-  }
-
-  async get(key: string): Promise<number> {
-    // Implement with Redis
-  }
-
-  async reset(key: string): Promise<void> {
-    // Implement with Redis
-  }
-
-  async resetAll(): Promise<void> {
-    // Implement with Redis
-  }
-}
-
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  store: new RedisRateLimitStore(),
-});
-```
-
-## Response Headers
-
-All responses include rate limit headers:
-
-- `X-RateLimit-Limit`: Maximum requests allowed
-- `X-RateLimit-Remaining`: Requests remaining in window
-- `X-RateLimit-Reset`: Unix timestamp when limit resets
-
-When rate limit is exceeded:
-
-- HTTP status: `429 Too Many Requests`
-- `Retry-After`: Seconds to wait before retrying
-
-## Best Practices
-
-1. **Use appropriate limits**: Don't over-limit legitimate users
-2. **Choose right strategy**:
-   - Fixed window: Fast, good for most cases
-   - Sliding window: More accurate, prevents burst attacks
-   - Token bucket: Allow controlled bursts
-3. **Monitor limits**: Track `429` responses to tune limits
-4. **Fail open**: If rate limiting errors, allow request through
-5. **Distributed systems**: Use Redis or similar for shared state
-
-## Examples
-
-### Protect API Endpoint
-
-```typescript
-// app/api/users/route.ts
-import { RateLimitPresets } from "veryfront/security/rate-limit";
-
-const limiter = RateLimitPresets.moderate();
-
-export async function GET(request: Request) {
-  return await limiter(request, async () => {
-    const users = await db.users.findMany();
-    return Response.json(users);
-  });
-}
-```
-
-### Protect Authentication
-
-```typescript
-// app/api/auth/login/route.ts
-import { RateLimitPresets } from "veryfront/security/rate-limit";
-
-const limiter = RateLimitPresets.auth();
-
-export async function POST(request: Request) {
-  return await limiter(request, async () => {
-    const { email, password } = await request.json();
-    // ... authentication logic
-  });
-}
-```
-
-### Different Limits per Tier
-
-```typescript
-import { createRateLimiter } from "veryfront/security/rate-limit";
-
-const limiter = createRateLimiter({
-  maxRequests: 100, // Default
-  windowMs: 60000,
-  keyGenerator: (request) => {
-    const tier = request.headers.get("x-user-tier");
-    return `${tier}:${request.headers.get("x-api-key")}`;
-  },
-  onRateLimitExceeded: async (request, key) => {
-    const tier = key.split(":")[0];
-    const limits = {
-      free: 100,
-      pro: 1000,
-      enterprise: 10000,
-    };
-
-    return new Response(
-      JSON.stringify({
-        error: "Rate limit exceeded",
-        limit: limits[tier] || 100,
-        message: "Upgrade for higher limits",
-      }),
-      { status: 429 },
-    );
-  },
-});
-```
-
-## Testing
-
-```typescript
-import { createRateLimiter } from "veryfront/security/rate-limit";
-
-Deno.test("rate limiter blocks after limit", async () => {
-  const limiter = createRateLimiter({
-    maxRequests: 2,
-    windowMs: 60000,
-  });
-
-  const request = new Request("http://localhost/test");
-  const handler = async () => new Response("OK");
-
-  // First 2 should succeed
-  await limiter(request, handler);
-  await limiter(request, handler);
-
-  // 3rd should be blocked
-  const response = await limiter(request, handler);
-  assertEquals(response.status, 429);
-});
-```
-
-## See Also
-
-- [Security Overview](../README.md)
-- [Input Validation](../input-validation/)
-- [Path Validation](../path-validation.ts)

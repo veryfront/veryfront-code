@@ -11,6 +11,12 @@
 import { VeryfrontError } from "../types.ts";
 import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";
+import { sanitizeErrorContext, sanitizeErrorText } from "../sanitization.ts";
+import { snapshotVeryfrontError } from "../error-snapshot.ts";
+
+function diagnosticMessage(error: unknown): string {
+  return sanitizeErrorText(getErrorMessage(error), 16_000);
+}
 
 /**
  * Wrap any unknown error as a VeryfrontError with unknown-error slug
@@ -42,7 +48,7 @@ export function wrapUnknownError(
   }
 
   // Extract message from the error
-  const message = getErrorMessage(error);
+  const message = diagnosticMessage(error);
 
   // Preserve original Error as cause if available
   const cause = error instanceof Error ? error : undefined;
@@ -51,7 +57,7 @@ export function wrapUnknownError(
   return UNKNOWN_ERROR.create({
     detail: message,
     cause,
-    context: context ? { ...context } : undefined,
+    context: sanitizeErrorContext(context),
   });
 }
 
@@ -80,28 +86,37 @@ export function wrapWithContext(
   message: string,
   context?: Record<string, unknown>,
 ): VeryfrontError {
-  const originalMessage = getErrorMessage(error);
-  const combinedMessage = `${message}: ${originalMessage}`;
+  if (
+    typeof message !== "string" || message.trim().length === 0 || message.length > 4_096
+  ) {
+    throw new TypeError("message must be a non-empty string of at most 4096 characters");
+  }
+  const originalMessage = diagnosticMessage(error);
+  const combinedMessage = sanitizeErrorText(
+    `${sanitizeErrorText(message, 4_096)}: ${originalMessage}`,
+    16_000,
+  );
 
   // If already a VeryfrontError, preserve slug but update message/context
   if (error instanceof VeryfrontError) {
+    const snapshot = snapshotVeryfrontError(error);
     return new VeryfrontError(combinedMessage, {
-      slug: error.slug,
-      category: error.category,
-      status: error.status,
-      title: error.title,
-      suggestion: error.suggestion,
+      slug: snapshot.slug,
+      category: snapshot.category,
+      status: snapshot.status,
+      title: snapshot.title,
+      suggestion: snapshot.suggestion,
       detail: combinedMessage,
-      cause: error.cause,
-      instance: error.instance,
-      context: {
-        ...(error.context as Record<string, unknown> ?? {}),
-        ...context,
+      cause: snapshot.cause,
+      instance: snapshot.instance,
+      context: sanitizeErrorContext({
+        ...(snapshot.context ?? {}),
+        ...(sanitizeErrorContext(context) ?? {}),
         originalError: {
-          message: error.message,
-          slug: error.slug,
+          message: sanitizeErrorText(getErrorMessage(error)),
+          slug: snapshot.slug,
         },
-      },
+      }),
     });
   }
 
@@ -109,9 +124,9 @@ export function wrapWithContext(
   return UNKNOWN_ERROR.create({
     detail: combinedMessage,
     cause: error instanceof Error ? error : undefined,
-    context: {
-      ...context,
+    context: sanitizeErrorContext({
+      ...(sanitizeErrorContext(context) ?? {}),
       originalMessage,
-    },
+    }),
   });
 }

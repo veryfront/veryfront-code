@@ -8,6 +8,7 @@
 
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "./types.ts";
 import { executeTool } from "./executor.ts";
@@ -31,7 +32,7 @@ function setupTools(): void {
   registerTool("researcher--fetch", makeTool("researcher--fetch", "researcher"));
 }
 
-Deno.test("executeTool runs an owned tool for its owning agent", async () => {
+it("executeTool runs an owned tool for its owning agent", async () => {
   setupTools();
   try {
     const result = await executeTool("researcher--fetch", {}, { agentId: "researcher" });
@@ -41,7 +42,7 @@ Deno.test("executeTool runs an owned tool for its owning agent", async () => {
   }
 });
 
-Deno.test("executeTool rejects an owned tool for another agent as not found", () => {
+it("executeTool rejects an owned tool for another agent as not found", () => {
   setupTools();
   try {
     assertThrows(
@@ -54,7 +55,7 @@ Deno.test("executeTool rejects an owned tool for another agent as not found", ()
   }
 });
 
-Deno.test("executeTool rejects an owned tool without an agent context", () => {
+it("executeTool rejects an owned tool without an agent context", () => {
   setupTools();
   try {
     assertThrows(
@@ -67,7 +68,7 @@ Deno.test("executeTool rejects an owned tool without an agent context", () => {
   }
 });
 
-Deno.test("MCP tools/list excludes agent-owned tools and keeps unowned ones", async () => {
+it("MCP tools/list excludes agent-owned tools and keeps unowned ones", async () => {
   setupTools();
   try {
     const server = createMCPServer({
@@ -95,7 +96,7 @@ Deno.test("MCP tools/list excludes agent-owned tools and keeps unowned ones", as
   }
 });
 
-Deno.test("MCP tools/call cannot execute an agent-owned tool", async () => {
+it("MCP tools/call cannot execute an agent-owned tool", async () => {
   setupTools();
   try {
     const server = createMCPServer({
@@ -132,7 +133,7 @@ Deno.test("MCP tools/call cannot execute an agent-owned tool", async () => {
 
 import { executeConfiguredTool, getAvailableTools } from "../agent/runtime/tool-helpers.ts";
 
-Deno.test("getAvailableTools(true) excludes other agents' owned tools from model definitions", async () => {
+it("getAvailableTools(true) excludes other agents' owned tools from model definitions", async () => {
   setupTools();
   try {
     const defs = await getAvailableTools(true, { callerAgentId: "writer" });
@@ -147,7 +148,7 @@ Deno.test("getAvailableTools(true) excludes other agents' owned tools from model
   }
 });
 
-Deno.test("getAvailableTools named entry cannot bind another agent's owned tool", async () => {
+it("getAvailableTools named entry cannot bind another agent's owned tool", async () => {
   setupTools();
   try {
     // Binding another agent's owned tool by full id fails with an explicit
@@ -168,7 +169,7 @@ Deno.test("getAvailableTools named entry cannot bind another agent's owned tool"
   }
 });
 
-Deno.test("executeConfiguredTool registry fallback rejects another agent's owned tool", async () => {
+it("executeConfiguredTool registry fallback rejects another agent's owned tool", async () => {
   setupTools();
   try {
     await executeConfiguredTool("researcher--fetch", {}, undefined, { agentId: "researcher" });
@@ -186,7 +187,7 @@ Deno.test("executeConfiguredTool registry fallback rejects another agent's owned
   }
 });
 
-Deno.test("executeConfiguredTool with tools: true cannot execute another agent's owned tool", async () => {
+it("executeConfiguredTool with tools: true cannot execute another agent's owned tool", async () => {
   setupTools();
   try {
     // Owner still works through the configured path.
@@ -208,7 +209,7 @@ Deno.test("executeConfiguredTool with tools: true cannot execute another agent's
   }
 });
 
-Deno.test("executeConfiguredTool named registry entry cannot execute another agent's owned tool", async () => {
+it("executeConfiguredTool named registry entry cannot execute another agent's owned tool", async () => {
   setupTools();
   try {
     let rejected = false;

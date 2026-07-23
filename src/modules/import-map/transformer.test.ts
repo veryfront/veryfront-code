@@ -55,5 +55,68 @@ describe("modules/import-map/transformer", () => {
       const result = transformImportsWithMap(code, map, "/app/");
       assertEquals(result.includes("react@19"), true);
     });
+
+    it("rewrites module specifiers without mutating comments or ordinary strings", () => {
+      const code = [
+        `// import ignored from "https://esm.sh/react@18";`,
+        `const description = 'from "https://esm.sh/react@18"';`,
+        `const pattern = /from\\s+["']https:\\/\\/esm\\.sh\\/react@18["']/;`,
+        `import React from "https://esm.sh/react@18";`,
+      ].join("\n");
+      const map = { imports: { react: "https://esm.sh/react@19" } };
+
+      assertEquals(
+        transformImportsWithMap(code, map),
+        [
+          `// import ignored from "https://esm.sh/react@18";`,
+          `const description = 'from "https://esm.sh/react@18"';`,
+          `const pattern = /from\\s+["']https:\\/\\/esm\\.sh\\/react@18["']/;`,
+          `import React from "https://esm.sh/react@19";`,
+        ].join("\n"),
+      );
+    });
+
+    it("rewrites side-effect imports and export-from declarations", () => {
+      const code = [
+        `import "https://esm.sh/react@18";`,
+        `export * from "https://esm.sh/react@18/jsx-runtime";`,
+      ].join("\n");
+      const map = {
+        imports: {
+          react: "https://esm.sh/react@19",
+          "react/jsx-runtime": "https://esm.sh/react@19/jsx-runtime",
+        },
+      };
+
+      assertEquals(
+        transformImportsWithMap(code, map),
+        [
+          `import "https://esm.sh/react@19";`,
+          `export * from "https://esm.sh/react@19/jsx-runtime";`,
+        ].join("\n"),
+      );
+    });
+
+    it("rewrites dynamic imports inside template expressions only", () => {
+      const code = [
+        'const raw = `import(\\"https://esm.sh/react@18\\")`;',
+        'const loaded = `${await import("https://esm.sh/react@18")}`;',
+      ].join("\n");
+      const map = { imports: { react: "https://esm.sh/react@19" } };
+
+      assertEquals(
+        transformImportsWithMap(code, map),
+        [
+          'const raw = `import(\\"https://esm.sh/react@18\\")`;',
+          'const loaded = `${await import("https://esm.sh/react@19")}`;',
+        ].join("\n"),
+      );
+    });
+
+    it("does not rewrite methods named import", () => {
+      const code = `loader.import("https://esm.sh/react@18");`;
+      const map = { imports: { react: "https://esm.sh/react@19" } };
+      assertEquals(transformImportsWithMap(code, map), code);
+    });
   });
 });

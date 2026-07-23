@@ -6,11 +6,7 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
-import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
-import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
-import { getProjectReact } from "#veryfront/react";
-import { ensureValidChild } from "./ensure-valid-child.ts";
+import { applyMDXLayout, applyTSXLayout } from "./component-loader.ts";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
@@ -156,80 +152,21 @@ export async function applyLayoutsFunctionBody(
   projectSlug: string,
   contentSourceId: string,
   reactVersion?: string,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
-  const React = await getProjectReact(reactVersion);
-  let element = pageElement;
-
-  logger.debug("Using function-body wrapping for layouts");
-  logger.debug("Nested layouts to apply:", {
-    count: nestedLayouts.length,
-    layouts: nestedLayouts.map((l) => ({
-      kind: l.kind,
-      path: l.componentPath || l.bundle?.compiledCode?.substring(0, 50),
-    })),
-  });
-
-  for (let i = nestedLayouts.length - 1; i >= 0; i--) {
-    const item = nestedLayouts[i];
-    if (!item) continue;
-
-    logger.debug(`Applying layout ${i}:`, {
-      kind: item.kind,
-      path: item.componentPath,
-    });
-
-    if (item.kind === "mdx" && item.bundle?.compiledCode) {
-      element = mdxRenderer.render(item.bundle.compiledCode, {
-        components: mergedComponents,
-        extractLayout: true,
-        children: element,
-      });
-      continue;
-    }
-
-    if (item.kind !== "tsx" || !item.componentPath) continue;
-
-    try {
-      const LayoutComponent = await loadTSXComponent(
-        item.componentPath,
-        projectDir,
-        tsxLayoutModuleCache,
-        adapter,
-        projectId,
-        projectSlug,
-        contentSourceId,
-        reactVersion,
-      );
-
-      const child = ensureValidChild(element, React);
-
-      logger.debug("Applying TSX layout:", {
-        layoutName: LayoutComponent.name || "Anonymous",
-        childType: React.isValidElement(child) ? getElementTypeName(child) : typeof child,
-      });
-
-      const props = layoutDataMap?.get(item.componentPath);
-
-      element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
-
-      logger.debug("After TSX layout applied:", {
-        pageElementType: React.isValidElement(element)
-          ? getElementTypeName(element)
-          : typeof element,
-      });
-    } catch (e) {
-      logger.error("Failed to compile/import TSX layout (non-ESM path)", e);
-      throw e;
-    }
-  }
-
-  if (layoutBundle?.compiledCode) {
-    element = mdxRenderer.render(layoutBundle.compiledCode, {
-      components: mergedComponents,
-      extractLayout: true,
-      children: element,
-    });
-  }
-
-  return element;
+  return await applyLayoutsESM(
+    pageElement,
+    layoutBundle,
+    nestedLayouts,
+    projectDir,
+    mergedComponents,
+    tsxLayoutModuleCache,
+    adapter,
+    layoutDataMap,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    preloadedImportMap,
+    reactVersion,
+  );
 }

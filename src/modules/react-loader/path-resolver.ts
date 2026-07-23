@@ -1,27 +1,43 @@
+import { isAbsolute, normalize, relative } from "#veryfront/compat/path/index.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
+
+const MAX_MODULE_PATH_LENGTH = 4_096;
+
+function validatePath(value: string, label: string): void {
+  if (
+    value.length === 0 || value.length > MAX_MODULE_PATH_LENGTH ||
+    hasUnsafeControlCharacters(value)
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+}
+
 export function resolveRelativePath(filePath: string, projectDir: string): string {
-  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+  validatePath(filePath, "filePath");
+  validatePath(projectDir, "projectDir");
 
-  if (filePath.startsWith(normalizedProjectDir)) {
-    return filePath.slice(normalizedProjectDir.length + 1);
+  const normalizedFilePath = normalize(filePath);
+  if (!isAbsolute(normalizedFilePath)) {
+    if (
+      normalizedFilePath === "." || normalizedFilePath === ".." ||
+      normalizedFilePath.startsWith("../")
+    ) {
+      throw new TypeError("filePath must not traverse outside projectDir");
+    }
+    return normalizedFilePath.replace(/^\.\//, "");
   }
 
-  if (!filePath.startsWith("/")) {
-    return filePath;
+  const projectRelativePath = relative(normalize(projectDir), normalizedFilePath);
+  if (
+    projectRelativePath === "." || projectRelativePath === ".." ||
+    projectRelativePath.startsWith("../") || isAbsolute(projectRelativePath)
+  ) {
+    throw new TypeError("filePath must be inside projectDir");
   }
-
-  const lastProjectPart = normalizedProjectDir.split("/").at(-1);
-  if (!lastProjectPart) {
-    return filePath;
-  }
-
-  const projectIndex = filePath.split("/").indexOf(lastProjectPart);
-  if (projectIndex < 0) {
-    return filePath;
-  }
-
-  return filePath.split("/").slice(projectIndex + 1).join("/");
+  return projectRelativePath;
 }
 
 export function normalizeModulePath(filePath: string): string {
+  validatePath(filePath, "filePath");
   return filePath.replace(/\.(tsx?|jsx)$/, ".js");
 }

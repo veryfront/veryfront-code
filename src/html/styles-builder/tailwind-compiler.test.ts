@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCSSCache,
@@ -13,6 +13,7 @@ import {
   hashCSS,
   loadModuleFromEsmSh,
 } from "./tailwind-compiler.ts";
+import { hashCandidates } from "./candidate-extractor.ts";
 
 describe("styles-builder/tailwind-compiler", () => {
   describe("extractCandidates", () => {
@@ -96,6 +97,14 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should extract CSS variable utilities", () => {
       const candidates = extractCandidates('class="bg-[var(--color)]"');
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
+    });
+
+    it("rejects candidates that exceed the compiler input limit", () => {
+      assertThrows(
+        () => extractCandidates(`class-${"x".repeat(1025)}`),
+        TypeError,
+        "CSS candidate exceeds",
+      );
     });
   });
 
@@ -199,6 +208,17 @@ describe("styles-builder/tailwind-compiler", () => {
       const candidates = extractCandidatesFromFiles([]);
       assertEquals(candidates.size, 0);
     });
+
+    it("rejects oversized source files before candidate allocation", () => {
+      assertThrows(
+        () =>
+          extractCandidatesFromFiles([
+            { path: "pages/large.tsx", content: "x".repeat(2 * 1024 * 1024 + 1) },
+          ]),
+        TypeError,
+        "Style source file exceeds",
+      );
+    });
   });
 
   describe("hashCSS", () => {
@@ -219,14 +239,23 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(hash1 !== hash2, true);
     });
 
-    it("should return max 8 characters", () => {
+    it("should return a 64-bit hexadecimal content hash", () => {
       const hash = hashCSS("some long css content with many rules .a .b .c {}");
-      assertEquals(hash.length <= 8, true);
+      assertEquals(/^[0-9a-f]{16}$/.test(hash), true);
     });
 
     it("should handle empty string", () => {
       const hash = hashCSS("");
       assertEquals(typeof hash, "string");
+    });
+  });
+
+  describe("hashCandidates", () => {
+    it("distinguishes candidate sets whose comma-joined forms collide", () => {
+      const first = hashCandidates(new Set(["a,b", "c"]));
+      const second = hashCandidates(new Set(["a", "b,c"]));
+
+      assertEquals(first === second, false);
     });
   });
 

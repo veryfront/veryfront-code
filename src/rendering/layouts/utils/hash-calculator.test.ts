@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeDepsHash } from "./hash-calculator.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
@@ -28,8 +28,6 @@ function createMdxBundle(code: string): MdxBundle {
     compiledCode: code,
     frontmatter: {},
     globals: {},
-    headings: [],
-    nodeMap: new Map(),
   };
 }
 
@@ -93,13 +91,16 @@ describe("rendering/layouts/utils/hash-calculator", () => {
       assertEquals(result, "");
     });
 
-    it("should handle file read errors gracefully for component paths", async () => {
+    it("should propagate file read errors for component paths", async () => {
       const adapter = createMockAdapter({});
       const nestedLayouts: LayoutItem[] = [
         { componentPath: "/nonexistent.tsx" } as unknown as LayoutItem,
       ];
-      const result = await computeDepsHash(undefined, nestedLayouts, adapter);
-      assertEquals(typeof result, "string");
+      await assertRejects(
+        () => computeDepsHash(undefined, nestedLayouts, adapter),
+        Error,
+        "File not found",
+      );
     });
 
     it("should combine layout bundle hash with nested layout hashes", async () => {

@@ -1,9 +1,70 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { bundleHttpImports, hasHttpImports } from "./http-bundler.ts";
+import { bundleHttpImports, createHTTPPlugin, hasHttpImports } from "./http-bundler.ts";
+import { MAX_HTTP_MODULE_RESPONSE_BYTES } from "#veryfront/transforms/shared/http-module-response.ts";
+
+type HttpLoadResult = {
+  contents?: string;
+  errors?: Array<{ text: string }>;
+};
+
+function captureHttpLoadHandler(): (args: { path: string }) => Promise<HttpLoadResult> {
+  let handler: ((args: { path: string }) => Promise<HttpLoadResult>) | undefined;
+  createHTTPPlugin().setup({
+    onResolve() {},
+    onLoad(_options: unknown, callback: unknown) {
+      handler = callback as (args: { path: string }) => Promise<HttpLoadResult>;
+    },
+  } as never);
+  assert(handler);
+  return handler;
+}
 
 describe("transforms/esm/http-bundler", () => {
+  describe("createHTTPPlugin", () => {
+    it("rejects oversized bodies without exposing the request URL", async () => {
+      const originalFetch = globalThis.fetch;
+      const requestUrl = "https://esm.sh/private-package?token=secret-value";
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response("body", {
+            headers: {
+              "content-type": "application/javascript",
+              "content-length": String(MAX_HTTP_MODULE_RESPONSE_BYTES + 1),
+            },
+          }),
+        )) as typeof fetch;
+
+      try {
+        const result = await captureHttpLoadHandler()({ path: requestUrl });
+        const errorText = result.errors?.[0]?.text ?? "";
+        assertEquals(errorText, "HTTP module response exceeds the maximum allowed size.");
+        assertEquals(errorText.includes(requestUrl), false);
+        assertEquals(errorText.includes("secret-value"), false);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("redacts network error details", async () => {
+      const originalFetch = globalThis.fetch;
+      const requestUrl = "https://esm.sh/private-package?token=secret-value";
+      globalThis.fetch =
+        (() => Promise.reject(new Error(`request failed for ${requestUrl}`))) as typeof fetch;
+
+      try {
+        const result = await captureHttpLoadHandler()({ path: requestUrl });
+        const errorText = result.errors?.[0]?.text ?? "";
+        assertEquals(errorText, "HTTP module request failed.");
+        assertEquals(errorText.includes(requestUrl), false);
+        assertEquals(errorText.includes("secret-value"), false);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
   describe("hasHttpImports", () => {
     it("returns true for code with https import", () => {
       assertEquals(hasHttpImports(`import React from "https://esm.sh/react@18";`), true);

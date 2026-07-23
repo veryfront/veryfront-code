@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageLoader } from "./page-loader.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
@@ -115,6 +115,26 @@ describe("routing/client/page-loader", () => {
       assertEquals(loader.isSpaDataCached("/spa-new"), true);
       assertEquals(loader.isSpaDataCached("/spa-1"), true);
     });
+
+    it("should update an existing entry without evicting another page", () => {
+      const loader = new PageLoader();
+      for (let i = 0; i < 50; i++) loader.setCache(`/page-${i}`, makeRouteData());
+
+      loader.setCache("/page-25", makeRouteData({ html: "updated" }));
+
+      assertEquals(loader.isCached("/page-0"), true);
+      assertEquals(loader.getCached("/page-25")?.html, "updated");
+    });
+
+    it("should update existing SPA data without evicting another page", () => {
+      const loader = new PageLoader();
+      for (let i = 0; i < 50; i++) loader.setSpaCache(`/spa-${i}`, makeSpaPageData());
+
+      loader.setSpaCache("/spa-25", makeSpaPageData({ slug: "updated" }));
+
+      assertEquals(loader.isSpaDataCached("/spa-0"), true);
+      assertEquals(loader.getSpaCached("/spa-25")?.slug, "updated");
+    });
   });
 
   describe("loadPage()", () => {
@@ -144,6 +164,26 @@ describe("routing/client/page-loader", () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("rejects external navigation targets before fetching", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCount = 0;
+      globalThis.fetch = () => {
+        fetchCount++;
+        return Promise.resolve(Response.json({}));
+      };
+
+      try {
+        await assertRejects(
+          () => new PageLoader().fetchPageData("https://evil.example/page"),
+          TypeError,
+          "must stay on the current origin",
+        );
+        assertEquals(fetchCount, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("loadSpaPageData()", () => {
@@ -163,6 +203,36 @@ describe("routing/client/page-loader", () => {
       }
     });
 
+    it("cancels SPA responses whose declared body exceeds the limit", async () => {
+      const originalFetch = globalThis.fetch;
+      let cancelled = false;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.enqueue(new Uint8Array([123]));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { headers: { "content-length": "9000000" } },
+          ),
+        );
+
+      try {
+        await assertRejects(
+          () => new PageLoader().fetchSpaPageData("/large"),
+          RangeError,
+          "size limit",
+        );
+        assertEquals(cancelled, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("should return cached SPA data immediately", async () => {
       const loader = new PageLoader();
       const data = makeSpaPageData({ slug: "cached-spa" });
@@ -174,6 +244,23 @@ describe("routing/client/page-loader", () => {
   });
 
   describe("request deduplication", () => {
+    it("bounds the number of concurrent page requests", async () => {
+      const loader = new PageLoader();
+      const never = new Promise<RouteData>(() => {});
+      // deno-lint-ignore no-explicit-any
+      (loader as any).fetchPageData = () => never;
+
+      for (let index = 0; index < 100; index++) {
+        void loader.loadPage(`/pending-${index}`);
+      }
+
+      await assertRejects(
+        () => loader.loadPage("/pending-overflow"),
+        RangeError,
+        "Too many page requests",
+      );
+    });
+
     it("should deduplicate concurrent loadPage requests for same path", async () => {
       const loader = new PageLoader();
       const data = makeRouteData({ html: "<div>deduplicated</div>" });

@@ -183,7 +183,7 @@ rest of your page. The canonical scope attribute is **`data-vf-ui`**;
 element, and every token rule matches both), so existing selectors keep working.
 
 `<Chat>` establishes the scope for itself. When you compose the primitives
-_around_ `<Chat>` — a sidebar, header, or uploads panel in your own shell — wrap
+_around_ `<Chat>`, such as a sidebar, header, or uploads panel in your own shell, wrap
 that shell in one `ChatThemeScope` so everything inside it is themed:
 
 ```tsx

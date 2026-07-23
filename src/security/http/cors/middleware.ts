@@ -4,6 +4,7 @@ import { handleCORSPreflight, isPreflightRequest } from "./preflight.ts";
 import { applyCORSHeaders } from "./headers.ts";
 import { validateCORSConfig } from "./validators.ts";
 import { createError, toError } from "#veryfront/errors";
+import { isWebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 
 /** Create CORS middleware. */
 export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
@@ -17,10 +18,7 @@ export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
     );
   }
 
-  return async (
-    c: Context,
-    next: () => Promise<Response | undefined> | Response,
-  ): Promise<Response | undefined> => {
+  return async (c: Context, next) => {
     const request = c.req;
 
     if (isPreflightRequest(request)) {
@@ -29,6 +27,7 @@ export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
 
     const response = await next();
     if (!response) return undefined;
+    if (isWebSocketUpgradeResponse(response) || response.status === 101) return response;
 
     return (await applyCORSHeaders({ request, response, config })) ?? response;
   };

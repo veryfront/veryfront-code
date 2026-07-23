@@ -12,6 +12,7 @@ import {
   setRequestScopedFile,
   wrapWithCurrentContext,
 } from "./multi-project-adapter.ts";
+import { FS_ADAPTER_KIND } from "./types.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
   return new MultiProjectFSAdapter({
@@ -65,6 +66,7 @@ describe("MultiProjectFSAdapter", () => {
     it("should be instantiable with minimal config", () => {
       withAdapter((adapter) => {
         assertExists(adapter);
+        assertEquals(adapter[FS_ADAPTER_KIND], "veryfront-multi-project");
       });
     });
 

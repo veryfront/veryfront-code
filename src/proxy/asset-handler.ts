@@ -17,20 +17,27 @@ import {
   isAllowedReleaseAssetContentType,
   isValidContentHash,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
 } from "#veryfront/release-assets/constants.ts";
+import { sha256HexBytes } from "#veryfront/release-assets/hash.ts";
 
 const ASSET_PATH_PREFIX = "/_vf/assets/";
 const ASSET_PATH_RE = /^\/_vf\/assets\/([0-9a-f]{64})\.(js|css)$/;
 
 /** Bound on cached asset bodies (~100 hot entries). */
 const MAX_CACHED_ASSETS = 100;
+const MAX_CACHED_ASSET_BYTES = RELEASE_ASSET_MAX_SIZE_BYTES * 4;
+const ASSET_FETCH_TIMEOUT_MS = 10_000;
 
 interface CachedAsset {
   bytes: Uint8Array<ArrayBuffer>;
   contentType: string;
 }
 
-const assetCache = new LRUCache<string, CachedAsset>({ maxEntries: MAX_CACHED_ASSETS });
+const assetCache = new LRUCache<string, CachedAsset>({
+  maxEntries: MAX_CACHED_ASSETS,
+  maxSizeBytes: MAX_CACHED_ASSET_BYTES,
+});
 
 /** True when the path is owned by the release asset prefix. */
 export function isReleaseAssetPath(pathname: string): boolean {
@@ -54,6 +61,75 @@ function badRequest(message: string): Response {
     status: 400,
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
   });
+}
+
+function badGateway(): Response {
+  return new Response("Bad gateway", {
+    status: 502,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+  });
+}
+
+async function cancelBody(response: Response, reason: string): Promise<void> {
+  await response.body?.cancel(reason).catch(() => undefined);
+}
+
+async function readAssetBody(
+  response: Response,
+  signal: AbortSignal,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) {
+      await cancelBody(response, "Invalid asset content length");
+      return null;
+    }
+    const declaredBytes = Number(contentLength);
+    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      await cancelBody(response, "Asset body is too large");
+      return null;
+    }
+  }
+
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  let rejectAbort: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort?.(signal.reason ?? new Error("Asset fetch aborted"));
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) break;
+      if (!value) continue;
+      if (value.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES - totalBytes) {
+        await reader.cancel("Asset body is too large").catch(() => undefined);
+        return null;
+      }
+      totalBytes += value.byteLength;
+      chunks.push(value);
+    }
+  } catch {
+    await reader.cancel("Asset body could not be read").catch(() => undefined);
+    return null;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export interface ReleaseAssetHandlerOptions {
@@ -102,34 +178,38 @@ export async function handleReleaseAssetRequest(
   const upstreamUrl = `${options.apiBaseUrl}/release-assets/${hash}`;
 
   let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ASSET_FETCH_TIMEOUT_MS);
   try {
-    response = await doFetch(upstreamUrl);
+    response = await doFetch(upstreamUrl, { signal: controller.signal });
   } catch {
-    return new Response("Bad gateway", {
-      status: 502,
-      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+    clearTimeout(timeout);
+    return badGateway();
   }
 
-  if (response.status === 404) return notFound();
+  if (response.status === 404) {
+    clearTimeout(timeout);
+    await cancelBody(response, "Asset not found");
+    return notFound();
+  }
   if (!response.ok) {
-    return new Response("Bad gateway", {
-      status: 502,
-      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+    clearTimeout(timeout);
+    await cancelBody(response, "Asset upstream failed");
+    return badGateway();
   }
 
   const upstreamContentType = response.headers.get("content-type");
   if (!isAllowedReleaseAssetContentType(upstreamContentType)) {
-    return new Response("Bad gateway", {
-      status: 502,
-      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+    clearTimeout(timeout);
+    await cancelBody(response, "Asset content type is not allowed");
+    return badGateway();
   }
 
   // Serve the expected content type for the extension (allowlisted).
   const contentType = contentTypeForExtension(ext)!;
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await readAssetBody(response, controller.signal);
+  clearTimeout(timeout);
+  if (!bytes || await sha256HexBytes(bytes) !== hash) return badGateway();
   assetCache.set(cacheKey, { bytes, contentType });
 
   return new Response(bytes, {

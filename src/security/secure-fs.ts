@@ -8,7 +8,6 @@ import { logger as baseLogger } from "#veryfront/utils";
 import {
   sanitizePathForDisplay,
   validatePath,
-  validatePathSync,
   type ValidationOptions,
   ValidationPresets,
   type ValidationResult,
@@ -137,6 +136,10 @@ export class SecureFs {
     });
   }
 
+  private pathForDiagnostics(path: string): string {
+    return sanitizePathForDisplay(path, this.config.baseDir);
+  }
+
   private throwIfInvalid(
     result: ValidationResult,
     operation: string,
@@ -146,7 +149,7 @@ export class SecureFs {
 
     throw SECURITY_VIOLATION.create({
       detail: `Path validation failed for ${operation}: ${result.error}`,
-      context: { code: result.code, path },
+      context: { code: result.code, path: this.pathForDiagnostics(path) },
     });
   }
 
@@ -160,16 +163,6 @@ export class SecureFs {
     return result;
   }
 
-  private validatePathForOperationSync(
-    path: string,
-    operation: string,
-  ): ValidationResult {
-    const result = validatePathSync(path, this.validationOptions);
-    this.emitValidationEvent(result, operation, path);
-    this.throwIfInvalid(result, operation, path);
-    return result;
-  }
-
   private getCanonicalPathOrThrow(
     validation: ValidationResult,
     path: string,
@@ -177,7 +170,7 @@ export class SecureFs {
     if (validation.valid && validation.canonicalPath) return validation.canonicalPath;
     throw SECURITY_VIOLATION.create({
       detail: "Invalid path",
-      context: { code: validation.code, path },
+      context: { code: validation.code, path: this.pathForDiagnostics(path) },
     });
   }
 
@@ -189,7 +182,10 @@ export class SecureFs {
         const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
         return await this.config.adapter.fs.readFile(canonicalPath);
       },
-      { "fs.path": path, "security.context": this.config.context },
+      {
+        "fs.path": this.pathForDiagnostics(path),
+        "security.context": this.config.context,
+      },
     );
   }
 
@@ -218,7 +214,10 @@ export class SecureFs {
         const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
         return await this.config.adapter.fs.stat(canonicalPath);
       },
-      { "fs.path": path, "security.context": this.config.context },
+      {
+        "fs.path": this.pathForDiagnostics(path),
+        "security.context": this.config.context,
+      },
     );
   }
 
@@ -240,25 +239,61 @@ export class SecureFs {
     return await this.config.adapter.fs.exists(validation.canonicalPath);
   }
 
-  readDir(path: string): AsyncIterable<DirEntry> {
-    const validation = this.validatePathForOperationSync(path, "readDir");
+  async *readDir(path: string): AsyncIterable<DirEntry> {
+    const validation = await this.validatePathForOperation(path, "readDir");
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
-    return this.config.adapter.fs.readDir(canonicalPath);
+    yield* this.config.adapter.fs.readDir(canonicalPath);
   }
 
   async makeTempDir(prefix: string): Promise<string> {
-    return await this.config.adapter.fs.makeTempDir(prefix);
+    if (!/^[A-Za-z0-9._-]{0,128}$/.test(prefix)) {
+      throw new TypeError(
+        "Temporary directory prefix must contain only letters, numbers, dots, underscores, or hyphens",
+      );
+    }
+
+    const path = `${prefix}${crypto.randomUUID()}`;
+    const validation = await this.validatePathForOperation(path, "makeTempDir");
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+    await this.config.adapter.fs.mkdir(canonicalPath, { recursive: false });
+    return canonicalPath;
   }
 
   watch(
     paths: string | string[],
     options?: { recursive?: boolean; signal?: AbortSignal },
   ): FileWatcher {
+    const watcherPromise = this.createValidatedWatcher(paths, options);
+    // The iterator surfaces validation failures. Attach a handler immediately
+    // as well so delayed iteration cannot produce an unhandled rejection.
+    void watcherPromise.catch(() => undefined);
+
+    let closeRequested = false;
+    const close = (): void => {
+      if (closeRequested) return;
+      closeRequested = true;
+      void watcherPromise.then((watcher) => watcher.close()).catch(() => undefined);
+    };
+
+    return {
+      close,
+      async *[Symbol.asyncIterator]() {
+        const watcher = await watcherPromise;
+        if (closeRequested) return;
+        yield* watcher;
+      },
+    };
+  }
+
+  private async createValidatedWatcher(
+    paths: string | string[],
+    options?: { recursive?: boolean; signal?: AbortSignal },
+  ): Promise<FileWatcher> {
     const pathArray = Array.isArray(paths) ? paths : [paths];
     const validatedPaths: string[] = [];
 
     for (const path of pathArray) {
-      const validation = this.validatePathForOperationSync(path, "watch");
+      const validation = await this.validatePathForOperation(path, "watch");
       if (validation.valid && validation.canonicalPath) {
         validatedPaths.push(validation.canonicalPath);
       }
@@ -268,7 +303,10 @@ export class SecureFs {
       if (this.config.throwOnError) {
         throw SECURITY_VIOLATION.create({
           detail: "No valid paths to watch",
-          context: { code: "NO_VALID_PATHS", path: paths.toString() },
+          context: {
+            code: "NO_VALID_PATHS",
+            path: pathArray.map((path) => this.pathForDiagnostics(path)).join(","),
+          },
         });
       }
 
@@ -287,7 +325,7 @@ export class SecureFs {
     // env var can never silently open this path-validation-bypassing escape
     // hatch. Only an explicit non-production NODE_ENV unlocks it.
     const nodeEnv = getHostEnv("NODE_ENV");
-    if (!nodeEnv || nodeEnv === "production") {
+    if (nodeEnv !== "development" && nodeEnv !== "test") {
       throw SECURITY_VIOLATION.create({
         detail: "getUnsafeAdapter() is not allowed in production",
       });
@@ -301,7 +339,7 @@ export class SecureFs {
   }
 
   setContext(context: SecurityContext): void {
-    this.validationOptions = this.buildValidationOptions(context);
+    this.validationOptions = this.buildValidationOptions(context, this.config.contextOptions);
     this.config.context = context;
   }
 }

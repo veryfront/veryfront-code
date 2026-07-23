@@ -1,4 +1,5 @@
 import type { OAuthServiceConfig } from "../types.ts";
+import { freezeOAuthServiceConfigs } from "./freeze-config.ts";
 
 const atlassianBase = {
   providerId: "atlassian",
@@ -8,6 +9,7 @@ const atlassianBase = {
   userInfoUrl: "https://api.atlassian.com/me",
   clientIdEnvVar: "ATLASSIAN_CLIENT_ID",
   clientSecretEnvVar: "ATLASSIAN_CLIENT_SECRET",
+  tokenRequestFormat: "json",
   additionalAuthParams: {
     audience: "api.atlassian.com",
     prompt: "consent",
@@ -49,19 +51,22 @@ export const confluenceConfig: OAuthServiceConfig = {
 /** Configuration used by bitbucket. */
 export const bitbucketConfig: OAuthServiceConfig = {
   ...atlassianBase,
+  providerId: "bitbucket",
   serviceId: "bitbucket",
   displayName: "Bitbucket",
   authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
   tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
+  userInfoUrl: "https://api.bitbucket.org/2.0/user",
   clientIdEnvVar: "BITBUCKET_CLIENT_ID",
   clientSecretEnvVar: "BITBUCKET_CLIENT_SECRET",
+  tokenRequestFormat: "form",
+  useBasicAuth: true,
   apiBaseUrl: "https://api.bitbucket.org/2.0",
   additionalAuthParams: {},
   defaultScopes: [
     "repository",
-    "repository:write",
-    "pullrequest",
     "pullrequest:write",
+    "issue",
     "account",
   ],
 };
@@ -71,3 +76,5 @@ export const atlassianServices = {
   confluence: confluenceConfig,
   bitbucket: bitbucketConfig,
 } as const;
+
+freezeOAuthServiceConfigs(atlassianServices);

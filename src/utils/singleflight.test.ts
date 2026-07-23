@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Singleflight } from "./singleflight.ts";
 
@@ -115,5 +115,59 @@ describe("Singleflight", () => {
 
     assertEquals(r1, 1);
     assertEquals(r2, 2);
+  });
+
+  it("deduplicates synchronous falsy results returned by a non-conforming operation", async () => {
+    const sf = new Singleflight<number>();
+    let callCount = 0;
+    const operation = (() => {
+      callCount++;
+      return 0;
+    }) as unknown as () => Promise<number>;
+
+    assertEquals(
+      await Promise.all([sf.do("key", operation), sf.do("key", operation)]),
+      [0, 0],
+    );
+    assertEquals(callCount, 1);
+  });
+
+  it("registers the shared promise before invoking a re-entrant operation", async () => {
+    const sf = new Singleflight<number>();
+    let entered = false;
+    let callCount = 0;
+    let nested: Promise<number> | undefined;
+    const operation = () => {
+      callCount++;
+      if (!entered) {
+        entered = true;
+        nested = sf.do("key", operation);
+      }
+      return Promise.resolve(42);
+    };
+
+    const outer = sf.do("key", operation);
+    assert(nested);
+    assertEquals(await Promise.all([outer, nested]), [42, 42]);
+    assertEquals(callCount, 1);
+  });
+
+  it("normalizes hostile thenables and removes them after rejection", async () => {
+    const sf = new Singleflight<number>();
+    let callCount = 0;
+    const privateValue = "private-singleflight-thenable";
+    const operation = (() => {
+      callCount++;
+      return Object.defineProperty({}, "then", {
+        get() {
+          throw new Error(privateValue);
+        },
+      });
+    }) as unknown as () => Promise<number>;
+
+    await assertRejects(() => sf.do("key", operation), Error, privateValue);
+    assertEquals(sf.has("key"), false);
+    await assertRejects(() => sf.do("key", operation), Error, privateValue);
+    assertEquals(callCount, 2);
   });
 });

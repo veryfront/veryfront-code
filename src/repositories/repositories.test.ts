@@ -3,15 +3,18 @@ import "#veryfront/schemas/_test-setup.ts";
  * Repository Layer Unit Tests
  */
 
-import { describe, it } from "#std/testing/bdd";
-import { expect } from "#std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 
 import {
   buildScopedKey,
+  createFileSystemRepository,
   createMemoryCacheRepository,
   createRepositoryContext,
+  createRepositoryFactory,
   extractRepositoryContext,
   MemoryCacheRepository,
+  RepositoryFactory,
 } from "./index.ts";
 import {
   createMockRepositoryContext,
@@ -19,20 +22,53 @@ import {
   MockFileSystemRepository,
 } from "./testing/index.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { createMockAdapter } from "#veryfront/platform";
+import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { CacheRepositoryOptionsSchema, RepositoryContextSchema } from "./schemas/index.ts";
 
 describe("Repository Types", () => {
   describe("RepositoryContext", () => {
     it("creates valid context", () => {
       const ctx = createRepositoryContext("my-project", "preview", "v1");
-      expect(ctx.projectId).toBe("my-project");
-      expect(ctx.environment).toBe("preview");
-      expect(ctx.versionId).toBe("v1");
+      assertEquals(ctx.projectId, "my-project");
+      assertEquals(ctx.environment, "preview");
+      assertEquals(ctx.versionId, "v1");
     });
 
     it("has sensible defaults", () => {
       const ctx = createRepositoryContext("my-project");
-      expect(ctx.environment).toBe("preview");
-      expect(ctx.versionId).toBe("draft");
+      assertEquals(ctx.environment, "preview");
+      assertEquals(ctx.versionId, "draft");
+    });
+
+    it("returns an immutable context snapshot", () => {
+      const ctx = createRepositoryContext("my-project", "preview", "v1");
+      assertEquals(Object.isFrozen(ctx), true);
+      assertThrows(() => {
+        (ctx as { projectId: string }).projectId = "other";
+      });
+    });
+
+    it("rejects empty and unsafe identifiers", () => {
+      assertThrows(() => createRepositoryContext("", "preview", "v1"));
+      assertThrows(() => createRepositoryContext("project\nother", "preview", "v1"));
+      assertThrows(() => createRepositoryContext("project", "preview", ""));
+      assertThrows(() => createRepositoryContext("é".repeat(1000), "preview", "v1"));
+    });
+
+    it("rejects accessor-backed context fields without executing them", () => {
+      let getterCalls = 0;
+      const context = {
+        get projectId() {
+          getterCalls++;
+          return "project";
+        },
+        environment: "preview",
+        versionId: "v1",
+      };
+
+      assertThrows(() => buildScopedKey(context as Parameters<typeof buildScopedKey>[0], "key"));
+      assertEquals(getterCalls, 0);
     });
   });
 
@@ -40,8 +76,44 @@ describe("Repository Types", () => {
     it("builds project-scoped cache key", () => {
       const ctx = createRepositoryContext("proj123", "preview", "v1");
       const key = buildScopedKey(ctx, "manifest.json");
-      expect(key).toBe("proj123:preview:v1:manifest.json");
+      assertEquals(key, "proj123:preview:v1:manifest.json");
     });
+
+    it("encodes context delimiters and glob characters", () => {
+      const ctx = createRepositoryContext("proj:one", "preview", "v*1");
+      assertEquals(buildScopedKey(ctx, "manifest.json"), "proj%3Aone:preview:v%2A1:manifest.json");
+    });
+
+    it("rejects unsafe cache keys", () => {
+      const ctx = createRepositoryContext("project", "preview", "v1");
+      assertThrows(() => buildScopedKey(ctx, "line\nbreak"));
+    });
+  });
+});
+
+describe("Repository schemas", () => {
+  it("rejects invalid contexts and dangerous cache options", () => {
+    assertEquals(
+      RepositoryContextSchema.safeParse({
+        projectId: "",
+        environment: "preview",
+        versionId: "v1",
+      }).success,
+      false,
+    );
+    assertEquals(CacheRepositoryOptionsSchema.safeParse({ maxEntries: 0 }).success, false);
+    assertEquals(
+      CacheRepositoryOptionsSchema.safeParse({ defaultTtlSeconds: Infinity }).success,
+      false,
+    );
+    assertEquals(
+      RepositoryContextSchema.safeParse({
+        projectId: "é".repeat(1000),
+        environment: "preview",
+        versionId: "v1",
+      }).success,
+      false,
+    );
   });
 });
 
@@ -54,12 +126,23 @@ describe("MemoryCacheRepository", () => {
     const cache = new MemoryCacheRepository({ context: createCtx() });
 
     await cache.set("key1", "value1");
-    expect(await cache.get("key1")).toBe("value1");
+    assertEquals(await cache.get("key1"), "value1");
+  });
+
+  it("detaches its namespace from mutable constructor input", async () => {
+    const context = { projectId: "project", environment: "preview" as const, versionId: "v1" };
+    const cache = new MemoryCacheRepository({ context });
+    context.projectId = "other";
+
+    await cache.set("key", "value");
+
+    assertEquals(cache.context.projectId, "project");
+    assertEquals(await cache.get("key"), "value");
   });
 
   it("returns null for missing keys", async () => {
     const cache = new MemoryCacheRepository({ context: createCtx() });
-    expect(await cache.get("nonexistent")).toBe(null);
+    assertEquals(await cache.get("nonexistent"), null);
   });
 
   it("deletes values", async () => {
@@ -67,7 +150,7 @@ describe("MemoryCacheRepository", () => {
 
     await cache.set("key1", "value1");
     await cache.delete("key1");
-    expect(await cache.get("key1")).toBe(null);
+    assertEquals(await cache.get("key1"), null);
   });
 
   it("deletes by prefix", async () => {
@@ -78,11 +161,11 @@ describe("MemoryCacheRepository", () => {
     await cache.set("config/main", "config");
 
     const deleted = await cache.deleteByPrefix!("pages/");
-    expect(deleted).toBe(2);
+    assertEquals(deleted, 2);
 
-    expect(await cache.get("pages/index")).toBe(null);
-    expect(await cache.get("pages/about")).toBe(null);
-    expect(await cache.get("config/main")).toBe("config");
+    assertEquals(await cache.get("pages/index"), null);
+    assertEquals(await cache.get("pages/about"), null);
+    assertEquals(await cache.get("config/main"), "config");
   });
 
   it("tracks stats", async () => {
@@ -93,27 +176,28 @@ describe("MemoryCacheRepository", () => {
     await cache.get("nonexistent"); // miss
 
     const stats = cache.getStats!();
-    expect(stats.sets).toBe(1);
-    expect(stats.gets).toBe(2);
-    expect(stats.hits).toBe(1);
-    expect(stats.misses).toBe(1);
-    expect(stats.hitRate).toBe(0.5);
+    assertEquals(stats.sets, 1);
+    assertEquals(stats.gets, 2);
+    assertEquals(stats.hits, 1);
+    assertEquals(stats.misses, 1);
+    assertEquals(stats.hitRate, 0.5);
   });
 
   it("supports factory function", async () => {
     const cache = createMemoryCacheRepository(createCtx(), { maxEntries: 100 });
 
     await cache.set("key", "value");
-    expect(await cache.get("key")).toBe("value");
+    assertEquals(await cache.get("key"), "value");
   });
 
   it("expires entries for has checks", async () => {
     const cache = new MemoryCacheRepository({ context: createCtx() });
 
-    await cache.set("key1", "value1", -1);
+    await cache.set("key1", "value1", 0.001);
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
-    expect(await cache.has!("key1")).toBe(false);
-    expect(await cache.get("key1")).toBe(null);
+    assertEquals(await cache.has!("key1"), false);
+    assertEquals(await cache.get("key1"), null);
   });
 });
 
@@ -124,10 +208,10 @@ describe("MockFileSystemRepository", () => {
       files: { "test.txt": "hello" },
     });
 
-    expect(await mockFs.readFile("test.txt")).toBe("hello");
+    assertEquals(await mockFs.readFile("test.txt"), "hello");
 
     await mockFs.writeFile("new.txt", "world");
-    expect(await mockFs.readFile("new.txt")).toBe("world");
+    assertEquals(await mockFs.readFile("new.txt"), "world");
   });
 
   it("tracks method calls", async () => {
@@ -140,10 +224,12 @@ describe("MockFileSystemRepository", () => {
     await mockFs.exists("test.txt");
 
     const readCalls = mockFs.getCalls("readFile");
-    expect(readCalls).toHaveLength(1);
-    expect(readCalls[0]?.args).toEqual(["test.txt"]);
+    assertEquals(readCalls.length, 1);
+    assertEquals(readCalls[0]?.args, ["test.txt"]);
+    if (readCalls[0]) readCalls[0].args[0] = "mutated.txt";
+    assertEquals(mockFs.getCalls("readFile")[0]?.args, ["test.txt"]);
 
-    expect(mockFs.getCalls("exists")).toHaveLength(1);
+    assertEquals((mockFs.getCalls("exists")).length, 1);
   });
 
   it("throws for missing files", async () => {
@@ -151,7 +237,7 @@ describe("MockFileSystemRepository", () => {
       context: createMockRepositoryContext(),
     });
 
-    await expect(mockFs.readFile("nonexistent.txt")).rejects.toThrow("ENOENT");
+    await assertRejects(() => mockFs.readFile("nonexistent.txt"), Error, "ENOENT");
   });
 
   it("converts between text and bytes without changing content", async () => {
@@ -162,10 +248,42 @@ describe("MockFileSystemRepository", () => {
       },
     });
 
-    expect(await mockFs.readFile("bytes.txt")).toBe("hello");
+    assertEquals(await mockFs.readFile("bytes.txt"), "hello");
 
     await mockFs.writeFile("text.txt", "world");
-    expect(new TextDecoder().decode(await mockFs.readFileBytes("text.txt"))).toBe("world");
+    assertEquals(new TextDecoder().decode(await mockFs.readFileBytes("text.txt")), "world");
+  });
+
+  it("copies byte buffers and reports UTF-8 byte sizes", async () => {
+    const input = new TextEncoder().encode("é");
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: { "unicode.txt": input },
+    });
+    input[0] = 0;
+
+    const firstRead = await mockFs.readFileBytes("unicode.txt");
+    assertEquals([...firstRead], [...new TextEncoder().encode("é")]);
+    firstRead[0] = 0;
+    assertEquals([...await mockFs.readFileBytes("unicode.txt")], [
+      ...new TextEncoder().encode("é"),
+    ]);
+    assertEquals((await mockFs.stat("unicode.txt")).size, 2);
+
+    mockFs.setFile("text.txt", "é");
+    assertEquals((await mockFs.stat("text.txt")).size, 2);
+  });
+
+  it("preserves the root while creating absolute directories recursively", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+    });
+
+    await mockFs.mkdir("/tmp/project/cache", { recursive: true });
+
+    assertEquals(await mockFs.exists("/tmp"), true);
+    assertEquals(await mockFs.exists("/tmp/project"), true);
+    assertEquals(await mockFs.exists("/tmp/project/cache"), true);
   });
 
   it("supports recursive directory lifecycle", async () => {
@@ -177,20 +295,122 @@ describe("MockFileSystemRepository", () => {
       },
     });
 
+    assertEquals(await mockFs.exists("nested"), true);
+    assertEquals((await mockFs.stat("nested")).isDirectory, true);
+
     await mockFs.mkdir("nested/generated/path", { recursive: true });
-    expect(await mockFs.exists("nested/generated")).toBe(true);
-    expect(await mockFs.exists("nested/generated/path")).toBe(true);
+    assertEquals(await mockFs.exists("nested/generated"), true);
+    assertEquals(await mockFs.exists("nested/generated/path"), true);
 
     const entryNames: string[] = [];
     for await (const entry of mockFs.readDir("nested")) {
       entryNames.push(entry.name);
     }
 
-    expect(entryNames.sort()).toEqual(["child.txt", "generated", "subdir"]);
+    assertEquals(entryNames.sort(), ["child.txt", "generated", "subdir"]);
 
     await mockFs.remove("nested/subdir", { recursive: true });
-    expect(await mockFs.exists("nested/subdir")).toBe(false);
-    expect(await mockFs.exists("nested/subdir/grandchild.txt")).toBe(false);
+    assertEquals(await mockFs.exists("nested/subdir"), false);
+    assertEquals(await mockFs.exists("nested/subdir/grandchild.txt"), false);
+  });
+});
+
+describe("SecureFsRepository", () => {
+  it("preserves valid UTF-8 bytes and rejects lossy binary writes", async () => {
+    const adapter = createMockAdapter();
+    const repository = createFileSystemRepository({
+      baseDir: "/project",
+      adapter,
+      context: createRepositoryContext("project", "preview", "v1"),
+    });
+    const utf8 = new TextEncoder().encode("héllo");
+
+    await repository.writeFile("valid.txt", utf8);
+    assertEquals([...await repository.readFileBytes("valid.txt")], [...utf8]);
+    const withBom = new Uint8Array([0xef, 0xbb, 0xbf, 0x41]);
+    await repository.writeFile("bom.txt", withBom);
+    assertEquals([...await repository.readFileBytes("bom.txt")], [...withBom]);
+    await assertRejects(
+      () => repository.writeFile("invalid.bin", new Uint8Array([0xff, 0x00])),
+      Error,
+      "UTF-8",
+    );
+    assertEquals(await repository.exists("invalid.bin"), false);
+  });
+
+  it("delegates the complete filesystem repository lifecycle", async () => {
+    const adapter = createMockAdapter();
+    const repository = createFileSystemRepository({
+      baseDir: "/project",
+      adapter,
+      context: createRepositoryContext("project", "preview", "v1"),
+    });
+
+    await repository.mkdir("nested", { recursive: true });
+    await repository.writeFile("nested/file.txt", "content");
+    assertEquals(await repository.readFile("nested/file.txt"), "content");
+    assertEquals(await repository.exists("nested/file.txt"), true);
+    assertEquals((await repository.stat("nested/file.txt")).isFile, true);
+
+    const entries: string[] = [];
+    for await (const entry of repository.readDir("nested")) entries.push(entry.name);
+    assertEquals(entries, ["file.txt"]);
+
+    await repository.remove("nested", { recursive: true });
+    assertEquals(await repository.exists("nested/file.txt"), false);
+  });
+});
+
+describe("RepositoryFactory", () => {
+  it("creates scoped filesystem, memory, and distributed repositories", async () => {
+    const adapter = createMockAdapter();
+    const mutableContext = {
+      projectId: "project",
+      environment: "preview" as const,
+      versionId: "v1",
+    };
+    const factory = new RepositoryFactory({
+      adapter,
+      baseDir: "/project",
+      context: mutableContext,
+    });
+    mutableContext.projectId = "other";
+
+    assertEquals(factory.context.projectId, "project");
+    const filesystem = factory.createFileSystemRepository();
+    await filesystem.writeFile("file.txt", "content");
+    assertEquals(await filesystem.readFile("file.txt"), "content");
+
+    const memory = factory.createMemoryCacheRepository<string>({ maxEntries: 2 });
+    await memory.set("memory", "value");
+    assertEquals(await memory.get("memory"), "value");
+
+    const distributed = factory.createCacheRepository(new MemoryCacheBackend());
+    await distributed.set("distributed", "value");
+    assertEquals(await distributed.get("distributed"), "value");
+  });
+
+  it("builds a factory from a resolved handler context", () => {
+    const adapter = createMockAdapter();
+    const factory = createRepositoryFactory({
+      projectDir: "/project",
+      adapter,
+      securityConfig: null,
+      cspUserHeader: null,
+      projectId: "project",
+      resolvedEnvironment: "preview",
+      enriched: {
+        projectId: "project",
+        environment: "preview",
+        contentSourceId: "preview-main",
+      } as HandlerContext["enriched"],
+    });
+
+    assertEquals(factory.context, {
+      projectId: "project",
+      environment: "preview",
+      versionId: "preview-main",
+    });
   });
 });
 
@@ -201,7 +421,7 @@ describe("MockCacheRepository", () => {
     });
 
     await mockCache.set("key", "value");
-    expect(await mockCache.get("key")).toBe("value");
+    assertEquals(await mockCache.get("key"), "value");
   });
 
   it("tracks method calls", async () => {
@@ -212,8 +432,8 @@ describe("MockCacheRepository", () => {
     await mockCache.set("key", "value");
     await mockCache.get("key");
 
-    expect(mockCache.getCalls("set")).toHaveLength(1);
-    expect(mockCache.getCalls("get")).toHaveLength(1);
+    assertEquals((mockCache.getCalls("set")).length, 1);
+    assertEquals((mockCache.getCalls("get")).length, 1);
   });
 
   it("supports initial values", async () => {
@@ -222,8 +442,41 @@ describe("MockCacheRepository", () => {
       initial: { key1: "value1", key2: "value2" },
     });
 
-    expect(await mockCache.get("key1")).toBe("value1");
-    expect(await mockCache.get("key2")).toBe("value2");
+    assertEquals(await mockCache.get("key1"), "value1");
+    assertEquals(await mockCache.get("key2"), "value2");
+  });
+
+  it("can store undefined without treating it as a miss", async () => {
+    const mockCache = new MockCacheRepository<undefined>({
+      context: createMockRepositoryContext(),
+      initial: { key: undefined },
+    });
+
+    assertEquals(await mockCache.get("key"), undefined);
+    assertEquals(mockCache.getStats().hits, 1);
+    assertEquals(mockCache.getStats().misses, 0);
+  });
+
+  it("honors entry TTLs and clear deletion statistics", async () => {
+    const mockCache = new MockCacheRepository({
+      context: createMockRepositoryContext(),
+    });
+    await mockCache.set("short", "value", 0.001);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    assertEquals(await mockCache.get("short"), null);
+    await mockCache.set("a", "1");
+    await mockCache.set("b", "2");
+    await mockCache.clear();
+
+    assertEquals(mockCache.getStats(), {
+      gets: 1,
+      hits: 0,
+      misses: 1,
+      sets: 3,
+      deletes: 2,
+      hitRate: 0,
+    });
   });
 
   it("deletes by prefix and resets tracked stats", async () => {
@@ -236,12 +489,12 @@ describe("MockCacheRepository", () => {
       },
     });
 
-    expect(await mockCache.deleteByPrefix("pages/")).toBe(2);
-    expect(await mockCache.get("pages/home")).toBe(null);
-    expect(await mockCache.get("config/main")).toBe("config");
+    assertEquals(await mockCache.deleteByPrefix("pages/"), 2);
+    assertEquals(await mockCache.get("pages/home"), null);
+    assertEquals(await mockCache.get("config/main"), "config");
 
     mockCache.resetStats();
-    expect(mockCache.getStats()).toEqual({
+    assertEquals(mockCache.getStats(), {
       gets: 0,
       hits: 0,
       misses: 0,
@@ -262,33 +515,31 @@ describe("extractRepositoryContext", () => {
     };
   }
 
-  it("extracts context from handler with projectSlug", () => {
+  it("derives a canonical production content source from a release", () => {
     const handlerCtx: Partial<HandlerContext> = {
       ...createBaseHandlerCtx(),
       projectSlug: "my-project",
-      resolvedEnvironment: "preview",
-      releaseId: "release-123",
+      resolvedEnvironment: "production",
+      releaseId: "123",
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.projectId).toBe("my-project");
-    expect(ctx.environment).toBe("preview");
-    expect(ctx.versionId).toBe("release-123");
+    assertEquals(ctx.projectId, "my-project");
+    assertEquals(ctx.environment, "production");
+    assertEquals(ctx.versionId, "release-123");
   });
 
-  it("uses defaults for missing fields", () => {
+  it("fails closed when the project identity is missing", () => {
     const handlerCtx: Partial<HandlerContext> = createBaseHandlerCtx();
 
-    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.projectId).toBe("unknown");
-    expect(ctx.environment).toBe("preview");
-    expect(ctx.versionId).toBe("draft");
+    assertThrows(() => extractRepositoryContext(handlerCtx as HandlerContext));
   });
 
   it("extracts environment from requestContext.mode", () => {
     const handlerCtx: Partial<HandlerContext> = {
       ...createBaseHandlerCtx(),
       projectSlug: "my-project",
+      releaseId: "release-123",
       requestContext: {
         mode: "production",
         token: "",
@@ -298,7 +549,7 @@ describe("extractRepositoryContext", () => {
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.environment).toBe("production");
+    assertEquals(ctx.environment, "production");
   });
 
   it("falls back to projectId and enriched release identifiers", () => {
@@ -311,8 +562,8 @@ describe("extractRepositoryContext", () => {
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.projectId).toBe("project-from-id");
-    expect(ctx.versionId).toBe("content-source-123");
+    assertEquals(ctx.projectId, "project-from-id");
+    assertEquals(ctx.versionId, "content-source-123");
   });
 
   it("prefers resolvedEnvironment over requestContext.mode", () => {
@@ -329,6 +580,61 @@ describe("extractRepositoryContext", () => {
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.environment).toBe("preview");
+    assertEquals(ctx.environment, "preview");
+  });
+
+  it("prefers the fully enriched context for cache isolation", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "stale-project",
+      projectSlug: "stale-slug",
+      resolvedEnvironment: "preview",
+      releaseId: "stale-release",
+      enriched: {
+        projectId: "canonical-project",
+        projectSlug: "canonical-slug",
+        environment: "production",
+        contentSourceId: "release-canonical",
+      } as HandlerContext["enriched"],
+    };
+
+    assertEquals(extractRepositoryContext(handlerCtx as HandlerContext), {
+      projectId: "canonical-project",
+      environment: "production",
+      versionId: "release-canonical",
+    });
+  });
+
+  it("derives a branch-specific preview version without a brittle draft fallback", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "project",
+      requestContext: {
+        mode: "preview",
+        token: "",
+        slug: "project",
+        branch: "feature-a",
+      },
+    };
+
+    assertEquals(
+      extractRepositoryContext(handlerCtx as HandlerContext).versionId,
+      "preview-feature-a",
+    );
+  });
+
+  it("fails closed when a production context has no release identity", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "project",
+      requestContext: {
+        mode: "production",
+        token: "",
+        slug: "project",
+        branch: null,
+      },
+    };
+
+    assertThrows(() => extractRepositoryContext(handlerCtx as HandlerContext));
   });
 });

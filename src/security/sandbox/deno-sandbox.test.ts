@@ -49,6 +49,26 @@ describe("deno-sandbox input validation", () => {
       "maximum size",
     );
   });
+
+  it("rejects invalid timeout values before creating a worker", async () => {
+    for (const timeoutMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assertRejects(
+        () => runInWorker("return 1;", { timeoutMs }),
+        Error,
+        "positive safe integer",
+      );
+    }
+  });
+
+  it("rejects invalid memory limits before creating a worker", async () => {
+    for (const memoryLimitMb of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assertRejects(
+        () => runInWorker("return 1;", { memoryLimitMb }),
+        Error,
+        "positive safe integer",
+      );
+    }
+  });
 });
 
 // SEC-008: Node.js Workers do not support permission isolation. The opt-in

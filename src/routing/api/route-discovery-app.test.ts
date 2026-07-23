@@ -117,6 +117,21 @@ describe("route-discovery.ts - App Router Discovery", () => {
       assertEquals(routes.length, 0, "Should not discover non-route files");
     });
 
+    it("should skip test-only and dependency directories", async () => {
+      const adapter = createMockAdapter();
+      const router = createRouter();
+      setReadDir(adapter, {
+        "/project/app": [dir("api"), dir("__tests__"), dir("node_modules")],
+        "/project/app/api": [file("route.ts")],
+        "/project/app/__tests__": [file("route.ts")],
+        "/project/app/node_modules": [file("route.ts")],
+      });
+
+      await discoverAppRoutes(router, "/project/app", "", adapter);
+
+      assertEquals(router.listRoutes().map((route) => route.pattern), ["/api"]);
+    });
+
     it("should handle empty directory", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
@@ -159,6 +174,20 @@ describe("route-discovery.ts - App Router Discovery", () => {
       assertEquals(routes.length, 1);
       assertEquals(routes[0]!.pattern, "/api/users");
       assertEquals(routes[0]!.page, "/project/app/api/users/route.ts");
+    });
+
+    it("should omit route groups from public route patterns", async () => {
+      const adapter = createMockAdapter();
+      const router = createRouter();
+      setReadDir(adapter, {
+        "/project/app": [dir("(admin)")],
+        "/project/app/(admin)": [dir("api")],
+        "/project/app/(admin)/api": [file("route.ts")],
+      });
+
+      await discoverAppRoutes(router, "/project/app", "", adapter);
+
+      assertEquals(router.listRoutes().map((route) => route.pattern), ["/api"]);
     });
 
     it("should discover routes in deeply nested directories", async () => {

@@ -20,11 +20,13 @@ const EXTENSION_LOADERS: Record<string, Loader> = {
   ".json": "json",
 };
 
+/** Select the esbuild loader associated with a source-file extension. */
 export function getLoaderFromPath(filePath: string): Loader {
   const ext = filePath.slice(filePath.lastIndexOf("."));
   return EXTENSION_LOADERS[ext] ?? "tsx";
 }
 
+/** Return whether a source-file extension requires JavaScript compilation. */
 export function needsTransform(filePath: string): boolean {
   return /\.(tsx?|jsx?|mdx?|md)$/.test(filePath);
 }

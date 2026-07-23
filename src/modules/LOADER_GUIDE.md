@@ -1,8 +1,8 @@
-# Module Loader Selection Guide
+# Module loader selection guide
 
 This guide helps you choose the right module loader for your use case.
 
-## Quick Reference
+## Quick reference
 
 | Loader              | Location                                  | Use Case                                 |
 | ------------------- | ----------------------------------------- | ---------------------------------------- |
@@ -11,7 +11,7 @@ This guide helps you choose the right module loader for your use case.
 | orchestrator loader | `rendering/orchestrator/module-loader/`   | Render pipeline, ESM rewriting           |
 | API loader          | `routing/api/module-loader/`              | API routes, HTTP imports, security       |
 
-## Decision Tree
+## Decision tree
 
 ```
 Loading MDX content?
@@ -39,7 +39,23 @@ Loading MDX content?
           - HTTP import security
 ```
 
-## Shared Patterns
+## Shared parsing and patterns
+
+Use the source-aware utilities when you inspect or rewrite module specifiers:
+
+```typescript
+import {
+  findModuleSpecifierSpans,
+  rewriteModuleSpecifiers,
+  rewriteModuleSpecifiersAsync,
+} from "#veryfront/modules/loader-shared/index.ts";
+```
+
+These utilities recognize static imports, dynamic imports with string literals, and re-exports.
+They do not treat matching text in comments, regular expressions, ordinary strings, or template
+literal text as module syntax.
+
+The shared regular expressions remain available for constrained detection tasks:
 
 Import from `#veryfront/modules/loader-shared/patterns.ts`:
 
@@ -53,7 +69,9 @@ import {
 } from "#veryfront/modules/loader-shared/patterns.ts";
 ```
 
-## Loader Details
+Do not use these regular expressions for source rewriting.
+
+## Loader details
 
 ### esm-module-loader
 
@@ -61,7 +79,7 @@ import {
 
 **Purpose:** Primary loader for MDX content with ESM module support.
 
-**Key Features:**
+**Key features:**
 
 - Module caching with multi-layer validation
 - Alias import transformation (@/ → absolute paths)
@@ -69,9 +87,9 @@ import {
 - Stub module generation for missing dependencies
 - Framework bundle loading
 
-**Entry Point:** `loadModuleESM()`
+**Entry point:** `loadModuleESM()`
 
-**Sub-modules:**
+**Submodules:**
 
 - `metadata/` - Frontmatter and metadata extraction
 - `components/` - Component import resolution
@@ -86,14 +104,14 @@ import {
 
 **Purpose:** React SSR with distributed caching support.
 
-**Key Features:**
+**Key features:**
 
 - Memory + disk caching layers
 - Cross-project import rewriting
 - Environment-specific loading strategies (Deno vs Node)
 - Lockfile integrity verification
 
-**Entry Point:** `SSRModuleLoader` class
+**Entry point:** `SSRModuleLoader` class
 
 ### orchestrator/module-loader
 
@@ -101,13 +119,13 @@ import {
 
 **Purpose:** Render pipeline integration.
 
-**Key Features:**
+**Key features:**
 
 - ESM rewriting for external modules
 - CDN URL resolution
 - Render context integration
 
-**Entry Point:** `ESMRewriter` class
+**Entry point:** `ESMRewriter` class
 
 ### API module-loader
 
@@ -115,20 +133,20 @@ import {
 
 **Purpose:** API route handler loading.
 
-**Key Features:**
+**Key features:**
 
 - Direct import strategy (fastest)
 - Transpilation fallback
 - HTTP import security controls
 
-**Entry Point:** `loadModule()`
+**Entry point:** `loadModule()`
 
-## Migration Notes
+## Migration notes
 
 Legacy helper files under `module-loader/` were removed.
 Use `esm-module-loader/` imports directly.
 
-### Removed Legacy Paths
+### Removed legacy paths
 
 The following old imports were removed and must be replaced:
 

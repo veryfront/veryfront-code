@@ -12,7 +12,8 @@ import {
   createClaudeCodeEventState,
   reduceClaudeCodeEventState,
 } from "./event-state-reducer.ts";
-import { REQUEST_ERROR } from "#veryfront/errors";
+import { REQUEST_ERROR } from "#veryfront/errors/error-registry/server.ts";
+import { type GenerationTimeout, invokeLifecycleCallback } from "./connection-lifecycle.ts";
 
 /** Default delay before reconnecting after disconnect */
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -68,6 +69,15 @@ export interface UseClaudeCodeStreamOptions {
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
   onComplete?: (result: ClaudeCodeResult) => void;
+}
+
+function createStreamState(): UseClaudeCodeStreamState {
+  return {
+    ...createClaudeCodeEventState(),
+    isConnected: false,
+    allToolCalls: [],
+    events: [],
+  };
 }
 
 /**
@@ -127,81 +137,151 @@ export function useClaudeCodeStream(
     onComplete,
   } = options;
 
-  const [state, setState] = useState<UseClaudeCodeStreamState>({
-    ...createClaudeCodeEventState(),
-    isConnected: false,
-    allToolCalls: [],
-    events: [],
-  });
+  const [state, setState] = useState<UseClaudeCodeStreamState>(createStreamState);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectAttemptsRef = useRef(0);
-  const reconnectTimeoutRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<GenerationTimeout | null>(null);
+  const connectionGenerationRef = useRef(0);
+  const shouldConnectRef = useRef(false);
+  const connectionIdentity = JSON.stringify([url, runId]);
+  const connectionIdentityRef = useRef(connectionIdentity);
+  const startConnectionRef = useRef<(fresh: boolean) => void>(() => {});
+  const callbacksRef = useRef({ onEvent, onConnect, onDisconnect, onError, onComplete });
+  callbacksRef.current = { onEvent, onConnect, onDisconnect, onError, onComplete };
+
+  const clearReconnectTimeout = useCallback(() => {
+    const timeout = reconnectTimeoutRef.current;
+    reconnectTimeoutRef.current = null;
+    if (timeout) globalThis.clearTimeout(timeout.handle);
+  }, []);
 
   // Process incoming event
   const processEvent = useCallback(
-    (event: ClaudeCodeEvent) => {
-      onEvent?.(event);
-
+    (event: ClaudeCodeEvent, generation: number) => {
       setState((prev) => {
+        if (connectionGenerationRef.current !== generation) return prev;
         const newState = reduceClaudeCodeEventState(prev, event, {
           keepEventHistory,
           maxEventHistory,
           trackAllToolCalls: true,
         });
-
-        if (event.type === "complete") {
-          onComplete?.(event.result);
-        }
-
         return newState;
       });
+
+      const callbacks = callbacksRef.current;
+      invokeLifecycleCallback("useClaudeCodeStream.onEvent", callbacks.onEvent, event);
+      if (event.type === "complete") {
+        invokeLifecycleCallback(
+          "useClaudeCodeStream.onComplete",
+          callbacks.onComplete,
+          event.result,
+        );
+      }
     },
-    [onEvent, onComplete, keepEventHistory, maxEventHistory],
+    [keepEventHistory, maxEventHistory],
   );
 
   // Connect to SSE stream
-  const connect = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+  const startConnection = useCallback((fresh: boolean) => {
+    shouldConnectRef.current = true;
+    if (fresh) reconnectAttemptsRef.current = 0;
+    const generation = ++connectionGenerationRef.current;
+
+    clearReconnectTimeout();
+
+    const previousSource = eventSourceRef.current;
+    if (previousSource) {
+      previousSource.onopen = null;
+      previousSource.onmessage = null;
+      previousSource.onerror = null;
+      previousSource.close();
     }
+    setState((prev) => ({ ...prev, isConnected: false }));
 
     const streamUrl = `${url}?runId=${encodeURIComponent(runId)}`;
     const eventSource = new EventSource(streamUrl);
+    eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
+      if (
+        connectionGenerationRef.current !== generation ||
+        eventSourceRef.current !== eventSource ||
+        !shouldConnectRef.current
+      ) {
+        eventSource.close();
+        return;
+      }
       setState((prev) => ({ ...prev, isConnected: true }));
       reconnectAttemptsRef.current = 0;
-      onConnect?.();
+      invokeLifecycleCallback(
+        "useClaudeCodeStream.onConnect",
+        callbacksRef.current.onConnect,
+      );
     };
 
     eventSource.onmessage = (e) => {
+      if (
+        connectionGenerationRef.current !== generation ||
+        eventSourceRef.current !== eventSource
+      ) return;
       try {
         const parsed: unknown = JSON.parse(e.data);
         if (!parsed || typeof parsed !== "object") return;
         const event = parsed as ClaudeCodeEvent;
-        processEvent(event);
+        processEvent(event, generation);
       } catch (error) {
         console.error("[useClaudeCodeStream] Failed to parse event:", error);
       }
     };
 
     eventSource.onerror = () => {
+      if (
+        connectionGenerationRef.current !== generation ||
+        eventSourceRef.current !== eventSource ||
+        !shouldConnectRef.current
+      ) return;
+      eventSourceRef.current = null;
+      eventSource.onopen = null;
+      eventSource.onmessage = null;
+      eventSource.onerror = null;
+      eventSource.close();
       setState((prev) => ({ ...prev, isConnected: false }));
-      onDisconnect?.();
 
       // Attempt reconnect
+      let terminalError = false;
       if (autoReconnect && reconnectAttemptsRef.current < maxReconnectAttempts) {
         reconnectAttemptsRef.current++;
-        reconnectTimeoutRef.current = globalThis.setTimeout(() => {
-          connect();
+        const timeout: GenerationTimeout = {
+          generation,
+          handle: 0,
+        };
+        timeout.handle = globalThis.setTimeout(() => {
+          if (reconnectTimeoutRef.current !== timeout) return;
+          reconnectTimeoutRef.current = null;
+          if (
+            !shouldConnectRef.current ||
+            connectionGenerationRef.current !== generation
+          ) return;
+          startConnectionRef.current(false);
         }, reconnectDelay * reconnectAttemptsRef.current);
+        reconnectTimeoutRef.current = timeout;
       } else {
-        onError?.(REQUEST_ERROR.create({ detail: "Connection failed" }));
+        terminalError = true;
+      }
+
+      invokeLifecycleCallback(
+        "useClaudeCodeStream.onDisconnect",
+        callbacksRef.current.onDisconnect,
+      );
+      if (terminalError) {
+        invokeLifecycleCallback(
+          "useClaudeCodeStream.onError",
+          callbacksRef.current.onError,
+          REQUEST_ERROR.create({ detail: "Connection failed" }),
+        );
       }
     };
-
-    eventSourceRef.current = eventSource;
   }, [
     url,
     runId,
@@ -209,25 +289,42 @@ export function useClaudeCodeStream(
     autoReconnect,
     maxReconnectAttempts,
     reconnectDelay,
-    onConnect,
-    onDisconnect,
-    onError,
+    clearReconnectTimeout,
   ]);
+  startConnectionRef.current = startConnection;
+
+  const connect = useCallback(() => {
+    startConnectionRef.current(true);
+  }, []);
 
   // Disconnect from stream
   const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    shouldConnectRef.current = false;
+    connectionGenerationRef.current++;
+    clearReconnectTimeout();
+    const eventSource = eventSourceRef.current;
+    eventSourceRef.current = null;
+    if (eventSource) {
+      eventSource.onopen = null;
+      eventSource.onmessage = null;
+      eventSource.onerror = null;
+      eventSource.close();
+      invokeLifecycleCallback(
+        "useClaudeCodeStream.onDisconnect",
+        callbacksRef.current.onDisconnect,
+      );
     }
     setState((prev) => ({ ...prev, isConnected: false }));
-  }, []);
+  }, [clearReconnectTimeout]);
 
   // Auto-connect on mount
   useEffect(() => {
+    if (connectionIdentityRef.current !== connectionIdentity) {
+      connectionIdentityRef.current = connectionIdentity;
+      reconnectAttemptsRef.current = 0;
+      setState(createStreamState());
+    }
+
     if (autoConnect) {
       connect();
     }
@@ -235,7 +332,7 @@ export function useClaudeCodeStream(
     return () => {
       disconnect();
     };
-  }, [autoConnect, connect, disconnect]);
+  }, [autoConnect, connect, connectionIdentity, disconnect, startConnection]);
 
   return {
     ...state,

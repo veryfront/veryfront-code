@@ -1,9 +1,16 @@
 import * as React from "react";
-import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { getBaseLogger, isCompiledBinary } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { classifyTelemetryError } from "#veryfront/observability/telemetry-safety.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import type { SSROptions } from "./types.ts";
+
+const logger = getBaseLogger("RENDERER").component("string-renderer");
+
+function renderFailureContext(error: unknown): { errorCategory: string } {
+  return { errorCategory: classifyTelemetryError(error) };
+}
 
 async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -34,7 +41,10 @@ export async function renderToStringAdapter(
         () =>
           server.renderToReadableStream!(element, {
             onError: (error: unknown) => {
-              logger.error("SSR renderToReadableStream error", error);
+              logger.error(
+                "SSR renderToReadableStream error",
+                renderFailureContext(error),
+              );
               options.onError?.(error as Error);
             },
           }),
@@ -43,7 +53,10 @@ export async function renderToStringAdapter(
 
       return await streamToString(stream);
     } catch (error) {
-      logger.warn("SSR renderToReadableStream failed, falling back to renderToString", error);
+      logger.warn(
+        "SSR renderToReadableStream failed, falling back to renderToString",
+        renderFailureContext(error),
+      );
     }
   }
 
@@ -54,7 +67,7 @@ export async function renderToStringAdapter(
       { "ssr.method": "renderToString" },
     )) as string;
   } catch (error) {
-    logger.error("SSR renderToString failed", error);
+    logger.error("SSR renderToString failed", renderFailureContext(error));
     options.onError?.(error as Error);
     throw error;
   }
@@ -69,7 +82,7 @@ export async function renderToStaticMarkupAdapter(
   try {
     return renderToStaticMarkup(element);
   } catch (error) {
-    logger.error("SSR renderToStaticMarkup failed", error);
+    logger.error("SSR renderToStaticMarkup failed", renderFailureContext(error));
     options.onError?.(error as Error);
     throw error;
   }

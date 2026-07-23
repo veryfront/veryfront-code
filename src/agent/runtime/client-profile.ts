@@ -1,26 +1,54 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
-/** Zod schema for get runtime client type. */
-export const getRuntimeClientTypeSchema = defineSchema((v) =>
-  v.enum(["web", "cli", "api", "internal"])
+/** Runtime client category used to select trusted capability defaults. */
+export type RuntimeClientType = "web" | "cli" | "api" | "internal";
+
+/** Capability advertised by a runtime client. */
+export type RuntimeClientCapability =
+  | "ui_panels"
+  | "form_input"
+  | "media_display"
+  | "project_switching"
+  | "project.evals.read"
+  | "project.evals.write"
+  | "project.evals.run";
+
+/** Validated identity and capability profile for a runtime client. */
+export interface RuntimeClientProfile {
+  /** Stable client identifier. */
+  id: string;
+  /** Client category. */
+  type: RuntimeClientType;
+  /** Whether Veryfront recognizes the client as trusted. */
+  trusted: boolean;
+  /** Capabilities available to the client. */
+  capabilities: RuntimeClientCapability[];
+}
+
+/** Returns the schema for runtime client categories. */
+export const getRuntimeClientTypeSchema: () => Schema<RuntimeClientType> = defineSchema((v) =>
+  v.enum(["web", "cli", "api", "internal"] as const)
 );
 
-/** Zod schema for get runtime client capability. */
-export const getRuntimeClientCapabilitySchema = defineSchema((v) =>
-  v.enum([
-    "ui_panels",
-    "form_input",
-    "media_display",
-    "project_switching",
-    "project.evals.read",
-    "project.evals.write",
-    "project.evals.run",
-  ])
+/** Returns the schema for runtime client capabilities. */
+export const getRuntimeClientCapabilitySchema: () => Schema<RuntimeClientCapability> = defineSchema(
+  (v) =>
+    v.enum(
+      [
+        "ui_panels",
+        "form_input",
+        "media_display",
+        "project_switching",
+        "project.evals.read",
+        "project.evals.write",
+        "project.evals.run",
+      ] as const,
+    ),
 );
 
-/** Zod schema for get runtime client profile. */
-export const getRuntimeClientProfileSchema = defineSchema((v) =>
+/** Returns the schema for runtime client profiles. */
+export const getRuntimeClientProfileSchema: () => Schema<RuntimeClientProfile> = defineSchema((v) =>
   v.object({
     id: v.string().min(1).max(128),
     type: getRuntimeClientTypeSchema(),
@@ -32,24 +60,21 @@ export const getRuntimeClientProfileSchema = defineSchema((v) =>
 /** Schema for runtime client type.
  * @deprecated Use getRuntimeClientTypeSchema()
  */
-export const runtimeClientTypeSchema = lazySchema(getRuntimeClientTypeSchema);
+export const runtimeClientTypeSchema: Schema<RuntimeClientType> = lazySchema(
+  getRuntimeClientTypeSchema,
+);
 /** Schema for runtime client capability.
  * @deprecated Use getRuntimeClientCapabilitySchema()
  */
-export const runtimeClientCapabilitySchema = lazySchema(getRuntimeClientCapabilitySchema);
+export const runtimeClientCapabilitySchema: Schema<RuntimeClientCapability> = lazySchema(
+  getRuntimeClientCapabilitySchema,
+);
 /** Schema for runtime client profile.
  * @deprecated Use getRuntimeClientProfileSchema()
  */
-export const runtimeClientProfileSchema = lazySchema(getRuntimeClientProfileSchema);
-
-/** Public API contract for runtime client type. */
-export type RuntimeClientType = InferSchema<ReturnType<typeof getRuntimeClientTypeSchema>>;
-/** Public API contract for runtime client capability. */
-export type RuntimeClientCapability = InferSchema<
-  ReturnType<typeof getRuntimeClientCapabilitySchema>
->;
-/** Public API contract for runtime client profile. */
-export type RuntimeClientProfile = InferSchema<ReturnType<typeof getRuntimeClientProfileSchema>>;
+export const runtimeClientProfileSchema: Schema<RuntimeClientProfile> = lazySchema(
+  getRuntimeClientProfileSchema,
+);
 
 const getClientMetadataSchema = defineSchema((v) =>
   v.object({

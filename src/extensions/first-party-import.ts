@@ -7,9 +7,20 @@
  * the consuming service or app.
  */
 
+import { isVeryfrontErrorWithSlug, MISSING_EXTENSION_ERROR } from "./errors.ts";
+import {
+  hasAsciiWhitespaceOrControlCharacters,
+  hasControlCharacters,
+  MAX_EXTENSION_NAME_LENGTH,
+} from "./identifiers.ts";
+
 const SOURCE_EXTENSION_ROOT = "../../extensions";
+const MAX_EXPECTED_SPECIFIER_FRAGMENTS = 128;
+const MAX_EXPECTED_SPECIFIER_LENGTH = 4_096;
+const MAX_MODULE_ERROR_MESSAGE_LENGTH = 8_192;
 
 export function firstPartyExtensionSourceSpecifiers(sourceDirectory: string): string[] {
+  assertFirstPartySourceDirectory(sourceDirectory);
   const sourceRoot = `${SOURCE_EXTENSION_ROOT}/${sourceDirectory}/src/index`;
   return [`${sourceRoot}.ts`, `${sourceRoot}.js`];
 }
@@ -18,8 +29,8 @@ export async function importFirstPartyExtensionModule<TModule>(
   sourceDirectory: string,
   packageName: string,
 ): Promise<TModule> {
+  assertFirstPartySpecifierInputs(sourceDirectory, packageName);
   const sourceFragment = `extensions/${sourceDirectory}/src/index`;
-  let sourceError: unknown;
 
   for (const sourceSpecifier of firstPartyExtensionSourceSpecifiers(sourceDirectory)) {
     try {
@@ -28,7 +39,6 @@ export async function importFirstPartyExtensionModule<TModule>(
       if (!isMissingFirstPartyExtensionModule(error, [sourceFragment])) {
         throw error;
       }
-      sourceError ??= error;
     }
   }
 
@@ -38,7 +48,10 @@ export async function importFirstPartyExtensionModule<TModule>(
     if (!isMissingFirstPartyExtensionModule(error, [packageName])) {
       throw error;
     }
-    throw withMissingExtensionInstallHint(error, sourceDirectory, packageName, sourceError);
+    throw MISSING_EXTENSION_ERROR.create({
+      message:
+        `First-party extension is not installed. Install ${packageName} alongside Veryfront to enable it.`,
+    });
   }
 }
 
@@ -76,28 +89,98 @@ export function isMissingFirstPartyExtensionModule(
   error: unknown,
   expectedSpecifierFragments?: string[],
 ): boolean {
+  if (isVeryfrontErrorWithSlug(error, "missing-extension")) return true;
   const chain = errorChain(error);
   const missing = chain.filter(isMissingModuleError);
   if (missing.length === 0) return false;
-  if (!expectedSpecifierFragments || expectedSpecifierFragments.length === 0) return true;
+  if (expectedSpecifierFragments === undefined) return true;
+  const expectedFragments = snapshotExpectedSpecifierFragments(expectedSpecifierFragments);
+  if (expectedFragments === undefined) return false;
+  if (expectedFragments.length === 0) return true;
 
   for (const entry of missing) {
     const missingSpecifier = errorMessage(entry).match(/["']([^"']+)["']/)?.[1];
     if (!missingSpecifier) continue;
-    return expectedSpecifierFragments.some((fragment) => missingSpecifier.includes(fragment));
+    if (
+      expectedFragments.some((fragment) =>
+        matchesExpectedSpecifier(
+          missingSpecifier,
+          fragment,
+        )
+      )
+    ) {
+      return true;
+    }
   }
-  // Missing-module error with no quotable specifier: keep the previous
-  // fail-open behavior so unknown message shapes still degrade gracefully.
-  return true;
+  return false;
+}
+
+function snapshotExpectedSpecifierFragments(value: unknown): string[] | undefined {
+  try {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+    const length = Reflect.get(value, "length");
+    if (
+      typeof length !== "number" || !Number.isSafeInteger(length) || length < 0 ||
+      length > MAX_EXPECTED_SPECIFIER_FRAGMENTS
+    ) return undefined;
+    const result: string[] = [];
+    for (let index = 0; index < length; index++) {
+      const fragment = Reflect.get(value, index);
+      if (
+        typeof fragment !== "string" || fragment.length === 0 ||
+        fragment.length > MAX_EXPECTED_SPECIFIER_LENGTH ||
+        hasControlCharacters(fragment)
+      ) {
+        return undefined;
+      }
+      result.push(fragment);
+    }
+    return result;
+  } catch {
+    return undefined;
+  }
+}
+
+function matchesExpectedSpecifier(missingSpecifier: string, expectedFragment: string): boolean {
+  if (
+    typeof expectedFragment !== "string" || expectedFragment.length === 0 ||
+    expectedFragment.length > MAX_EXPECTED_SPECIFIER_LENGTH ||
+    hasControlCharacters(expectedFragment)
+  ) {
+    return false;
+  }
+  const missing = missingSpecifier.replaceAll("\\", "/");
+  const expected = expectedFragment.replaceAll("\\", "/");
+  if (missing === expected || missing === `npm:${expected}`) return true;
+
+  let offset = missing.indexOf(expected);
+  while (offset >= 0) {
+    const before = offset === 0 ? "" : missing[offset - 1];
+    const after = missing[offset + expected.length] ?? "";
+    if (
+      (before === "" || before === "/") &&
+      (after === "" || after === "/" || after === ".")
+    ) {
+      return true;
+    }
+    offset = missing.indexOf(expected, offset + 1);
+  }
+  return false;
 }
 
 function isMissingModuleError(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  if (typeof code === "string" && MISSING_MODULE_ERROR_CODES.has(code)) return true;
+  try {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && MISSING_MODULE_ERROR_CODES.has(code)) return true;
 
-  const message = errorMessage(error);
-  return MISSING_MODULE_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern)) ||
-    (message.includes("Import '") && message.includes("' failed"));
+    const message = errorMessage(error);
+    return MISSING_MODULE_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern)) ||
+      (message.includes("Import '") && message.includes("' failed"));
+  } catch {
+    return false;
+  }
 }
 
 function errorChain(error: unknown): unknown[] {
@@ -106,32 +189,44 @@ function errorChain(error: unknown): unknown[] {
   while (current !== undefined && current !== null && chain.length < 8) {
     if (chain.includes(current)) break;
     chain.push(current);
-    current = current instanceof Error ? current.cause : undefined;
+    try {
+      current = current instanceof Error ? current.cause : undefined;
+    } catch {
+      break;
+    }
   }
   return chain;
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.slice(0, MAX_MODULE_ERROR_MESSAGE_LENGTH);
+  } catch {
+    return "";
+  }
 }
 
-/**
- * Both the workspace source and the npm package are missing. Surface the
- * package-resolution error (its message names the installable @veryfront/ext-*
- * package) instead of the internal workspace source path, and append an
- * explicit install hint for npm consumers.
- */
-function withMissingExtensionInstallHint(
-  error: unknown,
+function assertFirstPartySpecifierInputs(
   sourceDirectory: string,
   packageName: string,
-  sourceError: unknown,
-): unknown {
-  if (!(error instanceof Error)) return error;
-  error.message +=
-    ` First-party extension "${sourceDirectory}" is not installed; install ${packageName} alongside veryfront to enable it.`;
-  if (error.cause === undefined && sourceError !== undefined && sourceError !== error) {
-    error.cause = sourceError;
+): void {
+  assertFirstPartySourceDirectory(sourceDirectory);
+  if (
+    typeof packageName !== "string" || packageName.length === 0 ||
+    packageName.length > MAX_EXTENSION_NAME_LENGTH ||
+    hasAsciiWhitespaceOrControlCharacters(packageName) || packageName.includes("\\") ||
+    packageName.startsWith(".") || packageName.startsWith("/")
+  ) {
+    throw new TypeError("First-party extension package name is invalid");
   }
-  return error;
+}
+
+function assertFirstPartySourceDirectory(sourceDirectory: string): void {
+  if (
+    typeof sourceDirectory !== "string" ||
+    !/^[a-z0-9][a-z0-9-]{0,127}$/.test(sourceDirectory)
+  ) {
+    throw new TypeError("First-party extension source directory is invalid");
+  }
 }

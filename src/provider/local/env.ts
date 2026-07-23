@@ -2,7 +2,7 @@
  * Cross-platform environment helpers for local LLM provider.
  *
  * Uses the platform compat layer so all local-AI checks go through
- * a single function — no duplicated env access patterns.
+ * a single function - no duplicated env access patterns.
  *
  * @module provider/local
  */
@@ -52,8 +52,7 @@ export function getLocalAIDevice(): LocalAIDevice {
   throw toError(
     createError({
       type: "config",
-      message:
-        `Invalid ${LOCAL_AI_DEVICE_ENV} value "${value}". Supported values are "cpu" and "webgpu".`,
+      message: `Invalid ${LOCAL_AI_DEVICE_ENV} value. Supported values are "cpu" and "webgpu".`,
     }),
   );
 }
@@ -77,7 +76,7 @@ export function getLocalAIThinkingEnabled(): boolean {
     createError({
       type: "config",
       message:
-        `Invalid ${LOCAL_AI_THINKING_ENV} value "${value}". Supported values are "1", "true", "yes", "on", "0", "false", "no", and "off".`,
+        `Invalid ${LOCAL_AI_THINKING_ENV} value. Supported values are "1", "true", "yes", "on", "0", "false", "no", and "off".`,
     }),
   );
 }

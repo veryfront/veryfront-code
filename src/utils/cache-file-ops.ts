@@ -6,7 +6,28 @@
  */
 
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { dirname } from "#veryfront/compat/path/basic-operations.ts";
+import { rendererLogger as logger } from "./logger/logger.ts";
+import { generateUuid } from "./id.ts";
+
+export interface WriteCacheFileOptions {
+  /** Create the parent directory before writing. Disable this for indexes that must not resurrect a cleared cache. */
+  createParent?: boolean;
+}
+
+async function removeTemporaryCacheFile(
+  fs: FileSystem,
+  temporaryPath: string,
+  label: string,
+): Promise<void> {
+  try {
+    await fs.remove(temporaryPath);
+  } catch (error) {
+    logger.debug(`[${label}] Failed to clean up temporary cache file`, {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
 
 /**
  * Safely write a cache file: mkdir parent dir → write file → verify file exists.
@@ -20,50 +41,65 @@ export async function writeCacheFile(
   path: string,
   content: string,
   label = "cache",
+  options: WriteCacheFileOptions = {},
 ): Promise<boolean> {
-  const parentDir = path.substring(0, path.lastIndexOf("/"));
+  const parentDir = dirname(path);
 
-  try {
-    await fs.mkdir(parentDir, { recursive: true });
-  } catch (mkdirError) {
-    logger.debug(`[${label}] mkdir failed for cache file parent`, {
-      path: path.slice(-80),
-      dir: parentDir.slice(-80),
-      error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError),
-    });
-    throw mkdirError;
+  if (options.createParent !== false) {
+    try {
+      await fs.mkdir(parentDir, { recursive: true });
+    } catch (mkdirError) {
+      logger.debug(`[${label}] mkdir failed for cache file parent`, {
+        errorName: mkdirError instanceof Error ? mkdirError.name : typeof mkdirError,
+      });
+      throw mkdirError;
+    }
   }
 
+  const rename = fs.rename?.bind(fs);
+  const temporaryPath = rename ? `${path}.tmp-${generateUuid()}` : undefined;
+  const writePath = temporaryPath ?? path;
   try {
-    await fs.writeTextFile(path, content);
+    await fs.writeTextFile(writePath, content);
   } catch (writeError) {
+    if (temporaryPath) await removeTemporaryCacheFile(fs, temporaryPath, label);
     // ENOENT / NotFound / os error 22 = parent dir was removed concurrently (cache cleanup race)
     if (isCacheWriteRaceError(writeError)) {
-      logger.debug(`[${label}] Cache write skipped (directory removed during write)`, {
-        path: path.slice(-80),
-      });
+      logger.debug(`[${label}] Cache write skipped (directory removed during write)`);
       return false;
     }
     logger.debug(`[${label}] Failed to write cache file`, {
-      path: path.slice(-80),
-      error: writeError instanceof Error ? writeError.message : String(writeError),
+      errorName: writeError instanceof Error ? writeError.name : typeof writeError,
     });
     throw writeError;
+  }
+
+  if (rename && temporaryPath) {
+    try {
+      await rename(temporaryPath, path);
+    } catch (renameError) {
+      await removeTemporaryCacheFile(fs, temporaryPath, label);
+      if (isCacheWriteRaceError(renameError)) {
+        logger.debug(`[${label}] Cache write skipped (directory removed during replacement)`);
+        return false;
+      }
+      logger.debug(`[${label}] Failed to replace cache file`, {
+        errorName: renameError instanceof Error ? renameError.name : typeof renameError,
+      });
+      throw renameError;
+    }
   }
 
   // Verify the file was actually written
   try {
     const stat = await fs.stat(path);
     if (!stat?.isFile) {
-      logger.debug(`[${label}] Cache file verification failed: not a file after write`, {
-        path: path.slice(-80),
-      });
+      logger.debug(`[${label}] Cache file verification failed: not a file after write`);
       return false;
     }
   } catch (verifyError) {
     logger.debug(`[${label}] Cache file verification failed: cannot stat after write`, {
-      path: path.slice(-80),
-      error: verifyError instanceof Error ? verifyError.message : String(verifyError),
+      errorName: verifyError instanceof Error ? verifyError.name : typeof verifyError,
     });
     return false;
   }

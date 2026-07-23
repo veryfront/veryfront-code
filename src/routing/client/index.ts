@@ -12,6 +12,7 @@ export {
   isInternalLink,
   manageFocus,
   parsePageDataFromHTML,
+  resolveInternalNavigationUrl,
   updateMetaTags,
 } from "./dom-utils.ts";
 

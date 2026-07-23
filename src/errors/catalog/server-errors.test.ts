@@ -37,8 +37,8 @@ describe("errors/catalog/server-errors", () => {
       }
     });
 
-    it("should have 8 entries", () => {
-      assertEquals(Object.keys(SERVER_ERROR_CATALOG).length, 8);
+    it("should have 15 entries", () => {
+      assertEquals(Object.keys(SERVER_ERROR_CATALOG).length, 15);
     });
 
     it("port-in-use should have an example", () => {

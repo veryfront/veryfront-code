@@ -2,13 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 /**
  * Cross-Runtime Compatibility Tests
  *
- * These tests verify that the platform compat layer works correctly
- * across Deno, Node.js, and Bun runtimes.
+ * These source-tree tests verify portable behavior under Deno. Use each
+ * distribution's package test harness to validate Node.js and Bun builds.
  *
  * Run with:
- *   deno test src/platform/compat/cross-runtime.test.ts
- *   npx tsx --test src/platform/compat/cross-runtime.test.ts
- *   bun test src/platform/compat/cross-runtime.test.ts
+ *   deno task test:cross-runtime
  */
 
 import { assert, assertEquals, assertExists } from "#std/assert.ts";
@@ -43,7 +41,7 @@ import {
 } from "./process.ts";
 
 import { createFileSystem, lstat, symlink } from "./fs.ts";
-import { isBun, isDeno, isNode } from "./runtime.ts";
+import { detectRuntimeEnvironment, isBun, isDeno, isNode } from "./runtime.ts";
 
 function getCurrentRuntime(): string {
   if (isDeno) return "Deno";
@@ -238,8 +236,12 @@ describe("Filesystem Operations", () => {
 });
 
 describe("Runtime Detection", () => {
-  it("exactly one runtime is detected", () => {
-    assertEquals([isDeno, isBun, isNode].filter(Boolean).length, 1);
+  it("keeps runtime flags consistent with the canonical classifier", () => {
+    const runtime = detectRuntimeEnvironment();
+    assertEquals(
+      [isDeno, isBun, isNode].filter(Boolean).length,
+      runtime === "unknown" || runtime === "cloudflare" ? 0 : 1,
+    );
   });
 
   it("detected runtime matches version string", () => {

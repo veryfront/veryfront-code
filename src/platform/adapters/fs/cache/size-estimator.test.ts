@@ -53,6 +53,21 @@ describe("estimateSize", () => {
     it("should handle nested objects", () => {
       assertJsonSize({ a: { b: { c: 1 } } });
     });
+
+    it("returns a finite estimate for cyclic objects", () => {
+      const value: Record<string, unknown> = { label: "root" };
+      value.self = value;
+
+      const size = estimateSize(value);
+      assertEquals(Number.isFinite(size), true);
+      assertEquals(size > 0, true);
+    });
+
+    it("returns a finite estimate for objects containing bigint values", () => {
+      const size = estimateSize({ value: 42n });
+      assertEquals(Number.isFinite(size), true);
+      assertEquals(size > 0, true);
+    });
   });
 
   describe("primitives", () => {

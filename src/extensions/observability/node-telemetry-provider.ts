@@ -44,6 +44,8 @@ export type NodeTelemetryLogRecord = {
   schedule_name?: string;
   tool_name?: string;
   tool_call_id?: string;
+  /** Additional structured dimensions preserved for forward-compatible log pipelines. */
+  [key: string]: unknown;
 };
 
 /** Emits a structured logger record into the active telemetry pipeline. */
@@ -83,5 +85,6 @@ export type NodeTelemetryInitializeOptions = {
  * from `TracingExporter`, which only exposes tracing APIs to the core shim.
  */
 export interface NodeTelemetryProvider {
+  /** Initialize telemetry once and report whether any telemetry signal was enabled. */
   initialize(options: NodeTelemetryInitializeOptions): Promise<boolean>;
 }

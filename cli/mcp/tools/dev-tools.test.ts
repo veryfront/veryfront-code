@@ -46,6 +46,34 @@ describe("mcp/tools/dev-tools", () => {
       assertEquals(ReloadNotifier.getMetrics().triggerCalls, triggerCalls + 1);
       unsubscribe();
     });
+
+    it("waits for invalidation before reporting success", async () => {
+      const release = Promise.withResolvers<void>();
+      const unsubscribeReload = ReloadNotifier.subscribe(() => {});
+      const unsubscribeInvalidate = ReloadNotifier.subscribeInvalidate(() => release.promise);
+      let settled = false;
+
+      const execution = vfHotReload.execute({ file: "app/page.tsx" }).then((result) => {
+        settled = true;
+        return result;
+      });
+      await Promise.resolve();
+      assertEquals(settled, false);
+      release.resolve();
+      assertEquals((await execution).success, true);
+
+      unsubscribeInvalidate();
+      unsubscribeReload();
+    });
+
+    it("does not echo file paths in public output", async () => {
+      const unsubscribe = ReloadNotifier.subscribe(() => {});
+      const privatePath = "/private/project/secret-page.tsx";
+      const result = await vfHotReload.execute({ file: privatePath });
+
+      assertEquals(result.message.includes(privatePath), false);
+      unsubscribe();
+    });
   });
 
   describe("vfGetDebugContext", () => {
@@ -74,6 +102,15 @@ describe("mcp/tools/dev-tools", () => {
 
     it("has execute function", () => {
       assertEquals(typeof vfTriggerHmr.execute, "function");
+    });
+
+    it("does not echo changed paths in public output", async () => {
+      const unsubscribe = ReloadNotifier.subscribe(() => {});
+      const privatePath = "/private/project/secret-page.tsx";
+      const result = await vfTriggerHmr.execute({ path: privatePath, port: 8080 });
+
+      assertEquals(result.message.includes(privatePath), false);
+      unsubscribe();
     });
   });
 
@@ -119,9 +156,10 @@ describe("mcp/tools/dev-tools", () => {
     });
 
     it("returns flywheel status when executed", async () => {
-      const result = await vfGetFlywheelStatus.execute({});
+      const result = await vfGetFlywheelStatus.execute({ port: 8080 });
       assertExists(result);
-      assertExists(result.serverReady !== undefined || result.errors !== undefined);
+      assertExists(result.server);
+      assertExists(result.errors);
     });
   });
 });

@@ -3,6 +3,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { isESMModule, loadESMModule } from "./esm-loader.ts";
 import type { MDXModule } from "./types.ts";
+import { errorLogName, fileLogLabel } from "../../shared/log-context.ts";
 
 export function loadMDXModule(
   modulePath: string,
@@ -20,18 +21,22 @@ export function loadMDXModule(
           throw toError(
             createError({
               type: "build",
-              message:
-                `[SECURITY] Legacy MDX modules are no longer supported. Recompile ${modulePath} using the modern ESM compiler.`,
+              message: `[SECURITY] Legacy MDX modules are no longer supported. Recompile ${
+                fileLogLabel(modulePath)
+              } using the modern ESM compiler.`,
             }),
           );
         }
 
         return await loadESMModule(moduleCode, modulePath, projectDir, adapter);
       } catch (error) {
-        logger.error(`Failed to load MDX module from ${modulePath}:`, error);
+        logger.error("Failed to load MDX module", {
+          moduleFile: fileLogLabel(modulePath),
+          errorName: errorLogName(error),
+        });
         return null;
       }
     },
-    { "mdx.module_path": modulePath },
+    { "mdx.module_file": fileLogLabel(modulePath) },
   );
 }

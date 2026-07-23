@@ -12,9 +12,9 @@ export function pathToSlug(path: string): string {
 }
 
 export function getSlugFromPath(filePath: string): string {
-  const parts = filePath.split("/");
+  const parts = filePath.replaceAll("\\", "/").split("/");
   const fileName = parts.at(-1) ?? "";
-  const slug = fileName.replace(/\.(mdx?|tsx?|jsx?|ts|js)$/, "");
+  const slug = fileName.replace(/\.(mdx?|tsx?|jsx?|ts|js)$/i, "");
 
   if (slug !== "index" && slug !== "page") return slug;
 

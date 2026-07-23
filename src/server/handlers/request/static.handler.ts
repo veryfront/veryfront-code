@@ -21,29 +21,13 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { StaticFileService } from "../../services/static/index.ts";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { computeEtag } from "../utils/etag.ts";
-import { isVersionedProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import {
+  isDynamicBuildFallbackPath,
+  isProductionBuildAssetPath,
+} from "./static-request-policy.ts";
 
 function isHtmlResponse(contentType: string): boolean {
   return /\btext\/html\b/i.test(contentType);
-}
-
-function isProductionBuildAssetPath(pathname: string): boolean {
-  return pathname === "/_veryfront/app.js" ||
-    pathname === "/_veryfront/client.js" ||
-    pathname === "/_veryfront/router.js" ||
-    pathname === "/_veryfront/prefetch.js" ||
-    pathname === "/_veryfront/hydration-runtime.js" ||
-    isVersionedProdHydrationModulePath(pathname) ||
-    pathname === "/_veryfront/manifest.json" ||
-    pathname.startsWith("/_veryfront/chunks/") ||
-    pathname.startsWith("/_veryfront/pages/") ||
-    pathname.startsWith("/_veryfront/data/") ||
-    pathname.startsWith("/_vf/assets/");
-}
-
-function isDynamicBuildFallbackPath(pathname: string): boolean {
-  return pathname.startsWith("/_veryfront/pages/") ||
-    pathname.startsWith("/_veryfront/data/");
 }
 
 export class StaticHandler extends BaseHandler {
@@ -109,16 +93,18 @@ export class StaticHandler extends BaseHandler {
             );
         }
 
-        const responseData = isHtmlResponse(result.contentType)
+        const isHtml = isHtmlResponse(result.contentType);
+        const responseData = isHtml
           ? new TextEncoder().encode(
             addNonceToHtmlTags(new TextDecoder().decode(result.data), builder.nonce),
           )
           : result.data;
-        const etag = computeEtag(responseData);
+        const etag = isHtml ? await computeEtag(responseData) : result.etag;
 
         if (hasMatchingEtag(req, etag)) {
           return builder
             .withSecurity(ctx.securityConfig ?? undefined, req)
+            .withCache(result.cacheStrategy)
             .notModified(etag);
         }
 
@@ -130,7 +116,7 @@ export class StaticHandler extends BaseHandler {
           .withContentType(result.contentType, body, HTTP_OK);
 
         this.logDebug(
-          `Served static file: ${result.path}`,
+          "Served static file",
           {
             contentType: result.contentType,
             cacheStrategy: result.cacheStrategy,
@@ -142,7 +128,7 @@ export class StaticHandler extends BaseHandler {
 
         return response;
       },
-      { "static.pathname": pathname, "static.projectSlug": ctx.projectSlug || "unknown" },
+      { "http.method": req.method },
     );
   }
 }

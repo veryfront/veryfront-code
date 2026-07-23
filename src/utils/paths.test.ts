@@ -15,6 +15,11 @@ describe("paths", () => {
 
     it("should define config file name", () => {
       assertEquals(PATHS.CONFIG_FILE, "veryfront.config.js");
+      assertEquals(PATHS.CONFIG_FILES, [
+        "veryfront.config.js",
+        "veryfront.config.ts",
+        "veryfront.config.mjs",
+      ]);
     });
   });
 

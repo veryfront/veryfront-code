@@ -6,6 +6,7 @@ import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-co
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VeryfrontError } from "#veryfront/errors";
+import { getSafeErrorName } from "../../../utils/error-name.ts";
 
 function isPageModuleNotFound(error: unknown): boolean {
   return error instanceof VeryfrontError &&
@@ -18,7 +19,6 @@ export function handlePageModule(
   ctx: HandlerContext,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
-  getErrorMessage: (error: unknown) => string,
 ): Promise<HandlerResult> {
   return withSpan(
     "module.page.handle",
@@ -46,7 +46,7 @@ export function handlePageModule(
           );
         }
 
-        const etag = computeEtag(code);
+        const etag = await computeEtag(code);
         const builder = createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined, req);
@@ -70,11 +70,8 @@ export function handlePageModule(
           );
         }
 
-        // Log the full error server-side but return a generic message
-        // to avoid leaking internal details (Babel/TS errors, file paths, etc.)
         serverLogger.error("[page-module] Failed to generate module", {
-          pathname,
-          error: getErrorMessage(error),
+          errorName: getSafeErrorName(error),
         });
 
         return respond(
@@ -90,9 +87,6 @@ export function handlePageModule(
         );
       }
     },
-    {
-      "module.page.pathname": pathname,
-      "module.page.projectSlug": ctx.projectSlug || "unknown",
-    },
+    { "http.method": req.method },
   );
 }

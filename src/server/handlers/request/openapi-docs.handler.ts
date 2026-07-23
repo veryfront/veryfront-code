@@ -9,8 +9,12 @@
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
-import { buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
+import {
+  HTTP_METHOD_NOT_ALLOWED,
+  HTTP_OK,
+  PRIORITY_HIGH_DEV,
+} from "#veryfront/utils/constants/index.ts";
+import { buildAttributes, buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
 
 /** Default paths */
 const DEFAULT_DOCS_PATH = "/_docs";
@@ -18,6 +22,10 @@ const DEFAULT_JSON_PATH = "/_openapi.json";
 
 /** Cache duration for production docs pages (1 hour) */
 const DOCS_CACHE_MAX_AGE_SECONDS = 3_600;
+const SCALAR_RUNTIME_URL =
+  "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.9/dist/browser/standalone.js";
+const SCALAR_RUNTIME_INTEGRITY =
+  "sha384-M2q8qmoFqvFoje8xUBOg9V0BWq2IMHZ+mwBaRX37gxfX7ylWBqFViltxRDglnu7le";
 
 export class OpenAPIDocsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -36,6 +44,17 @@ export class OpenAPIDocsHandler extends BaseHandler {
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return Promise.resolve(this.continue());
 
+    const method = req.method.toUpperCase();
+    if (method !== "GET" && method !== "HEAD") {
+      const response = this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withAllow(["GET", "HEAD"])
+        .text("Method Not Allowed", HTTP_METHOD_NOT_ALLOWED);
+      return Promise.resolve(this.respond(response));
+    }
+
     const isDev = !!ctx.isLocalProject;
     const builder = this.createResponseBuilder(ctx);
     const html = this.generateDocsPage(ctx, builder.nonce);
@@ -43,7 +62,7 @@ export class OpenAPIDocsHandler extends BaseHandler {
     const response = builder
       .withCache(isDev ? "no-cache" : { maxAge: DOCS_CACHE_MAX_AGE_SECONDS, public: true })
       .withSecurity(ctx.securityConfig ?? undefined, req)
-      .withContentType("text/html; charset=utf-8", html, HTTP_OK);
+      .withContentType("text/html; charset=utf-8", method === "HEAD" ? null : html, HTTP_OK);
 
     return Promise.resolve(this.respond(response));
   }
@@ -62,6 +81,18 @@ export class OpenAPIDocsHandler extends BaseHandler {
       hideTryIt: false,
       hideClientButton: false,
     });
+    const apiReferenceAttributes = buildAttributes({
+      id: "api-reference",
+      "data-url": specUrl,
+      "data-configuration": configuration,
+      ...(nonce ? { nonce } : {}),
+    });
+    const runtimeAttributes = buildAttributes({
+      src: SCALAR_RUNTIME_URL,
+      integrity: SCALAR_RUNTIME_INTEGRITY,
+      crossorigin: "anonymous",
+      ...(nonce ? { nonce } : {}),
+    });
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -78,13 +109,8 @@ export class OpenAPIDocsHandler extends BaseHandler {
   </style>
 </head>
 <body>
-  <script
-    id="api-reference"
-    data-url="${specUrl}"
-    data-configuration='${configuration}'
-    ${nonce ? `nonce="${escapeHtml(nonce)}"` : ""}
-  ></script>
-  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"${nonceAttr}></script>
+  <script ${apiReferenceAttributes}></script>
+  <script ${runtimeAttributes}></script>
 </body>
 </html>`;
   }

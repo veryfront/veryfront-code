@@ -69,6 +69,59 @@ describe("chat/chat-ui-message-helpers", () => {
     assertEquals(extractChatMessageMetadata({ ignored: true }), undefined);
   });
 
+  it("drops unsafe and non-finite metadata at the stream boundary", () => {
+    assertEquals(
+      normalizeChatMessageMetadata({
+        agentName: "  Support Agent  ",
+        agentAvatarUrl: "javascript:alert(1)",
+        runId: "  run-1  ",
+        usage: {
+          inputTokens: Number.POSITIVE_INFINITY,
+          outputTokens: -1,
+          reasoningTokens: 3,
+        },
+        costUsd: Number.NaN,
+        costCredits: -2,
+      }),
+      {
+        agentName: "Support Agent",
+        runId: "run-1",
+        usage: { reasoningTokens: 3 },
+      },
+    );
+  });
+
+  it("accepts fractional costs but not fractional token counts", () => {
+    assertEquals(
+      normalizeChatMessageMetadata({
+        usage: { inputTokens: 1.5, outputTokens: 2 },
+        billableInputTokens: 3.5,
+        costUsd: 0.125,
+      }),
+      {
+        usage: { outputTokens: 2 },
+        costUsd: 0.125,
+      },
+    );
+  });
+
+  it("does not execute metadata accessors at the stream boundary", () => {
+    let getterCalls = 0;
+    const metadata: Record<string, unknown> = {};
+    for (const key of ["agentName", "usage", "costUsd"]) {
+      Object.defineProperty(metadata, key, {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return key === "usage" ? { inputTokens: 1 } : "unsafe";
+        },
+      });
+    }
+
+    assertEquals(normalizeChatMessageMetadata(metadata), {});
+    assertEquals(getterCalls, 0);
+  });
+
   it("builds stream chunk metadata from finish usage", () => {
     assertEquals(
       buildChatStreamChunkMessageMetadata({
@@ -162,6 +215,23 @@ describe("chat/chat-ui-message-helpers", () => {
       { type: "text-start", id: "msg-1" },
       { type: "text-delta", id: "msg-1", delta: "Hello" },
       { type: "text-delta", id: "msg-1", delta: " world" },
+      { type: "text-end", id: "msg-1" },
+    ]);
+  });
+
+  it("does not emit a second end marker when a completed block is replayed", async () => {
+    const result = await collect(dedupeChatUiMessageChunks(toStream([
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Hello" },
+      { type: "text-end", id: "msg-1" },
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Hello" },
+      { type: "text-end", id: "msg-1" },
+    ])));
+
+    assertEquals(result, [
+      { type: "text-start", id: "msg-1" },
+      { type: "text-delta", id: "msg-1", delta: "Hello" },
       { type: "text-end", id: "msg-1" },
     ]);
   });

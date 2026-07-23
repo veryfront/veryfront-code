@@ -8,8 +8,7 @@
  * The actual tailwindcss `compile()` call is routed through the
  * `CSSProcessor` extension contract (default implementation:
  * `@veryfront/ext-css-tailwind`). When no `CSSProcessor` is registered, the
- * compile path returns a no-op compiler that emits empty CSS and logs an
- * actionable install message.
+ * compile path fails with an actionable dependency error.
  *
  * @module html/styles-builder/tailwind-compiler-cache
  */
@@ -27,6 +26,7 @@ import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { hashString } from "./candidate-extractor.ts";
 import { loadPlugin } from "./plugin-loader.ts";
+import { readResponseTextWithinLimit } from "./bounded-response-reader.ts";
 
 const logger = serverLogger.component("tailwind");
 
@@ -47,8 +47,16 @@ interface CompilerCacheEntry {
 
 const compilerCache = new Map<string, CompilerCacheEntry>();
 const MAX_CACHED_COMPILERS = 10;
+const MAX_PENDING_COMPILERS = 16;
+const MAX_TAILWIND_BASE_CSS_BYTES = 4 * 1024 * 1024;
+const TAILWIND_BASE_CSS_TIMEOUT_MS = 15_000;
 
 let tailwindBaseCSS: string | null = null;
+let tailwindBaseCSSPromise: Promise<string> | null = null;
+let tailwindBaseCSSAbortController: AbortController | null = null;
+let cssProcessorResolutionPromise: Promise<CSSProcessor | undefined> | null = null;
+let cacheGeneration = 0;
+const pendingCompilers = new Map<string, Promise<CSSCompiler>>();
 
 registerCache("tailwind-compiler-cache", () => ({
   name: "tailwind-compiler-cache",
@@ -57,129 +65,164 @@ registerCache("tailwind-compiler-cache", () => ({
 }));
 
 async function getTailwindBaseCSS(): Promise<string> {
-  if (tailwindBaseCSS) return tailwindBaseCSS;
+  if (tailwindBaseCSS !== null) return tailwindBaseCSS;
+  if (tailwindBaseCSSPromise) return await tailwindBaseCSSPromise;
 
   const url = getTailwindCSSUrl();
-  logger.debug("Fetching base CSS", { url });
+  const generation = cacheGeneration;
+  const request = (async () => {
+    const controller = new AbortController();
+    tailwindBaseCSSAbortController = controller;
+    const timeout = setTimeout(() => controller.abort(), TAILWIND_BASE_CSS_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        throw NETWORK_ERROR.create({
+          detail: `Tailwind base stylesheet request failed with status ${response.status}`,
+        });
+      }
 
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw NETWORK_ERROR.create({
-        detail: `Failed to fetch Tailwind CSS: ${response.status} ${response.statusText}`,
+      const css = await readResponseTextWithinLimit(
+        response,
+        MAX_TAILWIND_BASE_CSS_BYTES,
+        () =>
+          NETWORK_ERROR.create({
+            detail: "Tailwind base stylesheet exceeded the size limit",
+          }),
+      );
+      if (css.length === 0) {
+        throw NETWORK_ERROR.create({
+          detail: "Tailwind base stylesheet response was empty",
+        });
+      }
+
+      if (generation === cacheGeneration) tailwindBaseCSS = css;
+      return css;
+    } catch (error) {
+      logger.warn("Failed to fetch Tailwind base stylesheet", {
+        error: errorName(error),
       });
+      if (
+        error instanceof Error &&
+        (error.message.includes("Tailwind base stylesheet") ||
+          error.message.includes("size limit"))
+      ) {
+        throw error;
+      }
+      throw NETWORK_ERROR.create({ detail: "Failed to fetch Tailwind base stylesheet" });
+    } finally {
+      clearTimeout(timeout);
+      if (tailwindBaseCSSAbortController === controller) {
+        tailwindBaseCSSAbortController = null;
+      }
     }
-    tailwindBaseCSS = await response.text();
-  } catch (error) {
-    logger.warn("Failed to fetch Tailwind base CSS, using empty fallback", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    tailwindBaseCSS = "";
-  }
+  })();
 
-  return tailwindBaseCSS;
+  tailwindBaseCSSPromise = request;
+  try {
+    return await request;
+  } finally {
+    if (tailwindBaseCSSPromise === request) tailwindBaseCSSPromise = null;
+  }
 }
 
 async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
   const registeredProcessor = tryResolveContract<CSSProcessor>("CSSProcessor");
   if (registeredProcessor) return registeredProcessor;
+  if (cssProcessorResolutionPromise) return await cssProcessorResolutionPromise;
 
+  const resolution = (async () => {
+    try {
+      const { default: createTailwindExtension } = await importFirstPartyExtensionModule<
+        CssTailwindExtensionModule
+      >(
+        "ext-css-tailwind",
+        "@veryfront/ext-css-tailwind",
+      );
+      const extension = createTailwindExtension();
+      await extension.setup?.({
+        config: {},
+        logger,
+        provide: (name: string, impl: unknown) => registerContract(name, impl),
+        get: () => undefined,
+        require: <T>(name: string): T => {
+          const contract = tryResolveContract<T>(name);
+          if (contract === undefined) {
+            throw INITIALIZATION_ERROR.create({
+              detail: `Missing required extension contract: ${name}`,
+            });
+          }
+          return contract;
+        },
+      });
+    } catch (error) {
+      logger.warn("Failed to register built-in CSSProcessor extension", {
+        error: errorName(error),
+      });
+    }
+
+    return tryResolveContract<CSSProcessor>("CSSProcessor");
+  })();
+
+  cssProcessorResolutionPromise = resolution;
   try {
-    const { default: createTailwindExtension } = await importFirstPartyExtensionModule<
-      CssTailwindExtensionModule
-    >(
-      "ext-css-tailwind",
-      "@veryfront/ext-css-tailwind",
-    );
-    const extension = createTailwindExtension();
-    await extension.setup?.({
-      config: {},
-      logger,
-      provide: (name: string, impl: unknown) => registerContract(name, impl),
-      get: () => undefined,
-      require: <T>(name: string): T => {
-        const contract = tryResolveContract<T>(name);
-        if (contract === undefined) {
-          throw INITIALIZATION_ERROR.create({
-            detail: `Missing required extension contract: ${name}`,
-          });
-        }
-        return contract;
-      },
-    });
-  } catch (error) {
-    logger.warn("Failed to register built-in CSSProcessor extension", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    return await resolution;
+  } finally {
+    if (cssProcessorResolutionPromise === resolution) cssProcessorResolutionPromise = null;
   }
-
-  return tryResolveContract<CSSProcessor>("CSSProcessor");
 }
 
 function evictOldestCompiler(): void {
   if (compilerCache.size < MAX_CACHED_COMPILERS) return;
 
-  let oldestKey: string | null = null;
-  let oldestTime = Infinity;
-
-  for (const [key, entry] of compilerCache) {
-    if (entry.createdAt < oldestTime) {
-      oldestTime = entry.createdAt;
-      oldestKey = key;
-    }
-  }
-
-  if (!oldestKey) return;
-
+  const oldestKey = compilerCache.keys().next().value;
+  if (typeof oldestKey !== "string") return;
   compilerCache.delete(oldestKey);
-  logger.debug("Evicted oldest compiler from cache", { hash: oldestKey });
+  logger.debug("Evicted least recently used compiler");
 }
 
-export async function getCompiler(
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "UnknownError";
+}
+
+function compilerCacheKey(
   stylesheet: string,
   projectSlug?: string,
-): Promise<CSSCompiler> {
-  // Tailwind v4's compile().build() is stateful — it accumulates candidates
-  // across calls. Without per-project isolation, projects sharing the same
-  // stylesheet on the shared pool contaminate each other's CSS output.
+  candidateScopeHash?: string,
+): string {
   const stylesheetHash = hashString(stylesheet);
-  const hash = projectSlug ? `${projectSlug}:${stylesheetHash}` : stylesheetHash;
+  return hashString(
+    JSON.stringify({
+      stylesheetHash,
+      projectSlug: projectSlug ?? null,
+      candidateScopeHash: candidateScopeHash ?? null,
+    }),
+  );
+}
 
-  const cached = compilerCache.get(hash);
-  if (cached) {
-    logger.debug("Compiler cache hit", { hash, projectSlug });
-    return cached.compiler;
-  }
-
-  logger.debug("Creating new compiler", { hash, projectSlug });
-
+async function createCompiler(stylesheet: string): Promise<{
+  compiler: CSSCompiler;
+  pluginCache: Map<string, unknown>;
+  pluginErrors: Map<string, Error>;
+}> {
   const processor = await resolveCSSProcessor();
   if (!processor) {
-    logger.warn(
-      "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-css-tailwind",
-    );
-    const noopCompiler: CSSCompiler = { build: () => "" };
-    compilerCache.set(hash, {
-      compiler: noopCompiler,
-      createdAt: Date.now(),
-      pluginCache: new Map(),
-      pluginErrors: new Map(),
+    throw DEPENDENCY_MISSING.create({
+      detail:
+        "No CSSProcessor extension is available. Install it with: deno add @veryfront/ext-css-tailwind",
     });
-    return noopCompiler;
   }
 
   const tailwindBase = await getTailwindBaseCSS();
   const pluginCache = new Map<string, unknown>();
   const pluginErrors = new Map<string, Error>();
-
-  const newCompiler = await processor.compile(stylesheet, {
+  const compiler = await processor.compile(stylesheet, {
     base: "/",
     loadStylesheet: (id: string) => {
       if (id === "tailwindcss") {
         return Promise.resolve({ content: tailwindBase, base: "/", path: "/" });
       }
-      logger.debug("Unknown stylesheet import", { id });
-      return Promise.resolve({ content: "", base: "/", path: "/" });
+      throw DEPENDENCY_MISSING.create({ detail: "Unsupported stylesheet import" });
     },
     loadModule: async (id: string) => {
       const loaded = await loadPlugin(id, pluginCache, pluginErrors);
@@ -192,20 +235,67 @@ export async function getCompiler(
     },
   });
 
-  evictOldestCompiler();
+  return { compiler, pluginCache, pluginErrors };
+}
 
-  compilerCache.set(hash, {
-    compiler: newCompiler,
-    createdAt: Date.now(),
-    pluginCache,
-    pluginErrors,
-  });
+export async function getCompiler(
+  stylesheet: string,
+  projectSlug?: string,
+  candidateScopeHash?: string,
+): Promise<CSSCompiler> {
+  // Tailwind v4's compile().build() is stateful. It accumulates candidates
+  // across calls. Without per-project isolation, projects sharing the same
+  // stylesheet on the shared pool contaminate each other's CSS output.
+  const hash = compilerCacheKey(stylesheet, projectSlug, candidateScopeHash);
 
-  return newCompiler;
+  const cached = compilerCache.get(hash);
+  if (cached) {
+    compilerCache.delete(hash);
+    compilerCache.set(hash, cached);
+    logger.debug("Compiler cache hit");
+    return cached.compiler;
+  }
+
+  const generation = cacheGeneration;
+  const pendingKey = `${generation}:${hash}`;
+  const pending = pendingCompilers.get(pendingKey);
+  if (pending) return await pending;
+  if (pendingCompilers.size >= MAX_PENDING_COMPILERS) {
+    throw INITIALIZATION_ERROR.create({
+      detail: "Too many concurrent CSS compiler initializations",
+    });
+  }
+
+  logger.debug("Creating new compiler");
+  const creation = (async () => {
+    const { compiler, pluginCache, pluginErrors } = await createCompiler(stylesheet);
+    if (generation === cacheGeneration) {
+      evictOldestCompiler();
+      compilerCache.set(hash, {
+        compiler,
+        createdAt: Date.now(),
+        pluginCache,
+        pluginErrors,
+      });
+    }
+    return compiler;
+  })();
+
+  pendingCompilers.set(pendingKey, creation);
+  try {
+    return await creation;
+  } finally {
+    if (pendingCompilers.get(pendingKey) === creation) pendingCompilers.delete(pendingKey);
+  }
 }
 
 export function invalidateCompiler(): void {
+  cacheGeneration++;
   compilerCache.clear();
+  tailwindBaseCSSAbortController?.abort();
+  tailwindBaseCSSAbortController = null;
+  tailwindBaseCSS = null;
+  tailwindBaseCSSPromise = null;
   logger.debug("All compilers invalidated");
 }
 

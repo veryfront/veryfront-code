@@ -4,13 +4,20 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { createSearchKnowledgeTool, formatKnowledgeContext, projectKnowledge } from "./index.ts";
+import {
+  createSearchKnowledgeTool,
+  formatKnowledgeContext,
+  normalizeKnowledgeQuery,
+  projectKnowledge,
+  searchProjectKnowledge,
+} from "./index.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -69,6 +76,7 @@ describe("projectKnowledge", () => {
       assertEquals(result.query, "SSO login after deployment");
       assertEquals(result.matches.length, 1);
       assertEquals(result.matches[0]?.title, "login-troubleshooting");
+      assertEquals(result.matches[0]?.source, "knowledge/login-troubleshooting.md");
       assertStringIncludes(result.context, "[login-troubleshooting]");
       assertStringIncludes(result.context, "Escalate blocked SSO login issues");
       assertEquals(await exists(join(projectDir, "data", "knowledge-index.json")), true);
@@ -209,6 +217,125 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("returns empty document content for explicit lookup targets", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(join(projectDir, "knowledge", "empty.md"), "");
+
+      const result = await projectKnowledge({ projectDir }).lookup({
+        lookup_target: { path: "knowledge/empty.md" },
+      });
+
+      assertEquals(result.returned, 1);
+      assertEquals(result.data[0]?.content, "");
+    });
+  });
+
+  it("recognizes Markdown extensions without case sensitivity", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "RUNBOOK.MD"),
+        [
+          "---",
+          "title: Incident runbook",
+          "---",
+          "",
+          "# Incident runbook",
+        ].join("\n"),
+      );
+
+      const result = await projectKnowledge({ projectDir }).lookup({ query: "incident" });
+
+      assertEquals(result.returned, 1);
+      assertEquals(result.data[0]?.path, "knowledge/RUNBOOK.MD");
+    });
+  });
+
+  it("keeps document content available when OKF frontmatter is malformed", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "malformed.md"),
+        [
+          "---",
+          "title: [unterminated",
+          "---",
+          "",
+          "# Still retrievable",
+        ].join("\n"),
+      );
+
+      const result = await projectKnowledge({ projectDir }).lookup({
+        lookup_target: { path: "knowledge/malformed.md" },
+      });
+
+      assertEquals(result.returned, 1);
+      assertStringIncludes(result.data[0]?.content ?? "", "# Still retrievable");
+      assertEquals(result.data[0]?.frontmatter, []);
+    });
+  });
+
+  it("matches Unicode frontmatter instead of falling back to browse mode", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "invoice.md"),
+        [
+          "---",
+          "title: 顧客請求",
+          "description: 請求書の確認手順",
+          "---",
+          "",
+          "# 顧客請求",
+        ].join("\n"),
+      );
+
+      const result = await projectKnowledge({ projectDir }).lookup({ query: "請求書" });
+
+      assertEquals(result.mode, "search");
+      assertEquals(result.data.map((item) => item.path), ["knowledge/invoice.md"]);
+      assertEquals(result.data[0]?.matched_fields, ["description"]);
+    });
+  });
+
+  it("rejects excessive local knowledge directory nesting", async () => {
+    await withTempDir(async (projectDir) => {
+      const nestedDir = join(
+        projectDir,
+        "knowledge",
+        ...Array.from({ length: 34 }, (_, index) => `level-${index}`),
+      );
+      await mkdir(nestedDir, { recursive: true });
+      await writeTextFile(join(nestedDir, "runbook.md"), "# Runbook");
+
+      await assertRejects(
+        () => projectKnowledge({ projectDir }).lookup({ query: "runbook" }),
+        Error,
+        "Project knowledge directory nesting is too deep",
+      );
+    });
+  });
+
+  it("redacts local paths when manifest files cannot be read", async () => {
+    await withTempDir(async (projectDir) => {
+      const notADirectory = join(projectDir, "knowledge.md");
+      await writeTextFile(notADirectory, "# Not a directory");
+
+      const error = await assertRejects(() =>
+        projectKnowledge({
+          projectDir,
+          contentDir: "knowledge.md",
+        }).lookup({ query: "knowledge" })
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(error.message, "Project knowledge files could not be read");
+      assertEquals(error.message.includes(projectDir), false);
+      assertEquals(error.cause, undefined);
+    });
+  });
+
   it("falls back to browse order and paginates local knowledge lookups", async () => {
     await withTempDir(async (projectDir) => {
       await mkdir(join(projectDir, "knowledge"), { recursive: true });
@@ -267,6 +394,35 @@ describe("projectKnowledge", () => {
     assertEquals(error.cause, undefined);
   });
 
+  it("rejects fractional pagination values and tampered cursor state", async () => {
+    const knowledge = projectKnowledge({ projectDir: "." });
+
+    await assertRejects(
+      () => knowledge.lookup({ query: "billing", limit: 1.5 }),
+      Error,
+      "search_knowledge limit must be a positive integer",
+    );
+    await assertRejects(
+      () => knowledge.lookup({ query: "billing", shard_count: 1.5 }),
+      Error,
+      "search_knowledge shard_count must be a positive integer",
+    );
+
+    const tamperedCursor = btoa(JSON.stringify({
+      version: 1,
+      query: "billing",
+      offset: 0.5,
+      limit: 1,
+      shardCount: 1,
+      shardIndex: 0,
+    }));
+    await assertRejects(
+      () => knowledge.lookup({ cursor: tamperedCursor }),
+      Error,
+      "Invalid knowledge lookup cursor",
+    );
+  });
+
   it("creates a local search_knowledge tool for parity with hosted MCP", async () => {
     await withTempDir(async (projectDir) => {
       await mkdir(join(projectDir, "knowledge"), { recursive: true });
@@ -288,6 +444,12 @@ describe("projectKnowledge", () => {
       assertEquals(searchKnowledge.id, "search_knowledge");
       assertEquals(searchKnowledge.inputSchemaJson?.properties?.query?.type, "string");
       assertEquals(result.data.map((item) => item.path), ["knowledge/billing.md"]);
+
+      await assertRejects(
+        () => searchKnowledge.execute({ query: "billing", limit: "2" } as never),
+        Error,
+        "search_knowledge limit must be a number",
+      );
     });
   });
 
@@ -311,7 +473,7 @@ describe("projectKnowledge", () => {
               {
                 id: "file-1",
                 version_id: "version-1",
-                path: "knowledge/login-troubleshooting.md",
+                path: "knowledge/login-troubleshooting.MD",
                 content: [
                   "---",
                   "type: runbook",
@@ -368,7 +530,7 @@ describe("projectKnowledge", () => {
 
     assertEquals(result.mode, "search");
     assertEquals(result.returned, 1);
-    assertEquals(result.data[0]?.path, "knowledge/login-troubleshooting.md");
+    assertEquals(result.data[0]?.path, "knowledge/login-troubleshooting.MD");
     assertEquals(
       result.data[0]?.frontmatter.find((field) => field.key === "title")?.value,
       "Login troubleshooting",
@@ -376,6 +538,89 @@ describe("projectKnowledge", () => {
     assertEquals(requestedUrls.length, 1);
     assertStringIncludes(requestedUrls[0] ?? "", "/projects/acme/releases/release-1/files");
     assertStringIncludes(requestedUrls[0] ?? "", "path=knowledge%2F");
+  });
+
+  it("fails closed when production knowledge has no release or environment", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      return new Response(
+        JSON.stringify({
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const searchKnowledge = createSearchKnowledgeTool();
+    await assertRejects(
+      () =>
+        runWithRequestContext(
+          {
+            projectSlug: "acme",
+            projectId: "project-1",
+            token: "tenant-token",
+            productionMode: true,
+          },
+          () => searchKnowledge.execute({ query: "billing" }),
+        ),
+      Error,
+      "Production knowledge lookup requires a release ID or environment name",
+    );
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("forwards tool cancellation before hosted file lookup starts", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls++;
+      return new Response(
+        JSON.stringify({
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const controller = new AbortController();
+    controller.abort();
+
+    await assertRejects(
+      () =>
+        searchProjectKnowledge(
+          { query: "billing" },
+          {},
+          {
+            projectSlug: "acme",
+            projectId: "project-1",
+            authToken: "tenant-token",
+            productionMode: false,
+            branch: "main",
+            abortSignal: controller.signal,
+          },
+        ),
+      Error,
+    );
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("honors cancellation before local manifest traversal starts", async () => {
+    await withTempDir(async (projectDir) => {
+      const controller = new AbortController();
+      controller.abort();
+
+      await assertRejects(
+        () =>
+          searchProjectKnowledge(
+            { query: "billing" },
+            { projectDir },
+            { abortSignal: controller.signal },
+          ),
+        DOMException,
+        "aborted",
+      );
+    });
   });
 
   it("indexes project knowledge when requested explicitly", async () => {
@@ -407,7 +652,7 @@ describe("projectKnowledge", () => {
       assertEquals(beforeRefresh.matches.length, 1);
       assertEquals(
         indexPayload.documents.map((document) => document.source),
-        [join(projectDir, "knowledge", "login.md")],
+        ["knowledge/login.md"],
       );
 
       await knowledge.index();
@@ -419,11 +664,70 @@ describe("projectKnowledge", () => {
       assertEquals(
         refreshedPayload.documents.map((document) => document.source),
         [
-          join(projectDir, "knowledge", "login.md"),
-          join(projectDir, "knowledge", "billing.md"),
+          "knowledge/login.md",
+          "knowledge/billing.md",
         ],
       );
     });
+  });
+
+  it("keeps custom content sources relative and consistent across lookup and retrieval", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "docs", "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "docs", "knowledge", "login.md"),
+        [
+          "---",
+          "title: Login",
+          "---",
+          "",
+          "Login troubleshooting content.",
+        ].join("\n"),
+      );
+
+      const knowledge = projectKnowledge({
+        projectDir,
+        contentDir: "docs/knowledge",
+        model: "test/demo",
+      });
+      await knowledge.index();
+
+      const retrieved = await knowledge.retrieve("login");
+      const lookedUp = await knowledge.lookup({ query: "login" });
+
+      assertEquals(retrieved.matches[0]?.source, "knowledge/login.md");
+      assertEquals(lookedUp.data[0]?.path, "knowledge/login.md");
+    });
+  });
+
+  it("snapshots query limits when the knowledge helper is created", async () => {
+    await withTempDir(async (projectDir) => {
+      const config = { projectDir, maxQueryChars: 5 };
+      const knowledge = projectKnowledge(config);
+      config.maxQueryChars = 1;
+
+      const result = await knowledge.retrieve("abcdef");
+
+      assertEquals(result.query, "abcde");
+    });
+  });
+
+  it("rejects invalid query normalization limits", () => {
+    assertThrows(
+      () => normalizeKnowledgeQuery("billing", 0),
+      Error,
+      "maxQueryChars must be a positive integer",
+    );
+  });
+
+  it("rejects malformed tool factory options with a typed error", () => {
+    assertThrows(
+      () => createSearchKnowledgeTool(null as never),
+      Error,
+      "Search knowledge tool options must be an object",
+    );
   });
 
   it("formats retrieved knowledge into a deterministic context block", () => {

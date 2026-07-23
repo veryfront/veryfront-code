@@ -1,5 +1,4 @@
 import { serverLogger } from "#veryfront/utils";
-import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   context as otContext,
   propagation,
@@ -8,9 +7,19 @@ import {
   SpanStatusCode,
   trace,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import type { ErrorAttributes, HttpAttributes } from "./types.ts";
+import {
+  classifyTelemetryError,
+  extractSafeHttpScheme,
+  normalizeHttpMethod,
+  normalizeRouteTemplate,
+  runSpanHook,
+  setSanitizedSpanError,
+} from "#veryfront/observability/telemetry-safety.ts";
+import type { HttpAttributes, HttpHandlerInstrumentationOptions } from "./types.ts";
 
 const logger = serverLogger.component("auto-instrument");
+const PROPAGATION_HEADERS = new Set(["traceparent", "tracestate"]);
+const MAX_PROPAGATION_VALUE_LENGTH = 8_192;
 
 function getHttpTracer() {
   return trace.getTracer("veryfront-http");
@@ -18,35 +27,70 @@ function getHttpTracer() {
 
 const headersGetter = {
   keys(carrier: Headers): string[] {
-    return [...carrier.keys()];
+    return [...PROPAGATION_HEADERS].filter((key) => carrier.has(key));
   },
   get(carrier: Headers, key: string): string | undefined {
+    if (!PROPAGATION_HEADERS.has(key.toLowerCase())) return undefined;
     return carrier.get(key) ?? undefined;
   },
 };
+
+function logInstrumentationFailure(message: string, error: unknown): void {
+  try {
+    logger.debug(message, { failure_category: classifyTelemetryError(error) });
+  } catch {
+    // Logging must not affect application behavior.
+  }
+}
 
 function extractParentContext(headers: Headers) {
   try {
     return propagation.extract(otContext.active(), headers, headersGetter);
   } catch (error) {
-    logger.debug("Failed to extract parent context", error);
+    logInstrumentationFailure("Failed to extract parent context", error);
     return otContext.active();
   }
 }
 
-/** Handler for instrument HTTP. */
+type ResponseOutcome =
+  | { state: "pending" }
+  | { state: "resolved"; response: Response }
+  | { state: "rejected"; error: unknown };
+
+/** Instrument an HTTP handler without recording concrete request identity. */
 export function instrumentHttpHandler(
   handler: (request: Request) => Promise<Response> | Response,
+  options: HttpHandlerInstrumentationOptions = {},
 ): (request: Request) => Promise<Response> {
   return async function instrumentedHttpHandler(request: Request): Promise<Response> {
-    const startTime = performance.now();
-    const url = new URL(request.url);
-    const httpAttrs = buildHttpAttributes(request, url);
-    const parentContext = extractParentContext(request.headers);
-    // Track whether the handler has been invoked to prevent double-execution.
-    // If startActiveSpan throws after the callback already called handler(),
-    // the outer catch must propagate the error rather than re-invoke handler.
-    let handlerInvoked = false;
+    const startTime = readMonotonicTime();
+    let httpAttrs: HttpAttributes;
+    let parentContext: ReturnType<typeof extractParentContext>;
+    try {
+      httpAttrs = buildServerHttpAttributes(request, options.routeTemplate);
+      parentContext = extractParentContext(request.headers);
+    } catch (instrumentationError) {
+      logInstrumentationFailure("HTTP handler instrumentation failed", instrumentationError);
+      return await handler(request);
+    }
+    const operationState: { outcome: ResponseOutcome } = { outcome: { state: "pending" } };
+    let operationPromise: Promise<Response> | undefined;
+
+    const invokeHandlerOnce = (span: Span): Promise<Response> => {
+      operationPromise ??= (async () => {
+        try {
+          const response = await handler(request);
+          operationState.outcome = { state: "resolved", response };
+          recordResponseSuccess(span, response, elapsedMilliseconds(startTime));
+          return response;
+        } catch (error) {
+          operationState.outcome = { state: "rejected", error };
+          recordResponseError(span, error, elapsedMilliseconds(startTime));
+          throw error;
+        }
+      })();
+      return operationPromise;
+    };
 
     try {
       return await getHttpTracer().startActiveSpan(
@@ -55,32 +99,24 @@ export function instrumentHttpHandler(
         parentContext,
         async (span) => {
           try {
-            handlerInvoked = true;
-            const response = await handler(request);
-            recordResponseSuccess(span, response, performance.now() - startTime, httpAttrs);
-            return response;
-          } catch (error) {
-            recordResponseError(span, error, performance.now() - startTime, httpAttrs);
-            throw error;
+            return await invokeHandlerOnce(span);
           } finally {
-            span.end();
+            runSpanHook(() => span.end());
           }
         },
       );
-    } catch (error) {
-      if (handlerInvoked) {
-        // Handler already ran — propagate its error without re-invoking.
-        throw error;
-      }
-      logger.debug(
-        "[auto-instrument] HTTP handler span failed, falling back to raw handler",
-        error,
-      );
+    } catch (instrumentationError) {
+      logInstrumentationFailure("HTTP handler instrumentation failed", instrumentationError);
+
+      if (operationState.outcome.state === "resolved") return operationState.outcome.response;
+      if (operationState.outcome.state === "rejected") throw operationState.outcome.error;
+      if (operationPromise) return await operationPromise;
       return await handler(request);
     }
   };
 }
-/** Create a fetch implementation instrumented with observability spans. */
+
+/** Create a fetch implementation instrumented with low-cardinality spans. */
 export function createInstrumentedFetch(
   baseFetch: typeof fetch = globalThis.fetch,
 ): typeof fetch {
@@ -88,123 +124,139 @@ export function createInstrumentedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> {
-    const startTime = performance.now();
-    const urlString = extractFetchUrl(input);
-    const method = init?.method ?? "GET";
-    const spanUrl = sanitizeUrlForSpan(urlString);
-
-    const fetchAttrs: HttpAttributes = {
-      "http.method": method,
-      "http.url": spanUrl,
-      "http.target": spanUrl,
-      "http.host": "",
-      "http.scheme": "",
-    };
+    const startTime = readMonotonicTime();
+    const operationState: { outcome: ResponseOutcome } = { outcome: { state: "pending" } };
+    let operationPromise: Promise<Response> | undefined;
 
     try {
-      const parsed = new URL(urlString);
-      fetchAttrs["http.target"] = parsed.pathname;
-      fetchAttrs["http.host"] = parsed.host;
-      fetchAttrs["http.scheme"] = parsed.protocol.replace(":", "");
-    } catch (_) {
-      /* expected: relative URLs cannot be parsed, leave defaults */
-    }
+      const fetchAttrs = buildFetchHttpAttributes(input, init);
 
-    // Tracks whether baseFetch was invoked to prevent double-execution on span failure.
-    let fetchInvoked = false;
+      const invokeFetchOnce = (span: Span): Promise<Response> => {
+        if (operationPromise) return operationPromise;
 
-    try {
+        const forwardedInit = createForwardedFetchInit(input, init);
+        operationPromise = (async () => {
+          try {
+            const response = await baseFetch(input, forwardedInit);
+            operationState.outcome = { state: "resolved", response };
+            recordResponseSuccess(span, response, elapsedMilliseconds(startTime));
+            return response;
+          } catch (error) {
+            operationState.outcome = { state: "rejected", error };
+            recordResponseError(span, error, elapsedMilliseconds(startTime));
+            throw error;
+          }
+        })();
+        return operationPromise;
+      };
+
       return await getHttpTracer().startActiveSpan(
         "http.client.fetch",
         { kind: SpanKind.CLIENT, attributes: fetchAttrs },
         async (span) => {
           try {
-            const headers = new Headers(init?.headers);
-            propagation.inject(otContext.active(), headers, {
-              set: (h, k, v) => h.set(k, v),
-            });
-
-            fetchInvoked = true;
-            const response = await baseFetch(input, { ...init, headers });
-            recordResponseSuccess(span, response, performance.now() - startTime, fetchAttrs);
-            return response;
-          } catch (error) {
-            recordResponseError(span, error, performance.now() - startTime, fetchAttrs);
-            throw error;
+            return await invokeFetchOnce(span);
           } finally {
-            span.end();
+            runSpanHook(() => span.end());
           }
         },
       );
-    } catch (error) {
-      if (fetchInvoked) {
-        // baseFetch already ran — propagate its error without re-invoking.
-        throw error;
-      }
-      logger.debug("Fetch span failed, falling back to base fetch", error);
+    } catch (instrumentationError) {
+      logInstrumentationFailure("Fetch instrumentation failed", instrumentationError);
+
+      if (operationState.outcome.state === "resolved") return operationState.outcome.response;
+      if (operationState.outcome.state === "rejected") throw operationState.outcome.error;
+      if (operationPromise) return await operationPromise;
       return await baseFetch(input, init);
     }
   };
 }
 
-function buildHttpAttributes(request: Request, url: URL): HttpAttributes {
-  return {
-    "http.method": request.method,
-    "http.url": sanitizeUrlForSpan(request.url),
-    "http.target": url.pathname,
-    "http.host": url.host,
-    "http.scheme": url.protocol.replace(":", ""),
+function buildServerHttpAttributes(
+  request: Request,
+  routeTemplate: unknown,
+): HttpAttributes {
+  const attributes: HttpAttributes = {
+    "http.method": normalizeHttpMethod(request.method),
   };
+  const scheme = extractSafeHttpScheme(request.url);
+  const route = normalizeRouteTemplate(routeTemplate);
+  if (scheme) attributes["http.scheme"] = scheme;
+  if (route) attributes["http.route"] = route;
+  return attributes;
+}
+
+function buildFetchHttpAttributes(input: RequestInfo | URL, init?: RequestInit): HttpAttributes {
+  const inputMethod = input instanceof Request ? input.method : undefined;
+  const attributes: HttpAttributes = {
+    "http.method": normalizeHttpMethod(init?.method ?? inputMethod ?? "GET"),
+  };
+  const scheme = extractSafeHttpScheme(extractFetchUrl(input));
+  if (scheme) attributes["http.scheme"] = scheme;
+  return attributes;
+}
+
+function createForwardedFetchInit(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): RequestInit {
+  const inheritedHeaders = input instanceof Request ? input.headers : undefined;
+  const headers = new Headers(init?.headers ?? inheritedHeaders);
+  propagation.inject(otContext.active(), headers, {
+    set: (carrier, key, value) => {
+      if (
+        PROPAGATION_HEADERS.has(key.toLowerCase()) &&
+        value.length <= MAX_PROPAGATION_VALUE_LENGTH && !/[\r\n]/.test(value)
+      ) {
+        carrier.set(key, value);
+      }
+    },
+  });
+  return { ...init, headers };
 }
 
 function recordResponseSuccess(
   span: Span | null,
   response: Response,
   duration: number,
-  httpAttrs: HttpAttributes,
 ): void {
   if (!span) return;
 
-  span.setAttributes({
-    "http.status_code": response.status,
-    "http.response.size": Number(response.headers.get("content-length") ?? 0),
-    "http.duration_ms": Math.round(duration),
-  });
+  try {
+    const statusCode = response.status;
+    const responseAttributes: HttpAttributes = {
+      "http.status_code": statusCode,
+      "http.duration_ms": normalizeDuration(duration),
+    };
+    const responseSize = parseResponseSize(response.headers.get("content-length"));
+    if (responseSize !== undefined) responseAttributes["http.response.size"] = responseSize;
 
-  if (response.status >= 500) {
-    span.setStatus({ code: SpanStatusCode.ERROR });
-  } else if (response.status >= 400) {
-    span.setStatus({ code: SpanStatusCode.UNSET, message: `HTTP ${response.status}` });
-  } else {
-    span.setStatus({ code: SpanStatusCode.OK });
+    runSpanHook(() => span.setAttributes(responseAttributes));
+    if (statusCode >= 500) {
+      runSpanHook(() => span.setStatus({ code: SpanStatusCode.ERROR }));
+    } else if (statusCode >= 400) {
+      runSpanHook(() => span.setStatus({ code: SpanStatusCode.UNSET }));
+    } else {
+      runSpanHook(() => span.setStatus({ code: SpanStatusCode.OK }));
+    }
+  } catch (error) {
+    logInstrumentationFailure("Failed to read HTTP response metadata", error);
   }
-
-  // Preserve original request method/path for downstream analysis
-  span.setAttributes({
-    "http.method": httpAttrs["http.method"],
-    "http.target": httpAttrs["http.target"],
-  });
 }
 
 function recordResponseError(
   span: Span | null,
   error: unknown,
   duration: number,
-  httpAttrs: HttpAttributes,
 ): void {
   if (!span) return;
 
-  span.recordException(error instanceof Error ? error : new Error(String(error)));
-  span.setAttributes({
-    ...buildErrorAttributes(error),
-    "http.duration_ms": Math.round(duration),
-    "http.method": httpAttrs["http.method"],
-    "http.target": httpAttrs["http.target"],
-  });
-  span.setStatus({
-    code: SpanStatusCode.ERROR,
-    message: error instanceof Error ? error.message : String(error),
-  });
+  setSanitizedSpanError(span, SpanStatusCode.ERROR, error);
+  runSpanHook(() =>
+    span.setAttributes({
+      "http.duration_ms": normalizeDuration(duration),
+    })
+  );
 }
 
 function extractFetchUrl(input: RequestInfo | URL): string {
@@ -213,18 +265,27 @@ function extractFetchUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
-function buildErrorAttributes(error: unknown): ErrorAttributes {
-  if (error instanceof Error) {
-    return {
-      error: "true",
-      "error.type": error.constructor.name,
-      "error.message": error.message,
-    };
-  }
+function normalizeDuration(duration: number): number {
+  return Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0;
+}
 
-  return {
-    error: "true",
-    "error.type": "Unknown",
-    "error.message": String(error),
-  };
+function readMonotonicTime(): number | undefined {
+  try {
+    const value = performance.now();
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function elapsedMilliseconds(startTime: number | undefined): number {
+  if (startTime === undefined) return 0;
+  const endTime = readMonotonicTime();
+  return endTime === undefined ? 0 : endTime - startTime;
+}
+
+function parseResponseSize(value: string | null): number | undefined {
+  if (value === null || !/^\d+$/.test(value)) return undefined;
+  const size = Number(value);
+  return Number.isSafeInteger(size) ? size : undefined;
 }

@@ -8,7 +8,7 @@
  *
  * A request is considered proxy-trusted when either:
  *   1. The operator has opted in via `VERYFRONT_TRUST_FORWARDED_HEADERS=1`
- *      (strict "1" match — "true", "yes", whitespace-padded values do NOT count
+ *      (strict "1" match; "true", "yes", and whitespace-padded values do NOT count
  *      so misconfiguration fails closed); or
  *   2. The request carries a valid `x-veryfront-dispatch-jws` header that
  *      cryptographically verifies against the configured control-plane public

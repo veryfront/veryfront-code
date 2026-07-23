@@ -1,5 +1,7 @@
-import { createError, NOT_SUPPORTED, toError } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
+import { PORT_IN_USE, SERVER_START_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import { join } from "#veryfront/compat/path";
+import { isWebSocketUpgradeResponse } from "../../base.ts";
 import type {
   DirEntry,
   EnvironmentAdapter,
@@ -8,33 +10,37 @@ import type {
   FileSystemAdapter,
   FileWatcher,
   RuntimeAdapter,
+  RuntimeRequestHandler,
   ServeOptions,
   Server,
   ServerAdapter,
   ShellAdapter,
   WatchOptions,
+  WebSocketConnection,
   WebSocketUpgrade,
   WebSocketUpgradeOptions,
 } from "../../base.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   env as getEnvObject,
   getEnv,
   getEnvOverlayStorage,
   setEnv,
 } from "../../../compat/process.ts";
+import { createManagedFileWatcher, normalizeWatchPaths } from "../shared/shared-watcher.ts";
+import { createServerLifecycle } from "../shared/server-lifecycle.ts";
 import {
-  createFileWatcher,
-  createWatcherIterator,
-  enqueueWatchEvent,
-} from "../shared/watcher-queue.ts";
-import { stopManagedServer } from "../shared/server-lifecycle.ts";
+  createFileOperationError,
+  getSystemErrorCode,
+  isFileNotFoundError,
+} from "../shared/filesystem-errors.ts";
 import {
   getNativeDeno,
   getNativeResponse,
   toNativeResponse,
 } from "../../../compat/http/native-response.ts";
 import { resolveDenoUpgradeWebSocketOptions } from "../../../compat/http/websocket.ts";
+import { validateTempDirectoryPrefix } from "../../../compat/temp-dir.ts";
 
 const logger = serverLogger.component("deno");
 
@@ -70,9 +76,9 @@ async function collectPathSnapshot(
   let info: Deno.FileInfo;
   try {
     info = await Deno.stat(path);
-  } catch (_) {
-    /* expected: path may not exist or be inaccessible */
-    return;
+  } catch (error) {
+    if (isFileNotFoundError(error)) return;
+    throw error;
   }
 
   if (info.isFile) {
@@ -96,12 +102,12 @@ async function collectPathSnapshot(
       try {
         const entryInfo = await Deno.stat(entryPath);
         if (entryInfo.isFile) snapshot.set(entryPath, toSnapshotEntry(entryInfo));
-      } catch (_) {
-        /* expected: files may disappear during traversal */
+      } catch (error) {
+        if (!isFileNotFoundError(error)) throw error;
       }
     }
-  } catch (_) {
-    /* expected: readDir may fail due to permissions or transient removal */
+  } catch (error) {
+    if (!isFileNotFoundError(error)) throw error;
   }
 }
 
@@ -159,13 +165,13 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
   }
 
   async exists(path: string): Promise<boolean> {
-    if (typeof Deno === "undefined") return false;
+    assertDenoRuntime("DenoFileSystemAdapter", "exists");
     try {
       await Deno.stat(path);
       return true;
-    } catch (_) {
-      /* expected: stat throws when file does not exist */
-      return false;
+    } catch (error) {
+      if (isFileNotFoundError(error)) return false;
+      throw error;
     }
   }
 
@@ -222,84 +228,66 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
 
   async makeTempDir(prefix: string): Promise<string> {
     assertDenoRuntime("DenoFileSystemAdapter", "makeTempDir");
+    validateTempDirectoryPrefix(prefix);
     return Deno.makeTempDir({ prefix });
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
     assertDenoRuntime("DenoFileSystemAdapter", "watch");
 
-    const pathArray = Array.isArray(paths) ? paths : [paths];
+    const pathArray = normalizeWatchPaths(paths);
     const recursive = options?.recursive ?? true;
     const signal = options?.signal;
     const pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
+    let wakePoll: (() => void) | null = null;
 
-    let closed = false;
-    const eventQueue: FileChangeEvent[] = [];
-    let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
+    const waitForNextPoll = (): Promise<void> => {
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          if (wakePoll === finish) wakePoll = null;
+          resolve();
+        };
+        const timeoutId = setTimeout(finish, pollIntervalMs);
+        wakePoll = finish;
+      });
+    };
 
-    const iterator = createWatcherIterator(
-      eventQueue,
-      (r) => {
-        resolver = r;
+    return createManagedFileWatcher({
+      signal,
+      overflowPaths: pathArray,
+      setup: async ({ queue, isClosed }) => {
+        if (isClosed()) return;
+        let snapshot = await collectFileSnapshot(pathArray, recursive);
+
+        while (!isClosed()) {
+          await waitForNextPoll();
+          if (isClosed()) break;
+
+          let nextSnapshot: Map<string, FileSnapshotEntry>;
+          try {
+            nextSnapshot = await collectFileSnapshot(pathArray, recursive);
+          } catch (error) {
+            logger.debug("File snapshot failed", { code: getSystemErrorCode(error) });
+            continue;
+          }
+
+          const events = diffSnapshots(snapshot, nextSnapshot);
+          snapshot = nextSnapshot;
+          for (const event of events) queue.enqueue(event);
+        }
       },
-      () => closed,
-      () => signal?.aborted ?? false,
-    );
-
-    const cleanup = (): void => {
-      if (closed) return;
-      closed = true;
-
-      resolver?.({ done: true, value: undefined });
-      resolver = null;
-    };
-
-    const pollLoop = async (): Promise<void> => {
-      let snapshot = new Map<string, FileSnapshotEntry>();
-      try {
-        snapshot = await collectFileSnapshot(pathArray, recursive);
-      } catch (error) {
-        logger.debug("Initial file snapshot failed", { error });
-      }
-
-      while (!closed && !signal?.aborted) {
-        // no cleanup needed: one-shot
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-        if (closed || signal?.aborted) break;
-
-        let nextSnapshot: Map<string, FileSnapshotEntry>;
-        try {
-          nextSnapshot = await collectFileSnapshot(pathArray, recursive);
-        } catch (error) {
-          logger.debug("File snapshot failed", { error });
-          continue;
-        }
-
-        const events = diffSnapshots(snapshot, nextSnapshot);
-        snapshot = nextSnapshot;
-
-        for (const event of events) {
-          enqueueWatchEvent(
-            event,
-            eventQueue,
-            () => resolver,
-            (r) => {
-              resolver = r;
-            },
-          );
-        }
-      }
-    };
-
-    signal?.addEventListener("abort", cleanup, { once: true });
-    // Keep the loop promise so callers can await full termination: close()
-    // only flips the flag, while an in-flight snapshot (Deno.readDir) keeps
-    // running and would otherwise trip test op-sanitizers or delay shutdown.
-    const done = pollLoop();
-
-    const watcher = createFileWatcher(iterator, cleanup);
-    watcher.done = done;
-    return watcher;
+      closeResources: () => {
+        wakePoll?.();
+        wakePoll = null;
+      },
+      onError: (error) => {
+        logger.error("File watcher failed", { code: getSystemErrorCode(error) });
+      },
+    });
   }
 }
 
@@ -317,8 +305,57 @@ class DenoEnvironmentAdapter implements EnvironmentAdapter {
   }
 }
 
+const denoServerByRequest = new WeakMap<Request, DenoServer>();
+
+async function runWithDenoServerRequest<T>(
+  request: Request,
+  server: DenoServer,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  denoServerByRequest.set(request, server);
+  try {
+    return await operation();
+  } finally {
+    denoServerByRequest.delete(request);
+  }
+}
+
+function hasHeaders(headers: HeadersInit | undefined): boolean {
+  if (!headers) return false;
+  return !new Headers(headers).keys().next().done;
+}
+
+function validateDenoWebSocketOptions(
+  request: Request,
+  options: WebSocketUpgradeOptions | undefined,
+): void {
+  if (hasHeaders(options?.headers)) {
+    throw NOT_SUPPORTED.create({
+      message: "Deno does not support custom WebSocket upgrade headers",
+    });
+  }
+  if (
+    options?.idleTimeout !== undefined &&
+    (!Number.isFinite(options.idleTimeout) || options.idleTimeout < 0)
+  ) {
+    throw INVALID_ARGUMENT.create({ message: "WebSocket idle timeout must be non-negative" });
+  }
+  if (options?.protocol) {
+    const requestedProtocols = (request.headers.get("sec-websocket-protocol") ?? "")
+      .split(",")
+      .map((protocol) => protocol.trim())
+      .filter(Boolean);
+    if (!requestedProtocols.includes(options.protocol)) {
+      throw INVALID_ARGUMENT.create({
+        message: "The selected WebSocket protocol was not requested by the client",
+      });
+    }
+  }
+}
+
 class DenoServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request, options?: WebSocketUpgradeOptions): WebSocketUpgrade {
+    validateDenoWebSocketOptions(request, options);
     // Access native Deno via `self` to bypass dnt shim transform.
     // dnt rewrites `globalThis.Deno` to @deno/shim-deno, which lacks upgradeWebSocket.
     const nativeDeno = getNativeDeno();
@@ -331,6 +368,7 @@ class DenoServerAdapter implements ServerAdapter {
       request,
       resolveDenoUpgradeWebSocketOptions(options),
     );
+    denoServerByRequest.get(request)?.trackWebSocket(socket);
     return { socket, response };
   }
 }
@@ -342,12 +380,7 @@ class DenoShellAdapter implements ShellAdapter {
       const stat = Deno.statSync(path);
       return { isFile: stat.isFile, isDirectory: stat.isDirectory };
     } catch (error) {
-      throw toError(
-        createError({
-          type: "file",
-          message: `Failed to stat file: ${error}`,
-        }),
-      );
+      throw createFileOperationError(error, "stat");
     }
   }
 
@@ -356,36 +389,161 @@ class DenoShellAdapter implements ShellAdapter {
     try {
       return Deno.readTextFileSync(path);
     } catch (error) {
-      throw toError(
-        createError({
-          type: "file",
-          message: `Failed to read file: ${error}`,
-        }),
-      );
+      throw createFileOperationError(error, "read");
     }
   }
 }
 
 class DenoServer implements Server {
+  private readonly webSockets = new Set<WebSocketConnection>();
+  private stopPromise: Promise<void> | null = null;
+
   constructor(
-    private server: Deno.HttpServer,
-    private hostname: string,
-    private port: number,
-    private abortController?: AbortController,
+    private readonly server: Deno.HttpServer,
+    private readonly hostname: string,
+    private readonly port: number,
   ) {}
 
-  async stop(): Promise<void> {
-    try {
-      this.abortController?.abort();
-      await this.server.shutdown();
-    } catch (error) {
-      logger.debug("Server shutdown failed", { error });
+  trackWebSocket(socket: WebSocketConnection): void {
+    this.webSockets.add(socket);
+    socket.addEventListener("close", () => this.webSockets.delete(socket), { once: true });
+  }
+
+  stop(): Promise<void> {
+    if (!this.stopPromise) {
+      for (const socket of this.webSockets) {
+        try {
+          socket.close(1001, "Server shutting down");
+        } catch {
+          logger.warn("Failed to close a WebSocket during shutdown");
+        }
+      }
+      this.webSockets.clear();
+      const pending = this.server.shutdown();
+      const retryable = pending.catch((error) => {
+        if (this.stopPromise === retryable) this.stopPromise = null;
+        throw error;
+      });
+      this.stopPromise = retryable;
     }
+    return this.stopPromise;
   }
 
   get addr(): { hostname: string; port: number } {
     return { hostname: this.hostname, port: this.port };
   }
+}
+
+function getErrorName(error: unknown): string | undefined {
+  if ((typeof error !== "object" && typeof error !== "function") || error === null) {
+    return undefined;
+  }
+  try {
+    const name = Reflect.get(error, "name");
+    return typeof name === "string" && name.length <= 64 ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function createDenoStartupError(error: unknown): Error {
+  if (getErrorName(error) === "AddrInUse" || getSystemErrorCode(error) === "EADDRINUSE") {
+    return PORT_IN_USE.create({ message: "The server port is already in use", cause: error });
+  }
+  return SERVER_START_ERROR.create({ message: "Unable to start the Deno server", cause: error });
+}
+
+async function createDenoServer(
+  handler: RuntimeRequestHandler,
+  options: ServeOptions = {},
+): Promise<Server> {
+  if (typeof Deno === "undefined") {
+    throw NOT_SUPPORTED.create({
+      message: "Deno server APIs are unavailable in this runtime",
+    });
+  }
+
+  const nativeDeno = getNativeDeno();
+  if (!nativeDeno) {
+    throw NOT_SUPPORTED.create({
+      message: "Deno server APIs are unavailable in this runtime",
+    });
+  }
+
+  const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
+  const envOverlay = getEnvOverlayStorage();
+  const envStore = envOverlay?.getStore();
+  const wrappedHandler = envOverlay && envStore
+    ? (request: Request) => {
+      if (envOverlay.run) return envOverlay.run(envStore, () => handler(request));
+      envOverlay.enterWith?.(envStore);
+      return handler(request);
+    }
+    : handler;
+  const NativeResponse = getNativeResponse();
+  const serverReference: { current?: DenoServer } = {};
+  let listenAddress: { hostname: string; port: number } | undefined;
+  let nativeServer: Deno.HttpServer;
+
+  try {
+    nativeServer = nativeDeno.serve({
+      port,
+      hostname,
+      handler: async (request) => {
+        try {
+          const response = serverReference.current
+            ? await runWithDenoServerRequest(
+              request,
+              serverReference.current,
+              () => wrappedHandler(request),
+            )
+            : await wrappedHandler(request);
+          if (isWebSocketUpgradeResponse(response)) {
+            throw new TypeError("Deno WebSocket upgrades must return the native response");
+          }
+          return toNativeResponse(response, NativeResponse);
+        } catch {
+          logger.error("Request handler failed");
+          return new NativeResponse("Internal Server Error", { status: 500 });
+        }
+      },
+      onListen: (address) => {
+        listenAddress = { hostname: address.hostname, port: address.port };
+      },
+    });
+  } catch (error) {
+    throw createDenoStartupError(error);
+  }
+
+  const nativeAddress = nativeServer.addr;
+  const address = listenAddress ?? (
+    "hostname" in nativeAddress && "port" in nativeAddress
+      ? { hostname: nativeAddress.hostname, port: nativeAddress.port }
+      : undefined
+  );
+  if (
+    !address || typeof address.hostname !== "string" || address.hostname.length === 0 ||
+    !Number.isInteger(address.port) || address.port <= 0 || address.port > 65_535
+  ) {
+    await nativeServer.shutdown();
+    throw SERVER_START_ERROR.create({
+      message: "Deno did not report a valid server address",
+    });
+  }
+
+  const managedServer = new DenoServer(nativeServer, address.hostname, address.port);
+  serverReference.current = managedServer;
+  try {
+    onListen?.(managedServer.addr);
+  } catch (error) {
+    try {
+      await managedServer.stop();
+    } catch {
+      logger.error("Failed to stop the server after onListen failed");
+    }
+    throw error;
+  }
+  return managedServer;
 }
 
 export class DenoAdapter implements RuntimeAdapter {
@@ -396,7 +554,7 @@ export class DenoAdapter implements RuntimeAdapter {
   readonly server = new DenoServerAdapter();
   readonly shell = new DenoShellAdapter();
 
-  readonly capabilities = {
+  readonly capabilities = Object.freeze({
     typescript: true,
     jsx: true,
     http2: true,
@@ -404,77 +562,15 @@ export class DenoAdapter implements RuntimeAdapter {
     workers: true,
     fileWatching: true,
     shell: true,
-    kvStore: true,
+    kvStore: false,
     writableFs: true,
-  };
+  });
 
-  private activeServer: DenoServer | null = null;
+  private readonly serverLifecycle = createServerLifecycle(createDenoServer);
+  readonly serve = this.serverLifecycle.serve;
 
-  serve(
-    handler: (request: Request) => Promise<Response> | Response,
-    options: ServeOptions = {},
-  ): Promise<Server> {
-    if (typeof Deno === "undefined") {
-      throw NOT_SUPPORTED.create({
-        detail: "DenoAdapter.serve() can only be used in Deno runtime",
-      });
-    }
-
-    const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
-
-    const controller = new AbortController();
-    const signal = options.signal ?? controller.signal;
-
-    const envOverlay = getEnvOverlayStorage();
-    const envStore = envOverlay?.getStore();
-
-    const wrappedHandler = envOverlay && envStore
-      ? (request: Request) => {
-        if (envOverlay.run) return envOverlay.run(envStore, () => handler(request));
-        envOverlay.enterWith?.(envStore);
-        return handler(request);
-      }
-      : handler;
-
-    // Access native Deno.serve via `self` to bypass dnt shim transform.
-    // dnt rewrites both `Deno.*` and `globalThis.*` to use @deno/shim-deno which lacks .serve.
-    // `self` is not shimmed by dnt and equals `globalThis` in Deno.
-    const nativeDeno = getNativeDeno()!;
-
-    // Access native Response via `self` to bypass dnt shim transform.
-    // In npm packages, dnt replaces Response with undici's polyfill,
-    // but Deno.serve requires native Response instances.
-    const NativeResponse = getNativeResponse();
-
-    const server = nativeDeno.serve({
-      port,
-      hostname,
-      signal,
-      handler: async (request) => {
-        try {
-          const response: Response = await wrappedHandler(request);
-          return toNativeResponse(response, NativeResponse);
-        } catch (error) {
-          serverLogger.error("Request handler error:", error);
-          return new NativeResponse("Internal Server Error", { status: 500 });
-        }
-      },
-      onListen: (params) => {
-        onListen?.({ hostname: params.hostname, port: params.port });
-      },
-    });
-
-    this.activeServer = new DenoServer(
-      server,
-      hostname,
-      port,
-      options.signal ? undefined : controller,
-    );
-    return Promise.resolve(this.activeServer);
-  }
-
-  async shutdown(): Promise<void> {
-    this.activeServer = await stopManagedServer(this.activeServer);
+  shutdown(): Promise<void> {
+    return this.serverLifecycle.shutdown();
   }
 }
 

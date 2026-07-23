@@ -889,9 +889,10 @@ describe("DataFetcher - Comprehensive Tests", () => {
 
     it("should clear multiple entries matching pattern", async () => {
       await withProductionContext(async () => {
+        let callCount = 0;
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: () => ({ props: { timestamp: Date.now() } }),
+          getStaticData: () => ({ props: { count: ++callCount } }),
         };
 
         const contexts = [
@@ -901,23 +902,15 @@ describe("DataFetcher - Comprehensive Tests", () => {
         ];
 
         await Promise.all(contexts.map((ctx) => fetcher.fetchData(pageModule, ctx, "production")));
+        assertEquals(callCount, 3);
 
         fetcher.clearCache("blog");
 
-        let callCount = 0;
-        const countingModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+        await fetcher.fetchData(pageModule, contexts[0]!, "production");
+        await fetcher.fetchData(pageModule, contexts[1]!, "production");
+        await fetcher.fetchData(pageModule, contexts[2]!, "production");
 
-        await fetcher.fetchData(countingModule, contexts[0]!, "production");
-        await fetcher.fetchData(countingModule, contexts[1]!, "production");
-        await fetcher.fetchData(countingModule, contexts[2]!, "production");
-
-        assertEquals(callCount, 2);
+        assertEquals(callCount, 5);
       });
     });
 
@@ -1204,7 +1197,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       });
     });
 
-    it("should handle URLs with different protocols (same cache key)", async () => {
+    it("should isolate URLs with different protocols", async () => {
       await withProductionContext(async () => {
         let callCount = 0;
 
@@ -1222,13 +1215,13 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(callCount, 1);
+        assertEquals(callCount, 2);
         assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+        assertEquals(getProp<number>(result2.props, "count"), 2);
       });
     });
 
-    it("should handle URLs with different hosts (same cache key)", async () => {
+    it("should isolate URLs with different hosts", async () => {
       await withProductionContext(async () => {
         let callCount = 0;
 
@@ -1246,9 +1239,9 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(callCount, 1);
+        assertEquals(callCount, 2);
         assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+        assertEquals(getProp<number>(result2.props, "count"), 2);
       });
     });
 

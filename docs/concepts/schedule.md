@@ -11,11 +11,18 @@ Schedules exist because scheduled work has two separate concerns: when work
 starts and what work does. The schedule owns the trigger. The target owns the
 business logic.
 
+Source-defined recurring schedules use a five-field cron expression: minute,
+hour, day of month, month, and day of week. An optional IANA time zone defines
+which local calendar evaluates those fields. The schedule stores timing and
+execution policy, while its task, workflow, or agent target remains a separate
+runtime definition.
+
 ## Characteristics
 
 - A trigger defines when work starts.
 - A target defines what work runs.
 - Each trigger creates a run.
+- Retry, overlap, timeout, and maximum-run settings belong to the schedule.
 - Pausing or deleting the schedule affects future runs, not the task or workflow
   definition.
 

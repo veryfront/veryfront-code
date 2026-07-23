@@ -107,6 +107,21 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
     }));
   }
 
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    return Promise.reject(INVALID_ARGUMENT.create({
+      message: "Sandbox timeoutMs must be a positive safe integer",
+    }));
+  }
+  if (
+    options.memoryLimitMb !== undefined &&
+    (!Number.isSafeInteger(options.memoryLimitMb) || options.memoryLimitMb <= 0)
+  ) {
+    return Promise.reject(INVALID_ARGUMENT.create({
+      message: "Sandbox memoryLimitMb must be a positive safe integer",
+    }));
+  }
+
   // SEC-008: Node Workers have no permission isolation. Refuse execution
   // unless the operator has explicitly opted in via host env var. Use
   // getHostEnv so a tenant project env overlay cannot enable this.
@@ -131,8 +146,6 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
     }));
   }
 
-  const timeoutMs = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
-
   return withSpan(
     "security.sandbox.runInWorker",
     () => {
@@ -142,11 +155,6 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
 
       const { memoryLimitMb } = options;
       if (typeof memoryLimitMb === "number") {
-        if (!Number.isFinite(memoryLimitMb) || memoryLimitMb <= 0) {
-          throw INVALID_ARGUMENT.create({
-            detail: "Sandbox memoryLimitMb must be a positive, finite number",
-          });
-        }
         if (!isNode) {
           throw NOT_SUPPORTED.create({
             detail: "Sandbox memory limits are not supported in this runtime",
@@ -173,44 +181,73 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
 
       // Use data URL for compiled binaries (blob URLs don't work in deno compile)
       // See: https://github.com/denoland/deno/issues/18327
-      const workerUrl = isCompiledBinary()
-        ? `data:text/javascript;base64,${btoa(workerCode)}`
+      const objectUrl = isCompiledBinary()
+        ? null
         : URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }));
+      const workerUrl = objectUrl ?? `data:text/javascript;base64,${btoa(workerCode)}`;
 
-      const worker = new Worker(workerUrl, workerOptions);
+      let objectUrlRevoked = false;
+      function revokeObjectUrl(): void {
+        if (!objectUrl || objectUrlRevoked) return;
+        objectUrlRevoked = true;
+        URL.revokeObjectURL(objectUrl);
+      }
 
-      function safeTerminate(logMessage: string, error?: unknown): void {
+      let worker: Worker;
+      try {
+        worker = new Worker(workerUrl, workerOptions);
+      } catch (error) {
+        revokeObjectUrl();
+        throw error;
+      }
+
+      function safeTerminate(logMessage: string): void {
         try {
           worker.terminate();
-        } catch (e) {
-          serverLogger.debug(logMessage, { error: error ?? e });
+        } catch {
+          serverLogger.debug(logMessage);
+        } finally {
+          revokeObjectUrl();
         }
       }
 
       const promise = new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => {
+        let settled = false;
+        const settle = (operation: () => void): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          operation();
           safeTerminate("[sandbox] worker terminate failed");
-          reject(TIMEOUT_ERROR.create({ detail: "Sandbox timeout" }));
+        };
+        const timer = setTimeout(() => {
+          settle(() => reject(TIMEOUT_ERROR.create({ detail: "Sandbox timeout" })));
         }, timeoutMs);
 
         worker.onmessage = (e: MessageEvent) => {
-          clearTimeout(timer);
-
           const { result, error } = e.data ?? {};
-          if (error) reject(UNKNOWN_ERROR.create({ detail: error }));
-          else resolve(result as T);
-
-          safeTerminate("[sandbox] worker terminate failed");
+          settle(() => {
+            if (error) reject(UNKNOWN_ERROR.create({ detail: error }));
+            else resolve(result as T);
+          });
         };
 
         worker.onerror = (e) => {
-          clearTimeout(timer);
-          reject(UNKNOWN_ERROR.create({ detail: String(e.message || e.error || "Worker error") }));
-          safeTerminate("[sandbox] worker terminate failed on error");
+          e.preventDefault();
+          settle(() =>
+            reject(
+              UNKNOWN_ERROR.create({ detail: String(e.message || e.error || "Worker error") }),
+            )
+          );
         };
+
+        try {
+          worker.postMessage({ code });
+        } catch (error) {
+          settle(() => reject(error));
+        }
       });
 
-      worker.postMessage({ code });
       return promise;
     },
     {

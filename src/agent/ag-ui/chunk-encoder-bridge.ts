@@ -10,13 +10,17 @@ import type { AgentResponse } from "../types.ts";
 
 /** Public API contract for AG-UI chunk encoder bridge. */
 export interface AgUiChunkEncoderBridge<TChunk> {
+  /** Encodes one stream value. */
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
+  /** Finalizes the associated lifecycle. */
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
+  /** State value. */
   state: AgUiBrowserEncoderState;
 }
 
 /** Options accepted by create AG-UI chunk encoder bridge. */
 export interface CreateAgUiChunkEncoderBridgeOptions<TChunk> {
+  /** Callback that handles get runtime events. */
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
 }
 

@@ -204,7 +204,9 @@ export class RenderHandler {
   }
 
   private createErrorResponse(error: unknown): Response {
-    logger.error("Render error:", error);
+    logger.error("RSC render failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
 
     const message = getErrorMessage(error);
     let vfError;

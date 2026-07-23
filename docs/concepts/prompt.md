@@ -15,6 +15,8 @@ execute code and does not own state.
 
 - Content contains the instruction text.
 - Variables let the caller fill in task-specific values.
+- Argument metadata tells MCP clients which variables a prompt accepts. Static
+  templates derive optional metadata when you omit it.
 - A stable ID lets MCP clients discover the prompt.
 - The caller decides when the prompt is useful.
 
@@ -25,6 +27,13 @@ use it. A tool owns an action. A resource owns readable data. A prompt owns
 instructions.
 
 This keeps instruction templates separate from executable capabilities.
+
+## Variable boundary
+
+Veryfront validates prompt variable types and sizes, then inserts their values
+without rewriting them. Pattern replacement is not a reliable prompt-injection
+defense. Treat caller-provided variables as untrusted data, delimit them clearly
+from instructions, and apply the agent input policy required by the use case.
 
 ## Wrong fit
 

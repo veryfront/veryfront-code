@@ -51,5 +51,36 @@ Other instructions.`,
     assertEquals(registryDuplicate.metadata.description, "First copy");
 
     assertEquals(result.skills.has("other"), true);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.message,
+      "Duplicate skill id; keeping the first definition",
+    );
+  });
+
+  it("rejects a skill whose metadata name differs from its directory", async () => {
+    const result = await discoverAll({
+      baseDir: "/project",
+      toolDirs: [],
+      agentDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      skillDirs: ["skills"],
+      fsAdapter: createSkillTestAdapter({
+        "/project/skills/review/SKILL.md": `---
+name: other
+description: Mismatched skill
+---
+Review instructions.`,
+      }),
+      verbose: false,
+    });
+
+    assertEquals(result.skills.has("review"), false);
+    assertEquals(skillRegistry.get("review"), undefined);
+    assertEquals(result.errors.length, 1);
+    assertEquals(result.errors[0]?.error.message.includes("must match its directory name"), true);
   });
 });

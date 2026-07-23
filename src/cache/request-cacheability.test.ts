@@ -37,4 +37,16 @@ describe("cache/request-cacheability", () => {
 
     assertEquals(requestHasCacheSensitiveState(req), true);
   });
+
+  it("fails closed for malformed cookie pairs", () => {
+    const emptyName = new Request("https://example.com/", {
+      headers: { cookie: "=personalized" },
+    });
+    const missingEquals = new Request("https://example.com/", {
+      headers: { cookie: "lb" },
+    });
+
+    assertEquals(requestHasCacheSensitiveState(emptyName), true);
+    assertEquals(requestHasCacheSensitiveState(missingEquals), true);
+  });
 });

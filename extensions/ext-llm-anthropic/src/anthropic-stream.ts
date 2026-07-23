@@ -1,7 +1,7 @@
 import {
+  extractAnthropicUsage as extractSharedAnthropicUsage,
   mergeUsage,
   parseSseChunk,
-  readGatewayBillingMode,
   readRecord,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
@@ -66,68 +66,7 @@ export function normalizeAnthropicFinishReason(
 }
 
 export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  const cacheReadInputTokens = usage.cache_read_input_tokens;
-  const veryfront = readRecord(usage.veryfront);
-  const costSource = veryfront?.cost_source;
-  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
-  const usageCaptureStatus = veryfront?.usage_capture_status;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
-      : undefined,
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
-    ...(typeof veryfront?.billable_input_tokens === "number"
-      ? { billableInputTokens: veryfront.billable_input_tokens }
-      : {}),
-    ...(typeof veryfront?.billable_output_tokens === "number"
-      ? { billableOutputTokens: veryfront.billable_output_tokens }
-      : {}),
-    ...(typeof veryfront?.provider_input_cost_usd === "number"
-      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_output_cost_usd === "number"
-      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_cost_usd === "number"
-      ? { providerCostUsd: veryfront.provider_cost_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
-      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
-      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_charge_usd === "number"
-      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_billed_usd === "number"
-      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
-      : {}),
-    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
-    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
-      ? { costSource }
-      : {}),
-    ...(billingMode !== undefined ? { billingMode } : {}),
-    ...(usageCaptureStatus === "complete" ||
-        usageCaptureStatus === "missing" ||
-        usageCaptureStatus === "partial"
-      ? { usageCaptureStatus }
-      : {}),
-  };
+  return extractSharedAnthropicUsage(payload);
 }
 
 function isToolCallsFinishReason(
@@ -235,6 +174,7 @@ export async function* streamAnthropicCompatibleParts(
   const trailingUsageDrainTimeoutMs = options.clientToolUseTrailingUsageDrainTimeoutMs ??
     DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS;
   let readerReleased = false;
+  let readerSettled = false;
   let buffer = "";
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
@@ -249,7 +189,7 @@ export async function* streamAnthropicCompatibleParts(
       return;
     }
 
-    const parsed = parseSseChunk(`${buffer}\n\n`);
+    const parsed = parseSseChunk(`${buffer}\n\n`, { invalidEventPolicy: "ignore" });
     buffer = parsed.remainder;
     for (const event of parsed.events) {
       if (event === "[DONE]") {
@@ -288,6 +228,7 @@ export async function* streamAnthropicCompatibleParts(
       );
       if (read.kind === "timeout") {
         readerReleased = read.readerMode === "drain";
+        readerSettled = read.readerMode === "cancel";
         mergeTrailingBufferUsage();
         finishReason ??= CLIENT_TOOL_USE_FINISH_REASON;
         yield buildFinishPart();
@@ -295,11 +236,12 @@ export async function* streamAnthropicCompatibleParts(
       }
 
       if (read.kind === "done") {
+        readerSettled = true;
         break;
       }
 
       buffer += decoder.decode(read.chunk, { stream: true });
-      const parsed = parseSseChunk(buffer);
+      const parsed = parseSseChunk(buffer, { invalidEventPolicy: "ignore" });
       buffer = parsed.remainder;
 
       for (const event of parsed.events) {
@@ -547,6 +489,9 @@ export async function* streamAnthropicCompatibleParts(
     }
   } finally {
     if (!readerReleased) {
+      if (!readerSettled) {
+        await cancelStreamReader(reader, "Anthropic response consumer stopped before completion");
+      }
       reader.releaseLock();
     }
   }

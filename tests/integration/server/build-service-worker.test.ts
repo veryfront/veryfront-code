@@ -5,6 +5,7 @@ import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import type { BuildManifest } from "../../../src/build/production-build/index.ts";
+import type { ChunkInfo } from "../../../src/build/bundler/code-splitter/types.ts";
 import { generateServiceWorker } from "../../../src/server/build-service-worker.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
@@ -31,9 +32,25 @@ function createTestManifest(overrides: Partial<BuildManifest> = {}): BuildManife
   };
 }
 
+function createChunkInfo(file: string, overrides: Partial<ChunkInfo> = {}): ChunkInfo {
+  return {
+    name: file,
+    file,
+    imports: [],
+    size: 0,
+    hash: "test-hash",
+    ...overrides,
+  };
+}
+
 function extractCacheVersion(source: string): string | null {
   const match = source.match(/const CACHE_VERSION = '([^']+)'/);
   return match?.[1] ?? null;
+}
+
+function extractStaticCacheUrls(source: string): string[] {
+  const match = source.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
+  return JSON.parse(match?.[1] ?? "[]") as string[];
 }
 
 // Note: sanitizeOps and sanitizeResources disabled because global module caches
@@ -66,7 +83,7 @@ describe(
 
         assert(
           code.includes(
-            "const CACHE_VERSION = 'veryfront-2.0.0-2024-01-01T000000.000Z'",
+            "const CACHE_VERSION = 'veryfront-sw-2.0.0-2024-01-01T000000.000Z'",
           ),
         );
       });
@@ -74,18 +91,19 @@ describe(
       it("should include runtime cache constant", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("const RUNTIME_CACHE = 'veryfront-runtime'"));
+        assert(code.includes("const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`"));
       });
 
       it("should include static cache URLs", () => {
         const code = generateServiceWorker(createTestManifest());
+        const urls = extractStaticCacheUrls(code);
 
         assert(code.includes("STATIC_CACHE_URLS"));
-        assert(code.includes('"/"'));
-        assert(code.includes('"/_veryfront/router.js"'));
-        assert(code.includes('"/_veryfront/prefetch.js"'));
-        assert(code.includes('"/_veryfront/manifest.json"'));
-        assert(code.includes('"/sw.js"'));
+        assert(!urls.includes("/"));
+        assert(urls.includes("/_veryfront/router.js"));
+        assert(urls.includes("/_veryfront/prefetch.js"));
+        assert(urls.includes("/_veryfront/manifest.json"));
+        assert(!urls.includes("/sw.js"));
       });
 
       it("should include manifest assets in static cache", () => {
@@ -93,13 +111,17 @@ describe(
           routes: [{ path: "/", slug: "index", chunks: ["chunks/home-abc123.js"] }],
           chunks: {
             version: "1",
-            routes: { "/": { chunks: ["chunks/home-abc123.js"] } },
+            routes: {
+              "/": {
+                entry: "chunks/home-abc123.js",
+                chunks: ["chunks/home-abc123.js"],
+              },
+            },
             chunks: {
-              "chunks/home-abc123.js": {
-                file: "chunks/home-abc123.js",
+              "chunks/home-abc123.js": createChunkInfo("chunks/home-abc123.js", {
                 css: "chunks/home-abc123.css",
                 imports: ["chunks/vendor-xyz.js"],
-              },
+              }),
             },
             shared: ["chunks/shared-1.js"],
           },
@@ -113,38 +135,37 @@ describe(
         assert(code.includes('"/_veryfront/chunks/shared-1.js"'));
       });
 
-      it("should define cache strategies object", () => {
+      it("should define explicit cache eligibility checks", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("CACHE_STRATEGIES"));
-        assert(code.includes("networkFirst"));
-        assert(code.includes("cacheFirst"));
-        assert(code.includes("staleWhileRevalidate"));
+        assert(code.includes("function isCacheableRequest"));
+        assert(code.includes("function isCacheableResponse"));
+        assert(code.includes("STATIC_CACHE_PATHS.has(url.pathname)"));
       });
 
-      it("should include networkFirst strategy for API routes", () => {
+      it("should not intercept API or data routes", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("networkFirst:"));
-        assert(code.includes("/\\/api\\//"));
-        assert(code.includes("/\\/_veryfront\\/data\\//"));
+        assert(!extractStaticCacheUrls(code).some((path) => path.startsWith("/api/")));
+        assert(
+          !extractStaticCacheUrls(code).some((path) => path.startsWith("/_veryfront/data/")),
+        );
       });
 
-      it("should include cacheFirst strategy for assets", () => {
+      it("should serve only manifest-listed assets from cache", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("cacheFirst:"));
-        assert(code.includes("png") && code.includes("jpg") && code.includes("webp"));
-        assert(code.includes("/\\/_veryfront\\/chunks\\//"));
-        assert(code.includes("/\\/assets\\//"));
+        assert(code.includes("STATIC_CACHE_PATHS.has(url.pathname)"));
+        assert(code.includes("const cached = await cache.match(request)"));
+        assert(code.includes("if (cached) return cached"));
       });
 
-      it("should include staleWhileRevalidate strategy for code/HTML", () => {
+      it("should not broadly cache HTML or extension-matched routes", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("staleWhileRevalidate:"));
-        assert(code.includes("js|css"));
-        assert(code.includes(".html"));
+        assert(!code.includes("staleWhileRevalidate"));
+        assert(!code.includes(".html$"));
+        assert(!code.includes("png|jpg"));
       });
 
       it("should include install event listener", () => {
@@ -152,8 +173,8 @@ describe(
 
         assert(code.includes("self.addEventListener('install'"));
         assert(code.includes("event.waitUntil"));
-        assert(code.includes("caches.open(CACHE_VERSION)"));
-        assert(code.includes("cache.addAll(STATIC_CACHE_URLS)"));
+        assert(code.includes("precacheAssets()"));
+        assert(code.includes("caches.open(RUNTIME_CACHE)"));
         assert(code.includes("self.skipWaiting()"));
       });
 
@@ -169,7 +190,7 @@ describe(
       it("should include cache cleanup in activate", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("name !== CACHE_VERSION"));
+        assert(code.includes("name.startsWith('veryfront-sw-')"));
         assert(code.includes("name !== RUNTIME_CACHE"));
       });
 
@@ -178,7 +199,7 @@ describe(
 
         assert(code.includes("self.addEventListener('fetch'"));
         assert(code.includes("event.respondWith"));
-        assert(code.includes("handleRequest(request, strategy)"));
+        assert(code.includes("handleRequest(event)"));
       });
 
       it("should skip non-GET requests in fetch handler", () => {
@@ -187,51 +208,47 @@ describe(
         assert(code.includes("request.method !== 'GET'"));
       });
 
-      it("should skip chrome-extension URLs", () => {
+      it("should skip cross-origin URLs", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("url.protocol === 'chrome-extension:'"));
+        assert(code.includes("url.origin !== self.location.origin"));
       });
 
       it("should include handleRequest function", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("async function handleRequest(request, strategy)"));
+        assert(code.includes("async function handleRequest(event)"));
         assert(code.includes("caches.open(RUNTIME_CACHE)"));
       });
 
-      it("should implement networkFirst strategy", () => {
+      it("should reject private and uncacheable network responses", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("case 'networkFirst':"));
-        assert(code.includes("const response = await fetch(request)"));
-        assert(code.includes("if (response.ok)"));
-        assert(code.includes("cache.put(request, response.clone())"));
-        assert(code.includes("return cache.match(request)"));
+        assert(code.includes("cacheDirectives.has('private')"));
+        assert(code.includes("cacheDirectives.has('no-store')"));
+        assert(code.includes("response.headers.has('set-cookie')"));
       });
 
-      it("should implement cacheFirst strategy", () => {
+      it("should implement cache-first delivery for approved assets", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("case 'cacheFirst':"));
+        assert(code.includes("STATIC_CACHE_PATHS.has(url.pathname)"));
         assert(code.includes("const cached = await cache.match(request)"));
         assert(code.includes("if (cached) return cached"));
       });
 
-      it("should implement staleWhileRevalidate strategy", () => {
+      it("should keep background cache writes alive", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("case 'staleWhileRevalidate':"));
-        assert(code.includes("const cachedResponse = await cache.match(request)"));
-        assert(code.includes("const fetchPromise = fetch(request)"));
-        assert(code.includes("return cachedResponse || fetchPromise"));
+        assert(code.includes("event.waitUntil(cache.put(request, response.clone())"));
+        assert(code.includes(".catch(() => undefined)"));
       });
 
       it("should include message event listener", () => {
         const code = generateServiceWorker(createTestManifest());
 
         assert(code.includes("self.addEventListener('message'"));
-        assert(code.includes("event.data.type === 'SKIP_WAITING'"));
+        assert(code.includes("event.data?.type === 'SKIP_WAITING'"));
       });
 
       it("should include generation timestamp comment", () => {
@@ -308,32 +325,31 @@ describe(
         assert(code.length > 500);
       });
 
-      it("should apply networkFirst strategy to navigation requests", () => {
+      it("should pass navigation requests through to the network", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("let strategy = 'networkFirst'"));
-        assert(code.includes("case 'networkFirst':"));
-        assert(code.includes("const response = await fetch(request)"));
-        assert(code.includes("return cache.match(request)"));
+        assert(!extractStaticCacheUrls(code).includes("/"));
+        assert(code.includes("STATIC_CACHE_PATHS.has(url.pathname)"));
       });
 
-      it("should apply cacheFirst strategy to static assets", () => {
-        const code = generateServiceWorker(createTestManifest());
+      it("should apply cache-first delivery to manifest assets", () => {
+        const code = generateServiceWorker(
+          createTestManifest({
+            routes: [{ path: "/", slug: "index", chunks: ["app.js"] }],
+          }),
+        );
 
-        assert(code.includes("png|jpg|jpeg|svg|gif|webp"));
-        assert(code.includes("/\\/_veryfront\\/chunks\\//"));
-        assert(code.includes("case 'cacheFirst':"));
+        assert(extractStaticCacheUrls(code).includes("/_veryfront/chunks/app.js"));
         assert(code.includes("const cached = await cache.match(request)"));
         assert(code.includes("if (cached) return cached"));
       });
 
-      it("should apply staleWhileRevalidate for API calls and dynamic content", () => {
+      it("should pass API and dynamic content through", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("js|css"));
-        assert(code.includes(".html"));
-        assert(code.includes("case 'staleWhileRevalidate':"));
-        assert(code.includes("return cachedResponse || fetchPromise"));
+        assert(!extractStaticCacheUrls(code).includes("/api/data"));
+        assert(!extractStaticCacheUrls(code).includes("/page.html"));
+        assert(!code.includes("staleWhileRevalidate"));
       });
 
       it("should call skipWaiting immediately on install", () => {
@@ -362,7 +378,7 @@ describe(
         const code = generateServiceWorker(createTestManifest());
 
         assert(code.includes("caches.keys()"));
-        assert(code.includes("name !== CACHE_VERSION"));
+        assert(code.includes("name.startsWith('veryfront-sw-')"));
         assert(code.includes("name !== RUNTIME_CACHE"));
         assert(code.includes("caches.delete(name)"));
         assert(code.includes("Promise.all"));
@@ -379,35 +395,30 @@ describe(
         assert(returnIndex < methodCheckIndex + 50);
       });
 
-      it("should ignore chrome-extension URLs", () => {
+      it("should ignore every cross-origin URL", () => {
         const code = generateServiceWorker(createTestManifest());
 
         assert(code.includes("new URL(request.url)"));
-        assert(code.includes("url.protocol === 'chrome-extension:'"));
+        assert(code.includes("url.origin !== self.location.origin"));
 
-        const protocolCheckIndex = code.indexOf("url.protocol === 'chrome-extension:'");
-        const returnIndex = code.indexOf("return", protocolCheckIndex);
-        assert(returnIndex > protocolCheckIndex);
+        const originCheckIndex = code.indexOf("url.origin !== self.location.origin");
+        const returnIndex = code.indexOf("return", originCheckIndex);
+        assert(returnIndex > originCheckIndex);
       });
 
-      it("should handle fetch errors gracefully in networkFirst", () => {
+      it("should consult the cache before starting a network request", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("case 'networkFirst':"));
-
-        const networkFirstIndex = code.indexOf("case 'networkFirst':");
-        const tryIndex = code.indexOf("try", networkFirstIndex);
-        const catchIndex = code.indexOf("catch", tryIndex);
-
-        assert(tryIndex > networkFirstIndex);
-        assert(catchIndex > tryIndex);
-        assert(code.includes("return cache.match(request)"));
+        const cacheIndex = code.indexOf("await cache.match(request)");
+        const fetchIndex = code.indexOf("await fetch(request)", cacheIndex);
+        assert(cacheIndex >= 0);
+        assert(fetchIndex > cacheIndex);
       });
 
-      it("should create runtime cache for dynamic content", () => {
+      it("should create a versioned runtime cache for build assets", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        assert(code.includes("const RUNTIME_CACHE = 'veryfront-runtime'"));
+        assert(code.includes("const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`"));
         assert(code.includes("caches.open(RUNTIME_CACHE)"));
         assert(code.includes("name !== RUNTIME_CACHE"));
       });
@@ -417,11 +428,12 @@ describe(
 
         assert(
           code.includes(
-            "const CACHE_VERSION = 'veryfront-2.0.0-2024-01-01T000000.000Z'",
+            "const CACHE_VERSION = 'veryfront-sw-2.0.0-2024-01-01T000000.000Z'",
           ),
         );
-        assert(code.includes("caches.open(CACHE_VERSION)"));
-        assert(code.includes("name !== CACHE_VERSION"));
+        assert(code.includes("const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`"));
+        assert(code.includes("caches.open(RUNTIME_CACHE)"));
+        assert(code.includes("name !== RUNTIME_CACHE"));
       });
 
       it("should bump cache version when manifest changes", () => {
@@ -439,12 +451,12 @@ describe(
         assert(firstVersion !== secondVersion);
       });
 
-      it("should store responses only when response.ok is true", () => {
+      it("should store only complete and explicitly public responses", () => {
         const code = generateServiceWorker(createTestManifest());
 
-        const okChecks = code.match(/if \(response\.ok\)/g);
-        assert(okChecks && okChecks.length >= 3, "Should have at least 3 response.ok checks");
-
+        assert(code.includes("response.status !== 200"));
+        assert(code.includes("cacheDirectives.has('public')"));
+        assert(code.includes("cacheDirectives.has('private')"));
         assert(code.includes("cache.put(request, response.clone())"));
       });
     });

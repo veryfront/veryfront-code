@@ -6,10 +6,11 @@ import type {
   HandlerResult,
   RouteHandlerModule,
 } from "../types.ts";
-import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { handleCORSPreflight } from "#veryfront/security/index.ts";
 import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
+import { getSafeErrorName } from "../../utils/error-name.ts";
 
 export class CorsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -24,33 +25,49 @@ export class CorsHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (req.method.toUpperCase() !== "OPTIONS") return this.continue();
 
-    const pathname = new URL(req.url).pathname;
-    const allowMethods = await this.resolveAllowedMethods(pathname, ctx);
-
     let corsConfig = ctx.securityConfig?.cors;
-    try {
-      const cfg = await getConfig(ctx.projectDir, ctx.adapter);
-      corsConfig = cfg?.security?.cors ?? corsConfig;
-    } catch (error) {
-      // Falling back to ctx.securityConfig?.cors (set at request time). If that is
-      // also absent, ResponseBuilder.preflight will use its own restrictive defaults.
-      // Verify the fallback is not more permissive than the config-file value intended.
-      this.logWarn(
-        "Failed to load CORS config — falling back to security-context defaults",
-        { error },
-        ctx,
-      );
+    let allowMethods = CorsHandler.DEFAULT_METHODS;
+
+    // Remote preflight must not discover or import project routes merely to
+    // answer OPTIONS. The request-time security context is host-owned; when it
+    // contains no CORS policy, the canonical handler emits no allow headers.
+    if (ctx.isLocalProject !== false) {
+      const pathname = new URL(req.url).pathname;
+      allowMethods = await this.resolveAllowedMethods(pathname, ctx);
+
+      try {
+        const cfg = await getConfig(ctx.projectDir, ctx.adapter);
+        corsConfig = cfg?.security?.cors ?? corsConfig;
+      } catch (error) {
+        this.logWarn(
+          "Failed to load CORS config, falling back to security-context defaults",
+          { errorName: getSafeErrorName(error) },
+          ctx,
+        );
+      }
     }
 
-    const response = ResponseBuilder.preflight(req, {
-      allowMethods,
-      allowHeaders: req.headers.get("access-control-request-headers") ??
-        "Content-Type,Authorization",
-      securityConfig: ctx.securityConfig ?? undefined,
-      corsConfig,
+    const response = await handleCORSPreflight({
+      request: req,
+      allowMethods: this.restrictAllowedMethods(allowMethods, corsConfig),
+      config: corsConfig,
     });
 
     return this.respond(response);
+  }
+
+  private restrictAllowedMethods(
+    routeMethods: string,
+    corsConfig: boolean | { methods?: string[] } | null | undefined,
+  ): string {
+    if (typeof corsConfig !== "object" || !corsConfig?.methods?.length) return routeMethods;
+
+    const configured = new Set(corsConfig.methods.map((method) => method.toUpperCase()));
+    return routeMethods
+      .split(",")
+      .map((method) => method.trim())
+      .filter((method) => method === "OPTIONS" || configured.has(method.toUpperCase()))
+      .join(", ");
   }
 
   private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
@@ -67,7 +84,11 @@ export class CorsHandler extends BaseHandler {
 
       return [...new Set(methods)].join(", ");
     } catch (error) {
-      this.logWarn("Failed to resolve route for CORS", { error, pathname }, ctx);
+      this.logWarn(
+        "Failed to resolve route for CORS",
+        { errorName: getSafeErrorName(error) },
+        ctx,
+      );
       return CorsHandler.DEFAULT_METHODS;
     }
   }

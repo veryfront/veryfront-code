@@ -6,23 +6,18 @@ export async function loadSecurityConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<string[]> {
-  try {
-    const { getConfig } = await import("#veryfront/config");
-    const cfg: VeryfrontConfig = await getConfig(projectDir, adapter);
-    const remote = cfg.security?.remoteHosts;
+  const { getConfig } = await import("#veryfront/config");
+  const cfg: VeryfrontConfig = await getConfig(projectDir, adapter);
+  const remote = cfg.security?.remoteHosts;
 
-    if (Array.isArray(remote)) {
-      if (remote.length === 0) {
-        logger.warn(
-          "security.remoteHosts is set to an empty array — all remote requests will be blocked. " +
-            "If this is intentional, you can ignore this warning.",
-        );
-      }
-      return remote;
+  if (Array.isArray(remote)) {
+    if (remote.length === 0) {
+      logger.warn(
+        "security.remoteHosts is empty. Veryfront blocks all remote module imports.",
+      );
     }
-  } catch (e) {
-    logger.warn("Failed to load security.remoteHosts", e);
+    return [...remote];
   }
 
-  return DEFAULT_ALLOWED_CDN_HOSTS;
+  return [...DEFAULT_ALLOWED_CDN_HOSTS];
 }

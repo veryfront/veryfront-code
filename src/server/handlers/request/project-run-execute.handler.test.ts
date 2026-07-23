@@ -17,8 +17,15 @@ import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
-import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
+import {
+  type ControlPlaneTestSigningKey,
+  createControlPlaneSignature,
+  createControlPlaneTestSigningKey,
+  createCtx,
+} from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
+import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
 
 const encoder = new TextEncoder();
 
@@ -140,6 +147,9 @@ function createDeps(
     }),
     createEvalAgentAdapter: () => async () => ({ text: "Paris" }),
     uploadEvalReport: async () => null,
+    executeIsolatedProjectRun: async () => {
+      throw new Error("Unexpected remote project-run isolation call in local-path test");
+    },
     executeKnowledgeIngest: async () => ({
       success: true,
       result: { kind: "knowledge_ingest", summary: { ingested_count: 1 } },
@@ -174,6 +184,12 @@ function createDeps(
     now: () => 0,
     ...overrides,
   };
+}
+
+function createLocalCtx(publicKeyPem?: string): HandlerContext {
+  const ctx = createCtx(publicKeyPem);
+  ctx.isLocalProject = true;
+  return ctx;
 }
 
 function createEmptyDiscoveryResult(): DiscoveryResult {
@@ -221,6 +237,30 @@ async function signedRequest(
       body: rawBody,
     }),
   };
+}
+
+async function signedRequestWithKey(
+  path: string,
+  body: Record<string, unknown>,
+  signingKey: ControlPlaneTestSigningKey,
+): Promise<Request> {
+  const rawBody = JSON.stringify(body);
+  const { jws } = await createControlPlaneSignature(
+    rawBody,
+    {
+      requestId: String(body.runId),
+      projectId: String(body.projectId),
+    },
+    signingKey,
+  );
+  return new Request(`https://example.com${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-veryfront-control-plane-jws": jws,
+    },
+    body: rawBody,
+  });
 }
 
 function createStyleArtifactCtx(
@@ -290,6 +330,14 @@ function createStyleArtifactFetchRecorder(): {
         : input instanceof Request
         ? input.url
         : input.toString();
+      if (url === getTailwindCSSUrl()) {
+        return Promise.resolve(
+          new Response("@layer theme, base, components, utilities;", {
+            status: 200,
+            headers: { "Content-Type": "text/css; charset=utf-8" },
+          }),
+        );
+      }
       if (url.endsWith("/projects/demo-project/style-artifacts/current")) {
         const body = requestJsonBody(init) ?? {};
         upserts.push(body);
@@ -366,7 +414,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       body,
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -408,6 +456,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const ctx = {
       ...createCtx(publicKeyPem),
       environmentId: "22222222-2222-4222-8222-222222222222",
+      isLocalProject: true,
     } as HandlerContext;
 
     const result = await handler.handle(request, ctx);
@@ -451,7 +500,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       body,
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -462,6 +511,159 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: null,
     });
     assertEquals(order, ["discover", "run:sync-calendar-events"]);
+  });
+
+  it("routes remote project tasks to isolation without host discovery or execution", async () => {
+    let discoveryCalls = 0;
+    let hostTaskCalls = 0;
+    let isolatedCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        throw new Error("host discovery must not run");
+      },
+      runTask: async () => {
+        hostTaskCalls++;
+        throw new Error("host task execution must not run");
+      },
+      executeIsolatedProjectRun: async (input) => {
+        isolatedCalls++;
+        assertEquals(input.request.target, "task:sync-calendar-events");
+        return {
+          success: true,
+          result: { isolated: true },
+          durationMs: 7,
+        };
+      },
+    }));
+    const body = {
+      runId: "run_task_isolated",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_isolated/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { isolated: true },
+      duration_ms: 7,
+      logs: null,
+    });
+    assertEquals({ discoveryCalls, hostTaskCalls, isolatedCalls }, {
+      discoveryCalls: 0,
+      hostTaskCalls: 0,
+      isolatedCalls: 1,
+    });
+  });
+
+  it("sanitizes remote Worker diagnostics before returning or caching them", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      executeIsolatedProjectRun: async () => ({
+        success: false,
+        error: "task failed token=remote-secret-canary at file:///runtime/project/task.ts",
+        durationMs: 2,
+      }),
+    }));
+    const body = {
+      runId: "run_task_remote_sensitive_error",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_remote_sensitive_error/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const responseText = await result.response.text();
+    assertEquals(responseText.includes("remote-secret-canary"), false);
+    assertEquals(responseText.includes("file:///runtime/project/task.ts"), false);
+    assertStringIncludes(responseText, "token=[REDACTED]");
+    assertStringIncludes(responseText, "<LOCAL_PATH>");
+  });
+
+  it("fails closed when remote project-run isolation is unavailable", async () => {
+    let hostDiscoveryCalls = 0;
+    let hostTaskCalls = 0;
+    const deps = createDeps({
+      ensureProjectDiscovery: async () => {
+        hostDiscoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+      runTask: async () => {
+        hostTaskCalls++;
+        return { success: true, durationMs: 1 };
+      },
+    });
+    delete (deps as Partial<ProjectRunExecuteHandlerDeps>).executeIsolatedProjectRun;
+    const handler = new ProjectRunExecuteHandler(deps);
+    const body = {
+      runId: "run_task_isolation_unavailable",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_isolation_unavailable/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Remote project run isolation is unavailable",
+      logs: null,
+      duration_ms: 0,
+    });
+    assertEquals({ hostDiscoveryCalls, hostTaskCalls }, {
+      hostDiscoveryCalls: 0,
+      hostTaskCalls: 0,
+    });
+  });
+
+  it("keeps local project task execution on the local runtime path", async () => {
+    let hostTaskCalls = 0;
+    let isolatedCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        hostTaskCalls++;
+        return { success: true, result: { local: true }, durationMs: 4 };
+      },
+      executeIsolatedProjectRun: async () => {
+        isolatedCalls++;
+        throw new Error("local tasks must not enter remote isolation");
+      },
+    }));
+    const body = {
+      runId: "run_task_local",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_local/execute",
+      body,
+    );
+    const ctx = createLocalCtx(publicKeyPem);
+    ctx.isLocalProject = true;
+
+    const result = await handler.handle(request, ctx);
+
+    assertExists(result.response);
+    assertEquals((await result.response.json()).result, { local: true });
+    assertEquals({ hostTaskCalls, isolatedCalls }, { hostTaskCalls: 1, isolatedCalls: 0 });
   });
 
   it("reports runtime discovery failures before task lookup", async () => {
@@ -481,7 +683,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       body,
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -716,6 +918,149 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("routes explicitly remote workflows through the compatibility seam", async () => {
+    let hostDiscoveryCalls = 0;
+    let hostWorkflowLookupCalls = 0;
+    let remoteWorkflowCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        hostDiscoveryCalls++;
+        throw new Error("remote workflow must not enter host discovery when the seam is set");
+      },
+      findWorkflowById: async () => {
+        hostWorkflowLookupCalls++;
+        throw new Error("remote workflow must not enter host lookup when the seam is set");
+      },
+      executeRemoteWorkflow: async ({ request }) => {
+        remoteWorkflowCalls++;
+        assertEquals(request.target, "workflow:publish");
+        return {
+          success: true,
+          result: { delegated: true },
+          logs: null,
+          duration_ms: 3,
+        };
+      },
+    }));
+    const body = {
+      runId: "run_workflow_remote_seam",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_remote_seam/execute",
+      body,
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.isLocalProject = false;
+
+    const result = await handler.handle(request, ctx);
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { delegated: true },
+      logs: null,
+      duration_ms: 3,
+    });
+    assertEquals({ hostDiscoveryCalls, hostWorkflowLookupCalls, remoteWorkflowCalls }, {
+      hostDiscoveryCalls: 0,
+      hostWorkflowLookupCalls: 0,
+      remoteWorkflowCalls: 1,
+    });
+  });
+
+  it("routes remote eval modules to isolation and keeps the runtime endpoint public", async () => {
+    let hostEvalDiscoveryCalls = 0;
+    let hostEvalCalls = 0;
+    let isolatedEndpoint: string | undefined;
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_isolated",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 0, passed: 0, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async () => {
+        hostEvalDiscoveryCalls++;
+        throw new Error("host eval discovery must not run");
+      },
+      runEval: async () => {
+        hostEvalCalls++;
+        throw new Error("host eval execution must not run");
+      },
+      executeIsolatedProjectRun: async (input) => {
+        isolatedEndpoint = input.evalAgentAdapter?.endpoint;
+        return { success: true, result: report, durationMs: 12 };
+      },
+    }));
+    const body = {
+      runId: "run_eval_isolated",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_isolated/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result, report);
+    assertEquals(isolatedEndpoint, "https://demo-project.preview.veryfront.org/api/ag-ui");
+    assertEquals({ hostEvalDiscoveryCalls, hostEvalCalls }, {
+      hostEvalDiscoveryCalls: 0,
+      hostEvalCalls: 0,
+    });
+  });
+
+  it("rejects loopback endpoints before remote eval isolation", async () => {
+    let isolationCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      executeIsolatedProjectRun: async () => {
+        isolationCalls++;
+        return { success: true, durationMs: 1 };
+      },
+    }));
+    const body = {
+      runId: "run_eval_remote_loopback",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://localhost/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_remote_loopback/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "runtimeAgUiEndpoint must target a public project runtime",
+      logs: null,
+      duration_ms: 0,
+    });
+    assertEquals(isolationCalls, 0);
+  });
+
   it("runs a discovered eval with the canonical run id and local routed AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
@@ -785,7 +1130,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await withEnvValue(
       "PORT",
       "4311",
-      () => handler.handle(request, createCtx(publicKeyPem)),
+      () => handler.handle(request, createLocalCtx(publicKeyPem)),
     );
 
     assertExists(result.response);
@@ -847,7 +1192,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { "x-token": "runtime-token" },
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -864,40 +1209,48 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   });
 
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {
-    let receivedEndpoint: string | undefined;
+    const receivedEndpoints: string[] = [];
     const handler = new ProjectRunExecuteHandler(createDeps({
       createEvalAgentAdapter: (config) => {
-        receivedEndpoint = config.endpoint;
+        if (config.endpoint) receivedEndpoints.push(config.endpoint);
         return async () => ({ text: "Paris" });
       },
     }));
-    const body = {
-      runId: "run_eval_local_endpoint",
-      kind: "eval",
-      target: "eval:deep-research",
-      projectId: "proj-1",
-      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-    };
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_eval_local_endpoint/execute",
-      body,
-      {
-        "x-token": "runtime-token",
-        "x-forwarded-host": "localhost:4311",
-        "x-forwarded-proto": "http",
-      },
-      "http://localhost:4311",
-    );
+    const localEndpoints = [
+      { endpoint: "http://localhost:4311/api/ag-ui", origin: "http://localhost:4311" },
+      { endpoint: "http://[::1]:4311/api/ag-ui", origin: "http://[::1]:4311" },
+    ];
 
-    const result = await withEnvValue(
-      "PORT",
-      "4311",
-      () => handler.handle(request, createCtx(publicKeyPem)),
-    );
+    for (const [index, local] of localEndpoints.entries()) {
+      const runId = `run_eval_local_endpoint_${index}`;
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        {
+          runId,
+          kind: "eval",
+          target: "eval:deep-research",
+          projectId: "proj-1",
+          runtimeAgUiEndpoint: local.endpoint,
+        },
+        { "x-token": "runtime-token" },
+        local.origin,
+      );
 
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
-    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createLocalCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals((await result.response.json()).success, true);
+    }
+
+    assertEquals(receivedEndpoints, [
+      "http://127.0.0.1:4311/api/ag-ui",
+      "http://127.0.0.1:4311/api/ag-ui",
+    ]);
   });
 
   it("runs localized eval AG-UI requests through discovered source agents", async () => {
@@ -949,7 +1302,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await withEnvValue(
         "PORT",
         "4311",
-        () => handler.handle(request, createCtx(publicKeyPem)),
+        () => handler.handle(request, createLocalCtx(publicKeyPem)),
       );
 
       assertExists(result.response);
@@ -1009,7 +1362,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await withEnvValue(
       "PORT",
       "4311",
-      () => handler.handle(request, createCtx(publicKeyPem)),
+      () => handler.handle(request, createLocalCtx(publicKeyPem)),
     );
 
     assertExists(result.response);
@@ -1020,7 +1373,57 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEnvironment, "preview");
   });
 
-  it("preserves non-sibling eval AG-UI endpoints", async () => {
+  it("rejects untrusted eval AG-UI endpoints before creating an adapter", async () => {
+    let adapterCreations = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: () => {
+        adapterCreations++;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const endpoints = [
+      "https://agent-service.example.com/api/ag-ui",
+      "http://169.254.169.254/api/ag-ui",
+      "http://10.0.0.5/api/ag-ui",
+      "http://demo-project.preview.veryfront.org/api/ag-ui",
+      "https://other-project.preview.veryfront.org/api/ag-ui",
+      "https://demo-project.preview.veryfront.org/api/ag-ui?redirect=internal",
+      "https://user:password@demo-project.preview.veryfront.org/api/ag-ui",
+    ];
+
+    for (const [index, runtimeAgUiEndpoint] of endpoints.entries()) {
+      const runId = `run_eval_untrusted_endpoint_${index}`;
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        {
+          runId,
+          kind: "eval",
+          target: "eval:deep-research",
+          projectId: "proj-1",
+          runtimeAgUiEndpoint,
+        },
+        {
+          "x-token": "runtime-token",
+          "x-forwarded-host": "agent-service.example.com",
+          "x-forwarded-proto": "https",
+        },
+      );
+
+      const result = await handler.handle(request, createLocalCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(await result.response.json(), {
+        success: false,
+        error: "runtimeAgUiEndpoint must target this project runtime",
+        logs: null,
+        duration_ms: 0,
+      });
+    }
+    assertEquals(adapterCreations, 0);
+  });
+
+  it("localizes an HTTPS AG-UI endpoint only when it matches the request URL origin", async () => {
     let receivedEndpoint: string | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       createEvalAgentAdapter: (config) => {
@@ -1028,24 +1431,34 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         return async () => ({ text: "Paris" });
       },
     }));
-    const body = {
-      runId: "run_eval_custom_endpoint",
-      kind: "eval",
-      target: "eval:deep-research",
-      projectId: "proj-1",
-      runtimeAgUiEndpoint: "https://agent-service.example.com/api/ag-ui",
-    };
+    const runId = "run_eval_request_origin";
     const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_eval_custom_endpoint/execute",
-      body,
-      { "x-token": "runtime-token" },
+      `/api/control-plane/runs/${runId}/execute`,
+      {
+        runId,
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+        runtimeAgUiEndpoint: "https://runtime.example.test/api/ag-ui",
+      },
+      {
+        "x-token": "runtime-token",
+        "x-forwarded-host": "spoofed.example.test",
+        "x-forwarded-proto": "http",
+      },
+      "https://runtime.example.test",
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, createLocalCtx(publicKeyPem)),
+    );
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(receivedEndpoint, "https://agent-service.example.com/api/ag-ui");
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
   });
 
   it("uses local AG-UI endpoints for managed preview URLs when control-plane requests use an internal runtime host", async () => {
@@ -1073,7 +1486,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const result = await withEnvValue(
       "PORT",
       "4311",
-      () => handler.handle(request, createCtx(publicKeyPem)),
+      () => handler.handle(request, createLocalCtx(publicKeyPem)),
     );
 
     assertExists(result.response);
@@ -1123,7 +1536,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       { "x-token": "runtime-token" },
     );
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -1433,6 +1846,447 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: null,
     });
     assertEquals(destroyed, true);
+  });
+
+  it("coalesces concurrent run replays and reuses the completed response", async () => {
+    let runTaskCalls = 0;
+    let markStarted!: () => void;
+    let releaseTask!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const taskGate = new Promise<void>((resolve) => {
+      releaseTask = resolve;
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        runTaskCalls += 1;
+        markStarted();
+        await taskGate;
+        return { success: true, result: { attempt: runTaskCalls }, durationMs: 17 };
+      },
+    }));
+    const body = {
+      runId: "run_task_replay_concurrent",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const path = "/api/control-plane/runs/run_task_replay_concurrent/execute";
+    const { request, publicKeyPem } = await signedRequest(path, body);
+    const rawBody = JSON.stringify(body);
+    const createRetryRequest = () =>
+      new Request(request.url, {
+        method: "POST",
+        headers: request.headers,
+        body: rawBody,
+      });
+    const ctx = createLocalCtx(publicKeyPem);
+
+    const first = handler.handle(request, ctx);
+    await started;
+    const second = handler.handle(createRetryRequest(), ctx);
+    releaseTask();
+
+    const firstResult = await first;
+    const secondResult = await second;
+    const retryResult = await handler.handle(createRetryRequest(), ctx);
+    assertExists(firstResult.response);
+    assertExists(secondResult.response);
+    assertExists(retryResult.response);
+    assertEquals(runTaskCalls, 1);
+    assertEquals(await secondResult.response.json(), await firstResult.response.json());
+    assertEquals(await retryResult.response.json(), {
+      success: true,
+      result: { attempt: 1 },
+      duration_ms: 17,
+      logs: null,
+    });
+  });
+
+  it("rejects a run id reused with a different signed body", async () => {
+    let runTaskCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        runTaskCalls += 1;
+        return { success: true, result: { attempt: runTaskCalls }, durationMs: 9 };
+      },
+    }));
+    const signingKey = await createControlPlaneTestSigningKey();
+    const path = "/api/control-plane/runs/run_task_replay_conflict/execute";
+    const firstBody = {
+      runId: "run_task_replay_conflict",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      config: { mode: "first" },
+    };
+    const conflictingBody = {
+      ...firstBody,
+      config: { mode: "different" },
+    };
+    const ctx = createLocalCtx(signingKey.publicKeyPem);
+
+    const firstResult = await handler.handle(
+      await signedRequestWithKey(path, firstBody, signingKey),
+      ctx,
+    );
+    const conflictingResult = await handler.handle(
+      await signedRequestWithKey(path, conflictingBody, signingKey),
+      ctx,
+    );
+
+    assertExists(firstResult.response);
+    assertExists(conflictingResult.response);
+    assertEquals(firstResult.response.status, 200);
+    assertEquals(conflictingResult.response.status, 409);
+    assertEquals(await conflictingResult.response.json(), {
+      error: "Project run identity conflicts with a different request",
+    });
+    assertEquals(runTaskCalls, 1);
+  });
+
+  it("authenticates before entering a remote project source context", async () => {
+    let sourceContextEntries = 0;
+    let discoveryCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+    }));
+    const ctx = createCtx("-----BEGIN PUBLIC KEY-----\nZmFrZQ==\n-----END PUBLIC KEY-----");
+    ctx.adapter = ({
+      ...ctx.adapter,
+      fs: {
+        isMultiProjectMode: () => true,
+        runWithContext: async (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => {
+          sourceContextEntries++;
+          return await fn();
+        },
+      },
+    } as unknown) as HandlerContext["adapter"];
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_unsigned/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          runId: "run_unsigned",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+        }),
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(sourceContextEntries, 0);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("rejects new project runs while the runtime is shutting down", async () => {
+    let sourceContextEntries = 0;
+    let discoveryCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+    }));
+    const body = {
+      runId: "run_during_shutdown",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_during_shutdown/execute",
+      body,
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = ({
+      ...ctx.adapter,
+      fs: {
+        isMultiProjectMode: () => true,
+        runWithContext: async (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => {
+          sourceContextEntries++;
+          return await fn();
+        },
+      },
+    } as unknown) as HandlerContext["adapter"];
+
+    markServerShuttingDown();
+    let result;
+    try {
+      result = await handler.handle(request, ctx);
+    } finally {
+      __resetServerShuttingDownForTests();
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(await result.response.json(), {
+      code: "RUNTIME_SHUTTING_DOWN",
+      message: "Runtime is shutting down; retry against another instance",
+    });
+    assertEquals(result.response.headers.get("connection"), "close");
+    assertEquals(sourceContextEntries, 0);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("rejects project claim conflicts before entering a remote project source context", async () => {
+    const body = {
+      runId: "run_project_claim_conflict",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-body",
+    };
+    const rawBody = JSON.stringify(body);
+    const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
+      requestId: body.runId,
+      projectId: "proj-claim",
+    });
+    const request = new Request(
+      "https://example.com/api/control-plane/runs/run_project_claim_conflict/execute",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body: rawBody,
+      },
+    );
+    let sourceContextEntries = 0;
+    const ctx = createCtx(publicKeyPem);
+    ctx.projectId = undefined;
+    ctx.adapter = ({
+      ...ctx.adapter,
+      fs: {
+        isMultiProjectMode: () => true,
+        runWithContext: async (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => {
+          sourceContextEntries++;
+          return await fn();
+        },
+      },
+    } as unknown) as HandlerContext["adapter"];
+
+    const result = await new ProjectRunExecuteHandler(createDeps()).handle(request, ctx);
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 401);
+    assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
+    assertEquals(sourceContextEntries, 0);
+  });
+
+  it("decodes and validates the canonical run id before execution", async () => {
+    let runTaskCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        runTaskCalls++;
+        return { success: true, result: { ok: true }, durationMs: 1 };
+      },
+    }));
+    const body = {
+      runId: "run_encoded",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run%5Fencoded/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(runTaskCalls, 1);
+  });
+
+  it("rejects overlong run ids before entering a remote project source context", async () => {
+    const runId = "r".repeat(129);
+    const body = {
+      runId,
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${runId}/execute`,
+      body,
+    );
+    let sourceContextEntries = 0;
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = ({
+      ...ctx.adapter,
+      fs: {
+        isMultiProjectMode: () => true,
+        runWithContext: async (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => {
+          sourceContextEntries++;
+          return await fn();
+        },
+      },
+    } as unknown) as HandlerContext["adapter"];
+
+    const result = await new ProjectRunExecuteHandler(createDeps()).handle(request, ctx);
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(sourceContextEntries, 0);
+  });
+
+  it("rejects inconsistent runtime target selectors before project discovery", async () => {
+    let discoveryCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls++;
+        return createEmptyDiscoveryResult();
+      },
+    }));
+    const body = {
+      runId: "run_invalid_runtime_target",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: null,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_invalid_runtime_target/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(await result.response.json(), { error: "Invalid project run execute request" });
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("does not fall back to host project files for remote style builds", async () => {
+    const body = {
+      runId: "run_style_remote_source_missing",
+      kind: "task",
+      target: "task:style-artifact-build",
+      projectId: "proj-1",
+      config: { environment_name: "Preview" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_style_remote_source_missing/execute",
+      body,
+      { "x-token": "test-token" },
+    );
+    const recorder = createStyleArtifactFetchRecorder();
+
+    const result = await withMockFetch(
+      recorder.fetch,
+      async () => await new ProjectRunExecuteHandler().handle(request, createCtx(publicKeyPem)),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const response = await result.response.json();
+    assertEquals({
+      success: response.success,
+      error: response.error,
+      logs: response.logs,
+    }, {
+      success: false,
+      error: "Remote project source provider is unavailable",
+      logs: null,
+    });
+    assertEquals(typeof response.duration_ms, "number");
+    assertEquals(response.duration_ms >= 0, true);
+    assertEquals(recorder.upserts.length, 1);
+    assertEquals(recorder.upserts[0]?.status, "failed");
+    assertEquals(
+      recorder.upserts[0]?.failure_reason,
+      "Remote project source provider is unavailable",
+    );
+  });
+
+  it("sanitizes project execution errors before returning or caching them", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => {
+        throw new Error(
+          "task failed token=private-token-canary at file:///private/runtime/project.ts",
+        );
+      },
+    }));
+    const body = {
+      runId: "run_task_sensitive_error",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_sensitive_error/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
+
+    assertExists(result.response);
+    const responseText = await result.response.text();
+    assertEquals(responseText.includes("private-token-canary"), false);
+    assertEquals(responseText.includes("file:///private/runtime/project.ts"), false);
+    assertStringIncludes(responseText, "token=[REDACTED]");
+    assertStringIncludes(responseText, "<LOCAL_PATH>");
+  });
+
+  it("returns a bounded failure when project execution output is too large", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: async () => ({
+        success: true,
+        result: { output: "x".repeat(16 * 1024 * 1024 + 1_024) },
+        durationMs: 5,
+      }),
+    }));
+    const body = {
+      runId: "run_task_oversized_output",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_task_oversized_output/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createLocalCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const responseText = await result.response.text();
+    assertEquals(responseText.length < 4_096, true);
+    assertEquals(JSON.parse(responseText), {
+      success: false,
+      error: "Project run response exceeds the supported limit",
+      logs: null,
+      duration_ms: 5,
+    });
   });
 
   it("rejects unsigned execute requests", async () => {

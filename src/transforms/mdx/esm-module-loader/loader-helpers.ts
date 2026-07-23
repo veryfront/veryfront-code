@@ -26,6 +26,7 @@ import {
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
 import { buildMissingModuleError } from "./missing-module.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { fileLogLabel } from "../../shared/log-context.ts";
 
 /**
  * Check which framework bundles are missing from disk.
@@ -68,12 +69,12 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
 
   if (!context.projectId) {
     throw INVALID_ARGUMENT.create({
-      detail: `Missing projectId for MDX ESM cache directory (projectSlug: ${context.projectSlug})`,
+      detail: "MDX ESM cache initialization requires a projectId.",
     });
   }
   if (!context.contentSourceId) {
     throw INVALID_ARGUMENT.create({
-      detail: `Missing contentSourceId for MDX ESM cache directory (project: ${context.projectId})`,
+      detail: "MDX ESM cache initialization requires a contentSourceId.",
     });
   }
 
@@ -87,7 +88,7 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
   try {
     await localFs.mkdir(persistentCacheDir, { recursive: true });
     context.esmCacheDir = persistentCacheDir;
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Using persistent cache directory`);
     return persistentCacheDir;
   } catch (_) {
     /* expected: persistent cache dir may not be writable, fall through to temp dir */
@@ -119,7 +120,6 @@ export async function processVfModuleImports(
   projectDir: string,
   strictMissingModules: boolean,
 ): Promise<string> {
-  const projectSlug = context.projectSlug || "unknown";
   const adapter = context.adapter;
 
   if (!adapter) {
@@ -128,21 +128,17 @@ export async function processVfModuleImports(
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: found imports`, {
-    projectSlug,
     count: imports.length,
-    paths: imports.map((i) => i.path).slice(0, 10),
   });
 
   if (imports.length === 0) {
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: no imports to process`, {
-      projectSlug,
-    });
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: no imports to process`);
     return code;
   }
 
   if (!context.projectId) {
     throw INVALID_ARGUMENT.create({
-      detail: `Missing projectId for module fetching (projectSlug: ${context.projectSlug})`,
+      detail: "MDX module fetching requires a projectId.",
     });
   }
 
@@ -155,10 +151,7 @@ export async function processVfModuleImports(
       contentSourceId: context.contentSourceId,
       reactVersion: context.reactVersion,
       projectSlug: context.projectSlug,
-      logger: logger.child({
-        project_id: context.projectId,
-        project_slug: context.projectSlug,
-      }),
+      logger,
       strictMissingModules,
     },
   );
@@ -172,30 +165,26 @@ export async function processVfModuleImports(
         async () => {
           const moduleStart = performance.now();
           logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module START`, {
-            projectSlug,
             index,
-            path,
+            moduleFile: fileLogLabel(path),
           });
           const filePath = await fetchAndCacheModule(path, fetcherContext);
           logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module DONE`, {
-            projectSlug,
             index,
-            path,
+            moduleFile: fileLogLabel(path),
             durationMs: (performance.now() - moduleStart).toFixed(1),
           });
           return { original, start, end, filePath, path };
         },
         {
-          "mdx.module_path": path,
+          "mdx.module_file": fileLogLabel(path),
           "mdx.module_index": index,
-          "mdx.project_slug": projectSlug,
         },
       );
     }),
   );
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {
-    projectSlug,
     moduleCount: imports.length,
     durationMs: (performance.now() - fetchStart).toFixed(1),
   });
@@ -215,10 +204,8 @@ export async function processVfModuleImports(
     if (strictMissingModules) {
       throw buildMissingModuleError({
         modulePath: path,
-        importer: projectSlug,
         importStatement: original,
         code,
-        projectSlug,
       });
     }
 

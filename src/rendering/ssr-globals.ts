@@ -1,4 +1,5 @@
 export {
+  acquireSSRFetchInterception,
   createDocumentStub,
   createElementClass,
   createElementStub,
@@ -8,6 +9,8 @@ export {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   isSSRGlobalsActive,
+  runWithSSRRequestGlobals,
   setSSRServerPort,
   setupSSRGlobals,
+  type SSRRequestGlobals,
 } from "./ssr-globals/index.ts";

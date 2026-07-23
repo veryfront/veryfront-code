@@ -4,7 +4,7 @@
  * @module server/handlers
  */
 
-// Handler barrel — tightened to selective exports.
+// Handler barrel with selective exports.
 //
 // NOTE: No file imports from this barrel. All consumers use deep paths
 // (e.g. "../handlers/response/cors.ts", "#veryfront/server/handlers/utils/content-types.ts").

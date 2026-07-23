@@ -35,8 +35,8 @@ describe("errors/catalog/general-errors", () => {
       }
     });
 
-    it("should have 6 entries", () => {
-      assertEquals(Object.keys(GENERAL_ERROR_CATALOG).length, 6);
+    it("should have 10 entries", () => {
+      assertEquals(Object.keys(GENERAL_ERROR_CATALOG).length, 10);
     });
 
     it("unknown-error should suggest running veryfront doctor", () => {

@@ -1,5 +1,6 @@
 import { isVisibleIntegration } from "../../integrations/feature-flags.ts";
 import type { OAuthServiceConfig } from "../types.ts";
+import { freezeOAuthServiceConfigs } from "./freeze-config.ts";
 
 /** Configuration used by github. */
 export const githubConfig: OAuthServiceConfig = {
@@ -11,7 +12,7 @@ export const githubConfig: OAuthServiceConfig = {
   clientIdEnvVar: "GITHUB_CLIENT_ID",
   clientSecretEnvVar: "GITHUB_CLIENT_SECRET",
   apiBaseUrl: "https://api.github.com",
-  defaultScopes: ["repo", "user"],
+  defaultScopes: ["repo", "read:user", "read:org"],
 };
 
 /** Configuration used by slack. */
@@ -50,6 +51,7 @@ export const notionConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.notion.com/v1",
   defaultScopes: [],
   useBasicAuth: true,
+  tokenRequestFormat: "json",
   additionalAuthParams: {
     owner: "user",
   },
@@ -61,7 +63,7 @@ export const figmaConfig: OAuthServiceConfig = {
   serviceId: "figma",
   displayName: "Figma",
   authorizationUrl: "https://www.figma.com/oauth",
-  tokenUrl: "https://www.figma.com/api/oauth/token",
+  tokenUrl: "https://api.figma.com/v1/oauth/token",
   clientIdEnvVar: "FIGMA_CLIENT_ID",
   clientSecretEnvVar: "FIGMA_CLIENT_SECRET",
   apiBaseUrl: "https://api.figma.com/v1",
@@ -71,6 +73,7 @@ export const figmaConfig: OAuthServiceConfig = {
     "file_comments:read",
     "file_comments:write",
   ],
+  useBasicAuth: true,
 };
 
 /** Configuration used by linear. */
@@ -84,6 +87,7 @@ export const linearConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "LINEAR_CLIENT_SECRET",
   apiBaseUrl: "https://api.linear.app",
   defaultScopes: ["read", "write"],
+  revocationUrl: "https://api.linear.app/oauth/revoke",
 };
 
 /** Configuration used by gitlab. */
@@ -96,7 +100,7 @@ export const gitlabConfig: OAuthServiceConfig = {
   clientIdEnvVar: "GITLAB_CLIENT_ID",
   clientSecretEnvVar: "GITLAB_CLIENT_SECRET",
   apiBaseUrl: "https://gitlab.com/api/v4",
-  defaultScopes: ["read_user", "api"],
+  defaultScopes: ["api", "read_user", "read_repository"],
 };
 
 /** Configuration used by airtable. */
@@ -144,7 +148,7 @@ export const salesforceConfig: OAuthServiceConfig = {
   clientIdEnvVar: "SALESFORCE_CLIENT_ID",
   clientSecretEnvVar: "SALESFORCE_CLIENT_SECRET",
   apiBaseUrl: "https://login.salesforce.com/services/data/v59.0",
-  defaultScopes: ["api", "refresh_token"],
+  defaultScopes: ["api", "refresh_token", "offline_access"],
 };
 
 /** Configuration used by twitter. */
@@ -184,7 +188,7 @@ export const mondayConfig: OAuthServiceConfig = {
   clientIdEnvVar: "MONDAY_CLIENT_ID",
   clientSecretEnvVar: "MONDAY_CLIENT_SECRET",
   apiBaseUrl: "https://api.monday.com/v2",
-  defaultScopes: ["me:read", "boards:read", "boards:write"],
+  defaultScopes: ["boards:read", "boards:write"],
 };
 
 /** Configuration used by zoom. */
@@ -197,7 +201,13 @@ export const zoomConfig: OAuthServiceConfig = {
   clientIdEnvVar: "ZOOM_CLIENT_ID",
   clientSecretEnvVar: "ZOOM_CLIENT_SECRET",
   apiBaseUrl: "https://api.zoom.us/v2",
-  defaultScopes: ["meeting:read", "meeting:write", "user:read"],
+  defaultScopes: [
+    "user:read:user",
+    "meeting:read:meeting",
+    "meeting:read:list_meetings",
+    "meeting:write:meeting",
+    "cloud_recording:read:list_user_recordings",
+  ],
   useBasicAuth: true,
 };
 
@@ -264,6 +274,7 @@ export const quickbooksConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "QUICKBOOKS_CLIENT_SECRET",
   apiBaseUrl: "https://quickbooks.api.intuit.com/v3",
   defaultScopes: ["com.intuit.quickbooks.accounting"],
+  useBasicAuth: true,
 };
 
 /** Configuration used by xero. */
@@ -277,12 +288,13 @@ export const xeroConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "XERO_CLIENT_SECRET",
   apiBaseUrl: "https://api.xero.com/api.xro/2.0",
   defaultScopes: [
-    "openid",
-    "profile",
-    "email",
-    "accounting.transactions",
     "offline_access",
+    "accounting.transactions",
+    "accounting.contacts",
+    "accounting.settings",
+    "accounting.attachments",
   ],
+  useBasicAuth: true,
 };
 
 /** Configuration used by box. */
@@ -295,7 +307,7 @@ export const boxConfig: OAuthServiceConfig = {
   clientIdEnvVar: "BOX_CLIENT_ID",
   clientSecretEnvVar: "BOX_CLIENT_SECRET",
   apiBaseUrl: "https://api.box.com/2.0",
-  defaultScopes: [],
+  defaultScopes: ["root_readwrite"],
 };
 
 /** Configuration used by webex. */
@@ -308,7 +320,12 @@ export const webexConfig: OAuthServiceConfig = {
   clientIdEnvVar: "WEBEX_CLIENT_ID",
   clientSecretEnvVar: "WEBEX_CLIENT_SECRET",
   apiBaseUrl: "https://webexapis.com/v1",
-  defaultScopes: ["spark:all", "spark:kms"],
+  defaultScopes: [
+    "spark:messages_read",
+    "spark:messages_write",
+    "spark:rooms_read",
+    "spark:people_read",
+  ],
 };
 
 /** Configuration used by trello. */
@@ -350,7 +367,8 @@ export const pipedriveConfig: OAuthServiceConfig = {
   clientIdEnvVar: "PIPEDRIVE_CLIENT_ID",
   clientSecretEnvVar: "PIPEDRIVE_CLIENT_SECRET",
   apiBaseUrl: "https://api.pipedrive.com/v1",
-  defaultScopes: [],
+  defaultScopes: ["base", "deals:full", "contacts:full"],
+  useBasicAuth: true,
 };
 
 const allCommonServices = {
@@ -380,6 +398,10 @@ const allCommonServices = {
   pipedrive: pipedriveConfig,
 } as const;
 
-export const commonServices = Object.fromEntries(
-  Object.entries(allCommonServices).filter(([name]) => isVisibleIntegration(name)),
-) as Partial<typeof allCommonServices>;
+freezeOAuthServiceConfigs(allCommonServices);
+
+export const commonServices = Object.freeze(
+  Object.fromEntries(
+    Object.entries(allCommonServices).filter(([name]) => isVisibleIntegration(name)),
+  ) as Partial<typeof allCommonServices>,
+);

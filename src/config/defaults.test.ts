@@ -135,5 +135,16 @@ describe("config/defaults", () => {
     it("should have metrics config referencing duration boundaries", () => {
       assertEquals(defaultConfig.metrics.ssrBoundaries, DURATION_HISTOGRAM_BOUNDARIES_MS);
     });
+
+    it("keeps exported shared defaults immutable", () => {
+      assertEquals(Object.isFrozen(defaultConfig), true);
+      assertEquals(Object.isFrozen(defaultConfig.server), true);
+      assertEquals(Object.isFrozen(defaultConfig.timeouts), true);
+      assertEquals(Object.isFrozen(defaultConfig.cache), true);
+      assertEquals(Object.isFrozen(defaultConfig.cache.jit), true);
+      assertEquals(Object.isFrozen(defaultConfig.metrics), true);
+      assertEquals(Object.isFrozen(DURATION_HISTOGRAM_BOUNDARIES_MS), true);
+      assertEquals(Object.isFrozen(SIZE_HISTOGRAM_BOUNDARIES_KB), true);
+    });
   });
 });

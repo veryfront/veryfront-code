@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
@@ -81,24 +81,29 @@ export type RuntimeLoadSkillToolOptions = {
   logger?: RuntimeSkillMetadataLogger;
 };
 
-export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
-  v.object({
-    skillId: v.string()
-      .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
-      .describe('The skill ID to load (e.g., "react-components", "api-design")'),
-    file: v.string().optional().describe(
-      "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
-    ),
-  })
-);
+/** Input accepted by the runtime skill-loading tool. */
+export interface RuntimeLoadSkillToolInput {
+  /** Skill identifier to load. */
+  skillId: string;
+  /** Optional skill reference file to read. */
+  file?: string;
+}
+
+/** Returns the runtime skill-loading tool input schema. */
+export const getRuntimeLoadSkillToolInputSchema: () => Schema<RuntimeLoadSkillToolInput> =
+  defineSchema((v) =>
+    v.object({
+      skillId: v.string()
+        .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
+        .describe('The skill ID to load (e.g., "react-components", "api-design")'),
+      file: v.string().optional().describe(
+        "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+      ),
+    })
+  );
 
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
 const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
-
-/** Input payload for runtime load skill tool. */
-export type RuntimeLoadSkillToolInput = InferSchema<
-  ReturnType<typeof getRuntimeLoadSkillToolInputSchema>
->;
 
 /** Output from runtime load skill reference file. */
 export type RuntimeLoadSkillReferenceFileOutput = {

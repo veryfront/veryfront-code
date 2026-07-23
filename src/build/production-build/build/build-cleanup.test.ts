@@ -32,9 +32,8 @@ describe("build/production-build/build/build-cleanup", () => {
   });
 
   describe("cleanupCaches", () => {
-    it("should not throw when transform cache module is not available", async () => {
-      // This test verifies the catch block handles missing module gracefully
-      await cleanupCaches();
+    it("destroys the transform cache without asynchronous placeholder work", () => {
+      cleanupCaches();
     });
   });
 
@@ -51,22 +50,13 @@ describe("build/production-build/build/build-cleanup", () => {
       assertEquals(destroyCalled, true);
     });
 
-    it("does not mask an active build failure when renderer cleanup also fails", async () => {
-      const buildError = new Error("build failed");
+    it("reports renderer cleanup failures", async () => {
       const renderer = {
         destroy: () => Promise.reject(new Error("cleanup failed")),
         renderPage: () => Promise.resolve({ html: "" }),
       } as unknown as import("#veryfront/rendering/index.ts").VeryfrontRenderer;
 
-      const error = await assertRejects(async () => {
-        try {
-          throw buildError;
-        } finally {
-          await performCleanup(renderer);
-        }
-      });
-
-      assertEquals(error, buildError);
+      await assertRejects(() => performCleanup(renderer), Error, "cleanup failed");
     });
   });
 
@@ -74,6 +64,7 @@ describe("build/production-build/build/build-cleanup", () => {
     it("should not throw for valid stats", () => {
       logBuildCompletion({
         pages: 10,
+        components: 0,
         chunks: 5,
         assets: 3,
         totalSize: 1024 * 1024 * 2, // 2MB
@@ -85,6 +76,7 @@ describe("build/production-build/build/build-cleanup", () => {
     it("should handle zero values", () => {
       logBuildCompletion({
         pages: 0,
+        components: 0,
         chunks: 0,
         assets: 0,
         totalSize: 0,
@@ -96,6 +88,7 @@ describe("build/production-build/build/build-cleanup", () => {
     it("should handle very large values", () => {
       logBuildCompletion({
         pages: 10000,
+        components: 0,
         chunks: 500,
         assets: 200,
         totalSize: 1024 * 1024 * 1024, // 1GB

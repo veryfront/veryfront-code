@@ -10,8 +10,11 @@
  **************************/
 
 export interface MemoryConfigBase {
+  /** Memory implementation identifier. */
   type: string;
+  /** Optional token capacity. */
   maxTokens?: number;
+  /** Optional message capacity. */
   maxMessages?: number;
   /**
    * Persist conversation history across `stream()` / `generate()` calls on the
@@ -24,31 +27,47 @@ export interface MemoryConfigBase {
 
 /** Public API contract for memory stats. */
 export interface MemoryStats {
+  /** Total messages value. */
   totalMessages: number;
+  /** Estimated tokens value. */
   estimatedTokens: number;
+  /** Discriminator for this value. */
   type: string;
 }
 
+/** Minimal message contract required by memory implementations. */
 export interface MinimalMessage {
+  /** Message identifier. */
   id: string;
+  /** Message author role. */
   role: "user" | "assistant" | "system" | "tool";
+  /** Ordered message parts. */
   parts: Array<{ type: string }>;
+  /** Optional numeric timestamp. */
   timestamp?: number;
+  /** Optional message metadata. */
   metadata?: Record<string, unknown>;
 }
 
 /** Public API contract for memory. */
 export interface Memory<M extends MinimalMessage = MinimalMessage> {
+  /** Adds a message to memory. */
   add(message: M): Promise<void>;
+  /** Returns messages. */
   getMessages(): Promise<M[]>;
+  /** Clears stored conversation state. */
   clear(): Promise<void>;
+  /** Returns stats. */
   getStats(): Promise<MemoryStats>;
 }
 
 /** Public API contract for memory persistence. */
 export interface MemoryPersistence<M extends MinimalMessage = MinimalMessage> {
+  /** Performs the save operation. */
   save(agentId: string, messages: M[]): Promise<void>;
+  /** Performs the load operation. */
   load(agentId: string): Promise<M[]>;
+  /** Clears stored conversation state. */
   clear(agentId: string): Promise<void>;
 }
 

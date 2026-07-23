@@ -9,6 +9,7 @@ import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
+import { classifyTelemetryError } from "../telemetry-safety.ts";
 
 const logger = serverLogger.component("metrics");
 
@@ -17,7 +18,7 @@ export function initializeInstruments(
   config: MetricsConfig,
   runtimeState: RuntimeState,
 ): MetricsInstruments {
-  const emptyInstruments: MetricsInstruments = {
+  const instruments: MetricsInstruments = {
     httpRequestCounter: null,
     httpRequestDuration: null,
     httpActiveRequests: null,
@@ -52,20 +53,34 @@ export function initializeInstruments(
     errorCounter: null,
   };
 
-  try {
-    return {
-      ...emptyInstruments,
-      ...createHttpInstruments(meter, config),
-      ...createCacheInstruments(meter, config, runtimeState),
-      ...createRenderInstruments(meter, config),
-      ...createRscInstruments(meter, config),
-      ...createBuildInstruments(meter, config),
-      ...createDataInstruments(meter, config),
-      ...createMemoryInstruments(meter, config),
-      ...createErrorInstruments(meter, config),
-    };
-  } catch (error) {
-    logger.warn("Failed to initialize metric instruments", error);
-    return emptyInstruments;
+  const groups: ReadonlyArray<{
+    name: string;
+    create(): Partial<MetricsInstruments>;
+  }> = [
+    { name: "http", create: () => createHttpInstruments(meter, config) },
+    { name: "cache", create: () => createCacheInstruments(meter, config, runtimeState) },
+    { name: "render", create: () => createRenderInstruments(meter, config) },
+    { name: "rsc", create: () => createRscInstruments(meter, config) },
+    { name: "build", create: () => createBuildInstruments(meter, config) },
+    { name: "data", create: () => createDataInstruments(meter, config) },
+    { name: "memory", create: () => createMemoryInstruments(meter, config) },
+    { name: "error", create: () => createErrorInstruments(meter, config) },
+  ];
+
+  for (const group of groups) {
+    try {
+      Object.assign(instruments, group.create());
+    } catch (error) {
+      try {
+        logger.warn("Failed to initialize metric instrument group", {
+          failure_category: classifyTelemetryError(error),
+          instrument_group: group.name,
+        });
+      } catch {
+        // Metric initialization remains best effort when logging is unavailable.
+      }
+    }
   }
+
+  return instruments;
 }

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
+import { VERSION } from "#veryfront/utils/version.ts";
 import {
   generateAppModule,
   generateClientModule,
@@ -29,10 +30,10 @@ describe(
         assertEquals(result.length > 0, true);
       });
 
-      it("should contain version export", () => {
+      it("uses the canonical runtime version", () => {
         const result = getResult();
         assertEquals(result.includes("export const version"), true);
-        assertEquals(result.includes("2.0.0"), true);
+        assertEquals(result.includes(JSON.stringify(VERSION)), true);
       });
 
       it("should contain hydrate export", () => {
@@ -46,10 +47,11 @@ describe(
         assertEquals(result.includes("__veryfront.initialized"), true);
       });
 
-      it("should set data-hydrated attribute on root element", () => {
+      it("delegates hydration to the canonical client runtime", () => {
         const result = getResult();
-        assertEquals(result.includes("data-hydrated"), true);
-        assertEquals(result.includes("getElementById('root')"), true);
+        assertEquals(result.includes('import { boot } from "./client.js"'), true);
+        assertEquals(result.includes("data-hydrated"), false);
+        assertEquals(result.includes("getElementById('root')"), false);
       });
     });
 
@@ -216,10 +218,9 @@ describe(
     });
 
     describe("generateAppModule edge cases", () => {
-      it("should include IIFE wrapper", () => {
+      it("should not include a separate IIFE runtime", () => {
         const result = generateAppModule();
-        assertEquals(result.includes("(() => {"), true);
-        assertEquals(result.includes("})()"), true);
+        assertEquals(result.includes("(() => {"), false);
       });
 
       it("should include hydration support", () => {

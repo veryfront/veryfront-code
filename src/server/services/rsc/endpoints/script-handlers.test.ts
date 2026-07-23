@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleClientScript, handleDomScript } from "./script-handlers.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { buildOrServeScript, handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
@@ -48,6 +48,56 @@ function createMockAdapter(
 }
 
 describe("script-handlers", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
+  const testBuildOptions = {
+    bundle: true,
+    write: false,
+    format: "esm" as const,
+    platform: "browser" as const,
+    target: "es2020",
+    stdin: {
+      contents: "",
+      loader: "ts" as const,
+      resolveDir: new URL(".", import.meta.url).pathname,
+      sourcefile: "script-handler-test.ts",
+    },
+  };
+
+  describe("buildOrServeScript", () => {
+    it("fails closed when neither a generated bundle nor source is available", async () => {
+      const response = await buildOrServeScript(
+        createMockAdapter(),
+        "missing-client-script.ts",
+        "",
+        testBuildOptions,
+      );
+
+      assertEquals(response.status, 500);
+      assertEquals(await response.text(), "Required client script is unavailable.");
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+    });
+
+    it("does not serve raw TypeScript when bundling fails", async () => {
+      const source = "const privateRawSourceMarker: string = ;";
+      const response = await buildOrServeScript(
+        createMockAdapter({ readFile: () => Promise.resolve(source) }),
+        "invalid-client-script.ts",
+        "",
+        testBuildOptions,
+      );
+      const body = await response.text();
+
+      assertEquals(response.status, 500);
+      assertEquals(body.includes("privateRawSourceMarker"), false);
+      assertStringIncludes(response.headers.get("content-type") ?? "", "text/plain");
+    });
+  });
+
   describe("handleClientScript", () => {
     it("should not throw when source file is missing (compiled binary)", async () => {
       // Simulates the compiled binary where client-boot.ts is not at the resolved path.
@@ -74,17 +124,20 @@ describe("script-handlers", () => {
       assertStringIncludes(response.headers.get("cache-control") ?? "", "no-cache");
     });
 
-    it("should serve source when file exists and esbuild unavailable", async () => {
-      // When esbuild is not available but the file exists, it should
-      // still return a response (either the raw source or a fallback).
+    it("serves the generated bundle without reading raw source", async () => {
+      let readCount = 0;
       const adapter = createMockAdapter({
-        readFile: () => Promise.resolve("const boot = () => {}; boot();"),
+        readFile: () => {
+          readCount++;
+          return Promise.resolve("const rawSource: string = 'not-browser-output';");
+        },
       });
       const response = await handleClientScript(adapter);
       assertEquals(response.status, 200);
       const body = await response.text();
-      // Should contain something (either bundled output or raw source)
       assertEquals(body.length > 0, true);
+      assertEquals(body.includes("not-browser-output"), false);
+      assertEquals(readCount, 0);
     });
 
     it("does not embed unsafe eval in the compiled fallback bundle", async () => {

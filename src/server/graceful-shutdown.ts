@@ -1,8 +1,11 @@
 import { shutdownOTLP } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { shutdownProjectMetrics } from "#veryfront/metrics/lifecycle";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import { requestTracker } from "./runtime-handler/request-tracker.ts";
+import { projectIsolation } from "./runtime-handler/project-isolation.ts";
 import { markServerShuttingDown } from "./shutdown-state.ts";
+import { shutdownWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
 
 /** Default drain timeout leaves headroom under Kubernetes' default 30 second grace period. */
 export const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
@@ -29,11 +32,11 @@ export interface GracefulProductionShutdownOptions {
   drainTimeoutMs?: number;
   /** Total time allowed for cleanup after draining. Defaults to 4 seconds. */
   cleanupTimeoutMs?: number;
-  /** Stops signal-aware background work before the HTTP server closes. */
+  /** Stops new listener admissions before tracked requests drain. */
   abort: () => void;
   /** Stops the production HTTP server. */
   stop: () => Promise<void>;
-  /** Releases optional bootstrap resources before the server closes. */
+  /** Releases optional bootstrap resources after the server closes. */
   dispose?: () => void | Promise<void>;
   /** Logger used for shutdown progress and failures. */
   logger: {
@@ -44,18 +47,36 @@ export interface GracefulProductionShutdownOptions {
 
 type GracefulShutdownLogger = GracefulProductionShutdownOptions["logger"];
 
+function getShutdownErrorContext(error: unknown): { errorName: string } {
+  try {
+    if (error instanceof Error && /^[A-Za-z][A-Za-z0-9.]{0,127}$/.test(error.name)) {
+      return { errorName: error.name };
+    }
+  } catch {
+    // Use the generic name for hostile error objects.
+  }
+  return { errorName: "Error" };
+}
+
 interface GracefulProductionShutdownDependencies {
   markServerShuttingDown: () => void;
   setServerInitialized: (ready: boolean) => void;
   requestTracker: GracefulShutdownRequestTracker;
-  shutdownTelemetry: () => Promise<void>;
+  shutdownProjectIsolation?: () => void;
+  shutdownWorkerPool?: () => void;
+  shutdownTelemetry: (timeoutMs?: number) => Promise<void>;
 }
 
 const defaultDependencies: GracefulProductionShutdownDependencies = {
   markServerShuttingDown,
   setServerInitialized,
   requestTracker,
-  shutdownTelemetry: shutdownOTLP,
+  shutdownProjectIsolation: () => projectIsolation.shutdown(),
+  shutdownWorkerPool,
+  shutdownTelemetry: async (timeoutMs) => {
+    await shutdownProjectMetrics(timeoutMs);
+    await shutdownOTLP();
+  },
 };
 
 export function parseShutdownDrainTimeoutMs(raw: string | undefined): number {
@@ -88,7 +109,10 @@ async function runCleanupStep(
   try {
     result = action();
   } catch (error) {
-    logger.warn(`Failed to ${description} during graceful shutdown`, { error });
+    logger.warn(
+      `Failed to ${description} during graceful shutdown`,
+      getShutdownErrorContext(error),
+    );
     return;
   }
 
@@ -99,7 +123,10 @@ async function runCleanupStep(
   if (remainingMs === 0) {
     logger.warn("Graceful shutdown cleanup deadline exceeded", { step: description });
     void actionPromise.catch((error) => {
-      logger.warn(`Failed to ${description} after cleanup deadline exceeded`, { error });
+      logger.warn(
+        `Failed to ${description} after cleanup deadline exceeded`,
+        getShutdownErrorContext(error),
+      );
     });
     return;
   }
@@ -122,7 +149,10 @@ async function runCleanupStep(
   if (timeoutId !== undefined) clearTimeout(timeoutId);
 
   if (outcome.status === "failed") {
-    logger.warn(`Failed to ${description} during graceful shutdown`, { error: outcome.error });
+    logger.warn(
+      `Failed to ${description} during graceful shutdown`,
+      getShutdownErrorContext(outcome.error),
+    );
   } else if (outcome.status === "timeout") {
     logger.warn("Graceful shutdown cleanup deadline exceeded", { step: description });
   }
@@ -154,13 +184,24 @@ export async function gracefullyShutdownProductionServerWithDependencies(
 
   dependencies.markServerShuttingDown();
   dependencies.setServerInitialized(false);
+  try {
+    options.abort();
+  } catch (error) {
+    logger.warn(
+      "Failed to stop new server admissions during graceful shutdown",
+      getShutdownErrorContext(error),
+    );
+  }
   logger.info("Server marked as not ready, waiting for in-flight requests to drain...");
 
   let drained = false;
   try {
     drained = await dependencies.requestTracker.waitForDrain(drainTimeoutMs);
   } catch (error) {
-    logger.warn("Failed while waiting for in-flight requests to drain", { error });
+    logger.warn(
+      "Failed while waiting for in-flight requests to drain",
+      getShutdownErrorContext(error),
+    );
   }
 
   if (!drained) {
@@ -176,6 +217,12 @@ export async function gracefullyShutdownProductionServerWithDependencies(
     logger,
     cleanupDeadlineMs,
   );
+  await runCleanupStep(
+    "stop the production server",
+    options.stop,
+    logger,
+    cleanupDeadlineMs,
+  );
   if (options.dispose) {
     await runCleanupStep(
       "dispose the production bootstrap",
@@ -184,21 +231,25 @@ export async function gracefullyShutdownProductionServerWithDependencies(
       cleanupDeadlineMs,
     );
   }
-  await runCleanupStep(
-    "abort the production server",
-    options.abort,
-    logger,
-    cleanupDeadlineMs,
-  );
-  await runCleanupStep(
-    "stop the production server",
-    options.stop,
-    logger,
-    cleanupDeadlineMs,
-  );
+  if (dependencies.shutdownProjectIsolation) {
+    await runCleanupStep(
+      "shut down project isolation",
+      dependencies.shutdownProjectIsolation,
+      logger,
+      cleanupDeadlineMs,
+    );
+  }
+  if (dependencies.shutdownWorkerPool) {
+    await runCleanupStep(
+      "shut down the worker pool",
+      dependencies.shutdownWorkerPool,
+      logger,
+      cleanupDeadlineMs,
+    );
+  }
   await runCleanupStep(
     "shut down telemetry",
-    dependencies.shutdownTelemetry,
+    () => dependencies.shutdownTelemetry(Math.max(0, cleanupDeadlineMs - Date.now())),
     logger,
     cleanupDeadlineMs,
   );

@@ -44,36 +44,31 @@ export async function invalidateProjectCaches(
   const environment = options?.environment;
   const hasRealProjectSlug = projectSlug !== "preview" || !!projectId;
 
-  logger.debug("▶ Starting cache invalidation", {
-    projectSlug,
+  logger.debug("Starting cache invalidation", {
     environment: environment ?? "all",
-    changedPaths: changedPaths?.length ?? "all",
-    mode: hasRealProjectSlug ? "per-project" : "global",
+    changedPathCount: changedPaths?.length ?? 0,
+    pathScope: changedPaths?.length ? "selective" : "all",
+    projectScope: hasRealProjectSlug ? "project" : "unresolved",
   });
 
   if (changedPaths?.length) {
     logger.debug("Clearing module paths (selective)", {
-      projectSlug,
       pathCount: changedPaths.length,
     });
     invalidateModulePaths(changedPaths);
   } else {
-    logger.debug("Clearing module path cache (full)", { projectSlug });
+    logger.debug("Clearing module path cache (full)");
     clearModulePathCache();
   }
   clearSourceMissCache();
 
   const middlewareEntries = invalidateProjectMiddlewareCache(projectSlug, projectId);
   logger.debug("Clearing project middleware cache", {
-    projectSlug,
-    projectId,
     entriesDeleted: middlewareEntries,
   });
 
   logger.debug("Clearing SSR module cache", {
-    projectSlug,
-    projectId,
-    mode: projectId ? "per-project" : "global",
+    cacheScope: projectId ? "project" : "global",
   });
 
   if (projectId) {
@@ -85,7 +80,9 @@ export async function invalidateProjectCaches(
     clearSSRModuleCache();
   }
 
-  logger.debug("Clearing router detection cache", { projectSlug, projectId });
+  logger.debug("Clearing router detection cache", {
+    cacheScope: projectId ? "project" : "global",
+  });
   if (projectId) {
     clearRouterDetectionCacheForProject(projectId);
   } else {
@@ -94,11 +91,10 @@ export async function invalidateProjectCaches(
 
   if (!hasRealProjectSlug) {
     logger.error(
-      "[CacheInvalidation] Skipping cache invalidation — no project identity available",
+      "Skipping cache invalidation because project identity is unavailable",
       {
-        projectSlug,
-        reason: "projectSlug is 'preview' and no projectId provided",
-        action: "skipped_global_wipe",
+        reason: "missing-project-identity",
+        action: "skip-global-invalidation",
       },
     );
     // Previously called clearRendererCaches() which wiped ALL projects' caches on this pod.
@@ -110,32 +106,28 @@ export async function invalidateProjectCaches(
 
   const rendererProjectKey = projectId ?? projectSlug;
 
-  logger.debug("Clearing renderer cache (per-project)", {
-    projectSlug,
-    projectId,
-    rendererProjectKey,
-  });
+  logger.debug("Clearing renderer cache", { cacheScope: "project" });
   await clearRendererCacheForProject(rendererProjectKey);
 
-  logger.debug("Clearing snippet cache (per-project)", { projectSlug });
+  logger.debug("Clearing snippet cache", { cacheScope: "project" });
   clearSnippetCacheForProject(projectSlug);
 
-  logger.debug("Clearing API route handler cache (per-project)", { projectSlug });
+  logger.debug("Clearing API route handler cache", { cacheScope: "project" });
   try {
     await resetApiHandlerForProject(projectSlug);
   } catch (error) {
-    logger.error("Failed to reset API route handler cache", { projectSlug, error });
+    logger.error("Failed to reset API route handler cache", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
   }
 
   if (projectId) {
     if (environment) {
       logger.debug("Clearing registry caches (environment-scoped)", {
-        projectId,
         environment,
       });
       const deleted = cacheRegistry.deleteKeysForProjectEnvironment(projectId, environment);
       logger.debug("Registry caches cleared", {
-        projectId,
         environment,
         keysDeleted: deleted,
       });
@@ -143,21 +135,15 @@ export async function invalidateProjectCaches(
 
     const branchId = options?.branchId;
     if (branchId) {
-      logger.debug("Clearing registry caches (content-source)", {
-        projectId,
-        contentSourceId: branchId,
-      });
+      logger.debug("Clearing registry caches (content-source)");
       const deleted = cacheRegistry.deleteKeysForContentSource(projectId, branchId);
       logger.debug("Registry caches cleared (content-source)", {
-        projectId,
-        contentSourceId: branchId,
         keysDeleted: deleted,
       });
     }
   }
 
-  logger.debug("✓ Per-project cache invalidation complete", {
-    projectSlug,
+  logger.debug("Project cache invalidation complete", {
     durationMs: Date.now() - startTime,
   });
 }

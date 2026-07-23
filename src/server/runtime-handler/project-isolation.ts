@@ -12,6 +12,7 @@ interface ProjectIsolationConfig {
   circuitBreakerThreshold: number;
   circuitResetTimeMs: number;
   failureWindowMs: number;
+  maxTrackedProjects: number;
 }
 
 interface ProjectState {
@@ -20,11 +21,12 @@ interface ProjectState {
   circuitOpenedAt: number;
   totalRequests: number;
   totalTimeouts: number;
+  lastAccessedAt: number;
 }
 
 export interface IsolationCheckResult {
   allowed: boolean;
-  reason?: "circuit_open" | "max_concurrent";
+  reason?: "circuit_open" | "max_concurrent" | "capacity";
   waitTimeMs?: number;
 }
 
@@ -33,7 +35,16 @@ const DEFAULT_CONFIG: ProjectIsolationConfig = {
   circuitBreakerThreshold: 5,
   circuitResetTimeMs: 30_000,
   failureWindowMs: 60_000,
+  maxTrackedProjects: 10_000,
 };
+
+function validateConfig(config: ProjectIsolationConfig): void {
+  for (const [name, value] of Object.entries(config)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new TypeError(`${name} must be a positive safe integer`);
+    }
+  }
+}
 
 export class ProjectIsolationManager {
   private projects = new Map<string, ProjectState>();
@@ -42,7 +53,26 @@ export class ProjectIsolationManager {
 
   constructor(config: Partial<ProjectIsolationConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    validateConfig(this.config);
     this.startCleanup();
+  }
+
+  private refreshState(state: ProjectState, now: number): void {
+    state.failures = state.failures.filter(
+      (timestamp) => now - timestamp < this.config.failureWindowMs,
+    );
+
+    if (
+      state.circuitOpenedAt > 0 &&
+      now - state.circuitOpenedAt >= this.config.circuitResetTimeMs
+    ) {
+      state.circuitOpenedAt = 0;
+      state.failures = [];
+    }
+  }
+
+  private isInactive(state: ProjectState): boolean {
+    return state.inFlight === 0 && state.failures.length === 0 && state.circuitOpenedAt === 0;
   }
 
   private startCleanup(): void {
@@ -50,15 +80,9 @@ export class ProjectIsolationManager {
       const now = Date.now();
 
       for (const [slug, state] of this.projects.entries()) {
-        state.failures = state.failures.filter(
-          (t) => now - t < this.config.failureWindowMs,
-        );
+        this.refreshState(state, now);
 
-        if (
-          state.inFlight === 0 &&
-          state.failures.length === 0 &&
-          state.circuitOpenedAt === 0
-        ) {
+        if (this.isInactive(state)) {
           this.projects.delete(slug);
         }
       }
@@ -68,9 +92,31 @@ export class ProjectIsolationManager {
     unrefTimer(this.cleanupInterval);
   }
 
-  private getOrCreateState(projectSlug: string): ProjectState {
+  private getOrCreateState(projectSlug: string): ProjectState | undefined {
+    const now = Date.now();
     const existing = this.projects.get(projectSlug);
-    if (existing) return existing;
+    if (existing) {
+      this.refreshState(existing, now);
+      existing.lastAccessedAt = now;
+      return existing;
+    }
+
+    if (this.projects.size >= this.config.maxTrackedProjects) {
+      let evictionSlug: string | undefined;
+      let oldestAccess = Number.POSITIVE_INFINITY;
+
+      for (const [slug, state] of this.projects.entries()) {
+        this.refreshState(state, now);
+        if (this.isInactive(state) && state.lastAccessedAt < oldestAccess) {
+          evictionSlug = slug;
+          oldestAccess = state.lastAccessedAt;
+        }
+      }
+
+      if (evictionSlug !== undefined) this.projects.delete(evictionSlug);
+    }
+
+    if (this.projects.size >= this.config.maxTrackedProjects) return undefined;
 
     const state: ProjectState = {
       inFlight: 0,
@@ -78,6 +124,7 @@ export class ProjectIsolationManager {
       circuitOpenedAt: 0,
       totalRequests: 0,
       totalTimeouts: 0,
+      lastAccessedAt: now,
     };
 
     this.projects.set(projectSlug, state);
@@ -88,6 +135,12 @@ export class ProjectIsolationManager {
     if (!projectSlug) return { allowed: true };
 
     const state = this.getOrCreateState(projectSlug);
+    if (!state) {
+      logger.warn("Project isolation state capacity reached", {
+        maxTrackedProjects: this.config.maxTrackedProjects,
+      });
+      return { allowed: false, reason: "capacity" };
+    }
     const now = Date.now();
 
     if (state.circuitOpenedAt > 0) {
@@ -97,22 +150,16 @@ export class ProjectIsolationManager {
         const waitTimeMs = this.config.circuitResetTimeMs - elapsed;
 
         logger.warn("Circuit open, rejecting request", {
-          projectSlug,
           waitTimeMs,
           recentFailures: state.failures.length,
         });
 
         return { allowed: false, reason: "circuit_open", waitTimeMs };
       }
-
-      state.circuitOpenedAt = 0;
-      state.failures = [];
-      logger.info("Circuit reset", { projectSlug });
     }
 
     if (state.inFlight >= this.config.maxConcurrentPerProject) {
       logger.warn("Max concurrent requests reached", {
-        projectSlug,
         inFlight: state.inFlight,
         maxConcurrent: this.config.maxConcurrentPerProject,
       });
@@ -126,6 +173,7 @@ export class ProjectIsolationManager {
     if (!projectSlug) return;
 
     const state = this.getOrCreateState(projectSlug);
+    if (!state) throw new Error("Project isolation state capacity reached");
     state.inFlight++;
     state.totalRequests++;
   }
@@ -136,6 +184,7 @@ export class ProjectIsolationManager {
     const state = this.projects.get(projectSlug);
     if (!state) return;
 
+    state.lastAccessedAt = Date.now();
     state.inFlight = Math.max(0, state.inFlight - 1);
     if (timedOut) this.recordTimeout(projectSlug);
   }
@@ -155,17 +204,14 @@ export class ProjectIsolationManager {
 
     state.totalTimeouts++;
     const now = Date.now();
+    this.refreshState(state, now);
+    state.lastAccessedAt = now;
     state.failures.push(now);
-
-    state.failures = state.failures.filter(
-      (t) => now - t < this.config.failureWindowMs,
-    );
 
     if (state.failures.length < this.config.circuitBreakerThreshold) return;
 
     state.circuitOpenedAt = now;
     logger.error("Circuit opened due to failures", {
-      projectSlug,
       recentFailures: state.failures.length,
       threshold: this.config.circuitBreakerThreshold,
       resetAfterMs: this.config.circuitResetTimeMs,
@@ -179,33 +225,31 @@ export class ProjectIsolationManager {
   recordWorkerCrash(projectSlug: string | undefined): void {
     if (!projectSlug) return;
 
-    const state = this.getOrCreateState(projectSlug);
     const now = Date.now();
-    state.failures.push(now);
-
-    state.failures = state.failures.filter(
-      (t) => now - t < this.config.failureWindowMs,
-    );
-
-    logger.warn("Worker crash recorded", {
-      projectSlug,
-      recentFailures: state.failures.length,
-    });
+    const state = this.getOrCreateState(projectSlug);
 
     // Evict the crashed worker from the pool
     if (isWorkerIsolationEnabled()) {
-      try {
-        getWorkerPool().evictWorker(projectSlug);
-      } catch {
-        // Pool may not be initialized
-      }
+      getWorkerPool().evictWorker(projectSlug);
     }
+
+    if (!state) {
+      logger.warn("Worker crash could not be tracked because isolation state is at capacity", {
+        maxTrackedProjects: this.config.maxTrackedProjects,
+      });
+      return;
+    }
+
+    this.refreshState(state, now);
+    state.lastAccessedAt = now;
+    state.failures.push(now);
+
+    logger.warn("Worker crash recorded", { recentFailures: state.failures.length });
 
     if (state.failures.length < this.config.circuitBreakerThreshold) return;
 
     state.circuitOpenedAt = now;
     logger.error("Circuit opened due to worker crashes", {
-      projectSlug,
       recentFailures: state.failures.length,
       threshold: this.config.circuitBreakerThreshold,
       resetAfterMs: this.config.circuitResetTimeMs,
@@ -233,7 +277,9 @@ export class ProjectIsolationManager {
       }
     > = {};
 
+    const now = Date.now();
     for (const [slug, state] of this.projects.entries()) {
+      this.refreshState(state, now);
       stats[slug] = {
         inFlight: state.inFlight,
         recentFailures: state.failures.length,
@@ -247,17 +293,11 @@ export class ProjectIsolationManager {
   }
 
   shutdown(): void {
-    if (this.cleanupInterval) clearInterval(this.cleanupInterval);
-    this.projects.clear();
-
-    // Shut down the worker pool if isolation is enabled
-    if (isWorkerIsolationEnabled()) {
-      try {
-        getWorkerPool().shutdown();
-      } catch {
-        // Pool may not be initialized
-      }
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = undefined;
     }
+    this.projects.clear();
   }
 }
 
@@ -265,4 +305,5 @@ export const projectIsolation = new ProjectIsolationManager({
   maxConcurrentPerProject: getEnvNumber("PROJECT_MAX_CONCURRENT", 20),
   circuitBreakerThreshold: getEnvNumber("PROJECT_CIRCUIT_THRESHOLD", 5),
   circuitResetTimeMs: getEnvNumber("PROJECT_CIRCUIT_RESET_MS", 30_000),
+  maxTrackedProjects: getEnvNumber("PROJECT_MAX_TRACKED", 10_000),
 });

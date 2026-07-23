@@ -41,7 +41,7 @@ interface PageBundleResult {
 
 export class PageRenderer {
   private readonly projectDir: string;
-  private readonly mode: string;
+  private readonly mode: "development" | "production";
   private readonly config: VeryfrontConfig;
   private readonly adapter: RuntimeAdapter;
   private readonly componentRegistry: ComponentRegistry;
@@ -55,7 +55,7 @@ export class PageRenderer {
 
   constructor(options: {
     projectDir: string;
-    mode: string;
+    mode: "development" | "production";
     config: VeryfrontConfig;
     adapter: RuntimeAdapter;
     componentRegistry: ComponentRegistry;

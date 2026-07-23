@@ -14,6 +14,7 @@ export type {
   TransformOptions as PipelineOptions,
   TransformPlugin,
   TransformResult,
+  TransformTarget,
 } from "../pipeline/types.ts";
 
 export { computeShortContentHash, getLoaderFromPath, needsTransform } from "./transform-utils.ts";

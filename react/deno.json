@@ -13,6 +13,8 @@
   "imports": {
     "@types/react": "https://esm.sh/@types/react@19.2.14?deps=csstype@3.2.3",
     "@types/react-dom": "https://esm.sh/@types/react-dom@19.2.3?deps=csstype@3.2.3",
+    "@veryfront/react-markdown-upstream": "https://esm.sh/react-markdown@9.0.3?external=react&target=denonext&pin=v135",
+    "@veryfront/remark-gfm-upstream": "https://esm.sh/remark-gfm@4.0.1?target=denonext&pin=v135",
     "@veryfront/react-dom-client-upstream": "https://esm.sh/react-dom@19.2.4/client?external=react&target=es2022&deps=csstype@3.2.3",
     "@veryfront/react-dom-server-upstream": "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3",
     "@veryfront/react-dom-upstream": "https://esm.sh/react-dom@19.2.4?external=react&target=es2022&deps=csstype@3.2.3",

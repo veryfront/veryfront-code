@@ -1,4 +1,4 @@
-import type { Middleware } from "./types.ts";
+import type { MiddlewareHandler } from "../core/types.ts";
 import { getRequest } from "./types.ts";
 import {
   HTTP_SERVER_ERROR,
@@ -10,15 +10,27 @@ import {
   serverLogger,
 } from "#veryfront/utils";
 
-/** Public API contract for log format. */
+/** Output format used by request logging middleware. */
 export type LogFormat = "combined" | "common" | "dev" | "short" | "tiny" | "json";
 
 /** Options accepted by logger. */
 export interface LoggerOptions {
+  /** Output layout. Defaults to `dev`. */
   format?: LogFormat;
+  /** Return true to omit a request from logging. */
   skip?: (req: Request) => boolean;
+  /** Optional destination for fully formatted log lines. */
   log?: (message: string) => void;
 }
+
+const LOG_FORMATS: ReadonlySet<LogFormat> = new Set([
+  "combined",
+  "common",
+  "dev",
+  "short",
+  "tiny",
+  "json",
+]);
 
 interface RequestLogDetails {
   method: string;
@@ -77,7 +89,7 @@ const HEADER_LOG_MAX_LENGTH = 256;
  * Strip CR/LF/tab/other control characters and cap length before a user-controlled
  * header value is written to a log entry. Prevents log injection (CWE-117).
  *
- * Exported for direct unit testing — Deno's `Request` constructor rejects CR/LF
+ * Exported for direct unit testing. Deno's `Request` constructor rejects CR/LF
  * in header values, so the helper must be tested without going through `Request`.
  */
 export function sanitizeHeaderForLog(value: string): string {
@@ -183,20 +195,42 @@ function formatLog(format: LogFormat, req: Request, status: number, duration: nu
     case "tiny":
       return `${method} ${pathname} ${status} ${durationText}`;
     default:
-      return formatLog("dev", req, status, duration);
+      throw new TypeError(`Unsupported logger format: ${format}`);
   }
 }
 
 /** Create request logging middleware. */
-export function logger(options?: LoggerOptions): Middleware {
+export function logger(options?: LoggerOptions): MiddlewareHandler {
+  if (
+    options !== undefined &&
+    (options === null || typeof options !== "object" || Array.isArray(options))
+  ) {
+    throw new TypeError("logger options must be an object");
+  }
   const format = options?.format ?? "dev";
+  if (!LOG_FORMATS.has(format)) {
+    throw new TypeError(`format must be one of: ${[...LOG_FORMATS].join(", ")}`);
+  }
+  if (options?.skip !== undefined && typeof options.skip !== "function") {
+    throw new TypeError("skip must be a function");
+  }
+  if (options?.log !== undefined && typeof options.log !== "function") {
+    throw new TypeError("log must be a function");
+  }
   const skip = options?.skip;
   const isJson = format === "json";
   const logFn = options?.log;
 
   function logMessage(req: Request, status: number, duration: number): void {
     if (logFn) {
-      logFn(formatLog(format, req, status, duration));
+      try {
+        logFn(formatLog(format, req, status, duration));
+      } catch (error) {
+        // Request logging is best effort and must not replace application behavior.
+        serverLogger.warn("Custom request log sink failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
       return;
     }
 
@@ -241,11 +275,11 @@ export function logger(options?: LoggerOptions): Middleware {
 }
 
 /** Create development request logging middleware. */
-export function devLogger(): Middleware {
+export function devLogger(): MiddlewareHandler {
   return logger({ format: "dev" });
 }
 
 /** Create production request logging middleware. */
-export function prodLogger(): Middleware {
+export function prodLogger(): MiddlewareHandler {
   return logger({ format: "json" });
 }

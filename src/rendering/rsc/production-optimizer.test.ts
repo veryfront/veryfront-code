@@ -15,16 +15,17 @@ function makePayload(overrides: Partial<RSCPayload> = {}): RSCPayload {
 
 describe("rendering/rsc/production-optimizer", () => {
   describe("optimizePayload", () => {
-    it("should strip HTML comments", () => {
-      const payload = makePayload({ html: "<div><!-- comment -->text</div>" });
+    it("trims outer whitespace without rewriting document content", () => {
+      const payload = makePayload({ html: "  <div><!-- comment -->text</div>  " });
       const result = RSCProductionOptimizer.optimizePayload(payload);
-      assertEquals(result.html.includes("<!--"), false);
+      assertEquals(result.html, "<div><!-- comment -->text</div>");
     });
 
-    it("should remove whitespace between tags", () => {
-      const payload = makePayload({ html: "<div>  <span>  text  </span>  </div>" });
+    it("preserves raw-text content that resembles inter-tag whitespace", () => {
+      const html = '<script>const marker = "> <"; /* <!-- keep --> */</script>';
+      const payload = makePayload({ html });
       const result = RSCProductionOptimizer.optimizePayload(payload);
-      assertEquals(result.html.includes(">  <"), false);
+      assertEquals(result.html, html);
     });
 
     it("should strip tree from output", () => {
@@ -82,6 +83,32 @@ describe("rendering/rsc/production-optimizer", () => {
       const b = RSCProductionOptimizer.generateETag(makePayload({ html: "<div>b</div>" }));
       assertEquals(a !== b, true);
     });
+
+    it("changes when client module targets or assets change", () => {
+      const base = makePayload({
+        clientRefs: { Button: "/button-v1.js" },
+        assets: { css: ["/app.css"], js: ["/app.js"] },
+      });
+      const changedRef = makePayload({
+        clientRefs: { Button: "/button-v2.js" },
+        assets: base.assets,
+      });
+      const changedAsset = makePayload({
+        clientRefs: base.clientRefs,
+        assets: { css: ["/theme.css"], js: ["/app.js"] },
+      });
+
+      assertEquals(
+        RSCProductionOptimizer.generateETag(base) !==
+          RSCProductionOptimizer.generateETag(changedRef),
+        true,
+      );
+      assertEquals(
+        RSCProductionOptimizer.generateETag(base) !==
+          RSCProductionOptimizer.generateETag(changedAsset),
+        true,
+      );
+    });
   });
 
   describe("checkETag", () => {
@@ -95,6 +122,11 @@ describe("rendering/rsc/production-optimizer", () => {
 
     it("should match weak ETags", () => {
       assertEquals(RSCProductionOptimizer.checkETag('W/"abc"', '"abc"'), true);
+    });
+
+    it("matches lists and wildcard validators", () => {
+      assertEquals(RSCProductionOptimizer.checkETag('"old", W/"abc"', '"abc"'), true);
+      assertEquals(RSCProductionOptimizer.checkETag("*", '"abc"'), true);
     });
   });
 
@@ -121,6 +153,16 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals("_" in bundles, true);
       assertEquals(manifest["/"], ["App"]);
     });
+
+    it("does not overwrite routes whose sanitized names collide", () => {
+      const payloads = new Map<string, RSCPayload>([
+        ["/a-b", makePayload({ html: "one" })],
+        ["/a_b", makePayload({ html: "two" })],
+      ]);
+
+      const { bundles } = RSCProductionOptimizer.bundlePayloads(payloads);
+      assertEquals(Object.keys(bundles).length, 2);
+    });
   });
 
   describe("generatePreloadLinks", () => {
@@ -135,6 +177,14 @@ describe("rendering/rsc/production-optimizer", () => {
 
     it("should return empty for no refs", () => {
       assertEquals(RSCProductionOptimizer.generatePreloadLinks({}).length, 0);
+    });
+
+    it("escapes client module paths before embedding them in HTML", () => {
+      const [link] = RSCProductionOptimizer.generatePreloadLinks({
+        Unsafe: '/module.js" onload="alert(1)',
+      });
+      assertEquals(link?.includes('" onload="'), false);
+      assertEquals(link?.includes("&quot;"), true);
     });
   });
 

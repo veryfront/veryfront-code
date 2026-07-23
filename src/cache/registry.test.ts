@@ -9,10 +9,18 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cache/registry.test
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import type { RedisClient } from "#veryfront/utils/redis-client.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __cacheRegistryRedisHelpersForTests,
   cacheRegistry,
+  type CacheStore,
   extractProjectIdFromKey,
   isKeyForProject,
   isKeyForProjectEnvironment,
@@ -65,10 +73,22 @@ describe("MapCacheStore", () => {
     assertEquals(store.deleteWhere(() => false), 0);
     assertEquals(map.size, 1);
   });
+
+  it("counts only deletions confirmed by the underlying store", () => {
+    const store = new MapCacheStore("test", {
+      get: () => 1,
+      keys: () => ["project:key"],
+      size: 1,
+      delete: () => false,
+    });
+
+    assertEquals(store.deleteWhere(() => true), 0);
+  });
 });
 
 describe("LRUCacheStore", () => {
   function createMockLRU(): {
+    get: (key: string) => unknown;
     keys: () => IterableIterator<string>;
     readonly size: number;
     delete: (key: string) => boolean;
@@ -78,6 +98,7 @@ describe("LRUCacheStore", () => {
     const map = new Map<string, unknown>();
 
     return {
+      get: (key: string) => map.get(key),
       keys: () => map.keys(),
       get size() {
         return map.size;
@@ -156,7 +177,89 @@ describe("isKeyForProject", () => {
   });
 
   it("should handle empty string projectId", () => {
-    assertEquals(isKeyForProject("a::b", ""), true);
+    assertEquals(isKeyForProject("a::b", ""), false);
+  });
+
+  it("matches an encoded delimiter-bearing project identity exactly", () => {
+    assertEquals(
+      isKeyForProject("proxy:tenant%3Apreview:preview:branch:main", "tenant:preview"),
+      true,
+    );
+    assertEquals(
+      isKeyForProject("proxy:tenant:preview:preview:branch:main", "tenant:preview"),
+      false,
+    );
+  });
+});
+
+describe("Redis registry scan helpers", () => {
+  it("stops at the requested unique-key limit without reading another page", async () => {
+    let calls = 0;
+    const client = {
+      scan: () => {
+        calls++;
+        return Promise.resolve({ cursor: 7, keys: ["a", "b", "c"] });
+      },
+    } as Pick<RedisClient, "scan">;
+
+    const keys = await __cacheRegistryRedisHelpersForTests.scanRedisKeysWithClient(
+      client,
+      "prefix:*",
+      2,
+    );
+
+    assertEquals(keys, ["a", "b"]);
+    assertEquals(calls, 1);
+  });
+
+  it("rejects repeated cursors instead of looping forever", async () => {
+    const client = {
+      scan: () => Promise.resolve({ cursor: 7, keys: ["a"] }),
+    } as Pick<RedisClient, "scan">;
+
+    await assertRejects(() =>
+      __cacheRegistryRedisHelpersForTests.scanRedisKeysWithClient(client, "prefix:*", 10)
+    );
+  });
+
+  it("bounds duplicate-heavy Redis scans even when cursors keep advancing", async () => {
+    let calls = 0;
+    const duplicatePage = Array<string>(10_000).fill("duplicate");
+    const client = {
+      scan: () => {
+        calls++;
+        return Promise.resolve({
+          cursor: calls === 101 ? 0 : calls,
+          keys: duplicatePage,
+        });
+      },
+    } as Pick<RedisClient, "scan">;
+
+    await assertRejects(() =>
+      __cacheRegistryRedisHelpersForTests.scanRedisKeysWithClient(client, "prefix:*", 10)
+    );
+  });
+
+  it("deletes every matching key in bounded Redis batches", async () => {
+    const deleteBatchSizes: number[] = [];
+    const keys = Array.from({ length: 2505 }, (_, index) => `prefix:project:${index}`);
+    const client = {
+      scan: () => Promise.resolve({ cursor: 0, keys }),
+      del: (batch: string | string[]) => {
+        const count = Array.isArray(batch) ? batch.length : 1;
+        deleteBatchSizes.push(count);
+        return Promise.resolve(count);
+      },
+    } as Pick<RedisClient, "scan" | "del">;
+
+    const deleted = await __cacheRegistryRedisHelpersForTests.deleteRedisKeysWithClient(
+      client,
+      "prefix:*",
+      () => true,
+    );
+
+    assertEquals(deleted, 2505);
+    assertEquals(deleteBatchSizes, [1000, 1000, 505]);
   });
 });
 
@@ -203,6 +306,20 @@ describe("isKeyForProjectEnvironment", () => {
       isKeyForProjectEnvironment("v19:proj1:release-abc:hash", "proj1", "production"),
       true,
     );
+  });
+
+  it("recognizes the canonical structured SSR module identity", () => {
+    const key = `v2:proj1:${
+      JSON.stringify([
+        "preview-feature:one",
+        "19.0.0",
+        "config-hash",
+        ["path", "/pages/index.tsx"],
+      ])
+    }`;
+
+    assertEquals(isKeyForProjectEnvironment(key, "proj1", "preview"), true);
+    assertEquals(isKeyForProjectEnvironment(key, "proj1", "production"), false);
   });
 
   it("should match production via SSR module key with 'production' contentSourceId", () => {
@@ -370,6 +487,33 @@ describe("CacheRegistry", () => {
     assertEquals(store.name, "my-store");
   });
 
+  it("rejects incomplete stores at registration", () => {
+    assertThrows(() => cacheRegistry.register({ name: "broken" } as unknown as CacheStore));
+  });
+
+  it("snapshots the registered store contract", () => {
+    const source: CacheStore = {
+      name: "stable-store",
+      get: () => 1,
+      keys: () => ["first:key"],
+      size: () => 1,
+    };
+    cacheRegistry.register(source);
+
+    (source as { name: string }).name = "mutated-store";
+    source.keys = () => ["second:key"];
+
+    const registered = cacheRegistry.get("stable-store");
+    assertExists(registered);
+    assertEquals(registered.name, "stable-store");
+    assertEquals([...registered.keys()], ["first:key"]);
+  });
+
+  it("validates store names on lookup and removal", () => {
+    assertThrows(() => cacheRegistry.get(""));
+    assertThrows(() => cacheRegistry.unregister("bad\nname"));
+  });
+
   it("should list registered store names", () => {
     registerMapCache("s1", new Map());
     registerMapCache("s2", new Map());
@@ -396,6 +540,23 @@ describe("CacheRegistry", () => {
     const allKeys = cacheRegistry.getAllKeys();
     assertEquals(allKeys.get("s1"), ["a:p:x"]);
     assertEquals(allKeys.get("s2"), ["b:p:y"]);
+  });
+
+  it("bounds aggregate key snapshots across registered stores", () => {
+    const generatedStore = (name: string, offset: number): CacheStore => ({
+      name,
+      get: () => undefined,
+      keys: function* () {
+        for (let index = 0; index < 50_001; index++) {
+          yield `key-${offset + index}`;
+        }
+      },
+      size: () => 50_001,
+    });
+    cacheRegistry.register(generatedStore("large-a", 0));
+    cacheRegistry.register(generatedStore("large-b", 50_001));
+
+    assertThrows(() => cacheRegistry.getAllKeys());
   });
 
   it("should get keys for a specific project", () => {
@@ -459,6 +620,31 @@ describe("CacheRegistry", () => {
     assertEquals(m.size, 1);
   });
 
+  it("deletes canonical structured SSR keys for a content source", () => {
+    const matching = `v2:proj1:${
+      JSON.stringify([
+        "release-abc",
+        "19.0.0",
+        "config-hash",
+        ["content", "/page.tsx", "hash"],
+      ])
+    }`;
+    const other = `v2:proj1:${
+      JSON.stringify([
+        "release-def",
+        "19.0.0",
+        "config-hash",
+        ["content", "/page.tsx", "hash"],
+      ])
+    }`;
+    const map = new Map<string, unknown>([[matching, 1], [other, 2]]);
+    registerMapCache("structured-ssr-store", map);
+
+    assertEquals(cacheRegistry.deleteKeysForContentSource("proj1", "abc"), 1);
+    assertEquals(map.has(matching), false);
+    assertEquals(map.has(other), true);
+  });
+
   it("should get stats with sample keys", () => {
     const m = new Map<string, unknown>();
     for (let i = 0; i < 10; i++) m.set(`key-${i}:proj:data`, i);
@@ -474,6 +660,9 @@ describe("CacheRegistry", () => {
   it("should register LRU cache via helper", () => {
     const lru = {
       _keys: ["a"],
+      get() {
+        return undefined;
+      },
       keys() {
         return this._keys[Symbol.iterator]();
       },
@@ -508,6 +697,7 @@ describe("CacheRegistry", () => {
   it("should handle stores without deleteWhere gracefully", () => {
     const minimalStore = {
       name: "minimal",
+      get: () => undefined,
       keys: () => ["a:proj1:x"][Symbol.iterator](),
       size: () => 1,
     };

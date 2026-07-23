@@ -86,6 +86,11 @@ export interface PageDataResponse {
   pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   layouts: Array<{ kind: "mdx" | "tsx"; path: string }>;
   providers: string[];
+  /**
+   * Entity, compiled, and generated page metadata using SSR precedence.
+   * Title and description are always strings so navigation can replace stale
+   * document metadata from the previous route.
+   */
   frontmatter: Record<string, unknown>;
   props: Record<string, unknown>;
   params: Record<string, string | string[]>;
@@ -94,7 +99,7 @@ export interface PageDataResponse {
   appPath?: string;
   /** Page and client layout modules render inside a server-owned layout island. */
   isolatedClientPage?: boolean;
-  /** Server-owned layout markup requires a document navigation for this target. */
+  /** The target cannot be reconstructed safely by the SPA client. */
   requiresFullDocumentNavigation?: boolean;
   /** Production release id used to version fallback module URLs. */
   releaseId?: string;
@@ -107,10 +112,9 @@ export interface PageDataResponse {
   /** Client action for the SPA CSS tag when no route CSS payload is sent. */
   cssAction?: "clear";
   /**
-   * Error message if CSS generation failed.
-   * When set, the css field will be undefined and clients should fall back
-   * to inline styles or show a warning. This surfaces silent CSS failures
-   * instead of serving broken pages with no indication of the problem.
+   * Stable, client-safe signal that CSS generation failed.
+   * The server keeps diagnostic details in logs rather than exposing them in
+   * navigation data. When set, the css field is undefined.
    */
   cssError?: string;
 }

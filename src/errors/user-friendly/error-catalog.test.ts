@@ -9,6 +9,11 @@ describe("ERROR_SOLUTIONS", () => {
     assert(Object.keys(ERROR_SOLUTIONS).length > 0);
   });
 
+  it("does not expose inherited object properties as solutions", () => {
+    assertEquals(Object.getPrototypeOf(ERROR_SOLUTIONS), null);
+    assertEquals(Object.hasOwn(ERROR_SOLUTIONS, "constructor"), false);
+  });
+
   it("should contain all expected error keys", () => {
     const expectedKeys = [
       "missing-config",
@@ -80,7 +85,12 @@ describe("ERROR_SOLUTIONS", () => {
       const sol = ERROR_SOLUTIONS["client-boundary"];
       assertExists(sol);
       assertExists(sol.docs);
-      assert(sol.docs.includes("rsc-boundaries"));
+      assert(sol.docs.endsWith("/client-boundary-violation"));
     });
+  });
+
+  it("uses the canonical public configuration filename", () => {
+    assertEquals(JSON.stringify(ERROR_SOLUTIONS).includes("veryfront.config.js"), false);
+    assert(JSON.stringify(ERROR_SOLUTIONS).includes("veryfront.config.ts"));
   });
 });

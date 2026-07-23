@@ -13,12 +13,29 @@ import { MDXProvider, useMDXComponents } from "veryfront/mdx";
 ## Examples
 
 ```tsx
-import { MDXProvider } from "veryfront/mdx";
+import type { ComponentProps } from "react";
+import { MDXProvider, useMDXComponents } from "veryfront/mdx";
 
-<MDXProvider components={{ h1: CustomH1, code: CustomCode, a: CustomLink }}>
-  {children}
-</MDXProvider>
+function ArticleHeading(props: ComponentProps<"h1">) {
+  return <h1 className="article-heading" {...props} />;
+}
+
+function ArticleContent() {
+  const { h1: Heading = "h1" } = useMDXComponents();
+  return <Heading>Hello from MDX</Heading>;
+}
+
+export default function Article() {
+  return (
+    <MDXProvider components={{ h1: ArticleHeading }}>
+      <ArticleContent />
+    </MDXProvider>
+  );
+}
 ```
+
+Nested providers inherit outer overrides. Inner providers and local hook
+overrides take precedence.
 
 For runtime markdown string rendering, use `veryfront/markdown` instead.
 
@@ -28,16 +45,17 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProvider` | Render MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L13) |
+| `MDXProvider` | Provide inherited MDX component overrides to descendant content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L25) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `useMDXComponents` | React hook for mdxcomponents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L21) |
+| `useMDXComponents` | Return inherited MDX component overrides merged with local overrides. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L39) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
+| `MDXComponents` | MDX component overrides keyed by element or component name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L95) |
+| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L17) |

@@ -1,11 +1,21 @@
 import { LRUCacheAdapter } from "./cache/stores/memory/lru-cache-adapter.ts";
 import type { LRUCacheOptions } from "./cache/stores/memory/types.ts";
-import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils";
+import { DEFAULT_LRU_MAX_ENTRIES } from "./constants/cache.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function requireCleanupInterval(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_DELAY_MS) {
+    throw new TypeError(
+      `cleanupIntervalMs must be a positive safe integer no greater than ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+  return value;
+}
 
 interface LRUOptions {
   maxEntries?: number;
@@ -20,17 +30,24 @@ export class LRUCache<K, V> {
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private cleanupIntervalMs: number;
   private ttlMs?: number;
+  private readonly keyToAdapterKey = new Map<K, string>();
+  private readonly adapterKeyToKey = new Map<string, K>();
+  private nextAdapterKey = 0;
 
   constructor(options: LRUOptions = {}) {
+    this.cleanupIntervalMs = requireCleanupInterval(
+      options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS,
+    );
+
     const adapterOptions: LRUCacheOptions = {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
       maxSizeBytes: options.maxSizeBytes,
       ttlMs: options.ttlMs,
+      onEvict: (adapterKey) => this.forgetAdapterKey(adapterKey),
     };
 
     this.adapter = new LRUCacheAdapter(adapterOptions);
     this.ttlMs = options.ttlMs;
-    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS;
 
     if (this.ttlMs && this.ttlMs > 0) {
       this.startPeriodicCleanup();
@@ -55,8 +72,32 @@ export class LRUCache<K, V> {
     this.cleanupTimer = undefined;
   }
 
-  private toStringKey(key: K): string {
-    return typeof key === "string" ? key : String(key);
+  private getAdapterKey(key: K): string | undefined {
+    return this.keyToAdapterKey.get(key);
+  }
+
+  private getOrCreateAdapterKey(key: K): string {
+    const existing = this.keyToAdapterKey.get(key);
+    if (existing !== undefined) return existing;
+
+    if (!Number.isSafeInteger(this.nextAdapterKey)) {
+      if (this.keyToAdapterKey.size !== 0) {
+        throw new Error("LRU cache key space exhausted");
+      }
+      this.nextAdapterKey = 0;
+    }
+
+    const adapterKey = `k:${this.nextAdapterKey++}`;
+    this.keyToAdapterKey.set(key, adapterKey);
+    this.adapterKeyToKey.set(adapterKey, key);
+    return adapterKey;
+  }
+
+  private forgetAdapterKey(adapterKey: string): void {
+    if (!this.adapterKeyToKey.has(adapterKey)) return;
+    const key = this.adapterKeyToKey.get(adapterKey) as K;
+    this.adapterKeyToKey.delete(adapterKey);
+    this.keyToAdapterKey.delete(key);
   }
 
   get size(): number {
@@ -64,26 +105,39 @@ export class LRUCache<K, V> {
   }
 
   has(key: K): boolean {
-    return this.adapter.get(this.toStringKey(key)) !== undefined;
+    const adapterKey = this.getAdapterKey(key);
+    return adapterKey === undefined ? false : this.adapter.has(adapterKey);
   }
 
   get(key: K): V | undefined {
-    return this.adapter.get<V>(this.toStringKey(key));
+    const adapterKey = this.getAdapterKey(key);
+    return adapterKey === undefined ? undefined : this.adapter.get<V>(adapterKey);
   }
 
   set(key: K, value: V): void {
-    this.adapter.set(this.toStringKey(key), value);
+    const adapterKey = this.getOrCreateAdapterKey(key);
+    try {
+      this.adapter.set(adapterKey, value);
+    } catch (error) {
+      if (!this.adapter.has(adapterKey)) this.forgetAdapterKey(adapterKey);
+      throw error;
+    }
   }
 
   delete(key: K): boolean {
-    const stringKey = this.toStringKey(key);
-    const had = this.adapter.get(stringKey) !== undefined;
-    this.adapter.delete(stringKey);
+    const adapterKey = this.getAdapterKey(key);
+    if (adapterKey === undefined) return false;
+
+    const had = this.adapter.has(adapterKey);
+    if (had) this.adapter.delete(adapterKey);
+    else this.forgetAdapterKey(adapterKey);
     return had;
   }
 
   clear(): void {
     this.adapter.clear();
+    this.keyToAdapterKey.clear();
+    this.adapterKeyToKey.clear();
   }
 
   cleanup(): void {
@@ -92,15 +146,21 @@ export class LRUCache<K, V> {
 
   destroy(): void {
     this.stopCleanupTimer();
-    this.adapter.clear();
+    this.clear();
   }
 
-  keys(): IterableIterator<K> {
-    return this.adapter.keys() as IterableIterator<K>;
+  *keys(): IterableIterator<K> {
+    for (const adapterKey of this.adapter.keys()) {
+      if (!this.adapterKeyToKey.has(adapterKey)) continue;
+      yield this.adapterKeyToKey.get(adapterKey) as K;
+    }
   }
 
-  entries(): IterableIterator<[K, V]> {
-    return this.adapter.entries<V>() as IterableIterator<[K, V]>;
+  *entries(): IterableIterator<[K, V]> {
+    for (const [adapterKey, value] of this.adapter.entries<V>()) {
+      if (!this.adapterKeyToKey.has(adapterKey)) continue;
+      yield [this.adapterKeyToKey.get(adapterKey) as K, value];
+    }
   }
 }
 

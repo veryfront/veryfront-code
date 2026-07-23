@@ -1,6 +1,6 @@
 import type { Route, RouteMatch } from "./types.ts";
 import { getSpecificityScore, parseRoute } from "./route-parser.ts";
-import { matchRoute } from "./route-matcher.ts";
+import { cloneRoute, cloneRouteMatch, matchRoute } from "./route-matcher.ts";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
@@ -38,14 +38,14 @@ export class PageRouteMatcher {
     const normalizedPathname = normalizePath(pathname);
 
     const cached = this.cache.get(normalizedPathname);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return cached ? cloneRouteMatch(cached) : null;
 
     for (const route of this.routes) {
       const match = matchRoute(normalizedPathname, route);
       if (!match) continue;
 
       this.cache.set(normalizedPathname, match);
-      return match;
+      return cloneRouteMatch(match);
     }
 
     this.cache.set(normalizedPathname, null);
@@ -57,6 +57,6 @@ export class PageRouteMatcher {
   }
 
   getRoutes(): Route[] {
-    return [...this.routes];
+    return this.routes.map(cloneRoute);
   }
 }

@@ -21,9 +21,6 @@ import {
   type WrappedHandler,
 } from "./types.ts";
 import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
-import { logger as baseLogger } from "#veryfront/utils";
-
-const logger = baseLogger.component("open-api");
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -40,6 +37,12 @@ interface GenerateSpecOptions {
   servers?: Array<{ url: string; description?: string }>;
 }
 
+/** A discovered route paired with the module namespace evaluated for it. */
+export interface LoadedOpenAPIRoute {
+  pattern: string;
+  module: Record<string, unknown> | null;
+}
+
 export async function generateOpenAPISpec(
   router: ApiRouteMatcher,
   projectDir: string,
@@ -47,6 +50,47 @@ export async function generateOpenAPISpec(
   config?: VeryfrontConfig,
   options?: GenerateSpecOptions,
 ): Promise<OpenAPISpec> {
+  const spec = createSpec(config, options);
+  const tagSet = new Set<string>();
+
+  for (const [pattern, entry] of router.routes) {
+    if (!isAPIRoute(pattern, entry)) continue;
+    const module = await loadHandlerModule({
+      projectDir,
+      modulePath: entry.route.page,
+      adapter,
+      config,
+    }) as Record<string, unknown> | null;
+    addRouteToSpec(spec, tagSet, pattern, module);
+  }
+
+  return finalizeSpec(spec, tagSet);
+}
+
+/**
+ * Build an OpenAPI document from module namespaces that were evaluated by the
+ * caller. The worker isolation boundary uses this entry point so project
+ * modules never need to cross back into the host process.
+ */
+export async function generateOpenAPISpecFromModules(
+  routes: Iterable<LoadedOpenAPIRoute> | AsyncIterable<LoadedOpenAPIRoute>,
+  config?: VeryfrontConfig,
+  options?: GenerateSpecOptions,
+): Promise<OpenAPISpec> {
+  const spec = createSpec(config, options);
+  const tagSet = new Set<string>();
+
+  for await (const { pattern, module } of routes) {
+    addRouteToSpec(spec, tagSet, pattern, module);
+  }
+
+  return finalizeSpec(spec, tagSet);
+}
+
+function createSpec(
+  config: VeryfrontConfig | undefined,
+  options: GenerateSpecOptions | undefined,
+): OpenAPISpec {
   const spec: OpenAPISpec = {
     openapi: "3.1.0",
     info: {
@@ -59,22 +103,21 @@ export async function generateOpenAPISpec(
   };
 
   if (options?.servers?.length) spec.servers = options.servers;
+  return spec;
+}
 
-  const tagSet = new Set<string>();
+function addRouteToSpec(
+  spec: OpenAPISpec,
+  tagSet: Set<string>,
+  pattern: string,
+  module: Record<string, unknown> | null,
+): void {
+  const pathItem = processRouteModule(pattern, module, tagSet);
+  if (!pathItem || Object.keys(pathItem).length === 0) return;
+  spec.paths[toOpenAPIPath(pattern)] = pathItem;
+}
 
-  for (const [pattern, entry] of router.routes) {
-    if (!pattern.startsWith("/api") && !entry.route.page.includes("/api/")) continue;
-
-    try {
-      const pathItem = await processRoute(pattern, entry, projectDir, adapter, config, tagSet);
-      if (!pathItem || Object.keys(pathItem).length === 0) continue;
-
-      spec.paths[toOpenAPIPath(pattern)] = pathItem;
-    } catch (error) {
-      logger.warn(`Failed to process route ${pattern}:`, { error: String(error) });
-    }
-  }
-
+function finalizeSpec(spec: OpenAPISpec, tagSet: Set<string>): OpenAPISpec {
   spec.tags = Array.from(tagSet)
     .sort()
     .map((name) => ({ name }));
@@ -82,21 +125,15 @@ export async function generateOpenAPISpec(
   return spec;
 }
 
-async function processRoute(
-  pattern: string,
-  entry: RouteEntry,
-  projectDir: string,
-  adapter: RuntimeAdapter,
-  config: VeryfrontConfig | undefined,
-  tagSet: Set<string>,
-): Promise<OpenAPIPathItem | null> {
-  const module = await loadHandlerModule({
-    projectDir,
-    modulePath: entry.route.page,
-    adapter,
-    config,
-  });
+function isAPIRoute(pattern: string, entry: RouteEntry): boolean {
+  return pattern.startsWith("/api") || entry.route.page.includes("/api/");
+}
 
+function processRouteModule(
+  pattern: string,
+  module: Record<string, unknown> | null,
+  tagSet: Set<string>,
+): OpenAPIPathItem | null {
   if (!module) return null;
 
   const pathParams = extractPathParams(pattern);
@@ -161,7 +198,7 @@ function buildOperation(
     const parameter: OpenAPIParameter = {
       name: param.name,
       in: "path",
-      required: param.required,
+      required: true,
       schema: metadata?.params?.properties?.[param.name] ?? { type: "string" as const },
     };
 
@@ -224,42 +261,69 @@ export async function generateOpenAPIJson(
 }
 
 export function specToYaml(spec: OpenAPISpec): string {
-  return toYaml(spec, 0);
+  return toYaml(spec, 0, new WeakSet());
 }
 
-function toYaml(obj: unknown, indent: number): string {
+function toYaml(obj: unknown, indent: number, ancestors: WeakSet<object>): string {
+  if (indent > 100) throw new RangeError("OpenAPI document nesting exceeds 100 levels");
   const spaces = "  ".repeat(indent);
+  const inline = toYamlInline(obj);
+  if (inline !== null) return inline;
 
-  if (obj == null) return "null";
+  if (typeof obj !== "object" || obj === null) {
+    throw new TypeError(`Unsupported OpenAPI YAML value: ${typeof obj}`);
+  }
+  if (ancestors.has(obj)) throw new TypeError("OpenAPI document contains a circular reference");
+  ancestors.add(obj);
 
-  if (typeof obj === "string") {
-    if (obj.includes(":") || obj.includes("#") || obj.includes("\n") || obj.startsWith("{")) {
-      return `"${obj.replace(/"/g, '\\"')}"`;
+  try {
+    if (Array.isArray(obj)) {
+      return obj.map((item) => {
+        const itemInline = toYamlInline(item);
+        if (itemInline !== null) return `${spaces}- ${itemInline}`;
+
+        const rendered = toYaml(item, indent + 1, ancestors).split("\n");
+        const first = rendered.shift()?.trimStart() ?? "{}";
+        return `${spaces}- ${first}${rendered.length ? `\n${rendered.join("\n")}` : ""}`;
+      }).join("\n");
     }
-    return obj;
-  }
 
-  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
-
-  if (Array.isArray(obj)) {
-    if (obj.length === 0) return "[]";
-    return obj.map((item) => `\n${spaces}- ${toYaml(item, indent + 1).trimStart()}`).join("");
-  }
-
-  if (typeof obj === "object") {
-    const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
-    if (entries.length === 0) return "{}";
-
-    return entries
+    return Object.entries(obj)
+      .filter(([, value]) => value !== undefined)
       .map(([key, value]) => {
-        const yamlValue = toYaml(value, indent + 1);
-        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-          return `\n${spaces}${key}:${yamlValue}`;
-        }
-        return `\n${spaces}${key}: ${yamlValue}`;
+        const yamlKey = /^[A-Za-z_][A-Za-z0-9_-]*$/.test(key) ? key : JSON.stringify(key);
+        const valueInline = toYamlInline(value);
+        if (valueInline !== null) return `${spaces}${yamlKey}: ${valueInline}`;
+        return `${spaces}${yamlKey}:\n${toYaml(value, indent + 1, ancestors)}`;
       })
-      .join("");
+      .join("\n");
+  } finally {
+    ancestors.delete(obj);
   }
+}
 
-  return String(obj);
+function toYamlInline(value: unknown): string | null {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("OpenAPI YAML numbers must be finite");
+    return String(value);
+  }
+  if (typeof value === "string") return toYamlString(value);
+  if (Array.isArray(value) && value.length === 0) return "[]";
+  if (
+    typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.values(value).every((item) => item === undefined)
+  ) return "{}";
+  if (typeof value === "object") return null;
+  if (value === undefined) return "null";
+  throw new TypeError(`Unsupported OpenAPI YAML value: ${typeof value}`);
+}
+
+function toYamlString(value: string): string {
+  const implicitValue = /^(?:null|true|false|yes|no|on|off|~)$/i.test(value) ||
+    /^[-+]?\d/.test(value);
+  const safePlain = value.length > 0 && value.trim() === value &&
+    /^[A-Za-z_][A-Za-z0-9 _./-]*$/.test(value) && !implicitValue;
+  return safePlain ? value : JSON.stringify(value);
 }

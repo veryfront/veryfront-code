@@ -7,11 +7,11 @@ describe("module-loader/cache", () => {
   describe("generateHash", () => {
     async function assertHexHash(input: string): Promise<void> {
       const hash = await generateHash(input);
-      assertEquals(hash.length, 16);
+      assertEquals(hash.length, 64);
       assertEquals(/^[0-9a-f]+$/.test(hash), true);
     }
 
-    it("should produce a 16-character hex string", async () => {
+    it("should produce a SHA-256 hex string", async () => {
       await assertHexHash("hello world");
     });
 
@@ -33,7 +33,7 @@ describe("module-loader/cache", () => {
 
     it("should handle long strings", async () => {
       const hash = await generateHash("x".repeat(100000));
-      assertEquals(hash.length, 16);
+      assertEquals(hash.length, 64);
     });
 
     it("should handle unicode content", async () => {

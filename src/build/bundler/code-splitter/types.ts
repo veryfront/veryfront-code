@@ -11,7 +11,6 @@ export interface SplitOptions {
     file: string;
     name?: string;
   }[];
-  shared?: string[];
   external?: string[];
   moduleResolution?: "cdn" | "self-hosted" | "bundled";
 }

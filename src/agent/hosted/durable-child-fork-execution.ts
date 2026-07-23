@@ -116,10 +116,26 @@ export type HostedDurableChildInvokeTraceOverrides = Partial<
   Omit<HostedDurableChildInvokeTraceInput, keyof HostedDurableChildInvokeTraceBase>
 >;
 
-/** Public API contract for hosted durable child invoke trace recorder. */
-export type HostedDurableChildInvokeTraceRecorder = ReturnType<
-  typeof createHostedDurableChildInvokeTraceRecorder
->;
+/** Records trace attributes for durable child invocation outcomes. */
+export interface HostedDurableChildInvokeTraceRecorder {
+  /** Adds trace attributes for the current child invocation. */
+  annotate(overrides?: HostedDurableChildInvokeTraceOverrides): void;
+  /** Records a local child result without changing its concrete type. */
+  recordLocalResult<TLocalResult extends ChildRunExecutionResult>(
+    result: TLocalResult,
+  ): TLocalResult;
+  /** Records a failure that occurred during local execution. */
+  recordLocalFailure(errorMessage: string): void;
+  /** Records a durable child setup failure and returns its public result. */
+  recordSetupFailure(failure: HostedDurableChildSetupFailure): HostedDurableChildInvokeResult;
+  /** Records a terminal durable child failure and returns its public result. */
+  recordTerminalFailure(failure: HostedDurableChildTerminalFailure): HostedDurableChildInvokeResult;
+  /** Records a completed durable child invocation and builds its public result. */
+  recordSuccess<TLocalResult extends ChildRunExecutionResult>(
+    success: HostedDurableChildSuccess<TLocalResult>,
+    options?: HostedDurableChildInvokeSuccessResultOptions,
+  ): HostedDurableChildInvokeResult;
+}
 
 /** Public API contract for hosted local child invoke trace recorder. */
 export type HostedLocalChildInvokeTraceRecorder = {
@@ -261,7 +277,7 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
   traceBase: HostedDurableChildInvokeTraceBase;
   setTraceAttributes: (attributes: AgentTraceAttributes) => void;
   executionFailedCode: string;
-}) {
+}): HostedDurableChildInvokeTraceRecorder {
   function annotate(overrides: HostedDurableChildInvokeTraceOverrides = {}): void {
     input.setTraceAttributes(
       buildInvokeAgentTraceAttributes({

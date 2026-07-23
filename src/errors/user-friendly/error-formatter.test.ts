@@ -34,7 +34,29 @@ describe("formatErrorBox", () => {
     assert(result.includes("Server-only code used in Client Component"));
     assert(result.includes("How to fix:"));
     assert(result.includes("Learn more:"));
-    assert(result.includes("rsc-boundaries"));
+    assert(result.includes("client-boundary-violation"));
+  });
+
+  it("does not expose credentials or local paths", () => {
+    const result = formatErrorBox(
+      new Error("password=<TOKEN> at /private/project/config.ts"),
+    );
+    assert(!result.includes("<TOKEN>"));
+    assert(!result.includes("/private/project"));
+  });
+
+  it("handles a throwing message getter", () => {
+    const error = new Error("initial");
+    Object.defineProperty(error, "message", {
+      get() {
+        throw new Error("getter leaked password=<TOKEN>");
+      },
+    });
+
+    const result = formatErrorBox(error);
+
+    assert(result.includes("Unknown error"));
+    assert(!result.includes("<TOKEN>"));
   });
 });
 
@@ -65,6 +87,28 @@ describe("formatUserError", () => {
 
     assert(result.includes("How to fix:"));
     assert(result.includes("1."));
-    assert(result.includes("Create a veryfront.config.js file in your project root"));
+    assert(result.includes("Create veryfront.config.ts in your project root"));
+  });
+
+  it("sanitizes unknown-error stack traces", () => {
+    const error = new Error("password=<TOKEN> at /private/project/config.ts");
+    error.stack = "Error: password=<TOKEN>\n    at load (/private/project/config.ts:1:1)";
+    const result = formatUserError(error);
+    assert(!result.includes("<TOKEN>"));
+    assert(!result.includes("/private/project"));
+  });
+
+  it("handles a throwing stack getter", () => {
+    const error = new Error("unknown error xyz_unique_test");
+    Object.defineProperty(error, "stack", {
+      get() {
+        throw new Error("getter leaked password=<TOKEN>");
+      },
+    });
+
+    const result = formatUserError(error);
+
+    assert(result.includes("veryfront doctor"));
+    assert(!result.includes("<TOKEN>"));
   });
 });

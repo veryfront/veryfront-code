@@ -1,5 +1,5 @@
 /**
- * Cache category barrel — generic cache and proxy-grade token cache.
+ * Cache category barrel for generic cache and proxy-grade token cache contracts.
  *
  * @module extensions/cache
  */

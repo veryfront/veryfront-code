@@ -125,6 +125,26 @@ describe("route-discovery.ts - Pages Router Discovery", () => {
       assertEquals(routes[0]?.pattern, "/api/users");
     });
 
+    it("should ignore test files and test-only directories", async () => {
+      const adapter = createMockAdapter();
+      const router = createRouter();
+      adapter.fs.readDir = async function* (path: string) {
+        if (path !== "/project/pages/api") {
+          yield { name: "hidden.ts", isFile: true, isDirectory: false, isSymlink: false };
+          return;
+        }
+        yield { name: "users.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield { name: "users.test.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield { name: "users.spec.tsx", isFile: true, isDirectory: false, isSymlink: false };
+        yield { name: "__tests__", isFile: false, isDirectory: true, isSymlink: false };
+        yield { name: "node_modules", isFile: false, isDirectory: true, isSymlink: false };
+      };
+
+      await discoverPagesRoutes(router, "/project/pages/api", "/api", adapter);
+
+      assertEquals(router.listRoutes().map((route) => route.pattern), ["/api/users"]);
+    });
+
     it("should handle empty directory", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();

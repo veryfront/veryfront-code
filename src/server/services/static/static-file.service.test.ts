@@ -3,6 +3,8 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __injectDepsForTests,
+  MAX_STATIC_FILE_BYTES,
+  MAX_STATIC_MANIFEST_BYTES,
   type StaticFileOptions,
   StaticFileService,
 } from "./static-file.service.ts";
@@ -222,6 +224,234 @@ describe("server/services/static/static-file.service", () => {
         assertEquals(result.data, fileData);
       }
     });
+
+    it("isolates cached manifests for distinct filesystem sources at the same project path", async () => {
+      const manifestCache = new Map();
+      const manifestLoading = new Map();
+      __injectDepsForTests({ manifestCache, manifestLoading });
+
+      const createRepo = (chunk: string): FileSystemRepository => {
+        const manifest = JSON.stringify({
+          chunks: { chunks: { main: { file: chunk } }, shared: [] },
+          routes: [],
+        });
+        const files = new Map<string, Uint8Array>([
+          [
+            "/project/dist/_veryfront/manifest.json",
+            new TextEncoder().encode(manifest),
+          ],
+          [`/project/dist/_veryfront/${chunk}`, new TextEncoder().encode(chunk)],
+        ]);
+        return {
+          ...createMockFsRepo(files),
+          stat: async (path: string) => {
+            if (files.has(path)) {
+              return {
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+                size: files.get(path)!.byteLength,
+                mtime: new Date(1_000),
+              };
+            }
+            throw createFsError("not found", "ENOENT");
+          },
+        } as FileSystemRepository;
+      };
+
+      const first = await new StaticFileService(createRepo("first.js")).resolveFile(
+        "/_veryfront/first.js",
+        makeOptions(),
+      );
+      const second = await new StaticFileService(createRepo("second.js")).resolveFile(
+        "/_veryfront/second.js",
+        makeOptions(),
+      );
+
+      assertEquals(first?.source, "manifest");
+      assertEquals(second?.source, "manifest");
+    });
+
+    it("reloads manifests when the filesystem cannot report an mtime", async () => {
+      let manifestChunk = "first.js";
+      let manifestReads = 0;
+      const repo = {
+        readFile: async (path: string) => {
+          if (path !== "/project/dist/_veryfront/manifest.json") {
+            throw createFsError("not found", "ENOENT");
+          }
+          manifestReads++;
+          return JSON.stringify({
+            chunks: { chunks: { main: { file: manifestChunk } }, shared: [] },
+            routes: [],
+          });
+        },
+        readFileBytes: async (path: string) => new TextEncoder().encode(path),
+        stat: async (path: string) => {
+          if (
+            path === "/project/dist/_veryfront/manifest.json" ||
+            path === `/project/dist/_veryfront/${manifestChunk}`
+          ) {
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: 1,
+              mtime: null,
+            };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+      __injectDepsForTests({ manifestCache: new Map(), manifestLoading: new Map() });
+      const service = new StaticFileService(repo);
+
+      assertEquals(
+        (await service.resolveFile("/_veryfront/first.js", makeOptions()))?.source,
+        "manifest",
+      );
+      manifestChunk = "second.js";
+      assertEquals(
+        (await service.resolveFile("/_veryfront/second.js", makeOptions()))?.source,
+        "manifest",
+      );
+      assertEquals(manifestReads, 2);
+    });
+
+    it("does not let a manifest load repopulate the cache after clearCache", async () => {
+      StaticFileService.clearCache();
+      let markReadEntered: (() => void) | undefined;
+      const readEntered = new Promise<void>((resolve) => {
+        markReadEntered = resolve;
+      });
+      let releaseRead: (() => void) | undefined;
+      const readGate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let manifestChunk = "first.js";
+      let firstRead = true;
+      const repo = {
+        readFile: async () => {
+          const chunkAtReadStart = manifestChunk;
+          if (firstRead) {
+            firstRead = false;
+            markReadEntered?.();
+            await readGate;
+          }
+          return JSON.stringify({
+            chunks: { chunks: { main: { file: chunkAtReadStart } }, shared: [] },
+            routes: [],
+          });
+        },
+        readFileBytes: async (path: string) => new TextEncoder().encode(path),
+        stat: async (path: string) => {
+          if (
+            path === "/project/dist/_veryfront/manifest.json" ||
+            path.endsWith("/first.js") || path.endsWith("/second.js")
+          ) {
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: 1,
+              mtime: new Date(1_000),
+            };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+      const service = new StaticFileService(repo);
+
+      const firstResolution = service.resolveFile("/_veryfront/first.js", makeOptions());
+      await readEntered;
+      StaticFileService.clearCache();
+      manifestChunk = "second.js";
+      releaseRead?.();
+      await firstResolution;
+
+      assertEquals(
+        (await service.resolveFile("/_veryfront/second.js", makeOptions()))?.source,
+        "manifest",
+      );
+      StaticFileService.clearCache();
+    });
+
+    it("surfaces unreadable manifests instead of falling through to direct assets", async () => {
+      const repo = {
+        readFile: async () => {
+          throw createFsError("manifest read failed", "EIO");
+        },
+        readFileBytes: async () => new TextEncoder().encode("fallback"),
+        stat: async (path: string) => {
+          if (
+            path === "/project/dist/_veryfront/manifest.json" ||
+            path === "/project/dist/app.js"
+          ) {
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: 10,
+              mtime: new Date(),
+            };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+
+      await assertRejects(
+        () => new StaticFileService(repo).resolveFile("/app.js", makeOptions()),
+        Error,
+        "manifest read failed",
+      );
+    });
+
+    it("surfaces malformed manifests with a sanitized error", async () => {
+      const files = new Map<string, Uint8Array>([
+        [
+          "/project/dist/_veryfront/manifest.json",
+          new TextEncoder().encode('{"chunks":'),
+        ],
+        ["/project/dist/app.js", new TextEncoder().encode("fallback")],
+      ]);
+      const repo = createMockFsRepo(files);
+
+      await assertRejects(
+        () => new StaticFileService(repo).resolveFile("/app.js", makeOptions()),
+        TypeError,
+        "Static build manifest is invalid",
+      );
+    });
+
+    it("rejects oversized manifests before reading them", async () => {
+      let manifestReads = 0;
+      const repo = {
+        readFile: async () => {
+          manifestReads++;
+          return "{}";
+        },
+        readFileBytes: async () => new Uint8Array(),
+        stat: async (path: string) => {
+          if (path === "/project/dist/_veryfront/manifest.json") {
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: MAX_STATIC_MANIFEST_BYTES + 1,
+              mtime: new Date(),
+            };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+
+      await assertRejects(
+        () => new StaticFileService(repo).resolveFile("/app.js", makeOptions()),
+        RangeError,
+        "Static build manifest exceeds",
+      );
+      assertEquals(manifestReads, 0);
+    });
   });
 
   describe("resolveFile", () => {
@@ -278,6 +508,39 @@ describe("server/services/static/static-file.service", () => {
       if (result) {
         assertEquals(result.source, "public");
       }
+    });
+
+    it("rejects oversized files before reading their bodies", async () => {
+      let bodyReads = 0;
+      const repo = {
+        readFile: async () => {
+          throw createFsError("not found", "ENOENT");
+        },
+        readFileBytes: async () => {
+          bodyReads++;
+          return new Uint8Array();
+        },
+        stat: async (path: string) => {
+          if (path === "/project/dist/large.bin") {
+            return {
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              size: MAX_STATIC_FILE_BYTES + 1,
+              mtime: new Date(),
+            };
+          }
+          throw createFsError("not found", "ENOENT");
+        },
+      } as unknown as FileSystemRepository;
+      const service = new StaticFileService(repo);
+
+      await assertRejects(
+        () => service.resolveFile("/large.bin", makeOptions()),
+        RangeError,
+        "Static file exceeds",
+      );
+      assertEquals(bodyReads, 0);
     });
 
     it("continues probing sibling candidates after an unexpected candidate error", async () => {

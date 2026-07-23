@@ -1,7 +1,8 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const BUILD_ERROR_CATALOG: PartialErrorCatalog = {
+/** Immutable error-solution catalog fragment. */
+export const BUILD_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "build-failed": createErrorSolution("build-failed", {
     title: "Build failed",
     message: "The build process encountered errors.",
@@ -95,4 +96,4 @@ import Button from './components/Button.jsx'
       "Verify TypeScript configuration",
     ],
   ),
-};
+});

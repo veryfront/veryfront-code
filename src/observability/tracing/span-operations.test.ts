@@ -9,46 +9,45 @@ type MockSpan = Span & {
   _status: { code: number; message?: string } | null;
   _attributes: Record<string, unknown>;
   _events: Array<{ name: string; attributes?: Record<string, unknown> }>;
-  _exception: Error | null;
+  _exception: unknown;
 };
 
 function createMockSpan(): MockSpan {
-  const span = {
+  const span: MockSpan = {
     _ended: false,
     _status: null as { code: number; message?: string } | null,
     _attributes: {} as Record<string, unknown>,
     _events: [] as Array<{ name: string; attributes?: Record<string, unknown> }>,
-    _exception: null as Error | null,
+    _exception: null,
     end() {
       span._ended = true;
     },
     setStatus(status: { code: number; message?: string }) {
       span._status = status;
+      return span;
     },
     setAttributes(attrs: Record<string, unknown>) {
       Object.assign(span._attributes, attrs);
+      return span;
     },
     setAttribute(key: string, value: unknown) {
       span._attributes[key] = value;
+      return span;
     },
     addEvent(name: string, attributes?: Record<string, unknown>) {
       span._events.push({ name, attributes });
+      return span;
     },
-    recordException(error: Error) {
+    recordException(error: unknown) {
       span._exception = error;
     },
     spanContext() {
       return { traceId: "abc", spanId: "def", traceFlags: 1, isRemote: false };
     },
-    isRecording() {
-      return true;
-    },
-    updateName() {
-      return span;
-    },
+    updateName() {},
   };
 
-  return span as MockSpan;
+  return span;
 }
 
 function createMockTracer(): Tracer {
@@ -121,6 +120,23 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(span !== null, true);
     });
 
+    it("converts a parent span into an OpenTelemetry context", () => {
+      let receivedContext: unknown;
+      const capturingTracer: Tracer = {
+        startSpan(_name, _options, context) {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+
+      new SpanOperations(api, capturingTracer).startSpan("child", {
+        parent: createMockSpan(),
+      });
+
+      assertEquals(receivedContext, { _type: "context" });
+    });
+
     it("should return null when tracer throws", () => {
       const badTracer = {
         startSpan: () => {
@@ -149,8 +165,13 @@ describe("observability/tracing/span-operations", () => {
       ops.endSpan(mockSpan, error);
       assertEquals(mockSpan._ended, true);
       assertEquals(mockSpan._status?.code, 2);
-      assertEquals(mockSpan._status?.message, "test error");
-      assertEquals(mockSpan._exception, error);
+      assertEquals(mockSpan._status?.message, undefined);
+      assertEquals(mockSpan._exception, null);
+      assertEquals(mockSpan._attributes, {
+        error: true,
+        "error.category": "error",
+        "error.type": "error",
+      });
     });
 
     it("should handle null span gracefully", () => {
@@ -190,6 +211,21 @@ describe("observability/tracing/span-operations", () => {
 
       ops.setAttributes(badSpan, { key: "value" });
     });
+
+    it("bounds and redacts span attributes", () => {
+      const mockSpan = createMockSpan();
+      const attributes = Object.fromEntries(
+        Array.from({ length: 40 }, (_, index) => [
+          `dimension.${index}`,
+          index === 0 ? "token=secret-value" : "x".repeat(500),
+        ]),
+      );
+
+      ops.setAttributes(mockSpan, attributes);
+
+      assertEquals(Object.keys(mockSpan._attributes).length, 32);
+      assertEquals(String(mockSpan._attributes["dimension.0"]).includes("secret-value"), false);
+    });
   });
 
   describe("addEvent", () => {
@@ -219,6 +255,13 @@ describe("observability/tracing/span-operations", () => {
       } as unknown as Span;
 
       ops.addEvent(badSpan, "event");
+    });
+
+    it("normalizes event names", () => {
+      const mockSpan = createMockSpan();
+      ops.addEvent(mockSpan, `event\n${"x".repeat(200)}`);
+      assertEquals(mockSpan._events[0]?.name.length, 128);
+      assertEquals(mockSpan._events[0]?.name.includes("\n"), false);
     });
   });
 

@@ -2,7 +2,6 @@ import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { serverLogger } from "#veryfront/utils";
 import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
@@ -13,8 +12,12 @@ import {
   isReleaseAssetManifestEnabled,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import {
+  isValidContentHash,
+  RELEASE_ASSET_CONTENT_TYPES,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
   RELEASE_MODULE_VERSION_PARAM,
+  releaseAssetUrl,
 } from "#veryfront/release-assets/constants.ts";
 import {
   resolveManifestModuleUrl,
@@ -37,8 +40,80 @@ import {
   getDevStyles as getErrorOverlayStyles,
   getProjectCSS,
 } from "./styles-builder/index.ts";
-import type { HTMLGenerationOptions } from "./types.ts";
+import {
+  MAX_CSS_CANDIDATE_BYTES,
+  MAX_CSS_CANDIDATES,
+  MAX_TOTAL_CSS_CANDIDATE_BYTES,
+  utf8ByteLength,
+} from "./styles-builder/resource-limits.ts";
+import type { HTMLRuntimeGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
+import { INPUT_VALIDATION_FAILED, RENDER_ERROR } from "#veryfront/errors";
+import { hasPathControlCharacter, isSafeModulePathSegment } from "./path-safety.ts";
+import {
+  assertBoundedHTMLText,
+  assertHTMLPartsSize,
+  assertHTMLStringSize,
+  getUTF8ByteLength,
+  MAX_HTML_MODULE_PRELOAD_HINTS,
+  MAX_HTML_NESTED_LAYOUTS,
+  MAX_HTML_NONCE_BYTES,
+  MAX_HTML_PATH_BYTES,
+  MAX_HTML_RELEASE_ID_BYTES,
+  MAX_HTML_SLUG_BYTES,
+} from "./limits.ts";
+import { snapshotPlainDataArray, snapshotPlainDataRecord } from "./json-snapshot.ts";
+import { MAX_STUDIO_CONFIG_ID_LENGTH } from "#veryfront/studio/limits.ts";
+
+const CSS_HASH_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const PROJECT_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const MAX_LEGACY_ROUTE_MODULE_PRELOAD_HINTS = 50;
+const MAX_RELEASE_ASSET_CSS_ENTRIES = 512;
+const MAX_RELEASE_ASSET_CSS_ENTRY_FIELDS = 16;
+const MAX_RELEASE_ASSET_MANIFEST_FIELDS = 256;
+const MAX_STYLE_PROFILE_HASH_BYTES = 128;
+
+function assertProjectScope(value: unknown, label: string): asserts value is string | undefined {
+  if (value === undefined) return;
+  if (typeof value !== "string" || !PROJECT_SCOPE_PATTERN.test(value)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${label}` });
+  }
+}
+
+function isSafeModuleUrl(value: string): boolean {
+  if (
+    value.length === 0 || value.length > MAX_HTML_PATH_BYTES ||
+    getUTF8ByteLength(value) > MAX_HTML_PATH_BYTES ||
+    value.includes("\\") || hasPathControlCharacter(value) || value.startsWith("//")
+  ) return false;
+
+  try {
+    const parsed = new URL(value, "https://veryfront.local");
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (parsed.username || parsed.password) return false;
+    if (
+      parsed.pathname.split("/").some((segment) => segment && !isSafeModulePathSegment(segment))
+    ) {
+      return false;
+    }
+    if (
+      parsed.pathname.startsWith("/_vf/assets/") &&
+      !/^\/_vf\/assets\/[0-9a-f]{64}\.(?:js|css)$/.test(parsed.pathname)
+    ) return false;
+    return value.startsWith("/") || /^https?:\/\//.test(value);
+  } catch {
+    return false;
+  }
+}
+
+function isSafeRelativeModulePath(path: string): boolean {
+  if (
+    path.length === 0 || path.length > MAX_HTML_PATH_BYTES ||
+    getUTF8ByteLength(path) > MAX_HTML_PATH_BYTES || path.startsWith("/") ||
+    /[\\?#]/.test(path) || hasPathControlCharacter(path)
+  ) return false;
+  return path.split("/").every(isSafeModulePathSegment);
+}
 
 function pathToModuleUrl(
   path: string,
@@ -46,16 +121,16 @@ function pathToModuleUrl(
   manifest?: ReleaseAssetManifest | null,
   fallbackReleaseId?: string,
 ): string {
-  if (!path) return "";
+  if (!isSafeRelativeModulePath(path)) return "";
 
   // Manifest hit → content-addressed asset URL (production only; never in
   // studio-embed). Miss falls through to the existing URL (per-entry fallback).
   if (manifest && !studioEmbed) {
     const assetUrl = resolveManifestModuleUrl(manifest, path);
-    if (assetUrl) return assetUrl;
+    if (assetUrl && isSafeModuleUrl(assetUrl)) return assetUrl;
   }
 
-  const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+  const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx|md)$/, ".js");
   const urlBase = withExtReplaced === path && !path.endsWith(".js")
     ? `/_vf_modules/${path}.js`
     : `/_vf_modules/${withExtReplaced}`;
@@ -65,6 +140,7 @@ function pathToModuleUrl(
 }
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
+  assertBoundedHTMLText(releaseId, "HTML release ID", MAX_HTML_RELEASE_ID_BYTES);
   const separator = url.includes("?") ? "&" : "?";
   const params = new URLSearchParams({
     [RELEASE_MODULE_VERSION_PARAM]: releaseId,
@@ -80,7 +156,17 @@ function getRelativePagePath(
   if (!fullPath) return "";
 
   const normalized = fullPath.replace(/\\/g, "/");
-  if (!projectDir) return normalized.replace(/^\//, "");
+  if (!projectDir) {
+    if (isAbsolute(normalized) || /^[A-Za-z]:\//.test(normalized)) return "";
+    const relativePath = normalized.replace(/^\.\//, "");
+    if (
+      relativePath === "." || relativePath === ".." ||
+      relativePath.startsWith("../")
+    ) {
+      return "";
+    }
+    return relativePath;
+  }
 
   const projectRoot = resolve(projectDir).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
   const candidate = resolve(isAbsolute(normalized) ? normalized : `${projectRoot}/${normalized}`)
@@ -93,15 +179,107 @@ function getRelativePagePath(
 
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
 
+function resolveManifestCSSHash(
+  manifest: ReleaseAssetManifest | null,
+): string | undefined {
+  if (!manifest) return undefined;
+  const manifestSnapshot = snapshotPlainDataRecord(
+    manifest,
+    "Release asset manifest",
+    MAX_RELEASE_ASSET_MANIFEST_FIELDS,
+  );
+  const cssEntries = snapshotPlainDataArray(
+    manifestSnapshot.css,
+    "Release asset manifest CSS",
+    MAX_RELEASE_ASSET_CSS_ENTRIES,
+  );
+
+  let selectedHash: string | undefined;
+  for (const rawEntry of cssEntries) {
+    const entry = snapshotPlainDataRecord(
+      rawEntry,
+      "Release asset manifest CSS entry",
+      MAX_RELEASE_ASSET_CSS_ENTRY_FIELDS,
+    );
+    const contentHash = entry.contentHash;
+    const size = entry.size;
+    const contentType = entry.contentType;
+    const styleProfileHash = entry.styleProfileHash;
+    if (
+      typeof contentHash !== "string" || !isValidContentHash(contentHash) ||
+      !Number.isSafeInteger(size) || (size as number) < 0 ||
+      (size as number) > RELEASE_ASSET_MAX_SIZE_BYTES ||
+      contentType !== RELEASE_ASSET_CONTENT_TYPES.css ||
+      (styleProfileHash !== null &&
+        (typeof styleProfileHash !== "string" || styleProfileHash.length === 0 ||
+          styleProfileHash.length > MAX_STYLE_PROFILE_HASH_BYTES ||
+          getUTF8ByteLength(styleProfileHash) > MAX_STYLE_PROFILE_HASH_BYTES ||
+          hasPathControlCharacter(styleProfileHash)))
+    ) {
+      throw new TypeError("Release asset manifest CSS entry is invalid");
+    }
+    selectedHash ??= contentHash;
+  }
+  return selectedHash;
+}
+
 function resolveProjectCSSScope(
-  options: HTMLGenerationOptions,
-  metaSlug?: string,
-): string {
-  return options.projectSlug || options.projectId || metaSlug || "default";
+  options: HTMLRuntimeGenerationOptions,
+): string | null {
+  const explicitScope = options.projectSlug ?? options.projectId;
+  if (explicitScope === undefined) return null;
+  return explicitScope;
+}
+
+function buildCSSCandidates(
+  projectClasses: Set<string> | undefined,
+  content: string | undefined,
+): Set<string> {
+  const candidates = new Set<string>();
+  let totalBytes = 0;
+
+  function add(candidate: unknown): void {
+    if (typeof candidate !== "string") {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "CSS candidates must be strings" });
+    }
+    if (candidates.has(candidate)) return;
+    if (candidates.size >= MAX_CSS_CANDIDATES) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Too many CSS candidates" });
+    }
+    const bytes = utf8ByteLength(candidate);
+    if (bytes > MAX_CSS_CANDIDATE_BYTES) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "CSS candidate exceeds the size limit" });
+    }
+    totalBytes += bytes;
+    if (totalBytes > MAX_TOTAL_CSS_CANDIDATE_BYTES) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "CSS candidates exceed the total size limit",
+      });
+    }
+    candidates.add(candidate);
+  }
+
+  if (projectClasses !== undefined) {
+    if (!(projectClasses instanceof Set)) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Project CSS classes must be a Set" });
+    }
+    const setSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")?.get?.call(
+      projectClasses,
+    ) as number;
+    if (setSize > MAX_CSS_CANDIDATES) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Too many CSS candidates" });
+    }
+    for (const candidate of Set.prototype.values.call(projectClasses)) add(candidate);
+  }
+
+  if (content) {
+    for (const candidate of extractCandidates(content)) add(candidate);
+  }
+  return candidates;
 }
 
 function generateModulePreloadHints(
-  options: HTMLGenerationOptions,
+  options: HTMLRuntimeGenerationOptions,
   releaseManifest: ReleaseAssetManifest | null,
 ): string {
   const hints: string[] = [];
@@ -114,7 +292,10 @@ function generateModulePreloadHints(
     : undefined;
 
   function addHint(moduleUrl: string): void {
-    if (!moduleUrl || addedUrls.has(moduleUrl)) return;
+    if (!isSafeModuleUrl(moduleUrl) || addedUrls.has(moduleUrl)) return;
+    if (addedUrls.size >= MAX_HTML_MODULE_PRELOAD_HINTS) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: "Too many HTML module preload hints" });
+    }
     hints.push(`<link rel="modulepreload" href="${escapeHTML(moduleUrl)}">`);
     addedUrls.add(moduleUrl);
   }
@@ -145,7 +326,7 @@ function generateModulePreloadHints(
   const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
   const legacyModuleManifestRoute = relativePagePath
     ? relativePagePath
-      .replace(/\.(tsx|ts|jsx|mdx)$/, "")
+      .replace(/\.(tsx|ts|jsx|mdx|md)$/, "")
       .replace(/^pages\//, "")
     : "";
 
@@ -165,7 +346,7 @@ function generateModulePreloadHints(
     const hint of generateModulePreloadHintsFromManifest(
       projectSlug,
       legacyModuleManifestRoute,
-      50,
+      MAX_LEGACY_ROUTE_MODULE_PRELOAD_HINTS,
     )
   ) {
     const hintPrefix = '<link rel="modulepreload" href="';
@@ -182,14 +363,22 @@ function generateModulePreloadHints(
   return hints.join("\n  ");
 }
 
-export function generateHTMLShellParts(
+export async function generateHTMLShellParts(
   meta: RenderMetadata,
-  options: HTMLGenerationOptions,
+  options: HTMLRuntimeGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   contentForTailwind?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
+  meta = snapshotPlainDataRecord(
+    meta,
+    "HTML shell metadata",
+  ) as unknown as RenderMetadata;
+  options = snapshotPlainDataRecord(
+    options,
+    "HTML shell options",
+  ) as unknown as HTMLRuntimeGenerationOptions;
   return withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
     () =>
@@ -202,7 +391,7 @@ export function generateHTMLShellParts(
         projectCSSPromise,
       ),
     {
-      "html.slug": meta.slug || "",
+      "html.has_slug": !!meta.slug,
       "html.has_content": !!contentForTailwind,
       "html.mode": options.mode || "production",
       "html.is_local_project": options.isLocalProject ?? false,
@@ -212,33 +401,103 @@ export function generateHTMLShellParts(
 
 async function generateHTMLShellPartsImpl(
   meta: RenderMetadata,
-  options: HTMLGenerationOptions,
+  options: HTMLRuntimeGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   contentForTailwind?: string,
   prefetchedProjectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
-  const stylesheetContent = options.globalCSS;
+  if (options.mode !== "development" && options.mode !== "production") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid HTML generation mode" });
+  }
+  if (
+    options.environment !== undefined && options.environment !== "preview" &&
+    options.environment !== "production"
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid HTML deployment environment" });
+  }
+  if (
+    options.colorScheme !== undefined && options.colorScheme !== "light" &&
+    options.colorScheme !== "dark"
+  ) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid HTML color scheme" });
+  }
+  for (
+    const [label, value] of [
+      ["local project", options.isLocalProject],
+      ["Studio embed", options.studioEmbed],
+      ["HMR suppression", options.noHmr],
+      ["production scripts", options.forceProductionScripts],
+      ["URL color scheme", options.colorSchemeFromParam],
+      ["header color scheme", options.colorSchemeFromHeader],
+      ["isolated client page", options.isolatedClientPage],
+    ] as const
+  ) {
+    if (value !== undefined && typeof value !== "boolean") {
+      throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid HTML ${label} flag` });
+    }
+  }
+  assertProjectScope(options.projectId, "project ID");
+  assertProjectScope(options.projectSlug, "project slug");
+  assertBoundedHTMLText(meta.slug ?? "", "HTML slug", MAX_HTML_SLUG_BYTES, {
+    allowEmpty: true,
+  });
+  if (options.releaseId !== undefined) {
+    assertBoundedHTMLText(options.releaseId, "HTML release ID", MAX_HTML_RELEASE_ID_BYTES);
+  }
+  if (options.nonce !== undefined) {
+    assertBoundedHTMLText(options.nonce, "HTML nonce", MAX_HTML_NONCE_BYTES, {
+      allowEmpty: true,
+    });
+  }
+  if (contentForTailwind !== undefined) {
+    assertHTMLStringSize(contentForTailwind, "Rendered content");
+  }
+  if (options.nestedLayouts !== undefined) {
+    const nestedLayouts = snapshotPlainDataArray(
+      options.nestedLayouts,
+      "HTML nested layouts",
+      MAX_HTML_NESTED_LAYOUTS,
+    );
+    options.nestedLayouts = nestedLayouts.map((layout) =>
+      snapshotPlainDataRecord(layout, "HTML nested layout", 16)
+    ) as HTMLRuntimeGenerationOptions["nestedLayouts"];
+  }
+  const projectCandidates = buildCSSCandidates(options.projectClasses, undefined);
 
   const isLocalProject = options.isLocalProject ?? false;
   const isPreviewMode = options.environment === "preview";
   const useProductionCSS = !isLocalProject && options.environment === "production";
+  const explicitReleaseManifest = options.releaseAssetManifest;
+  const releaseManifest = options.studioEmbed
+    ? null
+    : explicitReleaseManifest !== undefined
+    ? explicitReleaseManifest
+    : await profilePhase("html.release_asset_manifest", () =>
+      getReadyManifestForRenderAsync(options.releaseId));
+  const manifestCSSHash = useProductionCSS ? resolveManifestCSSHash(releaseManifest) : undefined;
 
-  // Use projectClasses (extracted from ALL source files) + current page as fallback
-  const candidates = new Set<string>(options.projectClasses ?? []);
-  if (contentForTailwind) {
-    for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
-  }
-
-  const projectSlug = resolveProjectCSSScope(options, meta.slug);
-  const projectCSSPromise = prefetchedProjectCSSPromise ??
-    (useProductionCSS && projectSlug !== "default"
-      ? getProjectCSS(projectSlug, stylesheetContent, candidates, {
+  let projectCSSPromise: Promise<ProjectCSSResult> | undefined;
+  if (useProductionCSS && manifestCSSHash === undefined) {
+    const projectSlug = resolveProjectCSSScope(options);
+    if (!projectSlug) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "Production CSS generation requires a project ID or project slug",
+      });
+    }
+    // Use projectClasses (extracted from all source files) plus the current page as fallback.
+    const candidates = contentForTailwind
+      ? buildCSSCandidates(projectCandidates, contentForTailwind)
+      : projectCandidates;
+    projectCSSPromise = prefetchedProjectCSSPromise ??
+      getProjectCSS(projectSlug, options.globalCSS, candidates, {
         minify: true,
         environment: options.environment,
         buildMode: options.mode as "development" | "production",
-      })
-      : Promise.resolve(null));
+      });
+  }
+
+  const nonce = options.nonce ?? "";
 
   const {
     effectiveTitle,
@@ -248,7 +507,7 @@ async function generateHTMLShellPartsImpl(
     styleTags,
     lang,
     bodyClass,
-  } = processMetadata(meta);
+  } = processMetadata(meta, nonce);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
 
@@ -265,16 +524,6 @@ async function generateHTMLShellPartsImpl(
   // Enable dev scripts for local dev OR preview mode (for HMR support in Studio),
   // unless a caller explicitly forces production client scripts for fair benchmarking.
   const useDevScripts = !options.forceProductionScripts && (isLocalProject || isPreviewMode);
-  const explicitReleaseManifest =
-    (options as HTMLGenerationOptions & { releaseAssetManifest?: ReleaseAssetManifest | null })
-      .releaseAssetManifest;
-  const releaseManifest = options.studioEmbed
-    ? null
-    : explicitReleaseManifest !== undefined
-    ? explicitReleaseManifest
-    : await profilePhase("html.release_asset_manifest", () =>
-      getReadyManifestForRenderAsync(options.releaseId));
-
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
     config: options.config,
@@ -290,8 +539,6 @@ async function generateHTMLShellPartsImpl(
     { ...options, releaseAssetManifest: releaseManifest },
     { pretty: useDevScripts },
   );
-
-  const nonce = options.nonce ?? "";
 
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
@@ -326,27 +573,7 @@ async function generateHTMLShellPartsImpl(
     };</script>`
     : "";
 
-  const hydrationErrorSuppression = useDevScripts ? "" : `<script${nonceAttr}>
-(function(){
-  var origError = console.error;
-  var hydrationErrorLogged = false;
-  console.error = function() {
-    var msg = arguments[0];
-    var isHydrationError = (typeof msg === 'string' && msg.includes('Minified React error #4')) ||
-      (arguments[0] instanceof Error && arguments[0].message && arguments[0].message.includes('Minified React error #4'));
-    if (isHydrationError) {
-      if (!hydrationErrorLogged) {
-        hydrationErrorLogged = true;
-        origError.call(console, '[Veryfront] React hydration mismatch detected. This is usually caused by client-only code (localStorage, window checks) in SSR. React will recover automatically. See: https://react.dev/link/hydration-mismatch');
-      }
-      return;
-    }
-    origError.apply(console, arguments);
-  };
-})();
-</script>`;
-
-  const colorScheme = options.colorScheme ?? "light";
+  const colorScheme = options.colorScheme === "dark" ? "dark" : "light";
   // Only set data-theme/color-scheme when explicitly set via URL param (?color_mode=dark|light).
   const hasExplicitTheme = options.colorSchemeFromParam;
   const themeAttrs = hasExplicitTheme
@@ -368,24 +595,17 @@ async function generateHTMLShellPartsImpl(
   // Manifest-consumed CSS: when a ready release asset manifest carries a
   // compiled CSS entry, serve it from the immutable asset path (no renderer
   // involvement). Per-entry fallback: no manifest CSS → existing JIT link.
-  const manifestCssEntry = useProductionCSS ? releaseManifest?.css?.[0] : undefined;
-  if (manifestCssEntry) {
-    tailwindCSSBlock =
-      `<link rel="stylesheet" href="/_vf/assets/${manifestCssEntry.contentHash}.css">`;
+  if (manifestCSSHash) {
+    tailwindCSSBlock = `<link rel="stylesheet" href="${releaseAssetUrl(manifestCSSHash, "css")}">`;
   } else if (useProductionCSS) {
-    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise);
+    const projectCSS = await profilePhase("html.project_css", () => projectCSSPromise!);
     const cssHash = projectCSS?.hash ?? "";
-    if (cssHash) {
+    if (CSS_HASH_PATTERN.test(cssHash)) {
       tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
     } else {
-      // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
-      serverLogger.error(
-        "[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.",
-        {
-          projectSlug,
-          environment: options.environment,
-        },
-      );
+      throw RENDER_ERROR.create({
+        detail: "Production CSS generation did not return a valid content hash",
+      });
     }
   } else {
     // Dev/preview: use link tag for HMR cache-busting
@@ -406,7 +626,6 @@ async function generateHTMLShellPartsImpl(
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
 <head>
-  ${hydrationErrorSuppression}
   ${themePersistenceScript}
   ${metaTags}
   <title>${escapeHTML(effectiveTitle)}</title>
@@ -433,12 +652,18 @@ async function generateHTMLShellPartsImpl(
 <body${bodyClass ? ` class="${escapeHTML(bodyClass)}"` : ""} suppressHydrationWarning>
   <div ${rootAttributes}>`;
 
-  const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
+  const relativeStudioPagePath = getRelativePagePath(
+    options.studioPagePath ?? options.pagePath,
+    options.projectDir,
+  );
+  const fallbackStudioProjectId = meta.slug && meta.slug.length <= MAX_STUDIO_CONFIG_ID_LENGTH
+    ? meta.slug
+    : "";
   const studioScripts = options.studioEmbed
     ? getStudioScripts({
-      projectId: options.projectId || meta.slug || "",
-      pageId: options.pageId || relativePagePath || meta.slug || "",
-      pagePath: relativePagePath || undefined,
+      projectId: options.studioProjectId ?? options.projectId ?? fallbackStudioProjectId,
+      pageId: options.pageId,
+      pagePath: relativeStudioPagePath || undefined,
       nonce,
       sourceHash: options.sourceHash,
     })
@@ -450,7 +675,7 @@ async function generateHTMLShellPartsImpl(
 
   const mermaidScript = isMarkdownPreview
     ? `<script type="module"${nonceAttr}>
-import mermaid from 'https://esm.sh/mermaid@11';
+import mermaid from 'https://esm.sh/mermaid@11.4.1?pin=v135';
 mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
 // Convert code.language-mermaid blocks to mermaid-compatible format
 document.querySelectorAll('code.language-mermaid').forEach((code, i) => {
@@ -482,33 +707,43 @@ mermaid.run();
 </body>
 </html>`;
 
+  assertHTMLPartsSize([start, end], "Generated HTML shell");
   return { start, end };
 }
 
-export function wrapInHTMLShell(
+export async function wrapInHTMLShell(
   content: string,
   meta: RenderMetadata,
-  options: HTMLGenerationOptions,
+  options: HTMLRuntimeGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<string> {
+  assertHTMLStringSize(content, "Rendered content");
+  meta = snapshotPlainDataRecord(
+    meta,
+    "HTML shell metadata",
+  ) as unknown as RenderMetadata;
+  options = snapshotPlainDataRecord(
+    options,
+    "HTML shell options",
+  ) as unknown as HTMLRuntimeGenerationOptions;
   return withSpan(
     SpanNames.HTML_WRAP_IN_SHELL,
     async () => {
-      const cleanedContent = content.trim();
       const { start, end } = await generateHTMLShellParts(
         meta,
         options,
         params,
         props,
-        cleanedContent,
+        content,
         projectCSSPromise,
       );
-      return `${start}${cleanedContent}${end}`;
+      assertHTMLPartsSize([start, content, end]);
+      return `${start}${content}${end}`;
     },
     {
-      "html.slug": meta.slug || "",
+      "html.has_slug": !!meta.slug,
       "html.content_length": content.length,
     },
   );

@@ -68,6 +68,14 @@ const reactRange = npmDependencyRange(
 	"@veryfront/react-upstream",
 	"^",
 );
+const reactMarkdownVersion = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/react-markdown-upstream",
+);
+const remarkGfmVersion = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/remark-gfm-upstream",
+);
 
 await build({
 	entryPoints,
@@ -149,6 +157,14 @@ await build({
 			name: "react",
 			version: reactRange,
 			subPath: "jsx-dev-runtime",
+		},
+		"./react/react-markdown.ts": {
+			name: "react-markdown",
+			version: reactMarkdownVersion,
+		},
+		"./react/remark-gfm.ts": {
+			name: "remark-gfm",
+			version: remarkGfmVersion,
 		},
 	},
 

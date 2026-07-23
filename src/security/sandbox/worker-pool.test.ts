@@ -1,13 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   __resetPoolForTests,
+  getWorkerPool,
   isDataIsolationEnabled,
   isSSRIsolationEnabled,
   isWorkerIsolationEnabled,
+  shutdownWorkerPool,
   WorkerPool,
 } from "./worker-pool.ts";
 import { MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
@@ -42,6 +50,24 @@ testSuite("WorkerPool", () => {
     assertEquals(stats.poolSize, 1);
   });
 
+  it("rejects invalid resource and timer limits", () => {
+    for (
+      const config of [
+        { maxPoolSize: 0 },
+        { requestTimeoutMs: Number.NaN },
+        { healthCheckIntervalMs: -1 },
+        { maxRequestsPerWorker: 1.5 },
+        { memoryBudgetMb: Number.POSITIVE_INFINITY },
+      ]
+    ) {
+      assertThrows(
+        () => new WorkerPool(config),
+        TypeError,
+        "positive safe integer",
+      );
+    }
+  });
+
   it("returns the same worker for the same project", () => {
     const w1 = pool.getOrCreateWorker("project-a", []);
     const w2 = pool.getOrCreateWorker("project-a", []);
@@ -59,6 +85,15 @@ testSuite("WorkerPool", () => {
     assertEquals(w1, w2);
     assert(w1 !== w3, "worker permissions must be rebuilt for changed env keys");
     assertEquals(pool.getStats().poolSize, 1);
+  });
+
+  it("recreates a worker when its read permission set changes", () => {
+    const first = pool.getOrCreateWorker("project-a", ["/tmp/project-a"]);
+    const second = pool.getOrCreateWorker("project-a", ["/tmp/project-a"]);
+    const narrowed = pool.getOrCreateWorker("project-a", ["/tmp/project-a/public"]);
+
+    assertEquals(first, second);
+    assert(first !== narrowed, "worker permissions must be rebuilt for changed read paths");
   });
 
   it("creates separate workers for different projects", () => {
@@ -118,6 +153,16 @@ testSuite("WorkerPool", () => {
     assertEquals(stats.poolSize, 0);
   });
 
+  it("does not allow a shut down pool to resurrect workers", () => {
+    pool.shutdown();
+
+    assertThrows(
+      () => pool.getOrCreateWorker("project-after-shutdown", []),
+      Error,
+      "shut down",
+    );
+  });
+
   it("rejects execute when modulePath is outside allowed read paths", async () => {
     await assertRejects(
       () =>
@@ -125,6 +170,24 @@ testSuite("WorkerPool", () => {
           type: "execute-app-route",
           id: "test-id",
           modulePath: "/etc/passwd",
+          method: "GET",
+          request: { url: "http://localhost/api/test", method: "GET", headers: [], body: null },
+          params: {},
+          projectDir: "/allowed/path",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        }),
+      VeryfrontError,
+      "outside allowed read paths",
+    );
+  });
+
+  it("rejects module paths in a sibling directory with a shared prefix", async () => {
+    await assertRejects(
+      () =>
+        pool.execute("project-a", ["/allowed/path"], {
+          type: "execute-app-route",
+          id: "test-prefix",
+          modulePath: "/allowed/path-evil/route.ts",
           method: "GET",
           request: { url: "http://localhost/api/test", method: "GET", headers: [], body: null },
           params: {},
@@ -405,5 +468,17 @@ describe("Feature flag caching", () => {
       Deno.env.delete("WORKER_ISOLATION_API");
     } catch { /* ok */ }
     assertEquals(isWorkerIsolationEnabled(), false);
+  });
+
+  it("releases the singleton pool so a later server can create a fresh pool", () => {
+    __resetPoolForTests();
+    const first = getWorkerPool();
+
+    shutdownWorkerPool();
+    shutdownWorkerPool();
+    const second = getWorkerPool();
+
+    assert(first !== second, "worker pool shutdown must release singleton ownership");
+    assertEquals(second.getStats().poolSize, 0);
   });
 });

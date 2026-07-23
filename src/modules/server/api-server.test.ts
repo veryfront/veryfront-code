@@ -54,7 +54,7 @@ describe("modules/server/api-server", () => {
 
       const response = await server.handleRequest("/_veryfront/data/about.json");
       assertEquals(response instanceof Response, true);
-      assertEquals(response?.headers.get("content-type"), "application/json");
+      assertEquals(response?.headers.get("content-type"), "application/json; charset=utf-8");
 
       const body = await response?.json();
       assertEquals(body.slug, "about");
@@ -113,7 +113,7 @@ describe("modules/server/api-server", () => {
       assertEquals(response?.status, 404);
 
       const body = await response?.json();
-      assertEquals(body.error, "string error");
+      assertEquals(body.error, "Page not found");
     });
 
     it("should set no-cache header on success", async () => {
@@ -131,6 +131,64 @@ describe("modules/server/api-server", () => {
       const response = await server.handleRequest("/_veryfront/data/blog/my-post.json");
       const body = await response?.json();
       assertEquals(body.slug, "blog/my-post");
+    });
+
+    it("removes only the terminal JSON extension", async () => {
+      let renderedSlug = "";
+      const server = new APIServer({
+        renderer: {
+          renderPage: (slug) => {
+            renderedSlug = slug;
+            return Promise.resolve({ html: "", frontmatter: {} });
+          },
+        },
+      });
+
+      const response = await server.handleRequest("/_veryfront/data/about.json.json");
+      assertEquals(response?.status, 200);
+      assertEquals(renderedSlug, "about.json");
+    });
+
+    it("rejects traversal, control characters, and missing JSON suffixes", async () => {
+      const server = new APIServer({ renderer: createMockRenderer() });
+
+      for (
+        const path of [
+          "/_veryfront/data/../secret.json",
+          "/_veryfront/data/bad%00slug.json",
+          "/_veryfront/data/page",
+        ]
+      ) {
+        const response = await server.handleRequest(path);
+        assertEquals(response?.status, 400);
+      }
+    });
+
+    it("returns a generic 500 when response serialization fails", async () => {
+      const server = new APIServer({
+        renderer: createMockRenderer({ frontmatter: { value: 1n } }),
+      });
+
+      const response = await server.handleRequest("/_veryfront/data/page.json");
+      assertEquals(response?.status, 500);
+      assertEquals(await response?.json(), { error: "Page data serialization failed" });
+    });
+
+    it("rejects null and array frontmatter render results", async () => {
+      for (const frontmatter of [null, []]) {
+        const server = new APIServer({
+          renderer: {
+            renderPage: () =>
+              Promise.resolve({
+                html: "",
+                frontmatter: frontmatter as unknown as Record<string, unknown>,
+              }),
+          },
+        });
+
+        const response = await server.handleRequest("/_veryfront/data/page.json");
+        assertEquals(response?.status, 500);
+      }
     });
   });
 });

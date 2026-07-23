@@ -104,5 +104,14 @@ describe("security/path-validation/normalization", () => {
     it("should handle trailing slashes", () => {
       assertEquals(isWithinDirectory("/project/", "/project/src"), true);
     });
+
+    it("should treat the filesystem root as a real directory boundary", () => {
+      assertEquals(isWithinDirectory("/", "/etc/passwd"), true);
+      assertEquals(isWithinDirectory("/", "relative/path"), false);
+    });
+
+    it("should not treat an empty base as the filesystem root", () => {
+      assertEquals(isWithinDirectory("", "/etc/passwd"), false);
+    });
   });
 });

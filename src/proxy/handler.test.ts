@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import {
   __resetCachedAuthProviderForTests,
@@ -10,8 +15,10 @@ import {
 } from "./handler.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 
 const TEST_JWT_SECRET = "test-jwt-secret-for-proxy-handler-tests";
+const PREVIOUS_JWT_SECRET = Deno.env.get("JWT_SECRET");
 
 // Set JWT_SECRET so extractUserIdFromToken can verify tokens
 Deno.env.set("JWT_SECRET", TEST_JWT_SECRET);
@@ -110,7 +117,7 @@ async function mintControlPlaneJws(
     sub: "control-plane",
     surface: "channels",
     project_id: "proj-123",
-    request_hash: "n/a",
+    request_hash: "a".repeat(43),
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
   };
@@ -248,7 +255,7 @@ function forgeRs256Token(kid: string, userId: string): string {
     sub: userId,
     exp: Math.floor(Date.now() / 1000) + 3600,
   }));
-  // Signature intentionally opaque — the mock verifier looks up (url, token)
+  // Signature intentionally opaque. The mock verifier looks up (url, token)
   // pairs, so the bytes here just need to be unique per token.
   const sig = base64url(`sig-${kid}-${userId}-${Math.random()}`);
   return `${header}.${body}.${sig}`;
@@ -266,7 +273,42 @@ afterEach(() => {
   __resetCachedAuthProviderForTests();
 });
 
+afterAll(() => {
+  if (PREVIOUS_JWT_SECRET === undefined) Deno.env.delete("JWT_SECRET");
+  else Deno.env.set("JWT_SECRET", PREVIOUS_JWT_SECRET);
+});
+
 describe("Proxy Handler", () => {
+  it("snapshots caller-owned configuration and rejects unsafe API base URLs", async () => {
+    const localProjects = { demo: "safe-project-path" };
+    const config = {
+      apiBaseUrl: "https://api.example.test/base",
+      apiClientId: "client",
+      apiClientSecret: "secret",
+      previewApiClientId: "client",
+      previewApiClientSecret: "secret",
+      localProjects,
+    };
+    const handler = createProxyHandler({ config });
+
+    localProjects.demo = "attacker-replacement-path";
+    config.apiBaseUrl = "https://attacker.example.test";
+    assertEquals(handler.localProjects, { demo: "safe-project-path" });
+    await handler.close();
+
+    assertThrows(
+      () => createProxyHandler({ config: { ...config, apiBaseUrl: "file://example.test/api" } }),
+      TypeError,
+    );
+    assertThrows(
+      () =>
+        createProxyHandler({
+          config: { ...config, apiBaseUrl: "https://user:password@api.example.test" },
+        }),
+      TypeError,
+    );
+  });
+
   it("uses a pre-parsed request URL when provided", async () => {
     const handler = createProxyHandler({
       config: {
@@ -343,6 +385,199 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.token, "test-token");
 
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 502 when the metadata API is unavailable instead of reporting not found", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) {
+          return new Response("upstream unavailable", { status: 503 });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const result = await handler.processRequest(
+          new Request("http://example.com/page", { headers: { host: "example.com" } }),
+        );
+
+        assertEquals(result.error?.status, 502);
+        assertEquals(result.error?.message, "Proxy metadata service unavailable");
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 502 for malformed metadata instead of caching or reporting not found", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) {
+          return new Response('{"id":42,"slug":"broken"}', {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const result = await handler.processRequest(
+          new Request("http://example.com/page", { headers: { host: "example.com" } }),
+        );
+
+        assertEquals(result.error?.status, 502);
+        assertEquals(result.error?.message, "Proxy metadata service unavailable");
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("rejects control characters in metadata fields used as proxy headers", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "unsafe\nslug",
+            name: "Unsafe Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const result = await handler.processRequest(
+          new Request("http://example.com/page", { headers: { host: "example.com" } }),
+        );
+        assertEquals(result.error?.status, 502);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("bounds metadata response bodies and request duration", async () => {
+      let delayedLookup = false;
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          if (delayedLookup) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "x".repeat(512),
+            environments: [],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const request = () =>
+          new Request("http://example.com/page", { headers: { host: "example.com" } });
+        const boundedBodyHandler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          metadataResponseMaxBytes: 128,
+        });
+        assertEquals((await boundedBodyHandler.processRequest(request())).error?.status, 502);
+        await boundedBodyHandler.close();
+
+        delayedLookup = true;
+        const timeoutHandler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          metadataLookupTimeoutMs: 5,
+        });
+        assertEquals((await timeoutHandler.processRequest(request())).error?.status, 502);
+        await timeoutHandler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("cancels request-owned metadata lookups when the client disconnects", async () => {
+      let accessLookupStarted!: () => void;
+      const accessStarted = new Promise<void>((resolve) => {
+        accessLookupStarted = resolve;
+      });
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          accessLookupStarted();
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const controller = new AbortController();
+        const pending = handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+            signal: controller.signal,
+          }),
+        );
+        await accessStarted;
+        controller.abort(new Error("client disconnected"));
+
+        await assertRejects(() => pending, Error, "client disconnected");
         await handler.close();
       } finally {
         await server.shutdown();
@@ -1050,6 +1285,35 @@ describe("Proxy Handler", () => {
       await handler.close();
     });
 
+    it("lets explicit metadata limits override malformed environment settings", async () => {
+      const timeoutKey = "VERYFRONT_PROXY_METADATA_LOOKUP_TIMEOUT_MS";
+      const bodyKey = "VERYFRONT_PROXY_METADATA_RESPONSE_MAX_BYTES";
+      const previousTimeout = Deno.env.get(timeoutKey);
+      const previousBodyLimit = Deno.env.get(bodyKey);
+      Deno.env.set(timeoutKey, "invalid");
+      Deno.env.set(bodyKey, "invalid");
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: "https://api.example.test",
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-preview-client",
+            previewApiClientSecret: "test-preview-secret",
+          },
+          metadataLookupTimeoutMs: 100,
+          metadataResponseMaxBytes: 1_024,
+        });
+        await handler.close();
+      } finally {
+        if (previousTimeout === undefined) Deno.env.delete(timeoutKey);
+        else Deno.env.set(timeoutKey, previousTimeout);
+        if (previousBodyLimit === undefined) Deno.env.delete(bodyKey);
+        else Deno.env.set(bodyKey, previousBodyLimit);
+      }
+    });
+
     // Regression test for the ai-chatbot.veryfront.com incident (#1054): bare
     // {slug}.veryfront.com is intentionally unsupported, so the handler treats it as a
     // custom domain, the token mint returns "Project not found for domain", and the
@@ -1091,7 +1355,7 @@ describe("Proxy Handler", () => {
     });
 
     // Regression: studio.veryfront.com is an infra subdomain that doesn't map to a
-    // project. The token mint returns 400 "Project not found for domain" — the proxy
+    // project. The token mint returns 400 "Project not found for domain". The proxy
     // must return a clean 404, not a misleading 502. (#1110)
     it("returns 404 for studio.veryfront.com when token mint rejects the domain", async () => {
       const { server, port } = createMockServer((req: Request) => {
@@ -1404,6 +1668,67 @@ describe("Proxy Handler", () => {
   });
 
   describe("protected environments", () => {
+    it("falls back to canonical metadata when routing and access environments disagree", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-canonical",
+              name: "preview",
+              active_release_id: null,
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            environments: [{
+              id: "env-stale",
+              name: "preview",
+              protected: false,
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-canonical",
+              name: "preview",
+              active_release_id: null,
+              protected: true,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const context = await handler.processRequest(
+          new Request("http://protected-project.preview.veryfront.com/page", {
+            headers: { host: "protected-project.preview.veryfront.com" },
+          }),
+        );
+
+        assertEquals(context.error?.status, 302);
+        assertEquals(fullProjectLookups, 1);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("uses a service token for preview metadata when the request has a user cookie", async () => {
       let tokenRequests = 0;
       const metadataAuthorizationHeaders: string[] = [];
@@ -2942,6 +3267,26 @@ describe("Proxy Handler", () => {
 
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), null);
+    });
+
+    it("preserves request lifecycle metadata while replacing forwarded protocol", () => {
+      const controller = new AbortController();
+      const req = new Request("https://demo.preview.veryfront.com/path", {
+        headers: { "x-forwarded-proto": "http" },
+        signal: controller.signal,
+      });
+      const injected = injectContextHeaders(req, {
+        environment: "preview",
+        contentSourceId: "preview-main",
+        host: "demo.preview.veryfront.com",
+        parsedDomain: parseProjectDomain("demo.preview.veryfront.com"),
+        isLocalProject: false,
+      });
+
+      assertEquals(injected.headers.get("x-forwarded-proto"), "https");
+      assertEquals(injected.signal.aborted, false);
+      controller.abort();
+      assertEquals(injected.signal.aborted, true);
     });
   });
 });

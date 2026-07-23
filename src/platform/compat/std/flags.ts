@@ -1,24 +1,24 @@
 /**
- * Portable @std/flags shim for Node.js and Bun.
+ * Portable argument parsing compatible with `@std/cli/parse-args`.
  *
- * In Deno: Uses @std/flags
- * In Node.js/Bun: Provides a minimal arg parser implementation
+ * Deno delegates to the standard library. Node.js and Bun use the same
+ * parsing semantics locally so repository scripts behave consistently.
  *
  * @module
  */
 
 import { isDeno } from "../runtime.ts";
 
-interface ParseOptions {
-  alias?: Record<string, string | string[]>;
-  boolean?: string | string[] | boolean;
-  string?: string | string[];
+export interface ParseOptions {
+  "--"?: boolean;
+  alias?: Record<string, string | readonly string[] | undefined>;
+  boolean?: string | readonly string[] | boolean;
   default?: Record<string, unknown>;
   stopEarly?: boolean;
-  collect?: string | string[];
-  negatable?: string | string[];
-  unknown?: (arg: string) => boolean;
-  "--"?: boolean;
+  string?: string | readonly string[];
+  collect?: string | readonly string[];
+  negatable?: string | readonly string[];
+  unknown?: (arg: string, key?: string, value?: unknown) => unknown;
 }
 
 export interface Args {
@@ -27,185 +27,342 @@ export interface Args {
   [key: string]: unknown;
 }
 
-function parseValue(value: string): string | number | boolean {
-  if (value === "true") return true;
-  if (value === "false") return false;
-
-  const num = Number(value);
-  if (!isNaN(num) && value !== "") return num;
-
-  return value;
+interface NestedMapping {
+  [key: string]: NestedMapping | unknown;
 }
 
-function toStringArray(value: string | string[] | undefined): string[] {
-  if (!value) return [];
-  return Array.isArray(value) ? value : [value];
+const FLAG_REGEXP = /^(?:-(?:(?<doubleDash>-)(?<negated>no-)?)?)(?<key>.+?)(?:=(?<value>.*))?$/s;
+const LETTER_REGEXP = /[A-Za-z]/;
+const NUMBER_REGEXP = /-?\d+(\.\d*)?(e-?\d+)?$/;
+const HYPHEN_REGEXP = /^(-|--)[^-]/;
+const VALUE_REGEXP = /=(?<value>.+)/;
+const FLAG_NAME_REGEXP = /^--[^=]+$/;
+const SPECIAL_CHAR_REGEXP = /\W/;
+const NON_WHITESPACE_REGEXP = /\S/;
+
+function isNumber(value: string): boolean {
+  return NON_WHITESPACE_REGEXP.test(value) && Number.isFinite(Number(value));
 }
 
-function getBooleanKeys(value: string | string[] | boolean | undefined): string[] {
-  if (value === true || !value) return [];
-  return Array.isArray(value) ? value : [value];
+function isConstructorOrProto(object: NestedMapping, key: string): boolean {
+  return (key === "constructor" && typeof object[key] === "function") ||
+    key === "__proto__";
 }
 
-function nodeParse(args: string[], options: ParseOptions = {}): Args {
-  const result: Args = { _: [] };
+function setNested(
+  object: NestedMapping,
+  inputKeys: string[],
+  inputValue: unknown,
+  collect = false,
+): void {
+  const keys = [...inputKeys];
+  const key = keys.pop()!;
 
-  const alias = options.alias ?? {};
-  const defaults = options.default ?? {};
-
-  const booleans = new Set(getBooleanKeys(options.boolean));
-  const strings = new Set(toStringArray(options.string));
-  const collectKeys = new Set(toStringArray(options.collect));
-  const negatables = new Set(toStringArray(options.negatable));
-
-  const aliasMap: Record<string, string> = {};
-  const aliasGroups: Record<string, string[]> = {};
-
-  for (const [key, aliases] of Object.entries(alias)) {
-    const aliasList = Array.isArray(aliases) ? aliases : [aliases];
-
-    for (const a of aliasList) aliasMap[a] = key;
-
-    const group = [key, ...aliasList];
-    aliasGroups[key] = group;
-    for (const a of aliasList) aliasGroups[a] = group;
+  for (const nestedKey of keys) {
+    if (isConstructorOrProto(object, nestedKey)) return;
+    object = (object[nestedKey] ??= {}) as NestedMapping;
   }
 
-  function setWithAliases(key: string, value: unknown): void {
-    const keysToSet = aliasGroups[key] ?? [key];
+  if (isConstructorOrProto(object, key)) return;
 
-    for (const k of keysToSet) {
-      if (!collectKeys.has(k)) {
-        result[k] = value;
+  let value = inputValue;
+  if (collect) {
+    const current = object[key];
+    if (Array.isArray(current)) {
+      current.push(value);
+      return;
+    }
+    value = current ? [current, value] : [value];
+  }
+
+  object[key] = value;
+}
+
+function hasNested(object: NestedMapping, keys: string[]): boolean {
+  for (const key of keys) {
+    const value = object[key];
+    if (!Object.hasOwn(object, key)) return false;
+    object = value as NestedMapping;
+  }
+  return true;
+}
+
+function aliasIsBoolean(
+  aliasMap: Map<string, Set<string>>,
+  booleanSet: Set<string>,
+  key: string,
+): boolean {
+  const aliases = aliasMap.get(key);
+  if (aliases === undefined) return false;
+  for (const alias of aliases) if (booleanSet.has(alias)) return true;
+  return false;
+}
+
+function isBooleanString(value: string): boolean {
+  return value === "true" || value === "false";
+}
+
+function parseBooleanString(value: unknown): boolean {
+  return value !== "false";
+}
+
+function nodeParseArgs(
+  inputArgs: readonly string[],
+  options: ParseOptions = {},
+): Args {
+  const {
+    "--": doubleDash = false,
+    alias = {},
+    boolean = false,
+    default: defaults = {},
+    stopEarly = false,
+    string = [],
+    collect = [],
+    negatable = [],
+    unknown: unknownFn = (value: string): unknown => value,
+  } = options;
+  const aliasMap = new Map<string, Set<string>>();
+  const booleanSet = new Set<string>();
+  const stringSet = new Set<string>();
+  const collectSet = new Set<string>();
+  const negatableSet = new Set<string>();
+  let allBools = false;
+
+  for (const [key, value] of Object.entries(alias)) {
+    if (value === undefined) throw new TypeError("Alias value must be defined");
+    const aliases = Array.isArray(value) ? value : [value];
+    aliasMap.set(key, new Set(aliases));
+    aliases.forEach((alias) => {
+      aliasMap.set(
+        alias,
+        new Set([key, ...aliases.filter((candidate) => candidate !== alias)]),
+      );
+    });
+  }
+
+  if (boolean) {
+    if (typeof boolean === "boolean") {
+      allBools = boolean;
+    } else {
+      const booleanArgs = Array.isArray(boolean) ? boolean : [boolean];
+      for (const key of booleanArgs.filter(Boolean)) {
+        booleanSet.add(key);
+        aliasMap.get(key)?.forEach((alias) => booleanSet.add(alias));
+      }
+    }
+  }
+
+  if (string) {
+    const stringArgs = Array.isArray(string) ? string : [string];
+    for (const key of stringArgs.filter(Boolean)) {
+      stringSet.add(key);
+      aliasMap.get(key)?.forEach((alias) => stringSet.add(alias));
+    }
+  }
+
+  if (collect) {
+    const collectArgs = Array.isArray(collect) ? collect : [collect];
+    for (const key of collectArgs.filter(Boolean)) {
+      collectSet.add(key);
+      aliasMap.get(key)?.forEach((alias) => collectSet.add(alias));
+    }
+  }
+
+  if (negatable) {
+    const negatableArgs = Array.isArray(negatable) ? negatable : [negatable];
+    for (const key of negatableArgs.filter(Boolean)) {
+      negatableSet.add(key);
+      aliasMap.get(key)?.forEach((alias) => negatableSet.add(alias));
+    }
+  }
+
+  const parsed: Args = { _: [] };
+
+  function setArgument(
+    key: string,
+    inputValue: string | number | boolean,
+    arg: string,
+    collectValue: boolean,
+  ): void {
+    if (
+      !booleanSet.has(key) &&
+      !stringSet.has(key) &&
+      !aliasMap.has(key) &&
+      !collectSet.has(key) &&
+      !(allBools && FLAG_NAME_REGEXP.test(arg)) &&
+      unknownFn(arg, key, inputValue) === false
+    ) {
+      return;
+    }
+
+    const value = typeof inputValue === "string" && !stringSet.has(key) &&
+        isNumber(inputValue)
+      ? Number(inputValue)
+      : inputValue;
+    const collectable = collectValue && collectSet.has(key);
+    setNested(parsed, key.split("."), value, collectable);
+    aliasMap.get(key)?.forEach((alias) => {
+      setNested(parsed, alias.split("."), value, collectable);
+    });
+  }
+
+  let args = inputArgs;
+  let notFlags: readonly string[] = [];
+  const doubleDashIndex = args.indexOf("--");
+  if (doubleDashIndex !== -1) {
+    notFlags = args.slice(doubleDashIndex + 1);
+    args = args.slice(0, doubleDashIndex);
+  }
+
+  argsLoop:
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    const groups = arg.match(FLAG_REGEXP)?.groups;
+
+    if (groups) {
+      const { doubleDash: isDoubleDash, negated } = groups;
+      let key = groups.key!;
+      let value: string | number | boolean | undefined = groups.value;
+
+      if (isDoubleDash) {
+        if (value != null) {
+          if (booleanSet.has(key)) value = parseBooleanString(value);
+          setArgument(key, value, arg, true);
+          continue;
+        }
+
+        if (negated) {
+          if (negatableSet.has(key)) {
+            setArgument(key, false, arg, false);
+            continue;
+          }
+          key = `no-${key}`;
+        }
+
+        const next = args[index + 1];
+        if (next) {
+          if (
+            !booleanSet.has(key) &&
+            !allBools &&
+            !next.startsWith("-") &&
+            (!aliasMap.has(key) || !aliasIsBoolean(aliasMap, booleanSet, key))
+          ) {
+            index++;
+            setArgument(key, next, arg, true);
+            continue;
+          }
+          if (isBooleanString(next)) {
+            index++;
+            setArgument(key, parseBooleanString(next), arg, true);
+            continue;
+          }
+        }
+
+        setArgument(key, stringSet.has(key) ? "" : true, arg, true);
         continue;
       }
 
-      const existing = result[k];
-      if (!Array.isArray(existing)) {
-        result[k] = existing !== undefined ? [existing] : [];
+      const letters = arg.slice(1, -1).split("");
+      for (const [letterIndex, letter] of letters.entries()) {
+        const next = arg.slice(letterIndex + 2);
+        if (next === "-") {
+          setArgument(letter, next, arg, true);
+          continue;
+        }
+        if (next === "=") {
+          setArgument(letter, "", arg, true);
+          continue argsLoop;
+        }
+        if (LETTER_REGEXP.test(letter)) {
+          const valueGroups = VALUE_REGEXP.exec(next)?.groups;
+          if (valueGroups) {
+            setArgument(letter, valueGroups.value!, arg, true);
+            continue argsLoop;
+          }
+          if (NUMBER_REGEXP.test(next)) {
+            setArgument(letter, next, arg, true);
+            continue argsLoop;
+          }
+        }
+        if (letters[letterIndex + 1]?.match(SPECIAL_CHAR_REGEXP)) {
+          setArgument(letter, arg.slice(letterIndex + 2), arg, true);
+          continue argsLoop;
+        }
+        setArgument(letter, stringSet.has(letter) ? "" : true, arg, true);
       }
-      (result[k] as unknown[]).push(value);
+
+      key = arg.slice(-1);
+      if (key === "-") continue;
+      const next = args[index + 1];
+      if (next) {
+        if (
+          !HYPHEN_REGEXP.test(next) &&
+          !booleanSet.has(key) &&
+          (!aliasMap.has(key) || !aliasIsBoolean(aliasMap, booleanSet, key))
+        ) {
+          setArgument(key, next, arg, true);
+          index++;
+          continue;
+        }
+        if (isBooleanString(next)) {
+          setArgument(key, parseBooleanString(next), arg, true);
+          index++;
+          continue;
+        }
+      }
+      setArgument(key, stringSet.has(key) ? "" : true, arg, true);
+      continue;
+    }
+
+    if (unknownFn(arg) !== false) {
+      parsed._.push(stringSet.has("_") || !isNumber(arg) ? arg : Number(arg));
+    }
+    if (stopEarly) {
+      parsed._.push(...args.slice(index + 1));
+      break;
     }
   }
 
   for (const [key, value] of Object.entries(defaults)) {
-    result[key] = value;
+    const keys = key.split(".");
+    if (!hasNested(parsed, keys)) {
+      setNested(parsed, keys, value);
+      aliasMap.get(key)?.forEach((alias) => {
+        setNested(parsed, alias.split("."), value);
+      });
+    }
   }
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    if (arg === "--") {
-      const rest = args.slice(i + 1);
-      if (options["--"]) result["--"] = rest;
-      else result._.push(...rest);
-      break;
+  for (const key of booleanSet) {
+    const keys = key.split(".");
+    if (!hasNested(parsed, keys)) {
+      setNested(parsed, keys, collectSet.has(key) ? [] : false);
     }
-
-    if (arg.startsWith("--")) {
-      const eqIndex = arg.indexOf("=");
-      if (eqIndex !== -1) {
-        const key = arg.slice(2, eqIndex);
-        const value = arg.slice(eqIndex + 1);
-        const realKey = aliasMap[key] ?? key;
-        setWithAliases(realKey, strings.has(realKey) ? value : parseValue(value));
-        continue;
-      }
-
-      const key = arg.slice(2);
-      const realKey = aliasMap[key] ?? key;
-
-      if (key.startsWith("no-") && negatables.size > 0) {
-        const baseKey = key.slice(3);
-        if (negatables.has(baseKey)) {
-          setWithAliases(baseKey, false);
-          continue;
-        }
-      }
-
-      if (booleans.has(realKey) || options.boolean === true) {
-        setWithAliases(realKey, true);
-        continue;
-      }
-
-      const nextArg = args[i + 1];
-      const hasValue = nextArg !== undefined && !nextArg.startsWith("-");
-
-      if (strings.has(realKey)) {
-        if (hasValue) {
-          setWithAliases(realKey, nextArg);
-          i++;
-        } else {
-          setWithAliases(realKey, "");
-        }
-        continue;
-      }
-
-      if (hasValue) {
-        setWithAliases(realKey, parseValue(nextArg));
-        i++;
-      } else {
-        setWithAliases(realKey, true);
-      }
-      continue;
-    }
-
-    if (arg.startsWith("-") && arg.length > 1) {
-      const chars = arg.slice(1);
-      const eqIndex = chars.indexOf("=");
-
-      if (eqIndex !== -1) {
-        const key = chars.slice(0, eqIndex);
-        const value = chars.slice(eqIndex + 1);
-        const realKey = aliasMap[key] ?? key;
-        setWithAliases(realKey, strings.has(realKey) ? value : parseValue(value));
-        continue;
-      }
-
-      if (chars.length === 1) {
-        const key = chars;
-        const realKey = aliasMap[key] ?? key;
-
-        if (booleans.has(realKey) || options.boolean === true) {
-          setWithAliases(realKey, true);
-          continue;
-        }
-
-        const nextArg = args[i + 1];
-        const hasValue = nextArg !== undefined && !nextArg.startsWith("-");
-
-        if (hasValue) {
-          setWithAliases(realKey, strings.has(realKey) ? nextArg : parseValue(nextArg));
-          i++;
-        } else {
-          setWithAliases(realKey, true);
-        }
-        continue;
-      }
-
-      for (const char of chars) {
-        const realKey = aliasMap[char] ?? char;
-        setWithAliases(realKey, true);
-      }
-      continue;
-    }
-
-    if (options.stopEarly) {
-      result._.push(arg, ...args.slice(i + 1));
-      break;
-    }
-
-    result._.push(parseValue(arg));
   }
 
-  return result;
+  for (const key of stringSet) {
+    const keys = key.split(".");
+    if (!hasNested(parsed, keys) && collectSet.has(key)) {
+      setNested(parsed, keys, []);
+    }
+  }
+
+  if (doubleDash) parsed["--"] = [...notFlags];
+  else parsed._.push(...notFlags);
+  return parsed;
 }
 
-export let parse: (args: string[], options?: ParseOptions) => Args;
+export let parseArgs: (
+  args: readonly string[],
+  options?: ParseOptions,
+) => Args;
 
 if (isDeno) {
   const stdFlags = await import("#std/flags.ts");
-  parse = stdFlags.parse as (args: string[], options?: ParseOptions) => Args;
+  parseArgs = stdFlags.parseArgs as typeof parseArgs;
 } else {
-  parse = nodeParse;
+  parseArgs = nodeParseArgs;
 }
+
+/** @deprecated Use {@linkcode parseArgs}. */
+export { parseArgs as parse };

@@ -13,6 +13,12 @@ describe("logging", () => {
   const originalConsoleError = console.error;
   const originalNodeEnv = Deno.env.get("NODE_ENV");
 
+  function firstConsoleError(): string {
+    const output = consoleErrorOutput[0];
+    if (output === undefined) throw new Error("Expected console error output");
+    return output;
+  }
+
   beforeEach(() => {
     consoleErrorOutput = [];
     // Mock console.error to capture output
@@ -50,7 +56,7 @@ describe("logging", () => {
         assertStringIncludes(output, "Detail: Missing veryfront.config.ts");
         assertStringIncludes(
           output,
-          "💡 Suggestion: Run 'vf init' to create a configuration file",
+          "💡 Suggestion: Run 'veryfront init' to create a configuration file",
         );
         assertStringIncludes(output, "📚 Docs: https://veryfront.com/docs/errors/config-not-found");
       });
@@ -63,6 +69,7 @@ describe("logging", () => {
         const output = consoleErrorOutput.join("\n");
         assertStringIncludes(output, "Context:");
         assertStringIncludes(output, "projectPath");
+        assertEquals(output.includes("/foo/bar"), false);
       });
 
       it("should handle errors without detail or suggestion", () => {
@@ -112,7 +119,7 @@ describe("logging", () => {
         logError(error);
 
         assertEquals(consoleErrorOutput.length, 1);
-        const parsed = JSON.parse(consoleErrorOutput[0]);
+        const parsed = JSON.parse(firstConsoleError());
 
         assertEquals(parsed.level, "error");
         assertEquals(parsed.slug, "config-not-found");
@@ -129,8 +136,8 @@ describe("logging", () => {
 
         logError(error, { componentPath: "/app/page.tsx" });
 
-        const parsed = JSON.parse(consoleErrorOutput[0]);
-        assertEquals(parsed.context.componentPath, "/app/page.tsx");
+        const parsed = JSON.parse(firstConsoleError());
+        assertEquals(parsed.context.componentPath, "<LOCAL_PATH>");
       });
 
       it("redacts credential-like context keys in JSON output (#1989)", () => {
@@ -138,10 +145,10 @@ describe("logging", () => {
 
         logError(error, { userId: "u-1", token: "sk-secret" });
 
-        const parsed = JSON.parse(consoleErrorOutput[0]);
+        const parsed = JSON.parse(firstConsoleError());
         assertEquals(parsed.context.token, "[REDACTED]");
         assertEquals(parsed.context.userId, "u-1");
-        assertEquals(consoleErrorOutput[0].includes("sk-secret"), false);
+        assertEquals(firstConsoleError().includes("sk-secret"), false);
       });
 
       it("should merge error context with extra context and prefer extra values", () => {
@@ -157,7 +164,7 @@ describe("logging", () => {
           requestId: "req-123",
         });
 
-        const parsed = JSON.parse(consoleErrorOutput[0]);
+        const parsed = JSON.parse(firstConsoleError());
         assertEquals(parsed.context.source, "error");
         assertEquals(parsed.context.shared, "override");
         assertEquals(parsed.context.requestId, "req-123");
@@ -170,8 +177,8 @@ describe("logging", () => {
 
         logError(error);
 
-        const parsed = JSON.parse(consoleErrorOutput[0]);
-        assertEquals(parsed.context.path, "/config");
+        const parsed = JSON.parse(firstConsoleError());
+        assertEquals(parsed.context.path, "<LOCAL_PATH>");
       });
 
       it("should handle errors without optional fields", () => {
@@ -179,9 +186,73 @@ describe("logging", () => {
 
         logError(error);
 
-        const parsed = JSON.parse(consoleErrorOutput[0]);
+        const parsed = JSON.parse(firstConsoleError());
         assertEquals(parsed.slug, "render-error");
         assertEquals(parsed.detail, undefined);
+      });
+
+      it("removes credentials and local paths from free-form detail", () => {
+        const error = CONFIG_NOT_FOUND.create({
+          detail: "password=<TOKEN> at /private/project/veryfront.config.ts",
+        });
+
+        logError(error);
+
+        assertEquals(firstConsoleError().includes("<TOKEN>"), false);
+        assertEquals(firstConsoleError().includes("/private/project"), false);
+      });
+
+      it("fails closed for hostile context properties", () => {
+        const context = Object.defineProperty({}, "payload", {
+          enumerable: true,
+          get() {
+            throw new Error("getter failed with <TOKEN>");
+          },
+        });
+
+        logError(CONFIG_NOT_FOUND.create(), context);
+
+        assertEquals(consoleErrorOutput.length, 1);
+        assertEquals(firstConsoleError().includes("<TOKEN>"), false);
+      });
+
+      it("fails closed when extra context is hostile and error context exists", () => {
+        const context = Object.defineProperty({}, "payload", {
+          enumerable: true,
+          get() {
+            throw new Error("getter failed with password=<TOKEN>");
+          },
+        });
+        const error = CONFIG_NOT_FOUND.create({ context: { source: "error" } });
+
+        logError(error, context);
+
+        assertEquals(consoleErrorOutput.length, 1);
+        assertEquals(firstConsoleError().includes("<TOKEN>"), false);
+      });
+
+      it("fails closed for hostile mutable error properties", () => {
+        const error = CONFIG_NOT_FOUND.create();
+        Object.defineProperty(error, "title", {
+          get() {
+            throw new Error("getter leaked password=<TOKEN>");
+          },
+        });
+
+        logError(error);
+
+        const parsed = JSON.parse(firstConsoleError());
+        assertEquals(parsed.slug, "unknown-error");
+        assertEquals(parsed.title, "Unknown/unclassified error");
+        assertEquals(firstConsoleError().includes("<TOKEN>"), false);
+      });
+
+      it("does not let a broken output sink replace the application flow", () => {
+        console.error = () => {
+          throw new Error("sink unavailable");
+        };
+
+        logError(CONFIG_NOT_FOUND.create());
       });
     });
   });
@@ -196,7 +267,7 @@ describe("logging", () => {
 
       logErrorWithMessage("Failed to load project config", error, { retry: 3 });
 
-      const parsed = JSON.parse(consoleErrorOutput[0]);
+      const parsed = JSON.parse(firstConsoleError());
       assertEquals(parsed.context.operation, "Failed to load project config");
       assertEquals(parsed.context.retry, 3);
     });
@@ -206,7 +277,7 @@ describe("logging", () => {
 
       logErrorWithMessage("Component rendering failed", error);
 
-      const parsed = JSON.parse(consoleErrorOutput[0]);
+      const parsed = JSON.parse(firstConsoleError());
       assertEquals(parsed.context.operation, "Component rendering failed");
     });
 
@@ -223,11 +294,26 @@ describe("logging", () => {
         requestId: "req-456",
       });
 
-      const parsed = JSON.parse(consoleErrorOutput[0]);
+      const parsed = JSON.parse(firstConsoleError());
       assertEquals(parsed.context.operation, "Failed to load config");
       assertEquals(parsed.context.source, "error");
       assertEquals(parsed.context.shared, "override");
       assertEquals(parsed.context.requestId, "req-456");
+    });
+
+    it("sanitizes hostile operation context before merging", () => {
+      const context = Object.defineProperty({}, "payload", {
+        enumerable: true,
+        get() {
+          throw new Error("getter failed with password=<TOKEN>");
+        },
+      });
+
+      logErrorWithMessage("Failed at /private/project/file.ts", CONFIG_NOT_FOUND.create(), context);
+
+      const parsed = JSON.parse(firstConsoleError());
+      assertEquals(parsed.context.operation.includes("/private/project"), false);
+      assertEquals(firstConsoleError().includes("<TOKEN>"), false);
     });
   });
 });

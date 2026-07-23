@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";
 import {
@@ -8,6 +8,7 @@ import {
   getImageDimensions,
   getStandardPseudoSelectors,
   getVariantPath,
+  globFiles,
   isPseudoSelector,
 } from "./asset-utils.ts";
 
@@ -24,6 +25,32 @@ function createMetadata(
 }
 
 describe("build/utils/asset-utils", () => {
+  describe("globFiles", () => {
+    it("bounds matching file materialization", async () => {
+      const dir = await Deno.makeTempDir();
+      try {
+        await Deno.writeTextFile(`${dir}/one.ts`, "");
+        await Deno.writeTextFile(`${dir}/two.ts`, "");
+
+        await assertRejects(
+          () => globFiles(`${dir}/*.ts`, { maxResults: 1 }),
+          TypeError,
+          "maxResults",
+        );
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("validates explicit scan limits", async () => {
+      await assertRejects(
+        () => globFiles("*.ts", { maxScannedEntries: 0 }),
+        TypeError,
+        "maxScannedEntries",
+      );
+    });
+  });
+
   describe("isPseudoSelector", () => {
     it("should detect pseudo selectors", () => {
       assertEquals(isPseudoSelector(":hover"), true);
@@ -60,6 +87,42 @@ describe("build/utils/asset-utils", () => {
       assertEquals(result.includes("deep/nested/"), true);
       assertEquals(result.includes("img-400w.avif"), true);
     });
+
+    it("rejects paths that escape the image input directory", () => {
+      assertThrows(
+        () => getVariantPath("/out", "../secret.jpg", "webp", 400),
+        TypeError,
+        "relative",
+      );
+      assertThrows(
+        () => getVariantPath("/out", "/secret.jpg", "webp", 400),
+        TypeError,
+        "relative",
+      );
+    });
+
+    it("rejects invalid target widths", () => {
+      assertThrows(
+        () => getVariantPath("/out", "hero.jpg", "webp", 0),
+        TypeError,
+        "positive integer",
+      );
+    });
+
+    it("rejects unsafe paths and runtime format values", () => {
+      for (const path of ["images//hero.jpg", "./hero.jpg", "images/../hero.jpg", "hero\n.jpg"]) {
+        assertThrows(
+          () => getVariantPath("/out", path, "webp", 400),
+          TypeError,
+          "safe relative path",
+        );
+      }
+      assertThrows(
+        () => getVariantPath("/out", "hero.jpg", "../../js" as never, 400),
+        TypeError,
+        "Unsupported image variant format",
+      );
+    });
   });
 
   describe("calculateAspectRatio", () => {
@@ -68,10 +131,21 @@ describe("build/utils/asset-utils", () => {
       assertEquals(calculateAspectRatio(100, 100), 1);
     });
 
-    it("should return 1 for undefined dimensions", () => {
-      assertEquals(calculateAspectRatio(undefined, 100), 1);
-      assertEquals(calculateAspectRatio(100, undefined), 1);
-      assertEquals(calculateAspectRatio(undefined, undefined), 1);
+    it("rejects missing, non-finite, and non-positive dimensions", () => {
+      for (
+        const [width, height] of [
+          [undefined, 100],
+          [100, undefined],
+          [0, 100],
+          [100, Number.NaN],
+        ] as const
+      ) {
+        assertThrows(
+          () => calculateAspectRatio(width, height),
+          TypeError,
+          "positive finite",
+        );
+      }
     });
   });
 
@@ -107,9 +181,11 @@ describe("build/utils/asset-utils", () => {
         ],
       });
 
-      const srcSet = generateSrcSet("hero.jpg", metadata, "assets");
-      assertEquals(srcSet.includes("400w"), true);
-      assertEquals(srcSet.includes("800w"), true);
+      const srcSet = generateSrcSet("hero.jpg", metadata, "/assets");
+      assertEquals(
+        srcSet,
+        "/assets/hero-400w.webp 400w, /assets/hero-800w.webp 800w",
+      );
     });
 
     it("should filter by specified format", () => {
@@ -134,9 +210,71 @@ describe("build/utils/asset-utils", () => {
         ],
       });
 
-      const srcSet = generateSrcSet("img.jpg", metadata, "assets", "avif");
+      const srcSet = generateSrcSet("img.jpg", metadata, "/assets", "avif");
       assertEquals(srcSet.includes("avif"), true);
       assertEquals(srcSet.includes("webp"), false);
+    });
+
+    it("encodes variant path segments without exposing filesystem paths", () => {
+      const metadata = createMetadata({
+        original: "hero.jpg",
+        variants: [{
+          path: "blog/hero image.webp",
+          format: "webp",
+          width: 800,
+          height: 600,
+          size: 1000,
+          fileSize: 1000,
+        }],
+      });
+
+      assertEquals(
+        generateSrcSet("hero.jpg", metadata, "/.veryfront/optimized-images"),
+        "/.veryfront/optimized-images/blog/hero%20image.webp 800w",
+      );
+    });
+
+    it("rejects an unsafe public path", () => {
+      const metadata = createMetadata({
+        original: "hero.jpg",
+        variants: [{
+          path: "hero.webp",
+          format: "webp",
+          width: 800,
+          height: 600,
+          size: 1000,
+          fileSize: 1000,
+        }],
+      });
+
+      assertThrows(
+        () => generateSrcSet("hero.jpg", metadata, "assets"),
+        TypeError,
+        "publicPath",
+      );
+    });
+
+    it("rejects mismatched metadata and missing format variants", () => {
+      const metadata = createMetadata({
+        variants: [{
+          path: "img-400w.webp",
+          format: "webp",
+          width: 400,
+          height: 300,
+          size: 1000,
+          fileSize: 1000,
+        }],
+      });
+      assertThrows(
+        () => generateSrcSet("other.jpg", metadata, "/assets"),
+        TypeError,
+        "does not match",
+      );
+      assertThrows(
+        () => generateSrcSet("img.jpg", metadata, "/assets", "avif"),
+        TypeError,
+        "no variants",
+      );
     });
   });
 
@@ -168,7 +306,7 @@ describe("build/utils/asset-utils", () => {
       assertEquals(dims.height, 600);
     });
 
-    it("should fallback to first variant", () => {
+    it("rejects metadata without a default-format variant", () => {
       const metadata = createMetadata({
         defaultFormat: "png",
         variants: [
@@ -183,9 +321,36 @@ describe("build/utils/asset-utils", () => {
         ],
       });
 
-      const dims = getImageDimensions(metadata);
-      assertEquals(dims.width, 400);
-      assertEquals(dims.height, 300);
+      assertThrows(
+        () => getImageDimensions(metadata),
+        Error,
+        "No default-format image variants",
+      );
+    });
+
+    it("returns the largest default-format variant", () => {
+      const metadata = createMetadata({
+        variants: [
+          {
+            path: "img-400w.webp",
+            format: "webp",
+            width: 400,
+            height: 300,
+            size: 1000,
+            fileSize: 1000,
+          },
+          {
+            path: "img-1200w.webp",
+            format: "webp",
+            width: 1200,
+            height: 900,
+            size: 3000,
+            fileSize: 3000,
+          },
+        ],
+      });
+
+      assertEquals(getImageDimensions(metadata), { width: 1200, height: 900 });
     });
 
     it("should throw if no variants", () => {

@@ -26,6 +26,9 @@ describe("transforms/import-rewriter/types", () => {
       ["myproject@1.0.0/@/components", "cross-project"],
       ["lodash", "bare"],
       ["@tanstack/react-query", "bare"],
+      ["lodash/../private", "unknown"],
+      ["jsr:@scope/package", "unknown"],
+      ["myproject/@/../private", "unknown"],
     ];
 
     for (const [specifier, expected] of cases) {

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CacheManager } from "./css-bundle-cache.ts";
 
@@ -40,6 +45,22 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
       assertEquals(cache.getBundle("style.css"), bundle);
     });
 
+    it("does not expose mutable bundle state", () => {
+      const cache = new CacheManager();
+      const bundle = createBundle({ file: "style.css" });
+      cache.addBundle("style.css", bundle);
+
+      bundle.content = "forged";
+      const retrieved = cache.getBundle("style.css");
+      assertNotEquals(retrieved?.content, "forged");
+
+      const all = cache.getAllBundles();
+      all.get("style.css")!.content = "also-forged";
+      all.clear();
+      assertEquals(cache.size(), 1);
+      assertNotEquals(cache.getBundle("style.css")?.content, "also-forged");
+    });
+
     it("should return undefined for missing key", () => {
       const cache = new CacheManager();
       assertEquals(cache.getBundle("missing.css"), undefined);
@@ -71,12 +92,29 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
       assertEquals(all.has("b.css"), true);
     });
 
+    it("rejects unsafe keys and malformed bundle statistics", () => {
+      const cache = new CacheManager();
+      assertThrows(
+        () => cache.addBundle("../style.css", createBundle({ file: "../style.css" })),
+        TypeError,
+      );
+      assertThrows(
+        () => cache.addBundle("style.css", createBundle({ file: "style.css", size: 1.5 })),
+        TypeError,
+      );
+    });
+
+    it("rejects a blank manifest output directory before writing", async () => {
+      const cache = new CacheManager();
+      await assertRejects(() => cache.writeManifest(" "), TypeError, "must not be blank");
+    });
+
     describe("getStats", () => {
       it("should compute stats from bundles", () => {
         const cache = new CacheManager();
 
-        cache.addBundle("a.css", createBundle({ size: 200, minifiedSize: 150 }));
-        cache.addBundle("b.css", createBundle({ size: 300, minifiedSize: 200 }));
+        cache.addBundle("a.css", createBundle({ file: "a.css", size: 200, minifiedSize: 150 }));
+        cache.addBundle("b.css", createBundle({ file: "b.css", size: 300, minifiedSize: 200 }));
 
         const stats = cache.getStats();
 
@@ -101,7 +139,7 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
       it("should cache stats and invalidate on add", () => {
         const cache = new CacheManager();
 
-        cache.addBundle("a.css", createBundle({ size: 100, minifiedSize: 80 }));
+        cache.addBundle("a.css", createBundle({ file: "a.css", size: 100, minifiedSize: 80 }));
 
         const stats1 = cache.getStats();
         const stats2 = cache.getStats();
@@ -109,7 +147,7 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
         assertEquals(stats1.totalFiles, 1);
         assertEquals(stats1, stats2);
 
-        cache.addBundle("b.css", createBundle({ size: 200, minifiedSize: 100 }));
+        cache.addBundle("b.css", createBundle({ file: "b.css", size: 200, minifiedSize: 100 }));
 
         const stats3 = cache.getStats();
         assertEquals(stats3.totalFiles, 2);
@@ -118,7 +156,7 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
       it("should invalidate stats cache on clear", () => {
         const cache = new CacheManager();
 
-        cache.addBundle("a.css", createBundle({ size: 100, minifiedSize: 80 }));
+        cache.addBundle("a.css", createBundle({ file: "a.css", size: 100, minifiedSize: 80 }));
         cache.getStats(); // populate cache
 
         cache.clear();
@@ -132,7 +170,7 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
       it("should format savings string correctly", () => {
         const cache = new CacheManager();
 
-        cache.addBundle("a.css", createBundle({ size: 1024, minifiedSize: 512 }));
+        cache.addBundle("a.css", createBundle({ file: "a.css", size: 1024, minifiedSize: 512 }));
 
         const result = cache.getTotalSavings();
 
@@ -144,7 +182,7 @@ describe("build/asset-pipeline/css-optimizer/css-bundle-cache", () => {
       it("should handle zero original size", () => {
         const cache = new CacheManager();
 
-        cache.addBundle("a.css", createBundle({ size: 0, minifiedSize: 0 }));
+        cache.addBundle("a.css", createBundle({ file: "a.css", size: 0, minifiedSize: 0 }));
 
         const result = cache.getTotalSavings();
         assertEquals(result.includes("0.0%"), true);

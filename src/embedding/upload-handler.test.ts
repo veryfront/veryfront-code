@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -68,6 +73,193 @@ describe("createUploadHandler", () => {
     assertStringIncludes(warnings[0] ?? "", "createUploadHandler");
     assertStringIncludes(warnings[0] ?? "", "auth");
     assertStringIncludes(warnings[0] ?? "", "allowUnauthenticated");
+  });
+
+  it("rejects invalid file-size policies at registration", () => {
+    assertThrows(
+      () =>
+        createUploadHandler(createStubStore(), {
+          maxFileSize: 0,
+          auth: { type: "none", allowUnauthenticated: true },
+        }),
+      Error,
+      "maxFileSize must be a positive integer",
+    );
+    assertThrows(
+      () =>
+        createUploadHandler(createStubStore(), {
+          maxFileSize: Number.POSITIVE_INFINITY,
+          auth: { type: "none", allowUnauthenticated: true },
+        }),
+      Error,
+      "maxFileSize must be a positive integer",
+    );
+  });
+
+  it("rejects declared oversized requests before parsing multipart data", async () => {
+    const { POST } = createUploadHandler(createStubStore(), {
+      maxFileSize: 16,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const response = await POST(
+      new Request("http://test/uploads", {
+        method: "POST",
+        headers: {
+          "content-length": "2000000",
+          "content-type": "multipart/form-data; boundary=test",
+        },
+        body: "not parsed",
+      }),
+    );
+
+    assertEquals(response.status, 413);
+  });
+
+  it("bounds streamed multipart bodies before parsing", async () => {
+    const { POST } = createUploadHandler(createStubStore(), {
+      maxFileSize: 16,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1_100_000));
+        controller.close();
+      },
+    });
+
+    const response = await POST(
+      new Request("http://test/uploads", {
+        method: "POST",
+        body,
+        headers: { "content-type": "multipart/form-data; boundary=test" },
+      }),
+    );
+
+    assertEquals(response.status, 413);
+  });
+
+  it("returns a client error for malformed multipart requests", async () => {
+    const { POST } = createUploadHandler(createStubStore(), {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const response = await POST(
+      new Request("http://test/uploads", {
+        method: "POST",
+        body: "not multipart",
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), { error: "Invalid multipart form data" });
+  });
+
+  it("returns a client error for invalid uploaded text", async () => {
+    let ingestCalls = 0;
+    const { POST } = createUploadHandler(
+      createStubStore({
+        async ingest(): Promise<string> {
+          ingestCalls++;
+          return "unexpected";
+        },
+      }),
+      { auth: { type: "none", allowUnauthenticated: true } },
+    );
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([new Uint8Array([0xff])], "invalid.txt", { type: "text/plain" }),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), { error: "Uploaded file content is invalid" });
+    assertEquals(ingestCalls, 0);
+  });
+
+  it("uses payload-too-large status for an oversized multipart file", async () => {
+    const { POST } = createUploadHandler(createStubStore(), {
+      maxFileSize: 16,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const formData = new FormData();
+    formData.append("file", new File(["x".repeat(17)], "large.txt", { type: "text/plain" }));
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 413);
+  });
+
+  it("rejects extracted text that exceeds the RAG document boundary", async () => {
+    let ingestCalls = 0;
+    const { POST } = createUploadHandler(
+      createStubStore({
+        async ingest(): Promise<string> {
+          ingestCalls++;
+          return "unexpected";
+        },
+      }),
+      { auth: { type: "none", allowUnauthenticated: true } },
+    );
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File(["x".repeat(5 * 1024 * 1024 + 1)], "large.txt", { type: "text/plain" }),
+    );
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+
+    assertEquals(response.status, 413);
+    assertEquals(ingestCalls, 0);
+  });
+
+  it("does not expose storage failures in upload responses", async () => {
+    const store = createStubStore({
+      async ingest(): Promise<string> {
+        throw new Error("private provider detail <TOKEN>");
+      },
+    });
+    const { POST } = createUploadHandler(store, {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const formData = new FormData();
+    formData.append("file", new File(["content"], "guide.txt", { type: "text/plain" }));
+
+    const response = await POST(
+      new Request("http://test/uploads", { method: "POST", body: formData }),
+    );
+    const body = await response.json();
+
+    assertEquals(response.status, 500);
+    assertEquals(body, { error: "Upload failed" });
+  });
+
+  it("rejects malformed delete IDs before store access", async () => {
+    let removeCalls = 0;
+    const { DELETE } = createUploadHandler(
+      createStubStore({
+        async removeDocument(): Promise<void> {
+          removeCalls++;
+        },
+      }),
+      { auth: { type: "none", allowUnauthenticated: true } },
+    );
+
+    const response = await DELETE(
+      new Request(`http://test/uploads?id=${"x".repeat(513)}`, { method: "DELETE" }),
+      { params: {} },
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(removeCalls, 0);
   });
 
   it("rejects upload routes before store access when auth denies", async () => {
@@ -209,6 +401,71 @@ describe("createUploadHandler", () => {
       mediaType: "text/plain",
       size: 0,
     });
+  });
+
+  it("does not expose unsafe source URLs in upload listings", async () => {
+    const store = createStubStore({
+      async listDocuments() {
+        return [{
+          id: "doc-123",
+          title: "guide.txt",
+          source: "upload:guide.txt",
+          type: "txt",
+          createdAt: 1,
+          url: "javascript:alert(1)",
+        }];
+      },
+    });
+    const { GET } = createUploadHandler(store, {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const response = await GET(new Request("http://test/uploads"));
+    const body = await response.json() as { items: Array<Record<string, unknown>> };
+
+    assertEquals(response.status, 200);
+    assertEquals(body.items[0]?.url, undefined);
+  });
+
+  it("does not expose or delete non-upload RAG documents", async () => {
+    const removed: string[] = [];
+    const store = createStubStore({
+      async listDocuments() {
+        return [
+          {
+            id: "upload-1",
+            title: "guide.txt",
+            source: "upload:guide.txt",
+            type: "txt",
+            createdAt: 1,
+          },
+          {
+            id: "knowledge-1",
+            title: "runbook",
+            source: "knowledge/runbook.md",
+            type: "md",
+            createdAt: 1,
+          },
+        ];
+      },
+      async removeDocument(id: string): Promise<void> {
+        removed.push(id);
+      },
+    });
+    const { GET, DELETE } = createUploadHandler(store, {
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const listResponse = await GET(new Request("http://test/uploads"));
+    const listBody = await listResponse.json() as { items: Array<{ id: string }> };
+    const deleteResponse = await DELETE(
+      new Request("http://test/uploads/knowledge-1", { method: "DELETE" }),
+      { params: { id: "knowledge-1" } },
+    );
+
+    assertEquals(listBody.items.map((item) => item.id), ["upload-1"]);
+    assertEquals(deleteResponse.status, 404);
+    assertEquals(removed, []);
   });
 
   it("deletes docs-agent uploads from a query-string id", async () => {
@@ -474,7 +731,7 @@ describe("createUploadHandler", () => {
     });
   });
 
-  it("removes the document even when blob cleanup fails", async () => {
+  it("reports partial deletion when blob cleanup fails", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_uploads");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
     setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
@@ -500,8 +757,8 @@ describe("createUploadHandler", () => {
         { params: { id: "doc-123" } },
       );
 
-      // Document is removed even though blob cleanup failed (best-effort)
-      assertEquals(response.status, 200);
+      assertEquals(response.status, 500);
+      assertEquals(await response.json(), { error: "Delete failed" });
       assertEquals(removed, ["doc-123"]);
     });
   });
@@ -631,7 +888,7 @@ describe("createUploadHandler", () => {
     });
     const { POST } = createUploadHandler(store);
 
-    // Filename of only angle brackets — sanitization removes everything
+    // Sanitization removes a filename made only from angle brackets.
     const formData = new FormData();
     formData.append(
       "file",

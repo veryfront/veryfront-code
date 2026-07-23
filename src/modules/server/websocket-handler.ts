@@ -6,13 +6,51 @@ import {
 } from "#veryfront/utils";
 import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
 
+const WEBSOCKET_INTERNAL_ERROR = 1011;
+
+function getMessageSize(data: unknown): number {
+  if (typeof data === "string") return new TextEncoder().encode(data).byteLength;
+  if (data instanceof Blob) return data.size;
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  if (ArrayBuffer.isView(data)) return data.byteLength;
+  return 0;
+}
+
 export function setupWebSocketHandlers(
   socket: WebSocket,
   context: WebSocketContext,
 ): void {
+  if (!Number.isSafeInteger(context.maxMessageSize) || context.maxMessageSize <= 0) {
+    throw new RangeError("maxMessageSize must be a positive safe integer");
+  }
   context.clients.add(socket);
 
+  let cleanedUp = false;
+  function cleanup(): void {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    context.clients.delete(socket);
+    context.rateLimiter.cleanup(socket);
+  }
+
+  function closeAndCleanup(code: number, reason: string): void {
+    cleanup();
+    try {
+      if (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      ) {
+        socket.close(code, reason);
+      }
+    } catch (error) {
+      logger.debug("Failed to close HMR connection", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
+  }
+
   function sendConnectedMessage(): void {
+    if (cleanedUp || socket.readyState !== WebSocket.OPEN) return;
     logger.debug("HMR client connected", { totalClients: context.clients.size });
 
     try {
@@ -23,7 +61,10 @@ export function setupWebSocketHandlers(
         }),
       );
     } catch (error) {
-      logger.error("Failed to send connection message", error);
+      logger.error("Failed to send connection message", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      closeAndCleanup(WEBSOCKET_INTERNAL_ERROR, "Connection setup failed");
     }
   }
 
@@ -33,29 +74,23 @@ export function setupWebSocketHandlers(
     socket.onopen = sendConnectedMessage;
   }
 
-  function cleanup(): void {
-    context.clients.delete(socket);
-    context.rateLimiter.cleanup(socket);
-  }
-
   socket.onmessage = (event) => {
+    if (cleanedUp) return;
     try {
-      const messageSize = typeof event.data === "string"
-        ? event.data.length
-        : event.data.byteLength ?? 0;
+      const messageSize = getMessageSize(event.data);
 
       if (messageSize > context.maxMessageSize) {
         logger.warn("HMR message too large, closing connection", {
           size: messageSize,
           max: context.maxMessageSize,
         });
-        socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        closeAndCleanup(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
         return;
       }
 
       if (!context.rateLimiter.check(socket)) {
         logger.warn("HMR rate limit exceeded, closing connection");
-        socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
+        closeAndCleanup(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
         return;
       }
 
@@ -66,9 +101,13 @@ export function setupWebSocketHandlers(
 
       let message: { type?: string };
       try {
-        message = JSON.parse(event.data);
-      } catch (parseError) {
-        logger.warn("Failed to parse HMR message", { error: parseError });
+        const parsed: unknown = JSON.parse(event.data);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
+        const type = (parsed as { type?: unknown }).type;
+        if (type !== undefined && typeof type !== "string") return;
+        message = { type };
+      } catch {
+        logger.debug("Ignoring malformed HMR message");
         return;
       }
 
@@ -77,12 +116,12 @@ export function setupWebSocketHandlers(
         return;
       }
 
-      logger.debug("Received HMR message from client", {
-        type: message.type,
-        data: event.data.slice(0, 100),
-      });
+      logger.debug("Ignored unsupported HMR message");
     } catch (error) {
-      logger.error("Error processing HMR message", error);
+      logger.error("Error processing HMR message", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      closeAndCleanup(WEBSOCKET_INTERNAL_ERROR, "Message processing failed");
     }
   };
 
@@ -91,21 +130,22 @@ export function setupWebSocketHandlers(
     logger.debug("HMR client disconnected", { totalClients: context.clients.size });
   };
 
-  socket.onerror = (error) => {
-    logger.error("HMR WebSocket error:", error);
-    cleanup();
+  socket.onerror = () => {
+    logger.error("HMR WebSocket error");
+    closeAndCleanup(WEBSOCKET_INTERNAL_ERROR, "WebSocket error");
   };
 }
 
-export async function closeAllConnections(
+export function closeAllConnections(
   clients: Set<WebSocket>,
   rateLimiter: { cleanup(socket: WebSocket): void },
 ): Promise<void> {
   if (clients.size === 0) {
-    return;
+    return Promise.resolve();
   }
 
-  for (const client of clients) {
+  const connections = [...clients];
+  for (const client of connections) {
     try {
       if (
         client.readyState === WebSocket.OPEN ||
@@ -114,19 +154,12 @@ export async function closeAllConnections(
         client.close(HMR_CLOSE_NORMAL, "Server shutting down");
       }
     } catch (error) {
-      logger.debug("Error closing WebSocket client", error);
+      logger.debug("Error closing WebSocket client", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
     }
-  }
-
-  // WebSocket close handshake requires multiple round trips through the event loop.
-  // Alternate between microtasks and macrotasks to ensure all I/O completes.
-  for (let i = 0; i < 10; i++) {
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 50)); // no cleanup needed: one-shot
-  }
-
-  for (const client of clients) {
     rateLimiter.cleanup(client);
   }
   clients.clear();
+  return Promise.resolve();
 }

@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for CSS Optimizer Utilities
  */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
@@ -16,6 +16,7 @@ import {
   getOutputPath,
   globFiles,
   matchPattern,
+  parseBrowserTargets,
   shouldKeepSelector,
 } from "./utils.ts";
 
@@ -60,12 +61,22 @@ describe("CSS Optimizer Utils", () => {
       assert(matchPattern("test.ts", "*.{ts,tsx}"));
       assert(!matchPattern("test.js", "*.{ts,tsx}"));
     });
+
+    it("treats regular expression punctuation as literal text", () => {
+      assert(matchPattern("file+name.ts", "file+name.ts"));
+      assert(!matchPattern("filename.ts", "file+name.ts"));
+    });
   });
 
   describe("getOutputPath", () => {
     it("generates correct output path with .min suffix", () => {
       const result = getOutputPath("styles/main.css", ".output");
       assertEquals(result, ".output/styles/main.min.css");
+    });
+
+    it("rejects non-CSS and traversal paths", () => {
+      assertThrows(() => getOutputPath("styles/main.scss", ".output"), TypeError, ".css");
+      assertThrows(() => getOutputPath("../main.css", ".output"), TypeError, "escape");
     });
   });
 
@@ -154,6 +165,18 @@ describe("CSS Optimizer Utils", () => {
 
       assertEquals(minified, ".button{color:red}");
     });
+
+    it("preserves comment-like text inside quoted values", () => {
+      assertEquals(
+        basicMinify('.label::before { content: "/* keep */"; }').includes('"/* keep */"'),
+        true,
+      );
+    });
+
+    it("rejects unbalanced CSS instead of emitting corrupted output", () => {
+      assertThrows(() => basicMinify(".button { color: red"), SyntaxError, "Unterminated");
+      assertThrows(() => basicMinify(".button }"), SyntaxError, "Unexpected");
+    });
   });
 
   describe("calculateSavings", () => {
@@ -161,6 +184,27 @@ describe("CSS Optimizer Utils", () => {
       assertEquals(calculateSavings(1000, 500), 50);
       assertEquals(calculateSavings(1000, 750), 25);
       assertEquals(calculateSavings(0, 0), 0);
+    });
+  });
+
+  describe("parseBrowserTargets", () => {
+    it("encodes explicit browser versions for Lightning CSS", () => {
+      assertEquals(parseBrowserTargets({ chrome: 120, safari: 17.4 }), {
+        chrome: 120 << 16,
+        safari: (17 << 16) | (4 << 8),
+      });
+      assertEquals(parseBrowserTargets(["chrome 120", "firefox 119"]), {
+        chrome: 120 << 16,
+        firefox: 119 << 16,
+      });
+    });
+
+    it("rejects unsupported queries instead of substituting hardcoded targets", () => {
+      assertThrows(
+        () => parseBrowserTargets(["defaults", "not IE 11"]),
+        TypeError,
+        "Unsupported browser target",
+      );
     });
   });
 

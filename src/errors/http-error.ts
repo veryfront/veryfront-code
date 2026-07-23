@@ -13,24 +13,66 @@ import {
   type RFC9457Response,
   VeryfrontError,
 } from "./types.ts";
-import { getErrorMessage } from "./veryfront-error.ts";
+import { snapshotVeryfrontError } from "./error-snapshot.ts";
+import { sanitizeErrorInstance } from "./sanitization.ts";
+import { hasUnsafeControlCharacters } from "./text-validation.ts";
 
 /**
  * Content-Type header for RFC 9457 responses
  */
 export const PROBLEM_JSON_CONTENT_TYPE = "application/problem+json";
 
+/** Security headers applied to every problem-details response. */
+export const PROBLEM_RESPONSE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  "Cache-Control": "no-store",
+  "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
+  "X-Content-Type-Options": "nosniff",
+});
+
+/** Minimal request context accepted by the generated HTTP error handler. */
+export interface ErrorHandlerContext {
+  /** Request metadata used to derive the RFC 9457 instance path. */
+  readonly req: {
+    /** Absolute request URL. */
+    readonly url: string;
+  };
+}
+
+/** HTTP error handler returned by {@link createErrorHandler}. */
+export type ErrorRequestHandler = (
+  error: unknown,
+  context: ErrorHandlerContext,
+) => Response;
+
 /**
  * Create an RFC 9457 compliant error Response
  */
-export function createErrorResponse(error: VeryfrontError): Response {
-  const body = error.toRFC9457();
+export function createErrorResponse(error: VeryfrontError, instance?: string): Response {
+  const snapshot = snapshotVeryfrontError(error);
+  const body: RFC9457Response = {
+    type: `https://veryfront.com/docs/errors/${snapshot.slug}`,
+    title: snapshot.title,
+    status: snapshot.status,
+    category: snapshot.category,
+    detail: snapshot.detail,
+    instance: snapshot.instance,
+    suggestion: snapshot.suggestion,
+  };
+  if (
+    typeof instance === "string" && instance.length <= 4_096 &&
+    !hasUnsafeControlCharacters(instance) && !body.instance
+  ) {
+    body.instance = sanitizeErrorInstance(instance);
+  }
+
+  if (body.status >= 500) {
+    delete body.detail;
+  }
+  delete body.cause;
 
   return new Response(JSON.stringify(body), {
-    status: error.status,
-    headers: {
-      "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
-    },
+    status: snapshot.status,
+    headers: PROBLEM_RESPONSE_HEADERS,
   });
 }
 
@@ -62,23 +104,29 @@ export function createProblemResponse(params: {
   suggestion?: string;
   cause?: string;
 }): Response {
-  const body: RFC9457Response = {
-    type: `https://veryfront.com/docs/errors/${params.slug}`,
-    title: params.title,
-    status: params.status,
-    category: params.category,
-    detail: params.detail,
-    instance: params.instance,
-    suggestion: params.suggestion,
-    cause: params.cause,
-  };
-
-  return new Response(JSON.stringify(body), {
-    status: params.status,
-    headers: {
-      "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
-    },
-  });
+  try {
+    const slug = params.slug;
+    const title = params.title;
+    const status = params.status;
+    const category = params.category;
+    const detail = params.detail;
+    const instance = params.instance;
+    const suggestion = params.suggestion;
+    const cause = params.cause;
+    const error = new VeryfrontError(title, {
+      slug,
+      title,
+      status,
+      category,
+      detail,
+      instance,
+      suggestion,
+      cause,
+    });
+    return createErrorResponse(error);
+  } catch {
+    throw new TypeError("Invalid problem response parameters");
+  }
 }
 
 /**
@@ -96,21 +144,14 @@ export function isVeryfrontError(error: unknown): error is VeryfrontError {
  */
 export function errorToResponse(error: unknown, instance?: string): Response {
   if (isVeryfrontError(error)) {
-    if (instance && !error.instance) {
-      error.instance = instance;
-    }
-    return createErrorResponse(error);
+    return createErrorResponse(error, instance);
   }
-
-  // Wrap unknown errors
-  const message = getErrorMessage(error);
 
   return createProblemResponse({
     slug: "unknown-error",
     title: "Unknown/unclassified error",
     status: 500,
     category: "GENERAL",
-    detail: message,
     instance,
     suggestion: "Check logs for more details",
   });
@@ -124,9 +165,14 @@ export function errorToResponse(error: unknown, instance?: string): Response {
  * app.onError(createErrorHandler());
  * ```
  */
-export function createErrorHandler() {
-  return (error: unknown, c: { req: { url: string } }): Response => {
-    const instance = new URL(c.req.url).pathname;
+export function createErrorHandler(): ErrorRequestHandler {
+  return (error: unknown, c: ErrorHandlerContext): Response => {
+    let instance: string | undefined;
+    try {
+      instance = new URL(c.req.url).pathname;
+    } catch {
+      // Malformed request metadata must not replace the original error.
+    }
     return errorToResponse(error, instance);
   };
 }
@@ -135,23 +181,26 @@ export function createErrorHandler() {
  * Log format for errors (matches the plan's log format spec)
  *
  * Format:
- * [ERROR] {slug} ({category}) — {title}
+ * [ERROR] {slug} ({category}): {title}
  *   Detail: {detail}
  *   Suggestion: {suggestion}
  *   Docs: https://veryfront.com/docs/errors/{slug}
  */
 export function formatErrorLog(error: VeryfrontError): string {
-  const lines = [`[ERROR] ${error.slug} (${error.category}) — ${error.title}`];
+  const snapshot = snapshotVeryfrontError(error);
+  const lines = [
+    `[ERROR] ${snapshot.slug} (${snapshot.category}): ${snapshot.title}`,
+  ];
 
-  if (error.detail) {
-    lines.push(`  Detail: ${error.detail}`);
+  if (snapshot.detail) {
+    lines.push(`  Detail: ${snapshot.detail}`);
   }
 
-  if (error.suggestion) {
-    lines.push(`  Suggestion: ${error.suggestion}`);
+  if (snapshot.suggestion) {
+    lines.push(`  Suggestion: ${snapshot.suggestion}`);
   }
 
-  lines.push(`  Docs: ${error.getDocsUrl()}`);
+  lines.push(`  Docs: https://veryfront.com/docs/errors/${snapshot.slug}`);
 
   return lines.join("\n");
 }

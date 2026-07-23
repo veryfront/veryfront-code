@@ -1,74 +1,57 @@
 /**
- * Dev - Projects
+ * Dev project-picker surface.
+ *
+ * This surface runs before project resolution. Keep its routing in the
+ * pre-resolution runtime phase instead of registering a second route handler.
  *
  * @module server/handlers/dev/projects
  */
 
-import { BaseHandler } from "../../response/base.ts";
-import type {
-  HandlerContext,
-  HandlerMetadata,
-  HandlerPriority,
-  HandlerResult,
-} from "../../types.ts";
-import { HTTP_OK, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
+import type { HandlerContext } from "../../types.ts";
 import { PROJECTS_SHELL_HTML } from "./html-shell.ts";
 import { handleProjectsAPI } from "./api.ts";
 import { handleProjectsUI } from "./ui-handler.ts";
 import { createDevNotFoundResponse } from "../shared/not-found-response.ts";
+import {
+  createPrivateProjectsResponse,
+  isAuthorizedProjectsRequest,
+  withPrivateProjectsHeaders,
+} from "./request-policy.ts";
 
-export class ProjectsHandler extends BaseHandler {
-  metadata: HandlerMetadata = {
-    name: "ProjectsHandler",
-    priority: PRIORITY_HIGH as HandlerPriority,
-    patterns: [
-      { pattern: "/", exact: true },
-      { pattern: "/_projects", exact: false },
-    ],
-    enabled: (ctx) => {
-      const isVeryfrontDomain = ctx.parsedDomain?.isVeryfrontDomain === true;
-      const hasNoSlug = !ctx.projectSlug;
+function isProjectsSurfacePath(pathname: string): boolean {
+  return pathname === "/" || pathname === "/_projects" || pathname.startsWith("/_projects/");
+}
 
-      // Enable for veryfront domains without a project slug
-      // Works in both proxy mode and local multi-project mode
-      return isVeryfrontDomain && hasNoSlug;
-    },
-  };
+/** Handle the project-picker shell, UI modules, and configuration API. */
+export async function handleProjectsSurfaceRequest(
+  req: Request,
+  ctx: HandlerContext,
+): Promise<Response | null> {
+  const { pathname } = new URL(req.url);
+  if (!isProjectsSurfacePath(pathname)) return null;
 
-  protected override shouldHandle(req: Request, ctx: HandlerContext): boolean {
-    if (!this.metadata.enabled?.(ctx)) return false;
-
-    const { pathname } = new URL(req.url);
-    return pathname === "/" || pathname.startsWith("/_projects");
+  if (!isAuthorizedProjectsRequest(req)) {
+    return createPrivateProjectsResponse("Unauthorized", 401);
+  }
+  if (req.method.toUpperCase() !== "GET") {
+    return createPrivateProjectsResponse("Method Not Allowed", 405, { "Allow": "GET" });
   }
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) return this.continue();
-
-    const { pathname } = new URL(req.url);
-
-    if (pathname === "/" || pathname === "/_projects" || pathname === "/_projects/") {
-      return this.respond(
-        this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
-          "text/html; charset=utf-8",
-          PROJECTS_SHELL_HTML,
-          HTTP_OK,
-        ),
-      );
-    }
-
-    if (pathname.startsWith("/_projects/ui/")) {
-      const response = await handleProjectsUI(req);
-      if (response) return this.respond(response);
-      return this.respond(createDevNotFoundResponse());
-    }
-
-    if (pathname.startsWith("/_projects/api/")) {
-      const response = await handleProjectsAPI(req, ctx);
-      if (response) return this.respond(response);
-      return this.respond(createDevNotFoundResponse());
-    }
-
-    return this.respond(createDevNotFoundResponse());
+  if (pathname === "/" || pathname === "/_projects" || pathname === "/_projects/") {
+    return createPrivateProjectsResponse(PROJECTS_SHELL_HTML, 200, {
+      "Content-Type": "text/html; charset=utf-8",
+    });
   }
+
+  if (pathname.startsWith("/_projects/ui/")) {
+    const response = await handleProjectsUI(req);
+    return withPrivateProjectsHeaders(response ?? createDevNotFoundResponse());
+  }
+
+  if (pathname.startsWith("/_projects/api/")) {
+    const response = handleProjectsAPI(req, ctx);
+    return withPrivateProjectsHeaders(response ?? createDevNotFoundResponse());
+  }
+
+  return withPrivateProjectsHeaders(createDevNotFoundResponse());
 }

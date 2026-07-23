@@ -35,7 +35,7 @@ export function resolveConfiguredEmbeddingModel(model?: string): string {
     return getDefaultVeryfrontCloudEmbeddingModel();
   }
 
-  // Local ONNX Runtime is unavailable in compiled binaries — fall back to
+  // Local ONNX Runtime is unavailable in compiled binaries, so fall back to
   // a cloud embedding provider when API keys are present.
   if (isDenoCompiled) {
     const cloud = resolveCloudEmbeddingFallback();

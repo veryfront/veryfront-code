@@ -40,7 +40,7 @@ export async function loadAgentServiceEnvFiles(
 
   for (const file of files) {
     const envPath = joinEnvPath(cwd, file);
-    const parsed = await loadDotenv({ envPath, allowEmptyValues: true });
+    const parsed = await loadDotenv({ envPath });
     const entries = Object.entries(parsed);
 
     if (entries.length === 0) {
@@ -63,4 +63,5 @@ export async function loadAgentServiceEnvFiles(
 }
 
 /** Loads hosted agent service env files. */
-export const loadHostedAgentServiceEnvFiles = loadAgentServiceEnvFiles;
+export const loadHostedAgentServiceEnvFiles: typeof loadAgentServiceEnvFiles =
+  loadAgentServiceEnvFiles;

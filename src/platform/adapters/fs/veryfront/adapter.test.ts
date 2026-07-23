@@ -1,11 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
+import { runWithRequestContext } from "./request-context.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
-import type { ResolvedContentContext } from "./types.ts";
+import { FS_ADAPTER_KIND, type ResolvedContentContext } from "./types.ts";
 import {
   addPendingInvalidation,
   clearAllPendingInvalidations,
@@ -16,6 +23,45 @@ import {
   getReadyManifestForRender,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+
+interface TestManifestClient {
+  getReleaseAssetManifest: (releaseId: string) => Promise<{
+    state: string;
+    manifest: unknown;
+  }>;
+}
+
+function getManifestClient(adapter: VeryfrontFSAdapter): TestManifestClient {
+  return (adapter as unknown as { manifestClient: TestManifestClient }).manifestClient;
+}
+
+function stubClientInitialization(client: unknown): void {
+  const initializationClient = client as {
+    initializeProject: () => Promise<{
+      projectId: string;
+      project: {
+        id: string;
+        name: string;
+        slug: string;
+        provider: string;
+        layout: string;
+      };
+      requestScoped: boolean;
+    }>;
+  };
+  initializationClient.initializeProject = () =>
+    Promise.resolve({
+      projectId: "project-123",
+      project: {
+        id: "project-123",
+        name: "Project",
+        slug: "test-project",
+        provider: "veryfront",
+        layout: "default",
+      },
+      requestScoped: false,
+    });
+}
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -31,7 +77,9 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("constructor", () => {
     it("should be instantiable with minimal config", () => {
-      assertExists(createAdapter());
+      const adapter = createAdapter();
+      assertExists(adapter);
+      assertEquals(adapter[FS_ADAPTER_KIND], "veryfront");
     });
 
     it("should accept proxyMode in config", () => {
@@ -86,6 +134,106 @@ describe("VeryfrontFSAdapter", () => {
       assertExists(adapter);
       assertEquals(clearCalled, false);
     });
+
+    it("snapshots nested direct-constructor configuration and installs defaults", () => {
+      const originalInvalidation = () => {};
+      const replacementInvalidation = () => {};
+      const originalStyle = () => Promise.resolve(undefined);
+      const replacementStyle = () => Promise.resolve(undefined);
+      const contentSource = { type: "branch" as const, branch: "main" };
+      const invalidationCallbacks = { triggerReload: originalInvalidation };
+      const styleCallbacks = { pregenerateStyles: originalStyle };
+
+      const adapter = new VeryfrontFSAdapter({
+        projectDir: "/tmp/project-before",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource,
+          cache: { enabled: false },
+        },
+        invalidationCallbacks,
+        styleCallbacks,
+      });
+
+      contentSource.branch = "feature-after";
+      invalidationCallbacks.triggerReload = replacementInvalidation;
+      styleCallbacks.pregenerateStyles = replacementStyle;
+
+      const internals = adapter as unknown as {
+        contentSource: { type: string; branch?: string };
+        invalidationCallbacks: {
+          triggerReload?: () => void;
+          clearModulePathCache?: () => void;
+        };
+        styleCallbacks: { pregenerateStyles?: typeof originalStyle };
+        normalizer: { getProjectDir: () => string | undefined };
+      };
+
+      assertEquals(internals.contentSource, { type: "branch", branch: "main" });
+      assertEquals(Object.isFrozen(internals.contentSource), true);
+      assertStrictEquals(internals.invalidationCallbacks.triggerReload, originalInvalidation);
+      assertEquals(typeof internals.invalidationCallbacks.clearModulePathCache, "function");
+      assertEquals(Object.isFrozen(internals.invalidationCallbacks), true);
+      assertStrictEquals(internals.styleCallbacks.pregenerateStyles, originalStyle);
+      assertEquals(Object.isFrozen(internals.styleCallbacks), true);
+      assertEquals(internals.normalizer.getProjectDir(), "/tmp/project-before");
+    });
+
+    it("reads direct-constructor configuration properties once", () => {
+      const reads = new Map<string, number>();
+      const values = {
+        projectDir: "/tmp/project",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+        invalidationCallbacks: {},
+        styleCallbacks: {},
+      };
+      const config = Object.create(null);
+      for (const property of Object.keys(values) as Array<keyof typeof values>) {
+        Object.defineProperty(config, property, {
+          get() {
+            reads.set(property, (reads.get(property) ?? 0) + 1);
+            return values[property];
+          },
+        });
+      }
+
+      const adapter = new VeryfrontFSAdapter(config);
+      assertExists(adapter);
+      assertEquals(Object.fromEntries(reads), {
+        projectDir: 1,
+        veryfront: 1,
+        invalidationCallbacks: 1,
+        styleCallbacks: 1,
+      });
+    });
+
+    it("rejects unreadable direct-constructor configuration safely", () => {
+      const secret = "PRIVATE_DIRECT_FS_CONFIG/project-442";
+      const config = Object.create(null);
+      Object.defineProperty(config, "veryfront", {
+        get() {
+          throw new Error(secret);
+        },
+      });
+
+      let thrown: unknown;
+      try {
+        new VeryfrontFSAdapter(config);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assertStrictEquals(thrown instanceof VeryfrontError, true);
+      assertEquals((thrown as VeryfrontError).slug, "config-invalid");
+      assertEquals(JSON.stringify(thrown).includes(secret), false);
+    });
   });
 
   describe("instance methods", () => {
@@ -118,7 +266,7 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("request tokens", () => {
-    it("syncs request-scoped tokens into the WebSocket manager", () => {
+    it("keeps request-scoped tokens out of WebSocket credentials", () => {
       const adapter = createAdapter({
         veryfront: {
           apiBaseUrl: "https://api.example.com",
@@ -127,19 +275,140 @@ describe("VeryfrontFSAdapter", () => {
           cache: { enabled: false },
         },
       });
-      let websocketToken: string | undefined;
+      const websocketTokens: string[] = [];
 
       (adapter as unknown as { wsManager: { setApiToken: (token: string) => void } }).wsManager = {
         setApiToken: (token: string) => {
-          websocketToken = token;
+          websocketTokens.push(token);
         },
       };
 
       adapter.setRequestToken("fresh-request-token");
-      assertEquals(websocketToken, "fresh-request-token");
-
       adapter.clearRequestToken();
-      assertEquals(websocketToken, "static-token");
+      assertEquals(websocketTokens, []);
+    });
+
+    it("resolves concurrent proxy tokens from their matching request contexts", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+
+      const [tokenA, tokenB] = await Promise.all([
+        runWithRequestContext(
+          { projectSlug: "test-project", token: "request-token-a" },
+          async () => {
+            await Promise.resolve();
+            return adapter.getClient().getToken();
+          },
+        ),
+        runWithRequestContext(
+          { projectSlug: "test-project", token: "request-token-b" },
+          async () => {
+            await Promise.resolve();
+            return adapter.getClient().getToken();
+          },
+        ),
+      ]);
+
+      assertEquals([tokenA, tokenB], ["request-token-a", "request-token-b"]);
+    });
+
+    it("rejects an empty active proxy token instead of using the service credential", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "service-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+
+      await runWithRequestContext(
+        { projectSlug: "test-project", token: "" },
+        () => {
+          assertThrows(
+            () => adapter.getClient().getToken(),
+            Error,
+            "token must be a non-empty string",
+          );
+          return Promise.resolve();
+        },
+      );
+    });
+
+    it("rejects an active context for another project instead of using the service credential", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "service-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+
+      await runWithRequestContext(
+        { projectSlug: "other-project", token: "request-token" },
+        () => {
+          assertThrows(
+            () => adapter.getClient().getToken(),
+            Error,
+            "Unable to resolve the Veryfront API request identity",
+          );
+          return Promise.resolve();
+        },
+      );
+    });
+
+    it("does not open a WebSocket without a stable configured credential", () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+      let connections = 0;
+      (adapter as unknown as { wsManager: { connect: () => void } }).wsManager = {
+        connect: () => {
+          connections++;
+        },
+      };
+
+      (adapter as unknown as { connectWebSocket: (projectId: string) => void }).connectWebSocket(
+        "project-id",
+      );
+
+      assertEquals(connections, 0);
+    });
+
+    it("keeps background manifest requests on the configured credential", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "service-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+      const manifestClient = (adapter as unknown as {
+        manifestClient: { getToken: () => string } | null;
+      }).manifestClient;
+
+      const token = await runWithRequestContext(
+        { projectSlug: "test-project", token: "request-token" },
+        () => Promise.resolve(manifestClient?.getToken()),
+      );
+
+      assertEquals(token, "service-token");
     });
   });
 
@@ -237,12 +506,7 @@ describe("VeryfrontFSAdapter", () => {
       const adapter = createAdapter();
       let fetchCount = 0;
 
-      (adapter.getClient() as unknown as {
-        getReleaseAssetManifest: (releaseId: string) => Promise<{
-          state: string;
-          manifest: unknown;
-        }>;
-      }).getReleaseAssetManifest = async (requestedReleaseId: string) => {
+      getManifestClient(adapter).getReleaseAssetManifest = async (requestedReleaseId: string) => {
         fetchCount++;
         assertEquals(requestedReleaseId, releaseId);
         return {
@@ -317,12 +581,8 @@ describe("VeryfrontFSAdapter", () => {
           projectId?: string,
           releaseId?: string,
         ) => Promise<Array<{ path: string; content?: string }>>;
-        getReleaseAssetManifest: (releaseId: string) => Promise<{
-          state: string;
-          manifest: unknown;
-        }>;
       };
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -339,7 +599,7 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(requestedReleaseId, releaseId);
         return Promise.resolve(files);
       };
-      client.getReleaseAssetManifest = async (requestedReleaseId) => {
+      getManifestClient(adapter).getReleaseAssetManifest = async (requestedReleaseId) => {
         fetchCount++;
         assertEquals(requestedReleaseId, releaseId);
         return {
@@ -387,12 +647,7 @@ describe("VeryfrontFSAdapter", () => {
       const adapter = createAdapter();
       let fetchCount = 0;
 
-      (adapter.getClient() as unknown as {
-        getReleaseAssetManifest: (releaseId: string) => Promise<{
-          state: string;
-          manifest: unknown;
-        }>;
-      }).getReleaseAssetManifest = async (requestedReleaseId: string) => {
+      getManifestClient(adapter).getReleaseAssetManifest = async (requestedReleaseId: string) => {
         fetchCount++;
         assertEquals(requestedReleaseId, releaseId);
         return {
@@ -667,6 +922,53 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("initialize", () => {
+    it("uses request-scoped initialization data without reading shared client state", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "service-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const client = adapter.getClient() as unknown as {
+        initialize: () => Promise<void>;
+        initializeProject: () => Promise<{
+          projectId: string;
+          project: { id: string; name: string; slug: string };
+          requestScoped: boolean;
+        }>;
+        getProjectId: () => string;
+        listAllFiles: () => Promise<Array<{ path: string; content: string }>>;
+      };
+      client.initialize = () => Promise.reject(new Error("legacy initialization used"));
+      client.initializeProject = () =>
+        Promise.resolve({
+          projectId: "project-id",
+          project: { id: "project-id", name: "Project", slug: "test-project" },
+          requestScoped: true,
+        });
+      client.getProjectId = () => {
+        throw new Error("shared project state read");
+      };
+      client.listAllFiles = () => Promise.resolve([]);
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await runWithRequestContext(
+        { projectSlug: "test-project", token: "request-token", branch: "main" },
+        () => adapter.initialize(),
+      );
+
+      assertEquals(adapter.getProjectData()?.id, "project-id");
+    });
+
     it("should throw without causing unhandled rejection when file list fetch fails", async () => {
       // Regression: initialize() used to call fileListReadyReject() in its catch block.
       // Since no lookup() was pending, the rejected promise had no handler, causing
@@ -675,7 +977,7 @@ describe("VeryfrontFSAdapter", () => {
 
       // Stub client methods so initialize() reaches fetchFileListForContext (the inner try/catch)
       const client = (adapter as any).client;
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -758,7 +1060,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -831,7 +1133,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -894,7 +1196,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -949,7 +1251,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1007,7 +1309,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1059,7 +1361,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1111,7 +1413,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1175,7 +1477,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1251,7 +1553,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1303,7 +1605,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
@@ -1382,7 +1684,7 @@ describe("VeryfrontFSAdapter", () => {
         };
       }).client;
 
-      client.initialize = () => Promise.resolve();
+      stubClientInitialization(client);
       client.getProjectSlug = () => "test-project";
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });

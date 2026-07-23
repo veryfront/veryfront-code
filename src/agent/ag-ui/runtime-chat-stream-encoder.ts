@@ -39,21 +39,29 @@ export type AgUiRuntimeChatStreamUsage = {
 
 /** State for AG-UI runtime chat stream encoder. */
 export interface AgUiRuntimeChatStreamEncoderState {
+  /** Whether step open. */
   isStepOpen: boolean;
+  /** Finish reason value. */
   finishReason: ChatFinishReason;
+  /** Total usage value. */
   totalUsage: AgUiRuntimeChatStreamUsage | null;
 }
 
 /** Public API contract for AG-UI runtime chat stream encoder. */
 export interface AgUiRuntimeChatStreamEncoder {
+  /** State value. */
   state: AgUiRuntimeChatStreamEncoderState;
+  /** Encodes one stream value. */
   encode: (event: AgUiRuntimeStreamEvent) => ChatStreamEvent[];
 }
 
 /** Options accepted by create AG-UI runtime chat stream encoder. */
 export interface CreateAgUiRuntimeChatStreamEncoderOptions {
+  /** Response message ID value. */
   responseMessageId: string;
+  /** Whether send reasoning. */
   sendReasoning?: boolean;
+  /** Callback invoked when error. */
   onError?: (error: unknown) => string;
 }
 

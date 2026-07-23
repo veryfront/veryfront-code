@@ -63,7 +63,7 @@ export function assertPortable(code: PortableModuleCode): void {
 
   if (hasHardcodedCachePaths(codeStr)) {
     logger.error("Invariant violation: hardcoded paths in portable code", {
-      preview: codeStr.substring(0, 200),
+      codeLength: codeStr.length,
     });
 
     throw CACHE_INVARIANT_VIOLATION.create({
@@ -86,7 +86,7 @@ export function assertLocal(code: LocalModuleCode): void {
   if (hasPortableTokens(codeStr)) {
     logger.error("Invariant violation: portable tokens in local code", {
       tokenCount: (codeStr.match(new RegExp(CACHE_DIR_TOKEN, "g")) || []).length,
-      preview: codeStr.substring(0, 200),
+      codeLength: codeStr.length,
     });
 
     throw CACHE_INVARIANT_VIOLATION.create({

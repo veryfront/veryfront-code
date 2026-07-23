@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __registerLogRecordEmitter, type LogEntry } from "#veryfront/utils";
 import {
   resolveFrameworkFile,
   resolveRelativeFrameworkImport,
@@ -11,6 +12,7 @@ import { EMBEDDED_SRC_DIR, FRAMEWORK_ROOT, getFrameworkLookups } from "./constan
 
 function createMockFs(files: Record<string, string>) {
   return {
+    realPath: (path: string) => Promise.resolve(path),
     readTextFile: async (path: string) => {
       if (path in files) return files[path];
       throw new Error(`Not found: ${path}`);
@@ -75,6 +77,30 @@ describe("resolveFrameworkFile", () => {
     assertEquals(result, null);
   });
 
+  it("does not expose runtime filesystem roots when resolution fails", async () => {
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    try {
+      const result = await resolveFrameworkFile(
+        "/_vf_modules/_veryfront/nonexistent",
+        createMockFs({}),
+        async () => false,
+      );
+
+      assertEquals(result, null);
+      const output = JSON.stringify(
+        entries.filter((entry) =>
+          entry.message === "[SSR-VF-MODULES] resolveFrameworkFile: not found"
+        ),
+      );
+      assertEquals(output.includes(FRAMEWORK_ROOT), false);
+      assertEquals(output.includes(EMBEDDED_SRC_DIR), false);
+    } finally {
+      __registerLogRecordEmitter(null);
+    }
+  });
+
   it("normalizes file:///_vf_modules paths before resolving", async () => {
     const sourcePath = join(FRAMEWORK_ROOT, "src", "react", "runtime", "core.ts");
     const files: Record<string, string> = {
@@ -114,34 +140,34 @@ describe("resolveFrameworkFile", () => {
 
 describe("resolveRelativeFrameworkImport", () => {
   it("resolves relative import with explicit extension", async () => {
-    const files: Record<string, string> = { "/foo/bar/Head.tsx": "export default Head;" };
+    const files: Record<string, string> = { "/foo/src/bar/Head.tsx": "export default Head;" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./Head.tsx",
-      "/foo/bar/index.ts",
+      "/foo/src/bar/index.ts",
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/Head.tsx");
+    assertEquals(result, "/foo/src/bar/Head.tsx");
   });
 
   it("resolves parent directory import", async () => {
-    const files: Record<string, string> = { "/foo/utils.ts": "export const x = 1;" };
+    const files: Record<string, string> = { "/foo/src/utils.ts": "export const x = 1;" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "../utils",
-      "/foo/bar/index.ts",
+      "/foo/src/bar/index.ts",
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/utils.ts");
+    assertEquals(result, "/foo/src/utils.ts");
   });
 
   it("returns null for non-existent relative import", async () => {
     const fs = createMockFs({});
     const result = await resolveRelativeFrameworkImport(
       "./missing.tsx",
-      "/foo/bar/index.ts",
+      "/foo/src/bar/index.ts",
       fs,
       async () => false,
     );
@@ -149,39 +175,39 @@ describe("resolveRelativeFrameworkImport", () => {
   });
 
   it("tries .src extension for embedded sources", async () => {
-    const files: Record<string, string> = { "/foo/bar/Head.tsx.src": "embedded" };
+    const files: Record<string, string> = { "/foo/src/bar/Head.tsx.src": "embedded" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./Head.tsx",
-      "/foo/bar/index.ts",
+      "/foo/src/bar/index.ts",
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/Head.tsx.src");
+    assertEquals(result, "/foo/src/bar/Head.tsx.src");
   });
 
   it("resolves import without extension by probing", async () => {
-    const files: Record<string, string> = { "/foo/bar/utils.ts": "code" };
+    const files: Record<string, string> = { "/foo/src/bar/utils.ts": "code" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./utils",
-      "/foo/bar/index.ts",
+      "/foo/src/bar/index.ts",
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/utils.ts");
+    assertEquals(result, "/foo/src/bar/utils.ts");
   });
 
   it("resolves transpiled .js imports back to embedded TypeScript sources", async () => {
-    const files: Record<string, string> = { "/foo/bar/csp-nonce.ts.src": "embedded" };
+    const files: Record<string, string> = { "/foo/src/bar/csp-nonce.ts.src": "embedded" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./csp-nonce.js",
-      "/foo/bar/Head.tsx",
+      "/foo/src/bar/Head.tsx",
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/csp-nonce.ts.src");
+    assertEquals(result, "/foo/src/bar/csp-nonce.ts.src");
   });
 
   it("falls back from extracted framework src paths to embedded framework sources in compiled binaries", async () => {

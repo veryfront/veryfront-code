@@ -1,5 +1,5 @@
 /**
- * Schema category barrel — SchemaValidator contract and inference helpers.
+ * Schema category barrel for the SchemaValidator contract and inference helpers.
  *
  * @module extensions/schema
  */
@@ -14,6 +14,7 @@ export type {
   SchemaFactory,
   ValidationResult,
 } from "./schema-validator.ts";
+export type { JsonSchemaTypeName } from "./json-schema.ts";
 
 // Interfaces
 export type {

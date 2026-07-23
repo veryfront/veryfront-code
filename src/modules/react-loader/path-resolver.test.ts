@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 
@@ -23,17 +23,27 @@ describe("modules/react-loader/path-resolver", () => {
       assertEquals(resolveRelativePath("src/app.tsx", "/home/user/project"), "src/app.tsx");
     });
 
-    it("should find project dir name in path parts", () => {
-      assertEquals(
-        resolveRelativePath("/data/repos/myproject/pages/index.tsx", "/other/myproject"),
-        "pages/index.tsx",
+    it("rejects absolute paths outside the project", () => {
+      assertThrows(
+        () => resolveRelativePath("/data/repos/myproject/pages/index.tsx", "/other/myproject"),
+        TypeError,
+        "filePath must be inside projectDir",
       );
     });
 
-    it("should return path as-is when project dir not found", () => {
-      assertEquals(
-        resolveRelativePath("/completely/different/path.tsx", "/home/user/project"),
-        "/completely/different/path.tsx",
+    it("rejects project prefix collisions", () => {
+      assertThrows(
+        () => resolveRelativePath("/home/user/project-other/path.tsx", "/home/user/project"),
+        TypeError,
+        "filePath must be inside projectDir",
+      );
+    });
+
+    it("rejects relative traversal", () => {
+      assertThrows(
+        () => resolveRelativePath("../outside.tsx", "/home/user/project"),
+        TypeError,
+        "filePath must not traverse outside projectDir",
       );
     });
   });

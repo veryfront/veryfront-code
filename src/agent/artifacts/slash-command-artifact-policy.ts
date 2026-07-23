@@ -5,16 +5,23 @@ const EXACT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])\/?[\w./-]+\.(?:md|mdx|txt|js
 
 /** Input payload for slash command artifact policy. */
 export interface SlashCommandArtifactPolicyInput {
+  /** Messages associated with the operation. */
   messages: readonly unknown[];
+  /** Whether slash command artifact path seen. */
   slashCommandArtifactPathSeen?: boolean;
 }
 
 /** Public API contract for slash command artifact policy. */
 export interface SlashCommandArtifactPolicy {
+  /** Whether slash command. */
   hasSlashCommand: boolean;
+  /** Whether exact artifact path. */
   hasExactArtifactPath: boolean;
+  /** Whether load skill. */
   hasLoadSkill: boolean;
+  /** Whether invoke agent. */
   hasInvokeAgent: boolean;
+  /** Whether keep reminder. */
   shouldKeepReminder: boolean;
 }
 

@@ -5,6 +5,7 @@ import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors, icons } from "./_data.ts";
 import { historicalToolSummaries } from "./_tool_summaries.ts";
 import { filterVisibleIntegrations } from "./feature-flags.ts";
+import { ALL_INTEGRATION_NAMES, IntegrationConfigSchema } from "./schema.ts";
 
 function getConnector(name: string) {
   const connector = connectors.find((item) => item.name === name);
@@ -35,6 +36,38 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("keeps generated catalog records schema-valid, unique, and internally linked", () => {
+    const connectorNames = connectors.map((connector) => connector.name);
+    assertEquals(new Set(connectorNames).size, connectors.length);
+    assertEquals(Object.keys(icons).sort(), [...connectorNames].sort());
+
+    for (const connector of connectors) {
+      assertEquals(
+        IntegrationConfigSchema.safeParse(connector).success,
+        true,
+        `Expected ${connector.name} to satisfy IntegrationConfigSchema`,
+      );
+      assertEquals(
+        (ALL_INTEGRATION_NAMES as readonly string[]).includes(connector.name),
+        true,
+        `Expected ${connector.name} in the canonical integration-name registry`,
+      );
+    }
+
+    const summariesByTool = new Map<string, unknown>();
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        if (tool.id && tool.endpoint?.response?.historicalSummary) {
+          summariesByTool.set(tool.id, tool.endpoint.response.historicalSummary);
+        }
+      }
+    }
+    assertEquals(Object.keys(historicalToolSummaries).sort(), [...summariesByTool.keys()].sort());
+    for (const [toolId, summary] of Object.entries(historicalToolSummaries)) {
+      assertEquals(summary, summariesByTool.get(toolId));
+    }
+  });
+
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",

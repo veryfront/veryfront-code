@@ -12,7 +12,7 @@ describe("server/runtime-handler/request-tracker", () => {
   afterEach(() => {
     // Clean up any tracked requests
     for (const tracked of requestTracker.getInFlightRequests()) {
-      requestTracker.complete(tracked.requestId, 200);
+      requestTracker.complete(tracked.trackingKey, 200);
     }
     Deno.env.delete("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
     __resetLogRecordEmitterForTests();
@@ -20,44 +20,68 @@ describe("server/runtime-handler/request-tracker", () => {
 
   describe("start / complete", () => {
     it("should track a started request", () => {
-      requestTracker.start("req-1", "my-project", "/page", "GET");
+      const trackingKey = requestTracker.start("req-1", "my-project", "/page", "GET");
       assertEquals(requestTracker.getInFlightCount(), 1);
-      requestTracker.complete("req-1", 200);
+      requestTracker.complete(trackingKey, 200);
     });
 
     it("should remove request on complete", () => {
-      requestTracker.start("req-2", "my-project", "/page", "GET");
-      requestTracker.complete("req-2", 200);
+      const trackingKey = requestTracker.start("req-2", "my-project", "/page", "GET");
+      requestTracker.complete(trackingKey, 200);
       assertEquals(requestTracker.getInFlightCount(), 0);
     });
 
     it("should handle completing an unknown request gracefully", () => {
-      requestTracker.complete("nonexistent", 200);
+      const trackingKey = requestTracker.start("known", "proj", "/known", "GET");
+      requestTracker.complete(trackingKey, 200);
+      requestTracker.complete(trackingKey, 200);
       assertEquals(requestTracker.getInFlightCount(), 0);
     });
 
     it("should track multiple requests simultaneously", () => {
       const startCount = requestTracker.getInFlightCount();
-      requestTracker.start("req-a", "proj", "/a", "GET");
-      requestTracker.start("req-b", "proj", "/b", "POST");
-      requestTracker.start("req-c", "proj", "/c", "GET");
+      const firstKey = requestTracker.start("req-a", "proj", "/a", "GET");
+      const secondKey = requestTracker.start("req-b", "proj", "/b", "POST");
+      const thirdKey = requestTracker.start("req-c", "proj", "/c", "GET");
       assertEquals(requestTracker.getInFlightCount(), startCount + 3);
-      requestTracker.complete("req-a", 200);
-      requestTracker.complete("req-b", 201);
-      requestTracker.complete("req-c", 404);
+      requestTracker.complete(firstKey, 200);
+      requestTracker.complete(secondKey, 201);
+      requestTracker.complete(thirdKey, 404);
+      assertEquals(requestTracker.getInFlightCount(), startCount);
+    });
+
+    it("tracks duplicate correlation IDs with independent internal keys", async () => {
+      const startCount = requestTracker.getInFlightCount();
+      const firstKey = requestTracker.start("shared-id", "proj", "/first", "GET");
+      const secondKey = requestTracker.start("shared-id", "proj", "/second", "GET");
+
+      assertEquals(firstKey === secondKey, false);
+      assertEquals(requestTracker.getInFlightCount(), startCount + 2);
+      assertEquals(
+        requestTracker.getInFlightRequests().filter((request) => request.requestId === "shared-id")
+          .length,
+        2,
+      );
+
+      const drain = requestTracker.waitForDrain(500, 5);
+      requestTracker.complete(firstKey, 200);
+      assertEquals(requestTracker.getInFlightCount(), startCount + 1);
+      requestTracker.complete(secondKey, 200);
+
+      assertEquals(await drain, true);
       assertEquals(requestTracker.getInFlightCount(), startCount);
     });
   });
 
   describe("getInFlightRequests", () => {
     it("should return tracked request details", () => {
-      requestTracker.start("req-detail", "slug-1", "/test", "POST");
+      const trackingKey = requestTracker.start("req-detail", "slug-1", "/test", "POST");
       const requests = requestTracker.getInFlightRequests();
       const found = requests.find((r) => r.requestId === "req-detail");
       assertEquals(found?.projectSlug, "slug-1");
       assertEquals(found?.path, "/test");
       assertEquals(found?.method, "POST");
-      requestTracker.complete("req-detail", 200);
+      requestTracker.complete(trackingKey, 200);
     });
   });
 
@@ -72,24 +96,24 @@ describe("server/runtime-handler/request-tracker", () => {
 
     it("should increment total on start", () => {
       const before = requestTracker.getStats().total;
-      requestTracker.start("req-stats", "proj", "/s", "GET");
+      const trackingKey = requestTracker.start("req-stats", "proj", "/s", "GET");
       const after = requestTracker.getStats().total;
       assertEquals(after, before + 1);
-      requestTracker.complete("req-stats", 200);
+      requestTracker.complete(trackingKey, 200);
     });
 
     it("should increment completed on normal complete", () => {
       const before = requestTracker.getStats().completed;
-      requestTracker.start("req-comp", "proj", "/c", "GET");
-      requestTracker.complete("req-comp", 200, false);
+      const trackingKey = requestTracker.start("req-comp", "proj", "/c", "GET");
+      requestTracker.complete(trackingKey, 200, false);
       const after = requestTracker.getStats().completed;
       assertEquals(after, before + 1);
     });
 
     it("should increment timedOut when complete with timedOut flag", () => {
       const before = requestTracker.getStats().timedOut;
-      requestTracker.start("req-timeout", "proj", "/t", "GET");
-      requestTracker.complete("req-timeout", 504, true);
+      const trackingKey = requestTracker.start("req-timeout", "proj", "/t", "GET");
+      requestTracker.complete(trackingKey, 504, true);
       const after = requestTracker.getStats().timedOut;
       assertEquals(after, before + 1);
     });
@@ -102,75 +126,94 @@ describe("server/runtime-handler/request-tracker", () => {
     });
 
     it("should return true when requests complete within timeout", async () => {
-      requestTracker.start("req-drain", "proj", "/d", "GET");
+      const trackingKey = requestTracker.start("req-drain", "proj", "/d", "GET");
       // Complete after a tiny delay
-      setTimeout(() => requestTracker.complete("req-drain", 200), 10);
+      setTimeout(() => requestTracker.complete(trackingKey, 200), 10);
       const result = await requestTracker.waitForDrain(500, 5);
       assertEquals(result, true);
     });
 
     it("should return false when drain times out", async () => {
-      requestTracker.start("req-stuck", "proj", "/stuck", "GET");
+      const trackingKey = requestTracker.start("req-stuck", "proj", "/stuck", "GET");
       const result = await requestTracker.waitForDrain(50, 10);
       assertEquals(result, false);
-      requestTracker.complete("req-stuck", 200);
+      requestTracker.complete(trackingKey, 200);
     });
   });
 
   describe("module request logging", () => {
     it("should handle module request path completion without error", () => {
-      requestTracker.start("req-mod", "proj", "/_vf_modules/foo.js", "GET");
-      requestTracker.complete("req-mod", 200);
+      const trackingKey = requestTracker.start("req-mod", "proj", "/_vf_modules/foo.js", "GET");
+      requestTracker.complete(trackingKey, 200);
     });
 
     it("should treat lightweight stylesheet requests as internal assets", () => {
-      requestTracker.start("req-style", "proj", "/_vf_styles/styles.css", "GET");
-      requestTracker.complete("req-style", 200);
+      const trackingKey = requestTracker.start(
+        "req-style",
+        "proj",
+        "/_vf_styles/styles.css",
+        "GET",
+      );
+      requestTracker.complete(trackingKey, 200);
     });
 
     it("should handle _veryfront module path completion without error", () => {
-      requestTracker.start("req-vf", "proj", "/_veryfront/bar.js", "GET");
-      requestTracker.complete("req-vf", 200);
+      const trackingKey = requestTracker.start("req-vf", "proj", "/_veryfront/bar.js", "GET");
+      requestTracker.complete(trackingKey, 200);
     });
   });
 
   describe("WebSocket path handling", () => {
     it("should not set slow timer for WebSocket path", () => {
-      requestTracker.start("req-ws", "proj", "/_ws", "GET");
+      const trackingKey = requestTracker.start("req-ws", "proj", "/_ws", "GET");
       // Just verify it doesn't crash and tracks correctly
       assertEquals(requestTracker.getInFlightCount() >= 1, true);
-      requestTracker.complete("req-ws", 101);
+      requestTracker.complete(trackingKey, 101);
     });
   });
 
   describe("env and releaseId tracking", () => {
     it("should accept optional env and releaseId", () => {
-      requestTracker.start("req-env", "proj", "/path", "GET", "production", "rel-123");
+      const trackingKey = requestTracker.start(
+        "req-env",
+        "proj",
+        "/path",
+        "GET",
+        "production",
+        "rel-123",
+      );
       const requests = requestTracker.getInFlightRequests();
       const found = requests.find((r) => r.requestId === "req-env");
       assertEquals(found?.env, "production");
       assertEquals(found?.releaseId, "rel-123");
-      requestTracker.complete("req-env", 200);
+      requestTracker.complete(trackingKey, 200);
     });
   });
 
   describe("getStats accumulation", () => {
     it("tracks total and completed independently", () => {
       const before = requestTracker.getStats();
-      requestTracker.start("acc-1", "proj", "/a", "GET");
-      requestTracker.start("acc-2", "proj", "/b", "POST");
-      requestTracker.complete("acc-1", 200);
+      const firstKey = requestTracker.start("acc-1", "proj", "/a", "GET");
+      const secondKey = requestTracker.start("acc-2", "proj", "/b", "POST");
+      requestTracker.complete(firstKey, 200);
       const after = requestTracker.getStats();
       assertEquals(after.total, before.total + 2);
       assertEquals(after.completed, before.completed + 1);
       assertEquals(after.inFlight, before.inFlight + 1);
-      requestTracker.complete("acc-2", 200);
+      requestTracker.complete(secondKey, 200);
     });
   });
 
   describe("getInFlightRequests fields", () => {
     it("returns requests with all expected fields", () => {
-      requestTracker.start("field-1", "slug-x", "/test", "PUT", "staging", "rel-456");
+      const trackingKey = requestTracker.start(
+        "field-1",
+        "slug-x",
+        "/test",
+        "PUT",
+        "staging",
+        "rel-456",
+      );
       const requests = requestTracker.getInFlightRequests();
       const found = requests.find((r) => r.requestId === "field-1");
       assertEquals(found?.projectSlug, "slug-x");
@@ -179,20 +222,20 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(found?.env, "staging");
       assertEquals(found?.releaseId, "rel-456");
       assertEquals(typeof found?.startTime, "number");
-      requestTracker.complete("field-1", 200);
+      requestTracker.complete(trackingKey, 200);
     });
   });
 
   describe("complete logging behavior", () => {
     it("handles module request with short duration (no debug log)", () => {
-      requestTracker.start("fast-mod", "proj", "/_vf_modules/fast.js", "GET");
-      requestTracker.complete("fast-mod", 200);
+      const trackingKey = requestTracker.start("fast-mod", "proj", "/_vf_modules/fast.js", "GET");
+      requestTracker.complete(trackingKey, 200);
       // Just verify no error
     });
 
     it("handles regular request completion with logging", () => {
-      requestTracker.start("reg-req", "proj", "/about", "GET");
-      requestTracker.complete("reg-req", 200);
+      const trackingKey = requestTracker.start("reg-req", "proj", "/about", "GET");
+      requestTracker.complete(trackingKey, 200);
       // Just verify no error
     });
 
@@ -201,8 +244,15 @@ describe("server/runtime-handler/request-tracker", () => {
       __registerLogRecordEmitter((entry) => entries.push(entry));
       Deno.env.set("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS", "0");
 
-      requestTracker.start("profiled-req", "proj", "/", "GET", "production", "rel-1");
-      requestTracker.complete("profiled-req", 200, false, {
+      const trackingKey = requestTracker.start(
+        "profiled-req",
+        "proj",
+        "/",
+        "GET",
+        "production",
+        "rel-1",
+      );
+      requestTracker.complete(trackingKey, 200, false, {
         sequence: 7,
         category: "html",
         method: "GET",
@@ -219,7 +269,7 @@ describe("server/runtime-handler/request-tracker", () => {
         },
       });
 
-      const entry = entries.find((candidate) => candidate.message === "GET / 200");
+      const entry = entries.find((candidate) => candidate.message === "Request completed");
       const profile = entry?.context?.request_profile as
         | {
           sequence: number;
@@ -235,21 +285,61 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(profile?.phases["handler.execute"], 2400);
     });
 
+    it("does not write request or project identifiers to completion logs", () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      Deno.env.set("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS", "0");
+
+      const trackingKey = requestTracker.start(
+        "request-private-value",
+        "project-private-value",
+        "/customers/private-value",
+        "GET",
+        "production",
+        "release-private-value",
+      );
+      requestTracker.complete(trackingKey, 200, false, {
+        sequence: 8,
+        category: "html",
+        method: "GET",
+        pathname: "/customers/private-value",
+        projectSlug: "project-private-value",
+        requestMode: "production",
+        status: 200,
+        startedAt: "2026-07-09T18:41:00.000Z",
+        completedAt: "2026-07-09T18:41:02.500Z",
+        totalMs: 2500,
+        phases: { "handler.execute": 2400 },
+      });
+
+      const serialized = JSON.stringify(entries);
+      for (
+        const sensitive of [
+          "request-private-value",
+          "project-private-value",
+          "private-value",
+          "release-private-value",
+        ]
+      ) {
+        assertEquals(serialized.includes(sensitive), false);
+      }
+    });
+
     it("handles 404 status completion", () => {
-      requestTracker.start("not-found", "proj", "/missing", "GET");
-      requestTracker.complete("not-found", 404);
+      const trackingKey = requestTracker.start("not-found", "proj", "/missing", "GET");
+      requestTracker.complete(trackingKey, 404);
     });
 
     it("handles 500 status completion", () => {
-      requestTracker.start("error-req", "proj", "/broken", "GET");
-      requestTracker.complete("error-req", 500);
+      const trackingKey = requestTracker.start("error-req", "proj", "/broken", "GET");
+      requestTracker.complete(trackingKey, 500);
     });
   });
 
   describe("waitForDrain edge cases", () => {
     it("completes drain when request finished during polling", async () => {
-      requestTracker.start("drain-fast", "proj", "/d", "GET");
-      setTimeout(() => requestTracker.complete("drain-fast", 200), 5);
+      const trackingKey = requestTracker.start("drain-fast", "proj", "/d", "GET");
+      setTimeout(() => requestTracker.complete(trackingKey, 200), 5);
       const result = await requestTracker.waitForDrain(1000, 5);
       assertEquals(result, true);
     });
@@ -265,8 +355,8 @@ describe("server/runtime-handler/request-tracker", () => {
       }) as typeof clearTimeout;
 
       try {
-        requestTracker.start("req-timer", "proj", "/slow", "GET");
-        requestTracker.complete("req-timer", 200);
+        const trackingKey = requestTracker.start("req-timer", "proj", "/slow", "GET");
+        requestTracker.complete(trackingKey, 200);
 
         // Should have cleared the slow timer (verySlowTimer hasn't been set
         // yet since the outer timer hasn't fired)
@@ -286,12 +376,12 @@ describe("server/runtime-handler/request-tracker", () => {
 
       try {
         const beforeCount = requestTracker.getInFlightCount();
-        requestTracker.start("req-stream", "proj", "/stream", "POST");
-        requestTracker.markLongLived("req-stream");
+        const trackingKey = requestTracker.start("req-stream", "proj", "/stream", "POST");
+        requestTracker.markLongLived(trackingKey);
 
         assertEquals(clearedTimers.length, 1);
         assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
-        requestTracker.complete("req-stream", 200);
+        requestTracker.complete(trackingKey, 200);
       } finally {
         globalThis.clearTimeout = originalClearTimeout;
       }

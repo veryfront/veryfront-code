@@ -174,3 +174,33 @@ Deno.test("cache/testing/invariants - detects buggy cache", async () => {
 
   assertEquals(failed, true, "Should detect buggy cache that loses values");
 });
+
+Deno.test("cache/testing/invariants - detects cross-key value aliasing", async () => {
+  let storedValue: string | null = null;
+  const aliasedCache: MinimalCache<string> = {
+    get: () => storedValue,
+    set: (_key, value) => {
+      storedValue = value;
+    },
+  };
+  const steps: Array<{ name: string; fn: () => Promise<void> }> = [];
+  const mockContext = {
+    step: async (name: string, fn: () => Promise<void>) => {
+      steps.push({ name, fn });
+    },
+  } as unknown as Deno.TestContext;
+  let sequence = 0;
+
+  await testKeyCollisionResistance(mockContext, {
+    createCache: () => aliasedCache,
+    createValue: () => `value-${++sequence}`,
+  });
+
+  let failed = false;
+  try {
+    await steps[0]!.fn();
+  } catch {
+    failed = true;
+  }
+  assertEquals(failed, true, "Should detect a cache that aliases distinct keys");
+});

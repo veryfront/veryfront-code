@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { resolve } from "#veryfront/compat/path/index.ts";
 import {
   defaultDiscoveryCache,
   findLocalProjectPath,
@@ -17,6 +24,7 @@ describe("local-project-discovery", () => {
   afterEach(() => {
     localProjectCache.clear();
     localAdapterCache.clear();
+    __resetLogRecordEmitterForTests();
   });
 
   describe("constants", () => {
@@ -43,10 +51,12 @@ describe("local-project-discovery", () => {
     // Create a minimal mock adapter
     function createMockAdapter(
       files: Record<string, { isDirectory: boolean }>,
+      onStat?: (path: string) => void,
     ): RuntimeAdapter {
       return {
         fs: {
           stat: async (path: string) => {
+            onStat?.(path);
             const entry = files[path];
             if (!entry) return null;
             return { isDirectory: entry.isDirectory };
@@ -110,6 +120,44 @@ describe("local-project-discovery", () => {
       assertEquals(localProjectCache.has("myproject"), false);
     });
 
+    it("propagates unexpected explicit-path filesystem failures without logging details", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const adapter = createMockAdapter({});
+      adapter.fs.stat = () => {
+        throw new Error("private filesystem failure at /private/path");
+      };
+
+      await assertRejects(
+        () => findLocalProjectPath("private-project", adapter, "/private/path"),
+        Error,
+        "private filesystem failure",
+      );
+
+      const serialized = JSON.stringify(entries);
+      assertEquals(serialized.includes("private-project"), false);
+      assertEquals(serialized.includes("/private/path"), false);
+      assertEquals(serialized.includes("private filesystem failure"), false);
+    });
+
+    it("propagates unexpected project marker lookup failures", async () => {
+      const adapter = createMockAdapter({
+        "/custom/path": { isDirectory: true },
+      });
+      adapter.fs.stat = (path: string) => {
+        if (path === "/custom/path") {
+          return Promise.resolve({ isDirectory: true } as never);
+        }
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      };
+
+      await assertRejects(
+        () => findLocalProjectPath("custom", adapter, "/custom/path"),
+        Error,
+        "permission denied",
+      );
+    });
+
     it("returns cached path if available", async () => {
       const adapter = createMockAdapter({});
       localProjectCache.set("cached-project", "/cached/path");
@@ -117,6 +165,70 @@ describe("local-project-discovery", () => {
       const path = await findLocalProjectPath("cached-project", adapter);
 
       assertEquals(path, "/cached/path");
+    });
+
+    it("rejects unsafe slugs before probing the filesystem or cache", async () => {
+      const statPaths: string[] = [];
+      const adapter = createMockAdapter({
+        "/custom/path": { isDirectory: true },
+        "/custom/path/app": { isDirectory: true },
+      }, (path) => statPaths.push(path));
+      const cache = new ProjectDiscoveryCache();
+
+      for (
+        const slug of [
+          "../escape",
+          "../../escape",
+          "nested/project",
+          "nested\\project",
+          "%2e%2e%2fescape",
+          ".",
+          "..",
+        ]
+      ) {
+        assertEquals(
+          await findLocalProjectPath(slug, adapter, "/custom/path", cache),
+          undefined,
+        );
+      }
+
+      assertEquals(statPaths, []);
+      assertEquals(cache.projects.size, 0);
+    });
+
+    it("canonicalizes a safe slug before discovery and caching", async () => {
+      const adapter = createMockAdapter({
+        "data/projects/project-one": { isDirectory: true },
+        "data/projects/project-one/app": { isDirectory: true },
+      });
+      const cache = new ProjectDiscoveryCache();
+
+      const path = await findLocalProjectPath("  project-one  ", adapter, undefined, cache);
+
+      assertEquals(path?.endsWith("data/projects/project-one"), true);
+      assertEquals(cache.projects.has("project-one"), true);
+      assertEquals(cache.projects.has("  project-one  "), false);
+    });
+
+    it("rejects symlink targets outside standard project roots before stat", async () => {
+      const statPaths: string[] = [];
+      const adapter = createMockAdapter({}, (path) => statPaths.push(path));
+      adapter.fs.realPath = (path) => {
+        for (const dir of standardProjectDirs) {
+          const root = resolve(cwd(), dir);
+          if (path === resolve(root, "linked-project")) {
+            return Promise.resolve(resolve(cwd(), "outside/linked-project"));
+          }
+        }
+        return Promise.resolve(path);
+      };
+      const cache = new ProjectDiscoveryCache();
+
+      const path = await findLocalProjectPath("linked-project", adapter, undefined, cache);
+
+      assertEquals(path, undefined);
+      assertEquals(statPaths, []);
+      assertEquals(cache.projects.has("linked-project"), false);
     });
 
     it("discovers project with app directory", async () => {

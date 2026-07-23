@@ -26,6 +26,7 @@ function getRelativeFilePath(filePath: string, normalizedProjectDir: string): st
   return filePath;
 }
 
+/** Rewrite project-root aliases relative to the importing module. */
 export function resolvePathAliases(
   code: string,
   filePath: string,
@@ -62,6 +63,7 @@ export function resolvePathAliases(
   );
 }
 
+/** Rewrite relative imports and optionally route them through a module server. */
 export function resolveRelativeImports(
   code: string,
   filePath: string,

@@ -6,9 +6,15 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { createMockAdapter } from "./mock.ts";
 
-type DirEntry = { name: string; isFile: boolean; isDirectory: boolean };
+type DirEntry = {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+};
 
 async function collectDirEntries(iter: AsyncIterable<DirEntry>): Promise<DirEntry[]> {
   const entries: DirEntry[] = [];
@@ -44,9 +50,24 @@ describe("MockAdapter", () => {
 
       await assertRejects(
         () => adapter.fs.readFile("/missing.txt"),
-        Error,
-        "File not found: /missing.txt",
+        VeryfrontError,
+        "File not found",
       );
+    });
+
+    it("does not retain a missing caller path in the public error", async () => {
+      const adapter = createMockAdapter();
+      const secretPath = "/private/project-123/secret.txt";
+
+      const error = await assertRejects(
+        () => adapter.fs.readFile(secretPath),
+        VeryfrontError,
+        "File not found",
+      );
+
+      if (!(error instanceof VeryfrontError)) throw error;
+      assertEquals(error.slug, "file-not-found");
+      assertEquals(JSON.stringify(error).includes(secretPath), false);
     });
   });
 
@@ -63,11 +84,12 @@ describe("MockAdapter", () => {
     it("should throw for non-existent file", async () => {
       const adapter = createMockAdapter();
 
-      assertExists(adapter.fs.readFileBytes);
+      const readFileBytes = adapter.fs.readFileBytes;
+      assertExists(readFileBytes);
       await assertRejects(
-        () => adapter.fs.readFileBytes("/missing.txt"),
-        Error,
-        "File not found: /missing.txt",
+        () => readFileBytes("/missing.txt"),
+        VeryfrontError,
+        "File not found",
       );
     });
   });
@@ -140,6 +162,21 @@ describe("MockAdapter", () => {
       const entries = await collectDirEntries(adapter.fs.readDir("/empty"));
       assertEquals(entries.length, 0);
     });
+
+    it("lists explicit child directories without requiring a child file", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.directories.add("/dir");
+      adapter.fs.directories.add("/dir/empty-child");
+
+      const entries = await collectDirEntries(adapter.fs.readDir("/dir"));
+
+      assertEquals(entries, [{
+        name: "empty-child",
+        isFile: false,
+        isDirectory: true,
+        isSymlink: false,
+      }]);
+    });
   });
 
   describe("fs.stat", () => {
@@ -151,6 +188,15 @@ describe("MockAdapter", () => {
       assertEquals(stat.isFile, true);
       assertEquals(stat.isDirectory, false);
       assertEquals(stat.size, 5);
+    });
+
+    it("reports file size in UTF-8 bytes", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/unicode.txt", "🙂");
+
+      const stat = await adapter.fs.stat("/unicode.txt");
+
+      assertEquals(stat.size, 4);
     });
 
     it("should stat a directory", async () => {
@@ -176,8 +222,8 @@ describe("MockAdapter", () => {
 
       await assertRejects(
         () => adapter.fs.stat("/missing"),
-        Error,
-        "Path not found: /missing",
+        VeryfrontError,
+        "Path not found",
       );
     });
   });
@@ -242,6 +288,16 @@ describe("MockAdapter", () => {
       const tempDir = await adapter.fs.makeTempDir("test");
 
       assertEquals(tempDir.startsWith("/tmp/test"), true);
+      assertEquals(adapter.fs.directories.has(tempDir), true);
+    });
+
+    it("returns a distinct path for each temporary directory", async () => {
+      const adapter = createMockAdapter();
+
+      const first = await adapter.fs.makeTempDir("test");
+      const second = await adapter.fs.makeTempDir("test");
+
+      assertEquals(first === second, false);
     });
   });
 
@@ -285,6 +341,20 @@ describe("MockAdapter", () => {
       assertEquals(server.addr.port, 8000);
 
       await server.stop();
+    });
+
+    it("honors the configured address and reports it once", async () => {
+      const adapter = createMockAdapter();
+      const listened: Array<{ hostname: string; port: number }> = [];
+
+      const server = await adapter.serve(() => new Response("ok"), {
+        hostname: "127.0.0.1",
+        port: 4321,
+        onListen: (address) => listened.push(address),
+      });
+
+      assertEquals(server.addr, { hostname: "127.0.0.1", port: 4321 });
+      assertEquals(listened, [{ hostname: "127.0.0.1", port: 4321 }]);
     });
   });
 

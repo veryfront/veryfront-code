@@ -16,6 +16,7 @@ function getVeryfrontModulePaths(): Record<string, string> {
   };
 }
 
+/** Rewrite React and framework package imports for the selected runtime. */
 export async function resolveReactImports(
   code: string,
   forSSR: boolean = false,
@@ -39,6 +40,7 @@ export async function resolveReactImports(
   return replaceSpecifiers(code, (specifier) => ssrImports[specifier] ?? null);
 }
 
+/** Add React external and target parameters to bare esm.sh URLs. */
 export function addDepsToEsmShUrls(
   code: string,
   _forSSR: boolean = false,

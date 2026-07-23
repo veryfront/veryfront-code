@@ -9,9 +9,17 @@
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 import { register, tryResolve } from "../../src/extensions/contracts.ts";
 import type { SchemaValidator } from "../../src/extensions/schema/index.ts";
+import { assertSafeIntegrationIconSvg } from "../../src/integrations/icon-validation.ts";
 import { IntegrationConfigSchema } from "../../src/integrations/schema.ts";
 import type { IntegrationConfig } from "../../src/integrations/schema.ts";
-import { formatGeneratedModuleEntries } from "./integrations-module-format.ts";
+import {
+  formatConnectorIconFailure,
+  formatConnectorIdentityMismatch,
+  formatConnectorSourceFailure,
+  formatConnectorSourceMetadataFailure,
+  formatGeneratedModuleEntries,
+  isConnectorSourceRecord,
+} from "./integrations-module-format.ts";
 
 if (!tryResolve<SchemaValidator>("SchemaValidator")) {
   register<SchemaValidator>("SchemaValidator", createZodAdapter());
@@ -23,24 +31,13 @@ const summaryPath = "./src/integrations/_tool_summaries.ts";
 
 const connectors: IntegrationConfig[] = [];
 const icons: [string, string][] = [];
-const historicalToolSummaries: [string, NonNullable<
-  NonNullable<IntegrationConfig["tools"][number]["endpoint"]>["response"]
->["historicalSummary"]][] = [];
+const historicalToolSummaries: [
+  string,
+  NonNullable<
+    NonNullable<IntegrationConfig["tools"][number]["endpoint"]>["response"]
+  >["historicalSummary"],
+][] = [];
 const errors: string[] = [];
-
-function getNamespacedToolId(connectorName: string, toolId: string): string {
-  const prefix = `${connectorName}__`;
-  return toolId.startsWith(prefix) ? toolId : `${prefix}${toolId}`;
-}
-
-function normalizeConnectorToolIds(connector: IntegrationConfig): IntegrationConfig {
-  return {
-    ...connector,
-    tools: connector.tools.map((tool) =>
-      tool.id ? { ...tool, id: getNamespacedToolId(connector.name, tool.id) } : tool
-    ),
-  };
-}
 
 for await (const entry of Deno.readDir(integrationsDir)) {
   if (!entry.isDirectory || entry.name === "_base") continue;
@@ -51,16 +48,16 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     const raw = await Deno.readTextFile(`${dirPath}/connector.json`);
     const json = JSON.parse(raw);
 
-    if (json.internal) continue;
-
-    // Strip fields not needed in the runtime module
-    if (json.auth) {
-      const { callbackPath: _, ...rest } = json.auth;
-      json.auth = rest;
+    if (!isConnectorSourceRecord(json)) {
+      errors.push(formatConnectorSourceMetadataFailure(entry.name));
+      continue;
     }
+    if (json.internal === true) continue;
+
+    // Strip source-only fields that are not part of the runtime schema.
     delete json.internal;
     delete json.version;
-    // Keep setup guides in the runtime catalog — they power the
+    // Keep setup guides in the runtime catalog. They power the
     // missing-credentials UX in chat (how a user obtains each key).
     const setupGuide = json.setupGuide ?? json.SETUP_GUIDE;
     // Markdown-string guides (legacy authoring style) are wrapped as a single
@@ -71,13 +68,17 @@ for await (const entry of Deno.readDir(integrationsDir)) {
         ...setupGuide,
         steps: (setupGuide.steps ?? []).map((step: Record<string, unknown>) =>
           Object.fromEntries(
-            Object.entries(step).filter(([, value]) => value !== null && value !== undefined),
+            Object.entries(step).filter(([, value]) =>
+              value !== null && value !== undefined
+            ),
           )
         ),
       };
     } else if (typeof setupGuide === "string" && setupGuide.length > 0) {
       // Markdown-string guides (legacy authoring style) become a single step.
-      json.setupGuide = { steps: [{ title: "Setup guide", description: setupGuide }] };
+      json.setupGuide = {
+        steps: [{ title: "Setup guide", description: setupGuide }],
+      };
     } else {
       json.setupGuide = undefined;
     }
@@ -88,21 +89,28 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     if (!result.success) {
       errors.push(
         `${entry.name}: ${
-          result.error.issues.map((i) => `${i.path.join(".")} — ${i.message}`)
+          result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`)
             .join(", ")
         }`,
       );
       continue;
     }
 
-    const connector = normalizeConnectorToolIds(result.data);
+    if (result.data.name !== entry.name) {
+      errors.push(formatConnectorIdentityMismatch(entry.name));
+      continue;
+    }
+
+    // Validate callbackPath above, then omit it from the runtime catalog.
+    const { callbackPath: _, ...runtimeAuth } = result.data.auth;
+    const connector: IntegrationConfig = { ...result.data, auth: runtimeAuth };
 
     connectors.push(connector);
     for (const tool of connector.tools) {
       const historicalSummary = tool.endpoint?.response?.historicalSummary;
       if (!tool.id || !historicalSummary) continue;
       historicalToolSummaries.push([
-        getNamespacedToolId(connector.name, tool.id),
+        tool.id,
         historicalSummary,
       ]);
     }
@@ -110,14 +118,14 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     if (connector.icon) {
       try {
         const svg = await Deno.readTextFile(`${dirPath}/${connector.icon}`);
-        icons.push([connector.name, svg]);
-      } catch {
-        errors.push(
-          `${entry.name}: icon "${connector.icon}" declared but file not found`,
-        );
+        icons.push([connector.name, assertSafeIntegrationIconSvg(svg)]);
+      } catch (error) {
+        errors.push(formatConnectorIconFailure(entry.name, error));
       }
     }
-  } catch { /* no connector.json */ }
+  } catch (error) {
+    errors.push(formatConnectorSourceFailure(entry.name, error));
+  }
 }
 
 if (errors.length > 0) {
@@ -148,7 +156,7 @@ const historicalToolSummaryLines = formatGeneratedModuleEntries(
 
 await Deno.writeTextFile(
   dataPath,
-  `// Auto-generated — do not edit
+  `// Auto-generated, do not edit
 import type { IntegrationConfig } from "./schema.ts";
 
 export const connectors: IntegrationConfig[] = [
@@ -163,7 +171,7 @@ ${iconLines}
 
 await Deno.writeTextFile(
   summaryPath,
-  `// Auto-generated — do not edit
+  `// Auto-generated, do not edit
 import type { IntegrationEndpointHistoricalSummary } from "./schema.ts";
 
 export const historicalToolSummaries: Record<string, IntegrationEndpointHistoricalSummary> = {

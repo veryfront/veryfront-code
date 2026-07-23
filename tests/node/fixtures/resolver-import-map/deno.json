@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "fixture/": "../../../../src/testing/",
+    "fixture/specific/": "../../../../src/errors/",
+    "fixture/malformed": "https://esm.sh/react@%E0%A4%A"
+  }
+}

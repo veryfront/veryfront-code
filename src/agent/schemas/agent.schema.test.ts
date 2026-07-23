@@ -67,13 +67,18 @@ describe("agent/schema", () => {
       assertEquals(result.success, true);
     });
 
-    it("should accept all memory types", () => {
-      const types = ["conversation", "buffer", "summary", "redis"];
+    it("should accept all built-in memory configuration types", () => {
+      const types = ["conversation", "buffer", "summary"];
 
       for (const type of types) {
         const result = getMemoryConfigSchema().safeParse({ type });
         assertEquals(result.success, true, `${type} should be valid`);
       }
+    });
+
+    it("should reject Redis as a serializable built-in configuration", () => {
+      const result = getMemoryConfigSchema().safeParse({ type: "redis" });
+      assertEquals(result.success, false);
     });
 
     it("should accept config with only type", () => {

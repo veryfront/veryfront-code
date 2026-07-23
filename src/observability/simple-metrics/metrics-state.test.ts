@@ -34,6 +34,12 @@ describe("observability/simple-metrics/metrics-state", () => {
       assertEquals(boundaries.includes(500), true);
       assertEquals(boundaries.includes(1000), true);
     });
+
+    it("does not expose mutable histogram boundaries", () => {
+      const boundaries = getSSRBoundaries();
+      boundaries[0] = 999;
+      assertEquals(getSSRBoundaries()[0], 5);
+    });
   });
 
   describe("createSnapshot", () => {

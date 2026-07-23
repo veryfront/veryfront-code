@@ -1,7 +1,8 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const ROUTE_ERROR_CATALOG: PartialErrorCatalog = {
+/** Immutable error-solution catalog fragment. */
+export const ROUTE_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "route-conflict": createSimpleError(
     "route-conflict",
     "Route conflict",
@@ -66,4 +67,4 @@ export async function GET() {
     "Error in API route execution.",
     ["Check API handler code", "Ensure proper error handling", "Verify request parsing"],
   ),
-};
+});

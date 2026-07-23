@@ -45,6 +45,8 @@ describe("server/graceful-shutdown", () => {
         },
         shutdown: () => events.push("tracker-shutdown"),
       },
+      shutdownProjectIsolation: () => events.push("project-isolation-shutdown"),
+      shutdownWorkerPool: () => events.push("worker-pool-shutdown"),
       shutdownTelemetry: () => {
         events.push("telemetry-shutdown");
         return Promise.resolve();
@@ -56,12 +58,14 @@ describe("server/graceful-shutdown", () => {
       "info:Received SIGTERM, initiating graceful shutdown...",
       "lame-duck",
       "ready:false",
+      "abort",
       "info:Server marked as not ready, waiting for in-flight requests to drain...",
       "drain:290000",
       "tracker-shutdown",
-      "dispose",
-      "abort",
       "stop",
+      "dispose",
+      "project-isolation-shutdown",
+      "worker-pool-shutdown",
       "telemetry-shutdown",
       "info:Graceful shutdown complete",
     ]);
@@ -98,9 +102,9 @@ describe("server/graceful-shutdown", () => {
 
     assertEquals(drained, false);
     assertEquals(events, [
+      "abort",
       "warn:Drain timeout exceeded, forcing shutdown",
       "tracker-shutdown",
-      "abort",
       "stop",
       "telemetry-shutdown",
     ]);
@@ -109,6 +113,7 @@ describe("server/graceful-shutdown", () => {
   it("bounds cleanup and still invokes every cleanup action", async () => {
     const events: string[] = [];
     const warnings: string[] = [];
+    let telemetryTimeoutMs: number | undefined;
     const startedAt = Date.now();
 
     await gracefullyShutdownProductionServerWithDependencies({
@@ -136,7 +141,8 @@ describe("server/graceful-shutdown", () => {
         waitForDrain: () => Promise.resolve(true),
         shutdown: () => events.push("tracker-shutdown"),
       },
-      shutdownTelemetry: () => {
+      shutdownTelemetry: (timeoutMs) => {
+        telemetryTimeoutMs = timeoutMs;
         events.push("telemetry-shutdown");
         return Promise.resolve();
       },
@@ -144,15 +150,52 @@ describe("server/graceful-shutdown", () => {
 
     assertEquals(Date.now() - startedAt < 500, true);
     assertEquals(events, [
-      "tracker-shutdown",
-      "dispose",
       "abort",
+      "tracker-shutdown",
       "stop",
+      "dispose",
       "telemetry-shutdown",
     ]);
     assertEquals(
       warnings.includes("Graceful shutdown cleanup deadline exceeded"),
       true,
     );
+    assertEquals(telemetryTimeoutMs, 0);
+  });
+
+  it("does not expose cleanup error messages or stacks in shutdown logs", async () => {
+    const records: unknown[] = [];
+    const privateError = new Error("private-shutdown-payload-canary");
+    privateError.stack = "private-shutdown-stack-canary";
+
+    await gracefullyShutdownProductionServerWithDependencies({
+      signal: "SIGTERM",
+      drainTimeoutMs: 0,
+      cleanupTimeoutMs: 100,
+      abort: () => {
+        throw privateError;
+      },
+      stop: () => Promise.reject(privateError),
+      logger: {
+        info: () => {},
+        warn: (message, context) => records.push({ message, context }),
+      },
+    }, {
+      markServerShuttingDown: () => {},
+      setServerInitialized: () => {},
+      requestTracker: {
+        getInFlightCount: () => 0,
+        waitForDrain: () => Promise.reject(privateError),
+        shutdown: () => {
+          throw privateError;
+        },
+      },
+      shutdownTelemetry: () => Promise.reject(privateError),
+    });
+
+    const serialized = JSON.stringify(records);
+    assertEquals(serialized.includes("private-shutdown-payload-canary"), false);
+    assertEquals(serialized.includes("private-shutdown-stack-canary"), false);
+    assertEquals(serialized.includes('"errorName":"Error"'), true);
   });
 });

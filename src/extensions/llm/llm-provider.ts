@@ -12,9 +12,11 @@
 
 import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
 
+export type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
+
 /** Config passed to any provider's create* method. */
 export interface LLMProviderConfig {
-  /** API credential — maps to OpenAI `apiKey`, Anthropic `authToken`, Google `apiKey` internally. */
+  /** API credential mapped to the provider's authentication option. */
   credential: string;
   /** Override the provider's base URL (e.g. Azure OpenAI, self-hosted gateway). */
   baseURL?: string;
@@ -33,20 +35,29 @@ export interface LLMProviderConfig {
  * providers that don't support them.
  */
 export interface LLMProvider {
-  /** Stable id used in model strings: "openai" / "anthropic" / "google". */
+  /** Stable id using 1 to 128 alphanumeric, `.`, `_`, `:`, or `-` characters. */
   readonly id: string;
+  /** Create a text model runtime for `modelId`. */
   createModel(modelId: string, config: LLMProviderConfig): ModelRuntime;
+  /** Create an embedding runtime when the provider supports embeddings. */
   createEmbedding?(modelId: string, config: LLMProviderConfig): EmbeddingRuntime;
+  /** Create a Responses API runtime when the provider supports it. */
   createResponses?(modelId: string, config: LLMProviderConfig): ModelRuntime;
 }
 
 /** Registry contract. Single impl created at bootstrap. */
 export interface LLMProviderRegistry {
+  /** Register up to 256 providers. Conflicting duplicate ids throw. */
   register(provider: LLMProvider): void;
+  /** Remove the provider registered for `id`. */
   unregister(id: string): void;
+  /** Return the provider registered for `id`, if one exists. */
   get(id: string): LLMProvider | undefined;
+  /** Return the provider registered for `id` or throw. */
   require(id: string): LLMProvider;
+  /** Return registered providers in insertion order. */
   list(): LLMProvider[];
+  /** Return whether a provider is registered for `id`. */
   has(id: string): boolean;
 }
 

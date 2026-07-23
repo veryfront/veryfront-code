@@ -1,5 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { PageWithData, StaticPathsResult } from "./types.ts";
@@ -143,6 +145,69 @@ describe("StaticPathsFetcher", () => {
       assertExists(result);
       assertEquals(result.paths, []);
       assertEquals(result.fallback, false);
+    });
+
+    it("does not share mutable empty results between calls", async () => {
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(
+        () => undefined as unknown as StaticPathsResult,
+      );
+
+      const first = await fetcher.fetch(pageModule);
+      assertExists(first);
+      first.paths.push({ params: { id: "mutated" } });
+
+      const second = await fetcher.fetch(pageModule);
+      assertExists(second);
+      assertEquals(second, { paths: [], fallback: false });
+    });
+
+    it("times out a static-path loader that never settles", async () => {
+      using time = new FakeTime();
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(
+        () => new Promise<StaticPathsResult>(() => {}),
+      );
+      let outcome = "pending";
+
+      void fetcher.fetch(pageModule).then(
+        () => {
+          outcome = "resolved";
+        },
+        (error: unknown) => {
+          outcome = error instanceof Error ? error.name : "unknown error";
+        },
+      );
+      await time.tickAsync(DATA_FETCH_TIMEOUT_MS);
+      await time.tickAsync(0);
+
+      assertEquals(outcome, "TimeoutError");
+    });
+
+    it("rejects invalid static path results with a stable error", async () => {
+      const pageModule = createPageModule(
+        () =>
+          ({ paths: [{ params: { id: 42 } }], fallback: false }) as unknown as StaticPathsResult,
+      );
+
+      await assertRejects(
+        () => new StaticPathsFetcher().fetch(pageModule),
+        Error,
+        "invalid static paths result",
+      );
+    });
+
+    it("rejects static-path results that exceed the result byte limit", async () => {
+      const paths = Array.from({ length: 2_100 }, (_, index) => ({
+        params: { id: `${index}-${"x".repeat(4_080)}` },
+      }));
+      const pageModule = createPageModule(() => ({ paths, fallback: false }));
+
+      await assertRejects(
+        () => new StaticPathsFetcher().fetch(pageModule),
+        Error,
+        "exceeds the static paths limit",
+      );
     });
 
     it("should throw when getStaticPaths throws", async () => {

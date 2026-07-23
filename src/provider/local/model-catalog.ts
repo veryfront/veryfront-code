@@ -11,19 +11,19 @@ import { createError, toError } from "#veryfront/errors";
 
 export interface ModelInfo {
   /** HuggingFace model repository ID */
-  hfId: string;
+  readonly hfId: string;
   /** Quantization dtype for ONNX Runtime */
-  dtype: ModelDType | Record<string, ModelDType>;
+  readonly dtype: ModelDType | Readonly<Record<string, ModelDType>>;
   /** Runtime path required by the model. */
-  engine?: "text-generation" | "conditional-generation";
+  readonly engine?: "text-generation" | "conditional-generation";
   /** Transformers.js model class used by conditional-generation models. */
-  modelClass?: "gemma4" | "qwen3_5";
+  readonly modelClass?: "gemma4" | "qwen3_5";
   /** Approximate download size in MB */
-  sizeMB: number;
+  readonly sizeMB: number;
   /** Human-readable description */
-  description: string;
+  readonly description: string;
   /** Pooling strategy for embedding models (default: "mean") */
-  pooling?: "mean" | "last_token";
+  readonly pooling?: "mean" | "last_token";
 }
 
 export type ModelDType = "q4" | "q8" | "q4f16" | "fp16" | "fp32";
@@ -34,7 +34,17 @@ export type ModelDType = "q4" | "q8" | "q4f16" | "fp16" | "fp32";
  * Keep this list intentionally small. Local model support means the model has
  * been smoke-tested through the Veryfront local runtime.
  */
-const MODEL_CATALOG: Record<string, ModelInfo> = {
+function freezeModelCatalog(
+  entries: Record<string, ModelInfo>,
+): Readonly<Record<string, ModelInfo>> {
+  for (const model of Object.values(entries)) {
+    if (typeof model.dtype === "object") Object.freeze(model.dtype);
+    Object.freeze(model);
+  }
+  return Object.freeze(entries);
+}
+
+const MODEL_CATALOG = freezeModelCatalog({
   "qwen3.5-0.8b": {
     hfId: "onnx-community/Qwen3.5-0.8B-ONNX",
     dtype: {
@@ -63,7 +73,7 @@ const MODEL_CATALOG: Record<string, ModelInfo> = {
     sizeMB: 6000,
     description: "Gemma 4 E4B IT - larger current-generation Gemma model",
   },
-};
+});
 
 /** Default model used when no specific model ID is provided */
 export const DEFAULT_LOCAL_MODEL = "qwen3.5-0.8b";
@@ -73,7 +83,7 @@ export const DEFAULT_LOCAL_MODEL = "qwen3.5-0.8b";
  *
  * Uses the same `q4` quantization as language models for consistency.
  */
-const EMBEDDING_MODEL_CATALOG: Record<string, ModelInfo> = {
+const EMBEDDING_MODEL_CATALOG = freezeModelCatalog({
   "all-MiniLM-L6-v2": {
     hfId: "Xenova/all-MiniLM-L6-v2",
     dtype: "q4",
@@ -99,7 +109,7 @@ const EMBEDDING_MODEL_CATALOG: Record<string, ModelInfo> = {
     pooling: "last_token",
     description: "Qwen3 Embedding 0.6B - SOTA multilingual embeddings",
   },
-};
+});
 
 /** Default embedding model used when no specific model ID is provided */
 export const DEFAULT_LOCAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2";
@@ -109,29 +119,40 @@ export const DEFAULT_LOCAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2";
  * Falls back to treating the ID as a raw HuggingFace repository ID.
  */
 export function resolveLocalEmbeddingModel(modelId: string): ModelInfo {
-  const catalogEntry = EMBEDDING_MODEL_CATALOG[modelId];
+  const catalogEntry = Object.hasOwn(EMBEDDING_MODEL_CATALOG, modelId)
+    ? EMBEDDING_MODEL_CATALOG[modelId]
+    : undefined;
   if (catalogEntry) return catalogEntry;
 
-  return {
+  if (
+    typeof modelId !== "string" || modelId.length === 0 || modelId.length > 256 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/u.test(modelId) ||
+    modelId.split("/").some((segment) => segment === "." || segment === "..")
+  ) {
+    throw toError(createError({
+      type: "config",
+      message: "Custom local embedding model ID is invalid.",
+    }));
+  }
+
+  return Object.freeze({
     hfId: modelId,
     dtype: "q4",
     sizeMB: 0,
     description: `Custom embedding model: ${modelId}`,
-  };
+  });
 }
 
 /**
  * Resolve a supported local model ID to its HuggingFace model info.
  */
 export function resolveLocalModel(modelId: string): ModelInfo {
-  const catalogEntry = MODEL_CATALOG[modelId];
+  const catalogEntry = Object.hasOwn(MODEL_CATALOG, modelId) ? MODEL_CATALOG[modelId] : undefined;
   if (catalogEntry) return catalogEntry;
 
   throw toError(createError({
     type: "config",
-    message: `Unsupported local model "${modelId}". Supported local models: ${
-      getLocalModelIds().join(", ")
-    }.`,
+    message: `Unsupported local model. Supported local models: ${getLocalModelIds().join(", ")}.`,
   }));
 }
 

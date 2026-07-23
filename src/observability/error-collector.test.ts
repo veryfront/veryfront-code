@@ -99,6 +99,44 @@ describe("cli/mc./error-collector", () => {
       assertEquals(ec.count, 2);
     });
 
+    it("rejects unsafe collector bounds", () => {
+      for (const maxErrors of [0, -1, Number.POSITIVE_INFINITY, 10_001]) {
+        assertThrows(() => new ErrorCollector({ maxErrors }));
+      }
+    });
+
+    it("does not expose mutable collected errors", () => {
+      const ec = new ErrorCollector();
+      const context = { nested: { value: "original" } };
+      const added = ec.addRuntimeError("original", undefined, context);
+      added.message = "changed";
+      (added.context?.nested as { value: string }).value = "changed";
+      context.nested.value = "changed at source";
+
+      const stored = ec.get(added.id);
+      assertExists(stored);
+      assertEquals(stored.message, "original");
+      assertEquals((stored.context?.nested as { value: string }).value, "original");
+
+      stored.message = "changed again";
+      assertEquals(ec.get(added.id)?.message, "original");
+    });
+
+    it("sanitizes secrets and local paths in diagnostic text", () => {
+      const ec = new ErrorCollector();
+      const error = ec.addRuntimeError(
+        "request failed token=secret-value at /private/workspace/app.ts",
+        "Error: token=secret-value\n at /private/workspace/app.ts:1:1",
+        { apiKey: "secret-value", path: "/private/workspace/app.ts" },
+      );
+
+      assertEquals(error.message.includes("secret-value"), false);
+      assertEquals(error.message.includes("/private/workspace"), false);
+      assertEquals(error.stack?.includes("secret-value"), false);
+      assertEquals(error.context?.apiKey, "[REDACTED]");
+      assertEquals(error.context?.path, "<LOCAL_PATH>");
+    });
+
     it("should filter by type", () => {
       const ec = new ErrorCollector();
       ec.addCompileError("a");
@@ -126,6 +164,17 @@ describe("cli/mc./error-collector", () => {
       ec.addCompileError("b", "lib/bar.ts");
 
       assertEquals(ec.getAll({ file: /^src\// }).length, 1);
+    });
+
+    it("keeps stateful file regular expressions deterministic", () => {
+      const ec = new ErrorCollector();
+      ec.addCompileError("a", "src/foo.ts");
+      const pattern = /^src\//g;
+      pattern.lastIndex = 2;
+
+      assertEquals(ec.getAll({ file: pattern }).length, 1);
+      assertEquals(ec.getAll({ file: pattern }).length, 1);
+      assertEquals(pattern.lastIndex, 2);
     });
 
     it("should get by id", () => {
@@ -275,6 +324,27 @@ describe("cli/mc./error-collector", () => {
       assertEquals(result?.type, "compile");
       assertEquals(result?.category, "BUILD");
       assertEquals(result?.message, "Some error occurred");
+    });
+
+    it("bounds and sanitizes generic compiler output", () => {
+      const result = parseCompileError(
+        `error token=secret-value ${"x".repeat(100_000)}`,
+      );
+
+      assertEquals(result?.message?.includes("secret-value"), false);
+      assertEquals((result?.message?.length ?? 0) <= 4_107, true);
+    });
+
+    it("redacts absolute compiler paths and rejects unsafe locations", () => {
+      const result = parseCompileError(
+        "/private/workspace/app.ts(10,5): error TS2304: Cannot find name",
+      );
+
+      assertEquals(result?.file, "<LOCAL_PATH>");
+      assertEquals(
+        parseCompileError("src/app.ts(999999999999999999999,5): error TS1: bad")?.line,
+        undefined,
+      );
     });
 
     it("should return null for non-error output", () => {

@@ -14,7 +14,12 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
-import { assertLocalToolId, toolRegistry } from "#veryfront/tool/registry.ts";
+import type { Tool } from "#veryfront/tool";
+import {
+  assertLocalToolId,
+  registerFrameworkSkillTool,
+  toolRegistry,
+} from "#veryfront/tool/registry.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
 import {
@@ -79,6 +84,63 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
 
+let transientSkillToolLeaseCount = 0;
+let transientSkillToolsRetained = false;
+const transientSkillTools = new Map<string, Tool>();
+
+function registerMissingAgentSkillTools(): Map<string, Tool> {
+  const added = new Map<string, Tool>();
+  for (const registration of SKILL_TOOL_REGISTRATIONS) {
+    if (toolRegistry.hasShared(registration.id)) continue;
+    const skillTool = registration.create();
+    registerFrameworkSkillTool(registration.id, skillTool);
+    added.set(registration.id, skillTool);
+  }
+  return added;
+}
+
+/** Register framework-owned skill tools before project module initialization. */
+export function ensureAgentSkillToolsRegistered(): void {
+  registerMissingAgentSkillTools();
+  if (transientSkillToolLeaseCount > 0) {
+    transientSkillToolsRetained = true;
+  }
+}
+
+/**
+ * Make skill tools available while one project agent module initializes.
+ * The returned release function removes tools that were only needed for a
+ * module that did not construct a skill-enabled agent.
+ */
+export function prepareAgentSkillToolsForModuleInitialization(): () => void {
+  if (transientSkillToolLeaseCount === 0) {
+    transientSkillTools.clear();
+    transientSkillToolsRetained = false;
+  }
+  for (const [id, skillTool] of registerMissingAgentSkillTools()) {
+    transientSkillTools.set(id, skillTool);
+  }
+  transientSkillToolLeaseCount++;
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    transientSkillToolLeaseCount--;
+    if (transientSkillToolLeaseCount !== 0) return;
+
+    if (!transientSkillToolsRetained) {
+      for (const [id, skillTool] of transientSkillTools) {
+        if (toolRegistry.getShared(id) === skillTool) {
+          toolRegistry.deleteShared(id);
+        }
+      }
+    }
+    transientSkillTools.clear();
+    transientSkillToolsRetained = false;
+  };
+}
+
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {
     toDataStreamResponse(options): Response {
@@ -127,14 +189,10 @@ export function agent(config: AgentConfig): Agent {
 
   if (config.skills) {
     // Skill tools (load_skill, load_skill_reference, execute_skill_script) are
-    // framework infrastructure — shared across all projects. Project tools and
+    // framework infrastructure shared across all projects. Project tools and
     // skills themselves remain project-scoped. Using registerShared avoids
     // scope mismatch between module-load time and request-handling time.
-    for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!toolRegistry.has(registration.id)) {
-        toolRegistry.registerShared(registration.id, registration.create());
-      }
-    }
+    ensureAgentSkillToolsRegistered();
 
     // Ensure skill tools are enabled for this agent even when config.tools is undefined
     if (config.tools !== true) {
@@ -217,6 +275,7 @@ export function agent(config: AgentConfig): Agent {
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
+            input.memoryMode,
           ),
         { "agent.id": id },
       );
@@ -247,6 +306,7 @@ export function agent(config: AgentConfig): Agent {
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
+            input.memoryMode,
           );
 
           return createAgentStreamResult(stream);

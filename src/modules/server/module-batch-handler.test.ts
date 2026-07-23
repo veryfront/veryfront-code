@@ -8,6 +8,7 @@ import {
   handleModuleBatch,
 } from "./module-batch-handler.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 
 describe(
   "modules/server/module-batch-handler",
@@ -33,7 +34,11 @@ describe(
     });
 
     describe("handleModuleBatch", () => {
-      function createBatchRequest(paths?: string, extraParams?: string): Request {
+      function createBatchRequest(
+        paths?: string,
+        extraParams?: string,
+        method = "GET",
+      ): Request {
         const url = new URL("http://localhost:8080/_vf_modules/_batch");
 
         if (paths !== undefined) url.searchParams.set("paths", paths);
@@ -42,7 +47,7 @@ describe(
           for (const [key, value] of extra) url.searchParams.append(key, value);
         }
 
-        return new Request(url.toString());
+        return new Request(url.toString(), { method });
       }
 
       function createOptions(
@@ -57,8 +62,9 @@ describe(
         };
       }
 
-      function extractChildVersion(code: string): string {
-        const match = code.match(/\.\/child\.js\?ssr=true&project=test&v=([^"']+)/);
+      function extractModuleVersion(code: string, modulePath: string): string {
+        const escapedPath = modulePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const match = code.match(new RegExp(`/_vf_modules/${escapedPath}[^"']*[?&]v=([^&"']+)`));
         return match?.[1] ?? "";
       }
 
@@ -66,6 +72,15 @@ describe(
         const response = await handleModuleBatch(createBatchRequest(), createOptions());
         assertEquals(response.status, 400);
         assertEquals(await response.text(), "Missing 'paths' parameter");
+      });
+
+      it("rejects unsupported methods", async () => {
+        const response = await handleModuleBatch(
+          createBatchRequest("page.js", undefined, "POST"),
+          createOptions(),
+        );
+        assertEquals(response.status, 405);
+        assertEquals(response.headers.get("allow"), "GET, HEAD");
       });
 
       it("should return 400 when paths parameter is empty string", async () => {
@@ -85,6 +100,13 @@ describe(
         const response = await handleModuleBatch(createBatchRequest(paths), createOptions());
         assertEquals(response.status, 400);
         assertEquals((await response.text()).includes("Too many modules"), true);
+      });
+
+      it("rejects traversal and source-injection paths before filesystem access", async () => {
+        for (const path of ["../secret.js", "/absolute.js", "safe.js\nexport default 1"]) {
+          const response = await handleModuleBatch(createBatchRequest(path), createOptions());
+          assertEquals(response.status, 400);
+        }
       });
 
       it("should return 404 when no modules could be loaded", async () => {
@@ -182,6 +204,23 @@ describe(
         const code = await response.text();
         assertEquals(code.includes("__vf_batch_modules"), true);
         assertEquals(code.includes("getModule"), true);
+        const imports = await parseImports(code);
+        assertEquals(imports.length, 1);
+        assertEquals(imports[0]?.n?.startsWith("/_vf_modules/hello.js?"), true);
+      });
+
+      it("returns headers without a body for HEAD requests", async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set("/test-project/hello.tsx", "export const hello = true;");
+
+        const response = await handleModuleBatch(
+          createBatchRequest("hello.js", undefined, "HEAD"),
+          createOptions({ adapter }),
+        );
+
+        assertEquals(response.status, 200);
+        assertEquals(response.headers.get("X-Batch-Modules"), "1");
+        assertEquals(await response.text(), "");
       });
 
       it("streams cached batch bundles without joining the full response", async () => {
@@ -192,6 +231,7 @@ describe(
           projectDir: "/test-project",
           adapter,
           projectSlug: "test",
+          releaseId: "release-streamed",
           dev: false,
         };
 
@@ -219,6 +259,33 @@ describe(
         } finally {
           Array.prototype.join = originalJoin;
         }
+      });
+
+      it("isolates release transform caches by project directory when IDs are absent", async () => {
+        clearBatchCache();
+        const firstAdapter = createMockAdapter();
+        firstAdapter.fs.files.set("/project-a/page.ts", "export const project = 'a';");
+        const secondAdapter = createMockAdapter();
+        secondAdapter.fs.files.set("/project-b/page.ts", "export const project = 'b';");
+
+        const first = await handleModuleBatch(createBatchRequest("page.js"), {
+          projectDir: "/project-a",
+          adapter: firstAdapter,
+          releaseId: "shared-release-name",
+          dev: false,
+        });
+        const second = await handleModuleBatch(createBatchRequest("page.js"), {
+          projectDir: "/project-b",
+          adapter: secondAdapter,
+          releaseId: "shared-release-name",
+          dev: false,
+        });
+
+        const firstVersion = extractModuleVersion(await first.text(), "page.js");
+        const secondVersion = extractModuleVersion(await second.text(), "page.js");
+        assertEquals(firstVersion.length > 0, true);
+        assertEquals(secondVersion.length > 0, true);
+        assertEquals(firstVersion === secondVersion, false);
       });
 
       it("should include batch metadata headers", async () => {
@@ -257,19 +324,29 @@ describe(
         assertEquals(code.includes("Failed: missing.js"), true);
       });
 
-      it("should set immutable cache headers for non-dev mode", async () => {
+      it("sets immutable cache headers only for release-addressed batches", async () => {
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/comp.tsx", "export const y = 2;");
 
-        const response = await handleModuleBatch(createBatchRequest("comp.js"), {
+        const mutableResponse = await handleModuleBatch(createBatchRequest("comp.js"), {
           projectDir: "/test-project",
           adapter,
           projectSlug: "test",
           dev: false,
         });
+        assertEquals(mutableResponse.status, 200);
+        assertEquals(mutableResponse.headers.get("Cache-Control")?.includes("immutable"), false);
 
-        assertEquals(response.status, 200);
-        assertEquals(response.headers.get("Cache-Control")?.includes("immutable"), true);
+        const releaseResponse = await handleModuleBatch(createBatchRequest("comp.js"), {
+          projectDir: "/test-project",
+          adapter,
+          projectSlug: "test",
+          releaseId: "release-1",
+          dev: false,
+        });
+
+        assertEquals(releaseResponse.status, 200);
+        assertEquals(releaseResponse.headers.get("Cache-Control")?.includes("immutable"), true);
       });
 
       it("uses child source content for SSR import cache busters", async () => {
@@ -290,7 +367,7 @@ describe(
           },
         );
         assertEquals(firstResponse.status, 200);
-        const firstVersion = extractChildVersion(await firstResponse.text());
+        const firstVersion = extractModuleVersion(await firstResponse.text(), "page.js");
 
         adapter.fs.files.set("/test-project/child.ts", `export const child = "two";\n`);
 
@@ -304,7 +381,7 @@ describe(
           },
         );
         assertEquals(secondResponse.status, 200);
-        const secondVersion = extractChildVersion(await secondResponse.text());
+        const secondVersion = extractModuleVersion(await secondResponse.text(), "page.js");
 
         assertEquals(firstVersion.length > 0, true);
         assertEquals(secondVersion.length > 0, true);

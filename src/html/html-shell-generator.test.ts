@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import {
   clearAllManifests,
   recordSSRModules,
@@ -11,6 +16,7 @@ import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { MAX_HTML_OUTPUT_BYTES } from "./limits.ts";
 
 describe("html-generation/html-shell-generator", () => {
   const mockConfig = {
@@ -36,6 +42,7 @@ describe("html-generation/html-shell-generator", () => {
     return {
       mode: "development",
       config: mockConfig,
+      projectId: "test-project",
       ...overrides,
     };
   }
@@ -64,6 +71,137 @@ describe("html-generation/html-shell-generator", () => {
       );
 
       assertStringIncludes(result, "<h1>Hello World</h1>");
+    });
+
+    it("preserves leading and trailing whitespace in rendered content", async () => {
+      const content = "\n  <span>preserve hydration text boundaries</span>  \n";
+      const result = await wrapInHTMLShell(
+        content,
+        createMeta(),
+        createOptions(),
+      );
+
+      assertStringIncludes(result, `>${content}</div>`);
+    });
+
+    it("rejects rendered content that exceeds the HTML output budget", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "x".repeat(MAX_HTML_OUTPUT_BYTES + 1),
+            createMeta(),
+            createOptions(),
+          ),
+        Error,
+        "size limit",
+      );
+    });
+
+    it("rejects unsupported generation modes at the runtime boundary", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions({ mode: "fallback" as never }),
+          ),
+        Error,
+        "mode",
+      );
+    });
+
+    it("does not execute shell input accessors", async () => {
+      let metadataAccessorCalls = 0;
+      const metadata: Record<string, unknown> = { title: "Test" };
+      Object.defineProperty(metadata, "slug", {
+        enumerable: true,
+        get() {
+          metadataAccessorCalls++;
+          return "private";
+        },
+      });
+      await assertRejects(
+        () => wrapInHTMLShell("<p>content</p>", metadata as never, createOptions()),
+        TypeError,
+        "HTML shell metadata must not contain accessor properties",
+      );
+      assertEquals(metadataAccessorCalls, 0);
+
+      let optionAccessorCalls = 0;
+      const options: Record<string, unknown> = {
+        config: mockConfig,
+        projectId: "test-project",
+      };
+      Object.defineProperty(options, "mode", {
+        enumerable: true,
+        get() {
+          optionAccessorCalls++;
+          return "development";
+        },
+      });
+      await assertRejects(
+        () => wrapInHTMLShell("<p>content</p>", createMeta(), options as never),
+        TypeError,
+        "HTML shell options must not contain accessor properties",
+      );
+      assertEquals(optionAccessorCalls, 0);
+    });
+
+    it("rejects unsupported deployment environments at the runtime boundary", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions({ environment: "staging" as never }),
+          ),
+        Error,
+        "environment",
+      );
+    });
+
+    it("validates every supplied project identity", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions({
+              projectId: "invalid/project",
+              projectSlug: "valid-project",
+            }),
+          ),
+        Error,
+        "project ID",
+      );
+    });
+
+    it("rejects oversized project CSS candidates before cloning the set", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions({
+              projectClasses: new Set(["x".repeat(1025)]),
+            }),
+          ),
+        Error,
+        "CSS candidate",
+      );
+    });
+
+    it("rejects oversized slugs before embedding them in HTML and hydration data", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta({ slug: "s".repeat(2049) }),
+            createOptions(),
+          ),
+        Error,
+        "slug",
+      );
     });
 
     it("should set title from metadata", async () => {
@@ -222,7 +360,7 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("escapes legacy route-manifest URLs in modulepreload attributes", async () => {
+    it("omits unsafe legacy route-manifest URLs", async () => {
       clearAllManifests();
       recordSSRModules("hostile-project", "test-page", [
         'modules/evil"><script>alert(1)</script>.js',
@@ -238,52 +376,90 @@ describe("html-generation/html-shell-generator", () => {
       );
       clearAllManifests();
 
-      assertStringIncludes(
-        result,
-        'href="/_vf_modules/modules/evil&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
-      );
       assertEquals(
-        result.includes(
-          'href="/_vf_modules/modules/evil"><script>alert(1)</script>.js"',
-        ),
+        result.includes("modules/evil"),
         false,
       );
     });
 
-    it("omits page and layout preloads outside the project directory", async () => {
+    it("omits encoded traversal in legacy route-manifest URLs", async () => {
+      clearAllManifests();
+      recordSSRModules("encoded-traversal-project", "test-page", [
+        "%2e%2e/private.js",
+      ]);
+
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
         createOptions({
-          projectDir: "/project",
-          pagePath: "/private/workspace/secret-pages/dashboard.tsx",
-          nestedLayouts: [
-            { kind: "tsx", path: "/private/workspace/secret-layouts/root.tsx" },
-          ],
+          pagePath: "pages/test-page.tsx",
+          projectSlug: "encoded-traversal-project",
         }),
       );
+      clearAllManifests();
 
-      assertEquals(result.includes("/private/workspace/"), false);
-      assertEquals(result.includes("secret-pages/dashboard.js"), false);
-      assertEquals(result.includes("secret-layouts/root.js"), false);
+      assertEquals(result.includes("private.js"), false);
+      assertEquals(result.includes("%2e%2e"), false);
+    });
+
+    it("rejects page and layout paths outside the project directory", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({
+              projectDir: "/project",
+              pagePath: "/private/workspace/secret-pages/dashboard.tsx",
+            }),
+          ),
+        TypeError,
+        "Hydration page path is invalid",
+      );
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({
+              projectDir: "/project",
+              nestedLayouts: [
+                { kind: "tsx", path: "/private/workspace/secret-layouts/root.tsx" },
+              ],
+            }),
+          ),
+        TypeError,
+        "Hydration layout path is invalid",
+      );
+    });
+
+    it("rejects absolute filesystem paths when projectDir is unavailable", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({ pagePath: "/private/workspace/pages/dashboard.tsx" }),
+          ),
+        TypeError,
+        "Hydration page path is invalid",
+      );
     });
 
     it("rejects project-directory prefix collisions in module preloads", async () => {
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions({
-          projectDir: "/project",
-          pagePath: "/project-secret/pages/admin.tsx",
-          nestedLayouts: [
-            { kind: "tsx", path: "/project-secret/app/layout.tsx" },
-          ],
-        }),
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({
+              projectDir: "/project",
+              pagePath: "/project-secret/pages/admin.tsx",
+            }),
+          ),
+        TypeError,
+        "Hydration page path is invalid",
       );
-
-      assertEquals(result.includes("secret/pages/admin.js"), false);
-      assertEquals(result.includes("secret/app/layout.js"), false);
-      assertEquals(result.includes("/project-secret/"), false);
     });
 
     it("preserves module preloads for paths inside the project directory", async () => {
@@ -309,30 +485,24 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("escapes in-project filenames in modulepreload attributes", async () => {
+    it("rejects in-project filenames with unsafe URL characters", async () => {
       const hostilePagePath = '/project/pages/dashboard"><script>alert(1)</script>.tsx';
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions({
-          projectDir: "/project",
-          pagePath: hostilePagePath,
-        }),
-      );
-
-      assertStringIncludes(
-        result,
-        'href="/_vf_modules/pages/dashboard&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
-      );
-      assertEquals(
-        result.includes(
-          'href="/_vf_modules/pages/dashboard"><script>alert(1)</script>.js"',
-        ),
-        false,
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({
+              projectDir: "/project",
+              pagePath: hostilePagePath,
+            }),
+          ),
+        TypeError,
+        "Hydration page path is invalid",
       );
     });
 
-    it("escapes release-manifest URLs in modulepreload attributes", async () => {
+    it("rejects release-manifest module URLs with invalid content hashes", async () => {
       const hostileHash = 'hash"><script>alert(1)</script>';
       const manifest: ReleaseAssetManifest = {
         schemaVersion: 1,
@@ -365,19 +535,104 @@ describe("html-generation/html-shell-generator", () => {
         }),
         releaseAssetManifest: manifest,
       };
+      await assertRejects(
+        () => wrapInHTMLShell("<div>Content</div>", createMeta(), options),
+        TypeError,
+        "Release asset module entry is invalid",
+      );
+    });
+
+    it("rejects release manifests with excessive module preload closures", async () => {
+      const moduleEntries = Array.from({ length: 513 }, (_, index) => {
+        const path = `components/module-${index}.tsx`;
+        return [
+          path,
+          {
+            contentHash: index.toString(16).padStart(64, "0"),
+            size: 1,
+            contentType: "text/javascript",
+          },
+        ] as const;
+      });
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project",
+        releaseId: "release",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "source",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: Object.fromEntries(moduleEntries),
+        css: [],
+        routes: {
+          "/dashboard": { modules: moduleEntries.map(([path]) => path), css: [] },
+        },
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            {
+              ...createOptions({
+                projectDir: "/project",
+                pagePath: "/project/pages/dashboard.tsx",
+              }),
+              releaseAssetManifest: manifest,
+            },
+          ),
+        Error,
+        "preload hints",
+      );
+    });
+
+    it("preloads Markdown page modules with their compiled extension", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
-        options,
+        createOptions({
+          projectDir: "/project",
+          pagePath: "/project/pages/readme.md",
+        }),
       );
 
-      assertStringIncludes(
-        result,
-        'href="/_vf/assets/hash&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
+      assertStringIncludes(result, 'href="/_vf_modules/pages/readme.js"');
+      assertEquals(result.includes("readme.md.js"), false);
+    });
+
+    it("rejects relative module paths containing traversal segments", async () => {
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({ pagePath: "pages/../private/secret.tsx" }),
+          ),
+        TypeError,
+        "Hydration page path is invalid",
       );
-      assertEquals(
-        result.includes('href="/_vf/assets/hash"><script>alert(1)</script>.js"'),
-        false,
+    });
+
+    it("rejects relative module paths with deeply encoded traversal", async () => {
+      let traversal = "%2e%2e";
+      for (let layer = 0; layer < 12; layer++) {
+        traversal = traversal.replaceAll("%", "%25");
+      }
+
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({ pagePath: `pages/${traversal}/private/secret.tsx` }),
+          ),
+        TypeError,
+        "Hydration page path is invalid",
       );
     });
 
@@ -439,28 +694,43 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("should not emit /_vf/css/.css when CSS hash is empty", async () => {
-      // Bug regression: when Tailwind compilation fails, cssHash is ""
-      // and the old code emitted <link href="/_vf/css/.css"> which 404s.
-      // Trigger empty hash by using projectId "default" (skips CSS generation).
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta({ slug: "default" }),
-        createOptions({
-          mode: "production",
-          environment: "production",
-          isLocalProject: false,
-          projectId: "default",
-        }),
+    it("rejects production rendering when CSS generation has no valid result", async () => {
+      const error = await assertRejects(() =>
+        wrapInHTMLShell(
+          "<div>Content</div>",
+          createMeta(),
+          createOptions({
+            mode: "production",
+            environment: "production",
+            isLocalProject: false,
+          }),
+          undefined,
+          undefined,
+          Promise.resolve(null),
+        )
       );
 
-      assert(
-        !result.includes('href="/_vf/css/.css"'),
-        "Should not emit /_vf/css/.css with empty hash",
+      assertEquals((error as { slug?: string }).slug, "render-error");
+    });
+
+    it("should reject production CSS generation without a project identity", async () => {
+      const error = await assertRejects(() =>
+        wrapInHTMLShell(
+          "<div>Content</div>",
+          createMeta(),
+          createOptions({
+            mode: "production",
+            environment: "production",
+            isLocalProject: false,
+            projectId: undefined,
+            projectSlug: undefined,
+          }),
+        )
       );
-      assertStringIncludes(
-        result,
-        "<!-- Tailwind CSS: Server-side JIT compiled -->",
+
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "input-validation-failed",
       );
     });
 
@@ -477,6 +747,39 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, 'type="application/json"');
       assertStringIncludes(result, '"slug"');
       assertStringIncludes(result, '"test-slug"');
+    });
+
+    it("keeps the Studio source path separate from the hydration module path", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Snippet</div>",
+        createMeta({ slug: "components-button" }),
+        createOptions({
+          studioEmbed: true,
+          studioProjectId: "studio-project",
+          pageId: "page-1",
+          pagePath: "_snippets/abc123",
+          studioPagePath: "components/button.snippet.mdx",
+        }),
+      );
+
+      assertStringIncludes(result, '"pagePath":"components/button.snippet.mdx"');
+      assertStringIncludes(result, '"projectId":"studio-project"');
+      assertStringIncludes(result, '"pagePath":"_snippets/abc123"');
+    });
+
+    it("does not promote an oversized page slug to a Studio project identifier", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Preview</div>",
+        createMeta({ slug: "s".repeat(300) }),
+        createOptions({
+          projectId: undefined,
+          studioEmbed: true,
+          pagePath: "pages/preview.tsx",
+        }),
+      );
+
+      assertStringIncludes(result, '"projectId":""');
+      assertStringIncludes(result, '"pageId":"pages/preview.tsx"');
     });
 
     it("should include development scripts in dev mode", async () => {
@@ -604,6 +907,51 @@ describe("html-generation/html-shell-generator", () => {
 
       assertStringIncludes(result, 'data-theme="dark"');
       assertStringIncludes(result, "color-scheme: dark");
+    });
+
+    it("rejects unsupported runtime color schemes", async () => {
+      const hostile = 'dark" onload="globalThis.pwned=1';
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<div>Content</div>",
+            createMeta(),
+            createOptions({
+              colorScheme: hostile as HTMLGenerationOptions["colorScheme"],
+              colorSchemeFromParam: true,
+            }),
+          ),
+        Error,
+        "color scheme",
+      );
+    });
+
+    it("does not monkeypatch console.error to hide production hydration errors", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({ mode: "production", isLocalProject: false }),
+      );
+
+      assertEquals(result.includes("console.error = function"), false);
+      assertEquals(result.includes("Minified React error #4"), false);
+    });
+
+    it("propagates CSP nonces to metadata scripts and styles", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta({
+          frontmatter: {
+            scripts: [{ src: "/app.js" }, { content: "globalThis.ready = true" }],
+            styles: [{ content: "body { color: black; }" }],
+          },
+        }),
+        createOptions({ nonce: "nonce-123" }),
+      );
+
+      assertStringIncludes(result, 'src="/app.js" nonce="nonce-123"');
+      assertStringIncludes(result, '<script nonce="nonce-123"');
+      assertStringIncludes(result, '<style nonce="nonce-123"');
     });
 
     it("should add body class if specified", async () => {

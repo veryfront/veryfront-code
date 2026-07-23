@@ -6,9 +6,12 @@
  * import { Sandbox } from "veryfront/sandbox";
  *
  * const sandbox = await Sandbox.create();
- * const result = await sandbox.executeCommand("echo hello");
- * console.log(result.stdout); // "hello\n"
- * await sandbox.close();
+ * try {
+ *   const result = await sandbox.executeCommand("echo hello");
+ *   console.log(result.stdout); // "hello\n"
+ * } finally {
+ *   await sandbox.close();
+ * }
  * ```
  *
  * @module
@@ -38,10 +41,20 @@ export {
   type BashToolSandboxLike,
   type CreateSandboxBashTool,
   createSandboxShellTools,
+  type CreateSandboxShellToolsInput,
   normalizeBashToolSet,
   renameSandboxFileTools,
+  type SandboxShellClient,
+  type SandboxShellToolAnnotations,
   type SandboxShellToolDefinition,
+  type SandboxShellToolExecute,
+  type SandboxShellToolExecutionContext,
+  type SandboxShellToolJsonSchema,
+  type SandboxShellToolJsonSchemaTypeName,
+  type SandboxShellToolMcpConfig,
   type SandboxShellToolSet,
+  type SandboxShellToolsProvider,
+  type SandboxShellToolType,
 } from "./shell-tools.ts";
 export {
   type AgentServiceSandboxBackgroundCommandClient,

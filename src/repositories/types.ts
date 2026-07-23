@@ -5,6 +5,7 @@ import type { CacheStats, RepositoryContext } from "./schemas/index.ts";
 export interface FileSystemRepository {
   readFile(path: string): Promise<string>;
   readFileBytes(path: string): Promise<Uint8Array>;
+  /** Write text, or bytes that round-trip exactly through UTF-8. */
   writeFile(path: string, content: string | Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;

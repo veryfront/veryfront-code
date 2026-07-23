@@ -1,5 +1,5 @@
 /**
- * Hydration Script Builder - Templates
+ * Browser-runtime fragments composed into Veryfront hydration modules.
  *
  * @module html/hydration-script-builder/templates
  */

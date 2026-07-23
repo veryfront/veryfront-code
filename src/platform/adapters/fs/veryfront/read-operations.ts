@@ -1,5 +1,4 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { logContentMetric, type MissReason } from "./content-metrics.ts";
@@ -10,7 +9,6 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import {
   assertProjectSourcePath,
-  buildContentPreview,
   buildExtensionCandidatePaths,
   buildReadFetchState,
   createNotFoundLikeError,
@@ -20,6 +18,7 @@ import {
   splitKnownFileExtension,
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { classifyFilesystemError, withFilesystemSpan } from "./telemetry.ts";
 
 export {
   endRequestMetrics,
@@ -67,39 +66,36 @@ export class ReadOperations {
   }
 
   readFile(path: string): Promise<Uint8Array> {
-    return withSpan(
+    return withFilesystemSpan(
       "fs.veryfront.readFile",
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
         const content = await this.fetchContent(normalizedPath);
         return new TextEncoder().encode(content);
       },
-      { "fs.path": path },
     );
   }
 
   readTextFile(path: string): Promise<string> {
-    return withSpan(
+    return withFilesystemSpan(
       "fs.veryfront.readTextFile",
       () => {
         const normalizedPath = this.normalizer.normalize(path);
-        logger.debug("readTextFile called", { path, normalizedPath });
+        logger.debug("readTextFile called");
         return this.fetchContent(normalizedPath);
       },
-      { "fs.path": path },
     );
   }
 
   readOptionalTextFile(path: string): Promise<string> {
-    return withSpan(
+    return withFilesystemSpan(
       "fs.veryfront.readOptionalTextFile",
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
         const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
-        logger.debug("readOptionalTextFile called", { path, normalizedPath, apiPath });
+        logger.debug("readOptionalTextFile called");
         return await this.client.getOptionalFileContent(apiPath);
       },
-      { "fs.path": path },
     );
   }
 
@@ -117,30 +113,23 @@ export class ReadOperations {
       cacheKey,
     });
     logger.debug("REQUEST_CACHE_HIT", {
-      path: normalizedPath,
-      cacheKey,
       contentLength: requestCached.length,
-      preview: buildContentPreview(requestCached).replace(/\n/g, "\\n"),
     });
     return requestCached;
   }
 
   private async getProductionPersistentCacheHit(
     normalizedPath: string,
-    cacheKeyPrefix: string,
+    _cacheKeyPrefix: string,
     cacheKey: string,
     isProduction: boolean,
     skipPersistentCaches: boolean,
-    releaseId: string | null | undefined,
+    _releaseId: string | null | undefined,
     isPrefixInvalidated: boolean,
     ctx: ResolvedContentContext | null,
   ): Promise<string | null> {
     if (isProduction && skipPersistentCaches) {
       logger.info("PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
-        path: normalizedPath,
-        cacheKey,
-        cacheKeyPrefix,
-        releaseId: releaseId ?? undefined,
         prefixInvalidated: isPrefixInvalidated,
       });
     }
@@ -158,10 +147,7 @@ export class ReadOperations {
       cacheKey,
     });
     logger.debug("PERSISTENT_CACHE_HIT", {
-      path: normalizedPath,
-      cacheKey,
       contentLength: cached.length,
-      preview: buildContentPreview(cached).replace(/\n/g, "\\n"),
     });
     setRequestScopedFile(cacheKey, cached);
     return cached;
@@ -169,7 +155,7 @@ export class ReadOperations {
 
   private async getFileListCacheHit(
     normalizedPath: string,
-    cacheKeyPrefix: string,
+    _cacheKeyPrefix: string,
     cacheKey: string,
     isProduction: boolean,
     skipPersistentCaches: boolean,
@@ -183,10 +169,7 @@ export class ReadOperations {
     // - Request-scoped cache ensures consistency within a single render
     // - Persistent cache is only written for production mode (to avoid staleness risk in preview)
     if (skipPersistentCaches) {
-      logger.debug("Skipping file list cache due to invalidation", {
-        path: normalizedPath,
-        cacheKeyPrefix,
-      });
+      logger.debug("Skipping file list cache due to invalidation");
       return { status: "unavailable", fresh: false };
     }
 
@@ -227,8 +210,6 @@ export class ReadOperations {
     const existingEntry = this.inFlightRequests.get(cacheKey);
     if (existingEntry) {
       logger.debug("Deduplicating request - joining existing fetch", {
-        path: normalizedPath,
-        cacheKey,
         ageMs: Date.now() - existingEntry.startedAt,
       });
       return existingEntry.promise;
@@ -252,7 +233,6 @@ export class ReadOperations {
     });
 
     logger.debug("fetchContent decision", {
-      path: normalizedPath,
       isPublished,
       willFetch: isPublished ? "published (environment)" : "draft (branch)",
       sourceType: ctx?.sourceType ?? "null/undefined",
@@ -309,8 +289,7 @@ export class ReadOperations {
         const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
         if (cached) {
           logger.debug("Extension resolution cache hit", {
-            basePath: apiPath,
-            resolvedPath: cachedResolvedPath,
+            hasResolvedPath: true,
           });
           setRequestScopedFile(cacheKey, cached);
           return cached;
@@ -337,8 +316,7 @@ export class ReadOperations {
       });
     } catch (error) {
       logger.debug("resolveFileWithExtension failed", {
-        basePath: apiPath,
-        error: error instanceof Error ? error.message : String(error),
+        errorClass: classifyFilesystemError(error),
       });
       return null;
     }
@@ -402,10 +380,8 @@ export class ReadOperations {
     this.extensionResolutionCache.set(requestedPath, resolvedPath);
 
     logger.debug(logMessage, {
-      basePath: requestedPath,
-      resolvedPath,
-      cacheKey,
-      resolvedCacheKey: resolvedCacheKey === cacheKey ? undefined : resolvedCacheKey,
+      usesAlias: resolvedCacheKey !== cacheKey,
+      persisted: persistToCache,
     });
 
     this.cacheResolvedContent(cacheKey, resolvedCacheKey, content, persistToCache);
@@ -475,14 +451,9 @@ export class ReadOperations {
     });
 
     logger.debug("fetchContent context", {
-      path: normalizedPath,
       hasContextProvider: !!this.contextProvider,
       hasContext: !!ctx,
       sourceType: ctx?.sourceType,
-      projectSlug: ctx?.projectSlug,
-      branch: ctx?.branch,
-      releaseId: ctx?.releaseId,
-      cacheKeyPrefix,
       isProduction,
     });
 
@@ -608,7 +579,7 @@ export class ReadOperations {
   }
 
   private async fetchPublishedContent(
-    normalizedPath: string,
+    _normalizedPath: string,
     apiPath: string,
     cacheKey: string,
     releaseId: string | null,
@@ -616,32 +587,24 @@ export class ReadOperations {
     shouldCache: boolean,
   ): Promise<string> {
     logger.debug("Fetching published content", {
-      path: normalizedPath,
-      apiPath,
-      cacheKey,
-      environmentName: environmentName ?? undefined,
+      hasRelease: !!releaseId,
+      hasEnvironment: !!environmentName,
     });
 
     try {
       const content = await this.fetchPublishedVariant(apiPath, releaseId, environmentName);
 
       logger.debug("Fetched published content", {
-        path: normalizedPath,
         contentLength: content.length,
-        releaseId,
       });
 
       return this.storeFetchedContent(cacheKey, content, shouldCache);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
       const is404Error = isNotFoundLikeError(error);
 
       if (!is404Error) {
         logger.error("Failed to fetch published content", {
-          path: normalizedPath,
-          apiPath,
-          releaseId,
-          error: errorMessage,
+          errorClass: classifyFilesystemError(error),
         });
         throw error;
       }
@@ -655,10 +618,7 @@ export class ReadOperations {
       );
       if (fallbackContent !== null) return fallbackContent;
 
-      logger.debug("File not found (expected for optional files)", {
-        path: normalizedPath,
-        apiPath,
-      });
+      logger.debug("File not found (expected for optional files)");
       throw error;
     }
   }
@@ -675,26 +635,20 @@ export class ReadOperations {
 
     const { originalExtension: originalExt, basePath } = pathParts;
 
-    logger.debug("Searching for file with pattern", {
-      originalPath: apiPath,
-      pattern: `${basePath}.*`,
-    });
+    logger.debug("Searching for file with extension pattern");
 
     try {
       const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
       if (!result) return null;
 
       logger.debug("Pattern search found file", {
-        originalPath: apiPath,
-        foundPath: result.path,
         contentLength: result.content.length,
       });
 
       return this.storeFetchedContent(cacheKey, result.content, shouldCache);
     } catch (error) {
       logger.debug("Pattern search failed, trying sequential fallback", {
-        originalPath: apiPath,
-        error: error instanceof Error ? error.message : String(error),
+        errorClass: classifyFilesystemError(error),
       });
 
       return this.tryFallbackExtensionsSequential(
@@ -710,7 +664,7 @@ export class ReadOperations {
   }
 
   private async tryFallbackExtensionsSequential(
-    apiPath: string,
+    _apiPath: string,
     originalExt: string,
     basePath: string,
     cacheKey: string,
@@ -727,7 +681,7 @@ export class ReadOperations {
 
     const promises = candidates.map(async (ext) => {
       const content = await this.fetchPublishedVariant(basePath + ext, releaseId, environmentName);
-      return { ext, content };
+      return content;
     });
 
     // Mark all promises as handled to prevent unhandled rejection errors
@@ -735,7 +689,7 @@ export class ReadOperations {
     for (const p of promises) {
       p.catch((err) => {
         logger.debug("Fallback attempt failed", {
-          error: err instanceof Error ? err.message : String(err),
+          errorClass: classifyFilesystemError(err),
         });
       });
     }
@@ -743,13 +697,10 @@ export class ReadOperations {
     // Await in priority order: return as soon as highest-priority succeeds
     for (const promise of promises) {
       try {
-        const { ext, content } = await promise;
-        const fallbackPath = basePath + ext;
+        const content = await promise;
         const durationMs = Math.round(performance.now() - startTime);
 
         logger.debug("Parallel fallback succeeded", {
-          originalPath: apiPath,
-          fallbackPath,
           contentLength: content.length,
           durationMs,
           candidateCount: candidates.length,
@@ -766,23 +717,17 @@ export class ReadOperations {
   }
 
   private async fetchDraftContent(
-    normalizedPath: string,
+    _normalizedPath: string,
     apiPath: string,
     cacheKey: string,
     shouldCache: boolean,
   ): Promise<string> {
-    logger.debug("API_FETCH_START - fetching draft from API", {
-      path: normalizedPath,
-      apiPath,
-      cacheKey,
-    });
+    logger.debug("API_FETCH_START - fetching draft from API");
 
     const content = await this.client.getFileContent(apiPath);
 
     logger.debug("API_FETCH_DONE - got content from API", {
-      path: normalizedPath,
       contentLength: content.length,
-      preview: buildContentPreview(content).replace(/\n/g, "\\n"),
       willCache: shouldCache,
     });
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { schedule } from "./factory.ts";
@@ -54,6 +54,19 @@ describe("schedule/factory", () => {
       concurrencyPolicy: "Forbid",
     });
     assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("accepts standard cron lists, ranges, steps, names, and zero retries", () => {
+    const definition = schedule({
+      id: "business-hours",
+      cron: "*/15 8-17 * JAN,MAR MON-FRI",
+      timezone: "UTC",
+      target: { kind: "task", id: "sync-helpdesk" },
+      backoffLimit: 0,
+    });
+
+    assertEquals(definition.schedule, "*/15 8-17 * JAN,MAR MON-FRI");
+    assertEquals(definition.backoffLimit, 0);
   });
 
   it("preserves integration requirements", () => {
@@ -154,6 +167,135 @@ describe("schedule/factory", () => {
       VeryfrontError,
       "Schedule input.now must be JSON-serializable.",
     );
+  });
+
+  it("snapshots input and integration requirements", () => {
+    const nested = { queue: "priority" };
+    const input = { nested };
+    const scopes = ["chat:write"];
+    const resources = [{ kind: "channel", id: "C012345" }];
+    const definition = schedule({
+      id: "daily-triage",
+      cron: "0 8 * * 1-5",
+      target: { kind: "task", id: "sync-helpdesk" },
+      input,
+      integrationRequirements: [{ integration: "slack", requiredScopes: scopes, resources }],
+    });
+
+    nested.queue = "changed";
+    scopes[0] = "changed";
+    resources[0]!.id = "changed";
+
+    assertEquals(definition.input, { nested: { queue: "priority" } });
+    assertEquals(definition.integrationRequirements, [{
+      integration: "slack",
+      requiredScopes: ["chat:write"],
+      resources: [{ kind: "channel", id: "C012345" }],
+    }]);
+    assertNotStrictEquals(definition.input, input);
+  });
+
+  it("rejects invalid cron, timezone, aliases, and integer limits", () => {
+    const base = {
+      id: "daily-triage",
+      target: { kind: "task", id: "sync-helpdesk" },
+    } as const;
+
+    for (
+      const config of [
+        { ...base, cron: "not a cron expression" },
+        { ...base, cron: "60 8 * * *" },
+        { ...base, cron: "*/0 8 * * *" },
+        { ...base, cron: "0 17-8 * * *" },
+        { ...base, cron: "0 8 * * * extra" },
+        { ...base, cron: "0 8 * * *", timezone: "Not/A_Timezone" },
+        { ...base, cron: "0 8 * * *", schedule: "0 9 * * *" },
+        { ...base, cron: "0 8 * * *", timeoutSeconds: Number.MAX_VALUE },
+        { ...base, cron: "0 8 * * *", maxRuns: Number.POSITIVE_INFINITY },
+      ]
+    ) {
+      const error = assertThrows(() => schedule(config as never), VeryfrontError);
+      assertEquals(error.slug, "schedule-config-invalid");
+    }
+  });
+
+  it("does not invoke accessors while validating schedule definitions", () => {
+    let reads = 0;
+    const config = {
+      cron: "0 8 * * *",
+      target: { kind: "task", id: "sync-helpdesk" },
+    };
+    Object.defineProperty(config, "id", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "daily-triage";
+      },
+    });
+
+    const error = assertThrows(() => schedule(config as never), VeryfrontError);
+    assertEquals(error.slug, "schedule-config-invalid");
+    assertEquals(isScheduleDefinition(config), false);
+    assertEquals(reads, 0);
+  });
+
+  it("validates every canonical schedule definition field", () => {
+    assertEquals(
+      isScheduleDefinition({
+        id: "daily-triage",
+        schedule: "0 8 * * *",
+        target: { kind: "workflow", id: "escalate-ticket" },
+        timeoutSeconds: Number.NaN,
+      }),
+      false,
+    );
+    assertEquals(
+      isScheduleDefinition({
+        id: "daily-triage",
+        schedule: "0 8 * * *",
+        target: { kind: "workflow", id: "invalid/../target" },
+      }),
+      false,
+    );
+    assertEquals(
+      isScheduleDefinition({
+        id: "daily-triage",
+        schedule: "0 8 * * *",
+        target: { kind: "workflow", id: "escalate-ticket" },
+        unsupported: true,
+      }),
+      false,
+    );
+  });
+
+  it("rejects duplicate scopes and resources", () => {
+    for (
+      const requirement of [
+        {
+          integration: "slack",
+          requiredScopes: ["chat:write", "chat:write"],
+        },
+        {
+          integration: "slack",
+          resources: [
+            { kind: "channel", id: "C012345" },
+            { kind: "channel", id: "C012345" },
+          ],
+        },
+      ]
+    ) {
+      const error = assertThrows(
+        () =>
+          schedule({
+            id: "slack-digest",
+            schedule: "0 9 * * 1-5",
+            target: { kind: "workflow", id: "post-slack-digest" },
+            integrationRequirements: [requirement],
+          }),
+        VeryfrontError,
+      );
+      assertEquals(error.slug, "schedule-config-invalid");
+    }
   });
 
   it("rejects malformed integration requirements", () => {
@@ -312,6 +454,36 @@ describe("schedule/factory", () => {
       Error,
       "integrationRequirements[0].tokenId is not supported",
     );
+  });
+
+  it("rejects decorated collection arrays without invoking accessors", () => {
+    let reads = 0;
+    const requirements = [{
+      integration: "slack",
+      requiredScopes: [],
+      resources: [],
+    }];
+    Object.defineProperty(requirements, "metadata", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return "must-not-run";
+      },
+    });
+
+    const error = assertThrows(
+      () =>
+        schedule({
+          id: "slack-digest",
+          schedule: "0 9 * * 1-5",
+          target: { kind: "workflow", id: "post-slack-digest" },
+          integrationRequirements: requirements,
+        }),
+      VeryfrontError,
+    );
+
+    assertEquals(error.slug, "schedule-config-invalid");
+    assertEquals(reads, 0);
   });
 
   it("does not treat malformed integration requirements as schedule definitions", () => {

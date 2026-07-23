@@ -18,6 +18,16 @@ describe("platform/adapters/token/veryfront/memory-adapter", () => {
   });
 
   describe("get/set", () => {
+    it("keeps explicitly constructed adapters isolated", async () => {
+      const first = new MemoryTokenAdapter();
+      const second = new MemoryTokenAdapter();
+
+      await first.set("shared-key", "first-secret");
+
+      assertEquals(await first.get("shared-key"), "first-secret");
+      assertEquals(await second.get("shared-key"), null);
+    });
+
     it("should return null for missing key", async () => {
       const adapter = createAdapter();
       assertEquals(await adapter.get("nonexistent"), null);
@@ -117,9 +127,13 @@ describe("platform/adapters/token/veryfront/memory-adapter", () => {
   });
 
   describe("dispose", () => {
-    it("should not throw", () => {
+    it("clears stored secrets", async () => {
       const adapter = createAdapter();
+      await adapter.set("secret", "encrypted-value");
+
       adapter.dispose();
+
+      assertEquals(await adapter.get("secret"), null);
     });
   });
 });

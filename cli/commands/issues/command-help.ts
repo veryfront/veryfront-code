@@ -3,24 +3,24 @@ import type { CommandHelp } from "../../help/types.ts";
 export const issuesHelp: CommandHelp = {
   name: "issues",
   category: "ai",
-  description: "File-based issue tracking (SDLC conventions)",
+  description: "Manage file-backed project issues",
   usage: "veryfront issues <command> [options]",
   options: [
     {
       flag: "--title, -t <title>",
-      description: "Issue title (for create/edit)",
+      description: "Set the issue title for create or edit",
     },
     {
       flag: "--body, -b <body>",
-      description: "Issue description in markdown",
+      description: "Set the issue description in Markdown",
     },
     {
       flag: "--labels, -l <labels>",
-      description: "Comma-separated labels (e.g., bug,priority:high)",
+      description: "Set or filter by comma-separated labels",
     },
     {
       flag: "--state <state>",
-      description: "Issue state: open, closed",
+      description: "Set or filter by issue state: open or closed",
     },
     {
       flag: "--prefix <type>",
@@ -28,8 +28,40 @@ export const issuesHelp: CommandHelp = {
       default: "ISSUE",
     },
     {
+      flag: "--milestone, -m <name>",
+      description: "Set or filter by milestone",
+    },
+    {
+      flag: "--assignees, -a <users>",
+      description: "Set comma-separated assignees",
+    },
+    {
+      flag: "--assignee <user>",
+      description: "Filter by assignee",
+    },
+    {
+      flag: "--sort <field>",
+      description: "Sort by created_at, updated_at, or id",
+    },
+    {
+      flag: "--dir <direction>",
+      description: "Sort in asc or desc direction",
+    },
+    {
+      flag: "--limit <count>",
+      description: "Limit the number of returned issues",
+    },
+    {
+      flag: "--delete, -d",
+      description: "Delete the selected issue during edit",
+    },
+    {
       flag: "--json, -j",
       description: "Output as JSON",
+    },
+    {
+      flag: "--verbose",
+      description: "Show issue metadata in list output",
     },
   ],
   examples: [
@@ -38,13 +70,15 @@ export const issuesHelp: CommandHelp = {
     "veryfront issues view ISSUE-001",
     "veryfront issues edit ISSUE-001 --state closed",
     "veryfront issues close TASK-042",
+    "veryfront issues reopen TASK-042",
+    "veryfront issues delete PLAN-003",
     'veryfront issues create --title "New feature" --prefix PLAN',
   ],
   notes: [
-    "Issues are stored as markdown files in the issues/ directory",
-    "File naming: ISSUE-001.md, TASK-001.md, PLAN-001.md",
-    "Use TASK for small work items, PLAN for proposals/RFCs",
-    "Labels support colon syntax for categorization (priority:high, type:bug)",
-    "Also available via MCP tools: issues_create, issues_list, issues_update",
+    "Issues are stored as Markdown files in the issues/ directory.",
+    "Files use identifiers such as ISSUE-001, TASK-001, and PLAN-001.",
+    "TASK and PLAN are identifier prefixes. They do not change runtime execution semantics.",
+    "Labels can use colon-delimited names such as priority:high and type:bug.",
+    "MCP clients can use issues_create, issues_list, and issues_update.",
   ],
 };

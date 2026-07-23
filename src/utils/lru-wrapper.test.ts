@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { LRUCache } from "./lru-wrapper.ts";
@@ -14,7 +14,12 @@ describe("LRUCache", () => {
   });
 
   function createCache<K, V>(
-    options?: { maxEntries?: number; ttlMs?: number; cleanupIntervalMs?: number },
+    options?: {
+      maxEntries?: number;
+      maxSizeBytes?: number;
+      ttlMs?: number;
+      cleanupIntervalMs?: number;
+    },
   ): LRUCache<K, V> {
     const cache = new LRUCache<K, V>(options);
     caches.push(cache);
@@ -58,6 +63,33 @@ describe("LRUCache", () => {
       cache.set("exists", "value");
       assertEquals(cache.delete("exists"), true);
       assertEquals(cache.delete("exists"), false);
+    });
+
+    it("distinguishes keys by type and object identity", (): void => {
+      const cache = createCache<string | number | object, string>({ maxEntries: 5 });
+      const firstObject = {};
+      const secondObject = {};
+
+      cache.set(1, "number");
+      cache.set("1", "string");
+      cache.set(firstObject, "first-object");
+      cache.set(secondObject, "second-object");
+
+      assertEquals(cache.get(1), "number");
+      assertEquals(cache.get("1"), "string");
+      assertEquals(cache.get(firstObject), "first-object");
+      assertEquals(cache.get(secondObject), "second-object");
+      assertEquals([...cache.keys()], [1, "1", firstObject, secondObject]);
+    });
+
+    it("tracks a stored undefined value as present", (): void => {
+      const cache = createCache<string, undefined>({ maxEntries: 3 });
+
+      cache.set("present", undefined);
+
+      assertEquals(cache.has("present"), true);
+      assertEquals(cache.delete("present"), true);
+      assertEquals(cache.has("present"), false);
     });
 
     it("clear and size", (): void => {
@@ -104,6 +136,17 @@ describe("LRUCache", () => {
       cache.cleanup();
 
       assertEquals(cache.has("a"), false);
+    });
+
+    it("does not iterate expired entries", async (): Promise<void> => {
+      const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 30 });
+      cache.set("expired", 1);
+
+      await delay(150);
+
+      assertEquals([...cache.keys()], []);
+      assertEquals([...cache.entries()], []);
+      assertEquals(cache.size, 0);
     });
 
     it("no TTL - entries never expire", async (): Promise<void> => {
@@ -230,6 +273,28 @@ describe("LRUCache", () => {
 
       cache.clear();
       assertEquals(cache.size, 0);
+    });
+
+    it("rejects invalid resource and timer options", (): void => {
+      const invalidOptions = [
+        { maxEntries: 0 },
+        { maxEntries: -1 },
+        { maxEntries: 1.5 },
+        { maxEntries: 1_000_001 },
+        { maxSizeBytes: 0 },
+        { maxSizeBytes: Number.POSITIVE_INFINITY },
+        { ttlMs: 0 },
+        { ttlMs: Number.MAX_SAFE_INTEGER },
+        { cleanupIntervalMs: 0 },
+        { cleanupIntervalMs: 2_147_483_648 },
+      ];
+
+      for (const options of invalidOptions) {
+        assertThrows(
+          () => new LRUCache(options),
+          TypeError,
+        );
+      }
     });
   });
 });

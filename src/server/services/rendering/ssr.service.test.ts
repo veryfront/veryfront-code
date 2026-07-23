@@ -210,6 +210,58 @@ describe("server/services/rendering/ssr.service", () => {
     });
 
     describe("renderPage (with mock renderer)", () => {
+      it("uses opaque render session identifiers", async () => {
+        let renderSessionId = "";
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            renderSessionId = options?.renderSessionId ?? "";
+            return Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        await service.renderPage(
+          makeCtx({ projectSlug: "private-project-canary" }),
+          makeRenderOptions({ slug: "private-page-canary" }),
+        );
+
+        assertEquals(renderSessionId.length > 0, true);
+        assertEquals(renderSessionId.includes("private-project-canary"), false);
+        assertEquals(renderSessionId.includes("private-page-canary"), false);
+      });
+
+      it("creates a distinct session identifier for every render", async () => {
+        const renderSessionIds: string[] = [];
+        let sequence = 0;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            renderSessionIds.push(options?.renderSessionId ?? "");
+            return Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+          renderSessionIdFactory: () => `render-session-${++sequence}`,
+        });
+
+        await service.renderPage(makeCtx(), makeRenderOptions());
+        await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(renderSessionIds, ["render-session-1", "render-session-2"]);
+      });
+
       it("returns 200 with HTML from renderer", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () =>

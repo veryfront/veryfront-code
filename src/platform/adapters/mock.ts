@@ -1,5 +1,4 @@
-import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { FILE_NOT_FOUND, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
@@ -9,18 +8,19 @@ export interface MockRuntimeAdapter extends RuntimeAdapter {
   };
 }
 
-function fileNotFoundError(path: string): Error {
-  return FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
+function fileNotFoundError(): Error {
+  return FILE_NOT_FOUND.create({ message: "File not found" });
 }
 
-function pathNotFoundError(path: string): Error {
-  return FILE_NOT_FOUND.create({ detail: `Path not found: ${path}`, context: { path } });
+function pathNotFoundError(): Error {
+  return FILE_NOT_FOUND.create({ message: "Path not found" });
 }
 
 export function createMockAdapter(): MockRuntimeAdapter {
   const files = new Map<string, string>();
   const directories = new Set<string>();
   const envVars = new Map<string, string>();
+  let tempDirectorySequence = 0;
 
   function hasPath(path: string): boolean {
     if (files.has(path) || directories.has(path)) return true;
@@ -45,7 +45,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
   return {
     id: "memory",
     name: "mock",
-    capabilities: {
+    capabilities: Object.freeze({
       typescript: false,
       jsx: false,
       http2: false,
@@ -55,24 +55,30 @@ export function createMockAdapter(): MockRuntimeAdapter {
       shell: false,
       kvStore: false,
       writableFs: true,
-    },
-    serve: (_handler, _options) =>
-      Promise.resolve({
+    }),
+    serve: (_handler, options) => {
+      const addr = {
+        hostname: options.hostname ?? "localhost",
+        port: options.port ?? 8000,
+      };
+      options.onListen?.(addr);
+      return Promise.resolve({
         stop: () => Promise.resolve(),
-        addr: { hostname: "localhost", port: 8000 },
-      }),
+        addr,
+      });
+    },
     shutdown: () => Promise.resolve(),
     fs: {
       files,
       directories,
       readFile: (path: string) => {
         const content = files.get(path);
-        if (content == null) return Promise.reject(fileNotFoundError(path));
+        if (content == null) return Promise.reject(fileNotFoundError());
         return Promise.resolve(content);
       },
       readFileBytes: (path: string) => {
         const content = files.get(path);
-        if (content == null) return Promise.reject(fileNotFoundError(path));
+        if (content == null) return Promise.reject(fileNotFoundError());
         return Promise.resolve(new TextEncoder().encode(content));
       },
       writeFile: (path: string, content: string) => {
@@ -98,6 +104,16 @@ export function createMockAdapter(): MockRuntimeAdapter {
           });
         }
 
+        for (const directoryPath of directories) {
+          if (!directoryPath.startsWith(`${path}/`)) continue;
+
+          const relativePath = directoryPath.slice(path.length + 1);
+          const [name] = relativePath.split("/");
+          if (!name || entries.has(name)) continue;
+
+          entries.set(name, { isFile: false, isDirectory: true });
+        }
+
         for (const [name, meta] of entries) {
           yield { name, ...meta, isSymlink: false };
         }
@@ -106,7 +122,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
         const content = files.get(path);
         if (content != null) {
           return Promise.resolve({
-            size: content.length,
+            size: new TextEncoder().encode(content).byteLength,
             isFile: true,
             isDirectory: false,
             isSymlink: false,
@@ -124,7 +140,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
           });
         }
 
-        return Promise.reject(pathNotFoundError(path));
+        return Promise.reject(pathNotFoundError());
       },
       mkdir: (path: string, options?: { recursive?: boolean }) => {
         directories.add(path);
@@ -155,8 +171,11 @@ export function createMockAdapter(): MockRuntimeAdapter {
 
         return Promise.resolve();
       },
-      makeTempDir: (prefix: string) =>
-        Promise.resolve(`/tmp/${prefix}-${Math.random().toString(36).slice(2)}`),
+      makeTempDir: (prefix: string) => {
+        const path = `/tmp/${prefix}-${tempDirectorySequence++}`;
+        directories.add(path);
+        return Promise.resolve(path);
+      },
       watch: (_paths: string | string[], _options?: WatchOptions): FileWatcher => ({
         async *[Symbol.asyncIterator](): AsyncIterator<FileChangeEvent> {
           // Mock watcher doesn't emit events
@@ -173,13 +192,10 @@ export function createMockAdapter(): MockRuntimeAdapter {
     },
     server: {
       upgradeWebSocket: (_request) => {
-        throw toError(
-          createError({
-            type: "not_supported",
-            message: "WebSocket upgrade not available in mock adapter. " +
-              "Use integration tests with actual runtime adapters for WebSocket testing.",
-          }),
-        );
+        throw NOT_SUPPORTED.create({
+          message: "WebSocket upgrade not available in mock adapter. " +
+            "Use integration tests with actual runtime adapters for WebSocket testing.",
+        });
       },
     },
   };

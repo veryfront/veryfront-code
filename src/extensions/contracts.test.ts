@@ -8,10 +8,21 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, resolve, tryResolve, unregister } from "./contracts.ts";
+import * as publicContracts from "veryfront/extensions/contracts";
 
 describe("extensions/contracts", () => {
   afterEach(() => {
     reset();
+  });
+
+  it("keeps lifecycle snapshots out of the public contract registry surface", () => {
+    assertEquals(Object.keys(publicContracts).sort(), [
+      "register",
+      "reset",
+      "resolve",
+      "tryResolve",
+      "unregister",
+    ]);
   });
 
   describe("resolve()", () => {
@@ -55,6 +66,32 @@ describe("extensions/contracts", () => {
       register("CSSProcessor", { v: 1 });
       register("CSSProcessor", { v: 2 });
       assertEquals(resolve<{ v: number }>("CSSProcessor").v, 2);
+    });
+
+    it("rejects invalid names and undefined implementations", () => {
+      for (const name of ["", " Contract", "Contract\nName", "x".repeat(129)]) {
+        assertThrows(() => register(name, {}), Error, "Contract name");
+      }
+      assertThrows(
+        () => register("UndefinedContract", undefined),
+        Error,
+        "implementation cannot be undefined",
+      );
+    });
+
+    it("bounds process-wide contract registrations without blocking replacement", () => {
+      reset();
+      for (let index = 0; index < 4_096; index++) {
+        register(`Contract${index}`, index);
+      }
+
+      assertThrows(
+        () => register("ContractOverflow", {}),
+        Error,
+        "at most 4096",
+      );
+      register("Contract0", "replacement");
+      assertEquals(resolve("Contract0"), "replacement");
     });
   });
 

@@ -1,25 +1,19 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import type { TransformOptions as PipelineTransformOptions } from "../pipeline/types.ts";
 
-export interface TransformOptions {
-  dev?: boolean;
-  projectId: string;
-  jsxImportSource?: string;
-  moduleServerUrl?: string;
-  vendorBundleHash?: string;
-  ssr?: boolean;
-  apiBaseUrl?: string;
-  studioEmbed?: boolean;
-  /** React version for transforms (from project config, defaults to DEFAULT_REACT_VERSION) */
-  reactVersion?: string;
-  /** Internal per-render dependency hash cache. */
-  dependencyHashCache?: DependencyHashCache;
-}
+/** Options accepted by the ESM transform pipeline. */
+export type TransformOptions = PipelineTransformOptions;
 
+/** Legacy wrapper context retained for compatibility with loader consumers. */
 export interface TransformContext {
+  /** Source module text. */
   source: string;
+  /** Source module path. */
   filePath: string;
+  /** Project root directory. */
   projectDir: string;
+  /** Runtime adapter used to read project files. */
   adapter: RuntimeAdapter;
+  /** Pipeline options for this transform. */
   options: TransformOptions;
 }

@@ -11,6 +11,7 @@ import {
   setCachedTransform,
   setCachedTransformAsync,
 } from "./transform-cache.ts";
+import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 
 describe("transforms/esm/transform-cache", () => {
   describe("generateCacheKey", () => {
@@ -20,9 +21,12 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(key.length > 0, true);
     });
 
-    it("includes file path info", () => {
-      const key = generateCacheKey("app/page.tsx", "abc123");
-      assertEquals(key.includes("app/page.tsx"), true);
+    it("isolates file paths without disclosing them", () => {
+      const pageKey = generateCacheKey("app/page.tsx", "abc123");
+      const layoutKey = generateCacheKey("app/layout.tsx", "abc123");
+
+      assertEquals(pageKey.includes("app/page.tsx"), false);
+      assertEquals(pageKey !== layoutKey, true);
     });
 
     it("produces different keys for different content hashes", () => {
@@ -90,6 +94,22 @@ describe("transforms/esm/transform-cache", () => {
       const result = getCachedTransform("test-key");
       assertEquals(typeof result?.timestamp, "number");
       assertEquals(result!.timestamp > 0, true);
+    });
+
+    it("expires local fallback entries after their TTL", () => {
+      const originalNow = Date.now;
+      let now = 1_000;
+      Date.now = () => now;
+
+      try {
+        setCachedTransform("expiring-key", "const x = 1;", "hash1", 1);
+        assertEquals(getCachedTransform("expiring-key")?.code, "const x = 1;");
+
+        now = 2_001;
+        assertEquals(getCachedTransform("expiring-key"), undefined);
+      } finally {
+        Date.now = originalNow;
+      }
     });
 
     it("does not materialize and sort fallback entries during eviction", () => {
@@ -219,6 +239,17 @@ describe("transforms/esm/transform-cache", () => {
       const result = await getCachedTransformAsync("manifest-key");
       assertEquals(result?.bundleManifestId, "manifest-abc");
     });
+
+    it("rejects malformed backend records", async () => {
+      const backend = new MemoryCacheBackend();
+      await backend.set(
+        "malformed-key",
+        JSON.stringify({ code: "unsafe-code", hash: 123, timestamp: "not-a-time" }),
+      );
+      __injectCachesForTests({ cacheBackend: backend });
+
+      assertEquals(await getCachedTransformAsync("malformed-key"), undefined);
+    });
   });
 
   describe("getOrComputeTransform", () => {
@@ -255,6 +286,31 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(computed, false);
       assertEquals(result.code, "first-value");
       assertEquals(result.cacheHit, true);
+    });
+
+    it("coalesces concurrent cache misses for the same key", async () => {
+      let computeCount = 0;
+      let releaseCompute!: () => void;
+      const computeGate = new Promise<void>((resolve) => {
+        releaseCompute = resolve;
+      });
+
+      const compute = async () => {
+        computeCount++;
+        await computeGate;
+        return "shared-code";
+      };
+
+      const first = getOrComputeTransform("shared-key", compute);
+      const second = getOrComputeTransform("shared-key", compute);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      assertEquals(computeCount, 1);
+      releaseCompute();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      assertEquals(firstResult.code, "shared-code");
+      assertEquals(secondResult.code, "shared-code");
     });
 
     it("invalidates cache with unresolved _vf_modules imports", async () => {

@@ -12,66 +12,81 @@ export type {
   TokenCache,
   TokenCacheEntry,
 } from "./types.ts";
+export type { ResilientCacheOptions } from "./resilient-cache.ts";
+export type { TracingTokenCacheOptions } from "./tracing-cache.ts";
 export { MemoryCache } from "./memory-cache.ts";
 export { ResilientCache } from "./resilient-cache.ts";
-export { TracingTokenCache } from "./tracing-cache.ts";
+export { TokenCacheOperationError, TracingTokenCache } from "./tracing-cache.ts";
 
 import type { CacheOptions, TokenCache } from "./types.ts";
 import type { TokenCacheStore } from "../../extensions/cache/index.ts";
 import { MemoryCache } from "./memory-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
 import { TracingTokenCache } from "./tracing-cache.ts";
-import { tryResolve } from "../../extensions/contracts.ts";
+import { resolve } from "../../extensions/contracts.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { proxyLogger } from "../logger.ts";
 import { withSpan } from "../tracing.ts";
 
 const logger = proxyLogger.child({ module: "cache" });
 
-const MISSING_EXTENSION_INFO =
-  "TokenCacheStore contract not provided — install @veryfront/ext-cache-redis or scaffold extensions/ext-cache-redis/";
+function requireCacheType(value: unknown, name: string): "memory" | "redis" {
+  if (value !== "memory" && value !== "redis") {
+    throw new TypeError(`${name} must be "memory" or "redis"`);
+  }
+  return value;
+}
 
-export async function createCache(options: CacheOptions): Promise<TokenCache> {
-  return withSpan(
-    "cache.create",
-    async () => {
-      if (options.type === "redis") {
-        const tokenCache = tryResolve<TokenCacheStore>("TokenCacheStore");
-        if (tokenCache) return new TracingTokenCache(tokenCache);
-        logger.info(MISSING_EXTENSION_INFO);
-        return new MemoryCache(undefined);
-      }
-      return new MemoryCache(options.options);
-    },
-    { "cache.type": options.type },
+function requireFactoryOptions(options: CacheOptions): CacheOptions {
+  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+    throw new TypeError("cache options must be an object");
+  }
+  const type = requireCacheType((options as { type?: unknown }).type, "cache type");
+  const nested = (options as { options?: unknown }).options;
+  if (
+    nested !== undefined && (typeof nested !== "object" || nested === null || Array.isArray(nested))
+  ) {
+    throw new TypeError("cache implementation options must be an object");
+  }
+  if (type === "redis" && nested === undefined) {
+    throw new TypeError("redis cache options must be provided");
+  }
+  return options;
+}
+
+function createRedisCache(): TokenCache {
+  const tokenCache = resolve<TokenCacheStore>("TokenCacheStore");
+  logger.debug("[Cache] Using TokenCacheStore extension with resilient memory cache");
+  return new ResilientCache(
+    new TracingTokenCache(tokenCache),
+    new MemoryCache(),
   );
 }
 
+/** Create the requested token cache, failing when its required extension is absent. */
+export async function createCache(options: CacheOptions): Promise<TokenCache> {
+  const validatedOptions = requireFactoryOptions(options);
+  return withSpan(
+    "cache.create",
+    async () => {
+      if (validatedOptions.type === "redis") {
+        return createRedisCache();
+      }
+      return new MemoryCache(validatedOptions.options);
+    },
+    { "cache.type": validatedOptions.type },
+  );
+}
+
+/** Create a token cache from the validated `CACHE_TYPE` environment setting. */
 export async function createCacheFromEnv(): Promise<TokenCache> {
-  const cacheType = getEnv("CACHE_TYPE") || "memory";
+  const configuredType = getEnv("CACHE_TYPE");
+  const cacheType = requireCacheType(configuredType || "memory", "CACHE_TYPE");
 
   return withSpan(
     "cache.createFromEnv",
     async () => {
-      if (cacheType !== "redis") return new MemoryCache();
-
-      const tokenCache = tryResolve<TokenCacheStore>("TokenCacheStore");
-      if (!tokenCache) {
-        // Redis was requested via config/env but no extension registered the
-        // TokenCacheStore contract. Log an info (misconfiguration, not error),
-        // then fall back to an in-memory cache so the proxy still boots.
-        logger.info(MISSING_EXTENSION_INFO);
-        return new MemoryCache();
-      }
-
-      // Wrap the extension-provided cache with a memory fallback so a Redis
-      // outage does not take the proxy down. TracingTokenCache sits between
-      // ResilientCache and the extension impl so spans wrap the actual
-      // primary-cache attempt (mirrors the pre-extraction RedisCache which
-      // had inner withSpan calls).
-      logger.debug("[Cache] Using TokenCacheStore extension with memory fallback (ResilientCache)");
-      const traced = new TracingTokenCache(tokenCache);
-      return new ResilientCache(traced, new MemoryCache());
+      return cacheType === "redis" ? createRedisCache() : new MemoryCache();
     },
     { "cache.type": cacheType },
   );

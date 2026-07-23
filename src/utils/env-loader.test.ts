@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { __resetEnvLoaderForTests, loadEnv, supportsEnvFiles } from "./env-loader.ts";
@@ -103,6 +103,21 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("handles escaped quotes and backslashes in quoted values", async () => {
+      const doubleKey = createKey("ESCAPED_DQ");
+      const singleKey = createKey("ESCAPED_SQ");
+      await writeEnvFile(
+        ".env",
+        `${doubleKey}="say \\"hello\\" at C:\\\\temp"\n${singleKey}='it\\'s \\\\safe'`,
+      );
+
+      await loadEnv({ cwd: tempDir, override: true });
+
+      assertEquals(getEnv(doubleKey), 'say "hello" at C:\\temp');
+      assertEquals(getEnv(singleKey), "it's \\safe");
+      cleanupKeys(doubleKey, singleKey);
+    });
+
     it("should strip inline comments from unquoted values", async () => {
       const key = createKey("INLINE");
       await writeEnvFile(".env", `${key}=value # comment`);
@@ -145,6 +160,37 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("preserves an existing empty process value by default", async () => {
+      const key = createKey("EMPTY_EXISTING");
+      setEnv(key, "");
+      await writeEnvFile(".env", `${key}=replacement`);
+
+      await loadEnv({ cwd: tempDir });
+      assertEquals(getEnv(key), "");
+
+      cleanupKeys(key);
+    });
+
+    it("lets later env files override earlier files without overriding the process", async () => {
+      const layeredKey = createKey("LAYERED");
+      const protectedKey = createKey("PROTECTED_LAYERED");
+      setEnv(protectedKey, "from-process");
+      await writeEnvFile(
+        ".env",
+        `${layeredKey}=from-env\n${protectedKey}=from-env`,
+      );
+      await writeEnvFile(
+        ".env.local",
+        `${layeredKey}=from-local\n${protectedKey}=from-local`,
+      );
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(layeredKey), "from-local");
+      assertEquals(getEnv(protectedKey), "from-process");
+      cleanupKeys(layeredKey, protectedKey);
+    });
+
     it("should override existing env vars when override is true", async () => {
       const key = createKey("OVERRIDE");
       setEnv(key, "existing");
@@ -163,6 +209,31 @@ describe("env-loader", () => {
       await loadEnv({ cwd: tempDir, override: true });
       assertEquals(getEnv(key), "line1\nline2");
 
+      cleanupKeys(key);
+    });
+
+    it("does not treat an escaped quote as the end of a multiline value", async () => {
+      const key = createKey("ESCAPED_MULTI");
+      await writeEnvFile(".env", `${key}="line1 \\"quoted\\"\nline2"`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+
+      assertEquals(getEnv(key), 'line1 "quoted"\nline2');
+      cleanupKeys(key);
+    });
+
+    it("rejects trailing garbage after a quoted value", async () => {
+      const key = createKey("TRAILING_QUOTE_GARBAGE");
+      await writeEnvFile(".env", `${key}="safe" unexpected`);
+
+      const error = await assertRejects(
+        () => loadEnv({ cwd: tempDir, override: true }),
+        Error,
+        "Failed to load an environment file",
+      );
+
+      assertEquals((error as { slug?: unknown }).slug, "config-parse-error");
+      assertEquals(getEnv(key), undefined);
       cleanupKeys(key);
     });
 
@@ -251,6 +322,74 @@ describe("env-loader", () => {
         else setEnv("LOG_FORMAT", previousLogFormat);
         __resetLoggerConfigForTests();
       }
+    });
+
+    it("does not include variable names, values, or local paths in debug output", async () => {
+      const key = createKey("PRIVATE_NAME");
+      const value = "private-env-value-canary";
+      const previousLogLevel = getEnv("LOG_LEVEL");
+      const originalDebug = console.debug;
+      const output: string[] = [];
+
+      try {
+        setEnv("LOG_LEVEL", "DEBUG");
+        __resetLoggerConfigForTests();
+        console.debug = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        await writeEnvFile(".env", `${key}=${value}`);
+
+        await loadEnv({ cwd: tempDir, override: true, debug: true });
+
+        const emitted = output.join("\n");
+        assertEquals(emitted.includes(key), false);
+        assertEquals(emitted.includes(value), false);
+        assertEquals(emitted.includes(tempDir), false);
+      } finally {
+        console.debug = originalDebug;
+        if (previousLogLevel === undefined) deleteEnv("LOG_LEVEL");
+        else setEnv("LOG_LEVEL", previousLogLevel);
+        __resetLoggerConfigForTests();
+        cleanupKeys(key);
+      }
+    });
+
+    it("rejects unsafe environment names before constructing an env file path", async () => {
+      const previousNodeEnv = getEnv("NODE_ENV");
+
+      try {
+        setEnv("NODE_ENV", "../../private");
+
+        const error = await assertRejects(
+          () => loadEnv({ cwd: tempDir }),
+          Error,
+          "Environment name must use letters, numbers, underscores, or hyphens",
+        );
+        assertEquals((error as { slug?: unknown }).slug, "config-invalid");
+      } finally {
+        if (previousNodeEnv === undefined) deleteEnv("NODE_ENV");
+        else setEnv("NODE_ENV", previousNodeEnv);
+      }
+    });
+
+    it("does not partially apply variables when a later env file cannot be read", async () => {
+      const key = createKey("ATOMIC");
+      const environment = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
+      const failingPath = `${tempDir}/.env.${environment}`;
+      await writeEnvFile(".env", `${key}=partial-value`);
+      await Deno.mkdir(failingPath);
+
+      const error = await assertRejects(
+        () => loadEnv({ cwd: tempDir, override: true }),
+        Error,
+        "Failed to load an environment file",
+      );
+
+      assertEquals((error as { slug?: unknown }).slug, "config-parse-error");
+      assertEquals(getEnv(key), undefined);
+
+      await Deno.remove(failingPath);
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "partial-value");
+      cleanupKeys(key);
     });
   });
 });

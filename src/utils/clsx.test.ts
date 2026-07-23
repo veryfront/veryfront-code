@@ -16,4 +16,14 @@ describe("clsx", () => {
   it("flattens arrays recursively", () => {
     assertEquals(clsx(["a", ["b", ["c"]]]), "a b c");
   });
+  it("ignores cyclic arrays instead of overflowing the call stack", () => {
+    const values: unknown[] = ["a"];
+    values.push(values, "b");
+
+    assertEquals(clsx(values as never), "a b");
+  });
+  it("expands a repeated array each time when it is not cyclic", () => {
+    const values = ["a", "b"];
+    assertEquals(clsx(values, values), "a b a b");
+  });
 });

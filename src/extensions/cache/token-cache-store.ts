@@ -1,7 +1,7 @@
 /**
  * Contract interface for OAuth-token-style cache stores used by the proxy.
  *
- * This contract is richer than the generic `CacheStore` — it adds scan-by-prefix,
+ * This contract is richer than the generic `CacheStore`. It adds scan-by-prefix,
  * bulk read, and usage statistics primitives that the proxy's token cache needs.
  * Simpler key-value consumers should use `CacheStore` instead.
  *
@@ -17,10 +17,13 @@
  * mirrors what the proxy has historically stored.
  */
 export interface TokenCacheEntry {
+  /** Cached access token. */
   token: string;
   /** Unix timestamp in milliseconds. */
   expiresAt: number;
+  /** Runtime scope in which the token is valid. */
   scope: "preview" | "production";
+  /** Project associated with the token, when project-scoped. */
   projectSlug?: string;
 }
 
@@ -28,9 +31,13 @@ export interface TokenCacheEntry {
  * Aggregate usage statistics for a `TokenCacheStore`.
  */
 export interface TokenCacheStats {
+  /** Successful cache lookups. */
   hits: number;
+  /** Cache misses, including expired entries. */
   misses: number;
+  /** Number of entries owned by this store. */
   size: number;
+  /** Active storage implementation. */
   type: "memory" | "redis";
 }
 

@@ -8,6 +8,7 @@ import {
   EXTENSION_OWNED_DEPENDENCIES,
   normalizeNpmPackageMetadata,
   ROOT_OPTIONAL_RUNTIME_PEERS,
+  ROOT_RUNTIME_DEPENDENCIES,
 } from "./npm-package-metadata.ts";
 import {
   type ExtensionManifest,
@@ -23,6 +24,22 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
 
   assertEquals(exports["./skill"], "./src/skill/index.ts");
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
+});
+
+Deno.test("exports the documented platform package subpaths", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+  const expected = {
+    "./platform": "./src/platform/index.ts",
+    "./platform/http": "./src/platform/compat/http/index.ts",
+    "./platform/path": "./src/platform/compat/path/index.ts",
+  } as const;
+
+  for (const [subpath, source] of Object.entries(expected)) {
+    assertEquals(exports[subpath], source);
+    assertEquals(imports[`veryfront${subpath.slice(1)}`], source);
+  }
 });
 
 Deno.test("npm package provenance metadata points at veryfront-code", async () => {
@@ -286,6 +303,7 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
   ) as RootPackageConfig;
   const owned = new Set<string>(EXTENSION_OWNED_DEPENDENCIES);
   const optionalPeers = new Set<string>(ROOT_OPTIONAL_RUNTIME_PEERS);
+  const rootRuntime = new Set<string>(ROOT_RUNTIME_DEPENDENCIES);
 
   const manifestPaths = firstPartyExtensionManifestPaths(denoConfig);
   assertEquals(
@@ -314,9 +332,10 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
 
     for (const dependency of dependencies) {
       assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency),
+        owned.has(dependency) || optionalPeers.has(dependency) ||
+          rootRuntime.has(dependency),
         true,
-        `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
+        `${dependency} (declared by ${manifestPath}) must be classified as extension-owned, an optional peer, or a root runtime dependency`,
       );
     }
   }
@@ -354,6 +373,20 @@ describe("normalizeNpmPackageMetadata", () => {
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
+    });
+  });
+
+  it("retains packages used by the root runtime", () => {
+    const pkg = normalizeNpmPackageMetadata({
+      dependencies: {
+        "react-markdown": "^9.0.3",
+        "remark-gfm": "^4.0.1",
+      },
+    });
+
+    assertEquals(pkg.dependencies, {
+      "react-markdown": "9.0.3",
+      "remark-gfm": "4.0.1",
     });
   });
 
@@ -663,10 +696,32 @@ describe("npm supply-chain policy", () => {
       );
       assertStringIncludes(source, "#veryfront/errors/error-registry.ts");
     }
+
+    for (
+      const path of [
+        "src/workflow/claude-code/react/use-claude-code-stream.ts",
+        "src/workflow/claude-code/react/use-claude-code-websocket.ts",
+      ]
+    ) {
+      const source = await Deno.readTextFile(path);
+      assertEquals(
+        source.includes('from "#veryfront/errors"'),
+        false,
+        `${path} must not import the browser-unsafe errors barrel`,
+      );
+      assertStringIncludes(
+        source,
+        "#veryfront/errors/error-registry/server.ts",
+      );
+    }
   });
 
   it("keeps workflow React hooks in the browser-safe npm patch set", () => {
     assertEquals(BROWSER_SAFE_EXPORTS.includes("./workflow"), false);
+    assertEquals(
+      BROWSER_SAFE_EXPORTS.includes("./workflow/claude-code/react"),
+      true,
+    );
     assertEquals(
       BROWSER_SAFE_CLIENT_MODULES.includes("src/workflow/react/index.js"),
       true,

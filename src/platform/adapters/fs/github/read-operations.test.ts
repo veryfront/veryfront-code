@@ -15,13 +15,20 @@ describe("GitHubReadOperations", () => {
     ref: "main",
     token: "test-token",
     basePath: "",
-    retry: { maxRetries: 3, initialDelay: 1000, maxDelay: 30000 },
+    retry: {
+      maxRetries: 3,
+      initialDelay: 1000,
+      maxDelay: 30000,
+      requestTimeout: 30000,
+      totalTimeout: 120000,
+      maxResponseBytes: 67108864,
+    },
     cache: { enabled: true, ttl: 60000, maxSize: 1000, maxMemory: 104857600 },
   };
 
   function createMockClient(overrides: Record<string, unknown> = {}) {
     return {
-      getContents: () => Promise.resolve({ type: "file", content: "dGVzdA==" }),
+      getContents: () => Promise.resolve({ type: "file", content: "dGVzdA==", encoding: "base64" }),
       getBlob: () => Promise.resolve({ content: "dGVzdA==", encoding: "base64" }),
       repoId: "test-owner/test-repo",
       ...overrides,
@@ -91,6 +98,48 @@ describe("GitHubReadOperations", () => {
       const ops = createOps();
       const result = await ops.readTextFile("test.txt");
       assertEquals(result, "test");
+    });
+
+    it("should accept an empty file", async () => {
+      const ops = createOps({
+        client: {
+          getContents: () => Promise.resolve({ type: "file", content: "", encoding: "base64" }),
+        },
+      });
+
+      assertEquals(await ops.readTextFile("empty.txt"), "");
+    });
+
+    it("should reject an unexpected content encoding", async () => {
+      const ops = createOps({
+        client: {
+          getContents: () =>
+            Promise.resolve({ type: "file", content: "dGVzdA==", encoding: "utf-8" }),
+        },
+      });
+
+      await assertRejects(() => ops.readTextFile("test.txt"), Error, "base64");
+    });
+
+    it("should reject malformed base64 content", async () => {
+      const ops = createOps({
+        client: {
+          getContents: () =>
+            Promise.resolve({ type: "file", content: "not-base64%%%", encoding: "base64" }),
+        },
+      });
+
+      await assertRejects(() => ops.readTextFile("test.txt"), Error, "base64");
+    });
+
+    it("should reject invalid UTF-8 when reading text", async () => {
+      const ops = createOps({
+        client: {
+          getContents: () => Promise.resolve({ type: "file", content: "/w==", encoding: "base64" }),
+        },
+      });
+
+      await assertRejects(() => ops.readTextFile("test.txt"), Error, "UTF-8");
     });
 
     it("should cache the result after fetching", async () => {
@@ -174,6 +223,39 @@ describe("GitHubReadOperations", () => {
         "not found",
       );
     });
+
+    it("should not cache a read that finishes after invalidation", async () => {
+      let resolveFirst: ((value: unknown) => void) | undefined;
+      const firstResponse = new Promise((resolve) => {
+        resolveFirst = resolve;
+      });
+      let calls = 0;
+      const values = new Map<string, unknown>();
+      const ops = createOps({
+        client: {
+          getContents: () => {
+            calls++;
+            if (calls === 1) return firstResponse;
+            return Promise.resolve({
+              type: "file",
+              content: btoa("current"),
+              encoding: "base64",
+            });
+          },
+        },
+        cache: {
+          get: (key: string) => values.get(key),
+          set: (key: string, value: unknown) => values.set(key, value),
+        },
+      });
+
+      const staleRead = ops.readTextFile("test.txt");
+      ops.invalidate();
+      resolveFirst?.({ type: "file", content: btoa("stale"), encoding: "base64" });
+      assertEquals(await staleRead, "stale");
+      assertEquals(await ops.readTextFile("test.txt"), "current");
+      assertEquals(calls, 2);
+    });
   });
 
   describe("readFile (binary)", () => {
@@ -194,6 +276,16 @@ describe("GitHubReadOperations", () => {
       assertEquals(result instanceof Uint8Array, true);
       assertEquals(result.length, 4);
       assertEquals(result[0], 116); // 't'
+    });
+
+    it("should preserve bytes that are not valid UTF-8", async () => {
+      const ops = createOps({
+        client: {
+          getContents: () => Promise.resolve({ type: "file", content: "/w==", encoding: "base64" }),
+        },
+      });
+
+      assertEquals(await ops.readFile("test.bin"), new Uint8Array([255]));
     });
 
     it("should use blob API for large binary files", async () => {

@@ -1,9 +1,14 @@
 /** Context for mutable agent project. */
 export interface MutableAgentProjectContext {
+  /** Project ID value. */
   projectId: string;
+  /** Branch ID value. */
   branchId?: string | null;
+  /** Runtime target kind value. */
   runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  /** Runtime target environment ID value. */
   runtimeTargetEnvironmentId?: string | null;
+  /** Available skill IDs value. */
   availableSkillIds?: string[];
   /** Per-run skill id -> discovered SKILL.md source path (owner-aware catalog). */
   skillSourcePaths?: Readonly<Record<string, string>>;

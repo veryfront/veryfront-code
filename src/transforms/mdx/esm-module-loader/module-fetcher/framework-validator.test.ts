@@ -2,8 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { getCacheBaseDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  makeTempDirWithOptions,
+  mkdir,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import {
   findMissingFileDependenciesInCode,
   hasIncompatibleFrameworkPaths,
@@ -17,6 +22,15 @@ const noopLog = {
   error: () => {},
   child: () => noopLog,
 } as never;
+
+async function makeMdxCacheTempDir(): Promise<string> {
+  const cacheRoot = getMdxEsmCacheDir();
+  await mkdir(cacheRoot, { recursive: true });
+  return await makeTempDirWithOptions({
+    dir: cacheRoot,
+    prefix: "vf-framework-validator-",
+  });
+}
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", () => {
   describe("hasIncompatibleFrameworkPaths", () => {
@@ -70,8 +84,8 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
     });
 
     it("returns true for nested vf modules with esm.sh/_vf_modules URLs", async () => {
-      const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
-      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+      const tempDir = await makeMdxCacheTempDir();
+      const vfmodDir = join(tempDir, "project-a", "preview-main");
       const childPath = join(vfmodDir, "vfmod-child.mjs");
 
       try {
@@ -91,8 +105,8 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
     });
 
     it("returns true for nested vf modules with non-portable legacy cache paths", async () => {
-      const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
-      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+      const tempDir = await makeMdxCacheTempDir();
+      const vfmodDir = join(tempDir, "project-a", "preview-main");
       const childPath = join(vfmodDir, "vfmod-child.mjs");
 
       try {
@@ -160,8 +174,8 @@ import bar from "file:///tmp/nonexistent-dup-test.mjs";
     });
 
     it("follows nested vf modules when checking file dependencies", async () => {
-      const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
-      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+      const tempDir = await makeMdxCacheTempDir();
+      const vfmodDir = join(tempDir, "project-a", "preview-main");
       const childPath = join(vfmodDir, "vfmod-child.mjs");
 
       try {

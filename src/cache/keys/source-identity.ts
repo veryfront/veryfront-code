@@ -1,4 +1,7 @@
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { containsUnsafeCacheStringCharacter } from "../validation.ts";
+
+const MAX_CACHE_IDENTITY_SEGMENT_LENGTH = 4096;
 
 export type CacheSourceIdentity =
   | { type: "branch"; branch: string }
@@ -17,10 +20,17 @@ export interface EncodedCacheSourceIdentity {
   key: string;
 }
 
-function encodeRequiredSegment(value: string | null | undefined, label: string): string {
-  if (!value) {
+/** Encode one bounded identity field for a colon-delimited cache key. */
+export function encodeCacheIdentitySegment(
+  value: string | null | undefined,
+  label: string,
+): string {
+  if (
+    !value || value.length > MAX_CACHE_IDENTITY_SEGMENT_LENGTH ||
+    containsUnsafeCacheStringCharacter(value)
+  ) {
     throw CACHE_INVARIANT_VIOLATION.create({
-      detail: "Missing " + label + " for cache source identity",
+      detail: `Invalid ${label} for cache identity`,
     });
   }
   return encodeURIComponent(value);
@@ -33,15 +43,15 @@ export function encodeCacheSourceIdentity(
   let segments: string[];
   switch (identity.type) {
     case "branch":
-      segments = [encodeRequiredSegment(identity.branch, "branch")];
+      segments = [encodeCacheIdentitySegment(identity.branch, "branch")];
       break;
     case "release":
-      segments = [encodeRequiredSegment(identity.releaseId, "releaseId")];
+      segments = [encodeCacheIdentitySegment(identity.releaseId, "releaseId")];
       break;
     case "environment":
       segments = [
-        encodeRequiredSegment(identity.environmentName, "environmentName"),
-        encodeRequiredSegment(identity.releaseId, "releaseId"),
+        encodeCacheIdentitySegment(identity.environmentName, "environmentName"),
+        encodeCacheIdentitySegment(identity.releaseId, "releaseId"),
       ];
       break;
   }

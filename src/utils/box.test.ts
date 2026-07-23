@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BORDER_STYLES,
@@ -12,6 +12,13 @@ import {
 import { stripAnsi } from "./box.ts";
 
 describe("cli/ui/box", () => {
+  describe("stripAnsi", () => {
+    it("removes CSI and OSC terminal escape sequences", () => {
+      assertEquals(stripAnsi("\x1b[2Khello\x1b[0m"), "hello");
+      assertEquals(stripAnsi("\x1b]8;;https://example.test\x07link\x1b]8;;\x07"), "link");
+    });
+  });
+
   describe("BORDER_STYLES", () => {
     it("should have rounded style", () => {
       assertEquals(BORDER_STYLES.rounded.topLeft, "\u256D");
@@ -80,6 +87,17 @@ describe("cli/ui/box", () => {
       assertEquals(lines.length >= 5, true);
     });
 
+    it("aligns wide and combining Unicode by terminal column width", () => {
+      assertEquals(
+        box("界\nx", { padding: 0, paddingY: 0 }),
+        "╭──╮\n│界│\n│x │\n╰──╯",
+      );
+      assertEquals(
+        box("e\u0301\nx", { padding: 0, paddingY: 0 }),
+        "╭─╮\n│e\u0301│\n│x│\n╰─╯",
+      );
+    });
+
     it("should apply custom width", () => {
       const firstLine = box("hi", { width: 30 }).split("\n")[0]!;
       assertEquals(stripAnsi(firstLine).length, 30);
@@ -98,6 +116,32 @@ describe("cli/ui/box", () => {
       assertEquals(
         box("hi", { title: "T", titleColor: "\x1b[32m" }).includes("\x1b[32m"),
         true,
+      );
+    });
+
+    it("rejects unbounded numeric layout options", () => {
+      for (
+        const options of [
+          { width: Number.POSITIVE_INFINITY },
+          { padding: Number.NaN },
+          { paddingX: -1 },
+          { paddingY: 1.5 },
+        ]
+      ) {
+        assertThrows(() => box("content", options), RangeError);
+      }
+    });
+
+    it("rejects unsupported styles and alignments", () => {
+      assertThrows(
+        () => box("content", { style: "unknown" as never }),
+        RangeError,
+        "style must be one of",
+      );
+      assertThrows(
+        () => box("content", { titleAlign: "sideways" as never }),
+        RangeError,
+        "titleAlign must be one of",
       );
     });
   });
@@ -172,6 +216,12 @@ describe("cli/ui/box", () => {
 
     it("should use specified border style", () => {
       assertEquals(divider(5, "heavy"), "\u2501".repeat(5));
+    });
+
+    it("rejects invalid or unbounded widths", () => {
+      for (const width of [-1, 1.5, Number.POSITIVE_INFINITY, 10_001]) {
+        assertThrows(() => divider(width), RangeError);
+      }
     });
   });
 

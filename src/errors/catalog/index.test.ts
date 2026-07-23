@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ErrorSlug } from "../error-registry.ts";
+import { ERROR_REGISTRY } from "../error-registry.ts";
 import { ERROR_CATALOG, getErrorSolution, searchErrors } from "./index.ts";
 
 describe("errors/catalog/index", () => {
@@ -9,6 +10,30 @@ describe("errors/catalog/index", () => {
     it("should be a non-empty object", () => {
       assertEquals(typeof ERROR_CATALOG, "object");
       assertEquals(Object.keys(ERROR_CATALOG).length > 0, true);
+    });
+
+    it("documents every registered error slug", () => {
+      assertEquals(
+        Object.keys(ERROR_REGISTRY).filter((slug) => !Object.hasOwn(ERROR_CATALOG, slug)),
+        [],
+      );
+      assertEquals(Object.keys(ERROR_CATALOG).length, Object.keys(ERROR_REGISTRY).length);
+    });
+
+    it("contains no internal runbook or credential material", () => {
+      const serialized = JSON.stringify(ERROR_CATALOG);
+      for (
+        const forbidden of [
+          "kubectl",
+          "Authorization",
+          "/internal/",
+          "renderer pods",
+          "ADMIN_TOKEN",
+          "veryfront-production",
+        ]
+      ) {
+        assertEquals(serialized.includes(forbidden), false);
+      }
     });
   });
 
@@ -23,6 +48,11 @@ describe("errors/catalog/index", () => {
       assertEquals(solution.slug, "config-not-found");
       assertEquals(typeof solution.title, "string");
       assertEquals(typeof solution.message, "string");
+    });
+
+    it("does not resolve inherited object properties", () => {
+      assertEquals(getErrorSolution("__proto__" as never), null);
+      assertEquals(getErrorSolution("constructor" as never), null);
     });
   });
 
@@ -78,6 +108,15 @@ describe("errors/catalog/index", () => {
 
       const results = searchErrors(stepWord);
       assertEquals(results.length > 0, true);
+    });
+
+    it("rejects malformed and oversized search terms", () => {
+      assertThrows(() => searchErrors(42 as never), TypeError, "query must be a string");
+      assertThrows(
+        () => searchErrors("x".repeat(257)),
+        TypeError,
+        "query must not exceed 256 characters",
+      );
     });
   });
 });

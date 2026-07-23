@@ -1,16 +1,19 @@
 import { serverLogger } from "#veryfront/utils";
-import { getOpenSockets } from "./hmr-client-manager.ts";
+import { closeIdleClients, disconnectClient, getOpenClients } from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
 
 const PING_INTERVAL_MS = 45_000;
+const CLIENT_IDLE_TIMEOUT_MS = 120_000;
+const HMR_CLOSE_CONNECTION_FAILED = 1011;
 
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 
-export function startPingInterval(): void {
+export function startPingInterval(afterSweep?: () => void): void {
   if (pingInterval) return;
   pingInterval = setInterval(() => {
     sendPingToAllClients();
+    afterSweep?.();
   }, PING_INTERVAL_MS);
 }
 
@@ -26,23 +29,28 @@ export function getPingIntervalMs(): number {
 }
 
 function sendPingToAllClients(): void {
-  const sockets = getOpenSockets();
-  if (sockets.length === 0) return;
+  const idleClientsClosed = closeIdleClients(Date.now(), CLIENT_IDLE_TIMEOUT_MS);
+  const clients = getOpenClients();
+  if (clients.length === 0) {
+    if (idleClientsClosed > 0) logger.debug("Closed idle HMR clients", { idleClientsClosed });
+    return;
+  }
 
   const pingMessage = JSON.stringify({ type: "ping", timestamp: Date.now() });
   let sentCount = 0;
 
-  for (const socket of sockets) {
+  for (const client of clients) {
     try {
-      socket.send(pingMessage);
+      client.socket.send(pingMessage);
       sentCount++;
     } catch (_) {
-      /* expected: client will be cleaned up when socket closes */
+      disconnectClient(client.id, HMR_CLOSE_CONNECTION_FAILED, "Connection failed");
     }
   }
 
   logger.debug("Sent ping to clients", {
     sentCount,
-    totalClients: sockets.length,
+    totalClients: clients.length,
+    idleClientsClosed,
   });
 }

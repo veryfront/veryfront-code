@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { securityHeaders } from "./security-headers.ts";
 
@@ -92,9 +92,62 @@ describe("middleware/builtin/security/security-headers", () => {
       );
     });
 
+    it("honors the explicit legacy XSS protection option", async () => {
+      const mw = securityHeaders({ xssProtection: true });
+      const res = await mw(makeCtx(), nextOk);
+
+      assertEquals(res?.headers.get("X-XSS-Protection"), "1; mode=block");
+    });
+
+    it("rejects invalid header configuration during construction", () => {
+      assertThrows(
+        () => securityHeaders({ hsts: { maxAge: -1 } }),
+        TypeError,
+        "maxAge",
+      );
+      assertThrows(
+        () => securityHeaders({ referrerPolicy: "unsafe\r\nX-Injected: yes" }),
+        TypeError,
+        "Referrer-Policy",
+      );
+      assertThrows(
+        () => securityHeaders(null as never),
+        TypeError,
+        "options",
+      );
+      assertThrows(
+        () => securityHeaders({ noSniff: "false" as never }),
+        TypeError,
+        "noSniff",
+      );
+      assertThrows(
+        () => securityHeaders({ xssProtection: "true" as never }),
+        TypeError,
+        "xssProtection",
+      );
+      assertThrows(
+        () =>
+          securityHeaders({
+            hsts: { maxAge: 1, includeSubDomains: "yes" as never },
+          }),
+        TypeError,
+        "includeSubDomains",
+      );
+    });
+
+    it("preserves the original response status text", async () => {
+      const mw = securityHeaders();
+      const res = await mw(
+        makeCtx(),
+        () => Promise.resolve(new Response("Created", { status: 201, statusText: "Stored" })),
+      );
+
+      assertEquals(res?.statusText, "Stored");
+    });
+
     it("should handle undefined response from next", async () => {
       const mw = securityHeaders();
-      const res = await mw(makeCtx(), () => Promise.resolve(undefined as Response));
+      const res = await mw(makeCtx(), () => Promise.resolve(undefined));
 
       assertEquals(res, undefined);
     });

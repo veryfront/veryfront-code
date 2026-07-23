@@ -5,7 +5,6 @@ import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-
 import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
 import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("api-wrapper");
@@ -25,7 +24,6 @@ interface DiscoveryRecord {
 
 const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
 const MAX_DISCOVERY_FAILURES_TO_LOG = 5;
-const MAX_DISCOVERY_ERROR_MESSAGE_LENGTH = 500;
 
 const DISCOVERY_SOURCE_KINDS: Readonly<Record<string, string>> = {
   agents: "agent",
@@ -59,39 +57,15 @@ function projectRelativeDiscoveryFile(file: string, projectDir: string): string 
   return segments.slice(-2).join("/") || "unknown";
 }
 
-function sanitizeDiscoveryErrorMessage(
-  message: string,
-  file: string,
-  projectDir: string,
-  relativeFile: string,
-): string {
-  let sanitized = sanitizeUrlCredentials(message);
-  const normalizedFile = withoutFileProtocol(file);
-  const normalizedProjectDir = withoutFileProtocol(projectDir).replace(/\/$/, "");
-
-  for (const path of [file, normalizedFile]) {
-    if (path) sanitized = sanitized.replaceAll(path, relativeFile);
-  }
-  if (normalizedProjectDir) {
-    sanitized = sanitized.replaceAll(normalizedProjectDir, "<project>");
-  }
-
-  return sanitized.length <= MAX_DISCOVERY_ERROR_MESSAGE_LENGTH
-    ? sanitized
-    : `${sanitized.slice(0, MAX_DISCOVERY_ERROR_MESSAGE_LENGTH - 3)}...`;
-}
-
 function summarizeDiscoveryFailures(
   errors: DiscoveryResult["errors"],
   projectDir: string,
-): Array<{ file: string; sourceKind: string; message: string }> {
-  return errors.slice(0, MAX_DISCOVERY_FAILURES_TO_LOG).map(({ file, error }) => {
+): Array<{ sourceKind: string }> {
+  return errors.slice(0, MAX_DISCOVERY_FAILURES_TO_LOG).map(({ file }) => {
     const relativeFile = projectRelativeDiscoveryFile(file, projectDir);
     const topLevelDir = relativeFile.split("/", 1)[0] ?? "";
     return {
-      file: relativeFile,
       sourceKind: DISCOVERY_SOURCE_KINDS[topLevelDir] ?? "unknown",
-      message: sanitizeDiscoveryErrorMessage(error.message, file, projectDir, relativeFile),
     };
   });
 }
@@ -167,8 +141,6 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
           discoveryOptions.agentDirs.length > 0;
 
         const logData = {
-          projectSlug: ctx.projectSlug,
-          releaseId: ctx.releaseId,
           agents: result.agents.size,
           tools: result.tools.size,
           errors: result.errors.length,
@@ -201,12 +173,10 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     // Allow retry on next request
     discoveredProjects.delete(key);
     logger.warn("Primitive discovery failed (will retry)", {
-      projectSlug: ctx.projectSlug,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      errorName: error instanceof Error ? error.name : "UnknownError",
     });
     throw INITIALIZATION_ERROR.create({
-      detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      detail: "Runtime discovery failed",
       cause: error,
     });
   } finally {

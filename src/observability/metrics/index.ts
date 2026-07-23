@@ -4,10 +4,11 @@
  * @module observability/metrics
  */
 
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ObservabilityRuntimeAdapter } from "../runtime-adapter.ts";
 import { metricsManager } from "./manager.ts";
+import type { MetricsConfig, MetricsRuntimeState } from "./types.ts";
 
-export type { MemoryUsage, MetricsConfig } from "./types.ts";
+export type { MemoryUsage, MetricsConfig, MetricsRuntimeState } from "./types.ts";
 export { getMemoryUsage, loadConfig } from "./config.ts";
 export { MetricsRecorder } from "./recorder.ts";
 export { MetricsManager, metricsManager } from "./manager.ts";
@@ -18,8 +19,8 @@ function getRecorder(): ReturnType<typeof metricsManager.getRecorder> {
 
 /** Initialize metrics collection. */
 export async function initMetrics(
-  config: Parameters<typeof metricsManager.initialize>[0] = {},
-  adapter?: RuntimeAdapter,
+  config: Partial<MetricsConfig> = {},
+  adapter?: ObservabilityRuntimeAdapter,
 ): Promise<void> {
   await metricsManager.initialize(config, adapter);
 }
@@ -34,17 +35,17 @@ export async function shutdownMetrics(): Promise<void> {
   await metricsManager.shutdown();
 }
 
-/** State for get metrics. */
-export function getMetricsState(): ReturnType<typeof metricsManager.getState> {
+/** Return a metrics runtime state snapshot. */
+export function getMetricsState(): MetricsRuntimeState {
   return metricsManager.getState();
 }
 
-/** Request payload for record HTTP. */
+/** Record the start of an HTTP request. */
 export function recordHttpRequest(attributes?: Record<string, string>): void {
   getRecorder()?.recordHttpRequest(attributes);
 }
 
-/** Record HTTP request complete. */
+/** Record completion of an HTTP request. */
 export function recordHttpRequestComplete(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -52,7 +53,7 @@ export function recordHttpRequestComplete(
   getRecorder()?.recordHttpRequestComplete(durationMs, attributes);
 }
 
-/** Record cache get. */
+/** Record a cache lookup. */
 export function recordCacheGet(
   hit: boolean,
   attributes?: Record<string, string>,
@@ -60,12 +61,12 @@ export function recordCacheGet(
   getRecorder()?.recordCacheGet(hit, attributes);
 }
 
-/** Record cache set. */
+/** Record a cache write. */
 export function recordCacheSet(attributes?: Record<string, string>): void {
   getRecorder()?.recordCacheSet(attributes);
 }
 
-/** Record cache invalidate. */
+/** Record cache invalidation. */
 export function recordCacheInvalidate(
   count: number,
   attributes?: Record<string, string>,
@@ -73,12 +74,12 @@ export function recordCacheInvalidate(
   getRecorder()?.recordCacheInvalidate(count, attributes);
 }
 
-/** Sets cache size. */
+/** Set the current cache size. */
 export function setCacheSize(size: number): void {
   getRecorder()?.setCacheSize(size);
 }
 
-/** Record render. */
+/** Record a completed render. */
 export function recordRender(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -86,12 +87,12 @@ export function recordRender(
   getRecorder()?.recordRender(durationMs, attributes);
 }
 
-/** Error shape for record render. */
+/** Record a render failure. */
 export function recordRenderError(attributes?: Record<string, string>): void {
   getRecorder()?.recordRenderError(attributes);
 }
 
-/** Record RSC render. */
+/** Record an RSC render duration. */
 export function recordRSCRender(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -99,7 +100,7 @@ export function recordRSCRender(
   getRecorder()?.recordRSCRender(durationMs, attributes);
 }
 
-/** Record RSC stream. */
+/** Record an RSC stream duration. */
 export function recordRSCStream(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -107,7 +108,7 @@ export function recordRSCStream(
   getRecorder()?.recordRSCStream(durationMs, attributes);
 }
 
-/** Request payload for record rscrequest. */
+/** Record an RSC request by kind. */
 export function recordRSCRequest(
   type: "manifest" | "page" | "stream" | "action",
   attributes?: Record<string, string>,
@@ -115,12 +116,12 @@ export function recordRSCRequest(
   getRecorder()?.recordRSCRequest(type, attributes);
 }
 
-/** Error shape for record rscerror. */
+/** Record an RSC failure. */
 export function recordRSCError(attributes?: Record<string, string>): void {
   getRecorder()?.recordRSCError(attributes);
 }
 
-/** Record build. */
+/** Record a build duration. */
 export function recordBuild(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -128,7 +129,7 @@ export function recordBuild(
   getRecorder()?.recordBuild(durationMs, attributes);
 }
 
-/** Record bundle. */
+/** Record a bundle size. */
 export function recordBundle(
   sizeKb: number,
   attributes?: Record<string, string>,
@@ -136,7 +137,7 @@ export function recordBundle(
   getRecorder()?.recordBundle(sizeKb, attributes);
 }
 
-/** Record data fetch. */
+/** Record a data fetch duration. */
 export function recordDataFetch(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -144,21 +145,22 @@ export function recordDataFetch(
   getRecorder()?.recordDataFetch(durationMs, attributes);
 }
 
-/** Error shape for record data fetch. */
+/** Record a data fetch failure. */
 export function recordDataFetchError(attributes?: Record<string, string>): void {
   getRecorder()?.recordDataFetchError(attributes);
 }
 
-/** Record CORS rejection. */
+/** Record a CORS rejection. */
 export function recordCorsRejection(attributes?: Record<string, string>): void {
   getRecorder()?.recordCorsRejection?.(attributes);
 }
 
-/** Record security headers. */
+/** Record security-header application. */
 export function recordSecurityHeaders(attributes?: Record<string, string>): void {
   getRecorder()?.recordSecurityHeaders?.(attributes);
 }
 
+/** Record a categorized error. */
 export function recordErrorCount(attributes?: Record<string, string>): void {
   getRecorder()?.recordError(attributes);
 }

@@ -1,14 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 /**
- * Extension loader tests — topological sort and lifecycle management.
+ * Extension loader tests: topological sort and lifecycle management.
  *
  * @module extensions/loader.test
  */
 
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { ExtensionLoader } from "./loader.ts";
-import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
+import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 
 function makeResolved(
@@ -29,11 +30,11 @@ const noopLogger = {
   error: () => {},
 };
 
-describe("ExtensionLoader", () => {
-  afterEach(() => {
-    reset();
-  });
+afterEach(() => {
+  reset();
+});
 
+describe("ExtensionLoader", () => {
   describe("topologicalSort()", () => {
     it("should sort providers before consumers", () => {
       const provider = makeExt("provider", { provides: { CacheStore: {} } });
@@ -94,6 +95,20 @@ describe("ExtensionLoader", () => {
       assertEquals(sorted[0]?.extension.name, "shared");
     });
 
+    it("rejects distinct extensions with the same name", () => {
+      const loader = new ExtensionLoader(noopLogger);
+
+      assertThrows(
+        () =>
+          loader.topologicalSort([
+            makeResolved(makeExt("shared")),
+            makeResolved(makeExt("shared")),
+          ]),
+        Error,
+        "Duplicate extension name",
+      );
+    });
+
     it("should throw on circular dependencies", () => {
       const a = makeExt("ext-a", {
         provides: { A: {} },
@@ -111,9 +126,120 @@ describe("ExtensionLoader", () => {
         "Circular",
       );
     });
+
+    it("contains hostile direct lifecycle helper inputs", () => {
+      const loader = new ExtensionLoader(noopLogger);
+      for (const operation of ["flattenPresets", "topologicalSort"] as const) {
+        const revoked = Proxy.revocable([], {});
+        revoked.revoke();
+        let error: unknown;
+        try {
+          loader[operation](revoked.proxy as ResolvedExtension[]);
+        } catch (caught) {
+          error = caught;
+        }
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals(String(error).includes("revoked"), false);
+
+        const revokedExtension = Proxy.revocable({}, {});
+        revokedExtension.revoke();
+        error = undefined;
+        try {
+          loader[operation]([{
+            extension: revokedExtension.proxy as Extension,
+            source: "config",
+            origin: "hostile",
+          }]);
+        } catch (caught) {
+          error = caught;
+        }
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals(String(error).includes("revoked"), false);
+      }
+    });
   });
 
   describe("setupAll()", () => {
+    it("snapshots extension manifests before queued lifecycle work starts", async () => {
+      const originalContract = { owner: "original" };
+      const events: string[] = [];
+      const config = { marker: "original" };
+      const extension = makeExt("original", {
+        provides: { StableContract: originalContract },
+        setup: (context) => {
+          events.push(`original:${context.config.marker}`);
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const setup = loader.setupAll([makeResolved(extension)], config);
+      extension.name = "mutated";
+      extension.provides = { StableContract: { owner: "mutated" } };
+      extension.setup = () => {
+        events.push("mutated");
+      };
+      config.marker = "mutated";
+      await setup;
+
+      assertEquals(events, ["original:original"]);
+      assertEquals(resolveContract("StableContract"), originalContract);
+    });
+
+    it("reads stateful manifest fields once at the setup boundary", async () => {
+      let nameReads = 0;
+      let capabilityTypeReads = 0;
+      const capability = {} as { type: string };
+      Object.defineProperty(capability, "type", {
+        enumerable: true,
+        get() {
+          capabilityTypeReads++;
+          return "fs:read";
+        },
+      });
+      const extension = {
+        version: "1.0.0",
+        capabilities: [capability],
+      } as Extension;
+      Object.defineProperty(extension, "name", {
+        enumerable: true,
+        get() {
+          nameReads++;
+          return "stateful";
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        { extension, source: "config", origin: "stateful" },
+      ], {});
+
+      assertEquals(nameReads, 1);
+      assertEquals(capabilityTypeReads, 1);
+    });
+
+    it("rejects malformed resolved entries and project config without leaking hostile errors", async () => {
+      const canary = "private-resolved-entry";
+      const hostile = new Proxy({}, {
+        get() {
+          throw new Error(canary);
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const resolvedError = await assertRejects(
+        () => loader.setupAll([hostile as ResolvedExtension], {}),
+        Error,
+        "Resolved extension",
+      );
+      assert(resolvedError instanceof Error);
+      assertEquals(resolvedError.message.includes(canary), false);
+      await assertRejects(
+        () => loader.setupAll([], null as unknown as Record<string, unknown>),
+        Error,
+        "Project config",
+      );
+    });
+
     it("should call setup() on each extension in order", async () => {
       const order: string[] = [];
       const a = makeExt("ext-a", {
@@ -161,6 +287,17 @@ describe("ExtensionLoader", () => {
       );
     });
 
+    it("does not treat one extension's static and declared contract as two providers", async () => {
+      const provider = makeExt("provider", {
+        contracts: { provides: ["Bundler"] },
+        provides: { Bundler: { id: "bundler" } },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      await loader.setupAll([makeResolved(provider)], {});
+      assertEquals(tryResolve("Bundler"), { id: "bundler" });
+    });
+
     it("should register static provides before calling setup()", async () => {
       let resolved: unknown;
       const provider = makeExt("provider", {
@@ -199,9 +336,146 @@ describe("ExtensionLoader", () => {
 
       assertEquals(order, ["provider", "consumer:dynamic"]);
     });
+
+    it("rolls back earlier extensions when a later extension is invalid", async () => {
+      let teardownCalls = 0;
+      const provider = makeExt("provider", {
+        provides: { CacheStore: { id: "memory" } },
+        teardown: () => {
+          teardownCalls++;
+        },
+      });
+      const invalid = {
+        name: "invalid",
+        version: "1.0.0",
+        capabilities: [],
+        setup: "not-a-function",
+      } as unknown as Extension;
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(invalid)], {}),
+        Error,
+        "setup must be a function",
+      );
+
+      assertEquals(teardownCalls, 0);
+      assertEquals(tryResolve("CacheStore"), undefined);
+    });
+
+    it("does not let logger failures mask a successful lifecycle", async () => {
+      const throwingLogger = {
+        debug: () => {
+          throw new Error("logger-failure");
+        },
+        info: () => {
+          throw new Error("logger-failure");
+        },
+        warn: () => {
+          throw new Error("logger-failure");
+        },
+        error: () => {
+          throw new Error("logger-failure");
+        },
+      };
+      const extension = makeExt("logged", {
+        capabilities: [{ type: "fs:read", paths: ["/private/path"] }],
+        provides: { LoggedContract: { ok: true } },
+      });
+
+      const loader = new ExtensionLoader(throwingLogger);
+      await loader.setupAll([makeResolved(extension)], {});
+      assertEquals(tryResolve("LoggedContract"), { ok: true });
+      await loader.teardownAll();
+    });
+
+    it("preserves structured logger arguments supplied by extensions", async () => {
+      const records: unknown[][] = [];
+      const logger = {
+        debug: (...args: unknown[]) => records.push(args),
+        info: (...args: unknown[]) => records.push(args),
+        warn: (...args: unknown[]) => records.push(args),
+        error: (...args: unknown[]) => records.push(args),
+      };
+      const extension = makeExt("structured-logger", {
+        setup: (ctx) => {
+          ctx.logger.info("extension message", { attempt: 1 });
+        },
+      });
+
+      const loader = new ExtensionLoader(logger);
+      await loader.setupAll([makeResolved(extension)], {});
+
+      assertEquals(
+        records.some((args) =>
+          args[0] === "extension message" &&
+          (args[1] as { attempt?: number } | undefined)?.attempt === 1
+        ),
+        true,
+      );
+    });
   });
 
-  describe("setupAll() — setup timeout", () => {
+  describe("setupAll(): setup timeout", () => {
+    it("rejects invalid timeout values before setup starts", async () => {
+      for (const setupTimeoutMs of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        let setupCalls = 0;
+        const extension = makeExt("invalid-timeout", {
+          setup: () => {
+            setupCalls++;
+          },
+        });
+        const loader = new ExtensionLoader(noopLogger);
+
+        await assertRejects(
+          () => loader.setupAll([makeResolved(extension)], {}, { setupTimeoutMs }),
+          Error,
+          "non-negative safe integer",
+        );
+        assertEquals(setupCalls, 0);
+      }
+
+      const canary = "private-timeout-option";
+      const hostileOptions = new Proxy({}, {
+        get() {
+          throw new Error(canary);
+        },
+      });
+      const error = await assertRejects(
+        () =>
+          new ExtensionLoader(noopLogger).setupAll(
+            [],
+            {},
+            hostileOptions as { setupTimeoutMs?: number },
+          ),
+        Error,
+        "options",
+      );
+      assert(error instanceof Error);
+      assertEquals(error.message.includes(canary), false);
+
+      const revokedOptions = Proxy.revocable({}, {});
+      revokedOptions.revoke();
+      await assertRejects(
+        () =>
+          new ExtensionLoader(noopLogger).setupAll(
+            [],
+            {},
+            revokedOptions.proxy,
+          ),
+        Error,
+        "options",
+      );
+
+      const revokedTeardownOptions = Proxy.revocable({}, {});
+      revokedTeardownOptions.revoke();
+      await assertRejects(
+        () => new ExtensionLoader(noopLogger).teardownAll(revokedTeardownOptions.proxy),
+        Error,
+        "options",
+      );
+    });
+
     it("should throw a timeout error when setup() never resolves within the configured timeout", async () => {
       const hanging = makeExt("hanging", {
         setup: () => new Promise<void>(() => {}), // never resolves
@@ -231,9 +505,13 @@ describe("ExtensionLoader", () => {
 
     it("should ignore provide() from a timed-out setup that resumes later", async () => {
       let capturedProvide: ((contract: string, impl: unknown) => void) | undefined;
+      let capturedRequire: ((contract: string) => unknown) | undefined;
+      let signal: AbortSignal | undefined;
       const hanging = makeExt("late-provider", {
         setup: (ctx) => {
           capturedProvide = ctx.provide;
+          capturedRequire = ctx.require;
+          signal = ctx.signal;
           return new Promise<void>(() => {}); // never resolves
         },
       });
@@ -249,6 +527,12 @@ describe("ExtensionLoader", () => {
       // to mutate the contract registry through its stale context.
       capturedProvide?.("LateContract", { id: "poisoned" });
       assertEquals(tryResolve("LateContract"), undefined);
+      assertEquals(signal?.aborted, true);
+      assertThrows(
+        () => capturedRequire?.("FutureContract"),
+        Error,
+        "no longer active",
+      );
     });
 
     it("should rollback already-loaded extensions on timeout of a later one", async () => {
@@ -315,6 +599,96 @@ describe("ExtensionLoader", () => {
       await loader.setupAll([makeResolved(a), makeResolved(b)], {});
       await loader.teardownAll();
       assertEquals(order, ["b", "a"]);
+    });
+
+    it("continues teardown when one extension never settles", async () => {
+      let earlierTeardownCalls = 0;
+      const earlier = makeExt("earlier", {
+        teardown: () => {
+          earlierTeardownCalls++;
+        },
+      });
+      const hanging = makeExt("hanging-teardown", {
+        teardown: () => new Promise<void>(() => {}),
+      });
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(earlier), makeResolved(hanging)], {});
+
+      let guardTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          loader.teardownAll({ teardownTimeoutMs: 20 }),
+          new Promise<never>((_, reject) => {
+            guardTimer = setTimeout(
+              () => reject(new Error("teardown remained unbounded")),
+              250,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(guardTimer);
+      }
+
+      assertEquals(earlierTeardownCalls, 1);
+    });
+
+    it("aborts a cooperative teardown when its deadline expires", async () => {
+      let observedSignal: AbortSignal | undefined;
+      let observedPhase: string | undefined;
+      const extension = makeExt("cooperative-teardown", {
+        teardown: async (...args: unknown[]) => {
+          const context = args[0] as {
+            signal: AbortSignal;
+            phase: string;
+          };
+          observedSignal = context.signal;
+          observedPhase = context.phase;
+          await new Promise<void>((resolve) => {
+            context.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(extension)], {});
+
+      await loader.teardownAll({ teardownTimeoutMs: 5 });
+
+      assertEquals(observedPhase, "shutdown");
+      assertEquals(observedSignal?.aborted, true);
+    });
+
+    it("restores contracts that existed before the loader lifecycle", async () => {
+      const baseline = { id: "baseline" };
+      register("BaselineContract", baseline);
+      const extension = makeExt("temporary", {
+        provides: { TemporaryContract: { id: "temporary" } },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      await loader.setupAll([makeResolved(extension)], {});
+      await loader.teardownAll();
+
+      assertEquals(tryResolve("BaselineContract"), baseline);
+      assertEquals(tryResolve("TemporaryContract"), undefined);
+    });
+
+    it("aborts the setup context before running teardown", async () => {
+      let signal: AbortSignal | undefined;
+      let teardownSawAborted = false;
+      const extension = makeExt("abort-aware", {
+        setup: (ctx) => {
+          signal = ctx.signal;
+        },
+        teardown: () => {
+          teardownSawAborted = signal?.aborted === true;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      await loader.setupAll([makeResolved(extension)], {});
+      assertEquals(signal?.aborted, false);
+      await loader.teardownAll();
+      assertEquals(teardownSawAborted, true);
     });
   });
 
@@ -385,9 +759,37 @@ describe("ExtensionLoader", () => {
       assertEquals(flat[0]?.extension.name, "leaf");
       assertEquals(flat[1]?.extension.name, "leaf");
     });
+
+    it("rejects preset chains deeper than the lifecycle budget", () => {
+      let extension = makeExt("leaf");
+      for (let depth = 0; depth < 70; depth++) {
+        extension = makeExt(`preset-${depth}`, { extends: [extension] });
+      }
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertThrows(
+        () => loader.flattenPresets([makeResolved(extension)]),
+        Error,
+        "depth",
+      );
+    });
+
+    it("rejects preset expansion beyond the flattened extension budget", () => {
+      let extension = makeExt("leaf");
+      for (let depth = 0; depth < 13; depth++) {
+        extension = makeExt(`fanout-${depth}`, { extends: [extension, extension] });
+      }
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertThrows(
+        () => loader.flattenPresets([makeResolved(extension)]),
+        Error,
+        "flatten",
+      );
+    });
   });
 
-  describe("setupAll() — source priority on register()", () => {
+  describe("setupAll(): source priority on register()", () => {
     it("should register the higher-priority provider's impl when two sources provide the same contract", async () => {
       const configProvider = makeExt("config-cache", {
         provides: { Cache: { id: "config-impl" } },
@@ -452,7 +854,7 @@ describe("ExtensionLoader", () => {
     });
   });
 
-  describe("setupAll() — rollback on setup failure", () => {
+  describe("setupAll(): rollback on setup failure", () => {
     it("should teardown previously-loaded extensions when a later setup throws", async () => {
       const order: string[] = [];
       const a = makeExt("ext-a", {
@@ -480,12 +882,17 @@ describe("ExtensionLoader", () => {
 
     it("should call teardown() on the failing extension (best-effort)", async () => {
       const order: string[] = [];
+      let teardownPhase: string | undefined;
+      let teardownSignal: AbortSignal | undefined;
       const failing = makeExt("failing", {
         setup: () => {
           order.push("setup");
           throw new Error("boom");
         },
-        teardown: () => {
+        teardown: (context) => {
+          assert(context);
+          teardownPhase = context.phase;
+          teardownSignal = context.signal;
           order.push("teardown");
         },
       });
@@ -497,6 +904,31 @@ describe("ExtensionLoader", () => {
         "boom",
       );
       assertEquals(order, ["setup", "teardown"]);
+      assertEquals(teardownPhase, "rollback");
+      assertEquals(teardownSignal?.aborted, true);
+    });
+
+    it("marks previously loaded extension teardown as rollback after setup failure", async () => {
+      const phases: Array<string | undefined> = [];
+      const loaded = makeExt("loaded", {
+        teardown: (context) => {
+          phases.push(context?.phase);
+        },
+      });
+      const failing = makeExt("failing", {
+        setup: () => {
+          throw new Error("boom");
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(loaded), makeResolved(failing)], {}),
+        Error,
+        "boom",
+      );
+
+      assertEquals(phases, ["rollback"]);
     });
 
     it("should clear the contract registry so failed provides do not leak", async () => {
@@ -536,6 +968,43 @@ describe("ExtensionLoader", () => {
 });
 
 describe("ExtensionLoader primeContracts", () => {
+  it("snapshots primed contracts for each queued setup lifecycle", async () => {
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ Initial: { id: "initial" } });
+
+    const setup = loader.setupAll([], {});
+    loader.primeContracts({ Late: { id: "late" } });
+    await setup;
+
+    assertEquals(tryResolve("Initial"), { id: "initial" });
+    assertEquals(tryResolve("Late"), undefined);
+
+    await loader.setupAll([], {});
+    assertEquals(tryResolve("Late"), { id: "late" });
+  });
+
+  it("rejects invalid contract snapshots without partially updating the prime set", async () => {
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ Existing: { id: "existing" } });
+
+    assertThrows(
+      () => loader.primeContracts({ Added: { id: "added" }, Invalid: undefined }),
+      Error,
+      "cannot be undefined",
+    );
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    assertThrows(
+      () => loader.primeContracts(revoked.proxy),
+      Error,
+      "Primed contracts must be an object",
+    );
+
+    await loader.setupAll([], {});
+    assertEquals(tryResolve("Existing"), { id: "existing" });
+    assertEquals(tryResolve("Added"), undefined);
+  });
+
   it("applies primed contracts after teardownAll so extensions can resolve them", async () => {
     const loader = new ExtensionLoader(noopLogger);
     const marker = { hello: "world" };
@@ -557,5 +1026,89 @@ describe("ExtensionLoader primeContracts", () => {
     await loader.setupAll([resolved], {});
     assertEquals(observed, marker);
     assertEquals(resolveContract("Primed"), marker);
+  });
+
+  it("removes primed contracts after an empty lifecycle", async () => {
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ PrimedOnly: { id: "prime" } });
+
+    await loader.setupAll([], {});
+    assertEquals(tryResolve("PrimedOnly"), { id: "prime" });
+    await loader.teardownAll();
+    assertEquals(tryResolve("PrimedOnly"), undefined);
+  });
+});
+
+describe("ExtensionLoader lifecycle serialization", () => {
+  it("serializes overlapping setup calls on one loader", async () => {
+    const events: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const first = makeExt("first", {
+      setup: async () => {
+        events.push("first:start");
+        markFirstStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        events.push("first:end");
+      },
+      teardown: () => {
+        events.push("first:teardown");
+      },
+    });
+    const second = makeExt("second", {
+      setup: () => {
+        events.push("second:setup");
+      },
+    });
+    const loader = new ExtensionLoader(noopLogger);
+
+    const firstSetup = loader.setupAll([makeResolved(first)], {}, { setupTimeoutMs: 0 });
+    await firstStarted;
+    const secondSetup = loader.setupAll([makeResolved(second)], {});
+    await Promise.resolve();
+    assertEquals(events, ["first:start"]);
+
+    releaseFirst?.();
+    await Promise.all([firstSetup, secondSetup]);
+    assertEquals(events, [
+      "first:start",
+      "first:end",
+      "first:teardown",
+      "second:setup",
+    ]);
+  });
+
+  it("replaces an active loader lifecycle without corrupting contracts", async () => {
+    const first = new ExtensionLoader(noopLogger);
+    const second = new ExtensionLoader(noopLogger);
+    const firstContract = { owner: "first" };
+    const secondContract = { owner: "second" };
+    let firstTeardownCount = 0;
+
+    await first.setupAll([
+      makeResolved(makeExt("first", {
+        provides: { SharedContract: firstContract },
+        teardown: () => {
+          firstTeardownCount++;
+        },
+      })),
+    ], {});
+
+    await second.setupAll([
+      makeResolved(makeExt("second", { provides: { SharedContract: secondContract } })),
+    ], {});
+    assertEquals(firstTeardownCount, 1);
+    assertEquals(resolveContract("SharedContract"), secondContract);
+
+    await first.teardownAll();
+    assertEquals(resolveContract("SharedContract"), secondContract);
+
+    await second.teardownAll();
+    assertEquals(tryResolve("SharedContract"), undefined);
   });
 });

@@ -2,12 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { importMapStrategy, resolveImportWithMap } from "./import-map-strategy.ts";
-import type {
-  ImportMapConfig,
-  ImportSpecifier,
-  ImportSpecifierInfo,
-  RewriteContext,
-} from "../types.ts";
+import type { ImportSpecifier } from "../../esm/lexer.ts";
+import type { ImportMapConfig, ImportSpecifierInfo, RewriteContext } from "../types.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
   return {

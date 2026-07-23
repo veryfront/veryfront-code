@@ -1,21 +1,13 @@
 import { join } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import {
-  FRAMEWORK_EMBEDDED_SRC_DIR,
-  FRAMEWORK_ROOT,
-  resolveFrameworkSourcePath,
-} from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { DIRECTORY_PREFIXES, LOG_PREFIX_MDX_LOADER, MODULE_EXTENSIONS } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
+import { assertSafeNormalizedModulePath } from "../module-fetcher/module-path.ts";
+import { errorLogName, fileLogLabel } from "../../../shared/log-context.ts";
 
 const logger = rendererLogger.component("file-finder");
-
-// Log framework paths on first load for debugging
-logger.debug("Module loaded with framework paths", {
-  FRAMEWORK_ROOT,
-  EMBEDDED_SRC_DIR: FRAMEWORK_EMBEDDED_SRC_DIR,
-});
 
 export interface FileResolutionResult {
   sourceCode: string;
@@ -52,6 +44,7 @@ export async function resolveModuleFile(
   projectDir?: string,
 ): Promise<FileResolutionResult | null> {
   const normalized = normalizedPath.replace(/^\/+/, "");
+  assertSafeNormalizedModulePath(normalized);
   const withoutVfModules = normalized.replace(/^_vf_modules\//, "");
   const isFramework = withoutVfModules.startsWith(FRAMEWORK_PREFIX);
   const rawPath = isFramework ? withoutVfModules.slice(FRAMEWORK_PREFIX.length) : withoutVfModules;
@@ -71,22 +64,20 @@ export async function resolveModuleFile(
       try {
         const content = await adapter.fs.readFile(resolvedPath);
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file via index`, {
-          normalizedPath,
-          basePath,
-          resolvedPath,
+          moduleFile: fileLogLabel(normalizedPath),
+          resolvedFile: fileLogLabel(resolvedPath),
         });
         return { sourceCode: decodeContent(content), actualFilePath: resolvedPath };
       } catch (error) {
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to read resolved file`, {
-          resolvedPath,
-          error: error instanceof Error ? error.message : String(error),
+          resolvedFile: fileLogLabel(resolvedPath),
+          errorName: errorLogName(error),
         });
       }
     }
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed via index`, {
-      normalizedPath,
-      filePathWithoutExt,
+      moduleFile: fileLogLabel(normalizedPath),
     });
   }
 
@@ -115,9 +106,7 @@ export async function resolveModuleFile(
     }
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed (no resolveFile)`, {
-      normalizedPath,
-      filePathWithoutExt,
-      projectDir: normalizedProjectDir,
+      moduleFile: fileLogLabel(normalizedPath),
     });
   }
 
@@ -129,10 +118,7 @@ export async function resolveModuleFile(
   const localFs = getLocalFs();
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Resolving framework file`, {
-    normalizedPath,
-    filePathWithoutJs,
-    FRAMEWORK_ROOT,
-    EMBEDDED_SRC_DIR: FRAMEWORK_EMBEDDED_SRC_DIR,
+    moduleFile: fileLogLabel(normalizedPath),
   });
 
   const resolvedFrameworkPath = await resolveFrameworkSourcePath(filePathWithoutJs, {
@@ -143,17 +129,14 @@ export async function resolveModuleFile(
   if (resolvedFrameworkPath) {
     const content = await localFs.readTextFile(resolvedFrameworkPath.path);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
-      basePath: filePathWithoutJs,
-      resolvedPath: resolvedFrameworkPath.path,
-      lookupDir: resolvedFrameworkPath.lookupDir,
+      moduleFile: fileLogLabel(filePathWithoutJs),
+      resolvedFile: fileLogLabel(resolvedFrameworkPath.path),
     });
     return { sourceCode: content, actualFilePath: resolvedFrameworkPath.path };
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework file not found`, {
-    filePathWithoutJs,
-    triedDirs: [join(FRAMEWORK_ROOT, "src"), FRAMEWORK_EMBEDDED_SRC_DIR],
-    triedExtensions: [".tsx.src", ".ts.src", ".jsx.src", ".js.src", ".tsx", ".ts", ".jsx", ".js"],
+    moduleFile: fileLogLabel(filePathWithoutJs),
   });
 
   return null;

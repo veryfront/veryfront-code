@@ -158,10 +158,21 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
   });
 
   it("returns 401 when the project id in the signed claims does not match the body", async () => {
+    let discoveryCalls = 0;
+    let agentLookups = 0;
+    let agentIdLookups = 0;
     const handler = new InternalAgentsListHandler({
-      ensureProjectDiscovery: async () => {},
-      getAgent: () => undefined,
-      getAllAgentIds: () => [],
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => {
+        agentLookups += 1;
+        return undefined;
+      },
+      getAllAgentIds: () => {
+        agentIdLookups += 1;
+        return [];
+      },
     });
 
     const body = JSON.stringify({
@@ -192,6 +203,9 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 401);
     assertEquals(await result.response.json(), { error: "Invalid control-plane signature" });
+    assertEquals(discoveryCalls, 0);
+    assertEquals(agentLookups, 0);
+    assertEquals(agentIdLookups, 0);
   });
 
   it("rejects oversized list payloads before parsing", async () => {

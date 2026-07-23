@@ -12,6 +12,7 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
+import { getOwnRecordValue } from "../executor/dag/context-patch.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
@@ -54,7 +55,7 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.executor,
       onWaiting: async (run, nodeId) => {
-        const input = run.nodeStates[nodeId]?.input as
+        const input = getOwnRecordValue(run.nodeStates, nodeId)?.input as
           | { type?: string; message?: string; payload?: unknown }
           | undefined;
 

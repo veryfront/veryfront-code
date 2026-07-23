@@ -9,10 +9,16 @@
 import { getBaseLogger } from "#veryfront/utils";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
+import type { RuntimeResponse } from "#veryfront/platform/adapters/base.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
+
+const PRIVATE_ERROR_HEADERS = {
+  "Cache-Control": "no-store",
+  "X-Content-Type-Options": "nosniff",
+} as const;
 
 interface RequestTimeoutOptions {
   /** Preserve cancellation from the inbound request while adding the timeout. */
@@ -39,12 +45,16 @@ interface RequestTimeoutOptions {
  * @param method - The HTTP method (for logging)
  * @returns The handler response or a timeout response, plus a drain sentinel
  */
-export async function withRequestTimeout(
-  executeHandler: (signal: AbortSignal) => Promise<Response>,
-  pathname: string,
+export async function withRequestTimeout<T extends RuntimeResponse>(
+  executeHandler: (signal: AbortSignal) => Promise<T>,
+  _pathname: string,
   method: string,
   options: RequestTimeoutOptions = {},
-): Promise<{ response: Response; error?: Error; settled: Promise<void> }> {
+): Promise<{
+  response: T | Response;
+  error?: Error;
+  settled: Promise<void>;
+}> {
   const controller = new AbortController();
   const abortFromParent = () => controller.abort(options.signal?.reason);
   if (options.signal?.aborted) {
@@ -79,7 +89,6 @@ export async function withRequestTimeout(
     if (e === TIMEOUT_SENTINEL) {
       controller.abort();
       logger.warn("Request timed out", {
-        path: pathname,
         method,
         timeoutMs,
       });
@@ -87,12 +96,13 @@ export async function withRequestTimeout(
       const response = new Response(
         JSON.stringify({
           error: "Request timeout",
-          timeoutMs,
-          path: pathname,
         }),
         {
           status: HTTP_GATEWAY_TIMEOUT,
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            ...PRIVATE_ERROR_HEADERS,
+          },
         },
       );
 
@@ -101,15 +111,16 @@ export async function withRequestTimeout(
 
     const error = e instanceof Error ? e : new Error(String(e));
     logger.error("Unhandled error in request handler", {
-      path: pathname,
       method,
-      error: error.message,
-      stack: error.stack,
+      errorName: e instanceof Error ? e.name : typeof e,
     });
     return {
       response: new Response(ErrorPages.serverError(), {
         status: 500,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          ...PRIVATE_ERROR_HEADERS,
+        },
       }),
       error,
       settled,

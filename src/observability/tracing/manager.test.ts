@@ -2,11 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { TracingManager } from "./manager.ts";
+import { _resetShimForTests, setGlobalTracerProvider, type Span, type Tracer } from "./api-shim.ts";
 
 describe("observability/tracing/manager", () => {
   let manager: TracingManager;
 
   beforeEach(() => {
+    _resetShimForTests();
     manager = new TracingManager();
   });
 
@@ -78,6 +80,21 @@ describe("observability/tracing/manager", () => {
       await manager.initialize({ enabled: false }, mockAdapter);
       assertEquals(manager.getState().initialized, true);
     });
+
+    it("refreshes a cached tracer after the global provider changes", async () => {
+      await manager.initialize({ enabled: true });
+      const initialTracer = manager.getState().tracer;
+      const replacementTracer = {
+        startSpan: () => ({}) as Span,
+        startActiveSpan: <T>(_name: string, callback: (span: Span) => T): T => callback({} as Span),
+      } as Tracer;
+      setGlobalTracerProvider({ getTracer: () => replacementTracer });
+
+      manager.getSpanOperations();
+
+      assertEquals(manager.getState().tracer, replacementTracer);
+      assertEquals(initialTracer === replacementTracer, false);
+    });
   });
 
   describe("isEnabled", () => {
@@ -117,6 +134,22 @@ describe("observability/tracing/manager", () => {
       manager.shutdown();
       manager.shutdown();
     });
+
+    it("resets state and permits reinitialization", async () => {
+      await manager.initialize({ enabled: false });
+      manager.shutdown();
+
+      assertEquals(manager.getState(), {
+        initialized: false,
+        degraded: false,
+        tracer: null,
+        api: null,
+        propagator: null,
+      });
+
+      await manager.initialize({ enabled: false });
+      assertEquals(manager.getState().initialized, true);
+    });
   });
 
   describe("getState", () => {
@@ -132,6 +165,15 @@ describe("observability/tracing/manager", () => {
 
       assertEquals(state1.initialized, state2.initialized);
       assertEquals(state1.degraded, state2.degraded);
+    });
+
+    it("does not expose mutable manager state", () => {
+      const state = manager.getState();
+      state.initialized = true;
+      state.degraded = true;
+
+      assertEquals(manager.getState().initialized, false);
+      assertEquals(manager.getState().degraded, false);
     });
   });
 });

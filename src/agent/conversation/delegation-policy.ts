@@ -20,12 +20,14 @@ export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calli
 /** Shared load skill continue same turn now value. */
 export const LOAD_SKILL_CONTINUE_SAME_TURN_NOW = "Continue the same turn now.";
 /** Shared load skill root ownership value. */
-export const LOAD_SKILL_ROOT_OWNERSHIP = KEEP_ROOT_ASSISTANT_VISIBLE_OWNER;
+export const LOAD_SKILL_ROOT_OWNERSHIP: typeof KEEP_ROOT_ASSISTANT_VISIBLE_OWNER =
+  KEEP_ROOT_ASSISTANT_VISIBLE_OWNER;
 /** Shared load skill use allowed tools value. */
 export const LOAD_SKILL_USE_ALLOWED_TOOLS =
   "For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools.";
 /** Shared load skill delegation threshold value. */
-export const LOAD_SKILL_DELEGATION_THRESHOLD = DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL;
+export const LOAD_SKILL_DELEGATION_THRESHOLD: typeof DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL =
+  DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL;
 /** Shared load skill override forwarding value. */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
   "Pass through any returned model, thinking, or maxSteps overrides to invoke_agent when delegating.";
@@ -39,7 +41,8 @@ export function buildRootOwnedDelegatedFindingsInstruction(): string {
 }
 
 /** Shared root owned child result instruction value. */
-export const ROOT_OWNED_CHILD_RESULT_INSTRUCTION = buildRootOwnedDelegatedFindingsInstruction();
+export const ROOT_OWNED_CHILD_RESULT_INSTRUCTION: string =
+  buildRootOwnedDelegatedFindingsInstruction();
 
 /** Builds root owned child result hint. */
 export function buildRootOwnedChildResultHint(
@@ -53,12 +56,15 @@ export function buildRootOwnedChildResultHint(
 
 /** Public API contract for root owned child result hint. */
 export interface RootOwnedChildResultHint {
+  /** Instruction value. */
   instruction: string;
+  /** Suggested text value. */
   suggestedText: string;
 }
 
 /** Public API contract for root owned child result hinted. */
 export interface RootOwnedChildResultHinted {
+  /** Root response hint value. */
   rootResponseHint?: RootOwnedChildResultHint;
 }
 
@@ -124,24 +130,32 @@ const RICH_TEXT_COMMAND_PATTERN = /<span\s+data-command="([^"]+)">\s*\/([a-z0-9_
 const STARTER_INTENT_PATTERN = /^\s*\/([a-z0-9_-]+)\b/i;
 const CONVERSATION_FIRST_STARTER_INTENT_IDS = new Set(["plan", "research"]);
 /** Shared first turn starter intent root ownership reminder value. */
-export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER =
+export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER: string =
   buildStarterIntentRootOwnershipReminder();
 /** Shared first turn starter intent root ownership context key value. */
 export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY =
   "__vfStarterIntentRootOwnership";
 /** Shared first turn starter intent root ownership block message value. */
-export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_BLOCK_MESSAGE =
+export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_BLOCK_MESSAGE: string =
   buildStarterIntentRootOwnershipBlockMessage();
 
-type StarterIntentTurnPolicyInput = {
+/** Input used to evaluate first-turn starter intent policy. */
+export type StarterIntentTurnPolicyInput = {
+  /** Conversation messages available at the current step. */
   messages: readonly unknown[];
+  /** Zero-based runtime step index. */
   step: number;
 };
 
-type StarterIntentTurnPolicy = {
+/** Result of evaluating first-turn starter intent policy. */
+export type StarterIntentTurnPolicy = {
+  /** Parsed starter intent identifier, when present. */
   starterIntentId: string | null;
+  /** Whether the root agent must remain the visible conversation owner. */
   keepConversationFirst: boolean;
+  /** Whether root-ownership instructions must be added. */
   shouldAddRootOwnershipReminder: boolean;
+  /** Whether immediate delegation must be blocked. */
   shouldBlockImmediateDelegation: boolean;
 };
 

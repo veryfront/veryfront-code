@@ -12,6 +12,7 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import type { Logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { errorLogName } from "#veryfront/transforms/shared/log-context.ts";
 
 type TransformToEsmFn = typeof transformToESM;
 type LoadImportMapFn = typeof loadImportMap;
@@ -40,9 +41,6 @@ export async function transformResolvedModuleSource(
   input: TransformResolvedModuleSourceInput,
 ): Promise<string> {
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
-    projectSlug: input.projectSlug,
-    normalizedPath: input.normalizedPath,
-    actualFilePath: input.actualFilePath,
     sourceLength: input.sourceCode.length,
   });
 
@@ -65,27 +63,20 @@ export async function transformResolvedModuleSource(
     );
   } catch (transformError) {
     input.log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
-      normalizedPath: input.normalizedPath,
-      actualFilePath: input.actualFilePath,
       sourceLength: input.sourceCode.length,
-      sourcePreview: input.sourceCode.slice(0, 200),
-      error: transformError instanceof Error ? transformError.message : String(transformError),
+      errorName: errorLogName(transformError),
     });
     throw transformError;
   }
 
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
-    projectSlug: input.projectSlug,
-    normalizedPath: input.normalizedPath,
     transformMs: (performance.now() - transformStart).toFixed(1),
     outputLength: moduleCode.length,
   });
 
   moduleCode = await rewriteDntImports(moduleCode, input.actualFilePath);
 
-  input.log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`, {
-    normalizedPath: input.normalizedPath,
-  });
+  input.log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`);
   const readImportMap = input.loadImportMap ?? loadImportMap;
   const cacheHttpImports = input.cacheHttpImportsToLocal ?? cacheHttpImportsToLocal;
   const importMap = await readImportMap(input.projectDir);

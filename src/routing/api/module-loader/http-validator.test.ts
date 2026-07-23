@@ -5,8 +5,12 @@ import { validateHTTPImports } from "./http-validator.ts";
 
 describe("routing/api/module-loader/http-validator", () => {
   describe("validateHTTPImports", () => {
-    it("should do nothing when allowedHosts is empty", () => {
-      validateHTTPImports('import foo from "https://evil.com/lib.js";', []);
+    it("should block every remote import when allowedHosts is empty", () => {
+      assertThrows(
+        () => validateHTTPImports('import foo from "https://evil.com/lib.js";', []),
+        Error,
+        "Remote import blocked",
+      );
     });
 
     it("should allow imports from allowed hosts", () => {
@@ -48,6 +52,27 @@ describe("routing/api/module-loader/http-validator", () => {
         },
         Error,
         "Remote import blocked",
+      );
+    });
+
+    it("should check export-from declarations", () => {
+      assertThrows(
+        () =>
+          validateHTTPImports('export { unsafe } from "https://evil.com/mod.js";', [
+            "https://esm.sh",
+          ]),
+        Error,
+        "Remote import blocked",
+      );
+    });
+
+    it("should ignore comments and ordinary string data", () => {
+      validateHTTPImports(
+        [
+          '// import unsafe from "https://evil.com/comment.js";',
+          "const example = 'import(\"https://evil.com/data.js\")';",
+        ].join("\n"),
+        ["https://esm.sh"],
       );
     });
 

@@ -1,5 +1,6 @@
 import type { VeryfrontConfig, VeryfrontConfigInput } from "./schemas/index.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { validateVeryfrontConfig } from "./schemas/index.ts";
+import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 
 /** Define a Veryfront project configuration object. */
@@ -17,6 +18,7 @@ export function defineConfigWithEnv<const T extends VeryfrontConfigInput>(
 
 /** Merge multiple partial Veryfront configuration objects into one config object. */
 export function mergeConfigs(...configs: Partial<VeryfrontConfig>[]): VeryfrontConfig;
+/** Merge multiple user-authored configuration objects before validation. */
 export function mergeConfigs(...configs: Partial<VeryfrontConfigInput>[]): VeryfrontConfigInput;
 export function mergeConfigs(
   ...configs: Partial<VeryfrontConfigInput>[]
@@ -25,16 +27,15 @@ export function mergeConfigs(
 }
 
 export async function validateConfig(config: unknown): Promise<void> {
-  if (!config || typeof config !== "object") {
-    throw toError(
-      createError({ type: "config", message: "Configuration must be an object" }),
-    );
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw CONFIG_VALIDATION_FAILED.create({ detail: "Configuration must be an object" });
   }
 
   const cfg = config as Record<string, unknown>;
 
   await validatePort(cfg);
   validateOutDir(cfg);
+  validateVeryfrontConfig(cfg);
 }
 
 async function validatePort(cfg: Record<string, unknown>): Promise<void> {
@@ -43,19 +44,18 @@ async function validatePort(cfg: Record<string, unknown>): Promise<void> {
   if (port === undefined) return;
 
   const { MIN_PORT, MAX_PORT } = await import("../utils/constants/index.ts");
-  if (typeof port === "number" && port >= MIN_PORT && port <= MAX_PORT) return;
+  if (
+    typeof port === "number" && Number.isSafeInteger(port) && port >= MIN_PORT &&
+    port <= MAX_PORT
+  ) return;
 
-  throw toError(
-    createError({
-      type: "config",
-      message: `dev.port must be a number between ${MIN_PORT} and ${MAX_PORT}`,
-      context: {
-        field: "dev.port",
-        value: port,
-        expected: `number between ${MIN_PORT} and ${MAX_PORT}`,
-      },
-    }),
-  );
+  throw CONFIG_VALIDATION_FAILED.create({
+    detail: `dev.port must be a number between ${MIN_PORT} and ${MAX_PORT}`,
+    context: {
+      field: "dev.port",
+      expected: `number between ${MIN_PORT} and ${MAX_PORT}`,
+    },
+  });
 }
 
 function validateOutDir(cfg: Record<string, unknown>): void {
@@ -65,11 +65,8 @@ function validateOutDir(cfg: Record<string, unknown>): void {
     : undefined;
   if (outDir === undefined || typeof outDir === "string") return;
 
-  throw toError(
-    createError({
-      type: "config",
-      message: "build.outDir must be a string",
-      context: { field: "build.outDir", value: outDir, expected: "string" },
-    }),
-  );
+  throw CONFIG_VALIDATION_FAILED.create({
+    detail: "build.outDir must be a string",
+    context: { field: "build.outDir", expected: "string" },
+  });
 }

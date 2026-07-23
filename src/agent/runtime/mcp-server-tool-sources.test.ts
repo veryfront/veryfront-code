@@ -9,7 +9,7 @@ type FetchCall = {
 function createMcpFetch(calls: FetchCall[]): typeof fetch {
   return ((url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
-    const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+    const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: string };
     const result = body.method === "tools/list"
       ? {
         tools: [
@@ -30,7 +30,7 @@ function createMcpFetch(calls: FetchCall[]): typeof fetch {
       };
 
     return Promise.resolve(
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: "test", result }), {
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), {
         headers: { "content-type": "application/json" },
       }),
     );

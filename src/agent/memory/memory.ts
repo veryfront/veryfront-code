@@ -6,9 +6,54 @@ import {
   type MemoryStats,
   type MinimalMessage,
 } from "./memory-interface.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { withSpan, withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 type BasicMemoryType = "conversation" | "buffer";
+type BuiltInMemoryType = BasicMemoryType | "summary";
+
+const BUILT_IN_MEMORY_TYPES = new Set<BuiltInMemoryType>([
+  "conversation",
+  "buffer",
+  "summary",
+]);
+
+function isMemoryStore<M extends MinimalMessage>(value: unknown): value is Memory<M> {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.add === "function" &&
+    typeof candidate.getMessages === "function" &&
+    typeof candidate.clear === "function" &&
+    typeof candidate.getStats === "function";
+}
+
+function validatePositiveSafeInteger(value: unknown, name: string): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw INVALID_ARGUMENT.create({
+      detail: `memory.${name} must be a positive safe integer`,
+    });
+  }
+}
+
+function validateBuiltInMemoryConfig(config: MemoryConfigBase): void {
+  if (typeof config !== "object" || config === null) {
+    throw INVALID_ARGUMENT.create({
+      detail: "memory must be a built-in configuration or Memory implementation",
+    });
+  }
+  if (!BUILT_IN_MEMORY_TYPES.has(config.type as BuiltInMemoryType)) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `memory.type must be "conversation", "buffer", or "summary"; use createRedisMemory() for Redis`,
+    });
+  }
+  validatePositiveSafeInteger(config.maxMessages, "maxMessages");
+  validatePositiveSafeInteger(config.maxTokens, "maxTokens");
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+    throw INVALID_ARGUMENT.create({ detail: "memory.enabled must be a boolean" });
+  }
+}
 
 function getMessagesWithTrace<M extends MinimalMessage>(
   messages: M[],
@@ -83,13 +128,17 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
 /** Implement conversation memory. */
 export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
   extends BasicMemoryStore<M> {
+  /** Memory type value. */
   protected readonly memoryType = "conversation" as const;
+  /** Span prefix value. */
   protected readonly spanPrefix = "agent.memory.conversation";
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(private config: MemoryConfigBase) {
     super();
   }
 
+  /** Adds a message to memory. */
   add(message: M): Promise<void> {
     return withSpan(
       "agent.memory.conversation.add",
@@ -109,6 +158,7 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
     );
   }
 
+  /** Performs the trim to token limit operation. */
   private trimToTokenLimit(): Promise<void> {
     const maxTokens = this.config.maxTokens;
     if (!maxTokens) return Promise.resolve();
@@ -126,15 +176,19 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
 
 /** Implement buffer memory. */
 export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends BasicMemoryStore<M> {
+  /** Memory type value. */
   protected readonly memoryType = "buffer" as const;
+  /** Span prefix value. */
   protected readonly spanPrefix = "agent.memory.buffer";
   private bufferSize: number;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(config: MemoryConfigBase) {
     super();
     this.bufferSize = config.maxMessages || 10;
   }
 
+  /** Adds a message to memory. */
   add(message: M): Promise<void> {
     return Promise.resolve(
       withSpanSync(
@@ -164,6 +218,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   private summaryMaxChars: number;
   private maxTokens?: number;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(private config: MemoryConfigBase) {
     this.summaryThreshold = config.maxMessages || 20;
     this.maxTokens = config.maxTokens;
@@ -173,6 +228,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
+  /** Adds a message to memory. */
   add(message: M): Promise<void> {
     return withSpan(
       "agent.memory.summary.add",
@@ -189,6 +245,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
+  /** Returns messages. */
   getMessages(): Promise<M[]> {
     return Promise.resolve(
       withSpanSync(
@@ -215,6 +272,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
+  /** Clears stored conversation state. */
   clear(): Promise<void> {
     return Promise.resolve(
       withSpanSync(
@@ -228,6 +286,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
+  /** Returns stats. */
   getStats(): Promise<MemoryStats> {
     return withSpan(
       "agent.memory.summary.getStats",
@@ -244,6 +303,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     );
   }
 
+  /** Performs the summarize old messages operation. */
   private summarizeOldMessages(): Promise<void> {
     const halfIndex = Math.floor(this.messages.length / 2);
     const toSummarize = this.messages.slice(0, halfIndex);
@@ -255,6 +315,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     return Promise.resolve();
   }
 
+  /** Appends to summary. */
   private appendToSummary(messages: M[]): void {
     const topics = messages
       .filter((m) => m.role === "user")
@@ -267,6 +328,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     this.summary = this.boundSummary(combinedSummary);
   }
 
+  /** Performs the enforce token limit operation. */
   private enforceTokenLimit(): void {
     if (!this.maxTokens) return;
 
@@ -293,6 +355,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     this.summary = this.boundSummary(this.summary, availableSummaryChars);
   }
 
+  /** Performs the total text chars operation. */
   private totalTextChars(): number {
     const tailChars = this.messages.reduce(
       (total, message) =>
@@ -303,6 +366,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
     return tailChars + (this.summary ? SUMMARY_MESSAGE_PREFIX.length + this.summary.length : 0);
   }
 
+  /** Performs the bound summary operation. */
   private boundSummary(summary: string, maxChars = this.summaryMaxChars): string {
     const boundedMaxChars = Math.min(this.summaryMaxChars, Math.max(0, Math.floor(maxChars)));
     if (boundedMaxChars === 0) return "";
@@ -348,19 +412,25 @@ export class NoMemory<M extends MinimalMessage = MinimalMessage> implements Memo
   }
 }
 
-/** Create memory. */
-export function createMemory<M extends MinimalMessage = MinimalMessage>(
-  config: MemoryConfigBase,
-): Memory<M> {
+function createBuiltInMemory<M extends MinimalMessage>(config: MemoryConfigBase): Memory<M> {
   switch (config.type) {
     case "buffer":
       return new BufferMemory<M>(config);
     case "summary":
       return new SummaryMemory<M>(config);
     case "conversation":
-    default:
       return new ConversationMemory<M>(config);
+    default:
+      throw INVALID_ARGUMENT.create({ detail: `Unsupported memory type: ${config.type}` });
   }
+}
+
+/** Create an in-memory store from a validated built-in configuration. */
+export function createMemory<M extends MinimalMessage = MinimalMessage>(
+  config: MemoryConfigBase,
+): Memory<M> {
+  validateBuiltInMemoryConfig(config);
+  return createBuiltInMemory<M>(config);
 }
 
 /**
@@ -371,10 +441,11 @@ export function createMemory<M extends MinimalMessage = MinimalMessage>(
  * history. A provided config opts in to cross-call persistence.
  */
 export function createAgentMemory<M extends MinimalMessage = MinimalMessage>(
-  config?: MemoryConfigBase,
+  config?: MemoryConfigBase | Memory<M>,
 ): Memory<M> {
-  if (!config || config.enabled === false) {
-    return new NoMemory<M>();
-  }
-  return createMemory<M>(config);
+  if (isMemoryStore<M>(config)) return config;
+  if (!config) return new NoMemory<M>();
+  validateBuiltInMemoryConfig(config);
+  if (config.enabled === false) return new NoMemory<M>();
+  return createBuiltInMemory<M>(config);
 }

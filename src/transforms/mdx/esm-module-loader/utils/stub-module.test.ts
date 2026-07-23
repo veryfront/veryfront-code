@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { extractNamedImports, generateStubCode } from "./stub-module.ts";
+import { createStubModule, extractNamedImports, generateStubCode } from "./stub-module.ts";
+import { makeTempDir, readTextFile, remove } from "#veryfront/testing/deno-compat.ts";
+import { getLocalFs } from "../cache/index.ts";
 
 describe("extractNamedImports", () => {
   it("extracts named imports from import statement", () => {
@@ -55,5 +57,44 @@ describe("generateStubCode", () => {
     assertEquals(result.includes("export default"), true);
     // No named exports when array is empty
     assertEquals(result.includes("export const"), false);
+  });
+});
+
+describe("createStubModule", () => {
+  it("atomically publishes generated stub modules", async () => {
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-stub-atomic-" });
+    const localFs = getLocalFs();
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    const originalRename = localFs.rename?.bind(localFs);
+    if (!originalRename) throw new Error("Test filesystem must support rename");
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
+    localFs.writeTextFile = async (path, data) => {
+      writes.push(path);
+      await originalWriteTextFile(path, data);
+    };
+    localFs.rename = async (from, to) => {
+      renames.push([from, to]);
+      await originalRename(from, to);
+    };
+
+    try {
+      const stubPath = await createStubModule(
+        "missing-module",
+        `import { value } from "missing-module";`,
+        `from "missing-module"`,
+        cacheDir,
+      );
+      if (!stubPath) throw new Error("Expected a stub module");
+
+      const temporaryWrite = writes.find((path) => path.startsWith(`${stubPath}.tmp-`));
+      assertEquals(typeof temporaryWrite, "string");
+      assertEquals(renames, [[temporaryWrite!, stubPath]]);
+      assertEquals((await readTextFile(stubPath)).includes("export const value"), true);
+    } finally {
+      localFs.writeTextFile = originalWriteTextFile;
+      localFs.rename = originalRename;
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+    }
   });
 });

@@ -40,7 +40,7 @@ export interface CollectedHead {
   metas: HeadMeta[];
   links: HeadLink[];
   styles: string[];
-  /** Blocking scripts - injected at top of <head> before CSS */
+  /** Head scripts. Classic scripts are blocking; modules follow the shell import map. */
   scripts: HeadScript[];
 }
 

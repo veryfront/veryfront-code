@@ -66,8 +66,46 @@ describe("server/handlers/monitoring/metrics", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
+      assertEquals(result.response.headers.get("cache-control"), "no-store");
+      assertEquals(result.response.headers.get("x-content-type-options"), "nosniff");
       const body = await result.response.json();
       assertExists(body.counters);
+    });
+
+    it("rejects cross-origin browser requests", async () => {
+      const handler = createHandler();
+      const req = new Request("http://localhost/_metrics", {
+        headers: { Origin: "https://attacker.example" },
+      });
+      const result = await handler.handle(req, localCtx);
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 401);
+      assertEquals(result.response.headers.get("cache-control"), "no-store");
+      assertEquals(result.response.headers.get("x-content-type-options"), "nosniff");
+    });
+
+    it("rejects requests sent to a non-loopback destination", async () => {
+      const handler = createHandler();
+      const result = await handler.handle(
+        new Request("http://devbox.example/_metrics"),
+        localCtx,
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 401);
+    });
+
+    it("returns 405 for non-GET requests", async () => {
+      const handler = createHandler();
+      const result = await handler.handle(
+        new Request("http://localhost/_metrics", { method: "POST" }),
+        localCtx,
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 405);
+      assertEquals(result.response.headers.get("allow"), "GET");
     });
   });
 });

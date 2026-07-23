@@ -1,4 +1,8 @@
-import { parseSseChunk, readGatewayBillingMode, readRecord } from "veryfront/provider/shared";
+import {
+  extractOpenAIResponsesUsage as extractSharedOpenAIResponsesUsage,
+  parseSseChunk,
+  readRecord,
+} from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
 
 type OpenAIResponsesStreamReasoningState = {
@@ -18,74 +22,7 @@ type OpenAIResponsesStreamFunctionCallState = {
  * instead of Chat Completions' `prompt_tokens` / `completion_tokens`.
  */
 export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  // Streaming usage lives on response.completed inside `response.usage`;
-  // non-streaming has it at the top level.
-  const responseRecord = readRecord(record?.response);
-  const usage = readRecord(responseRecord?.usage) ?? readRecord(record?.usage);
-  if (!usage) return undefined;
-
-  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-  const totalTokens = typeof usage.total_tokens === "number"
-    ? usage.total_tokens
-    : (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens ?? 0) + (outputTokens ?? 0)
-      : undefined);
-  const inputDetails = readRecord(usage.input_tokens_details);
-  const cachedTokens = inputDetails?.cached_tokens;
-  const outputDetails = readRecord(usage.output_tokens_details);
-  const reasoningTokens = outputDetails?.reasoning_tokens;
-  const veryfront = readRecord(usage.veryfront);
-  const costSource = veryfront?.cost_source;
-  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
-  const usageCaptureStatus = veryfront?.usage_capture_status;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-    ...(typeof veryfront?.billable_input_tokens === "number"
-      ? { billableInputTokens: veryfront.billable_input_tokens }
-      : {}),
-    ...(typeof veryfront?.billable_output_tokens === "number"
-      ? { billableOutputTokens: veryfront.billable_output_tokens }
-      : {}),
-    ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
-    ...(typeof veryfront?.provider_input_cost_usd === "number"
-      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_output_cost_usd === "number"
-      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_cost_usd === "number"
-      ? { providerCostUsd: veryfront.provider_cost_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
-      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
-      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_charge_usd === "number"
-      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_billed_usd === "number"
-      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
-      : {}),
-    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
-    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
-      ? { costSource }
-      : {}),
-    ...(billingMode !== undefined ? { billingMode } : {}),
-    ...(usageCaptureStatus === "complete" ||
-        usageCaptureStatus === "missing" ||
-        usageCaptureStatus === "partial"
-      ? { usageCaptureStatus }
-      : {}),
-  };
+  return extractSharedOpenAIResponsesUsage(payload);
 }
 
 export function normalizeOpenAIResponsesFinishReason(
@@ -124,7 +61,7 @@ export async function* streamOpenAIResponsesParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
+    const parsed = parseSseChunk(buffer, { invalidEventPolicy: "ignore" });
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {

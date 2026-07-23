@@ -206,6 +206,98 @@ describe(
       assertEquals(await validateBrowserModuleBundle(bundle, { adapter, projectDir }), false);
     });
 
+    it("propagates unexpected resolution probe failures during cache validation", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/Counter.tsx`;
+      const dependencyPath = `${projectDir}/app/shared.ts`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        [
+          '"use client";',
+          'import { marker } from "./shared";',
+          "export default function Counter() { return marker; }",
+        ].join("\n"),
+      );
+      adapter.fs.files.set(dependencyPath, 'export const marker = "VALUE";');
+
+      const bundle = await bundleBrowserModuleWithMetadata(entryPath, {
+        adapter,
+        projectDir,
+      });
+      const missingProbe = bundle.resolutionProbes.find((probe) => probe.state === "missing");
+      assertEquals(missingProbe !== undefined, true);
+      const originalStat = adapter.fs.stat;
+      adapter.fs.stat = (path: string) =>
+        path === missingProbe!.path
+          ? Promise.reject(new Error("PROBE_STORAGE_MARKER"))
+          : originalStat(path);
+
+      await assertRejects(
+        () => validateBrowserModuleBundle(bundle, { adapter, projectDir }),
+        Error,
+        "PROBE_STORAGE_MARKER",
+      );
+    });
+
+    it("does not fall through to another import candidate after a storage failure", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/Counter.tsx`;
+      const dependencyPath = `${projectDir}/app/shared.ts`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        [
+          '"use client";',
+          'import { marker } from "./shared";',
+          "export default function Counter() { return marker; }",
+        ].join("\n"),
+      );
+      adapter.fs.files.set(dependencyPath, 'export const marker = "VALUE";');
+      const originalStat = adapter.fs.stat;
+      adapter.fs.stat = (path: string) =>
+        path === `${projectDir}/app/shared`
+          ? Promise.reject(new Error("IMPORT_STORAGE_MARKER"))
+          : originalStat(path);
+
+      await assertRejects(
+        () => bundleBrowserModule(entryPath, { adapter, projectDir }),
+        Error,
+      );
+    });
+
+    it("silences bundler diagnostics for server-managed browser builds", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/Counter.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(entryPath, '"use client"; export default null;');
+      const previous = tryResolve<Bundler>("Bundler");
+      let logLevel: unknown;
+      register<Bundler>("Bundler", {
+        bundle: (options) => {
+          logLevel = options.logLevel;
+          return Promise.resolve({
+            outputFiles: [{
+              path: "output.js",
+              text: "export default null;",
+              contents: new Uint8Array(),
+            }],
+            warnings: [],
+            errors: [],
+          });
+        },
+        transform: () => Promise.resolve({ code: "", warnings: [] }),
+      });
+
+      try {
+        await bundleBrowserModule(entryPath, { adapter, projectDir });
+        assertEquals(logLevel, "silent");
+      } finally {
+        if (previous) register("Bundler", previous);
+        else unregister("Bundler");
+      }
+    });
+
     it("uses the supplied effective import map for the bundle", async () => {
       const projectDir = "/project";
       const entryPath = `${projectDir}/app/Counter.tsx`;
@@ -241,7 +333,7 @@ describe(
       assertEquals(owned.importMapHash === unowned.importMapHash, false);
     });
 
-    it("uses only project-relative identities for source files and spans", () => {
+    it("uses only project-relative identities for source files", () => {
       assertEquals(
         getSafeBrowserModuleIdentity(
           "/private/tenant/project/app/Counter.tsx",

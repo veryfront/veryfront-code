@@ -7,6 +7,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
+import { sequence } from "./workflow.ts";
 import type { ParallelNodeConfig } from "../types.ts";
 
 function getConfig(node: { config: unknown }): ParallelNodeConfig {
@@ -28,6 +29,22 @@ describe("parallel()", () => {
     // parallel() prefixes child IDs
     assertEquals(config.nodes?.[0]?.id, "generate/write");
     assertEquals(config.nodes?.[1]?.id, "generate/images");
+    assertEquals(config.nodes?.[0]?.dependsOn, []);
+    assertEquals(config.nodes?.[1]?.dependsOn, []);
+  });
+
+  it("should namespace dependencies between child nodes", () => {
+    const node = parallel(
+      "generate",
+      sequence(
+        step("draft", { agent: "writer" }),
+        step("review", { agent: "reviewer" }),
+      ),
+    );
+
+    const config = getConfig(node);
+    assertEquals(config.nodes?.[0]?.dependsOn, []);
+    assertEquals(config.nodes?.[1]?.dependsOn, ["generate/draft"]);
   });
 
   it("should support strategy option", () => {

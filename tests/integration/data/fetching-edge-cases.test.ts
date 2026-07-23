@@ -217,15 +217,13 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       assertEquals((result.props as any)?.data.length, 1000000);
     });
 
-    it("should handle props with special types", async () => {
+    it("should preserve supported structured props", async () => {
       const fetcher = new DataFetcher();
       const specialProps = {
         date: new Date(),
         regexp: /test/gi,
         set: new Set([1, 2, 3]),
         map: new Map([["a", 1]]),
-        func: () => {},
-        symbol: Symbol("test"),
       };
 
       const page: PageWithData = {
@@ -238,6 +236,30 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
 
       assertExists(result.props);
+      const props = result.props as typeof specialProps;
+      assertEquals(props.date instanceof Date, true);
+      assertEquals(props.regexp instanceof RegExp, true);
+      assertEquals(props.set instanceof Set, true);
+      assertEquals(props.map instanceof Map, true);
+    });
+
+    it("should reject executable props", async () => {
+      const fetcher = new DataFetcher();
+      const page: PageWithData = {
+        default: () => null,
+        getServerData: () => ({
+          props: {
+            func: () => {},
+            symbol: Symbol("test"),
+          },
+        }),
+      };
+
+      await assertRejects(
+        () => fetcher.fetchData(page, makeContext("http://localhost/test")),
+        Error,
+        "result exceeds the data result limit",
+      );
     });
   });
 
@@ -259,7 +281,7 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       assertEquals(result.redirect?.permanent, undefined);
     });
 
-    it("should handle redirect with empty destination", async () => {
+    it("rejects a redirect with an empty destination", async () => {
       const fetcher = new DataFetcher();
       const page: PageWithData = {
         default: () => null,
@@ -270,9 +292,11 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
-
-      assertEquals(result.redirect?.destination, "");
+      await assertRejects(
+        () => fetcher.fetchData(page, makeContext("http://localhost/test")),
+        Error,
+        "invalid data result",
+      );
     });
 
     it("should handle redirect with special characters", async () => {

@@ -1,11 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import type { ProviderModelMessage } from "./types.ts";
 import {
   compactForStep,
+  compactOldToolInputs,
   compressTurn,
   enforceTokenBudget,
+  estimateOverhead,
   estimateTokens,
+  type HistoricalToolInputCompactionDiagnostic,
   maskOldToolOutputs,
   prepareProviderModelMessagesFromUiMessages,
   repairToolPairs,
@@ -66,6 +69,137 @@ Deno.test("repairToolPairs moves a later tool result immediately after the match
   assertEquals(repaired, [messages[0]!, messages[1]!, messages[3]!, messages[2]!]);
 });
 
+Deno.test("repairToolPairs removes incomplete calls instead of fabricating tool results", () => {
+  const messages: ProviderModelMessage[] = [
+    { role: "user", content: "run it" },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Starting." },
+        { type: "tool-call", toolCallId: "missing", toolName: "bash", input: {} },
+      ],
+    },
+  ];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    { role: "assistant", content: [{ type: "text", text: "Starting." }] },
+  ]);
+  assertEquals(
+    JSON.stringify(repairToolPairs(messages)).includes("tool result unavailable"),
+    false,
+  );
+});
+
+Deno.test("repairToolPairs never moves a result across a later user turn", () => {
+  const messages: ProviderModelMessage[] = [
+    { role: "user", content: "first turn" },
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "reused", toolName: "search", input: {} }],
+    },
+    { role: "user", content: "second turn" },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused",
+        toolName: "search",
+        output: { type: "json", value: { ok: true } },
+      }],
+    },
+  ];
+
+  assertEquals(repairToolPairs(messages), [messages[0]!, messages[2]!]);
+});
+
+Deno.test("estimateTokens handles cyclic diagnostic values without throwing", () => {
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+
+  const estimate = estimateTokens(cyclic);
+  assert(Number.isSafeInteger(estimate));
+  assert(estimate > 0);
+});
+
+Deno.test("estimateTokens does not execute accessors", () => {
+  let getterCalls = 0;
+  const value: Record<string, unknown> = { visible: "ok" };
+  Object.defineProperty(value, "secret", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "hidden";
+    },
+  });
+
+  assert(estimateTokens(value) > 0);
+  assertEquals(getterCalls, 0);
+});
+
+Deno.test("estimateTokens keeps its global entry budget across nested arrays", () => {
+  let descriptorReads = 0;
+  const trackDescriptors = (target: unknown[]) =>
+    new Proxy(target, {
+      getOwnPropertyDescriptor(target, key) {
+        if (typeof key === "string" && /^\d+$/u.test(key)) descriptorReads += 1;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+  const inner = trackDescriptors(new Array(10_000).fill(null));
+  const outerValues = new Array(10_000).fill(null);
+  outerValues[0] = inner;
+  const outer = trackDescriptors(outerValues);
+
+  estimateTokens({ nested: outer });
+
+  assertEquals(descriptorReads <= 10_000, true);
+});
+
+Deno.test("estimateOverhead rejects invalid tool counts", () => {
+  assertThrows(
+    () => estimateOverhead("instructions", -1),
+    RangeError,
+    "toolCount must be a nonnegative safe integer",
+  );
+  assertThrows(
+    () => estimateOverhead("instructions", 1.5),
+    RangeError,
+    "toolCount must be a nonnegative safe integer",
+  );
+});
+
+Deno.test("enforceTokenBudget fails when the required latest turn cannot fit", () => {
+  assertThrows(
+    () => enforceTokenBudget([{ role: "user", content: "latest request ".repeat(100) }], 10),
+    RangeError,
+    "Latest chat turn exceeds the available token budget",
+  );
+  assertThrows(
+    () => enforceTokenBudget([{ role: "user", content: "ok" }], Number.NaN),
+    RangeError,
+    "budget must be a positive finite number",
+  );
+});
+
+Deno.test("enforceTokenBudget preserves leading system instructions", () => {
+  const system = { role: "system" as const, content: "Follow the safety policy." };
+  const oldest = {
+    role: "user" as const,
+    content: "old question ".repeat(40),
+  };
+  const oldestAnswer = {
+    role: "assistant" as const,
+    content: "old answer ".repeat(40),
+  };
+  const latest = { role: "user" as const, content: "latest question" };
+
+  const compacted = enforceTokenBudget([system, oldest, oldestAnswer, latest], 35, 0);
+
+  assertEquals(compacted[0], system);
+  assertEquals(compacted.at(-1), latest);
+});
+
 Deno.test("maskOldToolOutputs masks large historical tool outputs and removes stale reasoning before the latest user turn", () => {
   const messages = [
     { role: "user", content: "run the check" },
@@ -106,7 +240,7 @@ Deno.test("maskOldToolOutputs masks large historical tool outputs and removes st
       input: { command: "npm test" },
     }],
   });
-  assertStringIncludes(JSON.stringify(masked[2]), "[Command: npm test — exit 0, output omitted");
+  assertStringIncludes(JSON.stringify(masked[2]), "[Command: npm test, exit 0, output omitted");
   assertEquals(masked[3], messages[3]);
 });
 
@@ -294,7 +428,7 @@ Deno.test("maskOldToolOutputs keeps compact GitHub PR labels from REST list resu
                   html_url: "https://github.com/veryfront/veryfront-code/pull/2567",
                   labels: [
                     { id: 1, name: "bug", color: "d73a4a", description: "ignored" },
-                    { id: 2, name: "integrations", color: "0e8a16" },
+                    { id: 2, name: "integrations", color: "0e8a16", description: "" },
                   ],
                   requested_reviewers: [{ login: "reviewer" }],
                   comments: [{ body: "large comment" }],
@@ -690,10 +824,8 @@ Deno.test("enforceTokenBudget compresses the oldest turn before dropping later t
   const compacted = enforceTokenBudget(messages, totalTokens - 1);
 
   assertMatch(String(compacted[0]!.content), /^\[Compressed:/);
-  assertEquals(compacted[1], {
-    role: "assistant",
-    content: "Acknowledged.",
-  });
+  assertEquals(compacted[1]?.role, "assistant");
+  assertStringIncludes(String(compacted[1]?.content), "[Earlier assistant response:");
   assertEquals(compacted.slice(-2), messages.slice(-2));
 });
 
@@ -709,7 +841,11 @@ Deno.test("enforceTokenBudget can still drop the oldest compressed turn when the
     { role: "assistant" as const, content: "answer four ".repeat(120) },
   ];
 
-  const compacted = enforceTokenBudget(messages, 120);
+  const retainedBudget = [
+    ...compressTurn(messages, 4, 5),
+    ...messages.slice(6),
+  ].reduce((sum, message) => sum + estimateTokens(message.content), 0);
+  const compacted = enforceTokenBudget(messages, retainedBudget);
 
   assertEquals(compacted.length >= 4, true);
   assertMatch(String(compacted[0]!.content), /^\[Compressed: turn three/);
@@ -735,8 +871,38 @@ Deno.test("compressTurn emits a two-message summary shell", () => {
   );
   assertEquals(compressed[1], {
     role: "assistant",
-    content: "Acknowledged.",
+    content: "[Earlier assistant response: Here is the final answer.]",
   });
+});
+
+Deno.test("compressTurn keeps generated summaries within bounded field limits", () => {
+  const repeatedToolParts = Array.from({ length: 40 }, (_, index) => ({
+    type: "tool-call" as const,
+    toolCallId: `tool-${index}`,
+    toolName: index === 0 ? "tool-" + "x".repeat(200) : `tool-${index % 20}`,
+    input: {},
+  }));
+  const compressed = compressTurn(
+    [
+      { role: "user", content: "u".repeat(200) },
+      {
+        role: "assistant",
+        content: [
+          ...repeatedToolParts,
+          { type: "text", text: "a".repeat(300) },
+        ],
+      },
+    ],
+    0,
+    1,
+  );
+
+  const userSummary = String(compressed[0]?.content);
+  const assistantSummary = String(compressed[1]?.content);
+  assertStringIncludes(userSummary, `[Compressed: ${"u".repeat(99)}…`);
+  assertStringIncludes(assistantSummary, `${"a".repeat(149)}…]`);
+  assertEquals(userSummary.includes("tool-20"), false);
+  assertEquals(userSummary.match(/tool-1(?:[,;]|$)/g)?.length, 1);
 });
 
 Deno.test("stripPendingToolParts removes stale assistant tool calls before model conversion", () => {
@@ -752,6 +918,13 @@ Deno.test("stripPendingToolParts removes stale assistant tool calls before model
           toolCallId: "tool-form",
           state: "input-available" as const,
           input: { title: "Intake" },
+        },
+        {
+          type: "dynamic-tool" as const,
+          toolName: "report",
+          toolCallId: "tool-report",
+          state: "output-streaming" as const,
+          input: {},
         },
       ],
     },
@@ -811,7 +984,7 @@ Deno.test("prepareProviderModelMessagesFromUiMessages normalizes UI history into
           type: "dynamic-tool",
           toolName: "search_files",
           toolCallId: "tool-1",
-          state: "output-available",
+          state: "completed",
           input: { query: "rollout" },
           output: { matches: 2 },
         },
@@ -878,7 +1051,7 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
           toolName: "notion__search_notion",
           toolCallId: "toolu_01Search",
           input: { query: "research notes" },
-          state: "output-available",
+          state: "completed",
           providerExecuted: true,
           renderMode: "tool_result",
           output: { data: [] },
@@ -991,7 +1164,7 @@ Deno.test("prepareProviderModelMessagesFromUiMessages compacts large historical 
 
 Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools through retention policy", () => {
   const customMarker = "RENDER_CANVAS_SOURCE_MARKER";
-  const diagnostics: unknown[] = [];
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
   const prepared = prepareProviderModelMessagesFromUiMessages(
     [
       {
@@ -1044,6 +1217,51 @@ Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools thro
   assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render");
   assert((diagnostics[0] as { originalInputChars?: number }).originalInputChars! > 1_000);
   assert((diagnostics[0] as { retainedInputChars?: number }).retainedInputChars! < 1_000);
+});
+
+Deno.test("compactOldToolInputs does not execute retained metadata accessors", () => {
+  let getterCalls = 0;
+  const metadata: Record<string, unknown> = {};
+  Object.defineProperty(metadata, "secret", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error("untrusted metadata getter");
+    },
+  });
+  const messages: ProviderModelMessage[] = [
+    { role: "user", content: "Run the tool." },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "tool-custom",
+        toolName: "custom",
+        input: { metadata, payload: "x".repeat(2_000) },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "tool-custom",
+        toolName: "custom",
+        output: { type: "json", value: { ok: true } },
+      }],
+    },
+    { role: "user", content: "Continue." },
+  ];
+
+  const compacted = compactOldToolInputs(messages, {
+    resolvePolicy: () => ({
+      compactCompletedInput: true,
+      compactAfterChars: 100,
+      retainInputFields: ["metadata"],
+    }),
+  });
+
+  assertEquals(getterCalls, 0);
+  assertEquals(JSON.stringify(compacted).includes("untrusted metadata getter"), false);
 });
 
 Deno.test("compactForStep compacts old tool inputs while preserving latest-turn tool inputs", () => {
@@ -1169,4 +1387,35 @@ Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool 
       content: [{ type: "text", text: "Cite the official source." }],
     },
   ]);
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages rejects invalid compaction thresholds", () => {
+  assertThrows(
+    () =>
+      prepareProviderModelMessagesFromUiMessages(
+        [
+          { id: "user-1", role: "user", parts: [{ type: "text", text: "Run it" }] },
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [{
+              type: "dynamic-tool",
+              toolName: "custom_tool",
+              toolCallId: "tool-1",
+              input: { payload: "x".repeat(2_000) },
+              state: "output-available",
+              output: { ok: true },
+            }],
+          },
+          { id: "user-2", role: "user", parts: [{ type: "text", text: "Continue" }] },
+        ],
+        {
+          historicalToolInputRetention: {
+            resolvePolicy: () => ({ compactCompletedInput: true, compactAfterChars: 0 }),
+          },
+        },
+      ),
+    RangeError,
+    "compactAfterChars must be a positive safe integer",
+  );
 });

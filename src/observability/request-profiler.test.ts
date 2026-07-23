@@ -116,4 +116,89 @@ describe("request profiler", () => {
     const withFlag = withServerTimingHeader(new Response("ok"), record);
     assertEquals(withFlag.headers.get("Server-Timing"), "total;dur=10.00");
   });
+
+  it("bounds phase cardinality and invalid durations", async () => {
+    const record = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/" },
+      async () => {
+        for (let index = 0; index < 100; index++) {
+          markRequestProfilePhase(`phase.${index}.${"x".repeat(100)}`, Number.NaN);
+        }
+        return finalizeRequestProfiling(200);
+      },
+    );
+
+    assertExists(record);
+    assertEquals(Object.keys(record.phases).length, 50);
+    assertEquals(Object.keys(record.phases).every((name) => name.length <= 64), true);
+    assertEquals(Object.values(record.phases).every((duration) => duration === 0), true);
+  });
+
+  it("does not expose mutable profile records", async () => {
+    const record = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/original" },
+      async () => {
+        markRequestProfilePhase("render", 1);
+        return finalizeRequestProfiling(200);
+      },
+    );
+    assertExists(record);
+    record.pathname = "/changed";
+    record.phases.render = 999;
+
+    const snapshot = snapshotRequestProfiles();
+    assertEquals(snapshot.records[0]?.pathname, "/original");
+    assertEquals(snapshot.records[0]?.phases.render, 1);
+
+    const first = snapshot.records[0];
+    assertExists(first);
+    first.phases.render = 500;
+    assertEquals(snapshotRequestProfiles().records[0]?.phases.render, 1);
+  });
+
+  it("normalizes untrusted profile metadata", async () => {
+    const record = await runWithRequestProfiling(
+      {
+        category: `html\n${"x".repeat(100)}`,
+        method: "CUSTOM-METHOD",
+        pathname: `/page?token=secret-value#fragment`,
+        projectSlug: `project\n${"x".repeat(200)}`,
+      },
+      async () => finalizeRequestProfiling(999),
+    );
+
+    assertExists(record);
+    assertEquals(record.category.includes("\n"), false);
+    assertEquals(record.category.length <= 64, true);
+    assertEquals(record.method, "OTHER");
+    assertEquals(record.pathname, "/page");
+    assertEquals(record.projectSlug?.includes("\n"), false);
+    assertEquals(record.status, undefined);
+  });
+
+  it("finalizes each request profile at most once", async () => {
+    const results = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: "/" },
+      async () => [finalizeRequestProfiling(200), finalizeRequestProfiling(500)],
+    );
+
+    assertExists(results[0]);
+    assertEquals(results[1], null);
+    assertEquals(snapshotRequestProfiles().records.length, 1);
+  });
+
+  it("formats only finite non-negative Server-Timing durations", () => {
+    const header = buildServerTimingHeader({
+      sequence: 1,
+      category: "html",
+      method: "GET",
+      pathname: "/",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:00:00.010Z",
+      totalMs: Number.POSITIVE_INFINITY,
+      phases: { invalid: Number.NaN, negative: -5 },
+    });
+
+    assertEquals(header, "total;dur=0.00, invalid;dur=0.00, negative;dur=0.00");
+  });
 });

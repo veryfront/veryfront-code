@@ -29,7 +29,7 @@ export interface RuntimeAdapter {
   server: ServerAdapter;
 
   serve(
-    handler: (request: Request) => Promise<Response> | Response,
+    handler: RuntimeRequestHandler,
     options: ServeOptions,
   ): Promise<Server>;
 
@@ -54,31 +54,31 @@ export interface RuntimeAdapter {
  */
 export interface RuntimeCapabilities {
   /** Native TypeScript support without compilation */
-  typescript: boolean;
+  readonly typescript: boolean;
 
   /** Native JSX/TSX support */
-  jsx: boolean;
+  readonly jsx: boolean;
 
   /** HTTP/2 server support */
-  http2: boolean;
+  readonly http2: boolean;
 
   /** WebSocket support */
-  websocket: boolean;
+  readonly websocket: boolean;
 
   /** Web Workers / Worker threads support */
-  workers: boolean;
+  readonly workers: boolean;
 
   /** File system watching */
-  fileWatching: boolean;
+  readonly fileWatching: boolean;
 
   /** Shell command execution */
-  shell: boolean;
+  readonly shell: boolean;
 
   /** Key-value store available */
-  kvStore: boolean;
+  readonly kvStore: boolean;
 
-  /** Writable filesystem (false for Workers without KV) */
-  writableFs: boolean;
+  /** Complete mutable filesystem semantics, including directory operations */
+  readonly writableFs: boolean;
 }
 
 export interface WebSocketUpgradeOptions {
@@ -109,9 +109,17 @@ export interface WebSocketUpgradeResponse {
   readonly body: null;
 }
 
+/** Response values a runtime server can return from a request handler. */
+export type RuntimeResponse = Response | WebSocketUpgradeResponse;
+
+/** Request handler accepted by runtime server adapters. */
+export type RuntimeRequestHandler = (
+  request: Request,
+) => Promise<RuntimeResponse> | RuntimeResponse;
+
 export interface WebSocketUpgrade {
   socket: WebSocketConnection;
-  response: Response | WebSocketUpgradeResponse;
+  response: RuntimeResponse;
 }
 
 export function createWebSocketUpgradeResponse(
@@ -132,13 +140,20 @@ export function isWebSocketUpgradeResponse(value: unknown): value is WebSocketUp
     (value as { status?: unknown }).status === 101;
 }
 
+/** Options for starting and stopping a runtime HTTP server. */
 export interface ServeOptions {
   port?: number;
   hostname?: string;
   signal?: AbortSignal;
   onListen?: (params: { hostname: string; port: number }) => void;
+  /**
+   * Node.js grace period before active HTTP connections are force-closed.
+   * Defaults to 30,000 milliseconds. Use 0 to force-close immediately.
+   */
+  gracefulShutdownTimeoutMs?: number;
 }
 
+/** A running runtime server with an idempotent asynchronous stop operation. */
 export interface Server {
   stop(): Promise<void>;
   addr: { hostname: string; port: number };
@@ -189,11 +204,17 @@ export interface DirEntry {
   isSymlink: boolean;
 }
 
+/** Portable metadata returned for a filesystem path. */
 export interface FileInfo {
+  /** File size in bytes. */
   size: number;
+  /** Whether the path resolves to a regular file. */
   isFile: boolean;
+  /** Whether the path resolves to a directory. */
   isDirectory: boolean;
+  /** Whether the inspected path itself is a symbolic link. */
   isSymlink: boolean;
+  /** Last modification time, or `null` when the backend cannot provide it. */
   mtime: Date | null;
 }
 

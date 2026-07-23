@@ -106,10 +106,9 @@ export class MockCacheBackend implements CacheBackend {
   getStoreSnapshot(): Map<string, string> {
     const snapshot = new Map<string, string>();
     const now = Date.now();
+    this.purgeExpired(now);
     for (const [key, entry] of this.store) {
-      if (entry.expiresAt > now) {
-        snapshot.set(key, entry.value);
-      }
+      snapshot.set(key, entry.value);
     }
     return snapshot;
   }
@@ -133,7 +132,14 @@ export class MockCacheBackend implements CacheBackend {
    * Get the current size of the cache.
    */
   get size(): number {
+    this.purgeExpired();
     return this.store.size;
+  }
+
+  private purgeExpired(now = Date.now()): void {
+    for (const [key, entry] of this.store) {
+      if (now >= entry.expiresAt) this.store.delete(key);
+    }
   }
 
   private async maybeDelay(): Promise<void> {
@@ -153,6 +159,13 @@ export class MockCacheBackend implements CacheBackend {
     return new Error(this.options.errorMessage ?? "Mock cache error");
   }
 
+  private failOperation(operation: RecordedOperation): never {
+    const error = this.createError();
+    operation.error = error;
+    this._operations.push(operation);
+    throw error;
+  }
+
   async get(key: string): Promise<string | null> {
     await this.maybeDelay();
 
@@ -163,10 +176,7 @@ export class MockCacheBackend implements CacheBackend {
     };
 
     if (this.shouldFail(key, "get")) {
-      const error = this.createError();
-      operation.error = error;
-      this._operations.push(operation);
-      throw error;
+      this.failOperation(operation);
     }
 
     const entry = this.store.get(key);
@@ -176,7 +186,7 @@ export class MockCacheBackend implements CacheBackend {
       return null;
     }
 
-    if (Date.now() > entry.expiresAt) {
+    if (Date.now() >= entry.expiresAt) {
       this.store.delete(key);
       operation.result = null;
       this._operations.push(operation);
@@ -196,14 +206,15 @@ export class MockCacheBackend implements CacheBackend {
       keys: [...keys],
       timestamp: Date.now(),
     };
+    if (keys.some((key) => this.shouldFail(key, "get"))) {
+      this.failOperation(operation);
+    }
 
     const now = Date.now();
 
     const results = buildBatchResults(keys, (key) => {
-      if (this.shouldFail(key, "get")) return null;
-
       const entry = this.store.get(key);
-      if (!entry || now > entry.expiresAt) {
+      if (!entry || now >= entry.expiresAt) {
         if (entry) this.store.delete(key);
         return null;
       }
@@ -227,10 +238,7 @@ export class MockCacheBackend implements CacheBackend {
     };
 
     if (this.shouldFail(key, "set")) {
-      const error = this.createError();
-      operation.error = error;
-      this._operations.push(operation);
-      throw error;
+      this.failOperation(operation);
     }
 
     this.store.set(key, {
@@ -249,15 +257,16 @@ export class MockCacheBackend implements CacheBackend {
       keys: entries.map((e) => e.key),
       timestamp: Date.now(),
     };
+    if (entries.some(({ key }) => this.shouldFail(key, "set"))) {
+      this.failOperation(operation);
+    }
 
     const now = Date.now();
     for (const { key, value, ttl } of entries) {
-      if (!this.shouldFail(key, "set")) {
-        this.store.set(key, {
-          value,
-          expiresAt: now + (ttl ?? 300) * 1000,
-        });
-      }
+      this.store.set(key, {
+        value,
+        expiresAt: now + (ttl ?? 300) * 1000,
+      });
     }
 
     this._operations.push(operation);
@@ -271,6 +280,7 @@ export class MockCacheBackend implements CacheBackend {
       key,
       timestamp: Date.now(),
     };
+    if (this.options.failAll) this.failOperation(operation);
 
     this.store.delete(key);
     this._operations.push(operation);
@@ -284,6 +294,7 @@ export class MockCacheBackend implements CacheBackend {
       pattern,
       timestamp: Date.now(),
     };
+    if (this.options.failAll) this.failOperation(operation);
 
     const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`^${escaped.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);

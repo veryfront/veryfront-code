@@ -3,10 +3,11 @@
  *
  * This file preserves backward compatibility for all existing imports.
  * Actual implementations live in ./backends/ directory:
- *   - backends/memory.ts  — MemoryCacheBackend
- *   - backends/redis.ts   — RedisCacheBackend
- *   - backends/api.ts     — ApiCacheBackend
- *   - backends/factory.ts — createCacheBackend, CacheBackends, etc.
+ *   - backends/memory.ts: MemoryCacheBackend
+ *   - backends/disk.ts: DiskCacheBackend
+ *   - backends/redis.ts: RedisCacheBackend
+ *   - backends/api.ts: ApiCacheBackend
+ *   - backends/factory.ts: createCacheBackend, CacheBackends, etc.
  *
  * @module cache/backend
  */
@@ -20,6 +21,7 @@ export {
   createDistributedCacheAccessor,
   createDistributedCodeCacheAccessor,
   createTokenizingGateway,
+  DiskCacheBackend,
   isApiCacheAvailable,
   isDiskCacheConfigured,
   isDistributedBackend,

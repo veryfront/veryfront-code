@@ -4,7 +4,14 @@
  * @module observability/auto-instrument
  */
 
-export type { AutoInstrumentConfig } from "./types.ts";
+export type {
+  AutoInstrumentationMetricsConfig,
+  AutoInstrumentationTracingConfig,
+  AutoInstrumentConfig,
+  BatchOptions,
+  HttpHandlerInstrumentationOptions,
+  InstrumentOptions,
+} from "./types.ts";
 
 export { initAutoInstrumentation, isAutoInstrumentEnabled } from "./orchestrator.ts";
 

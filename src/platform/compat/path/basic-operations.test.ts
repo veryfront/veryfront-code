@@ -21,8 +21,14 @@ describe("platform/compat/path/basic-operations", () => {
       assertEquals(join("a", "", "b"), "a/b");
     });
 
-    it("should return / for no valid segments", () => {
-      assertEquals(join(""), "/");
+    it("should return . for no valid segments", () => {
+      assertEquals(join(""), ".");
+      assertEquals(join(), ".");
+    });
+
+    it("should normalize dot segments", () => {
+      assertEquals(join("src", "generated", "..", "index.ts"), "src/index.ts");
+      assertEquals(join("/src", ".", "index.ts"), "/src/index.ts");
     });
   });
 
@@ -41,6 +47,11 @@ describe("platform/compat/path/basic-operations", () => {
 
     it("should handle Windows backslash paths", () => {
       assertEquals(dirname("D:\\a\\project\\src\\file.ts"), "D:/a/project/src");
+    });
+
+    it("should ignore trailing separators when finding a parent", () => {
+      assertEquals(dirname("src/generated/"), "src");
+      assertEquals(dirname("D:\\project\\src\\"), "D:/project");
     });
   });
 

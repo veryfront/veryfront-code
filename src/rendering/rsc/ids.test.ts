@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeStableId, withStableIds } from "./ids.ts";
 
@@ -80,16 +85,34 @@ describe("rendering/rsc/ids", () => {
       assertEquals(second.rel, "/z-file.tsx");
     });
 
-    it("should handle paths outside app root", () => {
+    it("rejects paths outside app root, including sibling-prefix paths", () => {
       const graph = {
-        client: [{ path: "/other/place.tsx" }],
+        client: [{ path: "/project/application/place.tsx" }],
         server: [],
       };
-      const result = withStableIds("/project", graph);
 
-      const entry = result.client[0];
-      assertExists(entry);
-      assertEquals(entry.rel, "/other/place.tsx");
+      assertThrows(
+        () => withStableIds("/project", graph),
+        Error,
+        "outside the app directory",
+      );
+    });
+
+    it("rejects distinct paths that collide under the stable-id hash", () => {
+      const graph = {
+        client: [
+          { path: "/project/app/c/1r" },
+          { path: "/project/app/c/30" },
+        ],
+        server: [],
+      };
+
+      assertEquals(computeStableId("/c/1r"), computeStableId("/c/30"));
+      assertThrows(
+        () => withStableIds("/project", graph),
+        Error,
+        "Stable RSC component ID collision",
+      );
     });
   });
 });

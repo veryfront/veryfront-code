@@ -55,6 +55,45 @@ describe("security/input-validation/limits", () => {
       );
     });
 
+    it("should reject partially numeric and negative Content-Length values", () => {
+      for (const contentLength of ["", "10oops", "-1", "+10", "1.5"]) {
+        const req = new Request("http://localhost/", {
+          method: "POST",
+          headers: { "Content-Length": contentLength },
+        });
+
+        assertThrows(
+          () => validateRequestLimits(req),
+          VeryfrontError,
+          "Invalid Content-Length",
+        );
+      }
+    });
+
+    it("should reject invalid configured limits before inspecting the request", () => {
+      const req = new Request("http://localhost/");
+
+      for (const maxBodySize of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => validateRequestLimits(req, { maxBodySize }),
+          VeryfrontError,
+          "Invalid request limit",
+        );
+      }
+    });
+
+    it("classifies an oversized declared body consistently", () => {
+      const request = new Request("http://localhost/", {
+        headers: { "content-length": "1025" },
+      });
+
+      const error = assertThrows(
+        () => validateRequestLimits(request, { maxBodySize: 1024 }),
+        VeryfrontError,
+      );
+      assertEquals(isRequestBodyTooLargeError(error), true);
+    });
+
     it("should reject oversized headers", () => {
       const headers: Record<string, string> = {};
 
@@ -66,6 +105,18 @@ describe("security/input-validation/limits", () => {
 
       assertThrows(
         () => validateRequestLimits(req, { maxHeaderSize: 1000 }),
+        VeryfrontError,
+        "Headers too large",
+      );
+    });
+
+    it("should measure header limits in bytes", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-test": "é" },
+      });
+
+      assertThrows(
+        () => validateRequestLimits(req, { maxHeaderSize: 11 }),
         VeryfrontError,
         "Headers too large",
       );
@@ -218,6 +269,16 @@ describe("security/input-validation/limits", () => {
         () => readBodyWithLimit(req),
         VeryfrontError,
         "No request body",
+      );
+    });
+
+    it("should reject an invalid size limit before reading the body", async () => {
+      const req = new Request("http://localhost/", { method: "POST", body: "body" });
+
+      await assertRejects(
+        () => readBodyWithLimit(req, Number.NaN),
+        VeryfrontError,
+        "Invalid request limit",
       );
     });
   });

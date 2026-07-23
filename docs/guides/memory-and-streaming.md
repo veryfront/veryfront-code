@@ -19,17 +19,17 @@ Memory configuration is independent of model selection, so these examples omit
 - An agent in `agents/` (see [Agents](./agents.md)).
 - An AG-UI route (see [API routes](./api-routes.md) for the
   `createAgUiHandler("assistant")` pattern).
-- A storage backend if you choose `conversation` memory; the default in-memory
-  driver is fine while developing.
+- A Redis client only if you choose Redis-backed memory. The built-in
+  `conversation`, `buffer`, and `summary` modes run in memory.
 
 ## Choose a memory mode
 
 Configure memory on your agent to persist messages across requests. A configured
 agent accumulates **one shared conversation** on the instance, so reuse it
 sequentially (a single chat thread) rather than across concurrent independent
-runs. For per-item fan-out, create a fresh agent per run instead. To keep the
-stateless default explicitly (for a single-shot agent that should never persist
-history), set `enabled: false`:
+runs. For per-item fan-out through a configured agent, set `memoryMode` to
+`"isolated"` on each invocation. To keep the stateless default explicitly (for
+a single-shot agent that should never persist history), set `enabled: false`:
 
 ```ts
 export default agent({
@@ -37,6 +37,35 @@ export default agent({
   memory: { type: "conversation", enabled: false }, // never persists across calls
 });
 ```
+
+Use isolated invocation memory when a configured agent must process supplied
+history without reading from or writing to its shared in-memory or Redis store:
+
+```ts
+import { agent } from "veryfront/agent";
+
+const assistant = agent({
+  system: "Answer from the supplied conversation history.",
+  memory: { type: "conversation" },
+});
+
+const suppliedMessages = [{
+  id: "request-1",
+  role: "user" as const,
+  parts: [{ type: "text" as const, text: "Summarize this conversation." }],
+}];
+
+const response = await assistant.generate({
+  input: suppliedMessages,
+  memoryMode: "isolated",
+});
+
+console.log(response.text);
+```
+
+The same option is available on `stream()`. Existing calls default to
+`memoryMode: "configured"`, which preserves the agent's configured persistence
+behavior.
 
 ### Buffer memory
 
@@ -89,25 +118,37 @@ summary while keeping recent messages intact.
 
 ### Redis memory
 
-For production deployments where multiple server instances share state:
+Use `createRedisMemory()` when multiple server instances must share one
+conversation. Pass the returned memory instance directly to `agent()`:
 
 ```ts
 import { agent, createRedisMemory } from "veryfront/agent";
 import { getEnv } from "veryfront";
-import Redis from "ioredis";
+import { createClient } from "npm:redis@5.11.0";
 
-const redis = new Redis(getEnv("REDIS_URL"));
+const redis = createClient({ url: getEnv("REDIS_URL") });
+await redis.connect();
+const memory = createRedisMemory("support", {
+  type: "redis",
+  client: redis,
+  keyPrefix: "chat:memory:",
+  userId: "<USER_ID>",
+  ttl: 86400, // 24 hours
+});
 
 export default agent({
+  id: "support",
   system: "You are a support agent.",
-  memory: createRedisMemory("support", {
-    type: "redis",
-    client: redis,
-    keyPrefix: "chat:memory:",
-    ttl: 86400, // 24 hours
-  }),
+  memory,
 });
 ```
+
+The Redis key combines `keyPrefix`, the memory agent ID, and `userId`. Use a
+stable, unique `userId` for each conversation. Do not reuse one Redis memory
+instance across unrelated users. Redis configuration is validated when the
+memory instance is created, including required client methods, positive limits,
+and a non-negative TTL. An invocation with `memoryMode: "isolated"` never reads
+from or writes to this Redis store.
 
 ## Memory operations
 
@@ -127,7 +168,7 @@ export async function DELETE() {
 
 export async function GET() {
   const agent = getAgent("assistant");
-  const messages = await agent.getMemory();
+  const messages = await agent.getMemory().getMessages();
   const stats = await agent.getMemoryStats();
   return Response.json({ messages, stats });
 }
@@ -163,7 +204,7 @@ non-chat streaming surface.
 ### Persisting finished conversations
 
 Pass `onComplete` to persist the finalized conversation server-side after a
-successful run — the counterpart to the client-side `useConversationChat` path.
+successful run. This is the counterpart to the client-side `useConversationChat` path.
 It fires once, only on success, after the stream is fully flushed and closed, so
 a slow or throwing persistence never delays or corrupts the response:
 
@@ -175,7 +216,7 @@ export const POST = createAgUiHandler({
   agent: "assistant",
   onComplete: async ({ threadId, messages, inputMessages, response }) => {
     // `messages` is the finalized assistant turn; `inputMessages` is what was
-    // sent. Persist however you like — no need to rebuild it from the stream.
+    // sent. Persist however you like. You do not need to rebuild it from the stream.
     await db.saveTurn({ threadId, input: inputMessages, output: messages });
   },
 });

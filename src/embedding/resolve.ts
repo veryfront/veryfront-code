@@ -6,8 +6,11 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
 import { LLMProviderRegistryName } from "#veryfront/extensions/llm/index.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
+import { CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
+import { MAX_IDENTIFIER_LENGTH } from "./validation.ts";
 
-type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
+/** Factory used to construct an embedding runtime for a provider model ID. */
+export type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
 
 const providers = new Map<string, EmbeddingProviderFactory>();
 let autoInitialized = false;
@@ -24,6 +27,30 @@ export function registerEmbeddingProvider(
   name: string,
   factory: EmbeddingProviderFactory,
 ): void {
+  if (typeof name !== "string" || !name.trim()) {
+    throw INVALID_ARGUMENT.create({ detail: "Embedding provider name must not be empty" });
+  }
+  if (name !== name.trim()) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Embedding provider name must not contain surrounding whitespace",
+    });
+  }
+  if (name.length > 64) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Embedding provider name must not exceed 64 characters",
+    });
+  }
+  if (name.includes("/")) {
+    throw INVALID_ARGUMENT.create({ detail: "Embedding provider name must not contain '/'" });
+  }
+  if (/\p{C}/u.test(name)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Embedding provider name contains invalid characters",
+    });
+  }
+  if (typeof factory !== "function") {
+    throw INVALID_ARGUMENT.create({ detail: "Embedding provider factory must be a function" });
+  }
   providers.set(name, factory);
 }
 
@@ -110,42 +137,54 @@ function autoInitializeFromEnv(): void {
 export function resolveEmbeddingModel(modelString: string): EmbeddingRuntime {
   autoInitializeFromEnv();
 
+  if (typeof modelString !== "string" || !modelString.trim()) {
+    throw CONFIG_INVALID.create({ detail: "Embedding model identifier must not be empty" });
+  }
+  if (modelString.length > MAX_IDENTIFIER_LENGTH) {
+    throw CONFIG_INVALID.create({
+      detail: `Embedding model identifier exceeds ${MAX_IDENTIFIER_LENGTH} characters`,
+    });
+  }
+  if (modelString !== modelString.trim() || /\p{C}/u.test(modelString)) {
+    throw CONFIG_INVALID.create({ detail: "Embedding model identifier is malformed" });
+  }
+
   const slashIndex = modelString.indexOf("/");
   if (slashIndex === -1) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          `Invalid model string: "${modelString}". Expected "provider/model" (e.g. "openai/text-embedding-3-small").`,
-      }),
-    );
+    throw CONFIG_INVALID.create({
+      detail: 'Embedding model identifier must use "provider/model" format',
+    });
   }
 
   const providerName = modelString.slice(0, slashIndex);
   const modelId = modelString.slice(slashIndex + 1);
 
   if (!providerName || !modelId) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          `Invalid model string: "${modelString}". Both provider and model name are required.`,
-      }),
-    );
+    throw CONFIG_INVALID.create({
+      detail: "Embedding model identifier requires both provider and model names",
+    });
   }
 
   const factory = providers.get(providerName);
   if (!factory) {
-    const available = [...providers.keys()].join(", ") || "none";
     throw toError(
       createError({
         type: "config",
-        message: `Embedding provider "${providerName}" not registered. Available: ${available}`,
+        message: "The requested embedding provider is not registered.",
       }),
     );
   }
 
-  return factory(modelId);
+  const runtime = factory(modelId);
+  if (
+    typeof runtime !== "object" || runtime === null ||
+    typeof runtime.doEmbed !== "function"
+  ) {
+    throw CONFIG_INVALID.create({
+      detail: "Embedding provider returned an invalid runtime",
+    });
+  }
+  return runtime;
 }
 
 /**

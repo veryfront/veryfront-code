@@ -36,5 +36,18 @@ describe("build/production-build/build/build-orchestrator", () => {
     it("should be a function", () => {
       assertEquals(typeof buildProduction, "function");
     });
+
+    it("rejects a project path that is a file", async () => {
+      const projectPath = await Deno.makeTempFile();
+      try {
+        await assertRejects(
+          () => buildProduction({ projectDir: projectPath }),
+          Error,
+          "Invalid project directory",
+        );
+      } finally {
+        await Deno.remove(projectPath);
+      }
+    });
   });
 });

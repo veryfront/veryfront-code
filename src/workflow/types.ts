@@ -356,6 +356,15 @@ export function validateRetryConfig(config: RetryConfig): void {
   });
 }
 
+/** Validate an execution concurrency limit. */
+export function validateConcurrency(value: number, name = "concurrency"): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${name} must be a positive safe integer, got: ${value}`,
+    });
+  }
+}
+
 /**
  * Generate a unique workflow ID
  */

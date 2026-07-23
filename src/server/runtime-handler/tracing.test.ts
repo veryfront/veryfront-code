@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { AttributeValue, Span } from "#veryfront/observability/tracing/api-shim.ts";
 import {
   endRequestTracing,
   executeWithTracingContext,
@@ -10,6 +11,32 @@ import {
 } from "./tracing.ts";
 
 describe("server/runtime-handler/tracing", () => {
+  function createRecordingSpan(attributes: Record<string, AttributeValue>): Span {
+    const span: Span = {
+      setAttribute(key, value) {
+        attributes[key] = value;
+        return span;
+      },
+      setAttributes(values) {
+        Object.assign(attributes, values);
+        return span;
+      },
+      setStatus() {
+        return span;
+      },
+      recordException() {},
+      addEvent() {
+        return span;
+      },
+      end() {},
+      spanContext() {
+        return { traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 0 };
+      },
+      updateName() {},
+    };
+    return span;
+  }
+
   describe("startRequestTracing", () => {
     it("should return a SpanInfo with span and context properties", () => {
       const req = new Request("http://localhost/test");
@@ -27,6 +54,18 @@ describe("server/runtime-handler/tracing", () => {
       setRequestAttributes(null, req, url);
       setRequestAttributes(undefined, req, url);
     });
+
+    it("records only the bounded HTTP scheme", () => {
+      const attributes: Record<string, AttributeValue> = {};
+      const span = createRecordingSpan(attributes);
+      const req = new Request(
+        "https://private-host-canary.example/projects/private-project-canary?value=private-query-canary",
+      );
+
+      setRequestAttributes(span, req, new URL(req.url));
+
+      assertEquals(attributes, { "http.scheme": "https" });
+    });
   });
 
   describe("setProjectAttributes", () => {
@@ -37,6 +76,15 @@ describe("server/runtime-handler/tracing", () => {
 
     it("should not throw when projectSlug is undefined", () => {
       setProjectAttributes({}, undefined, "production");
+    });
+
+    it("does not attach concrete project or environment identity", () => {
+      const attributes: Record<string, AttributeValue> = {};
+      const span = createRecordingSpan(attributes);
+
+      setProjectAttributes(span, "private-project-canary", "private-environment-canary");
+
+      assertEquals(attributes, {});
     });
   });
 

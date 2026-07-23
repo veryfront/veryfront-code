@@ -39,6 +39,13 @@ describe("version", () => {
     it("does not strip a leading v unless it prefixes a digit", () => {
       assertEquals(normalizeVeryfrontVersion("vnext"), "vnext");
     });
+
+    it("trims valid identifiers and rejects unsafe values", () => {
+      assertEquals(normalizeVeryfrontVersion("  v1.2.3-rc.1  "), "1.2.3-rc.1");
+      assertEquals(normalizeVeryfrontVersion("../release"), undefined);
+      assertEquals(normalizeVeryfrontVersion("1.2.3\nforged"), undefined);
+      assertEquals(normalizeVeryfrontVersion("x".repeat(129)), undefined);
+    });
   });
 
   describe("resolveRuntimeVersion", () => {
@@ -85,6 +92,18 @@ describe("version", () => {
         }),
         VERSION,
       );
+    });
+
+    it("skips invalid higher-priority sources and normalizes the explicit fallback", () => {
+      assertEquals(
+        resolveRuntimeVersion({
+          veryfrontVersion: "../unsafe",
+          releaseVersion: "v2.0.0",
+          fallbackVersion: "v4.0.0",
+        }),
+        "2.0.0",
+      );
+      assertEquals(resolveRuntimeVersion({ fallbackVersion: "v4.0.0" }), "4.0.0");
     });
   });
 

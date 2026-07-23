@@ -325,6 +325,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (_slug, options) => {
           assertEquals(options?.releaseAssetManifest?.manifestVersion, 1);
           return Promise.resolve({
@@ -413,6 +414,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (slug, options) => {
           renderCount++;
           assertEquals(slug, "/stale");
@@ -511,6 +513,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (_slug, options) => {
           assertEquals(options?.skipCacheCheck, true);
           assertEquals(options?.request, request);
@@ -599,6 +602,7 @@ describe("Renderer release asset cache isolation", () => {
         };
       }).createServicesForContext = () => ({
         pipeline: {
+          destroy() {},
           renderPage: (slug, options) => {
             renderCount++;
             assertEquals(slug, "/prewarm-disabled");
@@ -699,6 +703,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (_slug, options) => {
           assertEquals(options?.skipCacheCheck, true);
           assertEquals(options?.colorScheme, "dark");
@@ -772,6 +777,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (slug, options) => {
           assertEquals(options?.releaseAssetManifest, null);
           assertEquals(options?.nonce, slug === "/" ? "nonce-123" : undefined);
@@ -854,6 +860,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (slug) => {
           renderedSlugs.push(slug);
           return Promise.resolve({
@@ -915,6 +922,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: (slug) => {
           renderedSlugs.push(slug);
           return Promise.resolve({
@@ -970,6 +978,7 @@ describe("Renderer release asset cache isolation", () => {
       };
     }).createServicesForContext = () => ({
       pipeline: {
+        destroy() {},
         renderPage: async (slug) => {
           renderCalls++;
           await renderGate;
@@ -1005,6 +1014,35 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(results.length, 11);
     assertEquals(renderCalls, 1);
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
+  });
+});
+
+describe("rendering/renderer lifecycle", () => {
+  it("stops accepting work and waits for background renders before destroying caches", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (renderer as unknown as {
+      productionPrewarmContexts: Map<string, Promise<void>>;
+    }).productionPrewarmContexts.set("pending", pending);
+
+    let destroyed = false;
+    const destruction = renderer.destroy().then(() => {
+      destroyed = true;
+    });
+    await Promise.resolve();
+
+    assertEquals((renderer as unknown as { initialized: boolean }).initialized, false);
+    assertEquals(destroyed, false);
+
+    release();
+    await destruction;
+    assertEquals(destroyed, true);
   });
 });
 

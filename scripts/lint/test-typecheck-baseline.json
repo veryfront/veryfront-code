@@ -70,8 +70,6 @@
   "src/platform/adapters/token/factory.test.ts",
   "src/platform/adapters/veryfront-api-client/client.test.ts",
   "src/platform/compat/crypto.test.ts",
-  "src/platform/compat/shims/std-fs.test.ts",
-  "src/platform/compat/std/front-matter-yaml.test.ts",
   "src/prompt/factory.test.ts",
   "src/react/components/chat/chat.test.tsx",
   "src/react/components/chat/chat/chat.characterization.test.tsx",

@@ -15,6 +15,8 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
+import { readHttpModuleResponse } from "#veryfront/transforms/shared/http-module-response.ts";
+import { errorLogName } from "../shared/log-context.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 
@@ -103,7 +105,9 @@ export function createHTTPPlugin(): Plugin {
             requestUrl = url.toString();
           }
         } catch (urlError) {
-          logger.debug(`${LOG_PREFIX} URL parse error for ${args.path}:`, urlError);
+          logger.debug(`${LOG_PREFIX} URL parse failed`, {
+            errorName: errorLogName(urlError),
+          });
         }
 
         const controller = new AbortController();
@@ -117,11 +121,21 @@ export function createHTTPPlugin(): Plugin {
           });
 
           if (!res.ok) {
-            logger.warn(`${LOG_PREFIX} HTTP ${res.status} fetching ${args.path}`);
-            return { errors: [{ text: `Failed to fetch ${args.path}: ${res.status}` }] };
+            logger.warn(`${LOG_PREFIX} HTTP module request failed`, {
+              status: res.status,
+            });
+            return {
+              errors: [{ text: `HTTP module request failed with status ${res.status}.` }],
+            };
           }
 
-          const contents = await res.text();
+          const contents = await readHttpModuleResponse(res);
+          if (contents === null) {
+            logger.warn(`${LOG_PREFIX} HTTP module response exceeded the size limit`);
+            return {
+              errors: [{ text: "HTTP module response exceeds the maximum allowed size." }],
+            };
+          }
 
           // Validate response is JavaScript, not an HTML error page.
           // esm.sh can return HTTP 200 with HTML error pages when packages fail to build.
@@ -134,20 +148,24 @@ export function createHTTPPlugin(): Plugin {
             /<title>ESM[^<]*<\/title>/i.test(contents.slice(0, 500));
 
           if (isHtmlContent) {
-            logger.warn(`${LOG_PREFIX} Received HTML instead of JS for ${args.path}`);
+            logger.warn(`${LOG_PREFIX} Received HTML instead of JavaScript`);
             return {
-              errors: [{
-                text:
-                  `Received HTML instead of JavaScript from ${args.path}. Package may not exist or failed to build on esm.sh.`,
-              }],
+              errors: [{ text: "HTTP module response contains HTML instead of JavaScript." }],
             };
           }
 
           return { contents, loader: "js" };
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.warn(`${LOG_PREFIX} Network error fetching ${args.path}: ${errorMessage}`);
-          return { errors: [{ text: `Network error fetching ${args.path}: ${errorMessage}` }] };
+          const timedOut = controller.signal.aborted;
+          logger.warn(`${LOG_PREFIX} HTTP module request failed`, {
+            errorName: errorLogName(error),
+            timedOut,
+          });
+          return {
+            errors: [{
+              text: timedOut ? "HTTP module request timed out." : "HTTP module request failed.",
+            }],
+          };
         } finally {
           clearTimeout(timeout);
         }
@@ -186,7 +204,7 @@ function ensureEsmExternalAndDeps(specifier: string, version: string): string | 
       if (needsDeps) url.searchParams.set("deps", `react@${version},react-dom@${version}`);
 
       const out = url.toString();
-      logger.debug(`${LOG_PREFIX} ${specifier} -> ${out}`);
+      logger.debug(`${LOG_PREFIX} Normalized esm.sh module URL`);
       return out;
     } catch (_) {
       /* expected: URL may be malformed, fallback to string append */
@@ -210,7 +228,7 @@ function ensureEsmExternalAndDeps(specifier: string, version: string): string | 
 
   const joiner = specifier.includes("?") ? "&" : "?";
   const out = `${specifier}${joiner}${params.join("&")}`;
-  logger.debug(`${LOG_PREFIX} ${specifier} -> ${out}`);
+  logger.debug(`${LOG_PREFIX} Normalized esm.sh module URL`);
   return out;
 }
 
@@ -254,7 +272,7 @@ export function bundleHttpImports(
       specifier.startsWith("_vf_modules/") ||
       specifier.startsWith("_veryfront/")
     ) {
-      logger.debug(`${LOG_PREFIX} Skipping veryfront path: ${specifier}`);
+      logger.debug(`${LOG_PREFIX} Skipping Veryfront module path`);
       return null;
     }
 

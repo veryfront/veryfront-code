@@ -51,6 +51,5 @@ export function transformUiModule(
           `from "${importBasePath}/${resolveRelativeImport(currentDir, importPath)}.js"`,
       );
     },
-    { "module.filePath": filePath, "module.relativePath": relativePath },
   );
 }

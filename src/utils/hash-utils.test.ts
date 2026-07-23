@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { computeCodeHash, computeHash, shortHash, simpleHash } from "./hash-utils.ts";
+import { computeCodeHash, computeHash, fnv1aHash, shortHash, simpleHash } from "./hash-utils.ts";
 
 describe("hash-utils", () => {
   describe("computeHash", () => {
@@ -71,6 +71,17 @@ describe("hash-utils", () => {
       const hash2 = await computeCodeHash(bundle);
       assertEquals(hash1, hash2);
     });
+
+    it("frames bundle fields so different field boundaries cannot collide", async () => {
+      assertNotEquals(
+        await computeCodeHash({ code: "ab", css: "c" }),
+        await computeCodeHash({ code: "a", css: "bc" }),
+      );
+      assertNotEquals(
+        await computeCodeHash({ code: "a", css: "" }),
+        await computeCodeHash({ code: "a" }),
+      );
+    });
   });
 
   describe("simpleHash", () => {
@@ -114,6 +125,16 @@ describe("hash-utils", () => {
 
     it("should be different for different content", async () => {
       assertNotEquals(await shortHash("content 1"), await shortHash("content 2"));
+    });
+  });
+
+  describe("fnv1aHash", () => {
+    it("matches FNV-1a over UTF-8 bytes", () => {
+      assertEquals(fnv1aHash("hello"), "4f9f2cab");
+    });
+
+    it("does not collapse an astral character to its leading surrogate", () => {
+      assertNotEquals(fnv1aHash("😀"), fnv1aHash("\uD83D"));
     });
   });
 });

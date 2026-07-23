@@ -8,6 +8,7 @@
 import type { Counter, Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 import type { VeryfrontError } from "#veryfront/errors/types.ts";
+import { sanitizeTelemetryAttributes } from "../telemetry-safety.ts";
 
 export interface ErrorInstruments {
   errorCounter: Counter | null;
@@ -46,9 +47,16 @@ export function recordError(
     return;
   }
 
-  errorCounter.add(1, {
-    slug: error.slug,
-    category: error.category,
-    status: String(error.status),
-  });
+  try {
+    errorCounter.add(
+      1,
+      sanitizeTelemetryAttributes({
+        slug: error.slug,
+        category: error.category,
+        status: Number.isSafeInteger(error.status) ? String(error.status) : "unknown",
+      }),
+    );
+  } catch {
+    // Error metrics must not affect error handling.
+  }
 }

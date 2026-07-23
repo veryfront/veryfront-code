@@ -1,5 +1,5 @@
 /**
- * Bundler category barrel — Bundler contract, module lexer, and resolver helper.
+ * Bundler category barrel for the Bundler contract, module lexer, and resolver helper.
  *
  * @module extensions/bundler
  */
@@ -28,8 +28,7 @@ export type {
   TransformResult,
 } from "./bundler.ts";
 
-// Back-compat type aliases that the old top-level src/extensions/bundler.ts
-// re-exported under esbuild-flavoured names. Preserve them so consumers
+// Compatibility aliases from the legacy bundler entrypoint. Preserve them so consumers
 // importing `Plugin`, `PluginBuild`, `Message`, `ResolveResult`,
 // `BuildOptions`, `BuildResult` from `veryfront/extensions/bundler` keep
 // compiling without churn.

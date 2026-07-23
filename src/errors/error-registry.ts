@@ -2,8 +2,9 @@ import {
   getRegistryEntriesByCategory,
   getRegistryEntry,
   getRegistrySlugs,
+  mergeRegistryFragments,
 } from "./error-registry-helpers.ts";
-import { type ErrorCategory } from "./types.ts";
+import { type ErrorCategory, type RegisteredError } from "./types.ts";
 
 // Error definitions live in per-category modules under ./error-registry/.
 // This barrel re-exports them and assembles the slug → definition registry.
@@ -31,37 +32,50 @@ export * from "./error-registry/deploy.ts";
 export * from "./error-registry/agent.ts";
 export * from "./error-registry/general.ts";
 
-/**
- * Central registry mapping every error slug to its definition. Assembled from
- * the per-category registry fragments.
- */
-export const ERROR_REGISTRY = {
-  ...CONFIG_REGISTRY,
-  ...BUILD_REGISTRY,
-  ...RUNTIME_REGISTRY,
-  ...ROUTE_REGISTRY,
-  ...MODULE_REGISTRY,
-  ...SERVER_REGISTRY,
-  ...BOUNDARY_REGISTRY,
-  ...DEV_REGISTRY,
-  ...DEPLOY_REGISTRY,
-  ...AGENT_REGISTRY,
-  ...GENERAL_REGISTRY,
-} as const;
+/** Exact immutable shape of the central error registry. */
+export type ErrorRegistry = Readonly<
+  & typeof CONFIG_REGISTRY
+  & typeof BUILD_REGISTRY
+  & typeof RUNTIME_REGISTRY
+  & typeof ROUTE_REGISTRY
+  & typeof MODULE_REGISTRY
+  & typeof SERVER_REGISTRY
+  & typeof BOUNDARY_REGISTRY
+  & typeof DEV_REGISTRY
+  & typeof DEPLOY_REGISTRY
+  & typeof AGENT_REGISTRY
+  & typeof GENERAL_REGISTRY
+>;
 
+/** Central registry mapping every stable error slug to its definition. */
+export const ERROR_REGISTRY: ErrorRegistry = mergeRegistryFragments(
+  CONFIG_REGISTRY,
+  BUILD_REGISTRY,
+  RUNTIME_REGISTRY,
+  ROUTE_REGISTRY,
+  MODULE_REGISTRY,
+  SERVER_REGISTRY,
+  BOUNDARY_REGISTRY,
+  DEV_REGISTRY,
+  DEPLOY_REGISTRY,
+  AGENT_REGISTRY,
+  GENERAL_REGISTRY,
+) as ErrorRegistry;
+
+/** Stable slug accepted by the registered error system. */
 export type ErrorSlug = keyof typeof ERROR_REGISTRY;
 
 /**
  * Get an error definition by slug
  */
-export function getErrorBySlug(slug: ErrorSlug) {
+export function getErrorBySlug(slug: ErrorSlug): RegisteredError {
   return getRegistryEntry(ERROR_REGISTRY, slug);
 }
 
 /**
  * Get all errors in a category
  */
-export function getErrorsByCategory(category: ErrorCategory) {
+export function getErrorsByCategory(category: ErrorCategory): RegisteredError[] {
   return getRegistryEntriesByCategory(ERROR_REGISTRY, category);
 }
 

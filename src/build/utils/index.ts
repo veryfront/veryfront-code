@@ -1,5 +1,5 @@
 /**
- * Build Utils
+ * Shared build utilities and compatibility exports for legacy renderer helpers.
  *
  * @module build/utils
  */
@@ -16,6 +16,7 @@ export {
   globFiles,
   isImageFile,
   isPseudoSelector,
+  matchesGlob,
 } from "./asset-utils.ts";
 
 export {

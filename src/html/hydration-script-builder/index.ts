@@ -1,5 +1,5 @@
 /**
- * Html Hydration Script Builder
+ * HTML hydration script builder.
  *
  * @module html/hydration-script-builder
  */

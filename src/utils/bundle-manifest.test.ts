@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
@@ -171,6 +176,191 @@ describe("InMemoryBundleManifestStore", () => {
     assertEquals(stats.totalSize, 3072);
     assertEquals(stats.oldestBundle, now - 1000);
     assertEquals(stats.newestBundle, now);
+  });
+
+  it("preserves shared code until its final metadata reference is deleted", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const sharedCodeHash = "shared-code";
+
+    await store.setBundleCode(sharedCodeHash, { code: "shared" });
+    await store.setBundleMetadata("first", {
+      hash: "hash-1",
+      codeHash: sharedCodeHash,
+      size: 6,
+      compiledAt: Date.now(),
+      source: "first.mdx",
+      mode: "development",
+    });
+    await store.setBundleMetadata("second", {
+      hash: "hash-2",
+      codeHash: sharedCodeHash,
+      size: 6,
+      compiledAt: Date.now(),
+      source: "second.mdx",
+      mode: "development",
+    });
+
+    await store.deleteBundle("first");
+    assertExists(await store.getBundleCode(sharedCodeHash));
+
+    await store.deleteBundle("second");
+    assertEquals(await store.getBundleCode(sharedCodeHash), undefined);
+  });
+
+  it("preserves code ownership when an existing hash is replaced", async () => {
+    const store = new InMemoryBundleManifestStore();
+    await store.setBundleCode("code", { code: "first" });
+    await store.setBundleMetadata("key", {
+      hash: "hash",
+      codeHash: "code",
+      size: 6,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+    });
+
+    await store.setBundleCode("code", { code: "second" });
+    await store.deleteBundle("key");
+
+    assertEquals(await store.getBundleCode("code"), undefined);
+  });
+
+  it("removes an overwritten key from its previous source index", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const base = {
+      hash: "hash",
+      codeHash: "code",
+      size: 10,
+      compiledAt: Date.now(),
+      mode: "development" as const,
+    };
+
+    await store.setBundleMetadata("key", { ...base, source: "old.mdx" });
+    await store.setBundleMetadata("key", { ...base, source: "new.mdx" });
+
+    assertEquals(await store.invalidateSource("old.mdx"), 0);
+    assertExists(await store.getBundleMetadata("key"));
+    assertEquals(await store.invalidateSource("new.mdx"), 1);
+  });
+
+  it("returns defensive copies of metadata and code", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const metadata: BundleMetadata = {
+      hash: "hash",
+      codeHash: "code",
+      size: 10,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "development",
+      meta: { headings: [{ id: "heading", text: "Heading", level: 1 }] },
+    };
+    const code: BundleCode = { code: "original", css: ".original {}" };
+
+    await store.setBundleMetadata("key", metadata);
+    await store.setBundleCode("code", code);
+
+    metadata.source = "mutated-input.mdx";
+    metadata.meta!.headings![0]!.text = "Mutated input";
+    code.code = "mutated input";
+
+    const firstMetadata = await store.getBundleMetadata("key");
+    const firstCode = await store.getBundleCode("code");
+    assertExists(firstMetadata);
+    assertExists(firstCode);
+    firstMetadata.source = "mutated-output.mdx";
+    firstMetadata.meta!.headings![0]!.text = "Mutated output";
+    firstCode.code = "mutated output";
+
+    const secondMetadata = await store.getBundleMetadata("key");
+    const secondCode = await store.getBundleCode("code");
+    assertEquals(secondMetadata?.source, "source.mdx");
+    assertEquals(secondMetadata?.meta?.headings?.[0]?.text, "Heading");
+    assertEquals(secondCode?.code, "original");
+  });
+
+  it("evicts least-recently-used bundles at the entry limit", async () => {
+    const store = new InMemoryBundleManifestStore({ maxEntries: 2 });
+    const createMetadata = (key: string): BundleMetadata => ({
+      hash: `hash-${key}`,
+      codeHash: `code-${key}`,
+      size: 10,
+      compiledAt: Date.now(),
+      source: `${key}.mdx`,
+      mode: "development",
+    });
+
+    await store.setBundleMetadata("first", createMetadata("first"));
+    await store.setBundleMetadata("second", createMetadata("second"));
+    await store.getBundleMetadata("first");
+    await store.setBundleMetadata("third", createMetadata("third"));
+
+    assertExists(await store.getBundleMetadata("first"));
+    assertEquals(await store.getBundleMetadata("second"), undefined);
+    assertExists(await store.getBundleMetadata("third"));
+    assertEquals((await store.getStats()).totalBundles, 2);
+  });
+
+  it("purges expired metadata, indexes, and orphaned code from statistics", async () => {
+    const store = new InMemoryBundleManifestStore();
+    const ttlMs = scaleMs(30);
+
+    await store.setBundleCode("code", { code: "compiled" }, ttlMs);
+    await store.setBundleMetadata(
+      "key",
+      {
+        hash: "hash",
+        codeHash: "code",
+        size: 8,
+        compiledAt: Date.now(),
+        source: "source.mdx",
+        mode: "development",
+      },
+      ttlMs,
+    );
+
+    await delay(150);
+
+    assertEquals(await store.getStats(), { totalBundles: 0, totalSize: 0 });
+    assertEquals(await store.invalidateSource("source.mdx"), 0);
+    assertEquals(await store.getBundleCode("code"), undefined);
+  });
+
+  it("rejects invalid limits, TTLs, metadata, and oversized entries", async () => {
+    for (
+      const options of [
+        { maxEntries: 0 },
+        { maxEntries: 1_000_001 },
+        { maxSizeBytes: 0 },
+        { maxSizeBytes: Number.POSITIVE_INFINITY },
+      ]
+    ) {
+      assertThrows(() => new InMemoryBundleManifestStore(options), TypeError);
+    }
+
+    const store = new InMemoryBundleManifestStore({ maxSizeBytes: 64 });
+    await assertRejects(
+      () => store.setBundleCode("code", { code: "x".repeat(100) }),
+      RangeError,
+      "maxSizeBytes",
+    );
+    await assertRejects(
+      () =>
+        store.setBundleMetadata("key", {
+          hash: "hash",
+          codeHash: "code",
+          size: -1,
+          compiledAt: Date.now(),
+          source: "source.mdx",
+          mode: "development",
+        }),
+      TypeError,
+      "size",
+    );
+    await assertRejects(
+      () => store.setBundleCode("code", { code: "valid" }, -1),
+      TypeError,
+      "ttlMs",
+    );
   });
 });
 

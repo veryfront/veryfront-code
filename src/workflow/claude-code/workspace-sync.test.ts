@@ -19,7 +19,9 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "@std/path";
 import { WorkspaceSync } from "./workspace-sync.ts";
+import type { FileChange } from "./workspace-sync.ts";
 import type { CapturedTenantContext } from "../types.ts";
+import { getWorkflowTenant } from "../executor/step-executor.ts";
 
 function stubTenant(): CapturedTenantContext {
   return {
@@ -306,5 +308,501 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
     const leakedPaths = changes.filter((c) => c.path.includes("outside/"));
     assertEquals(leakedPaths, []);
     assertEquals(changes.some((c) => c.path === "/real.txt"), true);
+  });
+});
+
+describe("WorkspaceSync lifecycle and bounds", () => {
+  it("uses defaults when optional configuration properties are explicitly undefined", async () => {
+    const workspace = new WorkspaceSync(
+      {
+        baseDir: undefined,
+        runId: "undefined-defaults",
+        tenant: stubTenant(),
+        maxFileSize: undefined,
+        maxFiles: undefined,
+        maxTotalBytes: undefined,
+        maxDepth: undefined,
+        maxPages: undefined,
+        debug: undefined,
+      },
+      {
+        files: {
+          listAll: () => Promise.resolve([]),
+          read: () => Promise.resolve("unused"),
+        },
+      },
+    );
+
+    try {
+      const result = await workspace.initialize();
+      assertEquals(result.filesDownloaded, 0);
+      assertEquals(workspace.workspaceDir.startsWith("/tmp/veryfront-workspaces/"), true);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("gives each instance an unpredictable workspace and never cleans an unowned directory", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-owned-" });
+    const first = new WorkspaceSync({ baseDir, runId: "same-run", tenant: stubTenant() });
+    const second = new WorkspaceSync({ baseDir, runId: "same-run", tenant: stubTenant() });
+
+    try {
+      assertEquals(first.workspaceDir === second.workspaceDir, false);
+      await Deno.mkdir(first.workspaceDir);
+      await Deno.writeTextFile(join(first.workspaceDir, "preexisting.txt"), "keep");
+      await first.cleanup();
+      assertEquals(
+        await Deno.readTextFile(join(first.workspaceDir, "preexisting.txt")),
+        "keep",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("refuses to clean a replacement directory at an owned workspace path", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-replaced-" });
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "replaced", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () => Promise.resolve([]),
+          read: () => Promise.resolve("unused"),
+        },
+      },
+    );
+
+    try {
+      await workspace.initialize();
+      await Deno.remove(workspace.workspaceDir, { recursive: true });
+      await Deno.mkdir(workspace.workspaceDir);
+      await Deno.writeTextFile(join(workspace.workspaceDir, "replacement.txt"), "keep");
+      await assertRejects(() => workspace.cleanup(), Error, "ownership");
+      assertEquals(
+        await Deno.readTextFile(join(workspace.workspaceDir, "replacement.txt")),
+        "keep",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("rejects non-canonical and non-portable paths", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-paths-" });
+    const { workspace } = await makeWorkspace(baseDir);
+
+    try {
+      for (const path of [
+        "a//b.txt",
+        "a/./b.txt",
+        "a/../b.txt",
+        "a\\b.txt",
+        "CON.txt",
+        "trailing.",
+        "bad:name.txt",
+        "control\u0001.txt",
+      ]) {
+        await assertRejects(() => workspace.writeFile(path, "unsafe"), Error);
+      }
+      assertEquals((await Array.fromAsync(Deno.readDir(workspace.workspaceDir))).length, 0);
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("rejects case-folded and Unicode-normalized aliases before downloading", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-aliases-" });
+    let reads = 0;
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "aliases", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () =>
+            Promise.resolve([
+              { path: "/README.md" },
+              { path: "/readme.md" },
+              { path: "/caf\u00e9.txt" },
+              { path: "/cafe\u0301.txt" },
+            ]),
+          read: () => {
+            reads++;
+            return Promise.resolve("content");
+          },
+        },
+      },
+    );
+
+    try {
+      await assertRejects(() => workspace.initialize(), Error, "alias");
+      assertEquals(reads, 0);
+      assertEquals(await exists(workspace.workspaceDir), false);
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("enforces initialization depth before downloading or creating a workspace", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-depth-init-" });
+    let reads = 0;
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "depth-init", tenant: stubTenant(), maxDepth: 1 },
+      {
+        files: {
+          listAll: () => Promise.resolve([{ path: "/one/two/file.txt" }]),
+          read: () => {
+            reads++;
+            return Promise.resolve("content");
+          },
+        },
+      },
+    );
+
+    try {
+      await assertRejects(() => workspace.initialize(), Error, "directory depth");
+      assertEquals(reads, 0);
+      assertEquals(await exists(workspace.workspaceDir), false);
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("admits the complete download before creating or mutating its workspace", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-admission-" });
+    let existedDuringSecondRead: boolean | undefined;
+    let workspace!: WorkspaceSync;
+    workspace = new WorkspaceSync(
+      {
+        baseDir,
+        runId: "admission",
+        tenant: stubTenant(),
+        maxTotalBytes: 3,
+      },
+      {
+        files: {
+          listAll: () => Promise.resolve([{ path: "/a.txt" }, { path: "/b.txt" }]),
+          read: async (path) => {
+            if (path === "/b.txt") existedDuringSecondRead = await exists(workspace.workspaceDir);
+            return "aa";
+          },
+        },
+      },
+    );
+
+    try {
+      await assertRejects(() => workspace.initialize(), Error, "aggregate size");
+      assertEquals(existedDuringSecondRead, false);
+      assertEquals(await exists(workspace.workspaceDir), false);
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("enforces depth, file count, and aggregate size before a public write", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-write-admission-" });
+    const workspace = new WorkspaceSync({
+      baseDir,
+      runId: "write-admission",
+      tenant: stubTenant(),
+      maxDepth: 1,
+      maxFiles: 1,
+      maxTotalBytes: 3,
+    });
+    await Deno.mkdir(workspace.workspaceDir);
+    await Deno.writeTextFile(join(workspace.workspaceDir, "existing.txt"), "aa");
+
+    try {
+      await assertRejects(
+        () => workspace.writeFile("one/two/too-deep.txt", "x"),
+        Error,
+        "directory depth",
+      );
+      await assertRejects(
+        () => workspace.writeFile("second.txt", "bb"),
+        Error,
+        "maximum file count",
+      );
+      assertEquals(await exists(join(workspace.workspaceDir, "second.txt")), false);
+
+      await workspace.writeFile("existing.txt", "bbb");
+      await assertRejects(
+        () => workspace.writeFile("existing.txt", "bbbb"),
+        Error,
+        "maximum aggregate size",
+      );
+      assertEquals(await Deno.readTextFile(join(workspace.workspaceDir, "existing.txt")), "bbb");
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("rejects a case-folded public-write alias", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-write-alias-" });
+    const { workspace, workspaceDir } = await makeWorkspace(baseDir);
+
+    try {
+      await workspace.writeFile("README.md", "first");
+      await assertRejects(() => workspace.writeFile("readme.md", "second"), Error, "alias");
+      assertEquals(await Deno.readTextFile(join(workspaceDir, "README.md")), "first");
+      assertEquals(await exists(join(workspaceDir, "readme.md")), false);
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("snapshots upload changes before its first await", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-snapshot-" });
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "snapshot", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () => Promise.resolve([]),
+          read: () => Promise.resolve("unused"),
+        },
+      },
+    );
+    let releaseRead!: (content: string) => void;
+    const read = new Promise<string>((resolve) => releaseRead = resolve);
+    const uploaded: Array<{ path: string; type: FileChange["type"] }> = [];
+    const changes: FileChange[] = [{ path: "/original.txt", type: "created" }];
+
+    try {
+      await workspace.initialize();
+      workspace.readFile = () => read;
+      const upload = workspace.uploadChanges(changes, {
+        onUpload: (path, _content, type) => {
+          uploaded.push({ path, type });
+          return Promise.resolve();
+        },
+      });
+      changes[0].path = "/mutated.txt";
+      changes[0].type = "modified";
+      releaseRead("content");
+
+      const result = await upload;
+      assertEquals(uploaded, [{ path: "/original.txt", type: "created" }]);
+      assertEquals(result.uploaded, [{ path: "/original.txt", type: "created" }]);
+    } finally {
+      await workspace.cleanup();
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("creates owned workspace directories and files with private modes", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-modes-" });
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "modes", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () => Promise.resolve([{ path: "/nested/file.txt" }]),
+          read: () => Promise.resolve("content"),
+        },
+      },
+    );
+
+    try {
+      await workspace.initialize();
+      if (Deno.build.os !== "windows") {
+        assertEquals((await Deno.stat(workspace.workspaceDir)).mode! & 0o777, 0o700);
+        assertEquals((await Deno.stat(join(workspace.workspaceDir, "nested"))).mode! & 0o777, 0o700);
+        assertEquals(
+          (await Deno.stat(join(workspace.workspaceDir, "nested", "file.txt"))).mode! & 0o777,
+          0o600,
+        );
+      }
+    } finally {
+      await workspace.cleanup();
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("uses the configured tenant and byte counts for the complete download", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-lifecycle-" });
+    const tenant = stubTenant();
+    const observedTenants: Array<CapturedTenantContext | undefined> = [];
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "tenant-bound", tenant },
+      {
+        files: {
+          listAll: () => {
+            observedTenants.push(getWorkflowTenant());
+            return Promise.resolve([{ path: "/unicode.txt" }]);
+          },
+          read: () => {
+            observedTenants.push(getWorkflowTenant());
+            return Promise.resolve("é");
+          },
+        },
+      },
+    );
+
+    try {
+      const result = await workspace.initialize();
+      assertEquals(observedTenants, [tenant, tenant]);
+      assertEquals(result.filesDownloaded, 1);
+      assertEquals(result.bytesDownloaded, 2);
+      assertEquals(await workspace.readFile("unicode.txt"), "é");
+    } finally {
+      await workspace.cleanup();
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("fails closed and removes the workspace after a partial download", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-partial-" });
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "partial", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () => Promise.resolve([{ path: "/ok.txt" }, { path: "/failed.txt" }]),
+          read: (path) =>
+            path === "/ok.txt"
+              ? Promise.resolve("ok")
+              : Promise.reject(new Error("private provider failure")),
+        },
+      },
+    );
+
+    try {
+      const error = await assertRejects(
+        () => workspace.initialize(),
+        Error,
+        "Failed to initialize a complete workspace",
+      );
+      assertEquals(error.message.includes("private provider failure"), false);
+      assertEquals(await exists(workspace.workspaceDir), false);
+      await assertRejects(() => workspace.detectChanges(), Error, "Workspace not initialized");
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("refuses to reuse a pre-existing run directory", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-stale-" });
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "stale", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () => Promise.resolve([]),
+          read: () => Promise.resolve("unused"),
+        },
+      },
+    );
+    await Deno.mkdir(workspace.workspaceDir);
+    await Deno.writeTextFile(join(workspace.workspaceDir, "stale.txt"), "stale");
+
+    try {
+      await assertRejects(
+        () => workspace.initialize(),
+        Error,
+        "already exists",
+      );
+      assertEquals(await Deno.readTextFile(join(workspace.workspaceDir, "stale.txt")), "stale");
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("enforces maxFileSize in bytes for downloads and public writes", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-size-" });
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "bounded", tenant: stubTenant(), maxFileSize: 3 },
+      {
+        files: {
+          listAll: () => Promise.resolve([{ path: "/too-large.txt" }]),
+          read: () => Promise.resolve("éé"),
+        },
+      },
+    );
+
+    try {
+      await assertRejects(
+        () => workspace.initialize(),
+        Error,
+        "maximum file size",
+      );
+      await Deno.mkdir(workspace.workspaceDir);
+      await assertRejects(
+        () => workspace.writeFile("too-large.txt", "éé"),
+        Error,
+        "maximum file size",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("does not classify a security or I/O failure as a deleted file", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-delete-" });
+    const outsideDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-delete-outside-" });
+    const outsideFile = join(outsideDir, "outside.txt");
+    await Deno.writeTextFile(outsideFile, "outside");
+    const workspace = new WorkspaceSync(
+      { baseDir, runId: "deletion-check", tenant: stubTenant() },
+      {
+        files: {
+          listAll: () => Promise.resolve([{ path: "/tracked.txt" }]),
+          read: () => Promise.resolve("tracked"),
+        },
+      },
+    );
+
+    try {
+      await workspace.initialize();
+      await Deno.remove(join(workspace.workspaceDir, "tracked.txt"));
+      await Deno.symlink(outsideFile, join(workspace.workspaceDir, "tracked.txt"));
+      await assertRejects(() => workspace.detectChanges(), Error, "Refusing to traverse symlink");
+    } finally {
+      await workspace.cleanup();
+      await Deno.remove(baseDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("preflights aggregate upload bounds before invoking callbacks", async () => {
+    const baseDir = await Deno.makeTempDir({ prefix: "vf-ws-sync-upload-" });
+    const workspace = new WorkspaceSync(
+      {
+        baseDir,
+        runId: "upload-bound",
+        tenant: stubTenant(),
+        maxFileSize: 3,
+        maxTotalBytes: 3,
+      },
+      {
+        files: {
+          listAll: () => Promise.resolve([]),
+          read: () => Promise.resolve("unused"),
+        },
+      },
+    );
+    let uploads = 0;
+
+    try {
+      await workspace.initialize();
+      await workspace.writeFile("a.txt", "aa");
+      await workspace.writeFile("b.txt", "bb");
+      await assertRejects(
+        () =>
+          workspace.uploadChanges(
+            [
+              { path: "/a.txt", type: "created" },
+              { path: "/b.txt", type: "created" },
+            ],
+            {
+              onUpload: () => {
+                uploads++;
+                return Promise.resolve();
+              },
+            },
+          ),
+        Error,
+        "maximum aggregate size",
+      );
+      assertEquals(uploads, 0);
+    } finally {
+      await workspace.cleanup();
+      await Deno.remove(baseDir, { recursive: true });
+    }
   });
 });

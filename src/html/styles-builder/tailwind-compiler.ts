@@ -3,7 +3,7 @@ import { COMPILATION_ERROR } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
-import { hashCSS } from "./candidate-extractor.ts";
+import { hashCandidates, hashCSS } from "./candidate-extractor.ts";
 import { formatCSSErrorMessage } from "./tailwind-compiler-utils.ts";
 import { getCompiler } from "./tailwind-compiler-cache.ts";
 import {
@@ -20,6 +20,14 @@ import {
   tryGetProjectCSSFromDistributedCache,
   tryGetProjectCSSFromLocalFallback,
 } from "./project-css-cache.ts";
+import {
+  MAX_CSS_CANDIDATE_BYTES,
+  MAX_CSS_CANDIDATES,
+  MAX_GENERATED_CSS_BYTES,
+  MAX_STYLESHEET_BYTES,
+  MAX_TOTAL_CSS_CANDIDATE_BYTES,
+  utf8ByteLength,
+} from "./resource-limits.ts";
 
 // Re-export extracted modules for backward compatibility
 export { extractCandidates, extractCandidatesFromFiles, hashCSS } from "./candidate-extractor.ts";
@@ -49,6 +57,10 @@ const inFlightProjectCSS = new Map<
   Promise<{ css: string; hash: string; fromCache: boolean }>
 >();
 const inFlightRegeneration = new Map<string, Promise<string | undefined>>();
+const MAX_IN_FLIGHT_PROJECT_CSS = 32;
+const MAX_IN_FLIGHT_REGENERATIONS = 32;
+const CACHE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const CSS_HASH_PATTERN = /^[0-9a-f]{1,16}$/;
 
 export interface TailwindResult {
   css: string;
@@ -68,6 +80,75 @@ export interface CSSErrorInfo {
   suggestion: string;
 }
 
+function assertCacheSegment(value: string, label: string): void {
+  if (!CACHE_SEGMENT_PATTERN.test(value)) {
+    throw COMPILATION_ERROR.create({ detail: `Invalid ${label}` });
+  }
+}
+
+function assertGenerationInputs(
+  stylesheet: string,
+  candidates: string[] | Set<string>,
+  projectSlug?: string,
+): string[] {
+  if (utf8ByteLength(stylesheet) > MAX_STYLESHEET_BYTES) {
+    throw COMPILATION_ERROR.create({ detail: "Stylesheet exceeds the 2 MiB size limit" });
+  }
+  if (projectSlug !== undefined) assertCacheSegment(projectSlug, "project slug");
+
+  const count = Array.isArray(candidates) ? candidates.length : candidates.size;
+  if (count > MAX_CSS_CANDIDATES) {
+    throw COMPILATION_ERROR.create({ detail: "Too many CSS candidates" });
+  }
+
+  const normalized = [...candidates];
+  let totalBytes = 0;
+  for (const candidate of normalized) {
+    if (typeof candidate !== "string") {
+      throw COMPILATION_ERROR.create({ detail: "CSS candidates must be strings" });
+    }
+    const candidateBytes = utf8ByteLength(candidate);
+    if (candidateBytes > MAX_CSS_CANDIDATE_BYTES) {
+      throw COMPILATION_ERROR.create({ detail: "CSS candidate exceeds the size limit" });
+    }
+    totalBytes += candidateBytes;
+    if (totalBytes > MAX_TOTAL_CSS_CANDIDATE_BYTES) {
+      throw COMPILATION_ERROR.create({ detail: "CSS candidates exceed the total size limit" });
+    }
+  }
+  return normalized;
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "UnknownError";
+}
+
+function replaceUnsafeControlCharacters(value: string): string {
+  let result = "";
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    result += code <= 8 || code === 11 || code === 12 || (code >= 14 && code <= 31) || code === 127
+      ? " "
+      : value[index];
+  }
+  return result;
+}
+
+function safeCompilationMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "CSS compilation failed";
+  return replaceUnsafeControlCharacters(
+    message
+      .replace(/file:\/\/\/[^\s"'()]+/g, "<path>")
+      .replace(/\/(?:Users|home|var\/folders)\/[^\s"'()]+/g, "<path>")
+      .replace(/\b[A-Za-z]:[\\/][^\s"'()]+/g, "<path>")
+      .replace(
+        /((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s;,]+/gi,
+        "$1<REDACTED>",
+      ),
+  )
+    .slice(0, 2048);
+}
+
 // ============================================================================
 // Project CSS orchestration
 // ============================================================================
@@ -78,45 +159,49 @@ export async function getProjectCSS(
   candidates: Set<string>,
   options?: GenerateOptions,
 ): Promise<{ css: string; hash: string; fromCache: boolean }> {
-  const context = createProjectCSSRequestContext(projectSlug, stylesheet, candidates, {
-    minify: options?.minify,
-    environment: options?.environment,
-    buildMode: options?.buildMode,
+  const requestOptions: GenerateOptions = options ? { ...options } : {};
+  assertCacheSegment(projectSlug, "project slug");
+  if (requestOptions.environment !== undefined) {
+    assertCacheSegment(requestOptions.environment, "CSS environment");
+  }
+  const candidateSnapshot = new Set(
+    assertGenerationInputs(stylesheet ?? DEFAULT_STYLESHEET, candidates, projectSlug),
+  );
+  const context = createProjectCSSRequestContext(projectSlug, stylesheet, candidateSnapshot, {
+    minify: requestOptions.minify,
+    environment: requestOptions.environment,
+    buildMode: requestOptions.buildMode,
   });
 
-  const localHit = await tryGetProjectCSSFromLocalFallback(context, candidates);
+  const localHit = await tryGetProjectCSSFromLocalFallback(context, candidateSnapshot);
   if (localHit) return localHit;
 
   if (!isProjectCSSInitialized()) {
     await initializeProjectCSSCache();
   }
 
-  const distributedHit = await tryGetProjectCSSFromDistributedCache(context, candidates);
+  const distributedHit = await tryGetProjectCSSFromDistributedCache(context, candidateSnapshot);
   if (distributedHit) return distributedHit;
 
   const inFlight = inFlightProjectCSS.get(context.cacheKey);
   if (inFlight) {
-    logger.debug("Project CSS compile single-flight hit", {
-      projectSlug: context.projectSlug,
-      cacheKeySuffix: context.cacheKey.slice(-24),
-    });
+    logger.debug("Project CSS compile single-flight hit");
     return inFlight;
+  }
+  if (inFlightProjectCSS.size >= MAX_IN_FLIGHT_PROJECT_CSS) {
+    throw COMPILATION_ERROR.create({ detail: "Too many concurrent project CSS compilations" });
   }
 
   const generationPromise = (async () => {
     // Generate fresh CSS
-    const result = await generateTailwindCSS(context.stylesheet, candidates, {
-      ...options,
+    const result = await generateTailwindCSS(context.stylesheet, candidateSnapshot, {
+      ...requestOptions,
       projectSlug,
     });
 
     if (result.error) {
       const formatted = formatCSSError(result.error);
-      logger.error("Project CSS generation failed", {
-        projectSlug: context.projectSlug,
-        error: formatted.message,
-        suggestion: formatted.suggestion,
-      });
+      logger.error("Project CSS generation failed", { error: "CompilationError" });
       throw COMPILATION_ERROR.create({
         detail:
           `[tailwind] ${formatted.title}: ${formatted.message} Suggestion: ${formatted.suggestion}`,
@@ -127,14 +212,12 @@ export async function getProjectCSS(
     await storeProjectCSS(
       context,
       { css: result.css, hash, candidatesHash: context.candidatesHash },
-      candidates,
+      candidateSnapshot,
     );
 
     logger.debug("Project CSS generated", {
-      projectSlug: context.projectSlug,
-      hash,
       cssLength: result.css.length,
-      candidateCount: candidates.size,
+      candidateCount: candidateSnapshot.size,
     });
 
     return { css: result.css, hash, fromCache: false };
@@ -167,15 +250,21 @@ export async function regenerateCSSByHash(
   expectedHash: string,
   projectSlug: string | undefined,
 ): Promise<string | undefined> {
+  if (!CSS_HASH_PATTERN.test(expectedHash)) return undefined;
+  if (projectSlug !== undefined) assertCacheSegment(projectSlug, "project slug");
   const inFlight = inFlightRegeneration.get(expectedHash);
   if (inFlight) return await inFlight;
+  if (inFlightRegeneration.size >= MAX_IN_FLIGHT_REGENERATIONS) {
+    logger.warn("CSS regeneration concurrency limit reached");
+    return undefined;
+  }
 
   const regenerationPromise = withSpan(
     SpanNames.HTML_REGENERATE_CSS_BY_HASH,
     async () => {
       const inputs = await resolveRegenerationInputs(expectedHash);
       if (!inputs || inputs.candidates.length === 0) {
-        logger.debug("Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
+        logger.debug("Cannot regenerate CSS because cached inputs are unavailable");
         return undefined;
       }
 
@@ -185,19 +274,13 @@ export async function regenerateCSSByHash(
       });
 
       if (result.error) {
-        logger.warn("CSS regeneration failed", {
-          hash: expectedHash,
-          error: result.error,
-        });
+        logger.warn("CSS regeneration failed", { error: "CompilationError" });
         return undefined;
       }
 
       const regeneratedHash = hashCSS(result.css);
       if (regeneratedHash !== expectedHash) {
-        logger.debug("CSS regeneration hash mismatch", {
-          expected: expectedHash,
-          got: regeneratedHash,
-        });
+        logger.debug("CSS regeneration hash mismatch");
         return undefined;
       }
 
@@ -209,7 +292,6 @@ export async function regenerateCSSByHash(
       await persistRegeneratedCSSEntry(regeneratedHash, regeneratedEntry);
 
       logger.info("CSS regenerated via JIT", {
-        hash: expectedHash,
         cssLength: result.css.length,
         candidateCount: inputs.candidates.length,
       });
@@ -237,7 +319,8 @@ export async function generateTailwindCSS(
   candidates: string[] | Set<string>,
   options?: GenerateOptions,
 ): Promise<TailwindResult> {
-  const candidateArray = Array.isArray(candidates) ? candidates : [...candidates];
+  const generationOptions: GenerateOptions = options ? { ...options } : {};
+  const candidateCount = Array.isArray(candidates) ? candidates.length : candidates.size;
 
   return await withSpan(
     SpanNames.HTML_GENERATE_TAILWIND_CSS,
@@ -245,10 +328,25 @@ export async function generateTailwindCSS(
       const css = stylesheet ?? DEFAULT_STYLESHEET;
 
       try {
-        const comp = await getCompiler(css, options?.projectSlug);
+        const candidateArray = assertGenerationInputs(
+          css,
+          candidates,
+          generationOptions.projectSlug,
+        );
+        const candidateScopeHash = hashCandidates(new Set(candidateArray));
+        const comp = await getCompiler(css, generationOptions.projectSlug, candidateScopeHash);
         let output = comp.build(candidateArray);
+        if (typeof output !== "string") {
+          throw COMPILATION_ERROR.create({ detail: "CSS compiler returned invalid output" });
+        }
+        if (utf8ByteLength(output) > MAX_GENERATED_CSS_BYTES) {
+          throw COMPILATION_ERROR.create({ detail: "Generated CSS exceeds the 16 MiB size limit" });
+        }
 
-        if (options?.minify) output = minifyCSS(output);
+        if (generationOptions.minify) output = minifyCSS(output);
+        if (utf8ByteLength(output) > MAX_GENERATED_CSS_BYTES) {
+          throw COMPILATION_ERROR.create({ detail: "Generated CSS exceeds the 16 MiB size limit" });
+        }
 
         logger.debug("Generated CSS", {
           candidateCount: candidateArray.length,
@@ -257,15 +355,15 @@ export async function generateTailwindCSS(
 
         return { css: output };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error("Compilation failed", { error: errorMessage });
+        const errorMessage = safeCompilationMessage(error);
+        logger.error("Compilation failed", { error: errorName(error) });
         return { css: "", error: errorMessage };
       }
     },
     {
-      "tailwind.candidate_count": candidateArray.length,
+      "tailwind.candidate_count": candidateCount,
       "tailwind.has_stylesheet": !!stylesheet,
-      "tailwind.minify": options?.minify ?? false,
+      "tailwind.minify": generationOptions.minify ?? false,
     },
   );
 }

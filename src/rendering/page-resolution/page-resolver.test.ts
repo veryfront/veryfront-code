@@ -3,6 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageResolver } from "./page-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+
+function fileNotFound(): Error & { code: string } {
+  return Object.assign(new Error("File not found"), { code: "ENOENT" });
+}
 import type { VeryfrontConfig } from "#veryfront/config";
 
 interface DirEntry {
@@ -25,6 +29,7 @@ function createMockAdapter(
           yield entry;
         }
       },
+      realPath: async (path: string) => path,
       writeFile: async () => {},
       mkdir: async () => {},
     },
@@ -74,7 +79,7 @@ describe("rendering/page-resolution/page-resolver", () => {
         fs: {
           readFile: async (path: string) => {
             const source = files.get(path);
-            if (source === undefined) throw new Error("File not found");
+            if (source === undefined) throw fileNotFound();
             return source;
           },
           resolveFile: async (path: string) => {
@@ -90,7 +95,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/src/content") {
               return { isFile: false, isDirectory: true, isSymlink: false };
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           exists: async (path: string) => path === "/project/src/content",
           readDir: async function* (path: string) {
@@ -101,6 +106,7 @@ describe("rendering/page-resolution/page-resolver", () => {
           },
           writeFile: async () => {},
           mkdir: async () => {},
+          realPath: async (path: string) => path,
         },
         env: { get: () => undefined },
       } as unknown as RuntimeAdapter;
@@ -129,7 +135,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/app/page.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
@@ -145,7 +151,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           exists: async (path: string) => path === "/project/app",
           readDir: async function* (path: string) {
@@ -155,6 +161,7 @@ describe("rendering/page-resolution/page-resolver", () => {
           },
           writeFile: async () => {},
           mkdir: async () => {},
+          realPath: async (path: string) => path,
         },
         env: { get: () => undefined },
       } as unknown as RuntimeAdapter;
@@ -184,7 +191,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           resolveFile: async (path: string) => {
             resolveCalls.push(path);
@@ -211,7 +218,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           exists: async (path: string) => path === "/project/pages",
           readDir: async function* (path: string) {
@@ -221,6 +228,7 @@ describe("rendering/page-resolution/page-resolver", () => {
           },
           writeFile: async () => {},
           mkdir: async () => {},
+          realPath: async (path: string) => path,
         },
         env: { get: () => undefined },
       } as unknown as RuntimeAdapter;
@@ -249,7 +257,7 @@ describe("rendering/page-resolution/page-resolver", () => {
             if (path === "/project/pages/index.tsx") {
               return "export default function Page() { return null; }";
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           resolveFile: async (path: string) => {
             if (path === "/project/app/page") {
@@ -275,7 +283,7 @@ describe("rendering/page-resolution/page-resolver", () => {
                 isSymlink: false,
               };
             }
-            throw new Error("File not found");
+            throw fileNotFound();
           },
           exists: async (path: string) => path === "/project/app" || path === "/project/pages",
           readDir: async function* (path: string) {
@@ -295,6 +303,7 @@ describe("rendering/page-resolution/page-resolver", () => {
           },
           writeFile: async () => {},
           mkdir: async () => {},
+          realPath: async (path: string) => path,
         },
         env: { get: () => undefined },
       } as unknown as RuntimeAdapter;

@@ -5,7 +5,7 @@
  * This prevents hardcoding URLs across the codebase and makes refactoring easier.
  */
 
-export { DEFAULT_PORT } from "#veryfront/config/defaults.ts";
+export { DEFAULT_PORT } from "#veryfront/platform/compat/constants.ts";
 
 /** Default port for development dashboard (matches veryfront.config.ts default) */
 export const DEFAULT_DASHBOARD_PORT = 3001;

@@ -22,6 +22,12 @@ describe("observability/tracing/config", () => {
       assertEquals(result.debug, false);
     });
 
+    it("normalizes non-object runtime config", () => {
+      const result = loadConfig(null as never, emptyEnvAdapter);
+      assertEquals(result.enabled, false);
+      assertEquals(result.serviceName, "veryfront");
+    });
+
     it("should merge user config over defaults", () => {
       const result = loadConfig({ enabled: true, serviceName: "my-service" }, emptyEnvAdapter);
       assertEquals(result.enabled, true);
@@ -58,6 +64,48 @@ describe("observability/tracing/config", () => {
         createAdapter((key) => (key === "OTEL_TRACES_EXPORTER" ? "invalid" : undefined)),
       );
       assertEquals(result.exporter, "console");
+    });
+
+    it("prefers the trace-specific OTLP endpoint", () => {
+      const vars: Record<string, string> = {
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://general.invalid:4318",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://traces.invalid:4318/v1/traces",
+      };
+
+      const result = loadConfig({}, createAdapter((key) => vars[key]));
+
+      assertEquals(result.endpoint, "http://traces.invalid:4318/v1/traces");
+    });
+
+    it("normalizes invalid runtime configuration to safe defaults", () => {
+      const result = loadConfig(
+        {
+          enabled: "yes" as unknown as boolean,
+          exporter: "custom" as unknown as "console",
+          serviceName: "\n",
+          sampleRate: Number.NaN,
+          debug: "yes" as unknown as boolean,
+        },
+        emptyEnvAdapter,
+      );
+
+      assertEquals(result.enabled, false);
+      assertEquals(result.exporter, "console");
+      assertEquals(result.serviceName, "veryfront");
+      assertEquals(result.sampleRate, 1);
+      assertEquals(result.debug, false);
+    });
+
+    it("does not let a failing environment adapter break tracing setup", () => {
+      const result = loadConfig(
+        { enabled: true, serviceName: "application" },
+        createAdapter(() => {
+          throw new Error("adapter unavailable");
+        }),
+      );
+
+      assertEquals(result.enabled, true);
+      assertEquals(result.serviceName, "application");
     });
   });
 });

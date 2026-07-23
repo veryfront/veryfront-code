@@ -6,6 +6,7 @@ import {
   authorizeWebSocketRequest,
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
+  createUpstreamWebSocketUrl,
   getClientWebSocketErrorLogLevel,
   getServerWebSocketErrorLogLevel,
 } from "./websocket-bridge.ts";
@@ -94,6 +95,23 @@ describe("Proxy WebSocket Handler Tests", () => {
   });
 
   describe("WebSocket URL Construction", () => {
+    it("builds a normalized upstream URL and replaces trusted routing parameters", () => {
+      const target = createUpstreamWebSocketUrl(
+        "https://renderer.example.test/base",
+        new URL(
+          "https://project.example.test/_ws?x-project-slug=attacker&x-environment=production&foo=bar",
+        ),
+        "trusted-project",
+        "preview",
+      );
+
+      assertEquals(target.protocol, "wss:");
+      assertEquals(target.pathname, "/_ws");
+      assertEquals(target.searchParams.get("x-project-slug"), "trusted-project");
+      assertEquals(target.searchParams.get("x-environment"), "preview");
+      assertEquals(target.searchParams.get("foo"), "bar");
+    });
+
     it("converts HTTP to WS URL", () => {
       const rendererUrl = "http://localhost:3001";
       const wsUrl = rendererUrl.replace(/^http/, "ws");
@@ -196,6 +214,31 @@ describe("Proxy WebSocket Handler Tests", () => {
       closeBridgePeer(socket, 1011, "Server connection error");
 
       assertEquals(calls, [{ code: 1011, reason: "Server connection error" }]);
+    });
+
+    it("normalizes reserved codes, bounds UTF-8 reasons, and contains close failures", () => {
+      const calls: Array<{ code?: number; reason?: string }> = [];
+      const socket = {
+        readyState: WebSocket.CONNECTING,
+        close(code?: number, reason?: string) {
+          calls.push({ code, reason });
+        },
+      };
+
+      closeBridgePeer(socket, 1006, "🙂".repeat(100));
+      assertEquals(calls[0]?.code, 1011);
+      assertEquals(new TextEncoder().encode(calls[0]?.reason ?? "").byteLength <= 123, true);
+
+      closeBridgePeer(
+        {
+          readyState: WebSocket.OPEN,
+          close() {
+            throw new Error("already closed");
+          },
+        },
+        1011,
+        "failure",
+      );
     });
   });
 

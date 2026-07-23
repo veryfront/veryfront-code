@@ -10,10 +10,20 @@ import { unrefTimer } from "#veryfront/compat/process.ts";
 import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
 import type { RequestProfileRecord } from "#veryfront/observability";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { generateRequestId } from "#veryfront/utils/request-id.ts";
 
 const logger = serverLogger.component("request-tracker");
 
+declare const requestTrackingKeyBrand: unique symbol;
+
+/** Opaque identity for one in-flight request, distinct from its correlation ID. */
+export type RequestTrackingKey = string & {
+  readonly [requestTrackingKeyBrand]: true;
+};
+
 interface TrackedRequest {
+  trackingKey: RequestTrackingKey;
+  /** Client-visible correlation ID. This is not used as tracker identity. */
   requestId: string;
   projectSlug: string | undefined;
   path: string;
@@ -64,8 +74,6 @@ function buildRequestProfileLogContext(record: RequestProfileRecord): Record<str
     sequence: record.sequence,
     category: record.category,
     method: record.method,
-    pathname: record.pathname,
-    projectSlug: record.projectSlug,
     requestMode: record.requestMode,
     status: record.status,
     totalMs: record.totalMs,
@@ -75,7 +83,7 @@ function buildRequestProfileLogContext(record: RequestProfileRecord): Record<str
 }
 
 class RequestTracker {
-  private inFlight = new Map<string, TrackedRequest>();
+  private inFlight = new Map<RequestTrackingKey, TrackedRequest>();
   private statusInterval: ReturnType<typeof setInterval> | undefined;
   private totalRequests = 0;
   private totalCompleted = 0;
@@ -92,9 +100,6 @@ class RequestTracker {
       const now = performance.now();
       const requests = Array.from(this.inFlight.values())
         .map((r) => ({
-          requestId: r.requestId,
-          projectSlug: r.projectSlug,
-          path: r.path,
           method: r.method,
           elapsedMs: Math.round(now - r.startTime),
         }))
@@ -120,11 +125,13 @@ class RequestTracker {
     method: string,
     env?: string,
     releaseId?: string,
-  ): void {
+  ): RequestTrackingKey {
+    const trackingKey = generateRequestId() as RequestTrackingKey;
     const startTime = performance.now();
     this.totalRequests++;
 
     const tracked: TrackedRequest = {
+      trackingKey,
       requestId,
       projectSlug,
       path,
@@ -135,14 +142,11 @@ class RequestTracker {
     };
 
     // WebSocket connections are long-lived by design and lightweight internal
-    // asset/module requests can be noisy under CI jitter — don't flag them as stuck.
+    // asset/module requests can be noisy under CI jitter, so do not flag them as stuck.
     if (!isWebSocketPath(path) && !isLightweightPath(path)) {
       tracked.slowTimer = setTimeout(() => {
         const elapsedMs = Math.round(performance.now() - startTime);
         logger.warn("Slow request detected", {
-          requestId,
-          projectSlug,
-          path,
           method,
           elapsedMs,
           inFlightCount: this.inFlight.size,
@@ -151,9 +155,6 @@ class RequestTracker {
         tracked.verySlowTimer = setTimeout(() => {
           const verySlowElapsedMs = Math.round(performance.now() - startTime);
           logger.error("Very slow request - likely stuck", {
-            requestId,
-            projectSlug,
-            path,
             method,
             elapsedMs: verySlowElapsedMs,
             inFlightCount: this.inFlight.size,
@@ -164,30 +165,29 @@ class RequestTracker {
       if (tracked.slowTimer) unrefTimer(tracked.slowTimer);
     }
 
-    this.inFlight.set(requestId, tracked);
+    this.inFlight.set(trackingKey, tracked);
 
     logger.debug("Request started", {
-      requestId,
-      projectSlug,
-      path,
       method,
       inFlightCount: this.inFlight.size,
     });
+
+    return trackingKey;
   }
 
   complete(
-    requestId: string,
+    trackingKey: RequestTrackingKey,
     statusCode: number,
     timedOut = false,
     profile?: RequestProfileRecord | null,
   ): void {
-    const tracked = this.inFlight.get(requestId);
+    const tracked = this.inFlight.get(trackingKey);
     if (!tracked) return;
 
     if (tracked.slowTimer) clearTimeout(tracked.slowTimer);
     if (tracked.verySlowTimer) clearTimeout(tracked.verySlowTimer);
 
-    this.inFlight.delete(requestId);
+    this.inFlight.delete(trackingKey);
 
     const durationMs = Math.round(performance.now() - tracked.startTime);
 
@@ -196,30 +196,30 @@ class RequestTracker {
 
     if (isLightweightPath(tracked.path)) {
       if (durationMs > MODULE_REQUEST_LOG_THRESHOLD_MS) {
-        logger.debug(`${tracked.method} ${tracked.path} ${statusCode} ${durationMs}ms`);
+        logger.debug("Lightweight request completed", {
+          durationMs,
+          method: tracked.method,
+          statusCode,
+        });
       }
       return;
     }
 
     const logContext: Record<string, unknown> = {
-      project_slug: tracked.projectSlug,
-      request_url: tracked.path,
       durationMs,
       method: tracked.method,
       statusCode,
-      env: tracked.env,
-      release_id: tracked.releaseId,
     };
 
     if (profile && durationMs >= getSlowRequestProfileLogThresholdMs()) {
       logContext.request_profile = buildRequestProfileLogContext(profile);
     }
 
-    logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
+    logger.info("Request completed", logContext);
   }
 
-  markLongLived(requestId: string): void {
-    const tracked = this.inFlight.get(requestId);
+  markLongLived(trackingKey: RequestTrackingKey): void {
+    const tracked = this.inFlight.get(trackingKey);
     if (!tracked) return;
 
     if (tracked.slowTimer) {
@@ -268,9 +268,6 @@ class RequestTracker {
       if (elapsedMs >= timeoutMs) {
         const now = performance.now();
         const remainingRequests = Array.from(this.inFlight.values()).map((r) => ({
-          requestId: r.requestId,
-          projectSlug: r.projectSlug,
-          path: r.path,
           method: r.method,
           elapsedMs: Math.round(now - r.startTime),
         }));

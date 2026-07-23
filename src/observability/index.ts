@@ -13,6 +13,8 @@
  * ```
  */
 
+export type { ObservabilityRuntimeAdapter } from "./runtime-adapter.ts";
+
 export {
   addSpanEvent,
   createChildSpan,
@@ -39,6 +41,7 @@ export {
   initMetrics,
   isMetricsEnabled,
   type MetricsConfig,
+  type MetricsRuntimeState,
   recordBuild,
   recordBundle,
   recordCacheGet,
@@ -62,13 +65,18 @@ export {
 } from "./metrics/index.ts";
 
 export {
+  type AutoInstrumentationMetricsConfig,
+  type AutoInstrumentationTracingConfig,
   type AutoInstrumentConfig,
+  type BatchOptions,
+  type HttpHandlerInstrumentationOptions,
   initAutoInstrumentation,
   instrument,
   instrumentBatch,
   instrumentErrorHandler,
   instrumentFetch,
   instrumentHttpHandler,
+  type InstrumentOptions,
   instrumentReactRender,
   instrumentSync,
   isAutoInstrumentEnabled,
@@ -86,13 +94,18 @@ export {
 // OpenTelemetry API shim (spans, metrics, context primitives)
 export { getGlobalMetricsAPI, SpanKind, SpanStatusCode, trace } from "./tracing/api-shim.ts";
 export type {
+  AttributePrimitive,
   AttributeValue,
   Context,
   Counter,
   Histogram,
   Meter,
+  MetricsAPI,
   ObservableGauge,
+  ObservableResult,
   Span,
+  SpanContext,
+  UpDownCounter,
 } from "./tracing/api-shim.ts";
 
 // Shared-runtime telemetry environment helpers
@@ -118,7 +131,7 @@ export {
   recordContentCacheHit,
   recordContentNetworkFetch,
 } from "./simple-metrics/index.ts";
-export type { ModuleServeStatus } from "./simple-metrics/index.ts";
+export type { ContentCacheLayer, ModuleServeStatus } from "./simple-metrics/index.ts";
 
 export {
   createOpenTelemetryServiceTracer,
@@ -131,12 +144,15 @@ export {
   type OpenTelemetryTracer,
   type ServiceTracer,
   type ServiceTracerAttributeInput,
+  type ServiceTracerAttributePrimitive,
   type ServiceTracerAttributes,
   type ServiceTracerAttributeValue,
   type ServiceTracerSpan,
   type ServiceTracerSpanContext,
   type ServiceTracerStartSpanOptions,
 } from "./tracing/service-tracer.ts";
+
+export type { ErrorCategory } from "#veryfront/errors";
 
 export {
   type DevError,

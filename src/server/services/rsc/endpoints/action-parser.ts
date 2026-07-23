@@ -1,4 +1,3 @@
-import { serverLogger } from "#veryfront/utils";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import type { ActionBody } from "./types.ts";
 import { ActionPayloadSchema } from "../../../schemas/index.ts";
@@ -15,28 +14,16 @@ function isValidActionId(id: string): boolean {
 }
 
 export async function parseActionBody(body: unknown): Promise<ActionBody | Response> {
-  let id = "";
-  let args: unknown[] = [];
-
-  try {
-    const parsed = ActionPayloadSchema.parse(body);
-    id = parsed.id;
-    args = parsed.args;
-  } catch (schemaError) {
-    serverLogger.warn(
-      "[ActionParser] Zod validation failed, falling back to manual parsing",
-      { error: schemaError instanceof Error ? schemaError.message : String(schemaError) },
-    );
-
-    if (!body || typeof body !== "object") {
-      return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid request body");
-    }
-
-    const bodyObj = body as Record<string, unknown>;
-    id = typeof bodyObj.id === "string" ? bodyObj.id : "";
-    args = Array.isArray(bodyObj.args) ? bodyObj.args : [];
+  const parsed = ActionPayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    const id = body && typeof body === "object" ? (body as Record<string, unknown>).id : undefined;
+    const message = typeof id !== "string" || id.length === 0
+      ? "missing id"
+      : "invalid request body";
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, message);
   }
 
+  const { id, args } = parsed.data;
   if (!id) return jsonErrorResponse(HttpStatus.BAD_REQUEST, "missing id");
   if (!isValidActionId(id)) return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid id");
 

@@ -7,6 +7,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { buildReactUrl, getReactImportMap } from "../../../import-rewriter/url-builder.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
+import reactManifest from "../../../../../react/deno.json" with { type: "json" };
 
 export interface FrameworkSpecifierResolverInput {
   denoConfigStubUrl: string | null;
@@ -55,6 +56,29 @@ const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
   "jsx-dev-runtime.js": "react/jsx-dev-runtime",
 };
 
+function getReactManifestImport(specifier: string): string {
+  const value = (reactManifest.imports as Record<string, unknown>)[specifier];
+  if (typeof value !== "string") {
+    throw new TypeError(`React manifest import "${specifier}" must be a string`);
+  }
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" || url.hostname !== "esm.sh" || url.username || url.password
+    ) {
+      throw new TypeError();
+    }
+  } catch {
+    throw new TypeError(`React manifest import "${specifier}" must use https://esm.sh`);
+  }
+  return value;
+}
+
+const AUXILIARY_REEXPORT_URLS: Record<string, string> = {
+  "react-markdown.js": getReactManifestImport("@veryfront/react-markdown-upstream"),
+  "remark-gfm.js": getReactManifestImport("@veryfront/remark-gfm-upstream"),
+};
+
 /** `FRAMEWORK_ROOT/react/` prefix, precomputed (invariant per process). */
 const REACT_REEXPORT_DIR = join(FRAMEWORK_ROOT, "react") + "/";
 
@@ -69,7 +93,10 @@ export function reactReExportToEsmUrl(
   reactImportMap?: Record<string, string>,
 ): string | null {
   if (!resolvedPath.startsWith(REACT_REEXPORT_DIR)) return null;
-  const specifier = REACT_REEXPORT_SPECIFIERS[resolvedPath.slice(REACT_REEXPORT_DIR.length)];
+  const fileName = resolvedPath.slice(REACT_REEXPORT_DIR.length);
+  const auxiliaryUrl = AUXILIARY_REEXPORT_URLS[fileName];
+  if (auxiliaryUrl) return auxiliaryUrl;
+  const specifier = REACT_REEXPORT_SPECIFIERS[fileName];
   if (!specifier) return null;
   return resolveReactSpecifier(specifier, reactVersion, reactImportMap);
 }

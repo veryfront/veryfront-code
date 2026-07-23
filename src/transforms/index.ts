@@ -25,22 +25,29 @@ export {
   type TransformPlugin,
   type TransformResult,
   TransformStage,
+  type TransformTarget,
   transformToESM,
 } from "./esm/index.ts";
 
 // MDX transforms
 export {
   clearMDXRendererCache,
+  MDX_SYNC_RENDER_DISABLED,
   MDXCacheAdapter,
   type MDXCacheAdapterOptions,
   type MDXCompilationResult,
   MDXRenderer,
   mdxRenderer,
   type MDXRenderOptions,
+  type MDXSyncRenderDisabledProps,
+  type MDXSyncRenderResult,
 } from "./mdx/index.ts";
 
 // Plugins — remark/rehype plugin implementations moved into @veryfront/ext-content-mdx.
 // Core still exposes the plugin list getters (backed by the extension contract).
 export { getRehypePlugins, getRemarkPlugins } from "./plugins/index.ts";
+export type { ContentPlugin } from "./plugins/index.ts";
+
+export type { Loader } from "veryfront/extensions/bundler";
 
 export { clearAllLocalCaches } from "./mdx/esm-module-loader/cache/index.ts";

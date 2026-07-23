@@ -1,12 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 import { authRateLimit, MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
-
-(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 describe("MemoryRateLimitStore", () => {
   let store: MemoryRateLimitStore;
@@ -40,6 +38,38 @@ describe("MemoryRateLimitStore", () => {
       const entry2 = await store.increment("key2", 60000);
 
       assertEquals(entry2.count, 1);
+    });
+
+    it("does not expose mutable internal entries", async () => {
+      const first = await store.increment("test-key", 60000);
+      first.count = 10_000;
+      first.resetAt = 0;
+
+      const second = await store.increment("test-key", 60000);
+
+      assertEquals(second.count, 2);
+      assertEquals(second.resetAt > Date.now(), true);
+    });
+
+    it("keeps far-future reset timestamps within the safe integer range", async () => {
+      const entry = await store.increment("long-window", Number.MAX_SAFE_INTEGER);
+
+      assertEquals(entry.resetAt, Number.MAX_SAFE_INTEGER);
+    });
+
+    it("uses a bounded overflow bucket for excess client keys", async () => {
+      const boundedStore = new MemoryRateLimitStore(60000, 2);
+      try {
+        await boundedStore.increment("one", 60000);
+        await boundedStore.increment("two", 60000);
+        const firstOverflow = await boundedStore.increment("three", 60000);
+        const secondOverflow = await boundedStore.increment("four", 60000);
+
+        assertEquals(firstOverflow.count, 1);
+        assertEquals(secondOverflow.count, 2);
+      } finally {
+        boundedStore.destroy();
+      }
     });
 
     it("should reset expired entries", async () => {
@@ -113,6 +143,60 @@ describe("rateLimit middleware", () => {
     const response = await middleware(createContext(), () => Promise.resolve(new Response("OK")));
 
     assertEquals(response?.status, 200);
+  });
+
+  it("rejects invalid limits and windows", () => {
+    for (
+      const options of [
+        { maxRequests: 0, windowMs: 60000 },
+        { maxRequests: 1.5, windowMs: 60000 },
+        { maxRequests: 1, windowMs: 0 },
+        { maxRequests: 1, windowMs: Number.POSITIVE_INFINITY },
+      ]
+    ) {
+      assertThrows(
+        () => rateLimit(options),
+        TypeError,
+        "positive safe integer",
+      );
+    }
+  });
+
+  it("rejects malformed collaborators during configuration", () => {
+    assertThrows(
+      () => rateLimit({ store: {} as never }),
+      TypeError,
+      "store",
+    );
+    assertThrows(
+      () => rateLimit({ keyGenerator: "key" as never }),
+      TypeError,
+      "keyGenerator",
+    );
+    assertThrows(
+      () => rateLimit({ trustProxy: "yes" as never }),
+      TypeError,
+      "trustProxy",
+    );
+  });
+
+  it("rejects malformed entries returned by a custom store", async () => {
+    const middleware = rateLimit({
+      store: {
+        increment: () => Promise.resolve(null as never),
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    let error: unknown;
+    try {
+      await middleware(createContext(), () => Promise.resolve(new Response("OK")));
+    } catch (cause) {
+      error = cause;
+    }
+
+    assertEquals(error instanceof TypeError, true);
+    assertEquals((error as Error).message.includes("Rate limit stores"), true);
   });
 
   it("should use default values when no options provided", async () => {
@@ -278,5 +362,33 @@ describe("rateLimit middleware", () => {
       () => Promise.resolve(new Response("OK")),
     );
     assertEquals(secondClient?.status, 200);
+  });
+
+  it("does not allow runtime objects to override the auth preset limit", async () => {
+    const store = new MemoryRateLimitStore(60000);
+    const middleware = authRateLimit(
+      {
+        store,
+        maxRequests: 100,
+        windowMs: 60000,
+      } as unknown as Parameters<typeof authRateLimit>[0],
+    );
+
+    try {
+      for (let index = 0; index < 5; index += 1) {
+        const response = await middleware(
+          createContext(),
+          () => Promise.resolve(new Response("OK")),
+        );
+        assertEquals(response?.status, 200);
+      }
+      const blocked = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      assertEquals(blocked?.status, 429);
+    } finally {
+      store.destroy();
+    }
   });
 });

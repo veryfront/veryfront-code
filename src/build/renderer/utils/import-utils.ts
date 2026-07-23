@@ -2,31 +2,29 @@
  * Import resolution and extraction utilities
  */
 
+import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
+import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { existsSync } from "#veryfront/platform/compat/std/fs.ts";
-import { dirname, join, resolve } from "#veryfront/compat/path/index.ts";
+
+function assertWithinProject(path: string, projectDir: string): string {
+  const resolvedPath = resolve(path);
+  const relativePath = relative(resolve(projectDir), resolvedPath);
+  const normalizedRelativePath = relativePath.replaceAll("\\", "/");
+  if (
+    normalizedRelativePath === ".." || normalizedRelativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new TypeError("Resolved import path is outside projectDir");
+  }
+  return resolvedPath;
+}
 
 /**
  * Extract import statements from code
  */
-export function extractImports(code: string): string[] {
-  const imports: string[] = [];
-
-  const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
-  const dynamicImportRegex = /import\s*\(['"]([^'"]+)['"]\)/g;
-
-  let match: RegExpExecArray | null;
-
-  while ((match = importRegex.exec(code)) !== null) {
-    const path = match[1];
-    if (path) imports.push(path);
-  }
-
-  while ((match = dynamicImportRegex.exec(code)) !== null) {
-    const path = match[1];
-    if (path) imports.push(path);
-  }
-
-  return [...new Set(imports)];
+export async function extractImports(code: string): Promise<string[]> {
+  const imports = await parseImports(code);
+  return [...new Set(imports.flatMap((entry) => entry.n ? [entry.n] : []))];
 }
 
 /**
@@ -35,31 +33,42 @@ export function extractImports(code: string): string[] {
 export function resolveImportPath(
   importPath: string,
   fromFile: string,
-  _projectDir: string,
+  projectDir: string,
 ): string {
+  if (!importPath || importPath.includes("\0")) {
+    throw new TypeError("Import specifier must not be empty or contain null bytes");
+  }
   if (importPath.startsWith(".")) {
-    return resolve(dirname(fromFile), importPath);
+    return assertWithinProject(resolve(dirname(fromFile), importPath), projectDir);
   }
 
-  if (!importPath.startsWith("/") && !importPath.includes(":")) {
+  if (importPath.startsWith("/")) {
+    return assertWithinProject(resolve(projectDir, `.${importPath}`), projectDir);
+  }
+
+  if (!importPath.includes(":")) {
     return importPath;
   }
 
   return importPath;
 }
 
-/**
- * Find component file with various extensions
- */
-export function findComponent(basePath: string, _projectDir: string): string | null {
-  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+/** Resolve the first supported component file for a project-contained base path. */
+export function findComponent(basePath: string, projectDir: string): string | null {
+  if (typeof basePath !== "string" || !basePath.trim()) {
+    throw new TypeError("Component base path must not be blank");
+  }
+  if (typeof projectDir !== "string" || !projectDir.trim()) {
+    throw new TypeError("projectDir must not be blank");
+  }
 
-  for (const ext of extensions) {
-    const fullPath = `${basePath}${ext}`;
-    if (existsSync(fullPath)) return fullPath;
+  const resolvedBasePath = assertWithinProject(basePath, projectDir);
+  for (const extension of [".tsx", ".ts", ".jsx", ".js", ".mdx"] as const) {
+    const directPath = `${resolvedBasePath}${extension}`;
+    if (existsSync(directPath, { isFile: true })) return directPath;
 
-    const indexPath = join(basePath, `index${ext}`);
-    if (existsSync(indexPath)) return indexPath;
+    const indexPath = join(resolvedBasePath, `index${extension}`);
+    if (existsSync(indexPath, { isFile: true })) return indexPath;
   }
 
   return null;
@@ -74,20 +83,16 @@ export async function processImports(
   projectDir: string,
   processImport: (importPath: string) => Promise<string | null>,
 ): Promise<string> {
-  const imports = extractImports(code);
-  let processedCode = code;
+  const imports = await extractImports(code);
+  const replacements = new Map<string, string>();
 
   for (const importPath of imports) {
     const resolvedPath = resolveImportPath(importPath, filePath, projectDir);
     const newPath = await processImport(resolvedPath);
 
-    if (!newPath || newPath === importPath) continue;
-
-    processedCode = processedCode.replace(
-      new RegExp(`(['"])${importPath}\\1`, "g"),
-      `$1${newPath}$1`,
-    );
+    if (newPath && newPath !== importPath) replacements.set(importPath, newPath);
   }
 
-  return processedCode;
+  if (replacements.size === 0) return code;
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
 }

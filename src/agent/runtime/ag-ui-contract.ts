@@ -1,5 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -10,6 +10,151 @@ const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_RUNTIME_MESSAGES = 100;
 
 const encoder = new TextEncoder();
+
+/** Tool definition supplied with a canonical runtime AG-UI request. */
+export interface AgUiRuntimeInjectedTool {
+  /** Tool name. */
+  name: string;
+  /** Optional tool description. */
+  description?: string;
+  /** Legacy JSON Schema parameters document. */
+  parameters?: Record<string, unknown>;
+  /** JSON Schema document for tool input. */
+  inputSchema?: Record<string, unknown>;
+  /** JSON Schema document for tool output. */
+  outputSchema?: Record<string, unknown>;
+}
+
+/** Context item supplied with a canonical runtime AG-UI request. */
+export type AgUiRuntimeContextItem =
+  | {
+    /** Text context discriminator. */
+    type: "text";
+    /** Optional context title. */
+    title?: string;
+    /** Text context payload. */
+    text: string;
+  }
+  | {
+    /** JSON context discriminator. */
+    type: "json";
+    /** Optional context title. */
+    title?: string;
+    /** Structured context payload. */
+    data: Record<string, unknown>;
+  }
+  | {
+    /** Resource context discriminator. */
+    type: "resource";
+    /** Optional context title. */
+    title?: string;
+    /** Resource URI. */
+    uri: string;
+    /** Optional resource media type. */
+    mimeType?: string;
+    /** Optional inline resource text. */
+    text?: string;
+  };
+
+/** Message accepted by the canonical runtime AG-UI request. */
+export type AgUiRuntimeMessage =
+  | {
+    /** Message identifier. */
+    id: string;
+    /** System-message discriminator. */
+    role: "system";
+    /** System-message content. */
+    content: string;
+    /** Optional sender name. */
+    name?: string;
+    /** Optional message metadata. */
+    metadata?: Record<string, unknown>;
+    /** Optional creation timestamp. */
+    createdAt?: string;
+  }
+  | {
+    /** Message identifier. */
+    id: string;
+    /** User-message discriminator. */
+    role: "user";
+    /** User-message content. */
+    content: string;
+    /** Optional sender name. */
+    name?: string;
+    /** Optional message metadata. */
+    metadata?: Record<string, unknown>;
+    /** Optional creation timestamp. */
+    createdAt?: string;
+  }
+  | {
+    /** Message identifier. */
+    id: string;
+    /** Assistant-message discriminator. */
+    role: "assistant";
+    /** Optional assistant text content. */
+    content?: string;
+    /** Tool calls requested by the assistant. */
+    toolCalls?: Array<{
+      /** Tool-call identifier. */
+      id: string;
+      /** Tool-call discriminator. */
+      type: "function";
+      /** Serialized function call. */
+      function: {
+        /** Tool name. */
+        name: string;
+        /** JSON-encoded tool arguments. */
+        arguments: string;
+      };
+    }>;
+    /** Optional sender name. */
+    name?: string;
+    /** Optional message metadata. */
+    metadata?: Record<string, unknown>;
+    /** Optional creation timestamp. */
+    createdAt?: string;
+  }
+  | {
+    /** Message identifier. */
+    id: string;
+    /** Tool-message discriminator. */
+    role: "tool";
+    /** Tool call associated with the result. */
+    toolCallId: string;
+    /** Serialized tool result content. */
+    content: string;
+    /** Optional tool execution error. */
+    error?: string;
+    /** Optional sender name. */
+    name?: string;
+    /** Optional message metadata. */
+    metadata?: Record<string, unknown>;
+    /** Optional creation timestamp. */
+    createdAt?: string;
+  };
+
+/** Canonical request accepted by the runtime AG-UI handler. */
+export interface AgUiRuntimeRequest {
+  /** Conversation thread identifier. */
+  threadId: string;
+  /** Runtime run identifier. */
+  runId: string;
+  /** Optional parent run identifier. */
+  parentRunId?: string;
+  /** Optional runtime state snapshot. */
+  state?: unknown;
+  /** Conversation messages. */
+  messages: AgUiRuntimeMessage[];
+  /** Client-supplied tool definitions. */
+  tools: AgUiRuntimeInjectedTool[];
+  /** Context entries available to the run. */
+  context: Array<
+    | { description: string; value: string }
+    | AgUiRuntimeContextItem
+  >;
+  /** Optional host-forwarded properties. */
+  forwardedProps?: Record<string, unknown>;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -43,21 +188,24 @@ const agUiRuntimeToolJsonSchemaDocumentSchema = (v: SchemaValidator) =>
   );
 
 /** Zod schema for get AG-UI runtime injected tool. */
-export const getAgUiRuntimeInjectedToolSchema = defineSchema((v) =>
-  v.object({
-    name: agUiRuntimeInjectedToolNameSchema(v),
-    description: v.string().max(1024).optional(),
-    parameters: v.record(v.string(), v.unknown()).optional().refine(
-      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
-      { message: "Tool parameters must be less than 16 KB" },
-    ),
-    inputSchema: agUiRuntimeToolJsonSchemaDocumentSchema(v).optional(),
-    outputSchema: agUiRuntimeToolJsonSchemaDocumentSchema(v).optional(),
-  })
+export const getAgUiRuntimeInjectedToolSchema: () => Schema<AgUiRuntimeInjectedTool> = defineSchema(
+  (v) =>
+    v.object({
+      name: agUiRuntimeInjectedToolNameSchema(v),
+      description: v.string().max(1024).optional(),
+      parameters: v.record(v.string(), v.unknown()).optional().refine(
+        (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
+        { message: "Tool parameters must be less than 16 KB" },
+      ),
+      inputSchema: agUiRuntimeToolJsonSchemaDocumentSchema(v).optional(),
+      outputSchema: agUiRuntimeToolJsonSchemaDocumentSchema(v).optional(),
+    }),
 );
 
 /** Zod schema for get AG-UI runtime context item. */
-export const getAgUiRuntimeContextItemSchema = defineSchema((v) =>
+export const getAgUiRuntimeContextItemSchema: () => Schema<AgUiRuntimeContextItem> = defineSchema((
+  v,
+) =>
   v.discriminatedUnion("type", [
     v.object({
       type: v.literal("text"),
@@ -143,7 +291,7 @@ export const getAgUiRuntimeToolMessageSchema = defineSchema((v) =>
 );
 
 /** Zod schema for get AG-UI runtime message. */
-export const getAgUiRuntimeMessageSchema = defineSchema((v) =>
+export const getAgUiRuntimeMessageSchema: () => Schema<AgUiRuntimeMessage> = defineSchema((v) =>
   v.discriminatedUnion("role", [
     getAgUiRuntimeSystemMessageSchema(),
     getAgUiRuntimeUserMessageSchema(),
@@ -163,7 +311,7 @@ export const getAgUiRuntimeContextSchema = defineSchema((v) =>
 );
 
 /** Zod schema for get AG-UI runtime request. */
-export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
+export const getAgUiRuntimeRequestSchema: () => Schema<AgUiRuntimeRequest> = defineSchema((v) =>
   v.object({
     threadId: v.string().uuid(),
     runId: getAgUiRuntimeRunIdSchema(),
@@ -181,19 +329,6 @@ export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
     ),
   })
 );
-
-/** Public API contract for AG-UI runtime injected tool. */
-export type AgUiRuntimeInjectedTool = InferSchema<
-  ReturnType<typeof getAgUiRuntimeInjectedToolSchema>
->;
-/** Public API contract for AG-UI runtime context item. */
-export type AgUiRuntimeContextItem = InferSchema<
-  ReturnType<typeof getAgUiRuntimeContextItemSchema>
->;
-/** Message shape for AG-UI runtime. */
-export type AgUiRuntimeMessage = InferSchema<ReturnType<typeof getAgUiRuntimeMessageSchema>>;
-/** Request payload for AG-UI runtime. */
-export type AgUiRuntimeRequest = InferSchema<ReturnType<typeof getAgUiRuntimeRequestSchema>>;
 
 /** Request payload for normalize AG-UI browser runtime. */
 export function normalizeAgUiBrowserRuntimeRequest(

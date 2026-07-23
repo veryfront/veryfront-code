@@ -25,10 +25,11 @@ order: 1
 | [`veryfront/markdown`](./veryfront/markdown.md) | Markdown rendering. |
 | [`veryfront/mcp`](./veryfront/mcp.md) | MCP server helpers. |
 | [`veryfront/mdx`](./veryfront/mdx.md) | MDX component overrides. |
-| [`veryfront/metrics`](./veryfront/metrics.md) | Runtime/application metric hooks for project code. |
+| [`veryfront/metrics`](./veryfront/metrics.md) | Runtime and application metric hooks for project code. |
 | [`veryfront/middleware`](./veryfront/middleware.md) | HTTP middleware. |
 | [`veryfront/oauth`](./veryfront/oauth.md) | OAuth provider helpers. |
 | [`veryfront/observability`](./veryfront/observability.md) | Tracing, metrics, errors, and logs. |
+| [`veryfront/platform`](./veryfront/platform.md) | Cross-runtime abstraction layer for adapter detection, process/env/signal compat, filesystem and KV abstractions for Deno, Node.js, Bun, and Cloudflare Workers. |
 | [`veryfront/prompt`](./veryfront/prompt.md) | MCP prompt definitions. |
 | [`veryfront/provider`](./veryfront/provider.md) | Model provider registry. |
 | [`veryfront/resource`](./veryfront/resource.md) | MCP resource definitions. |

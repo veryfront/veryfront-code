@@ -122,5 +122,80 @@ describe("eval/factory", () => {
       Error,
       "input",
     );
+
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          repetitions: 10_001,
+        }),
+      Error,
+      "repetitions",
+    );
+
+    for (
+      const input of [
+        { tags: "quality" },
+        { metrics: {} },
+        { metadata: [] },
+        { check: "not-a-function" },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          evalAgent({
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+            ...input,
+          } as never),
+        Error,
+      );
+    }
+  });
+
+  it("copies mutable definition collections and rejects malformed definitions", () => {
+    const tags = ["quality"];
+    const metadata = { owner: "platform" };
+    const configuredMetrics = [metrics.answer.exactMatch()];
+    const definition = evalAgent({
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+      tags,
+      metadata,
+      metrics: configuredMetrics,
+    });
+
+    tags.push("mutated");
+    metadata.owner = "mutated";
+    configuredMetrics.length = 0;
+
+    assertEquals(definition.tags, ["quality"]);
+    assertEquals(definition.metadata, { owner: "platform" });
+    assertEquals(definition.metrics.length, 1);
+    assertEquals(isEvalDefinition({ ...definition, repetitions: Number.NaN }), false);
+    assertEquals(isEvalDefinition({ ...definition, tags: "quality" }), false);
+    assertEquals(
+      isEvalDefinition({ ...definition, dataset: { kind: "remote", load() {} } }),
+      false,
+    );
+    assertEquals(isEvalDefinition({ ...definition, check: "not-a-function" }), false);
+    assertEquals(
+      isEvalDefinition({
+        ...definition,
+        metrics: [{ ...definition.metrics[0], family: "unknown" }],
+      }),
+      false,
+    );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metrics: [{ ...definition.metrics[0], severity: "unknown" }],
+        } as never),
+      Error,
+      "metric definitions",
+    );
   });
 });

@@ -5,20 +5,31 @@ import { NETWORK_ERROR } from "#veryfront/errors";
 
 /** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
+  /** Resource identifier. */
   id: string;
+  /** Project identifier. */
   project_id: string;
+  /** Implementation kind value. */
   implementation_kind: string;
+  /** Worker key value. */
   worker_key: string;
+  /** Display name. */
   display_name?: string | null;
+  /** Status. */
   status?: string;
+  /** Additional structured metadata. */
   metadata?: unknown | null;
+  /** Last heartbeat timestamp. */
   last_heartbeat_at?: string | null;
+  /** Created timestamp. */
   created_at?: string;
+  /** Updated timestamp. */
   updated_at?: string;
 }
 
 /** Public API contract for external agent worker request snapshot. */
 export interface ExternalAgentWorkerRequestSnapshot {
+  /** Messages associated with the operation. */
   messages: Array<{
     id: string;
     role: string;
@@ -26,46 +37,79 @@ export interface ExternalAgentWorkerRequestSnapshot {
     metadata?: Record<string, unknown>;
     createdAt?: string;
   }>;
+  /** Tools value. */
   tools: unknown[];
+  /** Context supplied to the operation. */
   context: unknown[];
+  /** Forwarded props value. */
   forwardedProps?: Record<string, unknown>;
+  /** Trace context value. */
   traceContext?: unknown;
 }
 
 /** Public API contract for external agent worker session. */
 export interface ExternalAgentWorkerSession {
+  /** Resource identifier. */
   id: string;
+  /** Run identifier. */
   run_id: string;
+  /** Implementation kind value. */
   implementation_kind: string;
+  /** Worker identifier. */
   worker_id: string | null;
+  /** Session key value. */
   session_key: string;
+  /** Status. */
   status: string;
+  /** Additional structured metadata. */
   metadata?: unknown | null;
+  /** Created timestamp. */
   created_at?: string;
+  /** Updated timestamp. */
   updated_at?: string;
+  /** Ended timestamp. */
   ended_at?: string | null;
 }
 
 /** Public API contract for external agent worker run. */
 export interface ExternalAgentWorkerRun {
+  /** Run identifier. */
   run_id: string;
+  /** Conversation identifier. */
   conversation_id: string;
+  /** Message identifier. */
   message_id: string;
+  /** Project identifier. */
   project_id: string | null;
+  /** Agent identifier. */
   agent_id: string;
+  /** Status. */
   status: string;
+  /** Request snapshot value. */
   request_snapshot: ExternalAgentWorkerRequestSnapshot | null;
+  /** Source target kind value. */
   source_target_kind?: string | null;
+  /** Source target environment identifier. */
   source_target_environment_id?: string | null;
+  /** Source target branch identifier. */
   source_target_branch_id?: string | null;
+  /** Source target release version value. */
   source_target_release_version?: string | null;
+  /** Runtime target kind value. */
   runtime_target_kind?: string | null;
+  /** Runtime target environment identifier. */
   runtime_target_environment_id?: string | null;
+  /** Runtime target branch identifier. */
   runtime_target_branch_id?: string | null;
+  /** Latest event identifier. */
   latest_event_id: number;
+  /** Latest external event sequence value. */
   latest_external_event_sequence: number;
+  /** Lease owner value. */
   lease_owner: string | null;
+  /** Lease expires timestamp. */
   lease_expires_at: string | null;
+  /** Worker session value. */
   worker_session: ExternalAgentWorkerSession | null;
 }
 
@@ -85,7 +129,7 @@ function externalAgentWorker(v: SchemaValidator): Schema<ExternalAgentWorker> {
 }
 
 /** Zod schema for external agent worker. */
-export const ExternalAgentWorkerSchema = lazySchema(
+export const ExternalAgentWorkerSchema: Schema<ExternalAgentWorker> = lazySchema(
   defineSchema<ExternalAgentWorker>(externalAgentWorker),
 );
 
@@ -114,9 +158,10 @@ function externalAgentWorkerRequestSnapshot(
 }
 
 /** Zod schema for external agent worker request snapshot. */
-export const ExternalAgentWorkerRequestSnapshotSchema = lazySchema(
-  defineSchema<ExternalAgentWorkerRequestSnapshot>(externalAgentWorkerRequestSnapshot),
-);
+export const ExternalAgentWorkerRequestSnapshotSchema: Schema<ExternalAgentWorkerRequestSnapshot> =
+  lazySchema(
+    defineSchema<ExternalAgentWorkerRequestSnapshot>(externalAgentWorkerRequestSnapshot),
+  );
 
 function externalAgentWorkerSession(v: SchemaValidator): Schema<ExternalAgentWorkerSession> {
   return v.object({
@@ -134,7 +179,7 @@ function externalAgentWorkerSession(v: SchemaValidator): Schema<ExternalAgentWor
 }
 
 /** Zod schema for external agent worker session. */
-export const ExternalAgentWorkerSessionSchema = lazySchema(
+export const ExternalAgentWorkerSessionSchema: Schema<ExternalAgentWorkerSession> = lazySchema(
   defineSchema<ExternalAgentWorkerSession>(externalAgentWorkerSession),
 );
 
@@ -163,7 +208,7 @@ function externalAgentWorkerRun(v: SchemaValidator): Schema<ExternalAgentWorkerR
 }
 
 /** Zod schema for external agent worker run. */
-export const ExternalAgentWorkerRunSchema = lazySchema(
+export const ExternalAgentWorkerRunSchema: Schema<ExternalAgentWorkerRun> = lazySchema(
   defineSchema<ExternalAgentWorkerRun>(externalAgentWorkerRun),
 );
 
@@ -178,64 +223,95 @@ const RegisterExternalAgentWorkerResponseSchema = lazySchema(
 
 /** Options accepted by external agent worker client. */
 export interface ExternalAgentWorkerClientOptions {
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Fetch implementation used for API requests. */
   fetch?: typeof fetch;
 }
 
 /** Input payload for register external agent worker. */
 export interface RegisterExternalAgentWorkerInput {
+  /** Project reference value. */
   projectReference: string;
+  /** Implementation kind value. */
   implementationKind: string;
+  /** Implementation display name value. */
   implementationDisplayName: string;
+  /** Worker key value. */
   workerKey: string;
+  /** Display name value. */
   displayName?: string;
+  /** Additional structured metadata. */
   metadata?: Record<string, unknown>;
 }
 
 /** Input payload for claim external agent worker run. */
 export interface ClaimExternalAgentWorkerRunInput {
+  /** Worker ID value. */
   workerId: string;
+  /** Lease duration seconds value. */
   leaseDurationSeconds: number;
 }
 
 /** Input payload for record external agent worker session. */
 export interface RecordExternalAgentWorkerSessionInput {
+  /** Worker ID value. */
   workerId: string;
+  /** Run ID value. */
   runId: string;
+  /** Session key value. */
   sessionKey: string;
+  /** Status. */
   status?: "active" | "completed" | "failed" | "cancelled";
+  /** Additional structured metadata. */
   metadata?: Record<string, unknown>;
 }
 
 /** Input payload for complete external agent worker run. */
 export interface CompleteExternalAgentWorkerRunInput {
+  /** Run ID value. */
   runId: string;
+  /** Status. */
   status: "completed" | "failed" | "cancelled";
+  /** Terminal error code value. */
   terminalErrorCode?: string;
+  /** Terminal error message value. */
   terminalErrorMessage?: string;
 }
 
 /** Input payload for append external agent worker run events. */
 export interface AppendExternalAgentWorkerRunEventsInput {
+  /** Conversation ID value. */
   conversationId: string;
+  /** Run ID value. */
   runId: string;
+  /** Events value. */
   events: unknown[];
+  /** Expected previous external event sequence value. */
   expectedPreviousExternalEventSequence?: number;
 }
 
 /** Public API contract for external agent worker client. */
 export interface ExternalAgentWorkerClient {
+  /** Performs the register worker operation. */
   registerWorker(input: RegisterExternalAgentWorkerInput): Promise<ExternalAgentWorker>;
+  /** Performs the heartbeat worker operation. */
   heartbeatWorker(workerId: string): Promise<ExternalAgentWorker>;
+  /** Performs the claim run operation. */
   claimRun(input: ClaimExternalAgentWorkerRunInput): Promise<ExternalAgentWorkerRun | null>;
+  /** Performs the renew lease operation. */
   renewLease(input: ClaimExternalAgentWorkerRunInput & { runId: string }): Promise<
     ExternalAgentWorkerRun | null
   >;
+  /** Records session. */
   recordSession(input: RecordExternalAgentWorkerSessionInput): Promise<
     ExternalAgentWorkerSession
   >;
+  /** Appends run events. */
   appendRunEvents(input: AppendExternalAgentWorkerRunEventsInput): Promise<void>;
+  /** Performs the complete run operation. */
   completeRun(input: CompleteExternalAgentWorkerRunInput): Promise<void>;
 }
 

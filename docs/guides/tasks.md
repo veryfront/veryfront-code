@@ -71,12 +71,15 @@ interface TaskContext {
   env: Record<string, string>;
   config: Record<string, unknown>;
   projectId?: string;
+  environmentId?: string;
 }
 ```
 
-- **`env`**: filtered environment variables (use `envAllowlist` to restrict)
-- **`config`**: run configuration (passed when run in the cloud)
-- **`projectId`**: project identifier (available in cloud context)
+- **`env`**: validated environment variables. Veryfront and tenant control
+  variables are excluded. Use `envAllowlist` to expose only named variables.
+- **`config`**: private mutable snapshot of the invocation configuration.
+- **`projectId`**: project identifier when the runtime supplies one.
+- **`environmentId`**: environment identifier when the runtime supplies one.
 
 ## Discovery
 
@@ -85,10 +88,12 @@ Tasks are discovered automatically from the `tasks/` directory:
 ```
 tasks/
   sync-data.ts           → task ID: "sync-data"
-  reports/weekly.ts      → task ID: "reports-weekly"
+  reports/weekly.ts      → task ID: "reports/weekly"
 ```
 
-File extensions `.ts`, `.tsx`, `.js`, `.jsx` are supported. Test files and `node_modules` are ignored.
+Task IDs use lowercase letters, numbers, dots, underscores, slashes, and hyphens.
+File extensions `.ts`, `.tsx`, `.js`, `.jsx`, and `.mjs` are supported. Test
+files and `node_modules` are ignored.
 
 ## Running tasks
 
@@ -108,7 +113,7 @@ Tasks with `schedulable: true` can be targeted by runs and schedules:
 import { VeryfrontRunsClient } from "veryfront/runs";
 
 const runs = new VeryfrontRunsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
+  authToken: "<TOKEN>",
   projectReference: "my-project",
 });
 
@@ -130,8 +135,8 @@ Run the task locally first:
 veryfront task sync-data
 ```
 
-A passing task prints any `console.log` output, exits with status `0`, and
-returns the value you returned from `run` as the final JSON line.
+A passing task prints any `console.log` output, reports its duration, prints a
+sanitized `Result:` value when `run` returns one, and exits with status `0`.
 
 For cloud execution, create a run that targets the task and check Studio for
 a `completed` status. See the verification block in [Runs](./runs.md) for the

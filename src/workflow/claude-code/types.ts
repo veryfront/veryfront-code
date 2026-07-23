@@ -10,7 +10,7 @@
 export type ClaudeCodeMode =
   | "code" // read-write (maps to SDK acceptEdits)
   | "analysis" // read-only (maps to SDK plan)
-  | "custom"; // user-specified (maps to SDK default)
+  | "custom"; // maps to SDK default permission behavior
 
 /**
  * File change from workspace operations
@@ -32,9 +32,23 @@ export interface ClaudeCodeResult {
   iterations: number;
   /** Final text response */
   response?: string;
-  /** Files modified */
+  /** File paths observed in Write or Edit tool requests. */
+  filesTargeted?: string[];
+  /** Shell commands observed in Bash tool requests. */
+  commandsRequested?: string[];
+  /**
+   * File paths observed in Write or Edit tool requests.
+   *
+   * @deprecated The integration cannot verify that a requested write completed.
+   * Use `filesTargeted` for the accurate name.
+   */
   filesModified: string[];
-  /** Commands executed */
+  /**
+   * Shell commands observed in Bash tool requests.
+   *
+   * @deprecated The integration cannot verify that a requested command ran.
+   * Use `commandsRequested` for the accurate name.
+   */
   commandsExecuted: string[];
   /** Detected file changes (from workspace sync) */
   changes?: FileChange[];
@@ -52,11 +66,11 @@ export interface ClaudeCodeToolInput {
   task: string;
   /** Tool mode (default: "code") */
   mode?: ClaudeCodeMode;
-  /** Maximum turns (default: 20) */
+  /** Maximum turns, from 1 through 100 (default: 20) */
   maxTurns?: number;
   /** Files to focus on */
   files?: string[];
-  /** Additional context to include */
+  /** JSON-serializable context to include */
   context?: Record<string, unknown>;
   /** Custom system prompt */
   system?: string;

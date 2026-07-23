@@ -43,6 +43,27 @@ describe("chat/upload-handler", () => {
       assertEquals(res.status, 200, "explicit unauthenticated mode should still work");
     }));
 
+  it("rejects invalid resource-limit configuration before creating storage", () =>
+    withTempDir((dir) => {
+      for (const maxFileSize of [0, -1, Number.POSITIVE_INFINITY, Number.NaN]) {
+        assert(
+          (() => {
+            try {
+              createChatUploadHandler({
+                storage: new LocalBlobStorage(dir),
+                authorize: () => true,
+                maxFileSize,
+              });
+              return false;
+            } catch (error) {
+              return error instanceof Error && error.message.includes("maxFileSize");
+            }
+          })(),
+          `maxFileSize=${maxFileSize} should be rejected`,
+        );
+      }
+    }));
+
   describe("POST", () => {
     it("stores a file and returns id, url, name, mediaType, and size", () =>
       withTempDir(async (dir) => {
@@ -98,7 +119,7 @@ describe("chat/upload-handler", () => {
 
     it("prefers the backend's own url when the store provides one (cloud/S3)", () =>
       withTempDir(async (dir) => {
-        // A store that returns an external URL from stat() — like a signed CDN url.
+        // A store that returns an external URL from stat(), like a signed CDN URL.
         const inner = new LocalBlobStorage(dir);
         const store: BlobStorage = {
           put: (data: string | Uint8Array | Blob | ReadableStream, opts?: StoreBlobOptions) =>
@@ -121,6 +142,35 @@ describe("chat/upload-handler", () => {
           "an external store url should be used verbatim, not our GET fallback",
         );
       }));
+
+    it("does not pass an invalid storage-issued id back into storage", async () => {
+      let deletedId: string | undefined;
+      const store: BlobStorage = {
+        put: () =>
+          Promise.resolve({
+            __kind: "blob",
+            id: "../unsafe",
+            size: 1,
+            mimeType: "text/plain",
+            createdAt: new Date(0),
+          }),
+        getStream: () => Promise.resolve(null),
+        getText: () => Promise.resolve(null),
+        getBytes: () => Promise.resolve(null),
+        delete: (id: string) => {
+          deletedId = id;
+          return Promise.resolve();
+        },
+        exists: () => Promise.resolve(false),
+        stat: () => Promise.resolve(null),
+      };
+      const { POST } = createChatUploadHandler({ storage: store, authorize: () => true });
+
+      const response = await POST(postFile(txt("x")));
+
+      assertEquals(response.status, 502);
+      assertEquals(deletedId, undefined);
+    });
 
     it("sanitizes path separators and control characters out of the filename", () =>
       withTempDir(async (dir) => {
@@ -159,10 +209,52 @@ describe("chat/upload-handler", () => {
           new Request("http://localhost:3000/api/uploads", {
             method: "POST",
             body: form,
-            headers: { "content-length": "999" },
+            headers: { "content-length": "2000000" },
           }),
         );
         assertEquals(res.status, 413, "declared oversized bodies should be rejected early");
+      }));
+
+    it("bounds multipart bodies even when Content-Length is omitted", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          maxFileSize: 8,
+          authorize: () => true,
+        });
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(1_100_000));
+            controller.close();
+          },
+        });
+        const res = await POST(
+          new Request("http://localhost:3000/api/uploads", {
+            method: "POST",
+            body,
+            headers: { "content-type": "multipart/form-data; boundary=test" },
+          }),
+        );
+
+        assertEquals(res.status, 413, "streamed bodies must be bounded before multipart parsing");
+      }));
+
+    it("returns 400 for malformed multipart bodies", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+        });
+        const res = await POST(
+          new Request("http://localhost:3000/api/uploads", {
+            method: "POST",
+            body: "not multipart",
+            headers: { "content-type": "text/plain" },
+          }),
+        );
+
+        assertEquals(res.status, 400);
+        assertEquals(await res.json(), { error: "Invalid multipart form data" });
       }));
 
     it("returns 400 when no file field is present", () =>
@@ -249,6 +341,35 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 404, "a missing blob should be a 404");
       }));
 
+    it("rejects malformed storage metadata before opening a stream", async () => {
+      let streamRequested = false;
+      const store: BlobStorage = {
+        put: () => Promise.reject(new Error("unused")),
+        getStream: () => {
+          streamRequested = true;
+          return Promise.resolve(null);
+        },
+        getText: () => Promise.resolve(null),
+        getBytes: () => Promise.resolve(null),
+        delete: () => Promise.resolve(),
+        exists: () => Promise.resolve(true),
+        stat: () =>
+          Promise.resolve({
+            __kind: "blob",
+            id: "file-1",
+            size: Number.NaN,
+            mimeType: "text/plain",
+            createdAt: new Date(0),
+          }),
+      };
+      const { GET } = createChatUploadHandler({ storage: store, authorize: () => true });
+
+      const response = await GET(new Request("http://localhost:3000/api/uploads?id=file-1"));
+
+      assertEquals(response.status, 502);
+      assertEquals(streamRequested, false);
+    });
+
     it("lists the adapter's stored files (newest first) when no id is given", () =>
       withTempDir(async (dir) => {
         const { POST, GET } = createChatUploadHandler({
@@ -290,9 +411,25 @@ describe("chat/upload-handler", () => {
         );
       }));
 
+    it("caps list responses to the configured newest-file window", () =>
+      withTempDir(async (dir) => {
+        const { POST, GET } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: () => true,
+          maxListedFiles: 2,
+        });
+        await POST(postFile(txt("one", "one.txt")));
+        await POST(postFile(txt("two", "two.txt")));
+        await POST(postFile(txt("three", "three.txt")));
+
+        const response = await GET(new Request("http://localhost:3000/api/uploads"));
+        const body = await response.json() as { items: unknown[] };
+        assertEquals(body.items.length, 2);
+      }));
+
     it("returns 501 with an empty list when the backend cannot list", () =>
       withTempDir(async () => {
-        // A minimal store without `list` — feature detection must not throw.
+        // A minimal store without `list`; feature detection must not throw.
         const store: BlobStorage = {
           put: () =>
             Promise.resolve({
@@ -338,7 +475,7 @@ describe("chat/upload-handler", () => {
         assertEquals(served.status, 404, "the file should be gone after delete");
       }));
 
-    it("is idempotent — deleting an unknown id still succeeds", () =>
+    it("is idempotent: deleting an unknown id still succeeds", () =>
       withTempDir(async (dir) => {
         const { DELETE } = createChatUploadHandler({
           storage: new LocalBlobStorage(dir),

@@ -8,6 +8,9 @@ export type {
   HMRConnectedMessage,
   HMRMessage,
   HMRMessageType,
+  HMRPingMessage,
+  HMRPongMessage,
+  HMRProtocolMessage,
   HMRReloadMessage,
   HMRUpdateMessage,
 } from "./message-handler.ts";

@@ -92,6 +92,7 @@ export class CsrfHandler extends BaseHandler {
     // Check exclude paths
     if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {
       for (const excludePath of csrfConfig.excludePaths) {
+        if (!excludePath) continue;
         if (pathname === excludePath || pathname.startsWith(excludePath + "/")) {
           return this.continue();
         }
@@ -104,7 +105,7 @@ export class CsrfHandler extends BaseHandler {
 
     if (!validateCsrf(req, options)) {
       return this.respond(
-        new Response("Forbidden – invalid or missing CSRF token", { status: 403 }),
+        new Response("Forbidden - invalid or missing CSRF token", { status: 403 }),
       );
     }
 

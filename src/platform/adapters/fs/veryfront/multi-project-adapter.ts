@@ -1,6 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
+import {
+  type DirectoryEntry,
+  FS_ADAPTER_KIND,
+  type FSAdapter,
+  type FSAdapterConfig,
+} from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
@@ -10,6 +15,7 @@ import {
   clearRequestScopedFileCache,
   type RequestContext,
 } from "./request-context.ts";
+import { classifyFilesystemError, classifyFilesystemReason } from "./telemetry.ts";
 export {
   clearRequestScopedFileCache,
   getCurrentRequestContext,
@@ -27,6 +33,7 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly [FS_ADAPTER_KIND] = "veryfront-multi-project" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
 
@@ -62,12 +69,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const environmentName = options?.environmentName ?? null;
 
     logger.debug("runWithContext START", {
-      projectSlug,
       hasToken: !!token,
       productionMode,
-      releaseId: productionMode ? releaseId : undefined,
-      branch: productionMode ? undefined : branch,
-      environmentName,
+      sourceType: productionMode ? environmentName ? "environment" : "release" : "branch",
     });
 
     const context: RequestContext = {
@@ -81,12 +85,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
       fileCache: new Map<string, string>(),
     };
 
-    logger.debug("asyncLocalStorage.run START", { projectSlug });
+    logger.debug("asyncLocalStorage.run START");
 
     return asyncLocalStorage.run(context, async () => {
       logger.debug("Inside asyncLocalStorage.run callback", {
-        projectSlug,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        durationMs: Math.round(performance.now() - startTime),
       });
 
       // Release asset manifest fetchers are registered by the concrete adapter.
@@ -98,8 +101,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       const result = await runWithCacheBatching(fn);
 
       logger.debug("runWithContext callback complete", {
-        projectSlug,
-        totalDuration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        durationMs: Math.round(performance.now() - startTime),
       });
 
       return result;
@@ -140,12 +142,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const environmentName = context.environmentName ?? null;
 
     logger.debug("getAdapter RELEASE_ID_CHECK", {
-      projectSlug: context.projectSlug,
       productionMode,
-      releaseId,
-      environmentName,
-      branch: context.branch,
       hasReleaseId: !!releaseId,
+      sourceType: productionMode ? environmentName ? "environment" : "release" : "branch",
     });
 
     const adapter = await this.manager.getAdapter(
@@ -159,8 +158,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     );
 
     logger.debug("getAdapter DONE", {
-      projectSlug: context.projectSlug,
-      duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+      durationMs: Math.round(performance.now() - startTime),
     });
 
     return adapter;
@@ -230,7 +228,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const cleared = clearRequestScopedFileCache();
     if (cleared > 0) {
       logger.debug("Cleared request-scoped file cache after source snapshot refresh", {
-        reason,
+        reason: classifyFilesystemReason(reason),
         cleared,
       });
     }
@@ -252,7 +250,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
       const adapter = await this.getAdapter();
       return adapter.getProjectData?.();
     } catch (error) {
-      logger.debug("getProjectData failed", { error });
+      logger.debug("getProjectData failed", {
+        errorClass: classifyFilesystemError(error),
+      });
       return undefined;
     }
   }
@@ -262,7 +262,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
       const adapter = await this.getAdapter();
       return adapter.getFilePathByEntityId?.(entityId);
     } catch (error) {
-      logger.debug("getFilePathByEntityId failed", { entityId, error });
+      logger.debug("getFilePathByEntityId failed", {
+        errorClass: classifyFilesystemError(error),
+      });
       return undefined;
     }
   }
@@ -282,7 +284,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       return files;
     } catch (error) {
       logger.warn("getAllSourceFiles failed", {
-        error: error instanceof Error ? error.message : String(error),
+        errorClass: classifyFilesystemError(error),
       });
       return [];
     }

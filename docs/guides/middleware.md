@@ -47,13 +47,41 @@ Forwarded client-address headers are ignored by default. If the app is not
 behind a trusted reverse proxy, use `keyGenerator` with a trusted client or
 account identifier.
 
+Use Redis when multiple runtime processes must share counters:
+
+```ts
+import { rateLimit, RedisRateLimitStore } from "veryfront/middleware";
+
+const redisUrl = Deno.env.get("REDIS_URL");
+if (!redisUrl) throw new Error("REDIS_URL is required");
+
+const rateLimitStore = new RedisRateLimitStore({
+  url: redisUrl,
+  connectTimeoutMs: 5_000,
+  operationTimeoutMs: 5_000,
+});
+
+export const limiter = rateLimit({
+  maxRequests: 100,
+  windowMs: 60_000,
+  store: rateLimitStore,
+});
+
+export async function stopRateLimitStore(): Promise<void> {
+  await rateLimitStore.destroy();
+}
+```
+
 ### Logging
 
 ```ts
 import { logger } from "veryfront/middleware";
 
-const log = logger({ format: "combined" }); // "combined" | "common" | "short" | "dev"
+const log = logger({ format: "combined" });
 ```
+
+Supported formats are `combined`, `common`, `dev`, `short`, `tiny`, and
+`json`.
 
 ### Timeout
 
@@ -82,39 +110,45 @@ const pipeline = new MiddlewarePipeline()
 Apply middleware only to matching URL patterns:
 
 ```ts
+import { cors, MiddlewarePipeline, rateLimit, timeout } from "veryfront/middleware";
+
 const pipeline = new MiddlewarePipeline()
   .use(cors({ origin: "*" }))
   .useFor(/^\/api\//, rateLimit({ maxRequests: 50, windowMs: 60_000 }))
   .useFor(/^\/api\/chat\//, timeout({ timeoutMs: 120_000 }));
 ```
 
-### Execute the pipeline
+### Run middleware around a route
 
 ```ts
 // app/api/users/route.ts
+import { MiddlewarePipeline, rateLimit } from "veryfront/middleware";
+
+const pipeline = new MiddlewarePipeline()
+  .use(rateLimit({ maxRequests: 100, windowMs: 60_000 }));
+
 const users = [{ id: "user_123", name: "Ada Lovelace" }];
 
-export async function GET(request: Request) {
-  const result = await pipeline.execute(request);
-  if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
-
-  return Response.json(users);
+export function GET(request: Request): Promise<Response> {
+  return pipeline.handle(request, () => Response.json(users));
 }
 ```
 
-The same pipeline can run in a pages router handler by passing `ctx.request`:
+The same pattern works in a pages router handler. Pass `ctx.request` to the
+pipeline and return the route response from the final handler:
 
 ```ts
 // pages/api/users.ts
 import type { APIContext } from "veryfront";
+import { MiddlewarePipeline, rateLimit } from "veryfront/middleware";
+
+const pipeline = new MiddlewarePipeline()
+  .use(rateLimit({ maxRequests: 100, windowMs: 60_000 }));
 
 const users = [{ id: "user_123", name: "Ada Lovelace" }];
 
-export async function GET(ctx: APIContext) {
-  const result = await pipeline.execute(ctx.request);
-  if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
-
-  return ctx.json(users);
+export function GET(ctx: APIContext): Promise<Response> {
+  return pipeline.handle(ctx.request, () => ctx.json(users));
 }
 ```
 
@@ -124,42 +158,53 @@ Try it with the dev server running:
 curl -i http://localhost:3000/api/users
 ```
 
-The response should include any headers added by the middleware that matched the request. If a middleware returns a `Response`, the route handler stops there and returns that response.
+The response should include any headers added by middleware that matched the
+request. If middleware returns a `Response` without calling `next()`, the
+pipeline does not invoke the route handler.
+
+`execute(request)` runs without a final route handler. It returns a 404
+response when every middleware calls `next()`. Use `handle()` when middleware
+must wrap a separate route handler.
 
 ### Cleanup callbacks
 
-Register teardown logic that runs after the response is sent:
+`onTeardown()` registers cleanup for that pipeline instance. Call
+`teardown()` when code that created the pipeline shuts down. It does not run
+after each response.
 
 ```ts
-pipeline.onTeardown(async () => {
-  await flushMetrics();
-});
+import { MiddlewarePipeline } from "veryfront/middleware";
+
+const pipeline = new MiddlewarePipeline();
+const backgroundWork = new AbortController();
+
+pipeline.onTeardown(() => backgroundWork.abort());
+
+export async function stopPipeline(): Promise<void> {
+  await pipeline.teardown();
+}
 ```
 
 ## Custom middleware
 
-A middleware is a function that receives a context object and a `next` function. Access the request via `c.request`:
+A middleware receives a context object and a `next` function. Access the
+request through `context.request`:
 
 ```ts
-import type { MiddlewareHandler } from "veryfront/middleware";
+import { type MiddlewareHandler, MiddlewarePipeline } from "veryfront/middleware";
 
-const auth: MiddlewareHandler = async (c, next) => {
-  const token = c.request.headers.get("authorization");
-  if (!token) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+const requireRequestId: MiddlewareHandler = (context, next) => {
+  if (!context.request.headers.has("x-request-id")) {
+    return Response.json(
+      { error: "Missing x-request-id header" },
+      { status: 400 },
+    );
   }
 
-  // Continue to the next middleware or route handler
   return next();
 };
-```
 
-Add it to a pipeline:
-
-```ts
-const pipeline = new MiddlewarePipeline()
-  .use(auth)
-  .use(cors({ origin: "*" }));
+export const pipeline = new MiddlewarePipeline().use(requireRequestId);
 ```
 
 ## Project-wide root middleware
@@ -170,18 +215,28 @@ Add `middleware.ts`, `middleware.js`, or `middleware.mjs` at the project root to
 // middleware.ts
 import type { MiddlewareHandler } from "veryfront/middleware";
 
-const requireAccess: MiddlewareHandler = async (c, next) => {
-  if (!c.request.headers.has("authorization")) {
+const requireServiceToken: MiddlewareHandler = (context, next) => {
+  const expectedToken = context.env.API_TOKEN;
+  if (typeof expectedToken !== "string" || expectedToken.length === 0) {
+    return Response.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
+  }
+
+  const authorization = context.request.headers.get("authorization");
+  if (authorization !== `Bearer ${expectedToken}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const response = await next();
-  response?.headers.set("x-project-middleware", "applied");
-  return response;
+  return next();
 };
 
-export default requireAccess;
+export default requireServiceToken;
 ```
+
+Store `API_TOKEN` in the project environment. Use an identity provider for
+end-user authentication instead of a shared service token.
 
 Root middleware has the same ordering and short-circuit contract in local development, dedicated production servers, and the shared hosted runtime. The shared runtime resolves and compiles the file only after it has authenticated the project and selected its release or preview branch. Middleware receives only that request's project environment through `c.env`.
 
@@ -204,3 +259,6 @@ curl -i http://localhost:3000/api/protected \
 
 For CORS, include an `Origin` header and confirm
 `Access-Control-Allow-Origin` is set on the response.
+
+For complete types and options, see the
+[`veryfront/middleware` API reference](../api-reference/veryfront/middleware.md).

@@ -1,5 +1,5 @@
 import { buildGitHubDirCacheKey } from "#veryfront/cache";
-import { logger } from "#veryfront/utils";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
@@ -20,12 +20,12 @@ export class GitHubDirectoryOperations {
     const cacheKey = buildGitHubDirCacheKey(this.config.ref, normalizedPath);
 
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
-    if (cached) return cached;
+    if (cached !== undefined) return cached;
 
-    logger.debug(`${LOG_PREFIX} Reading directory`, { path: normalizedPath });
+    logger.debug(`${LOG_PREFIX} Reading directory`);
 
     if (normalizedPath && !this.statOps.isDirectory(normalizedPath)) {
-      logger.debug(`${LOG_PREFIX} Directory not found`, { path: normalizedPath });
+      logger.debug(`${LOG_PREFIX} Directory not found`);
       return [];
     }
 

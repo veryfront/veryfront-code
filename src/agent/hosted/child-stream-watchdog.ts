@@ -5,15 +5,20 @@ export type HostedChildStreamWatchdogPhase = "tool_running" | "post_tool_idle" |
 
 /** State for hosted child stream watchdog. */
 export interface HostedChildStreamWatchdogState {
+  /** Phase value. */
   phase: HostedChildStreamWatchdogPhase;
+  /** Timeout ms value. */
   timeoutMs: number;
 }
 
 /** Error shape for hosted child stream idle timeout. */
 export class HostedChildStreamIdleTimeoutError extends Error {
+  /** Timeout ms value. */
   readonly timeoutMs: number;
+  /** Phase value. */
   readonly phase: HostedChildStreamWatchdogPhase;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(input: HostedChildStreamWatchdogState) {
     super(
       `Child fork stream stalled after ${

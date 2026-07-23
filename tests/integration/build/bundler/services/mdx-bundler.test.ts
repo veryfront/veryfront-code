@@ -62,7 +62,7 @@ This is a simple MDX document.
         assertExists(output);
 
         assertEquals(output.type, "js");
-        assertEquals(output.content.includes("React"), true);
+        assertEquals(output.content.includes('from "react/jsx-runtime"'), true);
         assertEquals(output.content.includes("export default function"), true);
         assertEquals(output.content.includes("export const meta"), true);
       });
@@ -196,7 +196,7 @@ import NonExistent from "./non-existent.js"
 
         assertEquals(result.errors.length > 0, true);
         const hasImportError = result.errors.some((err) =>
-          err.message.includes("Cannot find module")
+          err.message.includes("Cannot find local module")
         );
         assertEquals(hasImportError, true);
       });
@@ -204,6 +204,10 @@ import NonExistent from "./non-existent.js"
 
     it("tracks dependencies", async () => {
       await withTestContext("mdx-dependencies", async (context) => {
+        await writeTextFile(
+          join(context.projectDir, "component.tsx"),
+          "export default function Component() { return null; }",
+        );
         const content = `---
 title: Test
 ---
@@ -224,7 +228,8 @@ import Component from "./component.tsx"
 
         const deps = result.dependencies.get(source.path);
         assertExists(deps);
-        assertEquals(deps.includes("react"), true);
+        assertEquals(deps.includes("react/jsx-runtime"), true);
+        assertEquals(deps.some((dependency) => dependency.endsWith("/component.tsx")), true);
       });
     });
 
@@ -288,7 +293,7 @@ Using custom bundler.`;
         });
 
         assertExists(result.code);
-        assertEquals(result.code.includes("React"), true);
+        assertEquals(result.code.includes('from "react/jsx-runtime"'), true);
         assertEquals(result.code.includes("export default"), true);
 
         assertExists(result.frontmatter);

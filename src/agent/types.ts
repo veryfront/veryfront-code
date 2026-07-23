@@ -71,22 +71,29 @@ export type Suggestion =
     task?: never;
   };
 
-/** Public API contract for suggestions. */
+/** Suggested prompts or tasks shown before an agent conversation starts. */
 export interface Suggestions {
+  /** Optional message displayed above the suggestions. */
   welcomeMessage?: string;
+  /** Ordered prompts or tasks to present to the user. */
   suggestions: Suggestion[];
 }
 
 /** Policy for tools exposed by one MCP server. */
 export interface AgentMcpToolPolicy {
+  /** Tool names that may be exposed. Omit to allow every non-denied tool. */
   allow?: string[];
+  /** Tool names that must not be exposed. */
   deny?: string[];
+  /** Approval policy for tools from this server. */
   approval?: "never";
 }
 
 /** HTTP transport configuration for one MCP server. */
 export interface AgentMcpHttpTransport {
+  /** Selects the HTTP MCP transport. */
   type: "http";
+  /** Server URL or a request-aware URL resolver. */
   url: string | ((context?: ToolExecutionContext) => string | Promise<string>);
 }
 
@@ -106,32 +113,46 @@ export type AgentVeryfrontMcpServerKind = "veryfront-api" | "veryfront-studio";
 
 /** Veryfront-owned MCP server available to an agent. */
 export interface AgentVeryfrontMcpServerConfig {
+  /** Veryfront-owned MCP server kind. */
   kind: AgentVeryfrontMcpServerKind;
+  /** Optional stable source identifier. */
   id?: string;
+  /** Tool allow, deny, and approval policy. */
   toolPolicy?: AgentMcpToolPolicy;
 }
 
 /** HTTP MCP server available to an agent. */
 export interface AgentHttpMcpServerConfig {
+  /** Stable source identifier. */
   id: string;
+  /** Optional HTTP server discriminator. */
   kind?: "http";
+  /** HTTP transport used to reach the MCP server. */
   transport: AgentMcpHttpTransport;
+  /** Optional request authentication. */
   auth?: AgentMcpServerAuth;
+  /** Tool allow, deny, and approval policy. */
   toolPolicy?: AgentMcpToolPolicy;
+  /** Optional fetch implementation used for MCP requests. */
   fetch?: typeof fetch;
 }
 
 /** MCP server available to an agent. */
 export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpServerConfig;
 
-/** Configuration used by agent. */
+/** Configuration accepted by the public agent factory. */
 export interface AgentConfig {
+  /** Resource identifier. */
   id?: string;
   /** Human-readable display name for registry and control-plane listings. */
   name?: string;
   /** Absolute avatar URL for registry, Studio, and chat identity surfaces. */
   avatarUrl?: string;
-  /** @deprecated Use `avatarUrl`. Serialized wire payloads use `avatar_url`. */
+  /**
+   * Deprecated serialized avatar URL retained for compatibility.
+   *
+   * @deprecated Use `avatarUrl`. Serialized wire payloads use `avatar_url`.
+   */
   avatar_url?: string;
   /** Optional summary shown in registry and control-plane listings. */
   description?: string;
@@ -143,7 +164,9 @@ export interface AgentConfig {
    * configured direct provider key when one exists.
    */
   model?: ModelString;
+  /** System prompt or a lazy system-prompt resolver. */
   system: string | (() => string) | (() => Promise<string>);
+  /** Enable registered tools or provide inline tool definitions by name. */
   tools?: true | Record<string, Tool | boolean>;
   /**
    * Optional sandbox selection for runtime-owned sandbox tools such as `bash`.
@@ -163,21 +186,25 @@ export interface AgentConfig {
   providerTools?: string[];
   /** Remote MCP servers available to this agent. */
   mcpServers?: AgentMcpServerConfig[];
+  /** Maximum number of model and tool-execution steps per invocation. */
   maxSteps?: number;
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
+  /** Whether the agent prefers streaming responses. */
   streaming?: boolean;
   /**
-   * Conversation memory persisted across `stream()` / `generate()` calls on this
-   * instance. Omit for the stateless default: every call runs in isolation,
-   * which keeps concurrent fan-out on a shared instance correct. When set, the
-   * instance accumulates one shared conversation, so reuse it sequentially, not
-   * across concurrent independent runs (use a separate instance per run for
-   * that). Set `enabled: false` to force the stateless behavior explicitly.
+   * Conversation memory used by `stream()` and `generate()`. Omit it for
+   * stateless operation. Provide a built-in configuration to persist history
+   * in memory, or provide a `Memory` implementation such as the value returned
+   * by `createRedisMemory()` to attach an external store. Set `enabled: false`
+   * on a built-in configuration to force stateless behavior explicitly.
    */
-  memory?: MemoryConfig;
+  memory?: MemoryConfig | Memory<Message>;
+  /** Middleware applied in declaration order around generation. */
   middleware?: AgentMiddleware[];
+  /** Edge-runtime limits and streaming settings. */
   edge?: EdgeConfig;
+  /** Multimodal capabilities advertised by the agent. */
   multimodal?: {
     vision?: boolean;
     audio?: boolean;
@@ -210,6 +237,7 @@ export interface AgentConfig {
    * and registers the skill tools.
    */
   skills?: true | string[];
+  /** Conversation starters shown by compatible clients. */
   suggestions?: Suggestions;
   /** Set to false to disable the default security middleware */
   security?: false;
@@ -220,10 +248,15 @@ export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
 
 /** Request payload for model transport. */
 export interface ModelTransportRequest {
+  /** Agent requesting the transport. */
   agentId: string;
+  /** Model requested by configuration or the invocation override. */
   requestedModel: ModelString;
+  /** Model selected after aliases and runtime policy are applied. */
   resolvedModel: ModelString;
+  /** Context supplied to the operation. */
   context?: Record<string, unknown>;
+  /** Invocation mode that needs the transport. */
   mode: "generate" | "stream";
 }
 
@@ -234,11 +267,15 @@ export type RuntimeReasoningOption = {
   budgetTokens?: number;
 };
 
-/** Public API contract for resolved model transport. */
+/** Provider runtime and transport options selected for one invocation. */
 export interface ResolvedModelTransport {
+  /** Optional provider runtime override. */
   model?: ModelRuntime;
+  /** Additional provider request headers. */
   headers?: HeadersInit;
+  /** Provider-specific request options. */
   providerOptions?: Record<string, unknown>;
+  /** Provider-neutral reasoning settings. */
   reasoning?: RuntimeReasoningOption;
 }
 
@@ -249,17 +286,25 @@ export type ModelTransportResolver = (
 
 /** Request payload for runtime state. */
 export interface RuntimeStateRequest {
+  /** Agent whose state is being refreshed. */
   agentId: string;
+  /** Active invocation mode. */
   mode: "generate" | "stream";
+  /** Zero-based execution step. */
   step: number;
+  /** Current system prompt. */
   system: string;
+  /** Messages associated with the operation. */
   messages: Message[];
+  /** Context supplied to the operation. */
   context?: Record<string, unknown>;
 }
 
 /** State for resolved runtime. */
 export interface ResolvedRuntimeState {
+  /** Replacement system prompt for the next step. */
   system?: string;
+  /** Context supplied to the operation. */
   context?: Record<string, unknown>;
 }
 
@@ -268,16 +313,25 @@ export type RuntimeStateResolver = (
   request: RuntimeStateRequest,
 ) => ResolvedRuntimeState | undefined | Promise<ResolvedRuntimeState | undefined>;
 
+/** Input passed to the tool result hook after a tool finishes. */
 export interface ToolExecutionResultRequest {
+  /** Agent that executed the tool. */
   agentId: string;
+  /** Agent execution mode. */
   mode: "generate" | "stream";
+  /** Executed tool name. */
   toolName: string;
+  /** Provider-assigned tool call identifier. */
   toolCallId: string;
+  /** Parsed tool input. */
   input: Record<string, unknown>;
+  /** Tool output, or the error value reported for a failed tool. */
   result: unknown;
+  /** Optional execution context supplied by the runtime. */
   context?: ToolExecutionContext;
 }
 
+/** Callback invoked after a configured tool finishes. */
 export type ToolExecutionResultHandler = (
   request: ToolExecutionResultRequest,
 ) => void | Promise<void>;
@@ -305,7 +359,7 @@ export function hasArgs(part: ToolCallPart): part is ToolCallPartWithArgs {
   return "args" in part && part.args !== undefined;
 }
 
-/** Input payload for has. */
+/** Check whether a tool-call part stores its parsed input in `input`. */
 export function hasInput(part: ToolCallPart): part is ToolCallPartWithInput {
   return "input" in part && part.input !== undefined;
 }
@@ -324,6 +378,7 @@ export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
 
 /** Result returned from agent stream. */
 export interface AgentStreamResult {
+  /** Convert the agent event stream to an HTTP response. */
   toDataStreamResponse(options?: {
     headers?: Record<string, string>;
     status?: number;
@@ -331,11 +386,14 @@ export interface AgentStreamResult {
   }): Response;
 }
 
-/** Public API contract for agent. */
+/** Executable agent returned by {@link agent}. */
 export interface Agent {
+  /** Stable agent identifier. */
   id: string;
+  /** Resolved public configuration. */
   config: ResolvedAgentConfig;
 
+  /** Generate a complete response. */
   generate(input: {
     input: string | Message[];
     context?: Record<string, unknown>;
@@ -345,8 +403,15 @@ export interface Agent {
     maxOutputTokens?: number;
     /** Abort signal for cooperative cancellation. */
     abortSignal?: AbortSignal;
+    /**
+     * Memory behavior for this invocation. `configured` uses the agent's
+     * configured persistent memory. `isolated` uses only the supplied input
+     * and never reads from or writes to shared memory.
+     */
+    memoryMode?: AgentInvocationMemoryMode;
   }): Promise<AgentResponse>;
 
+  /** Stream a response and optional tool lifecycle callbacks. */
   stream(input: {
     input?: string;
     messages?: Message[];
@@ -359,18 +424,30 @@ export interface Agent {
     onChunk?: (chunk: string) => void;
     onFinish?: (response: AgentResponse) => void;
     abortSignal?: AbortSignal;
+    /**
+     * Memory behavior for this invocation. `configured` uses the agent's
+     * configured persistent memory. `isolated` uses only the supplied messages
+     * and never reads from or writes to shared memory.
+     */
+    memoryMode?: AgentInvocationMemoryMode;
   }): Promise<AgentStreamResult>;
 
   /** Convert an HTTP request into an AG-UI streaming response for route handlers. */
   respond(request: Request): Promise<Response>;
 
+  /** Return the configured memory store. */
   getMemory(): Memory<Message>;
 
+  /** Return current memory usage statistics. */
   getMemoryStats(): Promise<{
     totalMessages: number;
     estimatedTokens: number;
     type: string;
   }>;
 
+  /** Clears memory. */
   clearMemory(): Promise<void>;
 }
+
+/** Memory behavior selected for one agent invocation. */
+export type AgentInvocationMemoryMode = "configured" | "isolated";

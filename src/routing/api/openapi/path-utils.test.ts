@@ -51,6 +51,13 @@ describe("extractPathParams", () => {
       expected: [{ name: "slug", required: false, catchAll: true }],
     },
     { input: "/api/health", expected: [] },
+    {
+      input: "/api/[accountId]/files/[[...path]]",
+      expected: [
+        { name: "accountId", required: true, catchAll: false },
+        { name: "path", required: false, catchAll: true },
+      ],
+    },
   ];
 
   for (const { input, expected } of cases) {
@@ -58,6 +65,13 @@ describe("extractPathParams", () => {
       assertEquals(extractPathParams(input), expected);
     });
   }
+});
+
+describe("dynamic syntax alignment", () => {
+  it("leaves unsupported bracket-like segments literal", () => {
+    assertEquals(toOpenAPIPath("/api/users/[user.id]"), "/api/users/[user.id]");
+    assertEquals(extractPathParams("/api/users/[user.id]"), []);
+  });
 });
 
 describe("generateOperationId", () => {

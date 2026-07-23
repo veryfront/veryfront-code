@@ -1,9 +1,10 @@
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
 import { ERROR_CATALOG, getErrorMessage, REQUEST_ERROR } from "#veryfront/errors";
-import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
+import { executeTool, isToolVisibleTo, toolRegistry, type Tool } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import type { Agent } from "#veryfront/agent/types.ts";
 import {
   getRegisteredModelProviders,
   hasModelProvider,
@@ -19,32 +20,114 @@ import {
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath, validatePathSync } from "#veryfront/security";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
+import { isAuthorizedDevControlRequest, isSensitiveDevFilePath } from "../access-policy.ts";
 import { errorResponse, jsonResponse } from "../http-helpers.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
+const HMR_TRIGGER_MAX_BODY_BYTES = 16 * 1_024;
+const HMR_TRIGGER_MAX_PATH_LENGTH = 4_096;
+const DASHBOARD_MEMORY_TYPE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/i;
+const DASHBOARD_PROJECT_ROOT = ".";
+
+interface DashboardAgentMemory {
+  type: string;
+  maxTokens: number;
+}
+
+function getOwnDataProperty(value: object, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function projectAgentMemory(
+  memory: Agent["config"]["memory"],
+): DashboardAgentMemory | null {
+  if (!memory || typeof memory !== "object") return null;
+
+  try {
+    const rawType = getOwnDataProperty(memory, "type");
+    const rawMaxTokens = getOwnDataProperty(memory, "maxTokens");
+
+    return {
+      type: typeof rawType === "string" && DASHBOARD_MEMORY_TYPE_PATTERN.test(rawType)
+        ? rawType
+        : "custom",
+      maxTokens: Number.isSafeInteger(rawMaxTokens) && (rawMaxTokens as number) > 0
+        ? rawMaxTokens as number
+        : 0,
+    };
+  } catch {
+    // A custom memory implementation can be a Proxy. Do not let metadata
+    // inspection invoke accessors or break the dashboard endpoint.
+    return { type: "custom", maxTokens: 0 };
+  }
+}
+
+function projectAgentTools(
+  agentId: string,
+  configuredTools: Agent["config"]["tools"],
+  allTools: Array<[string, Tool]>,
+): Record<string, boolean> {
+  if (configuredTools === true) {
+    return Object.fromEntries(
+      allTools
+        .filter(([, registryTool]) => isToolVisibleTo(registryTool, { agentId }))
+        .map(([toolId]) => [toolId, true]),
+    );
+  }
+  if (!configuredTools || typeof configuredTools !== "object") return {};
+
+  try {
+    return Object.fromEntries(
+      Object.entries(configuredTools).map(([toolId, configuredTool]) => [
+        toolId,
+        configuredTool !== false,
+      ]),
+    );
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Validate a relative path against the project directory.
  *
- * Uses `validatePathSync` in strict mode (rejects absolute paths, null bytes,
- * `..` traversal, and any resolved path that escapes `baseDir`).
+ * First applies strict lexical validation, then resolves the physical path so
+ * an in-project symlink cannot escape the project directory.
  *
  * Note: `searchParams.get()` already percent-decodes; no extra decoding needed
  * (double-decoding would itself be a vulnerability).
  *
  * Returns the canonicalized absolute path on success, or `null` when invalid.
  */
-function validateRelativePath(path: string, projectDir: string): string | null {
-  const result = validatePathSync(path, {
-    baseDir: projectDir,
+async function validateRelativePath(
+  path: string,
+  ctx: HandlerContext,
+): Promise<string | null> {
+  const lexicalResult = validatePathSync(path, {
+    baseDir: ctx.projectDir,
     allowAbsolute: false,
     level: "strict",
   });
-  if (!result.valid || !result.canonicalPath) return null;
-  return result.canonicalPath;
+  if (!lexicalResult.valid) return null;
+
+  const physicalResult = await validatePath(path, {
+    baseDir: ctx.projectDir,
+    allowAbsolute: false,
+    level: "normal",
+    adapter: ctx.adapter,
+    followSymlinks: true,
+  });
+  if (!physicalResult.valid || !physicalResult.canonicalPath) return null;
+  return physicalResult.canonicalPath;
 }
 
 const TEXT_EXTENSIONS = new Set([
@@ -60,7 +143,6 @@ const TEXT_EXTENSIONS = new Set([
   "yaml",
   "yml",
   "txt",
-  "env",
   "gitignore",
   "dockerignore",
 ]);
@@ -117,7 +199,7 @@ export function handleDashboardAPI(
   req: Request,
   ctx: HandlerContext,
 ): Promise<Response | null> | Response | null {
-  if (!ctx.isLocalProject) return errorResponse("Unauthorized", 401);
+  if (!isAuthorizedDevControlRequest(req, ctx)) return errorResponse("Unauthorized", 401);
 
   const { pathname } = new URL(req.url);
   const handler = getDashboardRouteHandler(req.method, pathname);
@@ -178,33 +260,21 @@ function handleListAgents(): Response {
   const allTools = Array.from(toolRegistry.getAll().entries());
 
   const list = Array.from(agentRegistry.getAll().entries()).map(([id, agent]) => {
-    const cfg = agent.config as unknown as Record<string, unknown>;
+    const { config } = agent;
 
     let system: string | null = null;
-    if (typeof cfg.system === "string") system = cfg.system;
-    else if (typeof cfg.system === "function") system = "(dynamic)";
-
-    let tools: Record<string, boolean> = {};
-    if (cfg.tools === true) {
-      // Owner-aware: list only tools this agent can actually resolve.
-      tools = Object.fromEntries(
-        allTools
-          .filter(([, registryTool]) => isToolVisibleTo(registryTool, { agentId: id }))
-          .map(([tid]) => [tid, true]),
-      );
-    } else if (typeof cfg.tools === "object" && cfg.tools !== null) {
-      tools = cfg.tools as Record<string, boolean>;
-    }
+    if (typeof config.system === "string") system = "(configured)";
+    else if (typeof config.system === "function") system = "(dynamic)";
 
     return {
       id,
-      description: (cfg.description as string) || `Model: ${agent.config.model}`,
-      model: agent.config.model,
+      description: config.description || `Model: ${config.model}`,
+      model: config.model,
       system,
-      tools,
-      memory: cfg.memory ?? null,
-      streaming: cfg.streaming ?? false,
-      maxSteps: cfg.maxSteps ?? null,
+      tools: projectAgentTools(id, config.tools, allTools),
+      memory: projectAgentMemory(config.memory),
+      streaming: config.streaming ?? false,
+      maxSteps: config.maxSteps ?? null,
     };
   });
 
@@ -246,7 +316,7 @@ async function handleReadResource(req: Request): Promise<Response> {
 
     const params = resourceRegistry.extractParams(uri, resource.pattern);
     const startTime = Date.now();
-    const data = await resource.load(params);
+    const data = await resource.load(params, { signal: req.signal });
 
     return jsonResponse({
       success: true,
@@ -269,7 +339,7 @@ async function handleRenderPrompt(req: Request): Promise<Response> {
     if (!promptId) return errorResponse("promptId is required", 400);
 
     const vars = variables ?? {};
-    const content = await promptRegistry.getContent(promptId, vars);
+    const content = await promptRegistry.getContent(promptId, vars, { signal: req.signal });
     if (content === undefined) return errorResponse(`Prompt not found: ${promptId}`, 404);
 
     return jsonResponse({ success: true, promptId, content, variablesUsed: vars });
@@ -392,22 +462,31 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
 
   const relativePath = new URL(req.url).searchParams.get("path") ?? "";
 
-  let fullPath: string;
-  if (relativePath === "") {
-    fullPath = projectDir;
-  } else {
-    const canonical = validateRelativePath(relativePath, projectDir);
-    if (canonical === null) return errorResponse("Invalid path", 400);
-    fullPath = canonical;
-  }
-
   try {
+    let fullPath: string;
+    if (relativePath === "") {
+      fullPath = projectDir;
+    } else {
+      const canonical = await validateRelativePath(relativePath, ctx);
+      if (canonical === null) return errorResponse("Invalid path", 400);
+      if (
+        isSensitiveDevFilePath(relativePath) ||
+        isSensitiveDevFilePath(canonical)
+      ) {
+        return errorResponse("Forbidden", 403);
+      }
+      fullPath = canonical;
+    }
+
     const files: Array<{ name: string; type: "file" | "directory"; path: string }> = [];
     for await (const entry of adapter.fs.readDir(fullPath)) {
+      const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      if (isSensitiveDevFilePath(entryPath)) continue;
+
       files.push({
         name: entry.name,
         type: entry.isDirectory ? "directory" : "file",
-        path: relativePath ? `${relativePath}/${entry.name}` : entry.name,
+        path: entryPath,
       });
     }
 
@@ -415,13 +494,18 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
       a.type !== b.type ? (a.type === "directory" ? -1 : 1) : a.name.localeCompare(b.name)
     );
 
-    return jsonResponse({ files, path: relativePath, projectDir, count: files.length });
-  } catch (error) {
+    return jsonResponse({
+      files,
+      path: relativePath,
+      projectDir: DASHBOARD_PROJECT_ROOT,
+      count: files.length,
+    });
+  } catch {
     return jsonResponse({
       files: [],
       path: relativePath,
-      projectDir,
-      error: getErrorMessage(error),
+      projectDir: DASHBOARD_PROJECT_ROOT,
+      error: "Unable to list directory",
     });
   }
 }
@@ -434,11 +518,16 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
   const relativePath = new URL(req.url).searchParams.get("path") ?? "";
   if (!relativePath) return errorResponse("path parameter is required", 400);
 
-  const canonical = validateRelativePath(relativePath, projectDir);
-  if (canonical === null) return errorResponse("Invalid path", 400);
-
   try {
-    const content = await adapter.fs.readFile(canonical);
+    const canonical = await validateRelativePath(relativePath, ctx);
+    if (canonical === null) return errorResponse("Invalid path", 400);
+    if (
+      isSensitiveDevFilePath(relativePath) ||
+      isSensitiveDevFilePath(canonical)
+    ) {
+      return errorResponse("Forbidden", 403);
+    }
+
     const extension = relativePath.split(".").pop() ?? "";
 
     if (!TEXT_EXTENSIONS.has(extension.toLowerCase())) {
@@ -450,6 +539,7 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
       });
     }
 
+    const content = await adapter.fs.readFile(canonical);
     return jsonResponse({
       path: relativePath,
       extension,
@@ -457,8 +547,8 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
       lines: content.split("\n").length,
       size: content.length,
     });
-  } catch (error) {
-    return jsonResponse({ path: relativePath, error: getErrorMessage(error) });
+  } catch {
+    return jsonResponse({ path: relativePath, error: "Unable to read file" });
   }
 }
 
@@ -618,8 +708,20 @@ function handleLiveLogs(req: Request): Response {
 
 async function handleHmrTrigger(req: Request): Promise<Response> {
   try {
-    const body = (await req.json().catch(() => ({}))) as { path?: string };
-    const changedPaths = body.path ? [body.path] : undefined;
+    const rawBody = await readBodyWithLimit(req, HMR_TRIGGER_MAX_BODY_BYTES);
+    const body: unknown = JSON.parse(rawBody);
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return errorResponse("Invalid HMR trigger request", 400);
+    }
+    const path = (body as { path?: unknown }).path;
+    if (
+      path !== undefined &&
+      (typeof path !== "string" || path.length === 0 ||
+        path.length > HMR_TRIGGER_MAX_PATH_LENGTH || hasUnsafeControlCharacters(path))
+    ) {
+      return errorResponse("Invalid HMR trigger request", 400);
+    }
+    const changedPaths = typeof path === "string" ? [path] : undefined;
 
     const listenerCount = ReloadNotifier.getListenerCount();
     if (listenerCount === 0) {
@@ -629,14 +731,20 @@ async function handleHmrTrigger(req: Request): Promise<Response> {
       });
     }
 
-    ReloadNotifier.triggerReload(changedPaths);
+    await ReloadNotifier.triggerReload(changedPaths);
     return jsonResponse({
       success: true,
       listeners: listenerCount,
       metrics: ReloadNotifier.getMetrics(),
     });
   } catch (error) {
-    return errorResponse(getErrorMessage(error));
+    if (isRequestBodyTooLargeError(error)) {
+      return errorResponse("HMR trigger request body is too large", 413);
+    }
+    if (error instanceof RangeError) {
+      return errorResponse("HMR reload capacity is temporarily unavailable", 503);
+    }
+    return errorResponse("Invalid HMR trigger request", 400);
   }
 }
 
@@ -661,7 +769,7 @@ function handleGetConfig(ctx: HandlerContext): Response {
   return jsonResponse({
     featureFlags,
     environment: safeEnvVars,
-    projectDir: ctx.projectDir ?? "(unknown)",
+    projectDir: DASHBOARD_PROJECT_ROOT,
     isLocalProject: !!ctx.isLocalProject,
     timestamp: new Date().toISOString(),
   });

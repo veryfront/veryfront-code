@@ -3,6 +3,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { profilePhase } from "#veryfront/observability";
+import { getSafeErrorName } from "../../../utils/error-name.ts";
 
 export function handleModuleServer(
   req: Request,
@@ -10,10 +11,7 @@ export function handleModuleServer(
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
   logDebug: (message: string, data: Record<string, unknown>, ctx: HandlerContext) => void,
-  getErrorMessage: (error: unknown) => string,
 ): Promise<HandlerResult> {
-  const url = new URL(req.url);
-
   return withSpan(
     "module.server.handle",
     async () => {
@@ -52,7 +50,7 @@ export function handleModuleServer(
 
         return respond(response);
       } catch (error) {
-        logDebug("module server error", { error: getErrorMessage(error) }, ctx);
+        logDebug("module server error", { errorName: getSafeErrorName(error) }, ctx);
 
         return respond(
           ResponseBuilder.error(500, "Module Server Error", req, {
@@ -62,9 +60,6 @@ export function handleModuleServer(
         );
       }
     },
-    {
-      "module.path": url.pathname,
-      "module.projectSlug": ctx.projectSlug || "unknown",
-    },
+    { "http.method": req.method },
   );
 }

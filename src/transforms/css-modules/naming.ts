@@ -15,9 +15,15 @@ export function normalizeCssModuleKey(path: string): string {
   const withoutFilePrefix = path.startsWith("file://") ? path.slice("file://".length) : path;
   const withoutQuery = withoutFilePrefix.replace(/[?#].*$/, "");
   const slashed = withoutQuery.replace(/\\/g, "/");
+  const urlMatch = slashed.match(/^(https?:\/\/)(.*)$/);
+  const urlPrefix = urlMatch?.[1];
+  const urlPath = urlMatch?.[2];
+  if (urlPrefix !== undefined && urlPath !== undefined) {
+    return `${urlPrefix}${urlPath.replace(/\/{2,}/g, "/")}`;
+  }
+
   const collapsed = slashed.replace(/\/{2,}/g, "/");
   if (collapsed.startsWith("/")) return collapsed;
-  if (collapsed.startsWith("http://") || collapsed.startsWith("https://")) return collapsed;
   return `/${collapsed.replace(/^\/+/, "")}`;
 }
 
@@ -113,10 +119,18 @@ export function toScopedCssModuleClass(moduleKey: string, localName: string): st
   return `${base}_${normalizedLocal}__${hash}`;
 }
 
-function maskGlobalSelectors(css: string): { masked: string; restore: (input: string) => string } {
+const PROTECTED_CSS_SEGMENT_PATTERN =
+  /\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|url\(\s*(?:"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|[^)]*)\)|:global\((?:[^()]|\([^()]*\))*\)/gi;
+
+function maskProtectedCssSegments(
+  css: string,
+): { masked: string; restore: (input: string) => string } {
   const segments: string[] = [];
-  const masked = css.replace(/:global\(([^()]*)\)/g, (match) => {
-    const token = `__VF_CSS_GLOBAL_${segments.length}__`;
+  let tokenPrefix = "__VF_CSS_PROTECTED_";
+  while (css.includes(tokenPrefix)) tokenPrefix += "_";
+
+  const masked = css.replace(PROTECTED_CSS_SEGMENT_PATTERN, (match) => {
+    const token = `${tokenPrefix}${segments.length}__`;
     segments.push(match);
     return token;
   });
@@ -126,11 +140,40 @@ function maskGlobalSelectors(css: string): { masked: string; restore: (input: st
     restore: (input: string) => {
       let result = input;
       for (const [i, segment] of segments.entries()) {
-        result = result.replaceAll(`__VF_CSS_GLOBAL_${i}__`, segment);
+        result = result.replaceAll(`${tokenPrefix}${i}__`, segment);
       }
       return result;
     },
   };
+}
+
+function rewriteLocalClasses(selector: string, moduleKey: string): string {
+  return selector.replace(
+    /\.([_a-zA-Z][_a-zA-Z0-9-]*)/g,
+    (_match, className: string) => `.${toScopedCssModuleClass(moduleKey, className)}`,
+  );
+}
+
+function rewriteSelectorPreludes(css: string, moduleKey: string): string {
+  let result = "";
+  let chunkStart = 0;
+
+  for (let i = 0; i < css.length; i++) {
+    const character = css[i];
+    if (character === "{") {
+      const chunk = css.slice(chunkStart, i);
+      const selectorStart = chunk.lastIndexOf(";") + 1;
+      result += chunk.slice(0, selectorStart);
+      result += rewriteLocalClasses(chunk.slice(selectorStart), moduleKey);
+      result += character;
+      chunkStart = i + 1;
+    } else if (character === "}") {
+      result += css.slice(chunkStart, i + 1);
+      chunkStart = i + 1;
+    }
+  }
+
+  return result + css.slice(chunkStart);
 }
 
 /**
@@ -138,15 +181,7 @@ function maskGlobalSelectors(css: string): { masked: string; restore: (input: st
  * Keeps `:global(...)` segments untouched.
  */
 export function rewriteCssModuleContent(content: string, moduleKey: string): string {
-  const { masked, restore } = maskGlobalSelectors(content);
-  // After :global() masking, every `.identifier` in the CSS is a local class
-  // selector. No lookbehind needed — numeric decimals like `0.5em` won't
-  // match because digits aren't in [_a-zA-Z].
-  const rewritten = masked.replace(
-    /\.([_a-zA-Z][_a-zA-Z0-9-]*)/g,
-    (_match, className: string) => {
-      return `.${toScopedCssModuleClass(moduleKey, className)}`;
-    },
-  );
+  const { masked, restore } = maskProtectedCssSegments(content);
+  const rewritten = rewriteSelectorPreludes(masked, moduleKey);
   return restore(rewritten);
 }

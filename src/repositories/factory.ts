@@ -10,6 +10,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HandlerContext } from "#veryfront/types";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import type { SecurityContext } from "#veryfront/security/secure-fs.ts";
 import type {
   CacheRepository,
@@ -22,6 +23,8 @@ import {
   createMemoryCacheRepository,
   createMultiTierCacheRepository,
 } from "./cache/cache-repository.ts";
+import { snapshotRepositoryContext } from "./context.ts";
+import { DEFAULT_REPOSITORY_ENVIRONMENT, DEFAULT_REPOSITORY_VERSION_ID } from "./limits.ts";
 
 export interface RepositoryFactoryConfig {
   adapter: RuntimeAdapter;
@@ -30,7 +33,15 @@ export interface RepositoryFactoryConfig {
 }
 
 export class RepositoryFactory {
-  constructor(private readonly config: RepositoryFactoryConfig) {}
+  private readonly config: RepositoryFactoryConfig;
+
+  constructor(config: RepositoryFactoryConfig) {
+    this.config = Object.freeze({
+      adapter: config.adapter,
+      baseDir: config.baseDir,
+      context: snapshotRepositoryContext(config.context),
+    });
+  }
 
   createFileSystemRepository(
     securityContext?: SecurityContext,
@@ -62,13 +73,18 @@ export class RepositoryFactory {
 }
 
 export function extractRepositoryContext(ctx: HandlerContext): RepositoryContext {
-  const projectId = ctx.projectSlug ?? ctx.projectId ?? "unknown";
-  const environment = ctx.resolvedEnvironment ??
+  const projectId = ctx.enriched?.projectId ?? ctx.projectId ?? ctx.projectSlug ??
+    ctx.requestContext?.slug;
+  const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
     (ctx.requestContext?.mode === "production" ? "production" : "preview");
-  const versionId = ctx.releaseId ?? ctx.enriched?.contentSourceId ??
-    ctx.enriched?.releaseId ?? "draft";
+  const versionId = ctx.enriched?.contentSourceId ?? computeContentSourceId(
+    ctx.enriched?.isLocalProject ?? ctx.isLocalProject ?? false,
+    environment,
+    ctx.enriched?.branch ?? ctx.requestContext?.branch,
+    ctx.enriched?.releaseId ?? ctx.releaseId,
+  );
 
-  return { projectId, environment, versionId };
+  return snapshotRepositoryContext({ projectId, environment, versionId });
 }
 
 export function createRepositoryFactory(ctx: HandlerContext): RepositoryFactory {
@@ -81,8 +97,8 @@ export function createRepositoryFactory(ctx: HandlerContext): RepositoryFactory 
 
 export function createRepositoryContext(
   projectId: string,
-  environment: "production" | "preview" = "preview",
-  versionId = "draft",
+  environment: "production" | "preview" = DEFAULT_REPOSITORY_ENVIRONMENT,
+  versionId = DEFAULT_REPOSITORY_VERSION_ID,
 ): RepositoryContext {
-  return { projectId, environment, versionId };
+  return snapshotRepositoryContext({ projectId, environment, versionId });
 }

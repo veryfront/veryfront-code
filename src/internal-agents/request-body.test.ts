@@ -34,4 +34,26 @@ describe("internal-agents/request-body", () => {
       "Payload too large",
     );
   });
+
+  it("rejects malformed UTF-8 instead of normalizing signed request bytes", async () => {
+    const request = new Request("https://veryfront.test/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+      body: new Uint8Array([0xc3, 0x28]),
+    });
+
+    await assertRejects(
+      () => readInternalAgentRequestBody(request),
+      Error,
+      "valid UTF-8",
+    );
+  });
+
+  it("preserves an explicit UTF-8 byte-order mark in the signed body", async () => {
+    const request = new Request("https://veryfront.test/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+      body: new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d]),
+    });
+
+    assertEquals(await readInternalAgentRequestBody(request), "\uFEFF{}");
+  });
 });

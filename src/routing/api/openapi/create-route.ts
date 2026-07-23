@@ -18,32 +18,20 @@ export function createRoute<
   const metadata: OpenAPIRouteMetadata = {
     summary: openApiConfig.summary,
     description: openApiConfig.description,
-    tags: openApiConfig.tags,
+    tags: openApiConfig.tags ? [...openApiConfig.tags] : undefined,
     deprecated: openApiConfig.deprecated,
   };
 
   if (openApiConfig.params) {
-    try {
-      metadata.params = zodToJsonSchema(openApiConfig.params);
-    } catch (_) {
-      /* expected: zodToJsonSchema may fail on unsupported schemas */
-    }
+    metadata.params = zodToJsonSchema(openApiConfig.params);
   }
 
   if (openApiConfig.query) {
-    try {
-      metadata.query = zodToJsonSchema(openApiConfig.query);
-    } catch (_) {
-      /* expected: zodToJsonSchema may fail on unsupported schemas */
-    }
+    metadata.query = zodToJsonSchema(openApiConfig.query);
   }
 
   if (openApiConfig.body) {
-    try {
-      metadata.body = zodToJsonSchema(openApiConfig.body);
-    } catch (_) {
-      /* expected: zodToJsonSchema may fail on unsupported schemas */
-    }
+    metadata.body = zodToJsonSchema(openApiConfig.body);
   }
 
   if (openApiConfig.response) {
@@ -51,39 +39,38 @@ export function createRoute<
 
     for (const [statusCode, schemaOrConfig] of Object.entries(openApiConfig.response)) {
       const status = Number(statusCode);
-
-      try {
-        const isConfigObject = typeof schemaOrConfig === "object" &&
-          schemaOrConfig !== null &&
-          "schema" in schemaOrConfig;
-
-        const responseSchema = isConfigObject
-          ? (schemaOrConfig as { schema: Schema }).schema
-          : (schemaOrConfig as Schema);
-
-        const description = isConfigObject
-          ? (schemaOrConfig as { description?: string }).description
-          : undefined;
-
-        metadata.responses[statusCode] = {
-          description: description ?? getDefaultStatusDescription(status),
-          content: {
-            "application/json": {
-              schema: zodToJsonSchema(responseSchema),
-            },
-          },
-        };
-      } catch (_) {
-        /* expected: zodToJsonSchema may fail on unsupported schemas */
-        metadata.responses[statusCode] = {
-          description: getDefaultStatusDescription(status),
-        };
+      if (!Number.isInteger(status) || status < 100 || status > 599) {
+        throw new RangeError(`Invalid HTTP status code: ${statusCode}`);
       }
+
+      const isConfigObject = typeof schemaOrConfig === "object" &&
+        schemaOrConfig !== null &&
+        "schema" in schemaOrConfig;
+      const responseSchema = isConfigObject
+        ? (schemaOrConfig as { schema: Schema }).schema
+        : (schemaOrConfig as Schema);
+      const description = isConfigObject
+        ? (schemaOrConfig as { description?: string }).description
+        : undefined;
+
+      metadata.responses[statusCode] = {
+        description: description ?? getDefaultStatusDescription(status),
+        content: {
+          "application/json": {
+            schema: zodToJsonSchema(responseSchema),
+          },
+        },
+      };
     }
   }
 
-  const wrappedHandler = handler as WrappedHandler;
-  wrappedHandler[OPENAPI_METADATA] = metadata;
+  const wrappedHandler: WrappedHandler = (request, context) => handler(request, context);
+  Object.defineProperty(wrappedHandler, OPENAPI_METADATA, {
+    configurable: false,
+    enumerable: false,
+    value: Object.freeze(metadata),
+    writable: false,
+  });
 
   return wrappedHandler;
 }

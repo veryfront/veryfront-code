@@ -1,9 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { RenderHandler } from "./render-handler.ts";
 
 describe("server/services/rsc/orchestrators/render-handler", () => {
+  afterEach(() => {
+    __resetLogRecordEmitterForTests();
+  });
+
   describe("handle", () => {
     it("returns error response when component is not found", async () => {
       const handler = new RenderHandler(
@@ -68,6 +78,30 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const params = new URLSearchParams({ foo: "bar", baz: "qux" });
       const response = await handler.handle("/page", params);
       assertEquals(response.status >= 400, true);
+    });
+
+    it("does not expose filesystem failure details in responses or logs", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const adapter = {
+        fs: {
+          stat: () => Promise.reject(new Error("RENDER_STORAGE_MARKER")),
+        },
+      } as unknown as RuntimeAdapter;
+      const handler = new RenderHandler(
+        "/virtual/project",
+        () => null,
+        "production",
+        "app",
+        { adapter },
+      );
+
+      const response = await handler.handle("/private", new URLSearchParams());
+      const body = await response.text();
+
+      assertEquals(response.status, 500);
+      assertEquals(body.includes("RENDER_STORAGE_MARKER"), false);
+      assertEquals(JSON.stringify(entries).includes("RENDER_STORAGE_MARKER"), false);
     });
   });
 });

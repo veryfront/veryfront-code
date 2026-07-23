@@ -273,6 +273,21 @@ describe("ViewportPrefetch", () => {
       mocks.cleanup();
     });
 
+    it("should not observe protocol-relative or active-content links", () => {
+      const mocks = setupMockIntersectionObserver();
+      const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });
+
+      viewportPrefetch.setup(
+        createMockRoot<Document>([
+          createMockAnchor("//evil.example/page"),
+          createMockAnchor("javascript:alert(1)"),
+        ]),
+      );
+
+      assertEquals(mocks.getObservedElements().size, 0);
+      mocks.cleanup();
+    });
+
     it("should not observe hash links", () => {
       const mocks = setupMockIntersectionObserver();
       const viewportPrefetch = new ViewportPrefetch(() => {}, { viewport: true });

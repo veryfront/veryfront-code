@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
+import { getPendingInvalidationsCount } from "./invalidation-state.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
 import {
   buildReloadProjectContext,
@@ -11,6 +12,11 @@ import {
   parsePokeWebSocketMessage,
 } from "./websocket-manager-helpers.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 interface TimerEntry {
   delay: number;
@@ -90,6 +96,7 @@ function withJsonLogFormat<T>(fn: () => T): T {
 
 function createWebSocketManager(options: {
   apiBaseUrl?: string;
+  cache?: Partial<FileCache>;
   client?: Partial<VeryfrontApiClient>;
   invalidationCallbacks?: InvalidationCallbacks;
   pregenerateStyles?: (
@@ -99,6 +106,7 @@ function createWebSocketManager(options: {
   const cache = {
     deleteByPrefixAsync: async () => 0,
     deleteByPrefixAndSuffixAsync: async () => 0,
+    ...options.cache,
   } as unknown as FileCache;
 
   const client = {
@@ -189,8 +197,19 @@ describe("WebSocketManager", () => {
       assertEquals(parsePokeWebSocketMessage(JSON.stringify(null)), null);
     });
 
-    it("returns null for malformed JSON (parser logs the error at warn)", () => {
-      assertEquals(parsePokeWebSocketMessage("{"), null);
+    it("returns null for malformed JSON without logging the frame", () => {
+      const warnCapture = captureConsoleMethod("warn");
+      try {
+        withJsonLogFormat(() => {
+          assertEquals(
+            parsePokeWebSocketMessage('{"PRIVATE_FRAME_CANARY":"value"'),
+            null,
+          );
+          assertEquals(warnCapture.getOutput().includes("PRIVATE_FRAME_CANARY"), false);
+        });
+      } finally {
+        warnCapture.restore();
+      }
     });
   });
   let originalWebSocket: typeof WebSocket;
@@ -248,9 +267,10 @@ describe("WebSocketManager", () => {
       originalWebSocket;
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
+    __resetLogRecordEmitterForTests();
   });
 
-  it("should not add an extra retry delay after reaching reconnect failure cap", () => {
+  it("uses capped exponential delays for repeated reconnect failures", () => {
     const manager = createWebSocketManager();
     manager.connect("project-1");
     assertEquals(MockWebSocket.instances.length, 1);
@@ -373,7 +393,7 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("should reset failure counter after reaching max failures", () => {
+  it("keeps the maximum backoff until a connection opens successfully", () => {
     const manager = createWebSocketManager();
     manager.connect("project-1");
 
@@ -385,13 +405,12 @@ describe("WebSocketManager", () => {
       runOnlyScheduledTimer();
     }
 
-    // On the next connect, the counter should have been reset
-    // The 11th socket close should use the base delay (5000)
+    // A connection attempt is not recovery. The delay remains capped until onopen.
     const socket = MockWebSocket.instances.at(-1);
     assertExists(socket);
     socket.emitClose();
     const delay = runOnlyScheduledTimer();
-    assertEquals(delay, 5000);
+    assertEquals(delay, 120000);
 
     manager.dispose();
   });
@@ -417,7 +436,7 @@ describe("WebSocketManager", () => {
     }
   });
 
-  it("should include projectSlug in connection lifecycle logs", () => {
+  it("omits customer identifiers from connection lifecycle logs", () => {
     const debugCapture = captureConsoleMethod("debug");
     const logCapture = captureConsoleMethod("log");
     const warnCapture = captureConsoleMethod("warn");
@@ -432,7 +451,9 @@ describe("WebSocketManager", () => {
           projectSlug?: string;
         };
         assertEquals(connectEntry.message, "Connecting to WebSocket");
-        assertEquals(connectEntry.projectSlug, "test-project");
+        assertEquals(connectEntry.projectSlug, undefined);
+        assertEquals(debugCapture.getOutput().includes("test-project"), false);
+        assertEquals(debugCapture.getOutput().includes("project-1"), false);
 
         const socket = MockWebSocket.instances[0];
         assertExists(socket);
@@ -452,12 +473,15 @@ describe("WebSocketManager", () => {
           };
         };
         assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
-        assertEquals(closeEntry.projectSlug, "test-project");
-        assertEquals(closeEntry.project_id, "project-1");
-        assertEquals(closeEntry.context?.projectId, "project-1");
-        assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
+        assertEquals(closeEntry.projectSlug, undefined);
+        assertEquals(closeEntry.project_id, undefined);
+        assertEquals(closeEntry.context?.projectId, undefined);
+        assertEquals(closeEntry.context?.url, undefined);
         assertEquals(closeEntry.context?.delayMs, 5000);
         assertEquals(closeEntry.context?.consecutiveFailures, 1);
+        assertEquals(warnCapture.getOutput().includes("test-project"), false);
+        assertEquals(warnCapture.getOutput().includes("project-1"), false);
+        assertEquals(warnCapture.getOutput().includes("api.example.com"), false);
 
         logCapture.reset();
         runOnlyScheduledTimer();
@@ -478,10 +502,12 @@ describe("WebSocketManager", () => {
           };
         };
         assertEquals(recoveryEntry.message, "WebSocket reconnect recovered");
-        assertEquals(recoveryEntry.projectSlug, "test-project");
-        assertEquals(recoveryEntry.project_id, "project-1");
-        assertEquals(recoveryEntry.context?.projectId, "project-1");
+        assertEquals(recoveryEntry.projectSlug, undefined);
+        assertEquals(recoveryEntry.project_id, undefined);
+        assertEquals(recoveryEntry.context?.projectId, undefined);
         assertEquals(recoveryEntry.context?.consecutiveFailures, 1);
+        assertEquals(logCapture.getOutput().includes("test-project"), false);
+        assertEquals(logCapture.getOutput().includes("project-1"), false);
 
         warnCapture.reset();
         socket.onerror?.call(socket as unknown as WebSocket, new Event("error"));
@@ -491,7 +517,9 @@ describe("WebSocketManager", () => {
           projectSlug?: string;
         };
         assertEquals(errorEntry.message, "WebSocket error");
-        assertEquals(errorEntry.projectSlug, "test-project");
+        assertEquals(errorEntry.projectSlug, undefined);
+        assertEquals(warnCapture.getOutput().includes("test-project"), false);
+        assertEquals(warnCapture.getOutput().includes("project-1"), false);
 
         manager.dispose();
       });
@@ -502,7 +530,156 @@ describe("WebSocketManager", () => {
     }
   });
 
-  it("redacts WebSocket URL credentials from reconnect warnings", () => {
+  it("does not write WebSocket frame data to debug logs", () => {
+    const debugCapture = captureConsoleMethod("debug");
+
+    try {
+      withJsonLogFormat(() => {
+        const manager = createWebSocketManager();
+        manager.connect("project-1");
+
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+        debugCapture.reset();
+        socket.onmessage?.call(
+          socket as unknown as WebSocket,
+          new MessageEvent("message", {
+            data: JSON.stringify({ type: "noop", data: "PRIVATE_FRAME_CANARY" }),
+          }),
+        );
+
+        assertEquals(debugCapture.getOutput().includes("PRIVATE_FRAME_CANARY"), false);
+        manager.dispose();
+      });
+    } finally {
+      debugCapture.restore();
+    }
+  });
+
+  it("does not write changed source paths from valid poke payloads to logs", () => {
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    withJsonLogFormat(() => {
+      const manager = createWebSocketManager();
+      manager.connect("project-1");
+
+      const socket = MockWebSocket.instances[0];
+      assertExists(socket);
+      socket.onmessage?.call(
+        socket as unknown as WebSocket,
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "poke",
+            data: {
+              changedPaths: ["PRIVATE_PATH_CANARY/page.tsx"],
+              branchName: "main",
+            },
+          }),
+        }),
+      );
+
+      assertEquals(JSON.stringify(entries).includes("PRIVATE_PATH_CANARY"), false);
+      manager.dispose();
+    });
+  });
+
+  it("releases pending preview invalidation state when disposed", () => {
+    const baseline = getPendingInvalidationsCount();
+    const manager = createWebSocketManager();
+    manager.connect("project-1");
+
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(getPendingInvalidationsCount(), baseline + 1);
+    manager.dispose();
+    assertEquals(getPendingInvalidationsCount(), baseline);
+  });
+
+  it("scopes selective cache invalidation to the active project", async () => {
+    const deletedPrefixes: string[] = [];
+    const deletedPrefixSuffixPairs: Array<[string, string]> = [];
+    const manager = createWebSocketManager({
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          deletedPrefixes.push(prefix);
+          return Promise.resolve(0);
+        },
+        deleteByPrefixAndSuffixAsync: (prefix: string, suffix: string) => {
+          deletedPrefixSuffixPairs.push([prefix, suffix]);
+          return Promise.resolve(0);
+        },
+      } as Partial<FileCache>,
+    });
+    manager.connect("project-1");
+
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    runOnlyScheduledTimer();
+    await flushMicrotasks();
+
+    assertEquals(
+      deletedPrefixSuffixPairs.every(([prefix]) => prefix.includes(":test-project:")),
+      true,
+    );
+    assertEquals(deletedPrefixes.includes("files:branch:test-project:"), true);
+    assertEquals(deletedPrefixes.includes("files:branch:"), false);
+    manager.dispose();
+  });
+
+  it("scopes full cache invalidation to the active project", async () => {
+    const deletedPrefixes: string[] = [];
+    const manager = createWebSocketManager({
+      cache: {
+        deleteByPrefixAsync: (prefix: string) => {
+          deletedPrefixes.push(prefix);
+          return Promise.resolve(0);
+        },
+      } as Partial<FileCache>,
+    });
+    manager.connect("project-1");
+
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({ type: "poke", data: { branchName: "main" } }),
+      }),
+    );
+
+    runOnlyScheduledTimer();
+    await flushMicrotasks();
+
+    assertEquals(deletedPrefixes.length >= 12, true);
+    assertEquals(
+      deletedPrefixes.every((prefix) => prefix.includes(":test-project:")),
+      true,
+    );
+    manager.dispose();
+  });
+
+  it("omits WebSocket URLs and credentials from reconnect warnings", () => {
     const warnCapture = captureConsoleMethod("warn");
 
     try {
@@ -519,6 +696,8 @@ describe("WebSocketManager", () => {
         const rawLog = warnCapture.getOutput();
         assertEquals(rawLog.includes("user:secret"), false);
         assertEquals(rawLog.includes("secret@"), false);
+        assertEquals(rawLog.includes("api.example.com"), false);
+        assertEquals(rawLog.includes("project-1"), false);
 
         const closeEntry = JSON.parse(rawLog) as {
           message: string;
@@ -527,7 +706,7 @@ describe("WebSocketManager", () => {
           };
         };
         assertEquals(closeEntry.message, "WebSocket reconnect scheduled after close");
-        assertEquals(closeEntry.context?.url, "wss://api.example.com/ws/project-1/events");
+        assertEquals(closeEntry.context?.url, undefined);
 
         manager.dispose();
       });
@@ -536,7 +715,7 @@ describe("WebSocketManager", () => {
     }
   });
 
-  it("should include projectSlug when WebSocket connection setup fails", () => {
+  it("omits customer identifiers and raw errors when connection setup fails", () => {
     const warnCapture = captureConsoleMethod("warn");
     const OriginalMockWebSocket = (globalThis as any).WebSocket;
     (globalThis as any).WebSocket = function () {
@@ -553,7 +732,10 @@ describe("WebSocketManager", () => {
           projectSlug?: string;
         };
         assertEquals(entry.message, "Failed to connect WebSocket");
-        assertEquals(entry.projectSlug, "test-project");
+        assertEquals(entry.projectSlug, undefined);
+        assertEquals(warnCapture.getOutput().includes("test-project"), false);
+        assertEquals(warnCapture.getOutput().includes("project-1"), false);
+        assertEquals(warnCapture.getOutput().includes("Connection failed"), false);
 
         manager.dispose();
       });
@@ -606,7 +788,7 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("uses the latest API token when opening a WebSocket", () => {
+  it("keeps the configured API token across reconnects", () => {
     const manager = createWebSocketManager();
 
     manager.connect("project-1");
@@ -614,14 +796,13 @@ describe("WebSocketManager", () => {
     assertExists(socket);
     assertEquals(socket.protocols, ["bearer-test-token"]);
 
-    manager.setApiToken("fresh-request-token");
     socket.emitClose();
 
     runOnlyScheduledTimer();
 
     socket = MockWebSocket.instances.at(-1);
     assertExists(socket);
-    assertEquals(socket.protocols, ["bearer-fresh-request-token"]);
+    assertEquals(socket.protocols, ["bearer-test-token"]);
 
     manager.dispose();
   });

@@ -6,8 +6,8 @@ import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr.handler.ts";
 import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
-import { broadcastUpdate } from "../../../../src/server/handlers/preview/hmr-message-router.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { createWebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
   HMR_CLOSE_RATE_LIMIT,
@@ -48,7 +48,7 @@ async function mintTrustedDispatchJws(): Promise<string> {
     sub: "dispatch-hmr-test",
     project_id: "proj-1",
     platform: "slack",
-    body_sha256: "n/a",
+    body_sha256: "a".repeat(43),
     iat: now,
     exp: now + 60,
   };
@@ -101,6 +101,9 @@ function createMockSocket() {
         listeners.set(type, set);
       }
       set.add(listener);
+    },
+    removeEventListener(type: string, listener: (event?: unknown) => void) {
+      listeners.get(type)?.delete(listener);
     },
   } as unknown as WebSocket;
 
@@ -242,7 +245,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("treats preview.veryfront.me as local preview host", async () => {
+    it("does not treat a local-looking Host as explicit local-project context", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws", {
@@ -258,8 +261,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
 
     it("IGNORES x-forwarded-host when the request is NOT proxy-trusted (VULN-SRV-4)", async () => {
@@ -289,23 +292,23 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("HONOURS x-forwarded-host when the request IS proxy-trusted (valid dispatch JWS)", async () => {
-      // With a cryptographically-verified dispatch-JWS signal, the request
-      // demonstrably came through the Veryfront fronting proxy, so the forwarded
-      // host is safe to consult. The preview.veryfront.me host is a recognised
-      // local preview surface and the handler must enter the HMR path.
+    it("accepts a proxy-trusted preview with a matching Origin", async () => {
       const handler = new HMRHandler();
       const jws = await mintTrustedDispatchJws();
 
       const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
           host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
+          origin: "https://demo.preview.veryfront.com",
+          "x-forwarded-host": "demo.preview.veryfront.com",
+          "x-forwarded-proto": "https",
           "x-veryfront-dispatch-jws": jws,
         },
       });
       const ctx = {
-        requestContext: { mode: "production" },
+        requestContext: { mode: "preview" },
+        resolvedEnvironment: "preview",
+        projectId: "proj-1",
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
@@ -315,6 +318,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const result = await handler.handle(req, ctx);
 
       assertExists(result.response);
+      assert(result.response instanceof Response);
       assertEquals(result.response.status, 200);
     });
 
@@ -374,7 +378,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response, undefined);
     });
 
-    it("handle accepts preview via query param (for proxy WebSocket)", async () => {
+    it("does not let a preview query parameter authorize proxy HMR", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws?x-environment=preview");
@@ -388,8 +392,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
   });
 
@@ -412,6 +416,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const ctx = {
         requestContext: { mode: "preview" },
         mode: "development",
+        isLocalProject: true,
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
@@ -423,10 +428,9 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
 
+      assert(result.response instanceof Response);
       const body = await result.response.json();
-      assertEquals(body.status, "ok");
-      assertEquals(body.clients, 0);
-      assert(body.message.includes("WebSocket"));
+      assertEquals(body, { status: "ok", clients: 0 });
     });
 
     it("returns 501 for WebSocket upgrade without adapter server", async () => {
@@ -438,6 +442,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const ctx = {
         requestContext: { mode: "preview" },
         mode: "development",
+        isLocalProject: true,
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
@@ -462,6 +467,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const ctx = {
         requestContext: { mode: "preview" },
         mode: "development",
+        isLocalProject: true,
         projectDir: "/tmp/test",
         projectSlug: "test-project",
         securityConfig: null,
@@ -471,7 +477,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
           server: {
             upgradeWebSocket: () => ({
               socket: mock.socket,
-              response: new Response(null, { status: 101 }),
+              response: createWebSocketUpgradeResponse(),
             }),
           },
         },
@@ -496,6 +502,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const ctx = {
         requestContext: { mode: "preview" },
         mode: "development",
+        isLocalProject: true,
         projectDir: "/tmp/test",
         projectSlug: "test-project",
         securityConfig: null,
@@ -505,7 +512,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
           server: {
             upgradeWebSocket: () => ({
               socket: mock.socket,
-              response: new Response(null, { status: 101 }),
+              response: createWebSocketUpgradeResponse(),
             }),
           },
         },
@@ -531,6 +538,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const ctx = {
         requestContext: { mode: "preview" },
         mode: "development",
+        isLocalProject: true,
         projectDir: "/tmp/test",
         projectSlug: "test-project",
         securityConfig: null,
@@ -540,7 +548,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
           server: {
             upgradeWebSocket: () => ({
               socket: mock.socket,
-              response: new Response(null, { status: 101 }),
+              response: createWebSocketUpgradeResponse(),
             }),
           },
         },
@@ -557,70 +565,63 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(HMRHandler.getClientCount(), 0);
     });
 
-    it("avoids duplicate reload broadcasts when external source is registered", async () => {
+    it("broadcasts each reload exactly once through the shared HMR runtime", async () => {
       const handler = new HMRHandler();
       const mock = createMockSocket();
 
-      const unregisterExternalSource = HMRHandler.registerExternalBroadcastSource();
-      const unsubscribeExternalReload = ReloadNotifier.subscribe((changedPaths, project) => {
-        broadcastUpdate(changedPaths, project);
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { upgrade: "websocket" },
       });
-
-      try {
-        const req = new Request("http://localhost:3000/_ws", {
-          headers: { upgrade: "websocket" },
-        });
-        const ctx = {
-          requestContext: { mode: "preview" },
-          mode: "development",
-          projectDir: "/tmp/test",
-          projectSlug: "test-project",
-          securityConfig: null,
-          cspUserHeader: null,
-          adapter: {
-            fs: {},
-            server: {
-              upgradeWebSocket: () => ({
-                socket: mock.socket,
-                response: new Response(null, { status: 101 }),
-              }),
-            },
+      const ctx = {
+        requestContext: { mode: "preview" },
+        mode: "development",
+        isLocalProject: true,
+        projectDir: "/tmp/test",
+        projectSlug: "test-project",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          fs: {},
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            }),
           },
-        } as unknown as Parameters<typeof handler.handle>[1];
+        },
+      } as unknown as Parameters<typeof handler.handle>[1];
 
-        await handler.handle(req, ctx);
+      await handler.handle(req, ctx);
 
-        // Ignore initial "connected" message; only validate reload/update emission.
-        mock.sentMessages.length = 0;
+      // Ignore initial "connected" message; only validate reload/update emission.
+      mock.sentMessages.length = 0;
 
-        ReloadNotifier.triggerReload(["app.tsx"], { projectSlug: "test-project" });
-        await new Promise((resolve) => setTimeout(resolve, 350));
+      await ReloadNotifier.triggerReload(["app.tsx"], { projectDir: "/tmp/test" });
+      await new Promise((resolve) => setTimeout(resolve, 350));
 
-        const hmrMessages = mock.sentMessages
-          .map((message) => {
-            try {
-              return JSON.parse(message) as { type?: string; path?: string };
-            } catch {
-              return null;
-            }
-          })
-          .filter((msg): msg is { type?: string; path?: string } =>
-            !!msg && (msg.type === "update" || msg.type === "reload")
-          );
+      const hmrMessages = mock.sentMessages
+        .map((message) => {
+          try {
+            return JSON.parse(message) as { type?: string; path?: string };
+          } catch {
+            return null;
+          }
+        })
+        .filter((msg): msg is { type?: string; path?: string } =>
+          !!msg && (msg.type === "update" || msg.type === "reload")
+        );
 
-        assertEquals(hmrMessages.length, 1);
-        assertEquals(hmrMessages[0]?.type, "update");
-        assertEquals(hmrMessages[0]?.path, "app.tsx");
-      } finally {
-        unsubscribeExternalReload();
-        unregisterExternalSource();
-      }
+      assertEquals(hmrMessages.length, 1);
+      assertEquals(hmrMessages[0]?.type, "update");
+      assertEquals(hmrMessages[0]?.path, "app.tsx");
     });
   });
 
   describe("HMR Handler - Adapter Initialization for Poke Reception", () => {
     it("triggers adapter initialization in proxy mode for preview requests", async () => {
       const handler = new HMRHandler();
+      const mock = createMockSocket();
+      const jws = await mintTrustedDispatchJws();
 
       let runWithContextCalled = false;
       let runWithContextArgs: unknown[] = [];
@@ -644,7 +645,15 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = new Request("http://internal.proxy/_ws", {
+        headers: {
+          upgrade: "websocket",
+          origin: "https://demo.preview.veryfront.com",
+          "x-forwarded-host": "demo.preview.veryfront.com",
+          "x-forwarded-proto": "https",
+          "x-veryfront-dispatch-jws": jws,
+        },
+      });
       const ctx = {
         requestContext: { mode: "preview", branch: "main" },
         resolvedEnvironment: "preview",
@@ -654,14 +663,22 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
-        adapter: { fs: mockFs, server: null },
+        adapter: {
+          ...adapterEnv(),
+          fs: mockFs,
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            }),
+          },
+        },
       } as unknown as Parameters<typeof handler.handle>[1];
 
       const result = await handler.handle(req, ctx);
 
-      // Should return info response (not WebSocket upgrade)
       assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.response.status, 101);
 
       // Wait for the async adapter initialization
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -677,6 +694,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
     it("does not trigger adapter initialization for production requests", async () => {
       const handler = new HMRHandler();
+      const mock = createMockSocket();
 
       let runWithContextCalled = false;
 
@@ -691,17 +709,28 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws?x-environment=preview");
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { upgrade: "websocket" },
+      });
       const ctx = {
         requestContext: { mode: "production" },
-        resolvedEnvironment: "production", // Production mode
+        resolvedEnvironment: "production",
+        isLocalProject: true,
         projectSlug: "test-project",
         projectId: "proj-123",
         proxyToken: "test-token",
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
-        adapter: { fs: mockFs, server: null },
+        adapter: {
+          fs: mockFs,
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            }),
+          },
+        },
       } as unknown as Parameters<typeof handler.handle>[1];
 
       await handler.handle(req, ctx);
@@ -715,6 +744,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
     it("does not trigger adapter initialization without proxyToken", async () => {
       const handler = new HMRHandler();
+      const mock = createMockSocket();
 
       let runWithContextCalled = false;
 
@@ -729,17 +759,28 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = new Request("http://localhost:3000/_ws", {
+        headers: { upgrade: "websocket" },
+      });
       const ctx = {
         requestContext: { mode: "preview" },
         resolvedEnvironment: "preview",
+        isLocalProject: true,
         projectSlug: "test-project",
         projectId: "proj-123",
-        proxyToken: undefined, // No proxy token
+        proxyToken: undefined,
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
-        adapter: { fs: mockFs, server: null },
+        adapter: {
+          fs: mockFs,
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            }),
+          },
+        },
       } as unknown as Parameters<typeof handler.handle>[1];
 
       await handler.handle(req, ctx);
@@ -753,6 +794,8 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
     it("handles adapter initialization errors gracefully", async () => {
       const handler = new HMRHandler();
+      const mock = createMockSocket();
+      const jws = await mintTrustedDispatchJws();
 
       const mockFs = {
         exists: async () => {
@@ -771,7 +814,15 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = new Request("http://internal.proxy/_ws", {
+        headers: {
+          upgrade: "websocket",
+          origin: "https://demo.preview.veryfront.com",
+          "x-forwarded-host": "demo.preview.veryfront.com",
+          "x-forwarded-proto": "https",
+          "x-veryfront-dispatch-jws": jws,
+        },
+      });
       const ctx = {
         requestContext: { mode: "preview", branch: "main" },
         resolvedEnvironment: "preview",
@@ -781,7 +832,16 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
-        adapter: { fs: mockFs, server: null },
+        adapter: {
+          ...adapterEnv(),
+          fs: mockFs,
+          server: {
+            upgradeWebSocket: () => ({
+              socket: mock.socket,
+              response: createWebSocketUpgradeResponse(),
+            }),
+          },
+        },
       } as unknown as Parameters<typeof handler.handle>[1];
 
       // Should not throw - error is caught and logged
@@ -792,7 +852,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       // Handler should still return a valid response
       assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.response.status, 101);
     });
   });
 });

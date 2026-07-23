@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type EvalRecord, metrics } from "veryfront/eval";
 
@@ -40,6 +40,22 @@ describe("eval/metrics", () => {
     assertEquals(
       (await jsonMatch.evaluate(createRecord({ output: { json: { city: "Paris" } } }))).pass,
       true,
+    );
+  });
+
+  it("handles non-JSON answer values without crashing", async () => {
+    const contains = metrics.answer.contains({ text: "undefined" });
+    const jsonMatch = metrics.answer.jsonMatch({ expected: { ok: true } });
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    assertEquals(
+      (await contains.evaluate(createRecord({ output: undefined }))).pass,
+      true,
+    );
+    assertEquals(
+      (await jsonMatch.evaluate(createRecord({ output: circular }))).pass,
+      false,
     );
   });
 
@@ -91,6 +107,77 @@ describe("eval/metrics", () => {
         },
       },
     );
+  });
+
+  it("fails configured operation budgets when required usage is missing", async () => {
+    const record = createRecord({ usage: {} });
+
+    assertEquals(await metrics.ops.tokens({ maxTotal: 20 }).evaluate(record), {
+      name: "ops.tokens",
+      family: "ops",
+      severity: "gate",
+      score: 0,
+      pass: false,
+      explanation: "Token usage required by this budget was not measured.",
+      evidence: { usage: {}, limits: { maxTotal: 20 }, missing: ["totalTokens"] },
+    });
+    assertEquals(await metrics.ops.cost({ maxUsd: 0.05 }).evaluate(record), {
+      name: "ops.cost",
+      family: "ops",
+      severity: "gate",
+      score: 0,
+      pass: false,
+      explanation: "Cost usage required by this budget was not measured.",
+      evidence: { maxUsd: 0.05 },
+    });
+  });
+
+  it("rejects malformed metric configuration at definition time", () => {
+    for (
+      const create of [
+        () => metrics.answer.contains({ text: "" }),
+        () => metrics.answer.regex({ pattern: "[" }),
+        () => metrics.knowledge.recallAtK({ k: 0 }),
+        () => metrics.knowledge.recallAtK({ k: 1, expected: [{}] }),
+        () => metrics.ops.latency({ maxMs: Number.NaN }),
+        () => metrics.ops.tokens({}),
+        () => metrics.ops.tokens({ maxOutput: -1 }),
+        () => metrics.ops.cost({ maxUsd: -1 }),
+        () => metrics.agent.calledTool(""),
+        () => metrics.agent.toolCallCount("tool", {}),
+        () => metrics.agent.toolCallCount("tool", { exact: 1, min: 1 }),
+        () => metrics.answer.exactMatch().gate({ min: 1, max: 0 }),
+      ]
+    ) {
+      assertThrows(create, Error);
+    }
+  });
+
+  it("fails closed on malformed judge scores", async () => {
+    const result = await metrics.answer.groundedness({
+      judge: () => ({ score: Number.NaN, pass: true }),
+    }).evaluate(createRecord());
+
+    assertEquals(result.pass, false);
+    assertEquals(result.score, 0);
+    assertEquals(result.explanation, "Groundedness judge returned an invalid score.");
+
+    const malformedResult = await metrics.judge.rubric({
+      rubric: "Check correctness",
+      judge: () => Promise.resolve(null as never),
+    }).evaluate(createRecord());
+    assertEquals(malformedResult.pass, false);
+    assertEquals(malformedResult.score, 0);
+    assertEquals(malformedResult.explanation, "Judge returned an invalid score.");
+  });
+
+  it("snapshots thresholds used for evaluation", async () => {
+    const threshold = { min: 0.5 };
+    const metric = metrics.answer.exactMatch().gate(threshold);
+    threshold.min = 2;
+    if (metric.threshold) metric.threshold.min = 2;
+
+    assertEquals((await metric.evaluate(createRecord())).pass, true);
   });
 
   it("evaluates agent tool behavior metrics", async () => {

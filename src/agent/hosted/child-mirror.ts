@@ -3,30 +3,44 @@ import type { HostedStreamPartForUiChunkMapping } from "#veryfront/chat/hosted-u
 
 /** Public API contract for hosted child chunk mirror. */
 export interface HostedChildChunkMirror {
+  /** Executes chunk. */
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void> | void;
 }
 
 /** State for hosted child mirror. */
 export interface HostedChildMirrorState {
+  /** Whether reasoning started. */
   reasoningStarted: boolean;
+  /** Whether text started. */
   textStarted: boolean;
 }
 
 /** Context for hosted child mirror. */
 export interface HostedChildMirrorContext {
+  /** Mirror value. */
   mirror: HostedChildChunkMirror | null;
+  /** Message ID value. */
   messageId: string | null;
+  /** Reasoning message ID value. */
   reasoningMessageId: string | null;
+  /** State value. */
   state: HostedChildMirrorState;
+  /** Callback that handles append chunk. */
   appendChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void>;
+  /** Callback that handles close reasoning segment. */
   closeReasoningSegment: () => Promise<void>;
+  /** Callback that handles close text segment. */
   closeTextSegment: () => Promise<void>;
+  /** Callback that handles mark step started. */
   markStepStarted: () => void;
+  /** Callback that handles has started step. */
   hasStartedStep: () => boolean;
+  /** Callback that handles has emitted progress. */
   hasEmittedProgress: () => boolean;
 }
 
-type CoreMirroredPartType =
+/** Core stream part kinds handled by the hosted child mirror. */
+export type CoreMirroredPartType =
   | "reasoning-delta"
   | "text-delta"
   | "tool-input-start"
@@ -34,9 +48,11 @@ type CoreMirroredPartType =
   | "tool-call"
   | "tool-result";
 
-type MirroredPartType = CoreMirroredPartType | "tool-error" | "error";
+/** Stream part kinds tracked by the hosted child mirror. */
+export type MirroredPartType = CoreMirroredPartType | "tool-error" | "error";
 
-type DurableMirrorChunkType = ChatUiMessageChunk<ChatMessageMetadata>["type"];
+/** Durable UI chunk kinds emitted by the hosted child mirror. */
+export type DurableMirrorChunkType = ChatUiMessageChunk<ChatMessageMetadata>["type"];
 
 const ALREADY_MIRRORED_CHUNK_TYPES_BY_PART_TYPE: Readonly<
   Partial<Record<MirroredPartType, readonly DurableMirrorChunkType[]>>
@@ -57,7 +73,8 @@ export function isAlreadyMirroredHostedChunk(
   return ALREADY_MIRRORED_CHUNK_TYPES_BY_PART_TYPE[partType]?.includes(mirroredChunkType) ?? false;
 }
 
-type MirroredHostedStreamPart = Extract<
+/** Hosted stream parts supported by durable child mirroring. */
+export type MirroredHostedStreamPart = Extract<
   HostedStreamPartForUiChunkMapping,
   | { type: "reasoning-delta" }
   | { type: "text-delta" }
@@ -70,7 +87,8 @@ type MirroredHostedStreamPart = Extract<
   | { type: "error" }
 >;
 
-type HostedMirrorBasePart =
+/** Provider-neutral stream parts accepted by the hosted child mirror. */
+export type HostedMirrorBasePart =
   | { type: "reasoning-delta"; text: string }
   | { type: "text-delta"; text: string }
   | { type: "tool-input-start"; toolCallId: string; toolName: string }
@@ -80,7 +98,11 @@ type HostedMirrorBasePart =
   | { type: "tool-error"; toolCallId: string; toolName: string; input: unknown; error: Error }
   | { type: "error"; error: Error };
 
-type ExtraMirroredHostedStreamPart = Extract<HostedStreamPartForUiChunkMapping, { type: "source" }>;
+/** Additional source part accepted directly from hosted stream mapping. */
+export type ExtraMirroredHostedStreamPart = Extract<
+  HostedStreamPartForUiChunkMapping,
+  { type: "source" }
+>;
 
 /** Public API contract for hosted child mirror part. */
 export type HostedChildMirrorPart = HostedMirrorBasePart | ExtraMirroredHostedStreamPart;

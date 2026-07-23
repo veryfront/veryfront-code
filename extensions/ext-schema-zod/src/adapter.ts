@@ -80,7 +80,7 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
     partial: () => wrap<Partial<T>>(anyZs.partial()),
     extend: <U extends Record<string, Schema<unknown>>>(shape: U) => {
       const zodShape = toZodShape(shape);
-      return wrap<T & { [K in keyof U]: U[K] extends Schema<infer V> ? V : never }>(
+      return wrap<T & InferShape<U>>(
         anyZs.extend(zodShape),
       );
     },
@@ -100,14 +100,25 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
     pipe: <U>(next: Schema<U>): Schema<U> => wrap<U>(zs.pipe(toZod(next))),
     parse: (data: unknown): T => zs.parse(data) as T,
     safeParse: (data: unknown): ValidationResult<T> => {
-      const res = zs.safeParse(data);
-      if (res.success) return { success: true, data: res.data as T };
-      const issues: ValidationIssue[] = res.error.issues.map((issue) => ({
-        path: issue.path as (string | number)[],
-        message: issue.message,
-        code: issue.code,
-      }));
-      return { success: false, issues, error: res.error };
+      try {
+        const res = zs.safeParse(data);
+        if (res.success) return { success: true, data: res.data as T };
+        const issues: ValidationIssue[] = res.error.issues.map((issue) => ({
+          path: issue.path as (string | number)[],
+          message: issue.message,
+          code: issue.code,
+        }));
+        return { success: false, issues, error: res.error };
+      } catch {
+        return {
+          success: false,
+          issues: [{
+            path: [],
+            message: "Validation could not be completed",
+            code: "custom",
+          }],
+        };
+      }
     },
   };
   // Attach the underlying zod schema for adapter round-trips without
@@ -136,7 +147,7 @@ const coerce: SchemaValidatorCoerce = {
 /**
  * Build a zod-backed `SchemaValidator` instance.
  *
- * Stateless — safe to call once at extension setup and pass the returned
+ * Stateless. Call this once at extension setup and pass the returned
  * value to `ctx.provide("SchemaValidator", …)`. Tests that need to register
  * the validator without going through full extension bootstrap can call this
  * factory directly.

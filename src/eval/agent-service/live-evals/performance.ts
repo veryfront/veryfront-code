@@ -1,3 +1,7 @@
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+const MAX_LIVE_EVAL_RESULTS = 100_000;
+
 /** Public API contract for live eval runtime. */
 export type LiveEvalRuntime = "framework";
 
@@ -37,6 +41,21 @@ function calculateDurationPercentile(
 export function buildRuntimePerformanceSummary(
   results: LiveEvalResultForPerformance[],
 ): Record<LiveEvalRuntime, RuntimePerformanceSummary> {
+  if (!Array.isArray(results) || results.length > MAX_LIVE_EVAL_RESULTS) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Live eval performance accepts at most ${MAX_LIVE_EVAL_RESULTS} results`,
+    });
+  }
+  for (const result of results) {
+    if (
+      result.runtime !== "framework" || !Number.isFinite(result.durationMs) ||
+      result.durationMs < 0
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Live eval durationMs must be a finite non-negative number",
+      });
+    }
+  }
   const durations = results.map((result) => result.durationMs).sort((
     left,
     right,

@@ -9,6 +9,13 @@ import {
 } from "./naming.ts";
 
 describe("css-modules/naming", () => {
+  it("preserves URL schemes while removing query and hash suffixes", () => {
+    assertEquals(
+      normalizeCssModuleKey("https://example.com/styles/App.module.css?theme=dark#top"),
+      "https://example.com/styles/App.module.css",
+    );
+  });
+
   it("resolves relative and alias module keys deterministically", () => {
     const relative = resolveCssModuleKey(
       "./Button.module.css",
@@ -60,5 +67,34 @@ describe("css-modules/naming", () => {
     // Original unsoped class names should not remain
     assertEquals(rewritten.includes(".container"), false);
     assertEquals(rewritten.includes(".active {"), false);
+  });
+
+  it("does not rewrite class-like text outside selectors", () => {
+    const key = normalizeCssModuleKey("/project/components/Card.module.css");
+    const css = `
+/* .commented should stay */
+.container::before {
+  content: ".quoted should stay";
+  background: url(/icons/.asset.svg);
+  --literal: .declaration;
+}
+`;
+
+    const rewritten = rewriteCssModuleContent(css, key);
+
+    assertEquals(rewritten.includes(".Card_container__"), true);
+    assertEquals(rewritten.includes("/* .commented should stay */"), true);
+    assertEquals(rewritten.includes('content: ".quoted should stay"'), true);
+    assertEquals(rewritten.includes("url(/icons/.asset.svg)"), true);
+    assertEquals(rewritten.includes("--literal: .declaration"), true);
+  });
+
+  it("rewrites selectors inside grouping rules", () => {
+    const key = normalizeCssModuleKey("/project/components/Card.module.css");
+    const css = `@media (min-width: 20rem) { .container:hover { color: red; } }`;
+
+    const rewritten = rewriteCssModuleContent(css, key);
+
+    assertEquals(rewritten.includes(".Card_container__"), true);
   });
 });

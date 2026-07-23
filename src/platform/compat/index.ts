@@ -22,9 +22,18 @@ export {
 } from "./fs.ts";
 
 // Compat: KV store
-export { createKVStore, MemoryKv, openKv, polyfillDenoKv } from "./kv/index.ts";
+export { createKVStore, KV_PORTABLE_LIMITS, MemoryKv, openKv, polyfillDenoKv } from "./kv/index.ts";
 export { SqliteKv } from "./kv/index.ts";
-export type { Kv, KvEntry, KvListOptions, SqliteDatabase } from "./kv/index.ts";
+export type {
+  CreateKVStoreOptions,
+  Kv,
+  KvBackend,
+  KvEntry,
+  KvJsonValue,
+  KvListOptions,
+  OpenKvOptions,
+  SqliteDatabase,
+} from "./kv/index.ts";
 
 // Compat: process
 export {
@@ -60,8 +69,25 @@ export {
 } from "./process.ts";
 export type { CommandOptions, CommandResult, EnvBooleanOptions } from "./process.ts";
 
+// Compat: DNS
+export {
+  type DnsAddressRecordType,
+  resolveHostAddresses,
+  type ResolveHostAddressesOptions,
+} from "./dns.ts";
+
+// Compat: media types
+export { charset, contentType, extension, lookup as lookupMimeType } from "./media-types.ts";
+
+// Compat: native Web Crypto
+export { createCrypto, type CryptoCompat } from "./crypto.ts";
+
 // Compat: runtime detection
 export {
+  type DetectedRuntime,
+  detectRuntimeEnvironment,
+  detectRuntimeFromHost,
+  getDenoRuntime,
   isBrowserEnvironment,
   isBun,
   isCloudflare,

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateText, streamText } from "./runtime-bridge.ts";
+import { cosineSimilarity, embed, embedMany, generateText, streamText } from "./runtime-bridge.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -61,6 +61,56 @@ describe("runtime-bridge", () => {
     });
 
     assertEquals(result.text, "ok");
+  });
+
+  it("omits flat usage without finite nonnegative fields", async () => {
+    const model = createGenerateModel("test", "test/invalid-flat-usage", async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: "stop",
+      usage: {
+        inputTokens: "3",
+        outputTokens: -1,
+        totalTokens: Number.POSITIVE_INFINITY,
+        costUsd: Number.NaN,
+      },
+    }));
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(result.usage, undefined);
+  });
+
+  it("normalizes nested usage with finite nonnegative fields", async () => {
+    const model = createGenerateModel("test", "test/nested-usage", async () => ({
+      content: [{ type: "text", text: "ok" }],
+      finishReason: "stop",
+      usage: {
+        inputTokens: {
+          total: 0,
+          cached: -1,
+          cacheCreation: 2,
+        },
+        outputTokens: {
+          total: 4,
+          reasoning: Number.POSITIVE_INFINITY,
+        },
+      },
+    }));
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    assertEquals(result.usage, {
+      inputTokens: 0,
+      outputTokens: 4,
+      totalTokens: 4,
+      cacheCreationInputTokens: 2,
+    });
   });
 
   it("buffers the stream path for models that prefer streamed generate", async () => {
@@ -148,6 +198,53 @@ describe("runtime-bridge", () => {
       outputTokens: 3,
       totalTokens: 7,
     });
+  });
+
+  it("preserves falsey streamed tool results by property presence", async () => {
+    const model = {
+      ...createStreamModel("test", "test/falsey-tool-results", async () => ({
+        stream: ReadableStream.from([
+          {
+            type: "tool-result",
+            toolCallId: "tool-null",
+            toolName: "probe",
+            result: null,
+            output: "fallback",
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-false",
+            toolName: "probe",
+            result: false,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-zero",
+            toolName: "probe",
+            output: 0,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-empty",
+            toolName: "probe",
+            result: "",
+          },
+        ]),
+      })),
+      _generateViaStream: true,
+    };
+
+    const result = await generateText({
+      model,
+      messages: [{ role: "user", content: "Probe" }],
+    });
+
+    assertEquals(result.toolResults, [
+      { toolCallId: "tool-null", toolName: "probe", result: null },
+      { toolCallId: "tool-false", toolName: "probe", result: false },
+      { toolCallId: "tool-zero", toolName: "probe", result: 0 },
+      { toolCallId: "tool-empty", toolName: "probe", result: "" },
+    ]);
   });
 
   it("uses the direct stream path for models without tools", async () => {
@@ -952,5 +1049,70 @@ describe("runtime-bridge", () => {
     });
 
     assertEquals(result.text, "Continuing");
+  });
+
+  it("rejects a single embedding response with the wrong result count", async () => {
+    const model = {
+      doEmbed: () => Promise.resolve({ embeddings: [] }),
+    };
+
+    await assertRejects(
+      async () => {
+        await embed({ model, value: "one" });
+      },
+      Error,
+      "Embedding response count must match input count: expected 1, received 0",
+    );
+  });
+
+  it("rejects a batched embedding response with the wrong result count", async () => {
+    const model = {
+      doEmbed: () => Promise.resolve({ embeddings: [[1, 2]] }),
+    };
+
+    await assertRejects(
+      async () => {
+        await embedMany({ model, values: ["one", "two"] });
+      },
+      Error,
+      "Embedding response count must match input count: expected 2, received 1",
+    );
+  });
+
+  it("rejects non-finite vectors from single and batched embedding responses", async () => {
+    const singleModel = {
+      doEmbed: () => Promise.resolve({ embeddings: [[1, Number.NaN]] }),
+    };
+    const batchModel = {
+      doEmbed: () => Promise.resolve({ embeddings: [[1, 2], [3, Number.POSITIVE_INFINITY]] }),
+    };
+
+    await assertRejects(
+      async () => {
+        await embed({ model: singleModel, value: "one" });
+      },
+      Error,
+      "Embedding response vector 0 must contain only finite numbers",
+    );
+    await assertRejects(
+      async () => {
+        await embedMany({ model: batchModel, values: ["one", "two"] });
+      },
+      Error,
+      "Embedding response vector 1 must contain only finite numbers",
+    );
+  });
+
+  it("rejects cosine similarity vectors with different dimensions", () => {
+    assertThrows(
+      () => cosineSimilarity([1], [1, 2]),
+      Error,
+      "Vectors must have the same length",
+    );
+  });
+
+  it("returns zero cosine similarity for equal empty and zero vectors", () => {
+    assertEquals(cosineSimilarity([], []), 0);
+    assertEquals(cosineSimilarity([0, 0], [1, 2]), 0);
   });
 });

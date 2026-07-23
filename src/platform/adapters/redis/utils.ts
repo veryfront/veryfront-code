@@ -7,7 +7,14 @@ export function arrayToObject(arr: string[]): Record<string, string> {
 
     if (!key || value === undefined) continue;
 
-    obj[key] = value;
+    // Defining the property avoids the legacy `__proto__` setter on Node.js
+    // while preserving Redis field names exactly.
+    Object.defineProperty(obj, key, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
 
   return obj;

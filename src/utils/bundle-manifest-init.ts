@@ -15,6 +15,7 @@ interface BundleManifestConfig {
 }
 import {
   type BundleManifestStore,
+  createDisabledBundleManifestStore,
   InMemoryBundleManifestStore,
   setBundleManifestStore,
 } from "./bundle-manifest.ts";
@@ -24,7 +25,11 @@ const logger = serverLogger.component("bundle-manifest");
 
 class UnsupportedBundleManifestStoreError extends Error {
   constructor(storeType: string) {
-    super(`Bundle manifest store type "${storeType}" is configured but is not implemented`);
+    super(
+      storeType === "redis" || storeType === "kv"
+        ? `Bundle manifest store type "${storeType}" is configured but is not implemented`
+        : "Unsupported bundle manifest store type",
+    );
     this.name = "UnsupportedBundleManifestStoreError";
   }
 }
@@ -39,33 +44,25 @@ export async function initializeBundleManifest(
 
   if (!enabled) {
     logger.debug("Bundle manifest disabled");
-    setBundleManifestStore(new InMemoryBundleManifestStore());
+    setBundleManifestStore(createDisabledBundleManifestStore());
     return;
   }
 
   const storeType = manifestConfig?.type ?? adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_TYPE") ??
     "memory";
 
-  logger.debug("Initializing bundle manifest", { type: storeType, mode });
+  const reportedType = storeType === "memory" || storeType === "redis" || storeType === "kv"
+    ? storeType
+    : "unsupported";
+  logger.debug("Initializing bundle manifest", { type: reportedType, mode });
 
-  try {
-    const store = await createStore(storeType, config.cache, adapter);
-    setBundleManifestStore(store);
-
-    try {
-      const stats = await store.getStats();
-      logger.debug("Store statistics", stats);
-    } catch (error) {
-      logger.debug("Failed to get stats", { error });
-    }
-  } catch (error) {
-    if (error instanceof UnsupportedBundleManifestStoreError) throw error;
-
-    logger.error("Failed to initialize store, using in-memory fallback", {
-      error,
-    });
-    setBundleManifestStore(new InMemoryBundleManifestStore());
-  }
+  const store = await createStore(storeType, config.cache, adapter);
+  setBundleManifestStore(store);
+  const stats = await store.getStats();
+  logger.debug("Store statistics", {
+    totalBundles: stats.totalBundles,
+    totalSize: stats.totalSize,
+  });
 }
 
 async function createStore(
@@ -78,6 +75,10 @@ async function createStore(
   }
 
   if (storeType === "kv") {
+    throw new UnsupportedBundleManifestStoreError(storeType);
+  }
+
+  if (storeType !== "memory") {
     throw new UnsupportedBundleManifestStoreError(storeType);
   }
 

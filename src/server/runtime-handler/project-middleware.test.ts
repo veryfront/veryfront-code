@@ -2,9 +2,19 @@ import "#veryfront/schemas/_test-setup.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  createWebSocketUpgradeResponse,
+  type RuntimeAdapter,
+  type RuntimeResponse,
+} from "#veryfront/platform/adapters/base.ts";
+import { FS_ADAPTER_KIND } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import {
   getActiveSourceIntegrationPolicy,
   runWithExactSourceIntegrationPolicy,
@@ -14,6 +24,7 @@ import {
   ProjectMiddlewareRuntime,
   type ProjectMiddlewareRuntimeContext,
 } from "./project-middleware.ts";
+import { MAX_MIDDLEWARE_FUNCTIONS } from "#veryfront/server/dev-server/middleware.ts";
 
 interface ActiveFsContext {
   projectSlug: string;
@@ -27,6 +38,7 @@ function createAdapter(
   middlewareSource?: string,
 ): RuntimeAdapter {
   const fs = {
+    [FS_ADAPTER_KIND]: "veryfront-multi-project" as const,
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
     isVeryfrontAdapter: () => true,
@@ -94,7 +106,7 @@ function createContext(
       branch: null,
       mode: "production",
     },
-    isLocalProject: false,
+    isLocalProject: true,
     ...overrides,
   };
 }
@@ -103,15 +115,21 @@ function execute(
   runtime: ProjectMiddlewareRuntime,
   context: HandlerContext,
   request = new Request("https://example.com/resource"),
-  next = () => Promise.resolve(new Response("route")),
-): Promise<Response | undefined> {
+  next = (): Promise<RuntimeResponse> => Promise.resolve(new Response("route")),
+  isSharedProxy = true,
+): Promise<RuntimeResponse | undefined> {
   const runtimeContext: ProjectMiddlewareRuntimeContext = {
     request,
     handlerContext: context,
-    isSharedProxy: true,
+    isSharedProxy,
     next,
   };
   return runtime.execute(runtimeContext);
+}
+
+function expectResponse(response: RuntimeResponse | undefined): Response {
+  if (!(response instanceof Response)) throw new Error("Expected an HTTP response");
+  return response;
 }
 
 describe("ProjectMiddlewareRuntime", () => {
@@ -120,15 +138,200 @@ describe("ProjectMiddlewareRuntime", () => {
     await stop();
   });
 
-  it("loads production middleware in trusted filesystem context and caches by release", async () => {
-    const storage = new AsyncLocalStorage<ActiveFsContext>();
-    const adapter = createAdapter(storage);
-    const loadedContexts: ActiveFsContext[] = [];
-    let loadCount = 0;
+  it("rejects remote middleware without loading it in the host process", async () => {
+    const adapter = createAdapter(
+      undefined,
+      "export default () => new Response('unsafe');",
+    );
+    let loadCalls = 0;
     const runtime = new ProjectMiddlewareRuntime({
       loadMiddleware: () => {
+        loadCalls++;
+        return Promise.resolve([() => new Response("unsafe")]);
+      },
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: false }),
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("cache-control"), "no-store");
+    assertEquals(response?.headers.get("x-content-type-options"), "nosniff");
+    assertEquals(loadCalls, 0);
+  });
+
+  it("fails closed in shared proxy mode when project locality is absent", async () => {
+    const adapter = createAdapter(
+      undefined,
+      "export default () => new Response('unsafe');",
+    );
+    let loadCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCalls++;
+        return Promise.resolve([() => new Response("unsafe")]);
+      },
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: undefined }),
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(loadCalls, 0);
+  });
+
+  it("keeps absent locality compatible for standalone trusted runtimes", async () => {
+    const adapter = createAdapter();
+    let loadCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCalls++;
+        return Promise.resolve([() => new Response("standalone")]);
+      },
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: undefined }),
+      undefined,
+      undefined,
+      false,
+    );
+
+    assertEquals(await expectResponse(response).text(), "standalone");
+    assertEquals(loadCalls, 1);
+  });
+
+  it("passes remote requests through when the project has no middleware", async () => {
+    const adapter = createAdapter();
+    let loadCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCalls++;
+        return Promise.resolve([() => new Response("unsafe")]);
+      },
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: false }),
+    );
+
+    assertEquals(await expectResponse(response).text(), "route");
+    assertEquals(loadCalls, 0);
+  });
+
+  it("rejects configured remote middleware without invoking it", async () => {
+    const adapter = createAdapter();
+    let middlewareCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime();
+    const context = createContext(adapter, {
+      isLocalProject: false,
+      config: {
+        middleware: {
+          custom: [() => {
+            middlewareCalls++;
+            return new Response("unsafe");
+          }],
+        },
+      } as HandlerContext["config"],
+    });
+
+    const response = await execute(runtime, context);
+
+    assertEquals(response?.status, 503);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("fails closed when remote middleware presence cannot be verified", async () => {
+    const adapter = createAdapter();
+    adapter.fs.exists = () => Promise.reject(new Error("private filesystem failure"));
+    let routeCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime();
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: false }),
+      undefined,
+      () => {
+        routeCalls++;
+        return Promise.resolve(new Response("unsafe"));
+      },
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(routeCalls, 0);
+  });
+
+  it("does not expose a remote filesystem error name in middleware logs", async () => {
+    const canary = "PRIVATE_REMOTE_ERROR_NAME";
+    const adapter = createAdapter();
+    adapter.fs.exists = () => {
+      const error = new Error("private failure");
+      error.name = canary;
+      return Promise.reject(error);
+    };
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    try {
+      const response = await execute(
+        new ProjectMiddlewareRuntime(),
+        createContext(adapter, { isLocalProject: false }),
+      );
+      assertEquals(response?.status, 503);
+      assertEquals(JSON.stringify(entries).includes(canary), false);
+    } finally {
+      __resetLogRecordEmitterForTests();
+    }
+  });
+
+  it("returns a bodyless non-cacheable response for remote HEAD middleware requests", async () => {
+    const response = await execute(
+      new ProjectMiddlewareRuntime(),
+      createContext(createAdapter(undefined, "export default () => new Response('unsafe');"), {
+        isLocalProject: false,
+      }),
+      new Request("https://example.com/resource", { method: "HEAD" }),
+    );
+
+    assertEquals(response?.status, 503);
+    assertEquals(await expectResponse(response).text(), "");
+    assertEquals(response?.headers.get("cache-control"), "no-store");
+    assertEquals(response?.headers.get("x-content-type-options"), "nosniff");
+  });
+
+  it("keeps explicitly local project middleware available", async () => {
+    const adapter = createAdapter();
+    let loadCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCalls++;
+        return Promise.resolve([() => new Response("local")]);
+      },
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: true }),
+    );
+
+    assertEquals(await expectResponse(response).text(), "local");
+    assertEquals(loadCalls, 1);
+  });
+
+  it("loads trusted middleware without using request selector headers and caches by release", async () => {
+    const adapter = createAdapter();
+    const loadedProjectDirs: string[] = [];
+    let loadCount = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: (projectDir) => {
         loadCount++;
-        loadedContexts.push(storage.getStore()!);
+        loadedProjectDirs.push(projectDir);
         return Promise.resolve([
           async (_c, next) => {
             const response = await next();
@@ -149,12 +352,7 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(loadCount, 1);
     assertEquals(first?.headers.get("x-project-middleware"), "applied");
     assertEquals(second?.headers.get("x-project-middleware"), "applied");
-    assertEquals(loadedContexts, [{
-      projectSlug: "trusted-project",
-      projectId: "project-a",
-      releaseId: "release-a",
-      branch: null,
-    }]);
+    assertEquals(loadedProjectDirs, ["/app"]);
   });
 
   it("reloads middleware when the production release changes", async () => {
@@ -173,8 +371,35 @@ describe("ProjectMiddlewareRuntime", () => {
       createContext(adapter, { releaseId: "release-b" }),
     );
 
-    assertEquals(await first?.text(), "middleware-1");
-    assertEquals(await second?.text(), "middleware-2");
+    assertEquals(await expectResponse(first).text(), "middleware-1");
+    assertEquals(await expectResponse(second).text(), "middleware-2");
+    assertEquals(loadCount, 2);
+  });
+
+  it("does not share compiled middleware between adapter instances", async () => {
+    const adapterA = createAdapter();
+    const adapterB = createAdapter();
+    Object.defineProperty(adapterA, "name", { value: "adapter-a" });
+    Object.defineProperty(adapterB, "name", { value: "adapter-b" });
+    let loadCount = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: (_projectDir, adapter) => {
+        loadCount++;
+        return Promise.resolve([() => new Response(adapter.name)]);
+      },
+    });
+
+    const responseA = await execute(
+      runtime,
+      createContext(adapterA, { isLocalProject: true }),
+    );
+    const responseB = await execute(
+      runtime,
+      createContext(adapterB, { isLocalProject: true }),
+    );
+
+    assertEquals(await expectResponse(responseA).text(), "adapter-a");
+    assertEquals(await expectResponse(responseB).text(), "adapter-b");
     assertEquals(loadCount, 2);
   });
 
@@ -227,7 +452,7 @@ describe("ProjectMiddlewareRuntime", () => {
     );
 
     assertEquals(routeCalls, 1);
-    assertEquals(await response?.text(), "route");
+    assertEquals(await expectResponse(response).text(), "route");
   });
 
   it("preserves short-circuit and pass-through middleware ordering", async () => {
@@ -272,7 +497,7 @@ describe("ProjectMiddlewareRuntime", () => {
 
     calls.length = 0;
     const allowed = await execute(runtime, createContext(adapter), undefined, next);
-    assertEquals(await allowed?.text(), "route");
+    assertEquals(await expectResponse(allowed).text(), "route");
     assertEquals(routeCalls, 1);
     assertEquals(calls, [
       "first:before",
@@ -288,7 +513,7 @@ describe("ProjectMiddlewareRuntime", () => {
     const request = new Request("https://example.com/_ws", {
       headers: { upgrade: "websocket" },
     });
-    const routeResponse = new Response("upgrade handoff");
+    const routeResponse = createWebSocketUpgradeResponse();
     const runtime = new ProjectMiddlewareRuntime({
       loadMiddleware: () =>
         Promise.resolve([
@@ -309,16 +534,12 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(response === routeResponse, true);
   });
 
-  it("isolates concurrent projects and ignores project selectors on the request", async () => {
-    const storage = new AsyncLocalStorage<ActiveFsContext>();
-    const adapter = createAdapter(storage);
+  it("isolates concurrent trusted project directories and ignores request selectors", async () => {
+    const adapter = createAdapter();
     const runtime = new ProjectMiddlewareRuntime({
-      loadMiddleware: async () => {
-        const before = storage.getStore()?.projectSlug;
+      loadMiddleware: async (projectDir) => {
         await new Promise((resolve) => setTimeout(resolve, 5));
-        const after = storage.getStore()?.projectSlug;
-        assertEquals(after, before);
-        return [() => new Response(before)];
+        return [() => new Response(projectDir)];
       },
     });
     const request = new Request("https://example.com/resource", {
@@ -330,6 +551,7 @@ describe("ProjectMiddlewareRuntime", () => {
       execute(
         runtime,
         createContext(adapter, {
+          projectDir: "/app-b",
           projectSlug: "trusted-project-b",
           projectId: "project-b",
           releaseId: "release-b",
@@ -344,8 +566,8 @@ describe("ProjectMiddlewareRuntime", () => {
       ),
     ]);
 
-    assertEquals(await projectA?.text(), "trusted-project");
-    assertEquals(await projectB?.text(), "trusted-project-b");
+    assertEquals(await expectResponse(projectA).text(), "/app");
+    assertEquals(await expectResponse(projectB).text(), "/app-b");
   });
 
   it("evicts rejected loads so the affected project can recover", async () => {
@@ -367,10 +589,46 @@ describe("ProjectMiddlewareRuntime", () => {
     const response = await execute(runtime, createContext(adapter));
 
     assertEquals(attempts, 2);
-    assertEquals(await response?.text(), "recovered");
+    assertEquals(await expectResponse(response).text(), "recovered");
   });
 
-  it("rejects malformed shared production middleware before routing", async () => {
+  it("omits project identities and raw failures from middleware load logs", async () => {
+    const canaries = [
+      "PRIVATE_PROJECT_SLUG",
+      "PRIVATE_PROJECT_ID",
+      "PRIVATE_RELEASE_ID",
+      "PRIVATE_BRANCH",
+      "PRIVATE_LOAD_FAILURE",
+    ] as const;
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.reject(new Error(canaries[4])),
+    });
+    const context = createContext(createAdapter(), {
+      projectSlug: canaries[0],
+      projectId: canaries[1],
+      releaseId: canaries[2],
+      requestContext: {
+        token: "trusted-token",
+        slug: canaries[0],
+        branch: canaries[3],
+        mode: "production",
+      },
+    });
+
+    try {
+      await assertRejects(() => execute(runtime, context), Error, canaries[4]);
+      const serialized = JSON.stringify(entries);
+      for (const canary of canaries) {
+        assertEquals(serialized.includes(canary), false);
+      }
+    } finally {
+      __resetLogRecordEmitterForTests();
+    }
+  });
+
+  it("rejects malformed trusted middleware before routing", async () => {
     const adapter = createAdapter(
       undefined,
       "export const middleware = () => new Response('untrusted');",
@@ -417,6 +675,35 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(loads, 3);
   });
 
+  it("rejects oversized custom middleware configuration before loading files", async () => {
+    const adapter = createAdapter();
+    let loadCalls = 0;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCalls++;
+        return Promise.resolve([]);
+      },
+    });
+    const custom = Array.from(
+      { length: MAX_MIDDLEWARE_FUNCTIONS + 1 },
+      () => () => new Response("unused"),
+    );
+
+    await assertRejects(
+      () =>
+        execute(
+          runtime,
+          createContext(adapter, {
+            isLocalProject: true,
+            config: { middleware: { custom } } as HandlerContext["config"],
+          }),
+        ),
+      TypeError,
+      "too many functions",
+    );
+    assertEquals(loadCalls, 0);
+  });
+
   it("exposes only the active project environment to middleware", async () => {
     const adapter = createAdapter();
     const runtime = new ProjectMiddlewareRuntime({
@@ -431,7 +718,7 @@ describe("ProjectMiddlewareRuntime", () => {
       () => execute(runtime, createContext(adapter)),
     );
 
-    assertEquals(await response?.json(), { TENANT_VALUE: "project-only" });
+    assertEquals(await expectResponse(response).json(), { TENANT_VALUE: "project-only" });
   });
 
   it("bypasses project middleware for config-optional control-plane run routes", async () => {
@@ -445,7 +732,7 @@ describe("ProjectMiddlewareRuntime", () => {
         ]);
       },
     });
-    const context = createContext(adapter, { releaseId: undefined });
+    const context = createContext(adapter, { releaseId: undefined, isLocalProject: undefined });
     let routeCalls = 0;
     const next = () => {
       routeCalls++;
@@ -466,7 +753,7 @@ describe("ProjectMiddlewareRuntime", () => {
     for (const request of requests) {
       const response = await execute(runtime, context, request, next);
       assertEquals(response?.status, 200);
-      assertEquals(await response?.text(), "route");
+      assertEquals(await expectResponse(response).text(), "route");
     }
 
     assertEquals(loads, 0);
@@ -499,7 +786,7 @@ describe("ProjectMiddlewareRuntime", () => {
     );
 
     assertEquals(response?.status, 418);
-    assertEquals(await response?.text(), "project-middleware");
+    assertEquals(await expectResponse(response).text(), "project-middleware");
     assertEquals(loads, 1);
     assertEquals(routeCalls, 0);
   });
@@ -521,12 +808,17 @@ describe("ProjectMiddlewareRuntime", () => {
 
     await runtime.execute({
       request: new Request("https://example.com"),
-      handlerContext: createContext(adapter),
+      handlerContext: createContext(adapter, { isLocalProject: undefined }),
       isSharedProxy: false,
       next,
     });
     await execute(runtime, createContext(adapter, { isLocalProject: true }), undefined, next);
-    await execute(runtime, createContext(adapter, { proxyToken: undefined }), undefined, next);
+    await execute(
+      runtime,
+      createContext(adapter, { isLocalProject: undefined, proxyToken: undefined }),
+      undefined,
+      next,
+    );
 
     assertEquals(loads, 1);
     assertEquals(routeCalls, 3);

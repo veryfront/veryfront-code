@@ -51,5 +51,15 @@ describe("feature-flags", () => {
       Deno.env.set("VERYFRONT_EXPERIMENTAL_RSC", "1");
       assertEquals(isRSCEnabled({ experimental: {} }), true);
     });
+
+    it("does not return a non-boolean value from malformed runtime config", () => {
+      Deno.env.delete("VERYFRONT_EXPERIMENTAL_RSC");
+      assertEquals(
+        isRSCEnabled({ experimental: { rsc: "false" } } as unknown as {
+          experimental: { rsc: boolean };
+        }),
+        false,
+      );
+    });
   });
 });

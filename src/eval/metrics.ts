@@ -20,6 +20,8 @@ import {
   findEvalToolCalls,
   isEvalToolFailed,
 } from "./tool-behavior.ts";
+import { createEvalValidationError } from "./validation.ts";
+import { canonicalJsonStringify } from "./canonical-json.ts";
 
 type MetricEvaluator = (record: EvalRecord) => EvalMetricResult | Promise<EvalMetricResult>;
 
@@ -84,6 +86,18 @@ const KNOWLEDGE_CONTENT_KEYS = [
   "verificationQuote",
 ];
 const KNOWLEDGE_MATCHED_FIELD_KEYS = ["matched_fields", "matchedFields"];
+const EXPECTED_KNOWLEDGE_KEYS = new Set([
+  "path",
+  "source",
+  "id",
+  "title",
+  "documentCode",
+  "document_code",
+  "contentMatch",
+  "verificationQuote",
+  "content",
+  "text",
+]);
 const KNOWLEDGE_STOP_WORDS = new Set([
   "the",
   "and",
@@ -110,6 +124,150 @@ const KNOWLEDGE_STOP_WORDS = new Set([
   "could",
 ]);
 
+const MAX_METRIC_STRING_LENGTH = 16_384;
+const MAX_KNOWLEDGE_RESULTS = 10_000;
+const MAX_KNOWLEDGE_STRING_LENGTH = 1024 * 1024;
+const MAX_KNOWLEDGE_TRAVERSAL_DEPTH = 32;
+const MAX_KNOWLEDGE_COLLECTION_ENTRIES = 10_000;
+const MAX_KNOWLEDGE_TRAVERSAL_NODES = 100_000;
+
+function assertNonEmptyMetricString(value: string, label: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw createEvalValidationError(`${label} must be a non-empty string`);
+  }
+  if (value.length > MAX_METRIC_STRING_LENGTH) {
+    throw createEvalValidationError(
+      `${label} must not exceed ${MAX_METRIC_STRING_LENGTH} characters`,
+    );
+  }
+}
+
+function assertFiniteNonNegative(value: number, label: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw createEvalValidationError(`${label} must be a finite non-negative number`);
+  }
+}
+
+function assertNonNegativeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw createEvalValidationError(`${label} must be a non-negative safe integer`);
+  }
+}
+
+function assertKnowledgeResultLimit(k: number, label = "Knowledge metric k"): void {
+  if (!Number.isSafeInteger(k) || k < 1 || k > MAX_KNOWLEDGE_RESULTS) {
+    throw createEvalValidationError(
+      `${label} must be an integer between 1 and ${MAX_KNOWLEDGE_RESULTS}`,
+    );
+  }
+}
+
+function assertKnowledgeString(value: string, label: string): void {
+  if (value.length > MAX_KNOWLEDGE_STRING_LENGTH) {
+    throw createEvalValidationError(
+      `${label} must not exceed ${MAX_KNOWLEDGE_STRING_LENGTH} characters`,
+    );
+  }
+}
+
+function assertKnowledgeOptions(
+  options:
+    | EvalKnowledgeRetrievalMetricOptions
+    | EvalKnowledgeMrrMetricOptions
+    | EvalKnowledgeCitationMetricOptions,
+): void {
+  for (
+    const [label, value] of [
+      ["knowledge tool", options.tool],
+      ["expectedFrom", options.expectedFrom],
+      ["citationsFrom", "citationsFrom" in options ? options.citationsFrom : undefined],
+    ] as const
+  ) {
+    if (value !== undefined) assertNonEmptyMetricString(value, label);
+  }
+  if (options.expected !== undefined) {
+    if (
+      !Array.isArray(options.expected) ||
+      options.expected.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES
+    ) {
+      throw createEvalValidationError(
+        `Expected knowledge sources must contain at most ${MAX_KNOWLEDGE_COLLECTION_ENTRIES} entries`,
+      );
+    }
+    for (const entry of options.expected) {
+      if (typeof entry === "string") {
+        if (entry.trim().length === 0) {
+          throw createEvalValidationError("Expected knowledge source must not be empty");
+        }
+        assertKnowledgeString(entry, "Expected knowledge source");
+      } else if (isRecord(entry)) {
+        let meaningfulFields = 0;
+        for (const [key, value] of Object.entries(entry)) {
+          if (!EXPECTED_KNOWLEDGE_KEYS.has(key)) {
+            throw createEvalValidationError(`Unknown expected knowledge source field "${key}"`);
+          }
+          if (value !== undefined && typeof value !== "string") {
+            throw createEvalValidationError("Expected knowledge source fields must be strings");
+          }
+          if (typeof value === "string") {
+            if (value.trim().length === 0) continue;
+            meaningfulFields += 1;
+            assertKnowledgeString(value, "Expected knowledge source field");
+          }
+        }
+        if (meaningfulFields === 0) {
+          throw createEvalValidationError(
+            "Expected knowledge source object must contain a non-empty supported field",
+          );
+        }
+      } else {
+        throw createEvalValidationError(
+          "Expected knowledge sources must be strings or source objects",
+        );
+      }
+    }
+  }
+}
+
+function assertMetricThreshold(threshold: EvalMetricThreshold | undefined): void {
+  if (!threshold) return;
+  if (threshold.min !== undefined && !Number.isFinite(threshold.min)) {
+    throw createEvalValidationError("Metric threshold min must be finite");
+  }
+  if (threshold.max !== undefined && !Number.isFinite(threshold.max)) {
+    throw createEvalValidationError("Metric threshold max must be finite");
+  }
+  if (
+    threshold.min !== undefined && threshold.max !== undefined && threshold.min > threshold.max
+  ) {
+    throw createEvalValidationError("Metric threshold min must not exceed max");
+  }
+}
+
+function assertToolName(name: string): void {
+  assertNonEmptyMetricString(name, "Tool name");
+}
+
+function assertToolCallCountOptions(options: EvalToolCallCountOptions): void {
+  const configured = [options.exact, options.min, options.max].filter((value) =>
+    value !== undefined
+  );
+  if (configured.length === 0) {
+    throw createEvalValidationError(
+      "Tool call count must configure exact, min, or max",
+    );
+  }
+  if (options.exact !== undefined && (options.min !== undefined || options.max !== undefined)) {
+    throw createEvalValidationError("Tool call count exact cannot be combined with min or max");
+  }
+  for (const [label, value] of Object.entries(options)) {
+    if (value !== undefined) assertNonNegativeInteger(value, `Tool call count ${label}`);
+  }
+  if (options.min !== undefined && options.max !== undefined && options.min > options.max) {
+    throw createEvalValidationError("Tool call count min must not exceed max");
+  }
+}
+
 function getOutputText(output: unknown): string {
   if (typeof output === "string") return output;
   if (output && typeof output === "object") {
@@ -117,7 +275,11 @@ function getOutputText(output: unknown): string {
     if (typeof record.text === "string") return record.text;
     if (typeof record.output === "string") return record.output;
   }
-  return stableStringify(output);
+  try {
+    return stableStringify(output) ?? String(output);
+  } catch {
+    return String(output);
+  }
 }
 
 function getOutputJson(output: unknown): unknown {
@@ -128,17 +290,7 @@ function getOutputJson(output: unknown): unknown {
 }
 
 function stableStringify(value: unknown): string {
-  return JSON.stringify(sortJsonValue(value));
-}
-
-function sortJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJsonValue);
-  if (!value || typeof value !== "object") return value;
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort()) {
-    sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
-  }
-  return sorted;
+  return canonicalJsonStringify(value) ?? String(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -147,7 +299,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getPathValue(value: unknown, path: string): unknown {
   return path.split(".").filter(Boolean).reduce<unknown>((current, segment) => {
-    if (!isRecord(current)) return undefined;
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return undefined;
     return current[segment];
   }, value);
 }
@@ -170,19 +322,62 @@ function uniqueStrings(values: string[]): string[] {
 
 function collectStringField(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
-  return typeof value === "string" && value.trim() ? [value] : [];
+  if (typeof value !== "string" || !value.trim()) return [];
+  assertKnowledgeString(value, `Knowledge field ${key}`);
+  return [value];
 }
 
-function collectLeafStrings(value: unknown): string[] {
-  if (typeof value === "string") return value.trim() ? [value] : [];
+function collectLeafStrings(
+  value: unknown,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet(),
+  state: { nodes: number } = { nodes: 0 },
+): string[] {
+  state.nodes += 1;
+  if (state.nodes > MAX_KNOWLEDGE_TRAVERSAL_NODES) {
+    throw createEvalValidationError("Knowledge metadata contains too many values");
+  }
+  if (depth > MAX_KNOWLEDGE_TRAVERSAL_DEPTH) {
+    throw createEvalValidationError(
+      `Knowledge metadata must not exceed ${MAX_KNOWLEDGE_TRAVERSAL_DEPTH} levels`,
+    );
+  }
+  if (typeof value === "string") {
+    assertKnowledgeString(value, "Knowledge metadata string");
+    return value.trim() ? [value] : [];
+  }
   if (typeof value === "number" || typeof value === "boolean") return [String(value)];
-  if (Array.isArray(value)) return value.flatMap(collectLeafStrings);
+  if (Array.isArray(value)) {
+    if (value.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+      throw createEvalValidationError("Knowledge metadata collection is too large");
+    }
+    if (seen.has(value)) throw createEvalValidationError("Knowledge metadata must not be cyclic");
+    seen.add(value);
+    try {
+      return value.flatMap((entry) => collectLeafStrings(entry, depth + 1, seen, state));
+    } finally {
+      seen.delete(value);
+    }
+  }
   if (!isRecord(value)) return [];
-  return Object.values(value).flatMap(collectLeafStrings);
+  const entries = Object.values(value);
+  if (entries.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+    throw createEvalValidationError("Knowledge metadata object has too many fields");
+  }
+  if (seen.has(value)) throw createEvalValidationError("Knowledge metadata must not be cyclic");
+  seen.add(value);
+  try {
+    return entries.flatMap((entry) => collectLeafStrings(entry, depth + 1, seen, state));
+  } finally {
+    seen.delete(value);
+  }
 }
 
 function collectFrontmatterValues(value: unknown): string[] {
   if (!Array.isArray(value)) return collectLeafStrings(value);
+  if (value.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+    throw createEvalValidationError("Knowledge frontmatter collection is too large");
+  }
 
   const values: string[] = [];
   for (const entry of value) {
@@ -191,7 +386,10 @@ function collectFrontmatterValues(value: unknown): string[] {
       continue;
     }
     const fieldValue = entry.value;
-    if (typeof fieldValue === "string" && fieldValue.trim()) values.push(fieldValue);
+    if (typeof fieldValue === "string" && fieldValue.trim()) {
+      assertKnowledgeString(fieldValue, "Knowledge frontmatter value");
+      values.push(fieldValue);
+    }
   }
   return values;
 }
@@ -199,6 +397,9 @@ function collectFrontmatterValues(value: unknown): string[] {
 function formatFrontmatterEvidence(value: unknown): string[] {
   if (!value) return [];
   if (Array.isArray(value)) {
+    if (value.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+      throw createEvalValidationError("Knowledge frontmatter collection is too large");
+    }
     const pairs = value.flatMap((entry) => {
       if (!isRecord(entry)) return collectLeafStrings(entry);
       const key = typeof entry.key === "string" && entry.key.trim() ? `${entry.key}: ` : "";
@@ -208,6 +409,9 @@ function formatFrontmatterEvidence(value: unknown): string[] {
   }
 
   if (isRecord(value)) {
+    if (Object.keys(value).length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+      throw createEvalValidationError("Knowledge frontmatter object has too many fields");
+    }
     const pairs = Object.entries(value).flatMap(([key, fieldValue]) =>
       collectLeafStrings(fieldValue).map((item) => `${key}: ${item}`)
     );
@@ -229,12 +433,22 @@ function collectCompactEvidence(item: Record<string, unknown>): string[] {
 }
 
 function extractKnowledgeItems(output: unknown): unknown[] {
-  if (Array.isArray(output)) return output;
+  if (Array.isArray(output)) {
+    if (output.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+      throw createEvalValidationError("Knowledge result collection is too large");
+    }
+    return output;
+  }
   if (!isRecord(output)) return [];
 
   for (const key of KNOWLEDGE_COLLECTION_KEYS) {
     const value = output[key];
-    if (Array.isArray(value)) return value;
+    if (Array.isArray(value)) {
+      if (value.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+        throw createEvalValidationError("Knowledge result collection is too large");
+      }
+      return value;
+    }
   }
 
   return KNOWLEDGE_SOURCE_KEYS.some((key) => typeof output[key] === "string") ? [output] : [];
@@ -243,6 +457,7 @@ function extractKnowledgeItems(output: unknown): unknown[] {
 function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
   if (!isRecord(item)) {
     if (typeof item === "string" && item.trim()) {
+      assertKnowledgeString(item, "Knowledge result");
       return {
         source: item,
         sourceCandidates: [item],
@@ -261,6 +476,7 @@ function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
     KNOWLEDGE_CONTENT_KEYS.flatMap((key) => collectStringField(item, key)),
   );
   const source = sourceCandidates[0] ?? contentCandidates[0] ?? stableStringify(item);
+  assertKnowledgeString(source, "Knowledge source");
   const evidenceCandidates = uniqueStrings([
     ...contentCandidates,
     ...collectCompactEvidence(item),
@@ -275,25 +491,46 @@ function createKnowledgeEntry(item: unknown): KnowledgeEntry | null {
 }
 
 function getKnowledgeEntries(record: EvalRecord, tool = DEFAULT_KNOWLEDGE_TOOL): KnowledgeEntry[] {
+  if ((record.retrievedContext?.length ?? 0) > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+    throw createEvalValidationError("Retrieved knowledge context is too large");
+  }
   const explicitEntries = (record.retrievedContext ?? [])
     .map(createKnowledgeEntry)
     .filter((entry): entry is KnowledgeEntry => entry !== null);
   if (explicitEntries.length > 0) return explicitEntries;
 
-  return findEvalToolCalls(record, tool)
-    .filter((call) => !isEvalToolFailed(call))
-    .flatMap((call) => extractKnowledgeItems(call.output))
-    .map(createKnowledgeEntry)
-    .filter((entry): entry is KnowledgeEntry => entry !== null);
+  const entries: KnowledgeEntry[] = [];
+  for (const call of findEvalToolCalls(record, tool)) {
+    if (isEvalToolFailed(call)) continue;
+    for (const item of extractKnowledgeItems(call.output)) {
+      const entry = createKnowledgeEntry(item);
+      if (!entry) continue;
+      if (entries.length >= MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+        throw createEvalValidationError("Knowledge results contain too many entries");
+      }
+      entries.push(entry);
+    }
+  }
+  return entries;
 }
 
 function extractCitationItems(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
+  if (Array.isArray(value)) {
+    if (value.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+      throw createEvalValidationError("Citation collection is too large");
+    }
+    return value;
+  }
   if (!isRecord(value)) return [];
 
   for (const key of CITATION_COLLECTION_KEYS) {
     const citations = value[key];
-    if (Array.isArray(citations)) return citations;
+    if (Array.isArray(citations)) {
+      if (citations.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+        throw createEvalValidationError("Citation collection is too large");
+      }
+      return citations;
+    }
   }
 
   return KNOWLEDGE_SOURCE_KEYS.some((key) => typeof value[key] === "string") ? [value] : [];
@@ -302,6 +539,7 @@ function extractCitationItems(value: unknown): unknown[] {
 function createCitationEntry(item: unknown): CitationEntry | null {
   if (!isRecord(item)) {
     if (typeof item === "string" && item.trim()) {
+      assertKnowledgeString(item, "Citation");
       return {
         source: item,
         sourceCandidates: [item],
@@ -318,6 +556,7 @@ function createCitationEntry(item: unknown): CitationEntry | null {
     CITATION_TEXT_KEYS.flatMap((key) => collectStringField(item, key)),
   );
   const source = sourceCandidates[0] ?? textCandidates[0] ?? stableStringify(item);
+  assertKnowledgeString(source, "Citation source");
   return {
     source,
     sourceCandidates: sourceCandidates.length === 0 ? [source] : sourceCandidates,
@@ -333,6 +572,10 @@ function getCitationEntries(
     return extractCitationItems(getPathValue(record, options.citationsFrom))
       .map(createCitationEntry)
       .filter((entry): entry is CitationEntry => entry !== null);
+  }
+
+  if ((record.citations?.length ?? 0) > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+    throw createEvalValidationError("Citation collection is too large");
   }
 
   const explicitCitations = (record.citations ?? [])
@@ -354,6 +597,9 @@ function expectedSourceLabel(expected: EvalKnowledgeExpectedSource): string {
 
 function normalizeExpectedKnowledgeSources(value: unknown): EvalKnowledgeExpectedSource[] {
   const values = Array.isArray(value) ? value : [value];
+  if (values.length > MAX_KNOWLEDGE_COLLECTION_ENTRIES) {
+    throw createEvalValidationError("Expected knowledge collection is too large");
+  }
   return values.filter((entry): entry is EvalKnowledgeExpectedSource => {
     if (typeof entry === "string") return entry.trim().length > 0;
     if (!isRecord(entry)) return false;
@@ -371,8 +617,10 @@ function resolveExpectedKnowledgeSources(
   if (options.expected) return { expected: options.expected };
 
   const expectedFrom = options.expectedFrom ?? DEFAULT_EXPECTED_KNOWLEDGE_PATH;
+  const expected = normalizeExpectedKnowledgeSources(getPathValue(record, expectedFrom));
+  assertKnowledgeOptions({ ...options, expected });
   return {
-    expected: normalizeExpectedKnowledgeSources(getPathValue(record, expectedFrom)),
+    expected,
     expectedFrom,
   };
 }
@@ -609,7 +857,13 @@ function withSeverity(
   severity: EvalSeverity,
   threshold?: EvalMetricThreshold,
 ): EvalMetric {
-  const base = { ...metric, severity, ...(threshold ? { threshold } : {}) };
+  assertMetricThreshold(threshold);
+  const normalizedThreshold = threshold ? { ...threshold } : undefined;
+  const base = {
+    ...metric,
+    severity,
+    ...(normalizedThreshold ? { threshold: { ...normalizedThreshold } } : {}),
+  };
   return {
     ...base,
     async evaluate(record, context) {
@@ -620,12 +874,14 @@ function withSeverity(
         family: metric.family,
         severity,
       };
-      if (!threshold || result.skipped || typeof next.score !== "number") {
+      if (!normalizedThreshold || result.skipped || typeof next.score !== "number") {
         return next;
       }
 
-      const minPass = threshold.min === undefined || next.score >= threshold.min;
-      const maxPass = threshold.max === undefined || next.score <= threshold.max;
+      const minPass = normalizedThreshold.min === undefined ||
+        next.score >= normalizedThreshold.min;
+      const maxPass = normalizedThreshold.max === undefined ||
+        next.score <= normalizedThreshold.max;
       const thresholdPass = minPass && maxPass;
       return {
         ...next,
@@ -633,13 +889,13 @@ function withSeverity(
       };
     },
     gate(nextThreshold?: EvalMetricThreshold) {
-      return withSeverity(base, "gate", nextThreshold ?? threshold);
+      return withSeverity(base, "gate", nextThreshold ?? normalizedThreshold);
     },
     soft(nextThreshold?: EvalMetricThreshold) {
-      return withSeverity(base, "soft", nextThreshold ?? threshold);
+      return withSeverity(base, "soft", nextThreshold ?? normalizedThreshold);
     },
     budget(nextThreshold?: EvalMetricThreshold) {
-      return withSeverity(base, "budget", nextThreshold ?? threshold);
+      return withSeverity(base, "budget", nextThreshold ?? normalizedThreshold);
     },
   };
 }
@@ -698,6 +954,7 @@ export const metrics = {
     },
 
     contains(options: { text: string; caseSensitive?: boolean }): EvalMetric {
+      assertNonEmptyMetricString(options.text, "Answer contains text");
       return createMetric("answer.contains", "answer", (record) => {
         const actual = getOutputText(record.output);
         const expected = options.text;
@@ -709,8 +966,13 @@ export const metrics = {
     },
 
     regex(options: { pattern: string; flags?: string }): EvalMetric {
+      assertNonEmptyMetricString(options.pattern, "Answer regex pattern");
+      if (options.flags !== undefined && options.flags.length > 32) {
+        throw createEvalValidationError("Answer regex flags must not exceed 32 characters");
+      }
+      const pattern = new RegExp(options.pattern, options.flags);
       return createMetric("answer.regex", "answer", (record) => {
-        const pattern = new RegExp(options.pattern, options.flags);
+        pattern.lastIndex = 0;
         return scoreResult(
           "answer.regex",
           "answer",
@@ -724,12 +986,19 @@ export const metrics = {
       return createMetric("answer.jsonMatch", "answer", (record) => {
         const expected = Object.hasOwn(options, "expected") ? options.expected : record.reference;
         const actual = getOutputJson(record.output);
-        const pass = stableStringify(actual) === stableStringify(expected);
+        let pass = false;
+        try {
+          pass = stableStringify(actual) === stableStringify(expected);
+        } catch {
+          pass = false;
+        }
         return scoreResult("answer.jsonMatch", "answer", "gate", pass);
       }, options as Record<string, unknown>);
     },
 
     groundedness(options: EvalAnswerGroundednessMetricOptions = {}): EvalMetric {
+      if (options.tool !== undefined) assertNonEmptyMetricString(options.tool, "Knowledge tool");
+      if (options.rubric !== undefined) assertNonEmptyMetricString(options.rubric, "Rubric");
       return createMetric("answer.groundedness", "answer", async (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const entries = getKnowledgeEntries(record, tool);
@@ -747,10 +1016,10 @@ export const metrics = {
           };
         }
 
-        const output = record.output && typeof record.output === "object"
-          ? record.output as Record<string, unknown>
+        const output = isRecord(record.output)
+          ? record.output
           : { text: getOutputText(record.output) };
-        const judged = await options.judge({
+        const judged: unknown = await options.judge({
           rubric: options.rubric ?? DEFAULT_GROUNDEDNESS_RUBRIC,
           input: record.input,
           output,
@@ -760,13 +1029,29 @@ export const metrics = {
           sources,
         });
 
+        const scoreIsValid = isRecord(judged) && typeof judged.score === "number" &&
+          Number.isFinite(judged.score) && judged.score >= 0 && judged.score <= 1 &&
+          (judged.pass === undefined || typeof judged.pass === "boolean") &&
+          (judged.explanation === undefined || typeof judged.explanation === "string");
+        if (!scoreIsValid) {
+          return {
+            name: "answer.groundedness",
+            family: "answer",
+            severity: "gate",
+            score: 0,
+            pass: false,
+            explanation: "Groundedness judge returned an invalid score.",
+            evidence: { tool, evidenceCount: evidence.length, sources },
+          };
+        }
+
         return {
           name: "answer.groundedness",
           family: "answer",
           severity: "gate",
-          score: judged.score,
-          pass: judged.pass ?? judged.score > 0,
-          ...(judged.explanation ? { explanation: judged.explanation } : {}),
+          score: judged.score as number,
+          pass: (judged.pass as boolean | undefined) ?? (judged.score as number) > 0,
+          ...(judged.explanation ? { explanation: judged.explanation as string } : {}),
           evidence: { tool, evidenceCount: evidence.length, sources },
         };
       }, {
@@ -794,6 +1079,7 @@ export const metrics = {
     },
 
     calledTool(name: string, options?: EvalToolCallMatchOptions): EvalMetric {
+      assertToolName(name);
       return createMetric(
         "agent.calledTool",
         "agent",
@@ -808,6 +1094,7 @@ export const metrics = {
     },
 
     notCalledTool(name: string): EvalMetric {
+      assertToolName(name);
       return createMetric(
         "agent.notCalledTool",
         "agent",
@@ -822,6 +1109,8 @@ export const metrics = {
     },
 
     toolCallCount(name: string, options: EvalToolCallCountOptions): EvalMetric {
+      assertToolName(name);
+      assertToolCallCountOptions(options);
       return createMetric(
         "agent.toolCallCount",
         "agent",
@@ -838,6 +1127,8 @@ export const metrics = {
 
   knowledge: {
     recallAtK(options: EvalKnowledgeRetrievalMetricOptions): EvalMetric {
+      assertKnowledgeResultLimit(options.k);
+      assertKnowledgeOptions(options);
       return createKnowledgeMetric("knowledge.recallAtK", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const entries = getKnowledgeEntries(record, tool).slice(0, options.k);
@@ -874,6 +1165,8 @@ export const metrics = {
     },
 
     precisionAtK(options: EvalKnowledgeRetrievalMetricOptions): EvalMetric {
+      assertKnowledgeResultLimit(options.k);
+      assertKnowledgeOptions(options);
       return createKnowledgeMetric("knowledge.precisionAtK", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const entries = getKnowledgeEntries(record, tool).slice(0, options.k);
@@ -913,6 +1206,8 @@ export const metrics = {
     },
 
     mrr(options: EvalKnowledgeMrrMetricOptions): EvalMetric {
+      if (options.k !== undefined) assertKnowledgeResultLimit(options.k);
+      assertKnowledgeOptions(options);
       return createKnowledgeMetric("knowledge.mrr", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const allEntries = getKnowledgeEntries(record, tool);
@@ -955,6 +1250,8 @@ export const metrics = {
     },
 
     citationPrecision(options: EvalKnowledgeCitationMetricOptions = {}): EvalMetric {
+      if (options.k !== undefined) assertKnowledgeResultLimit(options.k);
+      assertKnowledgeOptions(options);
       return createKnowledgeMetric("knowledge.citationPrecision", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const citations = getCitationEntries(record, options);
@@ -997,6 +1294,8 @@ export const metrics = {
     },
 
     citationRecall(options: EvalKnowledgeCitationMetricOptions = {}): EvalMetric {
+      if (options.k !== undefined) assertKnowledgeResultLimit(options.k);
+      assertKnowledgeOptions(options);
       return createKnowledgeMetric("knowledge.citationRecall", (record) => {
         const tool = options.tool ?? DEFAULT_KNOWLEDGE_TOOL;
         const citations = getCitationEntries(record, options);
@@ -1052,6 +1351,7 @@ export const metrics = {
 
   ops: {
     latency(options: { maxMs: number }): EvalMetric {
+      assertFiniteNonNegative(options.maxMs, "Latency maxMs");
       return createMetric("ops.latency", "ops", (record) => {
         const pass = record.durationMs <= options.maxMs;
         return {
@@ -1066,13 +1366,45 @@ export const metrics = {
     },
 
     tokens(options: { maxTotal?: number; maxInput?: number; maxOutput?: number }): EvalMetric {
+      const configuredLimits = [options.maxTotal, options.maxInput, options.maxOutput].filter(
+        (value) => value !== undefined,
+      );
+      if (configuredLimits.length === 0) {
+        throw createEvalValidationError("Token budget must configure at least one limit");
+      }
+      for (const [label, value] of Object.entries(options)) {
+        if (value !== undefined) assertNonNegativeInteger(value, `Token budget ${label}`);
+      }
       return createMetric("ops.tokens", "ops", (record) => {
+        const totalTokens = record.usage.totalTokens ??
+          (record.usage.inputTokens !== undefined && record.usage.outputTokens !== undefined
+            ? record.usage.inputTokens + record.usage.outputTokens
+            : undefined);
+        const missing = [
+          ...(options.maxInput !== undefined && record.usage.inputTokens === undefined
+            ? ["inputTokens"]
+            : []),
+          ...(options.maxOutput !== undefined && record.usage.outputTokens === undefined
+            ? ["outputTokens"]
+            : []),
+          ...(options.maxTotal !== undefined && totalTokens === undefined ? ["totalTokens"] : []),
+        ];
+        if (missing.length > 0) {
+          return {
+            name: "ops.tokens",
+            family: "ops",
+            severity: "budget",
+            score: 0,
+            pass: false,
+            explanation: "Token usage required by this budget was not measured.",
+            evidence: { usage: record.usage, limits: options, missing },
+          };
+        }
         const inputOk = options.maxInput === undefined ||
-          (record.usage.inputTokens ?? 0) <= options.maxInput;
+          record.usage.inputTokens! <= options.maxInput;
         const outputOk = options.maxOutput === undefined ||
-          (record.usage.outputTokens ?? 0) <= options.maxOutput;
-        const totalOk = options.maxTotal === undefined ||
-          (record.usage.totalTokens ?? 0) <= options.maxTotal;
+          record.usage.outputTokens! <= options.maxOutput;
+        const totalOk = options.maxTotal === undefined || totalTokens! <= options.maxTotal;
         const pass = inputOk && outputOk && totalOk;
         return {
           name: "ops.tokens",
@@ -1086,9 +1418,21 @@ export const metrics = {
     },
 
     cost(options: { maxUsd: number }): EvalMetric {
+      assertFiniteNonNegative(options.maxUsd, "Cost maxUsd");
       return createMetric("ops.cost", "ops", (record) => {
         const costUsd = record.usage.veryfrontBilledUsd ?? record.usage.veryfrontChargeUsd ??
-          record.usage.costUsd ?? record.usage.providerCostUsd ?? 0;
+          record.usage.costUsd ?? record.usage.providerCostUsd;
+        if (costUsd === undefined) {
+          return {
+            name: "ops.cost",
+            family: "ops",
+            severity: "budget",
+            score: 0,
+            pass: false,
+            explanation: "Cost usage required by this budget was not measured.",
+            evidence: { maxUsd: options.maxUsd },
+          };
+        }
         const pass = costUsd <= options.maxUsd;
         return {
           name: "ops.cost",
@@ -1108,6 +1452,7 @@ export const metrics = {
 
   judge: {
     rubric(options: JudgeRubricInput): EvalMetric {
+      assertNonEmptyMetricString(options.rubric, "Judge rubric");
       return createMetric("judge.rubric", "judge", async (record) => {
         if (!options.judge) {
           return {
@@ -1119,16 +1464,31 @@ export const metrics = {
           };
         }
 
-        const output = record.output && typeof record.output === "object"
-          ? record.output as Record<string, unknown>
+        const output = isRecord(record.output)
+          ? record.output
           : { text: getOutputText(record.output) };
-        const judged = await options.judge({
+        const judged: unknown = await options.judge({
           rubric: options.rubric,
           input: record.input,
           output,
           reference: record.reference,
           metadata: record.metadata,
         });
+        if (
+          !isRecord(judged) || typeof judged.score !== "number" ||
+          !Number.isFinite(judged.score) || judged.score < 0 || judged.score > 1 ||
+          (judged.pass !== undefined && typeof judged.pass !== "boolean") ||
+          (judged.explanation !== undefined && typeof judged.explanation !== "string")
+        ) {
+          return {
+            name: "judge.rubric",
+            family: "judge",
+            severity: "gate",
+            score: 0,
+            pass: false,
+            explanation: "Judge returned an invalid score.",
+          };
+        }
         const min = 0;
 
         return {

@@ -23,17 +23,39 @@ import {
   schemaToJsonSchema,
 } from "#veryfront/schemas/json-schema.ts";
 
-/** Detect contract `Schema<T>` (carries a `__zod` brand from the ext-schema-zod adapter). */
+type DataProperty = { found: boolean; value?: unknown };
+
+function readDataProperty(value: object, property: PropertyKey): DataProperty {
+  let current: object | null = value;
+  for (let depth = 0; current !== null && depth < 32; depth += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(current, property);
+    } catch {
+      return { found: false };
+    }
+    if (descriptor) {
+      return "value" in descriptor ? { found: true, value: descriptor.value } : { found: false };
+    }
+    try {
+      current = Object.getPrototypeOf(current);
+    } catch {
+      return { found: false };
+    }
+  }
+  return { found: false };
+}
+
+/** Detect contract `Schema<T>` without invoking schema accessors. */
 function isContractSchema(value: unknown): value is Schema<unknown> {
   if (value === null || typeof value !== "object") return false;
-  if ("__zod" in value) return true;
-  // Fallback: defineSchema-produced wrappers expose `_output`, `parse`, and
-  // `safeParse`. Some test doubles may construct these directly.
-  return (
-    "_output" in value &&
-    typeof (value as { parse?: unknown }).parse === "function" &&
-    typeof (value as { safeParse?: unknown }).safeParse === "function"
-  );
+  if (readDataProperty(value, "__zod").found) return true;
+
+  const output = readDataProperty(value, "_output");
+  const parse = readDataProperty(value, "parse");
+  const safeParse = readDataProperty(value, "safeParse");
+  return output.found && parse.found && typeof parse.value === "function" &&
+    safeParse.found && typeof safeParse.value === "function";
 }
 
 /**

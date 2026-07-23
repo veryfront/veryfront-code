@@ -1,50 +1,82 @@
 import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+import { sanitizeErrorText } from "#veryfront/errors/sanitization.ts";
+
+const MAX_BUFFER_SIZE = 100_000;
+const MAX_LOG_MESSAGE_LENGTH = 16_384;
+const MAX_LOG_SOURCE_LENGTH = 128;
 
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 /** Entry shape for log. */
 export interface LogEntry {
+  /** Process-local entry identifier. */
   id: string;
+  /** Severity assigned to the entry. */
   level: LogLevel;
+  /** Sanitized human-readable message. */
   message: string;
+  /** Optional sanitized structured data. */
   data?: Record<string, unknown>;
+  /** Unix timestamp in milliseconds. */
   timestamp: number;
+  /** Bounded code-owned source label. */
   source: string;
 }
 /** Filter options for reading buffered log entries. */
 export interface LogFilter {
+  /** Include one or more severity levels. */
   level?: LogLevel | LogLevel[];
+  /** Include one or more exact source labels. */
   source?: string | string[];
+  /** Match entry messages by substring or regular expression. */
   pattern?: string | RegExp;
+  /** Include entries captured at or after this Unix timestamp in milliseconds. */
   since?: number;
+  /** Maximum number of entries returned. */
   limit?: number;
 }
 
 /** Public API contract for log subscriber. */
 export type LogSubscriber = (entry: LogEntry) => void;
 
-/** Implement log buffer. */
+/** Store bounded, sanitized in-process log snapshots. */
 export class LogBuffer {
   private entries: LogEntry[] = [];
   private subscribers = new Set<LogSubscriber>();
   private idCounter = 0;
   private maxSize: number;
 
+  /** Create a buffer with an optional bounded retention limit. */
   constructor(options: { maxSize?: number } = {}) {
-    this.maxSize = options.maxSize ?? 1000;
+    const maxSize = options.maxSize ?? 1000;
+    if (!Number.isSafeInteger(maxSize) || maxSize <= 0 || maxSize > MAX_BUFFER_SIZE) {
+      throw new TypeError(`maxSize must be a positive safe integer up to ${MAX_BUFFER_SIZE}`);
+    }
+    this.maxSize = maxSize;
   }
 
+  /** Create a process-local identifier for a buffered entry. */
   private generateId(): string {
     return `log_${Date.now()}_${++this.idCounter}`;
   }
 
+  /** Sanitize, snapshot, and append one log entry. */
   append(entry: Omit<LogEntry, "id" | "timestamp">): LogEntry {
+    if (!entry || typeof entry !== "object" || !Object.hasOwn(LOG_LEVEL_SET, entry.level)) {
+      throw new TypeError("level must be debug, info, warn, or error");
+    }
+    if (typeof entry.message !== "string" || typeof entry.source !== "string") {
+      throw new TypeError("message and source must be strings");
+    }
+    const data = sanitizeLogData(entry.data);
     const fullEntry: LogEntry = {
-      ...entry,
       // Redact credential-like keys before the entry is buffered, surfaced to
       // subscribers, or written to disk by the file subscriber (#1989).
-      data: entry.data ? redactSensitive(entry.data) : entry.data,
+      ...(data ? { data } : {}),
+      level: entry.level,
+      message: sanitizeLogText(entry.message, MAX_LOG_MESSAGE_LENGTH),
+      source: sanitizeLogText(entry.source, MAX_LOG_SOURCE_LENGTH),
       id: this.generateId(),
       timestamp: Date.now(),
     };
@@ -57,33 +89,40 @@ export class LogBuffer {
 
     for (const subscriber of this.subscribers) {
       try {
-        subscriber(fullEntry);
+        subscriber(cloneEntry(fullEntry));
       } catch (_) {
         /* expected: subscriber errors must not break log buffering */
       }
     }
 
-    return fullEntry;
+    return cloneEntry(fullEntry);
   }
 
+  /** Append a debug entry. */
   debug(message: string, source = "server", data?: Record<string, unknown>): LogEntry {
     return this.append({ level: "debug", message, source, data });
   }
 
+  /** Append an informational entry. */
   info(message: string, source = "server", data?: Record<string, unknown>): LogEntry {
     return this.append({ level: "info", message, source, data });
   }
 
+  /** Append a warning entry. */
   warn(message: string, source = "server", data?: Record<string, unknown>): LogEntry {
     return this.append({ level: "warn", message, source, data });
   }
 
+  /** Append an error entry. */
   error(message: string, source = "server", data?: Record<string, unknown>): LogEntry {
     return this.append({ level: "error", message, source, data });
   }
 
+  /** Return sanitized entry snapshots matching an optional filter. */
   query(filter?: LogFilter): LogEntry[] {
-    if (!filter) return [...this.entries];
+    if (!filter) return this.entries.map(cloneEntry);
+
+    validateReadLimit(filter.limit, "limit");
 
     let results = [...this.entries];
 
@@ -104,37 +143,53 @@ export class LogBuffer {
         const lower = pattern.toLowerCase();
         results = results.filter((e) => e.message.toLowerCase().includes(lower));
       } else {
-        results = results.filter((e) => pattern.test(e.message));
+        let matcher: RegExp;
+        try {
+          matcher = new RegExp(pattern.source, pattern.flags);
+        } catch {
+          return [];
+        }
+        results = results.filter((e) => {
+          matcher.lastIndex = 0;
+          return matcher.test(e.message);
+        });
       }
     }
 
     if (filter.since != null) {
-      results = results.filter((e) => e.timestamp >= filter.since!);
+      const since = filter.since;
+      results = results.filter((e) => e.timestamp >= since);
     }
 
     if (filter.limit != null) {
       results = results.slice(-filter.limit);
     }
 
-    return results;
+    return results.map(cloneEntry);
   }
 
+  /** Return the most recent entry snapshots. */
   tail(count = 50): LogEntry[] {
-    return this.entries.slice(-count);
+    validateReadLimit(count, "count");
+    return this.entries.slice(-count).map(cloneEntry);
   }
 
+  /** Return snapshots of all retained entries. */
   getAll(): LogEntry[] {
-    return [...this.entries];
+    return this.entries.map(cloneEntry);
   }
 
+  /** Remove every retained entry. */
   clear(): void {
     this.entries = [];
   }
 
+  /** Number of retained entries. */
   get count(): number {
     return this.entries.length;
   }
 
+  /** Count retained entries by severity. */
   countByLevel(): Record<LogLevel, number> {
     const counts: Record<LogLevel, number> = { debug: 0, info: 0, warn: 0, error: 0 };
 
@@ -145,26 +200,85 @@ export class LogBuffer {
     return counts;
   }
 
+  /** Subscribe to snapshots of newly appended entries. */
   subscribe(callback: LogSubscriber): () => void {
+    if (typeof callback !== "function") throw new TypeError("subscriber must be a function");
     this.subscribers.add(callback);
     return () => this.subscribers.delete(callback);
   }
 
+  /** Serialize retained entries as sanitized snapshots. */
   toJSON(): LogEntry[] {
     return this.getAll();
   }
 
+  /** Format entries as bounded human-readable lines. */
   format(entries?: LogEntry[]): string {
     const logs = entries ?? this.entries;
 
     return logs
       .map((e) => {
-        const time = new Date(e.timestamp).toISOString().slice(11, 23);
-        const level = e.level.toUpperCase().padEnd(5);
-        const source = e.source.padEnd(10);
-        return `${time} ${level} [${source}] ${e.message}`;
+        const timestamp = isValidTimestamp(e.timestamp) ? e.timestamp : 0;
+        const time = new Date(timestamp).toISOString().slice(11, 23);
+        const level = Object.hasOwn(LOG_LEVEL_SET, e.level) ? e.level : "info";
+        const source = sanitizeLogText(
+          typeof e.source === "string" ? e.source : "unknown",
+          MAX_LOG_SOURCE_LENGTH,
+        ).padEnd(10);
+        const message = sanitizeLogText(
+          typeof e.message === "string" ? e.message : "",
+          MAX_LOG_MESSAGE_LENGTH,
+        );
+        return `${time} ${level.toUpperCase().padEnd(5)} [${source}] ${message}`;
       })
       .join("\n");
+  }
+}
+
+const LOG_LEVEL_SET: Record<LogLevel, true> = {
+  debug: true,
+  info: true,
+  warn: true,
+  error: true,
+};
+
+function sanitizeLogText(value: string, maxLength: number): string {
+  return sanitizeErrorText(value, maxLength).replace(/[\r\n]/g, " ");
+}
+
+function cloneEntry(entry: LogEntry): LogEntry {
+  const data = sanitizeLogData(entry.data);
+  return {
+    id: entry.id,
+    level: entry.level,
+    message: entry.message,
+    source: entry.source,
+    timestamp: entry.timestamp,
+    ...(data ? { data } : {}),
+  };
+}
+
+function sanitizeLogData(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  try {
+    const sanitized = redactSensitive(value);
+    return sanitized && typeof sanitized === "object" && !Array.isArray(sanitized)
+      ? sanitized as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isValidTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 &&
+    value <= 8_640_000_000_000_000;
+}
+
+function validateReadLimit(value: number | undefined, name: string): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_BUFFER_SIZE) {
+    throw new TypeError(`${name} must be a non-negative safe integer up to ${MAX_BUFFER_SIZE}`);
   }
 }
 
@@ -184,6 +298,7 @@ export function resetLogBuffer(): void {
 
 /** Capture console output in the log buffer. */
 export function interceptConsole(buffer: LogBuffer, source = "console"): () => void {
+  let active = true;
   const original = {
     log: console.log,
     info: console.info,
@@ -195,15 +310,15 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
   function formatArgs(...args: unknown[]): string {
     return args
       .map((a) => {
-        if (typeof a === "string") return a;
+        if (typeof a === "string") return sanitizeLogText(a, MAX_LOG_MESSAGE_LENGTH);
 
         try {
           // Redact object args before they are folded into the message string,
           // where the per-entry data redaction can no longer reach them (#1989).
-          return JSON.stringify(redactSensitive(a));
+          return JSON.stringify(redactSensitive(a)) ?? "[Unserializable]";
         } catch (_) {
           /* expected: circular references or non-serializable values */
-          return String(a);
+          return "[Unserializable]";
         }
       })
       .join(" ");
@@ -214,18 +329,35 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
     log: (message: string, source: string) => LogEntry,
   ): (...args: unknown[]) => void {
     return (...args: unknown[]) => {
-      log(formatArgs(...args), source);
+      if (active) {
+        try {
+          log(formatArgs(...args), source);
+        } catch {
+          // Buffering must not suppress the original console call.
+        }
+      }
       original[method].apply(console, args);
     };
   }
 
-  console.log = wrap("log", buffer.info.bind(buffer));
-  console.info = wrap("info", buffer.info.bind(buffer));
-  console.warn = wrap("warn", buffer.warn.bind(buffer));
-  console.error = wrap("error", buffer.error.bind(buffer));
-  console.debug = wrap("debug", buffer.debug.bind(buffer));
+  const installed = {
+    log: wrap("log", buffer.info.bind(buffer)),
+    info: wrap("info", buffer.info.bind(buffer)),
+    warn: wrap("warn", buffer.warn.bind(buffer)),
+    error: wrap("error", buffer.error.bind(buffer)),
+    debug: wrap("debug", buffer.debug.bind(buffer)),
+  };
+
+  console.log = installed.log;
+  console.info = installed.info;
+  console.warn = installed.warn;
+  console.error = installed.error;
+  console.debug = installed.debug;
 
   return () => {
-    Object.assign(console, original);
+    active = false;
+    for (const method of Object.keys(original) as (keyof typeof original)[]) {
+      if (console[method] === installed[method]) console[method] = original[method];
+    }
   };
 }

@@ -153,6 +153,16 @@ describe("security/http/csrf/csrf-handler", () => {
   });
 
   describe("custom configuration", () => {
+    it("should not let an empty excluded path disable CSRF protection", async () => {
+      const handler = new CsrfHandler();
+      const ctx = createCtx({ excludePaths: [""] });
+      const req = new Request("http://localhost/api/update", { method: "POST" });
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.response?.status, 403);
+    });
+
     it("should use custom cookieName and headerName", async () => {
       const ctx = createCtx({ cookieName: "my_csrf", headerName: "x-my-csrf" });
       const { token } = generateCsrfToken({ cookieName: "my_csrf", secure: false });

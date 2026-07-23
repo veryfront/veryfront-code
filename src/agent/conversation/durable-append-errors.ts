@@ -2,9 +2,12 @@ import { getConversationRunErrorSchema } from "./durable-contracts.ts";
 
 /** Error shape for append conversation run events. */
 export class AppendConversationRunEventsError extends Error {
+  /** Status. */
   readonly status: number;
+  /** Detail value. */
   readonly detail: string | null;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(input: {
     status: number;
     detail?: string | null;

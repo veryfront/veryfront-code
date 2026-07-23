@@ -16,6 +16,68 @@ const logger = serverLogger.component("api");
 const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
+const HTTP_MODULE_MAX_BYTES = 10 * 1024 * 1024;
+const HTTP_MODULE_MAX_REDIRECTS = 5;
+
+class RemoteImportPolicyError extends Error {
+  override name = "RemoteImportPolicyError";
+}
+
+class RemoteModuleSizeError extends Error {
+  override name = "RemoteModuleSizeError";
+}
+
+function remoteUrlForDisplay(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  } catch {
+    return "invalid remote URL";
+  }
+}
+
+async function readRemoteModuleBody(response: Response): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) {
+      throw new RemoteModuleSizeError("Remote module returned an invalid Content-Length header");
+    }
+    if (Number(contentLength) > HTTP_MODULE_MAX_BYTES) {
+      await response.body?.cancel().catch(() => {});
+      throw new RemoteModuleSizeError(
+        `Remote module exceeds the ${HTTP_MODULE_MAX_BYTES} byte limit`,
+      );
+    }
+  }
+
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let source = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > HTTP_MODULE_MAX_BYTES) {
+        await reader.cancel();
+        throw new RemoteModuleSizeError(
+          `Remote module exceeds the ${HTTP_MODULE_MAX_BYTES} byte limit`,
+        );
+      }
+      source += decoder.decode(value, { stream: true });
+    }
+    return source + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 interface HTTPPluginOptions {
   allowedHosts: string[];
@@ -67,7 +129,9 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
     try {
       return JSON.parse(await fs.readTextFile(metadataPath)) as CachedHTTPModuleMetadata;
     } catch (error) {
-      logger.debug(`[http] ignoring unreadable module cache metadata: ${error}`);
+      logger.debug("[http] ignoring unreadable module cache metadata", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       return null;
     }
   }
@@ -83,19 +147,26 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
         const contents = await fs.readTextFile(sourcePath);
         const integrity = await computeIntegrity(contents);
         if (expectedIntegrity && integrity !== expectedIntegrity) {
-          logger.warn(`[http] cached module integrity mismatch: ${url}`);
+          logger.warn("[http] cached module integrity mismatch", {
+            remote: remoteUrlForDisplay(url),
+          });
           return null;
         }
 
         const metadata = await readMetadata(metadataPath, fs);
         if (metadata?.integrity && metadata.integrity !== integrity) {
-          logger.warn(`[http] cached module metadata integrity mismatch: ${url}`);
+          logger.warn("[http] cached module metadata integrity mismatch", {
+            remote: remoteUrlForDisplay(url),
+          });
           return null;
         }
 
         return contents;
       } catch (error) {
-        logger.debug(`[http] module cache read miss for ${url}: ${error}`);
+        logger.debug("[http] module cache read miss", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          remote: remoteUrlForDisplay(url),
+        });
         return null;
       }
     },
@@ -126,7 +197,10 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
           }\n`,
         );
       } catch (error) {
-        logger.debug(`[http] could not update module cache for ${url}: ${error}`);
+        logger.debug("[http] could not update module cache", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          remote: remoteUrlForDisplay(url),
+        });
       }
     },
   };
@@ -154,11 +228,38 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           return await fetch(url, {
             headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
             signal: controller.signal,
-            redirect: "follow",
+            redirect: "manual",
           });
         } finally {
           clearTimeout(timeout);
         }
+      }
+
+      async function fetchAllowedRedirectChain(url: string): Promise<Response> {
+        let requestUrl = url;
+        for (let redirectCount = 0; redirectCount <= HTTP_MODULE_MAX_REDIRECTS; redirectCount++) {
+          const parsed = new URL(requestUrl);
+          if (parsed.username || parsed.password || !isAllowedRemoteHost(parsed, allowedHosts)) {
+            throw new RemoteImportPolicyError(
+              `Remote import blocked by allow-list: ${parsed.origin}`,
+            );
+          }
+
+          const response = await fetchWithTimeout(requestUrl);
+          if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+          const location = response.headers.get("location");
+          if (!location) return response;
+          await response.body?.cancel().catch(() => {});
+          if (redirectCount === HTTP_MODULE_MAX_REDIRECTS) {
+            throw new RemoteImportPolicyError(
+              `Remote import exceeded the ${HTTP_MODULE_MAX_REDIRECTS} redirect limit`,
+            );
+          }
+          requestUrl = new URL(location, requestUrl).href;
+        }
+
+        throw new RemoteImportPolicyError("Remote import redirect validation failed");
       }
 
       function shouldRetryFetch(status: number): boolean {
@@ -202,31 +303,38 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
         try {
           await lockfile.flush();
-          logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
+          logger.debug("[http] lockfile updated", {
+            remote: remoteUrlForDisplay(url),
+          });
         } catch (error) {
           if (!isReadOnlyFileSystemError(error)) throw error;
           lockfileFlushDisabled = true;
-          logger.debug(
-            `[http] lockfile flush disabled on read-only filesystem for ${url}: ${
-              describePersistenceError(error)
-            }`,
-          );
+          logger.debug("[http] lockfile flush disabled on read-only filesystem", {
+            errorName: describePersistenceError(error),
+            remote: remoteUrlForDisplay(url),
+          });
         }
       }
 
       async function fetchRemoteModule(url: string): Promise<Response> {
         for (let attempt = 1; attempt <= HTTP_MODULE_FETCH_MAX_ATTEMPTS; attempt += 1) {
-          const response = await fetchWithTimeout(url).catch((error) =>
-            new Response(String(error?.message ?? error), {
+          let response: Response;
+          try {
+            response = await fetchAllowedRedirectChain(url);
+          } catch (error) {
+            if (error instanceof RemoteImportPolicyError) throw error;
+            response = new Response("Remote module fetch failed", {
               status: HTTP_NETWORK_CONNECT_TIMEOUT,
-            })
-          );
+            });
+          }
           if (!shouldRetryFetch(response.status) || attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS) {
             return response;
           }
 
           logger.warn(
-            `[http] fetch attempt ${attempt} failed ${url} ${response.status}; retrying`,
+            `[http] fetch attempt ${attempt} failed ${
+              remoteUrlForDisplay(url)
+            } ${response.status}; retrying`,
           );
           await delay(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
         }
@@ -278,21 +386,23 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
         let requestUrl = args.path;
 
+        const errorResult = (error: RemoteImportPolicyError | RemoteModuleSizeError) => ({
+          errors: [{ text: error.message } as Message],
+        });
+
         try {
           const u = new URL(args.path);
 
-          if (allowedHosts?.length) {
-            if (!isAllowedRemoteHost(u, allowedHosts)) {
-              const remediation =
-                `Add "${u.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
-              return {
-                errors: [
-                  {
-                    text: `Remote import blocked by allow-list: ${u.origin}. ${remediation}`,
-                  } as Message,
-                ],
-              };
-            }
+          if (!isAllowedRemoteHost(u, allowedHosts)) {
+            const remediation =
+              `Add "${u.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
+            return {
+              errors: [
+                {
+                  text: `Remote import blocked by allow-list: ${u.origin}. ${remediation}`,
+                } as Message,
+              ],
+            };
           }
 
           if (u.hostname === "esm.sh") {
@@ -301,11 +411,14 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             }
             u.searchParams.set("target", "es2020");
             u.searchParams.set("bundle", "true");
-            logger.debug(`[http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
+            logger.debug("[http] rewrote esm.sh module request");
             requestUrl = u.toString();
           }
         } catch (e) {
-          logger.warn("API URL parse failed", e);
+          logger.warn("API URL parse failed", {
+            errorName: e instanceof Error ? e.name : typeof e,
+          });
+          return { errors: [{ text: "Invalid remote module URL" } as Message] };
         }
 
         const readCachedModule = async (
@@ -320,11 +433,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
         if (lockfileEntry) {
           let canUseLockfileCacheFallback = true;
-          logger.debug(`[http] lockfile hit: ${args.path}`);
+          logger.debug(`[http] lockfile hit: ${remoteUrlForDisplay(args.path)}`);
           try {
             const res = await fetchRemoteModule(lockfileEntry.resolved);
             if (res.ok) {
-              const text = await res.text();
+              const text = await readRemoteModuleBody(res);
               const integrity = await computeIntegrity(text);
 
               if (integrity === lockfileEntry.integrity) {
@@ -342,22 +455,32 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 return {
                   errors: [
                     {
-                      text:
-                        `Integrity mismatch for ${args.path}: expected ${lockfileEntry.integrity}, got ${integrity}`,
+                      text: `Integrity mismatch for ${
+                        remoteUrlForDisplay(args.path)
+                      }: expected ${lockfileEntry.integrity}, got ${integrity}`,
                     } as Message,
                   ],
                 };
               }
 
               canUseLockfileCacheFallback = false;
-              logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
+              logger.warn(
+                `[http] integrity mismatch, refetching: ${remoteUrlForDisplay(args.path)}`,
+              );
             } else {
               logger.warn(
-                `[http] cached URL returned ${res.status}, trying module cache: ${args.path}`,
+                `[http] cached URL returned ${res.status}, trying module cache: ${
+                  remoteUrlForDisplay(args.path)
+                }`,
               );
             }
-          } catch (_error) {
-            logger.warn(`[http] cached URL failed, trying module cache: ${args.path}`);
+          } catch (error) {
+            if (
+              error instanceof RemoteImportPolicyError || error instanceof RemoteModuleSizeError
+            ) return errorResult(error);
+            logger.warn(
+              `[http] cached URL failed, trying module cache: ${remoteUrlForDisplay(args.path)}`,
+            );
           }
 
           if (canUseLockfileCacheFallback) {
@@ -365,13 +488,21 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               await readCachedModule(lockfileEntry.resolved, lockfileEntry.integrity) ??
                 await readCachedModule(args.path, lockfileEntry.integrity);
             if (cachedText) {
-              logger.warn(`[http] serving cached remote import for ${args.path}`);
+              logger.warn(
+                `[http] serving cached remote import for ${remoteUrlForDisplay(args.path)}`,
+              );
               return { contents: cachedText, loader: "js" } as const;
             }
           }
         }
 
-        const res = await fetchRemoteModule(requestUrl);
+        let res: Response;
+        try {
+          res = await fetchRemoteModule(requestUrl);
+        } catch (error) {
+          if (error instanceof RemoteImportPolicyError) return errorResult(error);
+          throw error;
+        }
 
         if (!res.ok) {
           const cachedText =
@@ -379,21 +510,29 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               await readCachedModule(requestUrl, lockfileEntry?.integrity) ??
               await readCachedModule(args.path, lockfileEntry?.integrity);
           if (cachedText) {
-            logger.warn(`[http] serving cached remote import for ${args.path}`);
+            logger.warn(
+              `[http] serving cached remote import for ${remoteUrlForDisplay(args.path)}`,
+            );
             return { contents: cachedText, loader: "js" } as const;
           }
 
-          logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
+          logger.error(`[http] fetch failed ${remoteUrlForDisplay(requestUrl)} ${res.status}`);
           return {
             errors: [
               {
-                text: `Failed to fetch ${args.path}: ${res.status}`,
+                text: `Failed to fetch ${remoteUrlForDisplay(args.path)}: ${res.status}`,
               } as Message,
             ],
           };
         }
 
-        const text = await res.text();
+        let text: string;
+        try {
+          text = await readRemoteModuleBody(res);
+        } catch (error) {
+          if (error instanceof RemoteModuleSizeError) return errorResult(error);
+          throw error;
+        }
         const resolvedUrl = res.url || requestUrl;
         const integrity = await computeIntegrity(text);
 

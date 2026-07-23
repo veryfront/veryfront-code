@@ -130,6 +130,31 @@ describe(
         assertEquals(typeof result.outputs.get("a.js")!.content, "string", "a.js should be string");
         assertEquals(typeof result.outputs.get("b.js")!.content, "string", "b.js should be string");
       });
+
+      it("records invalid JavaScript as a build error", async () => {
+        const result = createBundleResult([
+          { path: "broken.js", content: "const = ;", type: "js" },
+        ]);
+
+        await optimizeBundle(result, createOptions("production"));
+
+        assertEquals(result.errors.length, 1);
+        assertEquals(result.outputs.get("broken.js")?.content, "const = ;");
+      });
+
+      it("does not partially optimize outputs when a later module is invalid", async () => {
+        const original = "const   value   =   1; console.log(value);";
+        const result = createBundleResult([
+          { path: "valid.js", content: original, type: "js" },
+          { path: "broken.js", content: "const = ;", type: "js" },
+        ]);
+
+        await optimizeBundle(result, createOptions("production"));
+
+        assertEquals(result.errors.length, 1);
+        assertEquals(result.outputs.get("valid.js")?.content, original);
+        assertEquals(result.outputs.get("broken.js")?.content, "const = ;");
+      });
     });
   },
 );

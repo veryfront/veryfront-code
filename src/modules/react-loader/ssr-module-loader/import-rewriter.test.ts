@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
 
@@ -123,6 +123,32 @@ describe("rewriteLocalImports", () => {
     const code = `import { log } from "../utils/log.js";`;
     const result = await rewriteLocalImports(code, map, "/project/pages/index.tsx", "/project/");
     assertEquals(result, `import { log } from "file:///tmp/log.js";`);
+  });
+
+  it("does not confuse a sibling directory with the project root", async () => {
+    const map = new Map([["/project-two/lib/api.ts", "/tmp/api.js"]]);
+    const code = 'import { api } from "../two/lib/api.js";';
+    const result = await rewriteLocalImports(
+      code,
+      map,
+      "/project/pages/index.tsx",
+      projectDir,
+    );
+    assertEquals(result, code);
+  });
+
+  it("rejects a source file outside the project root", async () => {
+    await assertRejects(
+      () =>
+        rewriteLocalImports(
+          'import { api } from "./api.js";',
+          new Map([["./api", "/tmp/api.js"]]),
+          "/project-two/pages/index.tsx",
+          projectDir,
+        ),
+      TypeError,
+      "inside projectDir",
+    );
   });
 
   it("rewrites .tsx extensions to .js in alias patterns", async () => {

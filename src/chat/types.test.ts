@@ -71,6 +71,20 @@ describe("chat/types", () => {
         costCredits: 0.25,
       },
     );
+    assertEquals(
+      chatUiMessageSchema.safeParse({
+        id: "message-streaming-output",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "report",
+          toolCallId: "tool-report",
+          input: {},
+          state: "output-streaming",
+        }],
+      }).success,
+      true,
+    );
 
     assertEquals(normalizeInlineAttachmentMediaType("notes.md", undefined), "text/plain");
     assertEquals(
@@ -93,6 +107,87 @@ describe("chat/types", () => {
     assertEquals(
       annotation,
       '\n\n<uploaded_files>\n<file name="report&quot;&lt;&gt;&amp;.pdf" upload_id="upload-1" path="/uploads/report.pdf" size="10" type="application/pdf" />\n</uploaded_files>',
+    );
+  });
+
+  it("normalizes case-insensitive media types and omits invalid annotation sizes", () => {
+    assertEquals(
+      normalizeInlineAttachmentMediaType("photo.PNG", " Image/PNG; Charset=binary "),
+      "image/png",
+    );
+    assertEquals(
+      normalizeInlineAttachmentMediaType("archive.bin", "not a media type\n"),
+      "application/octet-stream",
+    );
+    assertEquals(
+      buildDataFileAnnotation([{
+        name: "report\u0000\n.csv",
+        mediaType: "text/csv",
+        size: 1.5,
+      }]).includes('size="'),
+      false,
+    );
+    assertEquals(
+      buildDataFileAnnotation([{
+        name: "report\u0000\n.csv",
+        mediaType: "text/csv",
+      }]).includes('name="report  .csv"'),
+      true,
+    );
+  });
+
+  it("rejects unsafe URLs and invalid usage or billing values", () => {
+    assertEquals(
+      chatUiMessageSchema.safeParse({
+        id: "message-1",
+        role: "assistant",
+        parts: [{
+          type: "source-url",
+          sourceId: "source-1",
+          url: "javascript:alert(1)",
+        }],
+      }).success,
+      false,
+    );
+    for (
+      const url of [
+        "javascript:alert(1)",
+        "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+        "https://user:password@example.com/file.pdf",
+      ]
+    ) {
+      assertEquals(
+        chatUiMessageSchema.safeParse({
+          id: "message-1",
+          role: "user",
+          parts: [{ type: "file", mediaType: "application/pdf", url }],
+        }).success,
+        false,
+      );
+    }
+    assertEquals(
+      chatUiMessageSchema.safeParse({
+        id: "message-1",
+        role: "user",
+        parts: [{
+          type: "file",
+          mediaType: "text/plain",
+          url: "data:text/plain;base64,aGVsbG8=",
+        }],
+      }).success,
+      true,
+    );
+    assertEquals(
+      messageMetadataSchema.safeParse({ usage: { inputTokens: -1 } }).success,
+      false,
+    );
+    assertEquals(
+      messageMetadataSchema.safeParse({ usage: { outputTokens: 1.5 } }).success,
+      false,
+    );
+    assertEquals(
+      messageMetadataSchema.safeParse({ costCredits: Number.POSITIVE_INFINITY }).success,
+      false,
     );
   });
 });

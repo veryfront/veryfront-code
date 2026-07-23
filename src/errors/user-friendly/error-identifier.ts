@@ -1,5 +1,11 @@
+/** Map a legacy free-form Error message to a compatibility solution key. */
 export function identifyError(error: Error): string {
-  const message = error.message.toLowerCase();
+  let message: string;
+  try {
+    message = typeof error.message === "string" ? error.message.slice(0, 16_384).toLowerCase() : "";
+  } catch {
+    return "unknown";
+  }
 
   if (message.includes("veryfront.config") && message.includes("not found")) {
     return "missing-config";

@@ -119,6 +119,60 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("rejects an aggregate internal stream request above the body budget", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: crypto.randomUUID(),
+          runId: "run_1",
+          state: "x".repeat(1024 * 1024),
+          messages: [],
+          context: [],
+          agentSource: { type: "branch", branch: "main" },
+        }),
+      Error,
+      "request must be less than 1 MB",
+    );
+  });
+
+  it("bounds legacy message parts independently of the aggregate body budget", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: crypto.randomUUID(),
+          runId: "run_1",
+          messages: [{
+            id: "message_1",
+            role: "user",
+            parts: Array.from({ length: 101 }, () => ({ type: "text", text: "x" })),
+          }],
+          agentSource: { type: "branch", branch: "main" },
+        }),
+      Error,
+    );
+  });
+
+  it("rejects duplicate injected tool names", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: crypto.randomUUID(),
+          runId: "run_1",
+          messages: [],
+          tools: [
+            { name: "focus_component", description: "First definition" },
+            { name: "focus_component", description: "Conflicting definition" },
+          ],
+          agentSource: { type: "branch", branch: "main" },
+        }),
+      Error,
+      "Tool names must be unique",
+    );
+  });
+
   it("defaults resume signals to non-error tool results", () => {
     assertEquals(
       getResumeSignalSchema().parse({
@@ -132,6 +186,17 @@ describe("internal-agents/schema", () => {
         result: { ok: true },
         isError: false,
       },
+    );
+  });
+
+  it("rejects resume signals without a tool result", () => {
+    assertThrows(
+      () =>
+        getResumeSignalSchema().parse({
+          type: "tool_result",
+          toolCallId: "tool_1",
+        }),
+      Error,
     );
   });
 

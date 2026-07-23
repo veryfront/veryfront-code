@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { getBundleManifestStore } from "./bundle-manifest.ts";
 import { getBundleManifestTTL, initializeBundleManifest } from "./bundle-manifest-init.ts";
 import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./constants/cache.ts";
 
@@ -46,6 +47,53 @@ describe("getBundleManifestTTL", () => {
 });
 
 describe("initializeBundleManifest", () => {
+  it("defaults to a disabled store in development", async () => {
+    await initializeBundleManifest({}, "development");
+
+    assertEquals(await getBundleManifestStore().isAvailable(), false);
+  });
+
+  it("defaults to an in-memory store in production", async () => {
+    await initializeBundleManifest({}, "production");
+
+    assertEquals(await getBundleManifestStore().isAvailable(), true);
+  });
+
+  it("rejects unknown backend config instead of silently using memory", async () => {
+    await assertRejects(
+      () =>
+        initializeBundleManifest(
+          { cache: { bundleManifest: { enabled: true, type: "unknown" } } },
+          "production",
+        ),
+      Error,
+      "Unsupported bundle manifest store type",
+    );
+  });
+
+  it("installs a no-op store when bundle manifests are disabled", async () => {
+    await initializeBundleManifest(
+      { cache: { bundleManifest: { enabled: false } } },
+      "production",
+    );
+    const store = getBundleManifestStore();
+
+    await store.setBundleCode("code", { code: "compiled" });
+    await store.setBundleMetadata("key", {
+      hash: "hash",
+      codeHash: "code",
+      size: 8,
+      compiledAt: Date.now(),
+      source: "source.mdx",
+      mode: "production",
+    });
+
+    assertEquals(await store.isAvailable(), false);
+    assertEquals(await store.getBundleMetadata("key"), undefined);
+    assertEquals(await store.getBundleCode("code"), undefined);
+    assertEquals(await store.getStats(), { totalBundles: 0, totalSize: 0 });
+  });
+
   it("rejects explicit redis backend config instead of silently falling back to memory", async () => {
     await assertRejects(
       () =>

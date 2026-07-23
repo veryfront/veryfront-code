@@ -106,6 +106,26 @@ describe("jsonResponse", () => {
     assertEquals(await res.text(), "Failed to serialize response data");
   });
 
+  it("should preserve safe response metadata on serialization failure", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    const res = jsonResponse(circular, HttpStatus.OK, {
+      correlationId: "request-123",
+      headers: { "x-safe-context": "present" },
+    });
+
+    assertEquals(res.status, 500);
+    assertEquals(res.headers.get("x-correlation-id"), "request-123");
+    assertEquals(res.headers.get("x-safe-context"), "present");
+  });
+
+  it("should not emit an empty body with a JSON content type", async () => {
+    const res = jsonResponse(undefined);
+    assertEquals(res.status, 500);
+    assertEquals(await res.text(), "Failed to serialize response data");
+  });
+
   it("should add correlation id header", () => {
     const res = jsonResponse({}, HttpStatus.OK, { correlationId: "xyz" });
     assertEquals(res.headers.get("X-Correlation-Id"), "xyz");
@@ -144,8 +164,11 @@ describe("redirectResponse", () => {
   });
 
   it("should return 400 for javascript: URLs", () => {
-    const res = redirectResponse("javascript:alert(1)");
+    const res = redirectResponse("javascript:alert(1)", false, {
+      correlationId: "redirect-request",
+    });
     assertEquals(res.status, 400);
+    assertEquals(res.headers.get("x-correlation-id"), "redirect-request");
   });
 });
 
@@ -198,8 +221,9 @@ describe("methodNotAllowed", () => {
 
 describe("ok", () => {
   it("should return 200 with no body when data is undefined", () => {
-    const res = ok();
+    const res = ok(undefined, { status: 418, correlationId: "ok-request" });
     assertEquals(res.status, 200);
+    assertEquals(res.headers.get("x-correlation-id"), "ok-request");
   });
 
   it("should return JSON when data is provided", async () => {
@@ -211,8 +235,9 @@ describe("ok", () => {
 
 describe("created", () => {
   it("should return 201 with no body when data is undefined", () => {
-    const res = created();
+    const res = created(undefined, undefined, { status: 202, correlationId: "create-request" });
     assertEquals(res.status, 201);
+    assertEquals(res.headers.get("x-correlation-id"), "create-request");
   });
 
   it("should return 201 with JSON body", async () => {
@@ -230,8 +255,9 @@ describe("created", () => {
 
 describe("noContent", () => {
   it("should return 204 with null body", () => {
-    const res = noContent();
+    const res = noContent({ status: 200, correlationId: "no-content-request" });
     assertEquals(res.status, 204);
+    assertEquals(res.headers.get("x-correlation-id"), "no-content-request");
   });
 });
 

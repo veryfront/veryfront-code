@@ -26,7 +26,12 @@ import { getSkill, registerSkill } from "#veryfront/skill/registry.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import { registerTool } from "#veryfront/mcp";
 import { ensureError } from "#veryfront/errors";
-import { filenameToId } from "./discovery-utils.ts";
+import {
+  runWithRegistryTransaction,
+  runWithRegistryTransactionSavepoint,
+} from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { discoveryFileLabel, filenameToId, isSafePathSegment } from "./discovery-utils.ts";
+export { isSafePathSegment } from "./discovery-utils.ts";
 import {
   discoveryFileExists,
   findTypeScriptFiles,
@@ -35,9 +40,11 @@ import {
 } from "./file-discovery.ts";
 import { importModule } from "./transpiler.ts";
 import type { DiscoveryResult, FileDiscoveryContext } from "./types.ts";
+import { recordDiscoveryError } from "./discovery-errors.ts";
 
 const AGENT_TOOLS_SUBDIR = "tools";
 const AGENT_SKILLS_SUBDIR = "skills";
+const MAX_COLOCATED_TOOL_EXPORTS_PER_MODULE = 1_000;
 /** Separator between the agent namespace and the capability short name. */
 export const AGENT_CAPABILITY_NAMESPACE_SEPARATOR = "--";
 /** Provider tool-call names allow only this charset, max 64 chars. */
@@ -46,17 +53,6 @@ const PROVIDER_TOOL_NAME_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 /** Whether a namespaced tool name is valid for provider tool calls. */
 export function isProviderSafeToolName(name: string): boolean {
   return PROVIDER_TOOL_NAME_REGEX.test(name);
-}
-
-const SAFE_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
-
-/**
- * Whether a directory/file entry name is a safe single path segment — used
- * before joining it into a filesystem path. Rejects `.` and `..` (which match
- * the permissive name regex) as defense-in-depth against path traversal.
- */
-export function isSafePathSegment(name: string): boolean {
-  return name !== "." && name !== ".." && SAFE_PATH_SEGMENT_REGEX.test(name);
 }
 
 /** Sanitizes an agent id into a provider-safe namespace segment. */
@@ -88,15 +84,37 @@ function toolShortName(tool: Tool, file: string): string {
   return hasExplicitToolId(tool) ? tool.id : filenameToId(file);
 }
 
-function collectModuleTools(module: unknown, file: string): Map<string, Tool> {
-  const tools = new Map<string, Tool>();
+function collectModuleTools(module: unknown, file: string): Array<[string, Tool]> {
+  const tools: Array<[string, Tool]> = [];
+  const seenTools = new Set<Tool>();
+  if (module === null || (typeof module !== "object" && typeof module !== "function")) {
+    return tools;
+  }
   const record = module as Record<string, unknown>;
-  for (const value of Object.values(record ?? {})) {
-    if (isTool(value)) {
-      tools.set(toolShortName(value, file), value);
-    }
+  const exportNames = Object.keys(record);
+  if (exportNames.length > MAX_COLOCATED_TOOL_EXPORTS_PER_MODULE) {
+    throw new RangeError("Colocated tool module export limit exceeded");
+  }
+  for (const exportName of exportNames) {
+    const value = record[exportName];
+    if (!isTool(value) || seenTools.has(value)) continue;
+    seenTools.add(value);
+    tools.push([toolShortName(value, file), value]);
   }
   return tools;
+}
+
+async function importColocatedToolModule(
+  file: string,
+  context: FileDiscoveryContext,
+): Promise<unknown> {
+  const moduleImporter = context.moduleImporter ?? importModule;
+  return await runWithRegistryTransaction(() =>
+    runWithRegistryTransactionSavepoint(
+      () => moduleImporter(file, context),
+      { rollbackOnSuccess: true },
+    )
+  );
 }
 
 function reportShadowedGlobalCapability(input: {
@@ -110,14 +128,16 @@ function reportShadowedGlobalCapability(input: {
     ? toolRegistry.get(input.shortName)
     : getSkill(input.shortName);
   if (global && (global as { ownerAgentId?: string }).ownerAgentId === undefined) {
-    input.result?.errors.push({
-      file: input.file,
-      error: ensureError(
-        `Colocated ${input.kind} "${input.shortName}" of agent "${input.agentId}" shadows the ` +
-          `global ${input.kind} id "${input.shortName}": the agent's selector resolves its own ` +
-          `${input.kind} first. Rename one to make the reference unambiguous.`,
-      ),
-    });
+    if (input.result) {
+      recordDiscoveryError(input.result.errors, {
+        file: input.file,
+        error: ensureError(
+          `Colocated ${input.kind} "${input.shortName}" of agent "${input.agentId}" shadows the ` +
+            `global ${input.kind} id "${input.shortName}": the agent's selector resolves its own ` +
+            `${input.kind} first. Rename one to make the reference unambiguous.`,
+        ),
+      });
+    }
   }
 }
 
@@ -148,33 +168,38 @@ export async function registerAgentColocatedTools(
   const seenThisPass = new Set<string>();
 
   for (const file of files) {
+    const resultFile = discoveryFileLabel(file, input.context.baseDir);
     try {
-      const module = await importModule(file, input.context);
+      const module = await importColocatedToolModule(file, input.context);
       for (const [shortName, moduleTool] of collectModuleTools(module, file)) {
         const namespaced = namespaceAgentCapability(input.agentId, shortName);
         if (!isProviderSafeToolName(namespaced)) {
-          input.result?.errors.push({
-            file,
-            error: ensureError(
-              `Colocated tool "${shortName}" for agent "${input.agentId}" produces an ` +
-                `invalid tool name "${namespaced}" (must match [A-Za-z0-9_-], max 64 chars).`,
-            ),
-          });
+          if (input.result) {
+            recordDiscoveryError(input.result.errors, {
+              file: resultFile,
+              error: ensureError(
+                `Colocated tool "${shortName}" for agent "${input.agentId}" produces an ` +
+                  `invalid tool name "${namespaced}" (must match [A-Za-z0-9_-], max 64 chars).`,
+              ),
+            });
+          }
           continue;
         }
         // Two colocated tools resolving to the same short name within one
-        // discovery pass is a user error — report it instead of silently
+        // discovery pass is a user error. Report it instead of silently
         // keeping the first (a later "unknown tool" with no breadcrumb).
         // A pre-existing registry entry from a previous pass is a normal
         // re-discovery refresh and is overwritten.
         if (seenThisPass.has(namespaced)) {
-          input.result?.errors.push({
-            file,
-            error: ensureError(
-              `Duplicate colocated tool "${shortName}" for agent "${input.agentId}": ` +
-                `another tools/ module already registered "${namespaced}"; keeping the first.`,
-            ),
-          });
+          if (input.result) {
+            recordDiscoveryError(input.result.errors, {
+              file: resultFile,
+              error: ensureError(
+                `Duplicate colocated tool "${shortName}" for agent "${input.agentId}": ` +
+                  `another tools/ module already registered "${namespaced}"; keeping the first.`,
+              ),
+            });
+          }
           continue;
         }
         seenThisPass.add(namespaced);
@@ -182,7 +207,7 @@ export async function registerAgentColocatedTools(
           kind: "tool",
           agentId: input.agentId,
           shortName,
-          file,
+          file: resultFile,
           result: input.result,
         });
         registerTool(namespaced, {
@@ -194,7 +219,12 @@ export async function registerAgentColocatedTools(
         registeredIds.push(namespaced);
       }
     } catch (error) {
-      input.result?.errors.push({ file, error: ensureError(error) });
+      if (input.result) {
+        recordDiscoveryError(input.result.errors, {
+          file: resultFile,
+          error: ensureError(error),
+        });
+      }
     }
   }
 
@@ -215,7 +245,7 @@ async function buildSkillFromDir(input: {
 
   const content = await readDiscoveryTextFile(skillMdPath, input.context);
   const parsed = await parseSkillFrontmatter(content);
-  const metadata = validateSkillMetadata(parsed.frontmatter, input.id);
+  const metadata = validateSkillMetadata(parsed.frontmatter, input.shortName);
 
   return {
     id: input.id,
@@ -259,6 +289,10 @@ export async function registerAgentColocatedSkills(
 
   const registeredIds: string[] = [];
   for (const candidate of candidates) {
+    const resultFile = discoveryFileLabel(
+      `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
+      input.context.baseDir,
+    );
     try {
       const skill = await buildSkillFromDir({
         id: candidate.id,
@@ -275,7 +309,7 @@ export async function registerAgentColocatedSkills(
           kind: "skill",
           agentId: input.agentId,
           shortName: candidate.shortName,
-          file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
+          file: resultFile,
           result: input.result,
         });
       }
@@ -283,10 +317,12 @@ export async function registerAgentColocatedSkills(
       input.result?.skills.set(skill.id, skill);
       registeredIds.push(skill.id);
     } catch (error) {
-      input.result?.errors.push({
-        file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
-        error: ensureError(error),
-      });
+      if (input.result) {
+        recordDiscoveryError(input.result.errors, {
+          file: resultFile,
+          error: ensureError(error),
+        });
+      }
     }
   }
 

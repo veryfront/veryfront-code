@@ -1,7 +1,8 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const RUNTIME_ERROR_CATALOG: PartialErrorCatalog = {
+/** Immutable error-solution catalog fragment. */
+export const RUNTIME_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "hydration-mismatch": createErrorSolution("hydration-mismatch", {
     title: "Hydration mismatch",
     message: "Client-side HTML does not match server-rendered HTML.",
@@ -93,4 +94,59 @@ export default function RootLayout({ children }) {
       "Verify middleware is properly exported",
     ],
   ),
-};
+
+  "trigger-target-not-found": createSimpleError(
+    "trigger-target-not-found",
+    "Trigger target not found",
+    "The trigger references a task or workflow that is not registered.",
+    [
+      "Check the target ID for spelling errors",
+      "Export the referenced task or workflow from the project",
+      "Restart the runtime after changing project exports",
+    ],
+  ),
+
+  "trigger-execution-failed": createSimpleError(
+    "trigger-execution-failed",
+    "Trigger execution failed",
+    "The trigger target failed during execution.",
+    [
+      "Review the task or workflow failure",
+      "Verify that the trigger input matches the target schema",
+      "Run the target directly to isolate the failure",
+    ],
+  ),
+
+  "trigger-not-supported": createSimpleError(
+    "trigger-not-supported",
+    "Trigger target is not supported",
+    "The selected target type is not supported by the local runtime.",
+    [
+      "Use a workflow or task target for local trigger execution",
+      "Select a runtime that supports the required target type",
+      "Run 'veryfront schema --json' to inspect supported trigger targets",
+    ],
+  ),
+
+  "missing-extension": createSimpleError(
+    "missing-extension",
+    "Required extension not found",
+    "Veryfront could not load an extension required by the current configuration.",
+    [
+      "Check that the extension package is installed",
+      "Add the extension to the project configuration",
+      "Restart Veryfront and verify extension discovery",
+    ],
+  ),
+
+  "extension-setup-timeout": createSimpleError(
+    "extension-setup-timeout",
+    "Extension setup timed out",
+    "An extension did not finish setup within the configured lifecycle timeout.",
+    [
+      "Remove blocking or unbounded work from the extension setup function",
+      "Ensure setup observes the provided cancellation signal",
+      "Increase the setup timeout only when the expected work requires it",
+    ],
+  ),
+});

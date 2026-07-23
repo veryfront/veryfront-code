@@ -55,7 +55,7 @@ function withMockConsole<T>(fn: (mockConsole: MockConsole) => T): T {
 }
 
 function withWindow<T>(windowValue: unknown, fn: () => T): T {
-  const globalWithWindow = globalThis as typeof globalThis & { window?: unknown };
+  const globalWithWindow = globalThis as unknown as Record<string, unknown>;
   const originalWindow = globalWithWindow.window;
   globalWithWindow.window = windowValue;
 

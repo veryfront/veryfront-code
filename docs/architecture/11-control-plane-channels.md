@@ -27,10 +27,48 @@ Primary source areas:
 ## Runtime flow
 
 1. A trusted service signs a channel request.
-2. The project runtime validates the signature and request shape.
+2. The project runtime caps the request body, then validates the signature and
+   request shape.
 3. Dispatch handlers route the request to the intended control-plane operation.
 4. Invoke handlers execute project-scoped runtime work and return structured
    results.
+
+## Request trust
+
+The runtime verifies Ed25519 compact JWS signatures before dispatch. Verification
+binds the signature to the exact request body, project audience, project
+identifier, and request identifier. Channel invokes also bind the signature
+subject and platform to the parsed payload. A valid signature for one payload
+cannot authorize another payload.
+
+Signature timestamps must form a valid window. Runtime dispatch handlers accept
+signatures issued within the configured 60 second age limit and reject expired
+or future-issued signatures. Signature-only trust checks are not authorization.
+The proxy accepts dispatch signatures only for `/channels/invoke` and
+control-plane signatures only for their control-plane route family. Any handler
+that consumes a payload must use the body-bound verifier.
+
+Verification and payload failures return generic responses. Runtime logs record
+the error class and classification, but do not record signed payloads, raw
+provider errors, stack traces, project identifiers, or account identifiers.
+
+## Resource and execution limits
+
+The shared dispatch reader rejects request bodies larger than 128 KiB before
+signature verification. Channel schemas also bound identifiers, conversation
+history, message parts, attachments, metadata, agent lists, skills, and response
+parts. Invalid or oversized agent output fails closed as a non-retryable runtime
+error.
+
+The request abort signal propagates to agent generation. This allows client
+disconnects and server cancellation to stop provider work instead of leaving it
+detached. Tool failures return a stable redacted result instead of provider or
+tool exception text.
+
+Channel invokes run the supplied conversation history with isolated agent
+memory. They do not read, write, or clear the registered agent's configured
+memory. Concurrent channel conversations therefore cannot erase or mix shared
+in-process or Redis-backed history.
 
 ## Boundaries
 
@@ -46,6 +84,7 @@ Primary source areas:
 ## Change checks
 
 - Preserve signature validation before any dispatch.
+- Bind signed claims to the parsed request fields used for routing.
 - Keep public app route handlers separate from control-plane handlers.
 - Add tests for invalid signatures, malformed payloads, and successful dispatch
   paths when changing channel behavior.

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { contentSecurityPolicy } from "./csp.ts";
 import { MiddlewareContext } from "../../core/context.ts";
@@ -53,6 +53,40 @@ describe("contentSecurityPolicy", () => {
     assertStringIncludes(getCsp(response), "'nonce-abc123'");
   });
 
+  it("adds a script-src directive when a nonce is configured without one", async () => {
+    const middleware = contentSecurityPolicy(
+      { "default-src": "'self'" },
+      { nonce: "abc123" },
+    );
+
+    const response = await runMiddleware(middleware, new Response("OK"));
+
+    assertStringIncludes(getCsp(response), "script-src 'nonce-abc123'");
+  });
+
+  it("rejects unsafe directives and nonces during configuration", () => {
+    assertThrows(
+      () => contentSecurityPolicy({ "default-src\r\nx-injected": "*" }),
+      TypeError,
+      "directive",
+    );
+    assertThrows(
+      () => contentSecurityPolicy({ "script-src": "'self'" }, { nonce: "bad' nonce" }),
+      TypeError,
+      "nonce",
+    );
+    assertThrows(
+      () => contentSecurityPolicy(null as never),
+      TypeError,
+      "directives",
+    );
+    assertThrows(
+      () => contentSecurityPolicy({ "default-src": "'self'" }, null as never),
+      TypeError,
+      "options",
+    );
+  });
+
   it("should merge with existing CSP", async () => {
     const middleware = contentSecurityPolicy(
       { "default-src": "'self'" },
@@ -74,6 +108,16 @@ describe("contentSecurityPolicy", () => {
     );
 
     assertEquals(response?.status, 201);
+  });
+
+  it("preserves the original response status text", async () => {
+    const middleware = contentSecurityPolicy({ "default-src": "'self'" });
+    const response = await runMiddleware(
+      middleware,
+      new Response("Created", { status: 201, statusText: "Stored" }),
+    );
+
+    assertEquals(response?.statusText, "Stored");
   });
 
   it("should preserve original response body", async () => {

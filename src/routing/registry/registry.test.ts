@@ -1,16 +1,26 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRouteRegistrySpanAttributes, RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
 import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import {
+  createWebSocketUpgradeResponse,
+  type RuntimeResponse,
+} from "#veryfront/platform/adapters/base.ts";
+import { getBaseLogger, runWithRequestContextAsync } from "#veryfront/utils";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 function makeHandler(
   name: string,
   priority: number,
-  result: HandlerResult = { continue: true },
+  result: HandlerResult<RuntimeResponse> = { continue: true },
   enabled?: (ctx: HandlerContext) => boolean,
-): Handler {
+): Handler<RuntimeResponse> {
   return {
     metadata: { name, priority, enabled },
     handle: () => Promise.resolve(result),
@@ -31,6 +41,10 @@ function makeReq(): Request {
 }
 
 describe("routing/registry/RouteRegistry", () => {
+  afterEach(() => {
+    __resetLogRecordEmitterForTests();
+  });
+
   describe("register()", () => {
     it("should register a handler", () => {
       const registry = new RouteRegistry();
@@ -79,58 +93,42 @@ describe("routing/registry/RouteRegistry", () => {
   });
 
   describe("execute()", () => {
-    it("adds trusted project identity to the routing span attributes", () => {
-      const req = makeReq();
+    it("records only the method in routing span attributes", () => {
+      const req = new Request(
+        "http://private-domain-canary.example/private-route-canary?private-query-canary=1",
+        { method: "POST" },
+      );
       const url = new URL(req.url);
       const attributes = buildRouteRegistrySpanAttributes(req, url, {
         ...makeCtx(),
-        projectSlug: "investment-ops-agent",
-        projectId: "proj-123",
+        projectSlug: "private-project-canary",
+        projectId: "private-project-id-canary",
+        releaseId: "private-release-canary",
         resolvedEnvironment: "production",
-        environmentName: "Production",
-      });
-
-      assertEquals(attributes["http.method"], "GET");
-      assertEquals(attributes["http.path"], "/test");
-      assertEquals(attributes["veryfront.project_slug"], "investment-ops-agent");
-      assertEquals(attributes["project.slug"], "investment-ops-agent");
-      assertEquals(attributes["veryfront.project_id"], "proj-123");
-      assertEquals(attributes["project.id"], "proj-123");
-      assertEquals(attributes["veryfront.environment"], "production");
-      assertEquals(attributes["veryfront.environment_name"], "Production");
-    });
-
-    it("omits project attributes when no trusted project identity exists", () => {
-      const req = makeReq();
-      const url = new URL(req.url);
-      const attributes = buildRouteRegistrySpanAttributes(req, url, makeCtx());
-
-      assertEquals(attributes["http.method"], "GET");
-      assertEquals(attributes["http.path"], "/test");
-      assertEquals("veryfront.project_slug" in attributes, false);
-      assertEquals("project.slug" in attributes, false);
-      assertEquals("veryfront.project_id" in attributes, false);
-      assertEquals("project.id" in attributes, false);
-      assertEquals("veryfront.environment" in attributes, false);
-      assertEquals("veryfront.environment_name" in attributes, false);
-    });
-
-    it("does not emit slug fallbacks as project id attributes", () => {
-      const req = makeReq();
-      const url = new URL(req.url);
-      const attributes = buildRouteRegistrySpanAttributes(req, url, {
-        ...makeCtx(),
-        projectSlug: "ops-agent",
+        environmentName: "private-environment-canary",
         enriched: {
-          projectSlug: "ops-agent",
-          projectId: "ops-agent",
+          projectSlug: "private-enriched-project-canary",
+          projectId: "private-enriched-project-id-canary",
         } as HandlerContext["enriched"],
       });
 
-      assertEquals(attributes["veryfront.project_slug"], "ops-agent");
-      assertEquals(attributes["project.slug"], "ops-agent");
-      assertEquals("veryfront.project_id" in attributes, false);
-      assertEquals("project.id" in attributes, false);
+      assertEquals(attributes, { "http.method": "POST" });
+      const serializedAttributes = JSON.stringify(attributes);
+      for (
+        const privateValue of [
+          "private-domain-canary",
+          "private-route-canary",
+          "private-query-canary",
+          "private-project-canary",
+          "private-project-id-canary",
+          "private-release-canary",
+          "private-environment-canary",
+          "private-enriched-project-canary",
+          "private-enriched-project-id-canary",
+        ]
+      ) {
+        assertEquals(serializedAttributes.includes(privateValue), false);
+      }
     });
 
     it("should return response from first matching handler", async () => {
@@ -145,6 +143,18 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(result?.status, 200);
     });
 
+    it("preserves WebSocket upgrade response identity", async () => {
+      const registry = new RouteRegistry();
+      const upgradeResponse = createWebSocketUpgradeResponse();
+      registry.register(
+        makeHandler("websocket", 100, { response: upgradeResponse }),
+      );
+
+      const result = await registry.execute(makeReq(), makeCtx());
+
+      assertEquals(Object.is(result, upgradeResponse), true);
+    });
+
     it("should skip handlers that return continue: true", async () => {
       const registry = new RouteRegistry();
       registry.register(makeHandler("pass-through", 100, { continue: true }));
@@ -156,6 +166,7 @@ describe("routing/registry/RouteRegistry", () => {
 
       const result = await registry.execute(makeReq(), makeCtx());
       assertEquals(result?.status, 200);
+      assert(result instanceof Response);
       assertEquals(await result?.text(), "found");
     });
 
@@ -197,12 +208,13 @@ describe("routing/registry/RouteRegistry", () => {
       );
 
       const result = await registry.execute(makeReq(), makeCtx());
+      assert(result instanceof Response);
       assertEquals(await result?.text(), "enabled");
     });
 
     it("should return RFC 9457 error response when handler throws", async () => {
       const registry = new RouteRegistry();
-      const errorHandler: Handler = {
+      const errorHandler: Handler<RuntimeResponse> = {
         metadata: { name: "erroring", priority: 100 },
         handle: () => Promise.reject(new Error("handler error")),
       };
@@ -219,15 +231,89 @@ describe("routing/registry/RouteRegistry", () => {
       // Should return error response, not continue to fallback handler
       assertEquals(result?.status, 500);
       assertEquals(result?.headers.get("Content-Type"), "application/problem+json");
+      assert(result instanceof Response);
 
       const body = await result?.json() as { type?: string; title?: string; category?: string };
       assertEquals(body.type?.includes("unknown-error"), true);
       assertEquals(body.category, "GENERAL");
     });
 
+    it("keeps handler failure logs useful without request or error details", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const registry = new RouteRegistry();
+      const error = new TypeError("private-error-message-canary");
+      registry.register({
+        metadata: { name: "erroring-handler", priority: 100 },
+        handle: () => Promise.reject(error),
+      });
+
+      const requestLogger = getBaseLogger("SERVER").child({
+        requestId: "private-request-id-canary",
+        request_url: "http://private-domain-canary.example/private-route-canary",
+        domain: "private-domain-canary.example",
+        project_slug: "private-project-canary",
+        project_id: "private-project-id-canary",
+        release_id: "private-release-canary",
+        branch_id: "private-branch-id-canary",
+        branch_name: "private-branch-name-canary",
+      });
+
+      const result = await runWithRequestContextAsync(
+        {
+          logger: requestLogger,
+          requestId: "private-request-id-canary",
+          projectSlug: "private-project-canary",
+          projectId: "private-project-id-canary",
+          domain: "private-domain-canary.example",
+        },
+        () =>
+          registry.execute(
+            new Request(
+              "http://private-domain-canary.example/private-route-canary?private-query-canary=1",
+              { method: "POST" },
+            ),
+            {
+              ...makeCtx(),
+              projectSlug: "private-project-canary",
+              projectId: "private-project-id-canary",
+              releaseId: "private-release-canary",
+              environmentName: "private-environment-canary",
+            },
+          ),
+      );
+
+      assertEquals(result?.status, 500);
+      const failureEntry = entries.find((entry) => entry.message === "Route handler failed");
+      assert(failureEntry);
+      assertEquals(failureEntry.context?.handler, "erroring-handler");
+      assertEquals(failureEntry.context?.method, "POST");
+      assertEquals(failureEntry.context?.status, 500);
+      assertEquals(failureEntry.context?.errorName, "TypeError");
+
+      const serializedEntry = JSON.stringify(failureEntry);
+      for (
+        const privateValue of [
+          "private-error-message-canary",
+          "private-request-id-canary",
+          "private-domain-canary",
+          "private-route-canary",
+          "private-query-canary",
+          "private-project-canary",
+          "private-project-id-canary",
+          "private-release-canary",
+          "private-branch-id-canary",
+          "private-branch-name-canary",
+          "private-environment-canary",
+        ]
+      ) {
+        assertEquals(serializedEntry.includes(privateValue), false);
+      }
+    });
+
     it("should return RFC 9457 response with correct slug for VeryfrontError", async () => {
       const registry = new RouteRegistry();
-      const errorHandler: Handler = {
+      const errorHandler: Handler<RuntimeResponse> = {
         metadata: { name: "config-error", priority: 100 },
         handle: () => Promise.reject(CONFIG_NOT_FOUND.create({ detail: "Test config error" })),
       };
@@ -238,6 +324,7 @@ describe("routing/registry/RouteRegistry", () => {
 
       assertEquals(result?.status, 404);
       assertEquals(result?.headers.get("Content-Type"), "application/problem+json");
+      assert(result instanceof Response);
 
       const body = await result?.json() as {
         type?: string;
@@ -248,7 +335,7 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(body.type?.includes("config-not-found"), true);
       assertEquals(body.category, "CONFIG");
       assertEquals(body.detail, "Test config error");
-      assertEquals(body.suggestion?.includes("vf init"), true);
+      assertEquals(body.suggestion?.includes("veryfront init"), true);
     });
 
     it("should return null on empty registry", async () => {
@@ -269,6 +356,17 @@ describe("routing/registry/RouteRegistry", () => {
     it("should return empty array when no handlers registered", () => {
       const registry = new RouteRegistry();
       assertEquals(registry.getHandlers().length, 0);
+    });
+
+    it("returns a snapshot that cannot mutate registry state", () => {
+      const registry = new RouteRegistry();
+      registry.register(makeHandler("registered", 100));
+
+      const snapshot = registry.getHandlers() as Handler<RuntimeResponse>[];
+      snapshot.length = 0;
+
+      assertEquals(registry.has("registered"), true);
+      assertEquals(registry.getHandlers().length, 1);
     });
   });
 

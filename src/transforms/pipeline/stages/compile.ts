@@ -4,8 +4,50 @@ import { COMPILATION_ERROR } from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
+import { basename, isAbsolute, relative, sep } from "#veryfront/compat/path";
 
 const logger = rendererLogger.component("esm-transform");
+
+function safeSourcePath(filePath: string, projectDir: string): string {
+  const projectRelative = relative(projectDir, filePath);
+  if (
+    projectRelative &&
+    projectRelative !== ".." &&
+    !projectRelative.startsWith(`..${sep}`) &&
+    !isAbsolute(projectRelative)
+  ) {
+    return projectRelative;
+  }
+  return basename(filePath) || "module";
+}
+
+function getCompileDiagnostic(error: unknown): {
+  message: string;
+  line?: number;
+  column?: number;
+} {
+  const errors = error !== null && typeof error === "object" && "errors" in error
+    ? (error as { errors?: unknown }).errors
+    : undefined;
+  const first = Array.isArray(errors) ? errors[0] : undefined;
+  if (first !== null && typeof first === "object") {
+    const diagnostic = first as {
+      text?: unknown;
+      location?: { line?: unknown; column?: unknown } | null;
+    };
+    const text = typeof diagnostic.text === "string"
+      ? diagnostic.text.replace(/[\r\n\u2028\u2029]+/g, " ").slice(0, 500)
+      : "Invalid module syntax";
+    return {
+      message: text,
+      line: typeof diagnostic.location?.line === "number" ? diagnostic.location.line : undefined,
+      column: typeof diagnostic.location?.column === "number"
+        ? diagnostic.location.column
+        : undefined,
+    };
+  }
+  return { message: "Module compilation failed" };
+}
 
 export const compilePlugin: TransformPlugin = {
   name: "esbuild-compile",
@@ -41,29 +83,30 @@ export const compilePlugin: TransformPlugin = {
 
       return code;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
       const isMdx = ctx.filePath.endsWith(".mdx");
-
-      const sourcePreview = ctx.code
-        .split("\n")
-        .slice(0, 10)
-        .map((line, i) => `${String(i + 1).padStart(3, " ")}| ${line}`)
-        .join("\n");
+      const sourcePath = safeSourcePath(ctx.filePath, ctx.projectDir);
+      const diagnostic = getCompileDiagnostic(err);
 
       logger.error("Transform failed", {
-        filePath: ctx.filePath,
+        sourcePath,
         loader,
         sourceLength: ctx.code.length,
         isMdx,
-        error: errorMsg,
+        line: diagnostic.line,
+        column: diagnostic.column,
       });
-      logger.error("Source preview (first 10 lines):\n" + sourcePreview);
 
-      getErrorCollector().addCompileError(errorMsg, ctx.filePath);
+      getErrorCollector().addCompileError(
+        diagnostic.message,
+        sourcePath,
+        diagnostic.line,
+        diagnostic.column,
+        "compilation-error",
+      );
 
       throw COMPILATION_ERROR.create({
-        detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
-        cause: err,
+        detail:
+          `ESM transform failed for ${sourcePath} with loader ${loader}: ${diagnostic.message}`,
       });
     }
   },

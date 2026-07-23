@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, mkdir, remove, symlink, writeTextFile } from "./fs.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
@@ -8,6 +10,9 @@ import {
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "./framework-source-resolver.ts";
+
+const identityRealPath = (path: string): Promise<string> => Promise.resolve(path);
+const notFound = (): Error => Object.assign(new Error("not found"), { code: "ENOENT" });
 
 describe("platform/compat/framework-source-resolver", () => {
   it("prefers live framework src before embedded sources", async () => {
@@ -31,9 +36,10 @@ describe("platform/compat/framework-source-resolver", () => {
             };
           }
 
-          throw new Error("not found");
+          throw notFound();
         },
       },
+      realPath: identityRealPath,
     });
 
     assertEquals(result?.path, "/framework/src/react/router/index.tsx");
@@ -55,9 +61,10 @@ describe("platform/compat/framework-source-resolver", () => {
             };
           }
 
-          throw new Error("not found");
+          throw notFound();
         },
       },
+      realPath: identityRealPath,
     });
 
     assertEquals(result?.path, "/framework/dist/framework-src/react/router/index.tsx.src");
@@ -105,6 +112,91 @@ describe("platform/compat/framework-source-resolver", () => {
     );
 
     assertEquals(result, embeddedPath);
+  });
+
+  it("rejects relative imports that escape the source tree before probing", async () => {
+    const probed: string[] = [];
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../../../outside.ts",
+      `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+      {
+        exists: (path) => {
+          probed.push(path);
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, []);
+  });
+
+  it("allows only the generated compatibility files at the framework root", async () => {
+    const shimPath = "/framework/_dnt.shims.js";
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../_dnt.shims.js",
+      "/framework/src/runtime/index.ts",
+      {
+        exists: (path) => Promise.resolve(path === shimPath),
+        realPath: identityRealPath,
+      },
+    );
+
+    assertEquals(result, shimPath);
+
+    const probed: string[] = [];
+    const rejected = await resolveRelativeFrameworkSourceImport(
+      "../../private.json",
+      "/framework/src/runtime/index.ts",
+      {
+        exists: (path) => {
+          probed.push(path);
+          return Promise.resolve(true);
+        },
+        realPath: identityRealPath,
+      },
+    );
+
+    assertEquals(rejected, null);
+    assertEquals(probed, []);
+  });
+
+  it("rejects a relative import symlink that resolves outside the source tree", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-framework-resolver-" });
+    const sourceDir = join(tempDir, "src");
+    const outsidePath = join(tempDir, "outside.ts");
+    const linkPath = join(sourceDir, "escape.ts");
+
+    try {
+      await mkdir(sourceDir, { recursive: true });
+      await writeTextFile(outsidePath, "export const secret = true;\n");
+      await symlink(outsidePath, linkPath);
+
+      const result = await resolveRelativeFrameworkSourceImport(
+        "./escape.ts",
+        join(sourceDir, "index.ts"),
+      );
+
+      assertEquals(result, null);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("propagates operational filesystem failures", async () => {
+    const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
+
+    await assertRejects(
+      () =>
+        resolveFrameworkSourcePath("react/router", {
+          extraLookupDirs: ["/framework/src"],
+          fileSystem: {
+            stat: () => Promise.reject(denied),
+          },
+        }),
+      Error,
+      "permission denied",
+    );
   });
 });
 
@@ -167,9 +259,10 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
               mtime: null,
             };
           }
-          throw new Error("not found");
+          throw notFound();
         },
       },
+      realPath: identityRealPath,
     });
     // Regardless of which extension wins first, result must be non-null and
     // contained within the lookup dir.
@@ -195,10 +288,34 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
               mtime: null,
             };
           }
-          throw new Error("not found");
+          throw notFound();
         },
       },
+      realPath: identityRealPath,
     });
     assertEquals(result?.path, target);
+  });
+
+  it("rejects a source symlink that resolves outside its lookup directory", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-framework-lookup-" });
+    const sourceDir = join(tempDir, "src");
+    const outsidePath = join(tempDir, "outside.ts");
+    const linkPath = join(sourceDir, "escape.ts");
+
+    try {
+      await mkdir(sourceDir, { recursive: true });
+      await writeTextFile(outsidePath, "export const secret = true;\n");
+      await symlink(outsidePath, linkPath);
+
+      const result = await resolveFrameworkSourcePath("escape", {
+        extraLookupDirs: [sourceDir],
+        extensions: [".ts"],
+        includeIndexFallback: false,
+      });
+
+      assertEquals(result, null);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
   });
 });

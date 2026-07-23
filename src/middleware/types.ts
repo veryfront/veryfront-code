@@ -1,6 +1,7 @@
 export type {
   Context,
   ExecutionContext,
+  MiddlewareExecutionAdapter,
   MiddlewareFactory,
   MiddlewareHandler,
   Next,
@@ -8,8 +9,8 @@ export type {
 
 export type {
   AnyMiddlewareContext,
+  LegacyMiddlewareContext,
   Middleware,
-  MiddlewareContext as LegacyMiddlewareContext,
   Next as LegacyNext,
 } from "./builtin/types.ts";
 

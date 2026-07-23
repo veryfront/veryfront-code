@@ -129,6 +129,15 @@ describe("validateOriginSync", () => {
       assertEquals(result.allowedOrigin, null);
       assertEquals(result.error, "Origin validation error");
     });
+
+    it("should reject a wildcard function result with credentials", () => {
+      const result = validateOriginSync("https://example.com", {
+        origin: () => "*",
+        credentials: true,
+      });
+      assertEquals(result.allowedOrigin, null);
+      assertEquals(result.allowCredentials, false);
+    });
   });
 });
 
@@ -243,7 +252,7 @@ describe("validateCORSConfig", () => {
       maxAge: -1,
     });
     assertEquals(result.valid, false);
-    assertEquals(result.error, "maxAge must be a positive number");
+    assertEquals(result.error, "maxAge must be a non-negative safe integer");
   });
 
   it("should accept zero maxAge", () => {
@@ -260,5 +269,37 @@ describe("validateCORSConfig", () => {
       maxAge: 3600,
     });
     assertEquals(result.valid, true);
+  });
+
+  it("should reject non-finite, fractional, and non-numeric maxAge values", () => {
+    for (const maxAge of [Number.NaN, Number.POSITIVE_INFINITY, 1.5, "60"]) {
+      const result = validateCORSConfig({
+        origin: "https://example.com",
+        maxAge: maxAge as number,
+      });
+      assertEquals(result.valid, false);
+    }
+  });
+
+  it("should reject malformed method and header entries", () => {
+    for (
+      const config of [
+        { origin: "https://example.com", methods: ["GET", "BAD METHOD"] },
+        { origin: "https://example.com", allowedHeaders: ["X-Good", "Bad Header"] },
+        { origin: "https://example.com", exposedHeaders: ["X-Good", "Bad\nHeader"] },
+      ]
+    ) {
+      assertEquals(validateCORSConfig(config).valid, false);
+    }
+  });
+
+  it("makes origin validation fail closed for invalid runtime config", () => {
+    const result = validateOriginSync("https://example.com", {
+      origin: "https://example.com",
+      maxAge: Number.NaN,
+    });
+    assertEquals(result.allowedOrigin, null);
+    assertEquals(result.allowCredentials, false);
+    assertEquals(result.error, "maxAge must be a non-negative safe integer");
   });
 });

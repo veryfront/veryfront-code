@@ -3,6 +3,14 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import type { EvalDefinition, EvalExample } from "./types.ts";
 
+const MAX_EVAL_STUDIO_TEXT_LENGTH = 16_384;
+const MAX_EVAL_STUDIO_SOURCE_LENGTH = 4 * 1024 * 1024;
+const MAX_EVAL_STUDIO_EXAMPLES = 100_000;
+const MAX_EVAL_STUDIO_METRICS = 1_000;
+const MAX_EVAL_STUDIO_TAGS = 1_000;
+const MAX_EVAL_STUDIO_FAILURES = 100_000;
+const MAX_EVAL_STUDIO_REPETITIONS = 10_000;
+
 /** Schema for Eval Studio capabilities. */
 export const getEvalStudioCapabilitySchema = defineSchema((v) =>
   v.enum(["project.evals.read", "project.evals.write", "project.evals.run"] as const)
@@ -32,16 +40,16 @@ export const getEvalEditableFieldSchema = defineSchema((v) =>
 /** Schema for an Eval source reference. */
 export const getEvalSourceReferenceSchema = defineSchema((v) =>
   v.object({
-    filePath: v.string(),
-    exportName: v.string(),
-    content: v.string().optional(),
+    filePath: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    exportName: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    content: v.string().max(MAX_EVAL_STUDIO_SOURCE_LENGTH).optional(),
   })
 );
 
 /** Schema for an Eval example in Studio source documents. */
 export const getEvalSourceExampleSchema = defineSchema((v) =>
   v.object({
-    id: v.string(),
+    id: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     input: v.unknown(),
     reference: v.unknown().optional(),
     metadata: v.record(v.string(), v.unknown()).optional(),
@@ -52,8 +60,8 @@ export const getEvalSourceExampleSchema = defineSchema((v) =>
 export const getEvalSourceDatasetSchema = defineSchema((v) =>
   v.object({
     kind: v.enum(["inline", "json", "jsonl", "dynamic"] as const),
-    path: v.string().optional(),
-    examples: v.array(getEvalSourceExampleSchema()).optional(),
+    path: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH).optional(),
+    examples: v.array(getEvalSourceExampleSchema()).max(MAX_EVAL_STUDIO_EXAMPLES).optional(),
     editable: v.boolean(),
     dynamic: v.boolean(),
   })
@@ -62,7 +70,7 @@ export const getEvalSourceDatasetSchema = defineSchema((v) =>
 /** Schema for an Eval metric in Studio source documents. */
 export const getEvalSourceMetricSchema = defineSchema((v) =>
   v.object({
-    name: v.string(),
+    name: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     family: v.enum(["answer", "agent", "ops", "judge", "knowledge", "check"] as const),
     severity: v.enum(["gate", "soft", "budget"] as const),
     threshold: v.object({
@@ -78,13 +86,13 @@ export const getEvalSourceMetricSchema = defineSchema((v) =>
 /** Schema for an Eval report metric summary in Studio run projections. */
 export const getEvalRunMetricSummarySchema = defineSchema((v) =>
   v.object({
-    name: v.string(),
+    name: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     family: v.enum(["answer", "agent", "ops", "judge", "knowledge", "check"] as const),
     severity: v.enum(["gate", "soft", "budget"] as const),
-    passed: v.number().int().nonnegative(),
-    failed: v.number().int().nonnegative(),
-    skipped: v.number().int().nonnegative(),
-    passRate: v.number(),
+    passed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+    failed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+    skipped: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+    passRate: v.number().min(0).max(1),
   })
 );
 
@@ -130,13 +138,13 @@ export const getEvalRunUsageSummarySchema = defineSchema((v) =>
 /** Schema for blocking Eval failures in Studio run projections. */
 export const getEvalRunGateFailureSummarySchema = defineSchema((v) =>
   v.object({
-    recordId: v.string(),
-    exampleId: v.string(),
-    repetition: v.number().int().positive(),
-    name: v.string(),
+    recordId: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    exampleId: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    repetition: v.number().int().positive().max(MAX_EVAL_STUDIO_REPETITIONS),
+    name: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     family: v.enum(["answer", "agent", "ops", "judge", "knowledge", "check"] as const),
     severity: v.enum(["gate", "budget"] as const),
-    explanation: v.string().optional(),
+    explanation: v.string().max(MAX_EVAL_STUDIO_SOURCE_LENGTH).optional(),
     evidence: v.record(v.string(), v.unknown()).optional(),
   })
 );
@@ -144,11 +152,11 @@ export const getEvalRunGateFailureSummarySchema = defineSchema((v) =>
 /** Schema for failed Eval examples in Studio run projections. */
 export const getEvalRunFailedExampleSummarySchema = defineSchema((v) =>
   v.object({
-    exampleId: v.string(),
-    records: v.number().int().nonnegative(),
-    passed: v.number().int().nonnegative(),
-    failed: v.number().int().nonnegative(),
-    passRate: v.number(),
+    exampleId: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    records: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+    passed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+    failed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+    passRate: v.number().min(0).max(1),
     flaky: v.boolean(),
   })
 );
@@ -156,10 +164,10 @@ export const getEvalRunFailedExampleSummarySchema = defineSchema((v) =>
 /** Schema for Eval flake aggregates in Studio run projections. */
 export const getEvalRunFlakeSummarySchema = defineSchema((v) =>
   v.object({
-    examples: v.number().int().nonnegative(),
-    stablePassed: v.number().int().nonnegative(),
-    stableFailed: v.number().int().nonnegative(),
-    flaky: v.number().int().nonnegative(),
+    examples: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_EXAMPLES),
+    stablePassed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_EXAMPLES),
+    stableFailed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_EXAMPLES),
+    flaky: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_EXAMPLES),
   })
 );
 
@@ -167,20 +175,20 @@ export const getEvalRunFlakeSummarySchema = defineSchema((v) =>
 export const getEvalSourceDocumentSchema = defineSchema((v) =>
   v.object({
     kind: v.literal("eval-source-document"),
-    id: v.string(),
-    name: v.string(),
-    description: v.string().optional(),
+    id: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    name: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    description: v.string().max(MAX_EVAL_STUDIO_SOURCE_LENGTH).optional(),
     targetKind: getEvalTargetKindSchema(),
-    target: v.string(),
+    target: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     source: getEvalSourceReferenceSchema(),
     dataset: getEvalSourceDatasetSchema(),
-    metrics: v.array(getEvalSourceMetricSchema()),
-    repetitions: v.number().int().positive(),
-    tags: v.array(v.string()),
+    metrics: v.array(getEvalSourceMetricSchema()).max(MAX_EVAL_STUDIO_METRICS),
+    repetitions: v.number().int().positive().max(MAX_EVAL_STUDIO_REPETITIONS),
+    tags: v.array(v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH)).max(MAX_EVAL_STUDIO_TAGS),
     metadata: v.record(v.string(), v.unknown()),
     editableFields: v.array(getEvalEditableFieldSchema()),
     dynamicFields: v.array(getEvalEditableFieldSchema()),
-    capabilities: v.array(getEvalStudioCapabilitySchema()),
+    capabilities: v.array(getEvalStudioCapabilitySchema()).max(3),
   })
 );
 
@@ -188,17 +196,19 @@ export const getEvalSourceDocumentSchema = defineSchema((v) =>
 export const getEvalSourcePatchSchema = defineSchema((v) =>
   v.object({
     kind: v.literal("eval-source-patch"),
-    id: v.string(),
+    id: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     source: getEvalSourceReferenceSchema(),
     fields: v.object({
-      name: v.string().optional(),
-      description: v.string().optional(),
-      target: v.string().optional(),
+      name: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH).optional(),
+      description: v.string().max(MAX_EVAL_STUDIO_SOURCE_LENGTH).optional(),
+      target: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH).optional(),
       dataset: getEvalSourceDatasetSchema().optional(),
-      repetitions: v.number().int().positive().optional(),
-      tags: v.array(v.string()).optional(),
+      repetitions: v.number().int().positive().max(MAX_EVAL_STUDIO_REPETITIONS).optional(),
+      tags: v.array(v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH)).max(
+        MAX_EVAL_STUDIO_TAGS,
+      ).optional(),
       metadata: v.record(v.string(), v.unknown()).optional(),
-      metrics: v.array(getEvalSourceMetricSchema()).optional(),
+      metrics: v.array(getEvalSourceMetricSchema()).max(MAX_EVAL_STUDIO_METRICS).optional(),
     }).strict(),
   })
 );
@@ -207,31 +217,35 @@ export const getEvalSourcePatchSchema = defineSchema((v) =>
 export const getEvalRunSchema = defineSchema((v) =>
   v.object({
     kind: v.literal("eval-run"),
-    runId: v.string(),
-    evalId: v.string(),
+    runId: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    evalId: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     status: v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"] as const),
     targetKind: getEvalTargetKindSchema(),
-    target: v.string(),
+    target: v.string().min(1).max(MAX_EVAL_STUDIO_TEXT_LENGTH),
     source: getEvalSourceReferenceSchema().optional(),
     summary: v.object({
-      records: v.number().int().nonnegative(),
-      passed: v.number().int().nonnegative(),
-      failed: v.number().int().nonnegative(),
-      passRate: v.number(),
+      records: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+      passed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+      failed: v.number().int().nonnegative().max(MAX_EVAL_STUDIO_FAILURES),
+      passRate: v.number().min(0).max(1),
       skippedResults: v.number().int().nonnegative().optional(),
-      metrics: v.array(getEvalRunMetricSummarySchema()).optional(),
+      metrics: v.array(getEvalRunMetricSummarySchema()).max(MAX_EVAL_STUDIO_METRICS).optional(),
       duration: getEvalRunDurationSummarySchema().optional(),
       usage: getEvalRunUsageSummarySchema().optional(),
-      gateFailures: v.array(getEvalRunGateFailureSummarySchema()).optional(),
-      failedExamples: v.array(getEvalRunFailedExampleSummarySchema()).optional(),
+      gateFailures: v.array(getEvalRunGateFailureSummarySchema()).max(
+        MAX_EVAL_STUDIO_FAILURES,
+      ).optional(),
+      failedExamples: v.array(getEvalRunFailedExampleSummarySchema()).max(
+        MAX_EVAL_STUDIO_FAILURES,
+      ).optional(),
       flakes: getEvalRunFlakeSummarySchema().optional(),
     }).nullable(),
-    reportPath: v.string().nullable(),
+    reportPath: v.string().max(MAX_EVAL_STUDIO_TEXT_LENGTH).nullable(),
     error: v.unknown().nullable(),
     metadata: v.record(v.string(), v.unknown()),
-    createdAt: v.string(),
-    startedAt: v.string().nullable(),
-    completedAt: v.string().nullable(),
+    createdAt: v.string().max(MAX_EVAL_STUDIO_TEXT_LENGTH),
+    startedAt: v.string().max(MAX_EVAL_STUDIO_TEXT_LENGTH).nullable(),
+    completedAt: v.string().max(MAX_EVAL_STUDIO_TEXT_LENGTH).nullable(),
   })
 );
 

@@ -1,4 +1,4 @@
-import { tool, type ToolExecutionContext } from "#veryfront/tool";
+import { type Tool, tool, type ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { containsExactArtifactPathValue } from "../artifacts/slash-command-artifact-policy.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "../../chat/types.ts";
@@ -23,15 +23,23 @@ type PersistedFormInputToolPart = ChatUiMessagePart & {
 
 /** Context for hosted form input tool. */
 export interface HostedFormInputToolContext {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Whether slash command artifact path seen. */
   slashCommandArtifactPathSeen?: boolean;
+  /** Submitted form input result value. */
   submittedFormInputResult?: HostedSubmittedFormInputResult;
 }
 
 /** Create hosted form input tool. */
-export function createHostedFormInputTool(context: HostedFormInputToolContext, apiUrl: string) {
+export function createHostedFormInputTool(
+  context: HostedFormInputToolContext,
+  apiUrl: string,
+): Tool<FormInputToolInput, unknown> {
   return tool<FormInputToolInput, unknown>({
     description:
       "Display a durable structured form to collect user input. Use this when you need a concrete choice or structured values before continuing. The request is persisted as an input_request and the tool waits until the user submits or the request expires.",

@@ -99,39 +99,36 @@ export class SSROrchestrator {
     const wantsStream = options?.delivery === "stream";
 
     // Use AsyncLocalStorage-based head collection for multi-tenant safety
-    const { result: renderResult, head: collectedHead } = await runWithHeadCollector(() =>
-      withSpan(
-        SpanNames.SSR_ORCHESTRATOR_RENDER,
-        () =>
-          this.config.ssrRenderer.renderToHTML(validatedElement, {
-            mode: this.config.mode,
-            wantsStream,
-            debugMode: this.config.debugMode,
-          }),
-        {
-          "ssr.wants_stream": wantsStream,
-          "ssr.mode": this.config.mode,
-        },
-      )
-    );
+    let renderWithHead: Awaited<
+      ReturnType<typeof runWithHeadCollector<Awaited<ReturnType<SSRRenderer["renderToHTML"]>>>>
+    >;
+    try {
+      renderWithHead = await runWithHeadCollector(() =>
+        withSpan(
+          SpanNames.SSR_ORCHESTRATOR_RENDER,
+          () =>
+            this.config.ssrRenderer.renderToHTML(validatedElement, {
+              mode: this.config.mode,
+              wantsStream,
+              debugMode: this.config.debugMode,
+            }),
+          {
+            "ssr.wants_stream": wantsStream,
+            "ssr.mode": this.config.mode,
+          },
+        )
+      );
+    } finally {
+      finalizeRenderSession(options);
+    }
+    const { result: renderResult, head: collectedHead } = renderWithHead;
 
     const { html, stream } = renderResult;
 
-    if (options?.renderSessionId && hasRenderSession(options.renderSessionId)) {
-      endRenderSession(options.renderSessionId);
-    }
-
-    const mergedOptions = {
-      ...generationContext.options,
-      ...options,
-      props: {
-        ...generationContext.options?.props,
-        ...options?.props,
-      },
-    };
+    const mergedOptions = mergeRenderOptions(generationContext.options, options);
 
     if (stream && wantsStream) {
-      const ssrHash = html ? await computeHash(html) : `stream-${Date.now()}`;
+      const ssrHash = html ? await computeHash(html) : `stream-${crypto.randomUUID()}`;
 
       logger.debug("True streaming mode - sending HTML shell immediately", {
         hasBufferedHtml: !!html,
@@ -195,24 +192,29 @@ export class SSROrchestrator {
 
         if (wantsStream) {
           // Streaming mode: get a ReadableStream of chunks from the Worker
-          const stream = worker.executeStream({
-            type: "render-ssr",
-            id: requestId,
-            pageModulePath: isolation.pageModulePath,
-            layoutModulePaths: isolation.layoutModulePaths,
-            pageProps: isolation.pageProps,
-            layoutProps: isolation.layoutProps,
-            delivery: "stream",
-            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-          });
+          let stream: ReadableStream<Uint8Array>;
+          try {
+            stream = worker.executeStream({
+              type: "render-ssr",
+              id: requestId,
+              pageModulePath: isolation.pageModulePath,
+              layoutModulePaths: isolation.layoutModulePaths,
+              pageProps: isolation.pageProps,
+              layoutProps: isolation.layoutProps,
+              delivery: "stream",
+              sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
+            });
+          } finally {
+            finalizeRenderSession(options);
+          }
 
-          const ssrHash = `stream-isolated-${Date.now()}`;
+          const ssrHash = `stream-${requestId}`;
 
           // Generate HTML stream using the framework's HTML generator
           const finalStream = await this.config.htmlGenerator.generateHTMLStream(stream, {
             ...generationContext,
             ssrHash,
-            options: { ...generationContext.options, ...options },
+            options: mergeRenderOptions(generationContext.options, options),
             collectedHead: undefined,
           });
 
@@ -220,16 +222,21 @@ export class SSROrchestrator {
         }
 
         // String mode: render to HTML in Worker, get result back
-        const workerResponse: WorkerResponse = await worker.execute({
-          type: "render-ssr",
-          id: requestId,
-          pageModulePath: isolation.pageModulePath,
-          layoutModulePaths: isolation.layoutModulePaths,
-          pageProps: isolation.pageProps,
-          layoutProps: isolation.layoutProps,
-          delivery: "string",
-          sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-        });
+        let workerResponse: WorkerResponse;
+        try {
+          workerResponse = await worker.execute({
+            type: "render-ssr",
+            id: requestId,
+            pageModulePath: isolation.pageModulePath,
+            layoutModulePaths: isolation.layoutModulePaths,
+            pageProps: isolation.pageProps,
+            layoutProps: isolation.layoutProps,
+            delivery: "string",
+            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
+          });
+        } finally {
+          finalizeRenderSession(options);
+        }
 
         if (workerResponse.type === "error") {
           const err = new Error(workerResponse.error.message);
@@ -248,7 +255,7 @@ export class SSROrchestrator {
           ...generationContext,
           html,
           ssrHash,
-          options: { ...generationContext.options, ...options },
+          options: mergeRenderOptions(generationContext.options, options),
           collectedHead: undefined,
         });
 
@@ -257,7 +264,6 @@ export class SSROrchestrator {
       {
         "ssr.isolated": true,
         "ssr.wants_stream": wantsStream,
-        "ssr.project_dir": isolation.projectDir,
       },
     );
   }
@@ -266,15 +272,35 @@ export class SSROrchestrator {
     try {
       return new Response(html).body ?? null;
     } catch (error) {
-      logger.error("Failed to create stream from HTML:", error);
+      logger.error("Failed to create stream from HTML", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
       throw toError(
         createError({
           type: "render",
-          message: `Unable to create response stream: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          message: "Unable to create response stream",
         }),
       );
     }
   }
+}
+
+function finalizeRenderSession(options: RenderOptions | undefined): void {
+  if (options?.renderSessionId && hasRenderSession(options.renderSessionId)) {
+    endRenderSession(options.renderSessionId);
+  }
+}
+
+function mergeRenderOptions(
+  base: RenderOptions | undefined,
+  override: RenderOptions | undefined,
+): RenderOptions {
+  return {
+    ...base,
+    ...override,
+    props: {
+      ...base?.props,
+      ...override?.props,
+    },
+  };
 }

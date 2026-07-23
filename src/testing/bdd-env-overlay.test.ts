@@ -1,5 +1,4 @@
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { assertEquals } from "./assert.ts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "./bdd.ts";
 
@@ -10,7 +9,7 @@ const originalBeforeEachValue = getEnv(BEFORE_EACH_ENV_KEY);
 const SUITE_ENV_KEY = "VF_TEST_SUITE_ENV_OVERLAY";
 const originalSuiteValue = getEnv(SUITE_ENV_KEY);
 
-describe("BDD environment overlay", { ignore: !isDeno }, () => {
+describe("BDD environment overlay", () => {
   afterEach(() => {
     setEnv(TEST_ENV_KEY, "after-each-value");
   });
@@ -33,7 +32,7 @@ describe("BDD environment overlay", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD beforeEach environment overlay", { ignore: !isDeno }, () => {
+describe("BDD beforeEach environment overlay", () => {
   beforeEach(() => {
     setEnv(BEFORE_EACH_ENV_KEY, "before-each-value");
   });
@@ -43,7 +42,7 @@ describe("BDD beforeEach environment overlay", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD suite environment isolation", { ignore: !isDeno }, () => {
+describe("BDD suite environment isolation", () => {
   afterAll(() => {
     if (originalBeforeEachValue === undefined) {
       deleteEnv(BEFORE_EACH_ENV_KEY);
@@ -57,7 +56,7 @@ describe("BDD suite environment isolation", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD suite-wide environment", { ignore: !isDeno }, () => {
+describe("BDD suite-wide environment", () => {
   beforeAll(() => {
     setEnv(SUITE_ENV_KEY, "suite-value");
   });
@@ -75,7 +74,7 @@ describe("BDD suite-wide environment", { ignore: !isDeno }, () => {
   });
 });
 
-describe("BDD suite-wide environment cleanup", { ignore: !isDeno }, () => {
+describe("BDD suite-wide environment cleanup", () => {
   afterAll(() => {
     if (originalSuiteValue === undefined) {
       deleteEnv(SUITE_ENV_KEY);
@@ -86,5 +85,36 @@ describe("BDD suite-wide environment cleanup", { ignore: !isDeno }, () => {
 
   it("does not expose environment changes made by another suite's beforeAll", () => {
     assertEquals(getEnv(SUITE_ENV_KEY), originalSuiteValue);
+  });
+});
+
+const DIRECT_ENV_KEY = "VF_TEST_DIRECT_ENV_OVERLAY";
+const originalDirectValue = process.env[DIRECT_ENV_KEY];
+
+describe("BDD direct process environment overlay", () => {
+  afterEach(() => {
+    process.env[DIRECT_ENV_KEY] = "after-each-value";
+  });
+
+  afterAll(() => {
+    if (originalDirectValue === undefined) {
+      delete process.env[DIRECT_ENV_KEY];
+    } else {
+      process.env[DIRECT_ENV_KEY] = originalDirectValue;
+    }
+  });
+
+  it("makes direct process environment changes visible to the test", () => {
+    process.env[DIRECT_ENV_KEY] = "test-value";
+    assertEquals(process.env[DIRECT_ENV_KEY], "test-value");
+  });
+
+  it("does not expose direct process environment changes from another test", () => {
+    assertEquals(process.env[DIRECT_ENV_KEY], originalDirectValue);
+  });
+
+  it("preserves inherited object utilities on process.env", () => {
+    assertEquals(typeof process.env.toString, "function");
+    assertEquals(typeof process.env.hasOwnProperty, "function");
   });
 });

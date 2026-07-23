@@ -1,8 +1,8 @@
 /**
  * Shared test helper: activates the `@veryfront/ext-css-tailwind` extension so
  * core tests that exercise the Tailwind compile path can resolve the
- * `CSSProcessor` contract and — for tests that dynamically load plugins
- * from esm.sh — find the `__tailwindPluginShim` / `__tailwindDefaultThemeShim`
+ * `CSSProcessor` contract and, for tests that dynamically load plugins
+ * from esm.sh, find the `__tailwindPluginShim` / `__tailwindDefaultThemeShim`
  * / `__tailwindColorsShim` globals that plugin-loader rewrites plugin
  * bundle imports against.
  *

@@ -28,10 +28,15 @@ export {
   buildStatCacheKeyPrefix,
   cacheRegistry,
   type FileOperationContext,
+  type FileSourceType,
 } from "./keys/index.ts";
 
 // Distributed cache initialization
-export { initializeDistributedCaches } from "./distributed-cache-init.ts";
+export {
+  type DistributedCacheInitializers,
+  type DistributedCacheStatus,
+  initializeDistributedCaches,
+} from "./distributed-cache-init.ts";
 
 // Cache store registry
-export { registerLRUCache } from "./registry.ts";
+export { type CacheStatsSource, registerLRUCache } from "./registry.ts";

@@ -8,7 +8,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/discovery.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "@std/path";
 import type { Extension, ResolvedExtension } from "./types.ts";
@@ -30,6 +30,21 @@ function stubExtension(overrides: Partial<Extension> = {}): Extension {
 }
 
 describe("parsePackageMetadata()", () => {
+  it("returns undefined for hostile or non-object input", () => {
+    assertEquals(parsePackageMetadata(null), undefined);
+    assertEquals(parsePackageMetadata([]), undefined);
+    assertEquals(
+      parsePackageMetadata(
+        new Proxy({}, {
+          get() {
+            throw new Error("hostile package metadata");
+          },
+        }),
+      ),
+      undefined,
+    );
+  });
+
   it("should detect extension package", () => {
     const result = parsePackageMetadata({
       name: "@veryfront/ext-css-tailwind",
@@ -84,6 +99,58 @@ describe("parsePackageMetadata()", () => {
     assertEquals(result?.capabilities[1]?.type, "valid");
   });
 
+  it("contains hostile nested capability collections", () => {
+    const capabilities = new Proxy([], {
+      get(target, property, receiver) {
+        if (property === "filter") throw new Error("private-capability-metadata");
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const result = parsePackageMetadata({
+      veryfront: { extension: true, capabilities },
+    });
+
+    assertEquals(result, { isExtension: true, capabilities: [] });
+  });
+
+  it("contains revoked package metadata proxies", () => {
+    const revokedPackage = Proxy.revocable({}, {});
+    revokedPackage.revoke();
+    assertEquals(parsePackageMetadata(revokedPackage.proxy), undefined);
+
+    const revokedVeryfront = Proxy.revocable({}, {});
+    revokedVeryfront.revoke();
+    assertEquals(
+      parsePackageMetadata({ veryfront: revokedVeryfront.proxy }),
+      undefined,
+    );
+
+    const revokedCapabilities = Proxy.revocable([], {});
+    revokedCapabilities.revoke();
+    assertEquals(
+      parsePackageMetadata({
+        veryfront: { extension: true, capabilities: revokedCapabilities.proxy },
+      }),
+      { isExtension: true, capabilities: [] },
+    );
+  });
+
+  it("returns capability metadata that is independent from the input", () => {
+    const hosts = ["api.example.com"];
+    const capability = { type: "net:outbound", hosts };
+    const result = parsePackageMetadata({
+      veryfront: { extension: true, capabilities: [capability] },
+    });
+
+    capability.type = "mutated";
+    hosts[0] = "mutated.example.com";
+
+    assertEquals(result?.capabilities, [{
+      type: "net:outbound",
+      hosts: ["api.example.com"],
+    }]);
+  });
+
   it("should parse contract metadata", () => {
     const result = parsePackageMetadata({
       veryfront: {
@@ -112,6 +179,21 @@ describe("parsePackageMetadata()", () => {
     });
 
     assertEquals(result?.contracts, undefined);
+  });
+
+  it("ignores contract metadata whose nested fields cannot be read", () => {
+    const result = parsePackageMetadata({
+      veryfront: {
+        extension: true,
+        contracts: new Proxy({}, {
+          get() {
+            throw new Error("private nested metadata");
+          },
+        }),
+      },
+    });
+
+    assertEquals(result, { isExtension: true, capabilities: [] });
   });
 
   it("should treat non-array capabilities as empty", () => {
@@ -181,6 +263,100 @@ describe("mergeExtensions()", () => {
   it("should return empty for empty inputs", () => {
     assertEquals(mergeExtensions([], [], [], []), []);
   });
+
+  it("rejects entries whose resolved source does not match their merge lane", () => {
+    assertThrows(
+      () =>
+        mergeExtensions(
+          [],
+          [{ extension: stubExtension(), source: "config", origin: "config" }],
+          [],
+          [],
+        ),
+      Error,
+      "Package extension entry is invalid",
+    );
+  });
+
+  it("snapshots stateful merge entries before priority resolution", () => {
+    let nameReads = 0;
+    const extension = {
+      version: "1.0.0",
+      capabilities: [],
+    } as Record<string, unknown>;
+    Object.defineProperty(extension, "name", {
+      enumerable: true,
+      get() {
+        nameReads += 1;
+        if (nameReads > 1) throw new Error("private-stateful-name");
+        return "stable";
+      },
+    });
+
+    const result = mergeExtensions(
+      [{
+        extension: extension as unknown as Extension,
+        source: "config",
+        origin: "config",
+      }],
+      [],
+      [],
+      [],
+    );
+
+    assertEquals(result[0]?.extension.name, "stable");
+    assertEquals(nameReads, 1);
+  });
+
+  it("reads each merge lane length once when creating its snapshot", () => {
+    const reads = [0, 0, 0, 0, 0];
+    const sources = ["config", "package", "project", "local-file", "builtin"] as const;
+    const lanes = sources.map((source, laneIndex) => {
+      const entries = Array.from({ length: 1_024 }, (_, index) => ({
+        extension: {
+          name: `${source}-${index}`,
+          version: "1.0.0",
+          capabilities: [],
+        },
+        source,
+        origin: source,
+      }));
+      return new Proxy(entries, {
+        get(target, property, receiver) {
+          if (property === "length") {
+            reads[laneIndex] = (reads[laneIndex] ?? 0) + 1;
+            return reads[laneIndex] === 1 ? 0 : target.length;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    });
+
+    assertEquals(
+      mergeExtensions(lanes[0]!, lanes[1]!, lanes[2]!, lanes[3]!, [], lanes[4]!),
+      [],
+    );
+    assertEquals(reads, [1, 1, 1, 1, 1]);
+  });
+
+  it("bounds aggregate merge work across all source lanes", () => {
+    const configEntries = Array.from({ length: 2_049 }, () => ({
+      extension: stubExtension({ name: "same-config" }),
+      source: "config" as const,
+      origin: "config",
+    }));
+    const packageEntries = Array.from({ length: 2_048 }, () => ({
+      extension: stubExtension({ name: "same-package" }),
+      source: "package" as const,
+      origin: "package",
+    }));
+
+    assertThrows(
+      () => mergeExtensions(configEntries, packageEntries, [], []),
+      Error,
+      "at most 4096 entries",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -211,6 +387,24 @@ describe("discoverPackageExtensions()", () => {
 
   it("returns empty when node_modules is missing", async () => {
     assertEquals(await discoverPackageExtensions(tmp), []);
+  });
+
+  it("rejects invalid discovery roots before filesystem access", async () => {
+    await assertRejects(
+      () => discoverPackageExtensions("\0private-root"),
+      Error,
+      "base directory is invalid",
+    );
+  });
+
+  it("sanitizes filesystem discovery failures", async () => {
+    await Deno.writeTextFile(join(tmp, "node_modules"), "not a directory");
+    const error = await assertRejects(
+      () => discoverPackageExtensions(tmp),
+      Error,
+      "could not read a directory",
+    );
+    assertEquals(String(error).includes(tmp), false);
   });
 
   it("finds a top-level extension package", async () => {
@@ -297,6 +491,18 @@ describe("discoverPackageExtensions()", () => {
     const found = await discoverPackageExtensions(tmp);
     assertEquals(found.length, 1);
   });
+
+  it("returns packages in deterministic name order", async () => {
+    await writePkg(join(tmp, "node_modules", "z-extension"), "z-extension", {
+      extension: true,
+    });
+    await writePkg(join(tmp, "node_modules", "a-extension"), "a-extension", {
+      extension: true,
+    });
+
+    const found = await discoverPackageExtensions(tmp);
+    assertEquals(found.map((entry) => entry.packageName), ["a-extension", "z-extension"]);
+  });
 });
 
 describe("discoverProjectExtensions()", () => {
@@ -349,6 +555,13 @@ describe("discoverProjectExtensions()", () => {
     assertEquals(found, []);
   });
 
+  it("does not treat a directory named index.ts as a module", async () => {
+    await Deno.mkdir(join(tmp, "extensions", "invalid", "src", "index.ts"), {
+      recursive: true,
+    });
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
   it("skips non-directory entries in extensions/", async () => {
     await Deno.mkdir(join(tmp, "extensions"), { recursive: true });
     await Deno.writeTextFile(join(tmp, "extensions", "README.md"), "x");
@@ -379,7 +592,10 @@ describe("discoverLocalExtensions()", () => {
     await Deno.writeTextFile(join(tmp, "foo.extension.ts"), "x");
     await Deno.writeTextFile(join(tmp, "bar.extension.ts"), "x");
     const found = await discoverLocalExtensions(tmp);
-    assertEquals(found.length, 2);
+    assertEquals(found, [
+      join(tmp, "bar.extension.ts"),
+      join(tmp, "foo.extension.ts"),
+    ]);
   });
 
   it("ignores non-matching files", async () => {

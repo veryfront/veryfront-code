@@ -16,6 +16,10 @@ export function isServerInitialized(): boolean {
 }
 
 export class HealthHandler extends BaseHandler {
+  constructor(private readonly isReady: () => boolean = isServerInitialized) {
+    super();
+  }
+
   metadata: HandlerMetadata = {
     name: "HealthHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
@@ -27,7 +31,7 @@ export class HealthHandler extends BaseHandler {
   };
 
   private async checkReadiness(ctx: HandlerContext): Promise<boolean> {
-    if (!serverInitialized || !ctx.adapter) return false;
+    if (!this.isReady() || !ctx.adapter) return false;
 
     try {
       if (ctx.config?.fs?.veryfront?.proxyMode === true) return true;

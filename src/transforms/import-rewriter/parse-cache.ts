@@ -9,6 +9,7 @@ import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import type { ImportSpecifierInfo } from "./types.ts";
 import type { ImportSpecifier } from "../esm/lexer.ts";
+import { maskHttpUrls, unmaskHttpUrls } from "../esm/http-url-mask.ts";
 
 let initPromise: Promise<void> | null = null;
 
@@ -26,42 +27,6 @@ export async function initLexer(): Promise<void> {
   }
 
   await initPromise;
-}
-
-// Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
-const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
-
-interface UrlMaskResult {
-  masked: string;
-  urlMap: Map<string, string>;
-}
-
-function maskHttpUrls(code: string): UrlMaskResult {
-  const urlMap = new Map<string, string>();
-  let counter = 0;
-
-  const masked = code.replace(
-    HTTP_URL_PATTERN,
-    (_match, quote: string, url: string) => {
-      const placeholder = `__VFURL_${counter++}__`;
-      urlMap.set(placeholder, url);
-      return `${quote}${placeholder}${quote}`;
-    },
-  );
-
-  return { masked, urlMap };
-}
-
-function unmaskUrl(specifier: string, urlMap: Map<string, string>): string {
-  if (urlMap.size === 0) return specifier;
-
-  for (const [placeholder, url] of urlMap) {
-    if (specifier.includes(placeholder)) {
-      return specifier.replace(placeholder, url);
-    }
-  }
-
-  return specifier;
 }
 
 /**
@@ -89,7 +54,7 @@ export async function parseAllImports(code: string): Promise<ParsedImports> {
   const imports: ImportSpecifierInfo[] = rawImports
     .filter((imp) => imp.n !== undefined)
     .map((imp) => ({
-      specifier: unmaskUrl(imp.n!, urlMap),
+      specifier: unmaskHttpUrls(imp.n!, urlMap),
       isDynamic: imp.d > -1,
       start: imp.s,
       end: imp.e,
@@ -159,11 +124,7 @@ export function applyRewrites(
 
   if (parsed.urlMap.size === 0) return result;
 
-  for (const [placeholder, url] of parsed.urlMap) {
-    result = result.replaceAll(placeholder, url);
-  }
-
-  return result;
+  return unmaskHttpUrls(result, parsed.urlMap);
 }
 
 /**

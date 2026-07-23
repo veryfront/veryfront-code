@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getTokenStorageAdapter,
@@ -102,10 +108,31 @@ describe("platform/adapters/token/integration", () => {
       assertExists(adapter.delete);
     });
 
+    it("rejects partial cloud configuration instead of silently using memory", async () => {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+
+      await assertRejects(
+        () => getTokenStorageAdapter(),
+        Error,
+        "requires both VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG",
+      );
+    });
+
     it("should return same instance on multiple calls (singleton)", async () => {
       const adapter1 = await getTokenStorageAdapter();
       const adapter2 = await getTokenStorageAdapter();
-      assertEquals(adapter1, adapter2);
+      assertStrictEquals(adapter1, adapter2);
+    });
+
+    it("coalesces concurrent initialization into one singleton", async () => {
+      const [adapter1, adapter2, adapter3] = await Promise.all([
+        getTokenStorageAdapter(),
+        getTokenStorageAdapter(),
+        getTokenStorageAdapter(),
+      ]);
+
+      assertStrictEquals(adapter1, adapter2);
+      assertStrictEquals(adapter2, adapter3);
     });
 
     it("should create new instance after reset", async () => {
@@ -114,6 +141,21 @@ describe("platform/adapters/token/integration", () => {
       const adapter2 = await getTokenStorageAdapter();
       assertExists(adapter1);
       assertExists(adapter2);
+      assertNotStrictEquals(adapter1, adapter2);
+    });
+
+    it("does not let an in-flight initializer undo reset", async () => {
+      const staleInitialization = getTokenStorageAdapter();
+      resetTokenStorageAdapter();
+
+      await assertRejects(
+        () => staleInitialization,
+        Error,
+        "initialization was reset",
+      );
+
+      const current = await getTokenStorageAdapter();
+      assertNotStrictEquals(await staleInitialization.catch(() => undefined), current);
     });
 
     it("should return a working memory adapter", async () => {

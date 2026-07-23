@@ -174,6 +174,24 @@ describe("internal-agents/session-manager", () => {
     }
   });
 
+  it("does not trust a colliding application string on globalThis", async () => {
+    _resetGlobalAgentRunSessionManagerForTesting();
+    const collisionKey = "__veryfrontAgentRunSessionManager";
+    const runtimeGlobal = globalThis as typeof globalThis & Record<string, unknown>;
+    runtimeGlobal[collisionKey] = { collision: true };
+
+    const isolatedModule = await import(
+      new URL(`./session-manager.ts?collision=${crypto.randomUUID()}`, import.meta.url).href
+    ) as typeof import("./session-manager.ts");
+    try {
+      assertEquals(typeof isolatedModule.agentRunSessionManager.startRun, "function");
+    } finally {
+      delete runtimeGlobal[collisionKey];
+      isolatedModule._resetGlobalAgentRunSessionManagerForTesting();
+      _resetGlobalAgentRunSessionManagerForTesting();
+    }
+  });
+
   it("rejects runs that exceed the configured concurrency limit", () => {
     const sessionManager = new AgentRunSessionManager({ maxConcurrentSessions: 1 });
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
@@ -183,5 +201,50 @@ describe("internal-agents/session-manager", () => {
       Error,
       "Maximum concurrent sessions (1) reached",
     );
+  });
+
+  it("rejects invalid lifecycle and concurrency limits", () => {
+    assertThrows(
+      () => new AgentRunSessionManager({ waitingForToolTtlMs: 0 }),
+      TypeError,
+      "waitingForToolTtlMs",
+    );
+    assertThrows(
+      () => new AgentRunSessionManager({ sessionTtlMs: Number.NaN }),
+      TypeError,
+      "sessionTtlMs",
+    );
+    assertThrows(
+      () => new AgentRunSessionManager({ maxConcurrentSessions: -1 }),
+      TypeError,
+      "maxConcurrentSessions",
+    );
+  });
+
+  it("cancels pending waits when the manager resets", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+
+    sessionManager.reset();
+
+    await assertRejects(() => pending, AgentRunCancelledError);
+  });
+
+  it("cancels active runs before removing the global manager", async () => {
+    _resetGlobalAgentRunSessionManagerForTesting();
+    const isolatedModule = await import(
+      new URL(`./session-manager.ts?reset=${crypto.randomUUID()}`, import.meta.url).href
+    ) as typeof import("./session-manager.ts");
+    const manager = isolatedModule.agentRunSessionManager;
+    manager.startRun({ runId: "run_global_reset", threadId: crypto.randomUUID() });
+
+    try {
+      isolatedModule._resetGlobalAgentRunSessionManagerForTesting();
+      assertEquals(manager.getRunStatus("run_global_reset"), null);
+    } finally {
+      manager.cancelRun("run_global_reset");
+      _resetGlobalAgentRunSessionManagerForTesting();
+    }
   });
 });

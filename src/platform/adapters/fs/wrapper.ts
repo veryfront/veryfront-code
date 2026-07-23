@@ -6,7 +6,13 @@ import type {
   ResolveFileOptions,
   WatchOptions,
 } from "../base.ts";
-import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
+import {
+  type BuiltInFSAdapterKind,
+  type ContextualFSAdapter,
+  type DirectoryEntry,
+  FS_ADAPTER_KIND,
+  type FSAdapter,
+} from "./veryfront/types.ts";
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getUnderlyingAdapter(): FSAdapter;
@@ -46,11 +52,20 @@ export function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSy
  * Virtual filesystem adapters that fetch files remotely (API, GitHub, etc.)
  * rather than reading from a local disk.
  */
-const VIRTUAL_FS_ADAPTERS = new Set([
-  "VeryfrontFSAdapter",
-  "MultiProjectFSAdapter",
-  "GitHubFSAdapter",
+const VIRTUAL_FS_ADAPTERS = new Set<BuiltInFSAdapterKind>([
+  "veryfront",
+  "veryfront-multi-project",
+  "github",
+  "memory",
 ]);
+
+function getBuiltInAdapterKind(adapter: FSAdapter): BuiltInFSAdapterKind | undefined {
+  try {
+    return adapter[FS_ADAPTER_KIND];
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Check if the adapter is using a virtual filesystem (Veryfront API, GitHub, etc.)
@@ -59,8 +74,8 @@ const VIRTUAL_FS_ADAPTERS = new Set([
 export function isVirtualFilesystem(fs: FileSystemAdapter): boolean {
   if (!fs || typeof fs !== "object") return false;
   if (!isExtendedFSAdapter(fs)) return false;
-  if (fs.isVeryfrontAdapter()) return true;
-  return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
+  const kind = getBuiltInAdapterKind(fs.getUnderlyingAdapter());
+  return kind !== undefined && VIRTUAL_FS_ADAPTERS.has(kind);
 }
 
 export class NotSupportedError extends Error {
@@ -99,8 +114,8 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   isVeryfrontAdapter(): boolean {
-    const name = this._fsAdapter.constructor.name;
-    return name === "VeryfrontFSAdapter" || name === "MultiProjectFSAdapter";
+    const kind = getBuiltInAdapterKind(this._fsAdapter);
+    return kind === "veryfront" || kind === "veryfront-multi-project";
   }
 
   private get adapterType(): string {

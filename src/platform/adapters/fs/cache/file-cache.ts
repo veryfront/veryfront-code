@@ -7,25 +7,32 @@
  * - Uses CacheBackend abstraction for backend selection
  * - API Mode (production): Uses veryfront-api for centralized cache
  * - Redis Mode (local dev/open source): Direct Redis access
- * - Memory Mode (fallback): In-memory cache
+ * - Memory Mode: Explicit local in-memory cache selected by the backend factory
  *
  * Security: In production, renderer has no Redis credentials.
  * All cache access goes through the API which enforces tenant isolation.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
 import {
   getCachedWithBatching,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
+import { CONFIG_INVALID } from "#veryfront/errors/error-registry/config.ts";
+import { CACHE_ERROR } from "#veryfront/errors/error-registry/server.ts";
+import { deserializeFileCacheEntry, serializeFileCacheEntry } from "./serialization.ts";
 
 const logger = baseLogger.component("file-cache");
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends
@@ -45,39 +52,56 @@ const FALLBACK_MAX_ENTRIES = 200;
 /** Fallback cache max memory (10 MB, for local dev) */
 const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
 
+function validatePositiveFiniteOption(
+  name: string,
+  value: number,
+  requireInteger = false,
+): void {
+  if (Number.isFinite(value) && value > 0 && (!requireInteger || Number.isInteger(value))) return;
+
+  throw CONFIG_INVALID.create({
+    detail: `File cache ${name} must be a positive finite ${requireInteger ? "integer" : "number"}`,
+  });
+}
+
 // Shared backend state across all FileCache instances
 let cacheBackend: CacheBackend | null = null;
 let backendInitialized = false;
-let backendInitPromise: Promise<void> | null = null;
+let backendInitPromise: Promise<CacheBackend> | null = null;
 
 /**
  * Initialize file cache backend.
  * Call this at startup if you want to enable distributed caching.
+ * Initialization failures reject explicitly and remain retryable. A backend
+ * factory may deliberately select memory mode, which resolves to `false`.
  */
 export async function initializeFileCacheBackend(): Promise<boolean> {
   if (backendInitialized) return cacheBackend?.type !== "memory";
 
-  if (backendInitPromise) {
-    await backendInitPromise;
-    return cacheBackend?.type !== "memory";
+  const pending = backendInitPromise ??
+    (withSpan("platform.fs.cache.initializeBackend", async () => {
+      try {
+        const backend = await CacheBackends.file();
+        logger.debug("Backend initialized", { type: backend.type });
+        return backend;
+      } catch (error) {
+        logger.error("Backend initialization failed", { errorName: errorName(error) });
+        throw CACHE_ERROR.create({
+          message: "File cache backend initialization failed",
+          cause: error,
+        });
+      }
+    }) as Promise<CacheBackend>);
+  backendInitPromise = pending;
+
+  try {
+    const backend = await pending;
+    cacheBackend = backend;
+    backendInitialized = true;
+    return backend.type !== "memory";
+  } finally {
+    if (backendInitPromise === pending) backendInitPromise = null;
   }
-
-  backendInitPromise = withSpan("platform.fs.cache.initializeBackend", async () => {
-    try {
-      cacheBackend = await CacheBackends.file();
-      logger.debug("Backend initialized", { type: cacheBackend.type });
-    } catch (error) {
-      logger.warn("Backend init failed, using memory fallback", { error });
-      cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
-    } finally {
-      backendInitialized = true;
-    }
-  }) as Promise<void>;
-
-  await backendInitPromise;
-  backendInitPromise = null;
-
-  return cacheBackend?.type !== "memory";
 }
 
 /**
@@ -88,10 +112,10 @@ export function isFileCacheDistributedEnabled(): boolean {
 }
 
 /**
- * FileCache - Backend-First with Local Fallback
+ * FileCache - Backend-First with Bounded Local Storage
  *
  * When backend is available: Uses backend (API/Redis)
- * When backend unavailable: Small memory fallback for local dev
+ * When no backend is initialized: Small per-instance memory cache for local development
  */
 export class FileCache {
   private fallbackCache = new Map<string, CacheEntry<unknown>>();
@@ -109,6 +133,9 @@ export class FileCache {
       maxMemory: FALLBACK_MAX_MEMORY_BYTES,
       ...options,
     };
+    validatePositiveFiniteOption("ttl", this.options.ttl);
+    validatePositiveFiniteOption("maxSize", this.options.maxSize, true);
+    validatePositiveFiniteOption("maxMemory", this.options.maxMemory);
     this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
 
     const mode = cacheBackend?.type ?? "memory";
@@ -148,6 +175,11 @@ export class FileCache {
       return undefined;
     }
 
+    // Map iteration order is the fallback cache's LRU order. Move successful
+    // reads to the end so capacity eviction removes the least recently used
+    // entry instead of the oldest inserted entry.
+    this.fallbackCache.delete(key);
+    this.fallbackCache.set(key, entry);
     this.hits++;
     return entry.value;
   }
@@ -174,20 +206,20 @@ export class FileCache {
           // The backend will add its own namespace prefix, so we pass the key as-is
           const raw = await getCachedWithBatching(backend, key);
           if (raw) {
-            const entry = JSON.parse(raw) as CacheEntry<T>;
+            const entry = deserializeFileCacheEntry<T>(raw);
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
             this.hits++;
             return entry.value;
           }
         } catch (error) {
-          logger.debug("Backend get failed", { key, error });
+          logger.debug("Backend get failed", { errorName: errorName(error) });
         }
 
         this.misses++;
         return undefined;
       },
-      { "cache.key": key, "cache.backend": backend.type },
+      { "cache.backend": backend.type },
     );
   }
 
@@ -205,12 +237,18 @@ export class FileCache {
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
     const backend = this.getBackend();
     if (backend) {
-      const serialized = JSON.stringify(entry);
-      // Update request-scoped cache so subsequent reads in same request see the new value
-      setInRequestCache(key, serialized);
-      backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
-        logger.warn("Backend set failed", { key, error });
-      });
+      try {
+        const serialized = serializeFileCacheEntry(entry);
+        // Update request-scoped cache so subsequent reads in same request see the new value
+        setInRequestCache(key, serialized);
+        backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
+          logger.warn("Backend set failed", { errorName: errorName(error) });
+        });
+      } catch (error) {
+        logger.warn("Cache value could not be serialized", {
+          errorName: errorName(error),
+        });
+      }
       return;
     }
 
@@ -238,23 +276,34 @@ export class FileCache {
       "platform.fs.cache.setAsync",
       async () => {
         try {
-          const serialized = JSON.stringify(entry);
+          const serialized = serializeFileCacheEntry(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
           setInRequestCache(key, serialized);
           await backend.set(key, serialized, this.backendTtlSeconds);
         } catch (error) {
-          logger.debug("Backend set failed, skipping fallback", { key, error });
+          logger.debug("Backend set failed; value remains uncached", {
+            errorName: errorName(error),
+          });
         }
       },
-      { "cache.key": key, "cache.backend": backend.type, "cache.size": size },
+      { "cache.backend": backend.type, "cache.size": size },
     );
   }
 
   /** Write to fallback memory cache with size check and eviction. */
   private setToFallback<T>(key: string, entry: CacheEntry<T>, size: number): void {
     if (size > this.options.maxMemory) {
-      logger.warn("Value too large for fallback cache", { key, size });
+      logger.warn("Value too large for fallback cache", {
+        size,
+        maxMemory: this.options.maxMemory,
+      });
       return;
+    }
+
+    const existing = this.fallbackCache.get(key);
+    if (existing) {
+      this.fallbackMemoryUsed -= existing.size;
+      this.fallbackCache.delete(key);
     }
 
     this.evictFallbackIfNeeded(size);
@@ -294,7 +343,7 @@ export class FileCache {
         }
         return deletedFromFallback;
       },
-      { "cache.key": key },
+      { "cache.backend": this.getBackend()?.type ?? "memory" },
     );
   }
 
@@ -332,7 +381,7 @@ export class FileCache {
     // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     cacheBackend?.delByPattern?.(`${prefix}*`).catch((error) => {
-      logger.warn("Backend invalidation failed", { prefix, error });
+      logger.warn("Backend invalidation failed", { errorName: errorName(error) });
     });
 
     return count;
@@ -355,7 +404,7 @@ export class FileCache {
 
         return count;
       },
-      { "cache.prefix": prefix },
+      { "cache.backend": this.getBackend()?.type ?? "memory" },
     );
   }
 
@@ -366,7 +415,7 @@ export class FileCache {
     // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
-      logger.warn("Backend invalidation failed", { prefix, suffix, error });
+      logger.warn("Backend invalidation failed", { errorName: errorName(error) });
     });
 
     return count;
@@ -389,7 +438,7 @@ export class FileCache {
 
         return count;
       },
-      { "cache.prefix": prefix, "cache.suffix": suffix },
+      { "cache.backend": this.getBackend()?.type ?? "memory" },
     );
   }
 

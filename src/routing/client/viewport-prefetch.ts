@@ -1,4 +1,5 @@
 import { rendererLogger } from "#veryfront/utils";
+import { isInternalLink } from "./dom-utils.ts";
 
 const logger = rendererLogger.component("veryfront");
 
@@ -23,7 +24,9 @@ export class ViewportPrefetch {
       this.createObserver();
       this.observeLinks(root);
     } catch (error) {
-      logger.debug("setupViewportPrefetch failed", error);
+      logger.debug("setupViewportPrefetch failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
@@ -35,7 +38,7 @@ export class ViewportPrefetch {
           if (!(entry.target instanceof HTMLAnchorElement)) continue;
 
           const href = entry.target.getAttribute("href");
-          if (href) this.prefetchCallback(href);
+          if (href && isInternalLink(entry.target)) this.prefetchCallback(href);
 
           this.observer?.unobserve(entry.target);
         }
@@ -55,10 +58,7 @@ export class ViewportPrefetch {
   }
 
   private shouldObserveAnchor(anchor: HTMLAnchorElement, isViewportEnabled: boolean): boolean {
-    const href = anchor.getAttribute("href");
-    if (!href) return false;
-    if (href.startsWith("http") || href.startsWith("#")) return false;
-    if (anchor.getAttribute("download")) return false;
+    if (!isInternalLink(anchor)) return false;
 
     const prefetchAttribute = anchor.getAttribute("data-prefetch");
     if (prefetchAttribute === "false") return false;
@@ -72,7 +72,9 @@ export class ViewportPrefetch {
     try {
       this.observer.disconnect();
     } catch (error) {
-      logger.warn("prefetchObserver.disconnect failed", error);
+      logger.warn("prefetchObserver.disconnect failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
     } finally {
       this.observer = null;
     }

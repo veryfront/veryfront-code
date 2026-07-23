@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   addEsmShDeps,
@@ -44,6 +44,23 @@ describe("transforms/import-rewriter/url-builder", () => {
       const url = buildEsmShUrl("lodash", undefined, undefined, { target: "es2020" });
       assertEquals(url.includes("target=es2020"), true);
     });
+
+    for (
+      const build of [
+        () => buildEsmShUrl("lodash/../private"),
+        () => buildEsmShUrl("lodash", "1.0.0?token=secret"),
+        () => buildEsmShUrl("lodash", "1.0.0", "/../private"),
+        () => buildEsmShUrl("lodash", undefined, undefined, { target: "es2022&token=secret" }),
+        () =>
+          buildEsmShUrl("lodash", undefined, undefined, {
+            deps: { react: "19.0.0&token=secret" },
+          }),
+      ]
+    ) {
+      it("rejects unsafe URL parts", () => {
+        assertThrows(build, TypeError, "Invalid esm.sh");
+      });
+    }
   });
 
   describe("buildReactUrl", () => {
@@ -134,6 +151,24 @@ describe("transforms/import-rewriter/url-builder", () => {
         "/_vf_modules/_cross/proj@1.0.0/@/components/Button.tsx",
       );
     });
+
+    for (
+      const [projectSlug, version, path] of [
+        ["-project", "1.0.0", "components/Button"],
+        ["project", "1.0.0", "../secret"],
+        ["project", "1.0.0", "%2e%2e/secret"],
+        ["project", "1.0.0", "components/Button?token=secret"],
+        ["project", "1.0.0", "components\\Button"],
+      ] as const
+    ) {
+      it(`rejects unsafe cross-project URL parts: ${projectSlug}/${path}`, () => {
+        assertThrows(
+          () => buildCrossProjectUrl(projectSlug, version, path),
+          TypeError,
+          "Invalid cross-project import",
+        );
+      });
+    }
   });
 
   describe("buildVeryfrontModuleUrl", () => {

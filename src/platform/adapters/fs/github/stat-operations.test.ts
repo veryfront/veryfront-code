@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { GitHubStatOperations } from "./stat-operations.ts";
@@ -11,7 +11,14 @@ describe("GitHubStatOperations", () => {
     ref: "main",
     token: "test-token",
     basePath: "",
-    retry: { maxRetries: 3, initialDelay: 1000, maxDelay: 30000 },
+    retry: {
+      maxRetries: 3,
+      initialDelay: 1000,
+      maxDelay: 30000,
+      requestTimeout: 30000,
+      totalTimeout: 120000,
+      maxResponseBytes: 67108864,
+    },
     cache: { enabled: true, ttl: 60000, maxSize: 1000, maxMemory: 104857600 },
   };
 
@@ -20,8 +27,15 @@ describe("GitHubStatOperations", () => {
     repoId: "test-owner/test-repo",
   } as any;
 
-  function createOps(): GitHubStatOperations {
-    return new GitHubStatOperations(mockConfig, mockClient, new FileCache());
+  function createOps(options?: {
+    client?: Record<string, unknown>;
+    cache?: FileCache;
+  }): GitHubStatOperations {
+    return new GitHubStatOperations(
+      mockConfig,
+      { ...mockClient, ...options?.client } as any,
+      options?.cache ?? new FileCache(),
+    );
   }
 
   function assertHasMethod<T extends object>(obj: T, key: keyof T): void {
@@ -94,6 +108,38 @@ describe("GitHubStatOperations", () => {
 
     it("should return empty array for getSubdirectories before index is built", () => {
       assertEquals(createOps().getSubdirectories("test"), []);
+    });
+  });
+
+  describe("index behavior", () => {
+    it("does not hide index failures in exists", async () => {
+      const ops = createOps({
+        client: { getTree: () => Promise.reject(new Error("index unavailable")) },
+      });
+
+      await assertRejects(() => ops.exists("test.ts"), Error, "index unavailable");
+    });
+
+    it("returns false only for paths absent from a valid index", async () => {
+      const ops = createOps();
+      assertEquals(await ops.exists("missing.ts"), false);
+    });
+
+    it("partitions resolve cache entries by pages-prefix behavior", async () => {
+      const ops = createOps({
+        client: {
+          getTree: () =>
+            Promise.resolve({
+              sha: "root",
+              truncated: false,
+              tree: [{ path: "pages/about.ts", type: "blob", sha: "about", size: 1 }],
+            }),
+        },
+      });
+
+      assertEquals(await ops.resolveFile("about", { allowPagesPrefix: false }), null);
+      assertEquals(await ops.resolveFile("about"), "pages/about.ts");
+      assertEquals(await ops.resolveFile("about", { allowPagesPrefix: false }), null);
     });
   });
 });

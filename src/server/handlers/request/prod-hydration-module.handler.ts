@@ -9,16 +9,13 @@ import {
 import { computeStrongEtag, hasMatchingEtag } from "../utils/etag.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 
-let cachedModule: { js: string; etag: string } | null = null;
+let cachedModule: Promise<{ js: string; etag: string }> | null = null;
 
-function getProdHydrationModuleBundle(): { js: string; etag: string } {
+function getProdHydrationModuleBundle(): Promise<{ js: string; etag: string }> {
   if (cachedModule) return cachedModule;
 
   const js = generateProdHydrationModule();
-  cachedModule = {
-    js,
-    etag: computeStrongEtag(js),
-  };
+  cachedModule = computeStrongEtag(js).then((etag) => ({ js, etag }));
   return cachedModule;
 }
 
@@ -42,7 +39,7 @@ export class ProdHydrationModuleHandler extends BaseHandler {
     const method = req.method.toUpperCase();
     const pathname = new URL(req.url).pathname;
     const cacheStrategy = isVersionedProdHydrationModulePath(pathname) ? "immutable" : "no-cache";
-    const { js, etag } = getProdHydrationModuleBundle();
+    const { js, etag } = await getProdHydrationModuleBundle();
     const builder = this.createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
 
     if (hasMatchingEtag(req, etag)) {

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createTransformContext,
   createTransformContextSync,
   formatTimingLog,
   getTotalTiming,
@@ -33,6 +34,18 @@ function makeContext(overrides: Partial<TransformContext> = {}): TransformContex
 }
 
 describe("transforms/pipeline/context", () => {
+  it("uses a full SHA-256 digest for transform cache identity", async () => {
+    const ctx = await createTransformContext(
+      "export const value = 1;",
+      "/project/value.ts",
+      "/project",
+      { projectId: "hash-project" },
+    );
+
+    assertEquals(ctx.contentHash.length, 64);
+    assertEquals(/^[a-f0-9]{64}$/.test(ctx.contentHash), true);
+  });
+
   describe("createTransformContextSync", () => {
     it("should create context with browser target when ssr is false", () => {
       const ctx = createTransformContextSync("code", "/file.tsx", "/project", "hash", {

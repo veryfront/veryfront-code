@@ -35,6 +35,39 @@ describe("cache/config-hash", () => {
       const h2 = await computeConfigHash({ studioEmbed: true });
       assertNotEquals(h1, h2);
     });
+
+    it("should include transform routing and vendor inputs", async () => {
+      const base = await computeConfigHash({
+        moduleServerUrl: "https://modules.example.test/a",
+        vendorBundleHash: "vendor-a",
+        apiBaseUrl: "https://api.example.test/a",
+      });
+
+      assertNotEquals(
+        base,
+        await computeConfigHash({
+          moduleServerUrl: "https://modules.example.test/b",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test/a",
+        }),
+      );
+      assertNotEquals(
+        base,
+        await computeConfigHash({
+          moduleServerUrl: "https://modules.example.test/a",
+          vendorBundleHash: "vendor-b",
+          apiBaseUrl: "https://api.example.test/a",
+        }),
+      );
+      assertNotEquals(
+        base,
+        await computeConfigHash({
+          moduleServerUrl: "https://modules.example.test/a",
+          vendorBundleHash: "vendor-a",
+          apiBaseUrl: "https://api.example.test/b",
+        }),
+      );
+    });
   });
 
   describe("computeConfigHashSync", () => {
@@ -60,6 +93,28 @@ describe("cache/config-hash", () => {
     it("should include version prefix", () => {
       const hash = computeConfigHashSync({});
       assertEquals(hash.startsWith("v"), true);
+    });
+
+    it("returns a bounded digest instead of embedding the configuration", () => {
+      const hash = computeConfigHashSync({
+        jsxImportSource: "private-runtime-" + "x".repeat(4_000),
+      });
+
+      assertEquals(hash.length <= 64, true);
+      assertEquals(hash.includes("private-runtime"), false);
+    });
+
+    it("does not collide when delimiter-bearing fields have different boundaries", () => {
+      const left = computeConfigHashSync({
+        reactVersion: "react:custom",
+        jsxImportSource: "runtime",
+      });
+      const right = computeConfigHashSync({
+        reactVersion: "react",
+        jsxImportSource: "custom:runtime",
+      });
+
+      assertNotEquals(left, right);
     });
   });
 });

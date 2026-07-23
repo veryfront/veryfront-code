@@ -14,6 +14,74 @@ import { getErrorMessage } from "../veryfront-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
+import { sanitizeErrorText } from "../sanitization.ts";
+import { safeErrorStack, snapshotVeryfrontError } from "../error-snapshot.ts";
+
+function unknownErrorDetail(error: unknown): string {
+  return sanitizeErrorText(getErrorMessage(error), 16_000);
+}
+
+function safelyRecordError(error: VeryfrontError): void {
+  const snapshot = snapshotVeryfrontError(error);
+  try {
+    recordErrorCount({
+      slug: snapshot.slug,
+      category: snapshot.category,
+      status: String(snapshot.status),
+    });
+  } catch {
+    // Observability must not replace the application failure.
+  }
+}
+
+function resolveExitCode(
+  resolver: ((error: unknown, vfError: VeryfrontError) => number) | undefined,
+  error: unknown,
+  vfError: VeryfrontError,
+): number {
+  if (!resolver) return 1;
+  try {
+    const code = resolver(error, vfError);
+    return Number.isInteger(code) && code >= 1 && code <= 255 ? code : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Callbacks that customize asynchronous CLI error reporting and exit status. */
+export interface CLIErrorBoundaryOptions {
+  /** Report the failure before the command exits. */
+  readonly onError?: (error: unknown, vfError: VeryfrontError) => void | Promise<void>;
+  /** Resolve a non-zero process exit code for the failure. */
+  readonly getExitCode?: (error: unknown, vfError: VeryfrontError) => number;
+}
+
+interface CLIErrorBoundarySnapshot {
+  onError?: (error: unknown, vfError: VeryfrontError) => void | Promise<void>;
+  getExitCode?: (error: unknown, vfError: VeryfrontError) => number;
+}
+
+function snapshotBoundaryOptions(
+  options: CLIErrorBoundaryOptions,
+): CLIErrorBoundarySnapshot {
+  try {
+    if (!options || typeof options !== "object") throw new TypeError();
+    const onError = options.onError;
+    const getExitCode = options.getExitCode;
+    if (onError !== undefined && typeof onError !== "function") throw new TypeError();
+    if (getExitCode !== undefined && typeof getExitCode !== "function") throw new TypeError();
+    return {
+      onError: onError === undefined
+        ? undefined
+        : (error, vfError) => onError.call(options, error, vfError),
+      getExitCode: getExitCode === undefined
+        ? undefined
+        : (error, vfError) => getExitCode.call(options, error, vfError),
+    };
+  } catch {
+    throw new TypeError("Invalid CLI error boundary options");
+  }
+}
 
 /**
  * Color formatting functions (compatible with CLI colors)
@@ -90,35 +158,42 @@ function createColorFormatters(): ColorFormatter {
  *   (Stack trace in dev mode)
  */
 function formatVeryfrontError(error: VeryfrontError, colors: ColorFormatter): string {
+  const snapshot = snapshotVeryfrontError(error);
   const lines: string[] = [];
 
   // Header: [slug] title
   lines.push("");
   lines.push(
-    colors.red(colors.bold(`✖ [${error.slug}]`)) + " " + colors.bold(error.title),
+    colors.red(colors.bold(`✖ [${snapshot.slug}]`)) + " " + colors.bold(snapshot.title),
   );
   lines.push("");
 
   // Detail
-  if (error.detail) {
-    lines.push(colors.dim("  Detail: ") + error.detail);
+  if (snapshot.detail) {
+    lines.push(colors.dim("  Detail: ") + snapshot.detail);
   }
 
   // Suggestion
-  if (error.suggestion) {
-    lines.push(colors.yellow("  💡 Suggestion: ") + error.suggestion);
+  if (snapshot.suggestion) {
+    lines.push(
+      colors.yellow("  💡 Suggestion: ") + snapshot.suggestion,
+    );
   }
 
   // Docs link
-  lines.push(colors.dim("  📚 Docs: ") + colors.cyan(error.getDocsUrl()));
+  lines.push(
+    colors.dim("  📚 Docs: ") +
+      colors.cyan(`https://veryfront.com/docs/errors/${snapshot.slug}`),
+  );
 
   // Stack trace in dev mode
-  if (isDevelopment() && error.stack) {
+  const stack = isDevelopment() ? safeErrorStack(error) : undefined;
+  if (stack) {
     lines.push("");
     lines.push(colors.dim("  Stack trace:"));
-    const stackLines = error.stack.split("\n").slice(1, 6); // First 5 lines
+    const stackLines = stack.split("\n").slice(1, 6); // First 5 lines
     for (const line of stackLines) {
-      lines.push(colors.dim(`    ${line.trim()}`));
+      lines.push(colors.dim(`    ${sanitizeErrorText(line.trim(), 2_048)}`));
     }
   }
 
@@ -139,9 +214,8 @@ export function formatCLIError(error: unknown): string {
   }
 
   // Wrap unknown errors
-  const message = getErrorMessage(error);
   const unknownError = UNKNOWN_ERROR.create({
-    detail: message,
+    detail: unknownErrorDetail(error),
     cause: error instanceof Error ? error : undefined,
   });
 
@@ -162,36 +236,39 @@ export function formatCLIError(error: unknown): string {
  */
 export async function cliErrorBoundary(
   handler: () => Promise<void>,
-  options: {
-    onError?: (error: unknown, vfError: VeryfrontError) => void | Promise<void>;
-    getExitCode?: (error: unknown, vfError: VeryfrontError) => number;
-  } = {},
+  options: CLIErrorBoundaryOptions = {},
 ): Promise<void> {
+  if (typeof handler !== "function") throw new TypeError("handler must be a function");
+  const snapshot = snapshotBoundaryOptions(options);
   try {
     await handler();
   } catch (error) {
     // Convert error to VeryfrontError
     const vfError = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
-      detail: getErrorMessage(error),
+      detail: unknownErrorDetail(error),
       cause: error instanceof Error ? error : undefined,
     });
 
-    // Record error metrics
-    recordErrorCount({
-      slug: vfError.slug,
-      category: vfError.category,
-      status: String(vfError.status),
-    });
+    safelyRecordError(vfError);
 
     // Attach error to active OpenTelemetry span
     attachErrorToActiveSpan(vfError, trace);
 
-    if (options.onError) {
-      await options.onError(error, vfError);
-    } else {
-      console.log(formatCLIError(error));
+    const exitCode = resolveExitCode(snapshot.getExitCode, error, vfError);
+    try {
+      if (snapshot.onError) {
+        await snapshot.onError(error, vfError);
+      } else {
+        console.error(formatCLIError(error));
+      }
+    } catch {
+      try {
+        console.error(formatCLIError(vfError));
+      } catch {
+        // Reporting must not prevent the boundary from exiting.
+      }
     }
-    exit(options.getExitCode?.(error, vfError) ?? 1);
+    exit(exitCode);
   }
 }
 
@@ -201,26 +278,26 @@ export async function cliErrorBoundary(
 export function cliErrorBoundarySync(
   handler: () => void,
 ): void {
+  if (typeof handler !== "function") throw new TypeError("handler must be a function");
   try {
     handler();
   } catch (error) {
     // Convert error to VeryfrontError
     const vfError = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
-      detail: getErrorMessage(error),
+      detail: unknownErrorDetail(error),
       cause: error instanceof Error ? error : undefined,
     });
 
-    // Record error metrics
-    recordErrorCount({
-      slug: vfError.slug,
-      category: vfError.category,
-      status: String(vfError.status),
-    });
+    safelyRecordError(vfError);
 
     // Attach error to active OpenTelemetry span
     attachErrorToActiveSpan(vfError, trace);
 
-    console.log(formatCLIError(error));
+    try {
+      console.error(formatCLIError(error));
+    } catch {
+      // Reporting must not prevent the boundary from exiting.
+    }
     exit(1);
   }
 }

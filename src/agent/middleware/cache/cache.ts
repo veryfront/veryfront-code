@@ -1,10 +1,14 @@
 import type { AgentMiddleware, AgentResponse } from "../../types.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const DEFAULT_LRU_MAX_SIZE = 100;
+const DEFAULT_CACHE_MAX_SIZE = 10_000;
+const MAX_CACHE_SIZE = 1_000_000;
 const DEFAULT_TTL_MS = 300_000; // 5 minutes
 const TTL_CLEANUP_INTERVAL_MS = 60_000;
+const MAX_CACHE_KEY_LENGTH = 8_192;
 
 export interface CacheConfig {
   strategy: "memory" | "lru" | "ttl";
@@ -21,9 +25,69 @@ export interface CacheEntry {
   lastAccessedAt: number;
 }
 
+type ResolvedCacheConfig = Readonly<
+  Required<Pick<CacheConfig, "strategy" | "maxSize">> & {
+    ttl?: number;
+    keyGenerator: NonNullable<CacheConfig["keyGenerator"]>;
+  }
+>;
+
+function positiveSafeInteger(value: unknown, name: string, maximum: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > maximum) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${name} must be a positive safe integer no greater than ${maximum}`,
+    });
+  }
+  return value as number;
+}
+
+function normalizeCacheConfig(config: CacheConfig): ResolvedCacheConfig {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw INVALID_ARGUMENT.create({ detail: "Agent cache configuration must be an object" });
+  }
+  if (config.strategy !== "memory" && config.strategy !== "lru" && config.strategy !== "ttl") {
+    throw INVALID_ARGUMENT.create({ detail: "Agent cache strategy is not supported" });
+  }
+  if (config.keyGenerator !== undefined && typeof config.keyGenerator !== "function") {
+    throw INVALID_ARGUMENT.create({ detail: "Agent cache keyGenerator must be a function" });
+  }
+
+  const defaultMaxSize = config.strategy === "lru" ? DEFAULT_LRU_MAX_SIZE : DEFAULT_CACHE_MAX_SIZE;
+  const ttl = config.strategy === "ttl"
+    ? positiveSafeInteger(
+      config.ttl ?? DEFAULT_TTL_MS,
+      "ttl",
+      Number.MAX_SAFE_INTEGER - Date.now(),
+    )
+    : undefined;
+  return Object.freeze({
+    strategy: config.strategy,
+    maxSize: positiveSafeInteger(config.maxSize ?? defaultMaxSize, "maxSize", MAX_CACHE_SIZE),
+    ...(ttl === undefined ? {} : { ttl }),
+    keyGenerator: config.keyGenerator ?? defaultKeyGenerator,
+  });
+}
+
+function cloneAgentResponse(response: AgentResponse): AgentResponse {
+  try {
+    return structuredClone(response);
+  } catch (error) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Cached agent responses must contain structured-cloneable values",
+      cause: error,
+    });
+  }
+}
+
 function createCacheEntry(response: AgentResponse, expiresAt?: number): CacheEntry {
   const now = Date.now();
-  return { response, cachedAt: now, expiresAt, accessCount: 0, lastAccessedAt: now };
+  return {
+    response: cloneAgentResponse(response),
+    cachedAt: now,
+    expiresAt,
+    accessCount: 0,
+    lastAccessedAt: now,
+  };
 }
 
 function markAccessed(entry: CacheEntry): void {
@@ -34,7 +98,14 @@ function markAccessed(entry: CacheEntry): void {
 class MemoryCache {
   private cache = new Map<string, CacheEntry>();
 
+  constructor(private readonly maxSize: number) {}
+
   set(key: string, response: AgentResponse): void {
+    if (this.cache.has(key)) this.cache.delete(key);
+    if (this.cache.size >= this.maxSize) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) this.cache.delete(oldestKey);
+    }
     this.cache.set(key, createCacheEntry(response));
   }
 
@@ -43,7 +114,7 @@ class MemoryCache {
     if (!entry) return null;
 
     markAccessed(entry);
-    return entry.response;
+    return cloneAgentResponse(entry.response);
   }
 
   has(key: string): boolean {
@@ -66,7 +137,7 @@ class MemoryCache {
 class LRUCache {
   private cache = new Map<string, CacheEntry>();
 
-  constructor(private maxSize: number = DEFAULT_LRU_MAX_SIZE) {}
+  constructor(private readonly maxSize: number) {}
 
   set(key: string, response: AgentResponse): void {
     if (this.cache.has(key)) this.cache.delete(key);
@@ -87,7 +158,7 @@ class LRUCache {
     markAccessed(entry);
     this.cache.set(key, entry);
 
-    return entry.response;
+    return cloneAgentResponse(entry.response);
   }
 
   has(key: string): boolean {
@@ -111,13 +182,20 @@ class TTLCache {
   private cache = new Map<string, CacheEntry>();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private ttl?: number) {
-    this.ttl = this.ttl && this.ttl > 0 ? this.ttl : undefined;
-    if (this.ttl !== undefined) this.startCleanup();
+  constructor(
+    private readonly ttl: number,
+    private readonly maxSize: number,
+  ) {
+    this.startCleanup();
   }
 
   set(key: string, response: AgentResponse): void {
-    const expiresAt = this.ttl !== undefined ? Date.now() + this.ttl : undefined;
+    if (this.cache.has(key)) this.cache.delete(key);
+    if (this.cache.size >= this.maxSize) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) this.cache.delete(oldestKey);
+    }
+    const expiresAt = Date.now() + this.ttl;
     this.cache.set(key, createCacheEntry(response, expiresAt));
   }
 
@@ -131,7 +209,7 @@ class TTLCache {
     }
 
     markAccessed(entry);
-    return entry.response;
+    return cloneAgentResponse(entry.response);
   }
 
   has(key: string): boolean {
@@ -155,6 +233,7 @@ class TTLCache {
   }
 
   size(): number {
+    this.removeExpired();
     return this.cache.size;
   }
 
@@ -171,34 +250,34 @@ class TTLCache {
   }
 
   private startCleanup(): void {
-    if (this.ttl === undefined) return;
-
-    this.cleanupInterval = setInterval(() => {
-      const now = Date.now();
-      for (const [key, entry] of this.cache.entries()) {
-        if (entry.expiresAt !== undefined && now >= entry.expiresAt) {
-          this.cache.delete(key);
-        }
-      }
-    }, TTL_CLEANUP_INTERVAL_MS);
+    this.cleanupInterval = setInterval(() => this.removeExpired(), TTL_CLEANUP_INTERVAL_MS);
 
     // Unref so this timer does not keep the process alive when all other work
     // is done. destroy() handles explicit cleanup when the cache is torn down.
     const interval = this.cleanupInterval as { unref?: () => void };
     interval.unref?.();
   }
+
+  private removeExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache.entries()) {
+      if (entry.expiresAt !== undefined && now >= entry.expiresAt) {
+        this.cache.delete(key);
+      }
+    }
+  }
 }
 
 type CacheInstance = Pick<MemoryCache, "set" | "get" | "has" | "delete" | "clear" | "size">;
 
-function createCacheByStrategy(config: CacheConfig): CacheInstance {
+function createCacheByStrategy(config: ResolvedCacheConfig): CacheInstance {
   switch (config.strategy) {
     case "lru":
-      return new LRUCache(config.maxSize ?? DEFAULT_LRU_MAX_SIZE);
+      return new LRUCache(config.maxSize);
     case "ttl":
-      return new TTLCache(config.ttl ?? DEFAULT_TTL_MS);
+      return new TTLCache(config.ttl ?? DEFAULT_TTL_MS, config.maxSize);
     default:
-      return new MemoryCache();
+      return new MemoryCache(config.maxSize);
   }
 }
 
@@ -211,11 +290,19 @@ export function createCache(config: CacheConfig): {
   size(): number;
   destroy(): void;
 } {
-  const cache = createCacheByStrategy(config);
-  const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
+  const resolvedConfig = normalizeCacheConfig(config);
+  const cache = createCacheByStrategy(resolvedConfig);
+  const keyGenerator = resolvedConfig.keyGenerator;
 
   function keyFor(input: string, context?: Record<string, unknown>): string {
-    return keyGenerator(input, context);
+    const key = keyGenerator(input, context);
+    if (typeof key !== "string" || key.length === 0 || key.length > MAX_CACHE_KEY_LENGTH) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Agent cache keys must be non-empty strings no longer than ${MAX_CACHE_KEY_LENGTH} characters`,
+      });
+    }
+    return key;
   }
 
   return {
@@ -288,7 +375,8 @@ function defaultKeyGenerator(input: string, context?: Record<string, unknown>): 
 export function cacheMiddleware(
   config: CacheConfig,
 ): AgentMiddleware & { destroy(): void } {
-  const cache = createCache(config);
+  const resolvedConfig = normalizeCacheConfig(config);
+  const cache = createCache(resolvedConfig);
 
   const middleware = ((context, next) =>
     withSpan(
@@ -300,7 +388,7 @@ export function cacheMiddleware(
 
         const cached = cache.get(inputString, context);
         if (cached) {
-          setActiveSpanAttributes({ "cache.hit": true, "cache.strategy": config.strategy });
+          setActiveSpanAttributes({ "cache.hit": true, "cache.strategy": resolvedConfig.strategy });
 
           return {
             ...cached,
@@ -312,13 +400,13 @@ export function cacheMiddleware(
           };
         }
 
-        setActiveSpanAttributes({ "cache.hit": false, "cache.strategy": config.strategy });
+        setActiveSpanAttributes({ "cache.hit": false, "cache.strategy": resolvedConfig.strategy });
 
         const result = await next();
         cache.set(inputString, result, context);
         return result;
       },
-      { "cache.strategy": config.strategy },
+      { "cache.strategy": resolvedConfig.strategy },
     )) as AgentMiddleware & { destroy(): void };
 
   middleware.destroy = () => {

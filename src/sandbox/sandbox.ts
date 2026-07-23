@@ -7,14 +7,40 @@
  * @module
  */
 
-import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { INITIALIZATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
+import {
+  collectExecResult,
+  DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+  discardSandboxResponse,
+  fetchSandbox,
+  normalizeExecRequest,
+  normalizeSandboxAuthToken,
+  normalizeSandboxBaseUrl,
+  normalizeSandboxIdentifier,
+  normalizeSandboxListOptions,
+  normalizeSandboxNumber,
+  normalizeSandboxProjectId,
+  normalizeSandboxReadPath,
+  normalizeSandboxWriteFiles,
+  parseBackgroundCommand,
+  parseBackgroundCommandList,
+  parseBackgroundCommandOutput,
+  parseExecStream,
+  parseSandboxList,
+  parseSandboxSession,
+  parseSandboxSessionId,
+  parseSandboxStatus,
+  readSandboxJson,
+  readSandboxText,
+  sandboxClosedError,
+  SandboxTransportError,
+  throwSandboxResponseError,
+} from "./protocol.ts";
 import type {
   BackgroundCommand,
-  BackgroundCommandHeartbeatStatus,
   BackgroundCommandOutput,
-  BackgroundCommandStatus,
   ExecOptions,
   ExecResult,
   ExecStreamEvent,
@@ -41,6 +67,9 @@ export type {
 
 /** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
+  private closePromise: Promise<void> | null = null;
+  private closed = false;
+
   private constructor(
     private endpoint: string,
     private sessionId: string,
@@ -48,10 +77,12 @@ export class Sandbox {
     private apiUrl: string,
   ) {}
 
+  /** Resolve and validate the control-plane base URL. */
   private static resolveApiUrl(options: SandboxOptions = {}): string {
     return resolveSandboxApiUrl(options);
   }
 
+  /** Resolve and validate the control-plane credential. */
   private static resolveAuthToken(options: SandboxOptions = {}): string {
     return resolveSandboxAuthToken(options);
   }
@@ -60,107 +91,136 @@ export class Sandbox {
   static async create(options: SandboxOptions = {}): Promise<Sandbox> {
     const apiUrl = Sandbox.resolveApiUrl(options);
     const authToken = Sandbox.resolveAuthToken(options);
+    const projectId = normalizeSandboxProjectId(options.projectId);
 
-    const res = await fetch(`${apiUrl}/sandbox-sessions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-        "Content-Type": "application/json",
+    const res = await fetchSandbox(
+      `${apiUrl}/sandbox-sessions`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(projectId ? { project_id: projectId } : {}),
       },
-      body: JSON.stringify(options.projectId ? { project_id: options.projectId } : {}),
-    });
+    );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Failed to create sandbox", res);
     }
 
-    const { id, endpoint, status } = await res.json();
+    const createResponse = await readSandboxJson(res, "Sandbox create response");
+    const id = parseSandboxSessionId(createResponse);
+    try {
+      const { endpoint, status } = parseSandboxSession(createResponse);
+      let readyEndpoint = endpoint;
+      if (status !== "running") {
+        readyEndpoint = await Sandbox.waitForReady(apiUrl, id, endpoint, authToken);
+      }
 
-    // If not yet running, poll until ready
-    if (status !== "running") {
-      await Sandbox.waitForReady(apiUrl, id, authToken);
+      return new Sandbox(readyEndpoint, id, authToken, apiUrl);
+    } catch (startupError) {
+      try {
+        await Sandbox.deleteFailedSession(apiUrl, id, authToken);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [startupError, cleanupError],
+          "Sandbox startup and cleanup failed",
+        );
+      }
+      throw startupError;
     }
-
-    return new Sandbox(endpoint, id, authToken, apiUrl);
   }
 
   /** Reconnect to an existing sandbox session. */
   static async get(id: string, options: SandboxOptions = {}): Promise<Sandbox> {
     const apiUrl = Sandbox.resolveApiUrl(options);
     const authToken = Sandbox.resolveAuthToken(options);
+    const sessionId = normalizeSandboxIdentifier(id, "Sandbox session ID");
 
-    const res = await fetch(`${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
+    const res = await fetchSandbox(
+      `${apiUrl}/sandbox-sessions/${encodeURIComponent(sessionId)}`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+      {
+        headers: { Authorization: `Bearer ${authToken}` },
+      },
+    );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Failed to get sandbox", res);
     }
 
-    const { endpoint } = await res.json();
-    return new Sandbox(endpoint, id, authToken, apiUrl);
+    const session = parseSandboxSession(
+      await readSandboxJson(res, "Sandbox get response"),
+      { id: sessionId, status: "running" },
+    );
+    return new Sandbox(session.endpoint, sessionId, authToken, apiUrl);
   }
 
   /** Attach to an already-known sandbox session and endpoint without a reconnect lookup. */
   static attach(attachment: SandboxAttachment): Sandbox {
     const apiUrl = Sandbox.resolveApiUrl(attachment);
     const authToken = Sandbox.resolveAuthToken(attachment);
-    return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl);
+    const id = normalizeSandboxIdentifier(attachment.id, "Sandbox session ID");
+    const endpoint = normalizeSandboxBaseUrl(attachment.endpoint, "Sandbox runtime endpoint");
+    return new Sandbox(endpoint, id, authToken, apiUrl);
   }
 
   /** List sandbox sessions with optional pagination. */
   static async list(options: SandboxListOptions = {}): Promise<SandboxListResult> {
     const apiUrl = Sandbox.resolveApiUrl(options);
     const authToken = Sandbox.resolveAuthToken(options);
+    const listOptions = normalizeSandboxListOptions(options);
 
     const params = new URLSearchParams();
-    if (options.cursor) params.set("cursor", options.cursor);
-    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (listOptions.cursor) params.set("cursor", listOptions.cursor);
+    if (listOptions.limit !== undefined) params.set("limit", String(listOptions.limit));
 
     const query = params.toString();
     const url = `${apiUrl}/sandbox-sessions${query ? `?${query}` : ""}`;
 
-    const res = await fetch(url, {
+    const res = await fetchSandbox(url, DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS, {
       headers: { Authorization: `Bearer ${authToken}` },
     });
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to list sandboxes: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Failed to list sandboxes", res);
     }
-
-    const json = await res.json();
-
-    return {
-      data: json.data.map((s: Record<string, unknown>) => ({
-        id: s.id,
-        shortId: s.short_id,
-        endpoint: s.endpoint,
-        status: s.status,
-        createdAt: s.created_at,
-      })),
-      pageInfo: {
-        self: json.page_info?.self ?? null,
-        first: null,
-        next: json.page_info?.next ?? null,
-        prev: json.page_info?.prev ?? null,
-      },
-    };
+    return parseSandboxList(await readSandboxJson(res, "Sandbox list response"));
   }
 
+  /** Wait for a created session and return its latest runtime endpoint. */
   private static async waitForReady(
     apiUrl: string,
     id: string,
+    endpoint: string,
     authToken: string,
     maxWaitMs = 60_000,
     pollIntervalMs = 2_000,
+  ): Promise<string> {
+    return (await pollForSandboxReady(
+      { apiUrl, id, authToken, maxWaitMs, pollIntervalMs },
+      endpoint,
+    )) ?? endpoint;
+  }
+
+  /** Delete a session whose startup did not complete. */
+  private static async deleteFailedSession(
+    apiUrl: string,
+    id: string,
+    authToken: string,
   ): Promise<void> {
-    await waitForSandboxReady({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
+    const res = await fetchSandbox(
+      `${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${authToken}` },
+      },
+    );
+    if (!res.ok) await throwSandboxResponseError("Sandbox cleanup failed", res);
+    await discardSandboxResponse(res);
   }
 
   /** Create a lazily-provisioned sandbox session with automatic heartbeats. */
@@ -170,197 +230,159 @@ export class Sandbox {
 
   /** Execute a bash command in the sandbox and return buffered result. */
   async executeCommand(command: string, options?: ExecOptions): Promise<ExecResult> {
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 1;
-
-    for await (const event of this.executeStream(command, options)) {
-      switch (event.type) {
-        case "stdout":
-          stdout += event.data ?? "";
-          break;
-        case "stderr":
-          stderr += event.data ?? "";
-          break;
-        case "exit":
-          exitCode = event.exitCode ?? 1;
-          break;
-      }
-    }
-
-    return { stdout, stderr, exitCode };
+    return await collectExecResult(this.executeStream(command, options));
   }
 
   /** Execute a bash command with streaming output (NDJSON). */
   async *executeStream(command: string, options?: ExecOptions): AsyncGenerator<ExecStreamEvent> {
-    const res = await fetch(`${this.endpoint}/exec`, {
+    this.assertOpen();
+    const request = normalizeExecRequest(command, options);
+    const res = await fetchSandbox(`${this.endpoint}/exec`, DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ command, ...options }),
+      body: JSON.stringify(request),
     });
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
+      await throwSandboxResponseError("Exec failed", res);
     }
-
-    if (!res.body) {
-      throw new Error("Exec response has no body");
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop()!;
-
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            yield JSON.parse(line) as ExecStreamEvent;
-          } catch {
-            // Malformed NDJSON line (e.g. truncated network chunk); skip and
-            // continue streaming so already-buffered output is not lost.
-          }
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      try {
-        yield JSON.parse(buffer) as ExecStreamEvent;
-      } catch {
-        // Malformed final chunk; discard rather than surfacing a SyntaxError.
-      }
-    }
+    yield* parseExecStream(res);
   }
 
   /** Read a file from the sandbox workspace. */
   async readFile(path: string): Promise<string> {
-    const res = await fetch(
-      `${this.endpoint}/file?path=${encodeURIComponent(path)}`,
+    this.assertOpen();
+    const normalizedPath = normalizeSandboxReadPath(path);
+    const res = await fetchSandbox(
+      `${this.endpoint}/file?path=${encodeURIComponent(normalizedPath)}`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
       {
         headers: { Authorization: `Bearer ${this.authToken}` },
       },
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
+      await throwSandboxResponseError("Read file failed", res);
     }
 
-    return res.text();
+    return await readSandboxText(res, "Sandbox file response");
   }
 
   /** Write files to the sandbox workspace. */
   async writeFiles(
     files: Array<{ path: string; content: string }>,
   ): Promise<void> {
-    const res = await fetch(`${this.endpoint}/files`, {
+    this.assertOpen();
+    const normalizedFiles = normalizeSandboxWriteFiles(files);
+    const res = await fetchSandbox(`${this.endpoint}/files`, DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.authToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ files }),
+      body: JSON.stringify({ files: normalizedFiles }),
     });
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Write files failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Write files failed", res);
     }
+    await discardSandboxResponse(res);
   }
 
   /** Start an async background command in the sandbox. */
   async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
-    const res = await fetch(`${this.endpoint}/exec/commands`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        "Content-Type": "application/json",
+    this.assertOpen();
+    const request = normalizeExecRequest(command, options);
+    const res = await fetchSandbox(
+      `${this.endpoint}/exec/commands`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
       },
-      body: JSON.stringify({ command, ...options }),
-    });
+    );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Start background command failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Start background command failed", res);
     }
 
-    return Sandbox.mapBackgroundCommand(await res.json());
+    return parseBackgroundCommand(
+      await readSandboxJson(res, "Start background command response"),
+    );
   }
 
   /** Get the status of an async background command. */
   async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const res = await fetch(`${this.endpoint}/exec/commands/${encodeURIComponent(commandId)}`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    this.assertOpen();
+    const id = normalizeSandboxIdentifier(commandId, "Background command ID");
+    const res = await fetchSandbox(
+      `${this.endpoint}/exec/commands/${encodeURIComponent(id)}`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+      { headers: { Authorization: `Bearer ${this.authToken}` } },
+    );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Get background command failed", res);
     }
 
-    return Sandbox.mapBackgroundCommand(await res.json());
+    return parseBackgroundCommand(
+      await readSandboxJson(res, "Get background command response"),
+    );
   }
 
   /** Get the output of an async background command. */
   async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
-    const res = await fetch(
-      `${this.endpoint}/exec/commands/${encodeURIComponent(commandId)}/output`,
+    this.assertOpen();
+    const id = normalizeSandboxIdentifier(commandId, "Background command ID");
+    const res = await fetchSandbox(
+      `${this.endpoint}/exec/commands/${encodeURIComponent(id)}/output`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
       {
         headers: { Authorization: `Bearer ${this.authToken}` },
       },
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Get background command output failed", res);
     }
 
-    const json = await res.json();
-    return {
-      ...Sandbox.mapBackgroundCommand(json),
-      stdout: json.stdout,
-      stderr: json.stderr,
-      stdoutTruncated: json.stdout_truncated,
-      stderrTruncated: json.stderr_truncated,
-    };
+    return parseBackgroundCommandOutput(
+      await readSandboxJson(res, "Get background command output response"),
+    );
   }
 
   /** List all background commands in the sandbox. */
   async listBackgroundCommands(): Promise<BackgroundCommand[]> {
-    const res = await fetch(`${this.endpoint}/exec/commands`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
-    });
+    this.assertOpen();
+    const res = await fetchSandbox(
+      `${this.endpoint}/exec/commands`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+      { headers: { Authorization: `Bearer ${this.authToken}` } },
+    );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `List background commands failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("List background commands failed", res);
     }
 
-    const json = await res.json();
-    const commands = Array.isArray(json) ? json : (json.commands ?? []);
-    return commands.map((command: Record<string, unknown>) =>
-      Sandbox.mapBackgroundCommand(command)
+    return parseBackgroundCommandList(
+      await readSandboxJson(res, "List background commands response"),
     );
   }
 
   /** Cancel an async background command. */
   async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
-    const res = await fetch(
-      `${this.endpoint}/exec/commands/${encodeURIComponent(commandId)}/cancel`,
+    this.assertOpen();
+    const id = normalizeSandboxIdentifier(commandId, "Background command ID");
+    const res = await fetchSandbox(
+      `${this.endpoint}/exec/commands/${encodeURIComponent(id)}/cancel`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${this.authToken}` },
@@ -368,33 +390,20 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Cancel background command failed", res);
     }
 
-    return Sandbox.mapBackgroundCommand(await res.json());
-  }
-
-  private static mapBackgroundCommand(json: Record<string, unknown>): BackgroundCommand {
-    return {
-      id: json.id as string,
-      status: json.status as BackgroundCommandStatus,
-      exitCode: json.exit_code as number | null,
-      signal: json.signal as string | null,
-      startedAt: json.started_at as string,
-      finishedAt: json.finished_at as string | null,
-      heartbeatStatus: json.heartbeat_status as BackgroundCommandHeartbeatStatus,
-      lastHeartbeatAt: json.last_heartbeat_at as string | null,
-      lastHeartbeatError: json.last_heartbeat_error as string | null,
-      heartbeatFailureCount: json.heartbeat_failure_count as number,
-    };
+    return parseBackgroundCommand(
+      await readSandboxJson(res, "Cancel background command response"),
+    );
   }
 
   /** Send a heartbeat to prevent idle timeout. */
   async heartbeat(): Promise<void> {
-    const res = await fetch(
+    this.assertOpen();
+    const res = await fetchSandbox(
       `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}/heartbeat`,
+      DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${this.authToken}` },
@@ -402,26 +411,37 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Sandbox heartbeat failed: ${res.status} ${await res.text()}`,
-      });
+      await throwSandboxResponseError("Sandbox heartbeat failed", res);
     }
+    await discardSandboxResponse(res);
   }
 
-  /** Close the sandbox session and mark for deletion. */
+  /** Close the sandbox session. A successfully closed client cannot be reused. */
   async close(): Promise<void> {
-    const res = await fetch(
-      `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      },
-    );
+    if (this.closed) return;
+    if (this.closePromise) return await this.closePromise;
 
-    if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Close sandbox failed: ${res.status} ${await res.text()}`,
-      });
+    const pending = (async () => {
+      const res = await fetchSandbox(
+        `${this.apiUrl}/sandbox-sessions/${encodeURIComponent(this.sessionId)}`,
+        DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${this.authToken}` },
+        },
+      );
+
+      if (!res.ok) {
+        await throwSandboxResponseError("Close sandbox failed", res);
+      }
+      await discardSandboxResponse(res);
+      this.closed = true;
+    })();
+    this.closePromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (!this.closed && this.closePromise === pending) this.closePromise = null;
     }
   }
 
@@ -434,41 +454,80 @@ export class Sandbox {
   get url(): string {
     return this.endpoint;
   }
+
+  /** Reject operations after close begins. */
+  private assertOpen(): void {
+    if (this.closed || this.closePromise) throw sandboxClosedError();
+  }
 }
 
-export async function waitForSandboxReady(input: {
+interface WaitForSandboxReadyInput {
   apiUrl: string;
   id: string;
   authToken: string;
   maxWaitMs?: number;
   pollIntervalMs?: number;
-}): Promise<void> {
-  const maxWaitMs = input.maxWaitMs ?? 60_000;
-  const pollIntervalMs = input.pollIntervalMs ?? 2_000;
+}
+
+async function pollForSandboxReady(
+  input: WaitForSandboxReadyInput,
+  fallbackEndpoint?: string,
+): Promise<string | undefined> {
+  const apiUrl = normalizeSandboxBaseUrl(input.apiUrl, "Sandbox API URL");
+  const id = normalizeSandboxIdentifier(input.id, "Sandbox session ID");
+  const authToken = normalizeSandboxAuthToken(input.authToken);
+  const maxWaitMs = normalizeSandboxNumber(input.maxWaitMs, 60_000, "Sandbox startup timeout", {
+    min: 1,
+    max: 3_600_000,
+  });
+  const pollIntervalMs = normalizeSandboxNumber(
+    input.pollIntervalMs,
+    2_000,
+    "Sandbox readiness poll interval",
+    { min: 1, max: maxWaitMs },
+  );
   const start = Date.now();
 
   while (Date.now() - start < maxWaitMs) {
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    let remainingMs = maxWaitMs - (Date.now() - start);
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remainingMs)));
+    remainingMs = maxWaitMs - (Date.now() - start);
+    if (remainingMs <= 0) break;
 
-    const res = await fetch(
-      `${input.apiUrl}/sandbox-sessions/${encodeURIComponent(input.id)}`,
-      {
-        headers: { Authorization: `Bearer ${input.authToken}` },
-      },
-    );
+    let res: Response;
+    try {
+      res = await fetchSandbox(
+        `${apiUrl}/sandbox-sessions/${encodeURIComponent(id)}`,
+        Math.min(DEFAULT_SANDBOX_REQUEST_TIMEOUT_MS, Math.max(1, remainingMs)),
+        { headers: { Authorization: `Bearer ${authToken}` } },
+      );
+    } catch (error) {
+      if (error instanceof SandboxTransportError) continue;
+      throw error;
+    }
 
     if (!res.ok) {
+      await discardSandboxResponse(res);
       continue;
     }
 
-    const data = await res.json();
-    if (data.status === "running") return;
-    if (data.status === "error" || data.status === "deleting") {
+    const response = await readSandboxJson(res, "Sandbox readiness response");
+    const status = parseSandboxStatus(response);
+    if (status === "running") {
+      return fallbackEndpoint === undefined
+        ? undefined
+        : parseSandboxSession(response, { id, endpoint: fallbackEndpoint, status }).endpoint;
+    }
+    if (status === "error" || status === "deleting") {
       throw INITIALIZATION_ERROR.create({
-        detail: `Sandbox failed to start: status=${data.status}`,
+        detail: `Sandbox failed to start: status=${status}`,
       });
     }
   }
 
   throw TIMEOUT_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
+}
+
+export async function waitForSandboxReady(input: WaitForSandboxReadyInput): Promise<void> {
+  await pollForSandboxReady(input);
 }

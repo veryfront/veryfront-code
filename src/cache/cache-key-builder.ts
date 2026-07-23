@@ -3,6 +3,8 @@ import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { encodeCacheIdentitySegment } from "./keys/source-identity.ts";
+import { containsUnsafeCacheStringCharacter } from "./validation.ts";
 
 type MultiProjectRequestContextType = {
   projectSlug: string;
@@ -14,7 +16,15 @@ type MultiProjectRequestContextType = {
   environmentName?: string | null;
 };
 
-let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
+type AmbientCacheRequestContext = Pick<
+  MultiProjectRequestContextType,
+  | "projectSlug"
+  | "projectId"
+  | "productionMode"
+  | "releaseId"
+  | "branch"
+  | "environmentName"
+>;
 
 export type { CacheKeyContext };
 
@@ -25,6 +35,62 @@ export interface RegistryScopeContext {
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
+
+const REGISTRY_SCOPE_PREFIX = "scope-v1";
+const MAX_REGISTRY_SCOPE_SEGMENT_LENGTH = 4096;
+const MAX_REGISTRY_SCOPE_LENGTH = 16_384;
+
+function encodeRegistryScope(segments: readonly string[]): string {
+  let result = REGISTRY_SCOPE_PREFIX;
+  for (const segment of segments) {
+    if (
+      !segment || segment.length > MAX_REGISTRY_SCOPE_SEGMENT_LENGTH ||
+      containsUnsafeCacheStringCharacter(segment)
+    ) {
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: "Invalid registry scope identity",
+      });
+    }
+    result += `:${segment.length}:${segment}`;
+    if (result.length > MAX_REGISTRY_SCOPE_LENGTH) {
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: "Registry scope identity exceeds the supported size",
+      });
+    }
+  }
+  return result;
+}
+
+function decodeRegistryScope(scopeId: string): string[] | null {
+  if (!scopeId.startsWith(`${REGISTRY_SCOPE_PREFIX}:`)) return null;
+
+  const segments: string[] = [];
+  let cursor = REGISTRY_SCOPE_PREFIX.length;
+  while (cursor < scopeId.length) {
+    if (scopeId[cursor] !== ":") return null;
+    const lengthEnd = scopeId.indexOf(":", cursor + 1);
+    if (lengthEnd === -1) return null;
+    const rawLength = scopeId.slice(cursor + 1, lengthEnd);
+    if (!/^(0|[1-9]\d{0,4})$/.test(rawLength)) return null;
+    const length = Number(rawLength);
+    if (length < 1 || length > MAX_REGISTRY_SCOPE_SEGMENT_LENGTH) return null;
+    const valueStart = lengthEnd + 1;
+    const valueEnd = valueStart + length;
+    if (valueEnd > scopeId.length) return null;
+    segments.push(scopeId.slice(valueStart, valueEnd));
+    cursor = valueEnd;
+  }
+  return segments;
+}
+
+/** Match a structured registry scope to its exact owning project identity. */
+export function registryScopeMatchesProject(
+  scopeId: string,
+  projectId: string,
+): boolean {
+  const segments = decodeRegistryScope(scopeId);
+  return segments !== null && segments[0] === projectId;
+}
 
 function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
   return CacheKeyContextSchema.parse(ctx);
@@ -64,31 +130,59 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
   });
 }
 
-function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  // Memoize only once the adapter is actually resolved. A miss must NOT be cached
-  // permanently: the multi-project adapter can be installed on globalThis after
-  // the first call, and caching null here would disable distributed caching for
-  // the whole process lifetime even after the adapter is later wired.
-  if (_getCurrentRequestContext) return _getCurrentRequestContext;
-
+function readAmbientRequestContext(): AmbientCacheRequestContext | null {
   try {
-    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
-      | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
-      | undefined;
-    const fn = mod?.getCurrentRequestContext ?? null;
-    if (fn) _getCurrentRequestContext = fn;
-    return fn;
-  } catch (_) {
-    // expected: multi-project adapter may not be available yet — re-check next call
+    const adapter = Reflect.get(globalThis, "__vf_multi_project_adapter");
+    if (typeof adapter !== "object" || adapter === null || Array.isArray(adapter)) return null;
+
+    const getCurrentRequestContext = Reflect.get(adapter, "getCurrentRequestContext");
+    if (typeof getCurrentRequestContext !== "function") return null;
+
+    const rawContext = Reflect.apply(getCurrentRequestContext, adapter, []);
+    if (typeof rawContext !== "object" || rawContext === null || Array.isArray(rawContext)) {
+      return null;
+    }
+
+    const readRequiredString = (key: string, allowEmpty: boolean): string => {
+      const value = Reflect.get(rawContext, key);
+      if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
+        throw new TypeError(`Invalid ambient cache context ${key}`);
+      }
+      if (value.length > 0) encodeCacheIdentitySegment(value, key);
+      return value;
+    };
+    const readOptionalString = (key: string): string | null | undefined => {
+      const value = Reflect.get(rawContext, key);
+      if (value === undefined || value === null) return value;
+      if (typeof value !== "string") {
+        throw new TypeError(`Invalid ambient cache context ${key}`);
+      }
+      if (value.length > 0) encodeCacheIdentitySegment(value, key);
+      return value;
+    };
+    const productionMode = Reflect.get(rawContext, "productionMode");
+    if (typeof productionMode !== "boolean") return null;
+
+    return Object.freeze({
+      projectSlug: readRequiredString("projectSlug", true),
+      projectId: readOptionalString("projectId") ?? undefined,
+      productionMode,
+      releaseId: readOptionalString("releaseId"),
+      branch: readOptionalString("branch"),
+      environmentName: readOptionalString("environmentName"),
+    });
+  } catch {
+    // The adapter is optional and may be installed, replaced, or torn down at
+    // runtime. Invalid ambient state disables caching for this operation.
     return null;
   }
 }
 
 function extractCacheKeyContextFromMultiProjectContext(
-  reqCtx: MultiProjectRequestContextType,
+  reqCtx: AmbientCacheRequestContext,
 ): CacheKeyContext | null {
   // A genuinely missing project identity must NOT collapse to a shared "default"
-  // bucket — that would let unrelated projects serve each other's cached pages.
+  // bucket. That would let unrelated projects serve each other's cached pages.
   // Return null instead so callers skip caching for this request.
   const projectId = reqCtx.projectId || reqCtx.projectSlug;
   if (!projectId) return null;
@@ -113,7 +207,7 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
   const explicitCtx = cacheKeyContextStorage.getStore();
   if (explicitCtx) return explicitCtx;
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = readAmbientRequestContext();
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
@@ -140,12 +234,12 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   const cacheCtx = cacheKeyContextStorage.getStore();
   if (cacheCtx) {
     return {
-      scopeId: `${cacheCtx.projectId}:${cacheCtx.mode}:${cacheCtx.versionId}`,
+      scopeId: encodeRegistryScope([cacheCtx.projectId, cacheCtx.mode, cacheCtx.versionId]),
       immutable: cacheCtx.mode === "production",
     };
   }
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = readAmbientRequestContext();
   if (reqCtx) {
     const projectId = reqCtx.projectId || reqCtx.projectSlug;
     if (!projectId) return null;
@@ -153,7 +247,7 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     if (reqCtx.productionMode) {
       if (reqCtx.releaseId) {
         return {
-          scopeId: `${projectId}:production:${reqCtx.releaseId}`,
+          scopeId: encodeRegistryScope([projectId, "production", reqCtx.releaseId]),
           immutable: true,
         };
       }
@@ -162,13 +256,18 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
       // discovery, and adapter caches all describe the same content source.
       const environmentName = reqCtx.environmentName || "production";
       return {
-        scopeId: `${projectId}:production:environment:${environmentName}`,
+        scopeId: encodeRegistryScope([
+          projectId,
+          "production",
+          "environment",
+          environmentName,
+        ]),
         immutable: false,
       };
     }
 
     return {
-      scopeId: `${projectId}:preview:${reqCtx.branch || "main"}`,
+      scopeId: encodeRegistryScope([projectId, "preview", reqCtx.branch || "main"]),
       immutable: false,
     };
   }
@@ -181,7 +280,21 @@ export function tryGetRegistryScopeId(): string | null {
 }
 
 function buildProjectScopedKey(prefix: string, resourceKey: string, ctx: CacheKeyContext): string {
-  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
+  if (
+    typeof prefix !== "string" || prefix.length === 0 || prefix.length > 512 ||
+    containsUnsafeCacheStringCharacter(prefix)
+  ) {
+    throw CACHE_INVARIANT_VIOLATION.create({ detail: "Invalid project cache key prefix" });
+  }
+  if (
+    typeof resourceKey !== "string" || resourceKey.length === 0 || resourceKey.length > 65_536 ||
+    containsUnsafeCacheStringCharacter(resourceKey)
+  ) {
+    throw CACHE_INVARIANT_VIOLATION.create({ detail: "Invalid project cache resource key" });
+  }
+  const projectId = encodeCacheIdentitySegment(ctx.projectId, "projectId");
+  const versionId = encodeCacheIdentitySegment(ctx.versionId, "versionId");
+  return `${prefix}:${projectId}:${ctx.mode}:${versionId}:${resourceKey}`;
 }
 
 export function getProjectScopedKey(prefix: string, resourceKey: string): string | null {
@@ -200,7 +313,7 @@ export function getProjectScopedKeyAlways(prefix: string, resourceKey: string): 
 
 export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext | null {
   // Return null (skip caching) rather than collapsing to a shared "default"
-  // bucket when identity is missing — a shared bucket would be a cross-tenant
+  // bucket when identity is missing. A shared bucket would be a cross-tenant
   // risk, but crashing lightweight no-identity paths (e.g. local CSS/JIT) is
   // worse than simply not caching. Callers must treat null as "do not cache".
   const projectId = handlerCtx.projectId || handlerCtx.projectSlug;

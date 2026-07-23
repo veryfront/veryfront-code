@@ -1,13 +1,18 @@
 import { serverLogger } from "#veryfront/utils";
-import { join } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
+import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
-import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const logger = serverLogger.component("server");
+const MAX_ROUTE_DIRECTORY_LENGTH = 512;
+const MAX_DIRECTORY_ENTRY_LENGTH = 255;
+const MAX_DISCOVERY_DEPTH = 64;
+const MAX_DISCOVERY_ENTRIES = 100_000;
+const MAX_ROUTE_PATH_LENGTH = 500;
 
 /** Directories within .veryfront that should be excluded from routing */
 const VERYFRONT_EXCLUDED_DIRS = new Set([
@@ -26,12 +31,59 @@ function shouldSkipEntry(name: string, parentPath?: string): boolean {
   if (name === ".veryfront") return false;
   if (name.startsWith(".")) return true;
 
-  const inVeryfront = parentPath?.includes(".veryfront") || parentPath?.includes("/.veryfront");
+  const inVeryfront = parentPath?.replaceAll("\\", "/").split("/").includes(".veryfront");
   return Boolean(inVeryfront && VERYFRONT_EXCLUDED_DIRS.has(name));
+}
+
+function normalizeRouteDirectory(value: string): string {
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > MAX_ROUTE_DIRECTORY_LENGTH
+  ) {
+    throw new TypeError("Route directory must be a bounded project-relative path");
+  }
+
+  let normalized = value.replaceAll("\\", "/");
+  while (normalized.startsWith("./")) normalized = normalized.slice(2);
+  normalized = normalized.replace(/\/+$/, "");
+  const segments = normalized.split("/");
+  if (
+    normalized.length === 0 || normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized) ||
+    segments.some((segment) =>
+      segment.length === 0 || segment === "." || segment === ".." ||
+      hasUnsafeControlCharacters(segment)
+    )
+  ) {
+    throw new TypeError("Route directory must be a bounded project-relative path");
+  }
+
+  return segments.join("/");
+}
+
+function assertSafeDirectoryEntryName(name: unknown): asserts name is string {
+  if (
+    typeof name !== "string" || name.length === 0 || name.length > MAX_DIRECTORY_ENTRY_LENGTH ||
+    name === "." || name === ".." || name.includes("/") || name.includes("\\") ||
+    hasUnsafeControlCharacters(name)
+  ) {
+    throw new TypeError("Route directory entry is invalid");
+  }
+}
+
+interface DiscoveryState {
+  entriesVisited: number;
+}
+
+function isMissingDirectoryError(error: unknown): boolean {
+  try {
+    return isNotFoundError(error);
+  } catch {
+    return false;
+  }
 }
 
 export class RouteDiscovery {
   private useRelativePaths: boolean;
+  private discoveryTask?: Promise<void>;
 
   constructor(
     private projectDir: string,
@@ -44,45 +96,75 @@ export class RouteDiscovery {
   }
 
   async discoverRoutes(): Promise<void> {
-    this.router.clear();
-    this.router.clearCache();
+    if (this.discoveryTask) return await this.discoveryTask;
 
+    const task = this.discoverRouteGeneration();
+    this.discoveryTask = task;
+    try {
+      await task;
+    } finally {
+      if (this.discoveryTask === task) this.discoveryTask = undefined;
+    }
+  }
+
+  private async discoverRouteGeneration(): Promise<void> {
+    const discoveredRouter = new ApiRouteMatcher();
+    const state: DiscoveryState = { entriesVisited: 0 };
+    try {
+      await this.populateRouteGeneration(discoveredRouter, state);
+    } finally {
+      discoveredRouter.destroy();
+    }
+  }
+
+  private async populateRouteGeneration(
+    discoveredRouter: ApiRouteMatcher,
+    state: DiscoveryState,
+  ): Promise<void> {
     logger.debug("Starting route discovery", {
       useRelativePaths: this.useRelativePaths,
-      fsType: this.config?.fs?.type,
     });
 
     const routeDirs = await this.resolveRouteDirectories();
     logger.debug("Route directories resolved", {
       count: routeDirs.length,
-      dirs: routeDirs,
+      appDirectoryCount: routeDirs.filter((route) => route.type === "app").length,
+      pagesDirectoryCount: routeDirs.filter((route) => route.type === "pages").length,
     });
 
     if (routeDirs.length === 0) {
+      this.commitRoutes(discoveredRouter);
       logger.warn("No route directories found; skipping discovery");
       return;
     }
 
     for (const routeDir of routeDirs) {
       if (routeDir.type === "app") {
-        logger.debug(`Discovering app routes in: ${routeDir.path}`);
-        await this.discoverAppRoutes(routeDir.path);
+        logger.debug("Discovering app routes");
+        await this.discoverAppRoutes(discoveredRouter, routeDir.path, state);
         continue;
       }
 
-      logger.debug(`Discovering pages routes in: ${routeDir.path}`);
-      await this.discoverPagesRoutes(routeDir.path, "");
+      logger.debug("Discovering pages routes");
+      await this.discoverPagesRoutes(discoveredRouter, routeDir.path, "", state, 0);
     }
 
+    this.commitRoutes(discoveredRouter);
     logger.debug("Route discovery complete", {
       routes: this.router.listRoutes().length,
     });
   }
 
+  private commitRoutes(discoveredRouter: ApiRouteMatcher): void {
+    const routes = discoveredRouter.listRoutes();
+    this.router.clear();
+    for (const route of routes) this.router.addRoute(route.pattern, route.page);
+  }
+
   private async resolveRouteDirectories(): Promise<RouteDirectory[]> {
     const preferredRouter = this.config?.router;
-    const appDir = this.config?.directories?.app ?? "app";
-    const pagesDir = this.config?.directories?.pages ?? "pages";
+    const appDir = normalizeRouteDirectory(this.config?.directories?.app ?? "app");
+    const pagesDir = normalizeRouteDirectory(this.config?.directories?.pages ?? "pages");
     const results: RouteDirectory[] = [];
 
     const candidates: Array<{ type: "app" | "pages"; dir: string }> = [];
@@ -109,7 +191,7 @@ export class RouteDiscovery {
         const pagesFallback = this.useRelativePaths ? pagesDir : join(this.projectDir, pagesDir);
         if (await this.directoryExists(pagesFallback)) {
           logger.warn(
-            `router="app" but ${appDir}/ directory missing; falling back to ${pagesDir}/`,
+            "The configured app router directory is missing. Using the pages router directory.",
           );
           results.push({ type: "pages", path: pagesFallback });
         }
@@ -117,7 +199,7 @@ export class RouteDiscovery {
         const appFallback = this.useRelativePaths ? appDir : join(this.projectDir, appDir);
         if (await this.directoryExists(appFallback)) {
           logger.warn(
-            `router="pages" but ${pagesDir}/ directory missing; using ${appDir}/`,
+            "The configured pages router directory is missing. Using the app router directory.",
           );
           results.push({ type: "app", path: appFallback });
         }
@@ -142,101 +224,111 @@ export class RouteDiscovery {
   private async directoryExists(path: string): Promise<boolean> {
     try {
       logger.debug("Checking directory exists", {
-        path,
         useRelativePaths: this.useRelativePaths,
       });
 
-      const stat = this.useRelativePaths ? await this.adapter.fs.stat(path) : await withFallback(
-        () => this.adapter.fs.stat(path),
-        () => createFileSystem().stat(path),
-        { operationName: "stat:routeDiscovery:directoryExists", logError: false },
-      );
+      const stat = await this.adapter.fs.stat(path);
 
-      logger.debug("Directory stat result", { path, isDirectory: stat.isDirectory });
+      logger.debug("Directory stat result", { isDirectory: stat.isDirectory });
       return stat.isDirectory;
     } catch (error) {
-      // A missing directory is the expected "no routes here" case and by far the
-      // common one (e.g. a project with no `.veryfront` dir yet). Returning false
-      // is correct for both a genuine absence and a transient adapter error, so
-      // this stays at debug: escalating to warn here fires on the ordinary
-      // missing-dir path (the not-found is wrapped by the fallback-wrapper, so it
-      // is not recognizable as ENOENT) and floods normal dev startup. Surfacing a
-      // genuine adapter failure distinctly needs not-found detection that sees
-      // through the fallback wrapper — tracked as a follow-up.
-      logger.debug("Directory check failed", {
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-      return false;
+      if (isMissingDirectoryError(error)) return false;
+      throw error;
     }
   }
 
-  private async discoverPagesRoutes(dir: string, prefix: string): Promise<void> {
-    try {
-      logger.debug(`Reading directory: ${dir}`);
-
-      for await (const entry of this.adapter.fs.readDir(dir)) {
-        if (shouldSkipEntry(entry.name, dir)) continue;
-
-        const fullPath = join(dir, entry.name);
-        const routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx?)$/, "")}`.replace(
-          /\/+/g,
-          "/",
-        );
-
-        if (routePath.length > 500) {
-          logger.warn(`Route path too long, skipping: ${routePath.slice(0, 100)}...`);
-          continue;
-        }
-
-        if (entry.isDirectory) {
-          await this.discoverPagesRoutes(fullPath, routePath);
-          continue;
-        }
-
-        if (!entry.isFile || !/\.(tsx?|jsx?|mdx?)$/.test(entry.name)) continue;
-        if (routePath.startsWith("/api")) continue;
-
-        let pattern = routePath.replace(/\/index$/, "") || "/";
-        pattern = pattern.replace(/\/+/g, "/");
-
-        const relativePath = this.toProjectRelativePath(fullPath);
-        this.router.addRoute(pattern, relativePath);
-        logger.debug(`Discovered route: ${pattern} -> ${relativePath}`);
-      }
-    } catch (error) {
-      logger.error(`Failed to discover routes in ${dir}:`, error);
+  private visitEntry(state: DiscoveryState): void {
+    state.entriesVisited++;
+    if (state.entriesVisited > MAX_DISCOVERY_ENTRIES) {
+      throw new RangeError("Route discovery entry count exceeds the supported limit");
     }
   }
 
-  private async discoverAppRoutes(dir: string): Promise<void> {
-    await this.discoverAppRoutesRecursive(dir, []);
+  private async discoverPagesRoutes(
+    router: ApiRouteMatcher,
+    dir: string,
+    prefix: string,
+    state: DiscoveryState,
+    depth: number,
+  ): Promise<void> {
+    if (depth > MAX_DISCOVERY_DEPTH) {
+      throw new RangeError("Route discovery depth exceeds the supported limit");
+    }
+    logger.debug("Reading pages route directory", { depth });
+
+    for await (const entry of this.adapter.fs.readDir(dir)) {
+      this.visitEntry(state);
+      assertSafeDirectoryEntryName(entry.name);
+      if (shouldSkipEntry(entry.name, dir)) continue;
+
+      const fullPath = join(dir, entry.name);
+      const routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx?)$/, "")}`.replace(
+        /\/+/g,
+        "/",
+      );
+
+      if (routePath.length > MAX_ROUTE_PATH_LENGTH) {
+        throw new RangeError("Discovered route path exceeds the supported limit");
+      }
+
+      if (entry.isDirectory) {
+        await this.discoverPagesRoutes(router, fullPath, routePath, state, depth + 1);
+        continue;
+      }
+
+      if (!entry.isFile || !/\.(tsx?|jsx?|mdx?)$/.test(entry.name)) continue;
+      if (routePath.startsWith("/api")) continue;
+
+      let pattern = routePath.replace(/\/index$/, "") || "/";
+      pattern = pattern.replace(/\/+/g, "/");
+
+      const relativePath = this.toProjectRelativePath(fullPath);
+      router.addRoute(pattern, relativePath);
+    }
   }
 
-  private async discoverAppRoutesRecursive(dir: string, segments: string[]): Promise<void> {
-    try {
-      logger.debug(`Reading app directory: ${dir}`);
+  private async discoverAppRoutes(
+    router: ApiRouteMatcher,
+    dir: string,
+    state: DiscoveryState,
+  ): Promise<void> {
+    await this.discoverAppRoutesRecursive(router, dir, [], state, 0);
+  }
 
-      for await (const entry of this.adapter.fs.readDir(dir)) {
-        if (shouldSkipEntry(entry.name, dir)) continue;
+  private async discoverAppRoutesRecursive(
+    router: ApiRouteMatcher,
+    dir: string,
+    segments: string[],
+    state: DiscoveryState,
+    depth: number,
+  ): Promise<void> {
+    if (depth > MAX_DISCOVERY_DEPTH) {
+      throw new RangeError("Route discovery depth exceeds the supported limit");
+    }
+    logger.debug("Reading app route directory", { depth });
 
-        const fullPath = join(dir, entry.name);
+    for await (const entry of this.adapter.fs.readDir(dir)) {
+      this.visitEntry(state);
+      assertSafeDirectoryEntryName(entry.name);
+      if (shouldSkipEntry(entry.name, dir)) continue;
 
-        if (entry.isDirectory) {
-          const normalizedSegment = this.normalizeAppPathSegment(entry.name);
-          const nextSegments = normalizedSegment ? [...segments, normalizedSegment] : segments;
-          await this.discoverAppRoutesRecursive(fullPath, nextSegments);
-          continue;
-        }
+      const fullPath = join(dir, entry.name);
 
-        if (!entry.isFile || !/^page\.(tsx?|ts|jsx?|js|mdx)$/.test(entry.name)) continue;
-
-        const pattern = this.buildAppRoutePattern(segments);
-        const relativePath = this.toProjectRelativePath(fullPath);
-        this.router.addRoute(pattern, relativePath);
-        logger.debug(`Discovered app route: ${pattern} -> ${relativePath}`);
+      if (entry.isDirectory) {
+        const normalizedSegment = this.normalizeAppPathSegment(entry.name);
+        const nextSegments = normalizedSegment ? [...segments, normalizedSegment] : segments;
+        await this.discoverAppRoutesRecursive(router, fullPath, nextSegments, state, depth + 1);
+        continue;
       }
-    } catch (error) {
-      logger.error(`Failed to discover app routes in ${dir}:`, error);
+
+      if (!entry.isFile || !/^page\.(tsx?|ts|jsx?|js|mdx)$/.test(entry.name)) continue;
+
+      const pattern = this.buildAppRoutePattern(segments);
+      if (pattern.length > MAX_ROUTE_PATH_LENGTH) {
+        throw new RangeError("Discovered route path exceeds the supported limit");
+      }
+      const relativePath = this.toProjectRelativePath(fullPath);
+      router.addRoute(pattern, relativePath);
     }
   }
 
@@ -253,8 +345,13 @@ export class RouteDiscovery {
 
   private toProjectRelativePath(fullPath: string): string {
     if (this.useRelativePaths) return fullPath;
-    return fullPath.startsWith(this.projectDir)
-      ? fullPath.slice(this.projectDir.length + 1)
-      : fullPath;
+    const projectRelativePath = relative(this.projectDir, fullPath);
+    if (
+      projectRelativePath === ".." || projectRelativePath.startsWith(`..${sep}`) ||
+      isAbsolute(projectRelativePath)
+    ) {
+      throw new TypeError("Discovered route escaped the project root");
+    }
+    return projectRelativePath.split(sep).join("/");
   }
 }

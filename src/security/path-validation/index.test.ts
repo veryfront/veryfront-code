@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createValidator,
@@ -67,6 +67,7 @@ describe("security/path-validation/index", () => {
 
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.OUTSIDE_BASE);
+      assertEquals(result.error?.includes("/project"), false);
     });
 
     it("should reject symlinks in strict mode", async () => {
@@ -98,7 +99,7 @@ describe("security/path-validation/index", () => {
     it("should reject when file not found and checkExists is true", async () => {
       const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
         fs: {
-          stat: () => Promise.reject(new Error("ENOENT")),
+          stat: () => Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" })),
         },
       };
 
@@ -112,6 +113,28 @@ describe("security/path-validation/index", () => {
 
       assertEquals(result.valid, false);
       assertEquals(result.code, PathValidationError.FILE_NOT_FOUND);
+      assertEquals(result.error?.includes("/project"), false);
+    });
+
+    it("should propagate filesystem failures that are not not-found errors", async () => {
+      const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
+        fs: { stat: () => Promise.reject(failure) },
+      };
+
+      const error = await assertRejects(
+        () =>
+          validatePath("src/private.ts", {
+            baseDir: "/project",
+            checkExists: true,
+            adapter: mockAdapter,
+            allowedDirs: ["src"],
+          }),
+        Error,
+        "permission denied",
+      );
+
+      assertEquals(error, failure);
     });
 
     it("should enforce allowedDirs restriction", async () => {
@@ -171,6 +194,12 @@ describe("security/path-validation/index", () => {
   });
 
   describe("validatePathSync", () => {
+    it("should reject an empty base directory", () => {
+      const result = validatePathSync("etc/passwd", { baseDir: "" });
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.INVALID_PATH);
+    });
+
     it("should accept a valid relative path within base", () => {
       const result = validatePathSync("src/file.ts", {
         baseDir: "/project",
@@ -275,6 +304,11 @@ describe("security/path-validation/index", () => {
       assertEquals(result, "file.ts");
     });
 
+    it("should not strip a sibling directory that only shares the base prefix", () => {
+      const result = sanitizePathForDisplay("/project-private/secret.txt", "/project");
+      assertEquals(result, "secret.txt");
+    });
+
     it("should handle Windows-style backslashes", () => {
       const result = sanitizePathForDisplay("C:\\project\\src\\file.ts", "C:\\project");
       assertEquals(result, "src/file.ts");
@@ -288,6 +322,10 @@ describe("security/path-validation/index", () => {
     it("should handle base directory with trailing slash", () => {
       const result = sanitizePathForDisplay("/project/src/file.ts", "/project/");
       assertEquals(result, "src/file.ts");
+    });
+
+    it("should handle the filesystem root without discarding subdirectories", () => {
+      assertEquals(sanitizePathForDisplay("/var/log/app.log", "/"), "var/log/app.log");
     });
 
     it("should return the full normalized path when base does not match", () => {

@@ -1,4 +1,5 @@
 import type { LiveEvalRuntime } from "./performance.ts";
+import { formatEvalPublicError } from "../../validation.ts";
 
 /** Record shape for live eval result. */
 export interface LiveEvalResultRecord {
@@ -18,6 +19,7 @@ export interface LiveEvalResultRecord {
 }
 
 type EvalResultStatus = LiveEvalResultRecord["status"];
+const MAX_LIVE_EVAL_RESULT_ITEMS = 1_000;
 
 interface BaseEvalResultInput {
   id: string;
@@ -41,20 +43,39 @@ function createEvalResult(
   status: EvalResultStatus,
   input: EvalResultInputWithContext,
 ): LiveEvalResultRecord {
+  if (!Number.isFinite(input.startedAt)) {
+    throw new TypeError("Live eval startedAt must be a finite number");
+  }
   return {
     id: input.id,
     label: input.label,
     runtime: input.runtime,
     status,
-    details: input.details,
-    durationMs: Date.now() - input.startedAt,
+    details: formatEvalPublicError(input.details),
+    durationMs: Math.max(0, Date.now() - input.startedAt),
     ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     ...(input.runId ? { runId: input.runId } : {}),
-    ...(input.artifactPaths?.length ? { artifactPaths: input.artifactPaths } : {}),
-    ...(input.traceSignature ? { traceSignature: input.traceSignature } : {}),
-    ...(input.toolStarts ? { toolStarts: input.toolStarts } : {}),
-    ...(input.toolArgsPreview ? { toolArgsPreview: input.toolArgsPreview } : {}),
-    ...(input.textPreview ? { textPreview: input.textPreview } : {}),
+    ...(input.artifactPaths?.length
+      ? {
+        artifactPaths: input.artifactPaths.slice(0, MAX_LIVE_EVAL_RESULT_ITEMS).map((path) =>
+          formatEvalPublicError(path)
+        ),
+      }
+      : {}),
+    ...(input.traceSignature
+      ? { traceSignature: formatEvalPublicError(input.traceSignature) }
+      : {}),
+    ...(input.toolStarts
+      ? {
+        toolStarts: input.toolStarts.slice(0, MAX_LIVE_EVAL_RESULT_ITEMS).map((name) =>
+          formatEvalPublicError(name)
+        ),
+      }
+      : {}),
+    ...(input.toolArgsPreview
+      ? { toolArgsPreview: formatEvalPublicError(input.toolArgsPreview) }
+      : {}),
+    ...(input.textPreview ? { textPreview: formatEvalPublicError(input.textPreview) } : {}),
   };
 }
 
@@ -66,13 +87,16 @@ export function createSkippedEvalResult(input: {
   details: string;
   startedAt: number;
 }): LiveEvalResultRecord {
+  if (!Number.isFinite(input.startedAt)) {
+    throw new TypeError("Live eval startedAt must be a finite number");
+  }
   return {
     id: input.id,
     label: input.label,
     runtime: input.runtime,
     status: "skip",
-    details: input.details,
-    durationMs: Date.now() - input.startedAt,
+    details: formatEvalPublicError(input.details),
+    durationMs: Math.max(0, Date.now() - input.startedAt),
   };
 }
 

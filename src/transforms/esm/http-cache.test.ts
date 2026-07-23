@@ -24,6 +24,7 @@ import {
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
 import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { MAX_HTTP_MODULE_RESPONSE_BYTES } from "#veryfront/transforms/shared/http-module-response.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -41,6 +42,85 @@ function extractBundleHashes(code: string): string[] {
 }
 
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("rejects oversized module responses without exposing the request URL", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-http-size-limit-" });
+    const originalFetch = globalThis.fetch;
+    const sourceUrl = "https://modules.example.com/private.js?token=secret-value";
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response("body", {
+          headers: {
+            "content-type": "application/javascript",
+            "content-length": String(MAX_HTTP_MODULE_RESPONSE_BYTES + 1),
+          },
+        }),
+      )) as typeof fetch;
+
+    try {
+      let thrown: unknown;
+      try {
+        await cacheModuleToLocal(sourceUrl, tempDir);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error);
+      const serialized = `${String(thrown)} ${JSON.stringify(thrown)}`;
+      assertEquals(serialized.includes(sourceUrl), false);
+      assertEquals(serialized.includes("secret-value"), false);
+      assertEquals(serialized.includes("maximum allowed size"), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not expose network error details from module fetches", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-http-error-redaction-" });
+    const originalFetch = globalThis.fetch;
+    const sourceUrl = "https://modules.example.com/private.js?token=secret-value";
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = (() =>
+      Promise.reject(new Error(`request failed for ${sourceUrl}`))) as typeof fetch;
+
+    try {
+      let thrown: unknown;
+      try {
+        await cacheModuleToLocal(sourceUrl, tempDir);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error);
+      const serialized = `${String(thrown)} ${JSON.stringify(thrown)}`;
+      assertEquals(serialized.includes(sourceUrl), false);
+      assertEquals(serialized.includes("secret-value"), false);
+      assertEquals(serialized.includes("HTTP module request failed"), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("preserves and shares canonical React versions across project import maps", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-react-singleton-cache-" });
     const originalFetch = globalThis.fetch;

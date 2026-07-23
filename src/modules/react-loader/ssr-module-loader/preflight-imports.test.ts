@@ -43,7 +43,7 @@ describe("modules/react-loader/ssr-module-loader/preflight-imports", () => {
     assertEquals(result.validImports, [{ specifier: "./a", absolutePath: "/project/a.ts" }]);
     assertEquals(result.missingImports.length, 2);
     assertEquals(result.missingImports[0]?.reason.includes("not a file on disk"), true);
-    assertEquals(result.missingImports[1]?.reason.includes("file not accessible"), true);
+    assertEquals(result.missingImports[1]?.reason.includes("dependency is not accessible"), true);
   });
 
   it("checks framework source imports with the local filesystem", async () => {

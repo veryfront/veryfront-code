@@ -25,8 +25,8 @@ describe("dynamic-route-matcher", () => {
       expect(isDynamicRoute("users/[id]/posts/[postId]")).toBe(true);
     });
 
-    it("should return true for dynamic parameter with dots", () => {
-      expect(isDynamicRoute("api/[version.number]")).toBe(true);
+    it("should reject unsupported punctuation in parameter names", () => {
+      expect(isDynamicRoute("api/[version.number]")).toBe(false);
     });
 
     it("should return false for empty string", () => {
@@ -98,8 +98,8 @@ describe("dynamic-route-matcher", () => {
       expect(extractParams("blog/[...slug]", "blog/post")).toEqual({ slug: ["post"] });
     });
 
-    it("should extract empty catch-all as empty array", () => {
-      expect(extractParams("blog/[...slug]", "blog")).toEqual({ slug: [] });
+    it("should not match an empty required catch-all", () => {
+      expect(extractParams("blog/[...slug]", "blog")).toBeNull();
     });
 
     it("should handle catch-all at root level", () => {
@@ -166,10 +166,9 @@ describe("dynamic-route-matcher", () => {
       expect(extractParams("users/[id]", "posts/123")).toBeNull();
     });
 
-    it("should handle parameter with dots in name", () => {
-      expect(extractParams("api/[version.number]", "api/1.0")).toEqual({
-        "version.number": "1.0",
-      });
+    it("should treat unsupported dynamic syntax as a literal segment", () => {
+      expect(extractParams("api/[version.number]", "api/1.0")).toBeNull();
+      expect(extractParams("api/[version.number]", "api/[version.number]")).toEqual({});
     });
 
     it("should handle very long paths", () => {

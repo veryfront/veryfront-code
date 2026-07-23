@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
 import { flattenRouteParams } from "#veryfront/routing";
@@ -295,6 +295,132 @@ describe("script-page-handling helpers", () => {
   });
 
   describe("handleScriptPage", () => {
+    it("rejects page modules outside the project root", async () => {
+      const rootDir = await Deno.makeTempDir({ prefix: "vf-script-boundary-" });
+      const projectDir = `${rootDir}/project`;
+      const outsidePath = `${rootDir}/outside.js`;
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outsidePath, `export default "<main>outside</main>";`);
+
+      try {
+        const adapter = { fs: { exists: async () => false } } as unknown as RuntimeAdapter;
+        await assertRejects(
+          () =>
+            handleScriptPage(
+              { entity: { path: outsidePath, frontmatter: {} } } as never,
+              "outside",
+              {
+                mode: "production",
+                config: {} as never,
+                projectDir,
+                adapter,
+              },
+            ),
+          Error,
+          "outside the project",
+        );
+      } finally {
+        await Deno.remove(rootDir, { recursive: true });
+      }
+    });
+
+    it("propagates metadata generation failures", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-metadata-" });
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default "<main>page</main>";\nexport function generateMetadata() { throw new Error("metadata boom"); }`,
+        );
+        const adapter = { fs: { exists: async () => false } } as unknown as RuntimeAdapter;
+
+        await assertRejects(
+          () =>
+            handleScriptPage(
+              { entity: { path: pagePath, frontmatter: {} } } as never,
+              "metadata",
+              {
+                mode: "production",
+                config: {} as never,
+                projectDir,
+                adapter,
+              },
+            ),
+          Error,
+          "metadata boom",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not translate adapter permission failures into missing files", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-permission-" });
+      let readCalls = 0;
+      try {
+        const adapter = {
+          fs: {
+            readFile: () => {
+              readCalls++;
+              return Promise.reject(
+                Object.assign(new Error("adapter permission denied"), { code: "EACCES" }),
+              );
+            },
+            exists: async () => false,
+          },
+        } as unknown as RuntimeAdapter;
+
+        await assertRejects(
+          () =>
+            handleScriptPage(
+              { entity: { path: `${projectDir}/missing.ts`, frontmatter: {} } } as never,
+              "missing",
+              {
+                mode: "production",
+                config: {} as never,
+                projectDir,
+                adapter,
+              },
+            ),
+          Error,
+          "adapter permission denied",
+        );
+        assertEquals(readCalls, 1);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects response statuses that the render result cannot preserve", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-response-" });
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default function () { return new Response(null, { status: 302, headers: { location: "/next" } }); }`,
+        );
+        const adapter = { fs: { exists: async () => false } } as unknown as RuntimeAdapter;
+
+        await assertRejects(
+          () =>
+            handleScriptPage(
+              { entity: { path: pagePath, frontmatter: {} } } as never,
+              "redirect",
+              {
+                mode: "production",
+                config: {} as never,
+                projectDir,
+                adapter,
+              },
+            ),
+          Error,
+          "status 302",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("forwards the request nonce when enhancing full HTML script pages", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-" });
 

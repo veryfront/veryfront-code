@@ -14,20 +14,27 @@ import {
 
 /** Public API contract for hosted agent run span. */
 export interface HostedAgentRunSpan {
+  /** Callback that handles set attributes. */
   setAttributes: (attributes: AgentTraceAttributes) => void;
+  /** Callback that handles finish. */
   finish: () => void;
+  /** Callback that handles with context. */
   withContext: <T>(fn: () => T) => T;
 }
 
 /** Public API contract for hosted agent run tracer. */
 export interface HostedAgentRunTracer {
+  /** Callback that handles start span. */
   startSpan: (name: string) => HostedAgentRunSpan;
 }
 
 /** State for hosted agent run span final. */
 export interface HostedAgentRunSpanFinalState {
+  /** Status. */
   status: "completed" | "failed" | "cancelled";
+  /** Model ID value. */
   modelId?: string | null;
+  /** Usage value. */
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -37,33 +44,53 @@ export interface HostedAgentRunSpanFinalState {
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
   };
+  /** Terminal error code value. */
   terminalErrorCode?: string | null;
+  /** Terminal error message value. */
   terminalErrorMessage?: string | null;
 }
 
 /** Public API contract for hosted agent run span controller. */
 export interface HostedAgentRunSpanController {
+  /** Callback that handles with context. */
   withContext: <T>(fn: () => T) => T;
+  /** Callback that handles set attributes. */
   setAttributes: (attributes: AgentTraceAttributes) => void;
+  /** Callback that handles set message ID. */
   setMessageId: (messageId: string) => void;
+  /** Finalizes the associated lifecycle. */
   finalize: (finalState: HostedAgentRunSpanFinalState) => void;
 }
 
 /** Input payload for create hosted agent run span controller. */
 export interface CreateHostedAgentRunSpanControllerInput {
+  /** Tracer value. */
   tracer: HostedAgentRunTracer;
+  /** Span name value. */
   spanName?: string;
+  /** Operation name value. */
   operationName: "chat" | "invoke_agent";
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Project ID value. */
   projectId: string | null;
+  /** User ID value. */
   userId: string;
+  /** Agent ID value. */
   agentId: string;
+  /** Agent name value. */
   agentName?: string;
+  /** Model ID value. */
   modelId?: string;
+  /** Root run value. */
   rootRun?: Pick<HostedConversationRootRunState, "runId" | "messageId"> | null;
+  /** Upstream parent conversation ID value. */
   upstreamParentConversationId?: string;
+  /** Upstream parent run ID value. */
   upstreamParentRunId?: string;
+  /** Spawned from tool call ID value. */
   spawnedFromToolCallId?: string;
+  /** Trace attributes value. */
   traceAttributes?: AgentTraceAttributes;
 }
 
@@ -126,19 +153,29 @@ export function createHostedAgentRunSpanController(
 
 /** Public API contract for hosted root run lifecycle runtime adapter. */
 export interface HostedRootRunLifecycleRuntimeAdapter extends HostedChatExecutionLifecycleAdapter {
+  /** Durable root run value. */
   durableRootRun: HostedConversationRootRunState | null;
+  /** Durable run mirror value. */
   durableRunMirror: ConversationRunChunkMirror | null;
 }
 
 /** Input payload for create hosted root run lifecycle runtime adapter. */
 export interface CreateHostedRootRunLifecycleRuntimeAdapterInput {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Model ID value. */
   modelId: string;
+  /** Durable root run value. */
   durableRootRun: HostedConversationRootRunState | null;
+  /** Durable run mirror value. */
   durableRunMirror: ConversationRunChunkMirror | null;
+  /** Agent run span value. */
   agentRunSpan: Pick<HostedAgentRunSpanController, "finalize">;
+  /** Callback that handles resolve provider. */
   resolveProvider: (modelId: string) => string;
+  /** Create terminal adapter value. */
   createTerminalAdapter?: (
     input: Parameters<typeof createConversationHostedTerminalAdapter>[0],
   ) => ConversationHostedTerminalAdapter;

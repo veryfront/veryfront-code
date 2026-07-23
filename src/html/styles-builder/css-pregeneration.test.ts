@@ -1,17 +1,66 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import "./__tests__/css-processor-setup.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createStyleScopeProfile } from "./style-scope-profile.ts";
 import {
+  buildPreparedCSSArtifactFromFiles,
   collectLocalProjectSourceFiles,
   findGlobalStylesheet,
   findStylesheetFromFiles,
   readLocalProjectStylesheet,
 } from "./css-pregeneration.ts";
+import {
+  invalidatePreparedProjectCSS,
+  invalidatePreparedProjectCSSAsync,
+  tryGetPreparedProjectCSS,
+} from "./prepared-project-css-cache.ts";
+import { clearCSSCache, invalidateCompiler, invalidateProjectCSS } from "./tailwind-compiler.ts";
 
 describe("styles-builder/css-pregeneration", () => {
+  describe("buildPreparedCSSArtifactFromFiles", () => {
+    it("builds and persists a prepared artifact from a bounded source snapshot", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response("@layer theme, base, components, utilities;", { status: 200 }),
+        )) as typeof fetch;
+      const projectSlug = `prepared-build-${crypto.randomUUID()}`;
+
+      try {
+        const result = await buildPreparedCSSArtifactFromFiles({
+          projectSlug,
+          projectVersion: "release-1",
+          projectDir: "/project",
+          files: [{
+            path: "/project/pages/index.tsx",
+            content: 'export default () => <main className="block text-red-500" />;',
+          }],
+          styleProfile: createStyleScopeProfile(),
+          stylesheet: '@import "tailwindcss";',
+          minify: false,
+        });
+
+        assertEquals(result.candidateCount > 0, true);
+        assertEquals(result.css.length > 0, true);
+        assertEquals(await tryGetPreparedProjectCSS(result.context), {
+          css: result.css,
+          hash: result.hash,
+          fromCache: true,
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+        clearCSSCache();
+        invalidateCompiler();
+        invalidateProjectCSS(projectSlug);
+        invalidatePreparedProjectCSS(projectSlug);
+        await invalidatePreparedProjectCSSAsync(projectSlug);
+      }
+    });
+  });
+
   describe("findGlobalStylesheet", () => {
     it("should return undefined when no files match", () => {
       assertEquals(
@@ -112,7 +161,7 @@ describe("styles-builder/css-pregeneration", () => {
     it("should not match files that end with globals.css but have different prefix", () => {
       assertEquals(
         findGlobalStylesheet([{ path: "my-globals.css", content: "should not match" }]),
-        "should not match",
+        undefined,
       );
     });
   });
@@ -249,6 +298,31 @@ describe("styles-builder/css-pregeneration", () => {
       }
     });
 
+    it("does not traverse source-directory symlinks", async () => {
+      const rootDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const projectDir = join(rootDir, "project");
+      const outsideDir = join(rootDir, "outside");
+
+      try {
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(outsideDir, { recursive: true });
+        await writeTextFile(
+          join(outsideDir, "outside.tsx"),
+          'export default () => <div className="should-not-be-scanned" />;',
+        );
+        await Deno.symlink(outsideDir, join(projectDir, "linked"));
+
+        const files = await collectLocalProjectSourceFiles({
+          projectDir,
+          styleProfile: createStyleScopeProfile(),
+        });
+
+        assertEquals(files, []);
+      } finally {
+        await remove(rootDir, { recursive: true });
+      }
+    });
+
     it("reads the configured stylesheet path before default globals fallbacks", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
 
@@ -261,6 +335,53 @@ describe("styles-builder/css-pregeneration", () => {
           await readLocalProjectStylesheet(projectDir, "styles/custom.css"),
           ".custom { color: red; }",
         );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not read configured stylesheets outside the project root", async () => {
+      const rootDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+      const projectDir = join(rootDir, "project");
+
+      try {
+        await mkdir(projectDir, { recursive: true });
+        await writeTextFile(join(rootDir, "secret.css"), ".secret { display: block; }");
+
+        await assertRejects(
+          () => readLocalProjectStylesheet(projectDir, "../secret.css"),
+          TypeError,
+          "Configured stylesheet path is invalid",
+        );
+      } finally {
+        await remove(rootDir, { recursive: true });
+      }
+    });
+
+    it("does not silently replace an unreadable configured stylesheet", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await assertRejects(
+          () => readLocalProjectStylesheet(projectDir, "styles/missing.css"),
+          TypeError,
+          "Configured stylesheet could not be read",
+        );
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not load oversized project stylesheets", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
+
+      try {
+        await writeTextFile(
+          join(projectDir, "globals.css"),
+          "x".repeat(2 * 1024 * 1024 + 1),
+        );
+
+        assertEquals(await readLocalProjectStylesheet(projectDir), undefined);
       } finally {
         await remove(projectDir, { recursive: true });
       }

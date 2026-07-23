@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Embedding } from "./types.ts";
 import { vectorStore } from "./vector-store.ts";
@@ -141,5 +141,239 @@ describe("vectorStore", () => {
 
     assertEquals(store.size, 0);
     assertEquals(await store.search("alpha"), []);
+  });
+
+  it("validates add cardinality and embedding dimensions atomically", async () => {
+    const { embedder } = createTestEmbedder();
+    const store = vectorStore({ embedder, maxEntries: 1 });
+
+    await assertRejects(
+      () => store.add(["alpha document", "beta document"]),
+      Error,
+      "Vector store capacity exceeded",
+    );
+    assertEquals(store.size, 0);
+
+    const malformed = vectorStore({
+      embedder: {
+        model: "test/malformed",
+        async embed() {
+          return [1, 2];
+        },
+        async embedMany() {
+          return [[1, 2]];
+        },
+      },
+    });
+    await assertRejects(
+      () => malformed.add(["one", "two"]),
+      Error,
+      "Embedding response count must match input count",
+    );
+    assertEquals(malformed.size, 0);
+  });
+
+  it("rejects invalid metadata and search options", async () => {
+    const { embedder } = createTestEmbedder();
+    const store = vectorStore({ embedder });
+
+    await assertRejects(
+      () => store.add(["alpha document", "beta document"], [{ source: "docs" }]),
+      Error,
+      "Metadata count must match text count",
+    );
+    await store.add(["alpha document"]);
+    await assertRejects(
+      () => store.search("alpha", { topK: 0 }),
+      Error,
+      "topK must be a positive integer",
+    );
+    await assertRejects(
+      () => store.search("alpha", { strategy: "mmr", lambda: 2 }),
+      Error,
+      "lambda must be between 0 and 1",
+    );
+  });
+
+  it("keeps clear authoritative over an add already in flight", async () => {
+    let finishEmbedding!: (vectors: number[][]) => void;
+    const pendingEmbedding = new Promise<number[][]>((resolve) => {
+      finishEmbedding = resolve;
+    });
+    const store = vectorStore({
+      embedder: {
+        model: "test/deferred",
+        async embed() {
+          return [1, 0];
+        },
+        embedMany() {
+          return pendingEmbedding;
+        },
+      },
+    });
+
+    const add = store.add(["alpha"]);
+    store.clear();
+    finishEmbedding([[1, 0]]);
+    await add;
+
+    assertEquals(store.size, 0);
+  });
+
+  it("discards stale add dimensions after clear starts a new generation", async () => {
+    let finishOldEmbedding!: (vectors: number[][]) => void;
+    const oldEmbedding = new Promise<number[][]>((resolve) => {
+      finishOldEmbedding = resolve;
+    });
+    const store = vectorStore({
+      embedder: {
+        model: "test/generations",
+        async embed() {
+          return [1, 0, 0];
+        },
+        embedMany(texts) {
+          return texts[0] === "old" ? oldEmbedding : Promise.resolve([[1, 0, 0]]);
+        },
+      },
+    });
+
+    const staleAdd = store.add(["old"]);
+    store.clear();
+    await store.add(["new"]);
+    finishOldEmbedding([[1, 0]]);
+    await staleAdd;
+
+    assertEquals(store.size, 1);
+  });
+
+  it("selects the most relevant MMR result first even at maximum diversity", async () => {
+    const { embedder } = createTestEmbedder();
+    const store = vectorStore({ embedder });
+    await store.add(["beta document", "alpha document", "gamma document"]);
+
+    const results = await store.search("alpha", {
+      strategy: "mmr",
+      lambda: 0,
+      topK: 2,
+    });
+
+    assertEquals(results[0]?.text, "alpha document");
+  });
+
+  it("uses negative cosine similarity when selecting diverse MMR results", async () => {
+    const vectors = new Map<string, number[]>([
+      ["query", [1, 0]],
+      ["relevant", [1, 0]],
+      ["orthogonal", [0, 1]],
+      ["opposite", [-1, 0]],
+    ]);
+    const embedder: Embedding = {
+      model: "test/mmr-negative",
+      async embed(text) {
+        return vectors.get(text)!;
+      },
+      async embedMany(texts) {
+        return texts.map((text) => vectors.get(text)!);
+      },
+    };
+    const store = vectorStore({ embedder });
+    await store.add(["relevant", "orthogonal", "opposite"]);
+
+    const results = await store.search("query", {
+      strategy: "mmr",
+      lambda: 0,
+      topK: 3,
+    });
+
+    assertEquals(results.map((result) => result.text), [
+      "relevant",
+      "opposite",
+      "orthogonal",
+    ]);
+  });
+
+  it("snapshots metadata on input and output", async () => {
+    const { embedder } = createTestEmbedder();
+    const store = vectorStore({ embedder });
+    const metadata = { source: "docs", nested: { category: "guide" } };
+    await store.add(["alpha document"], [metadata]);
+    metadata.source = "mutated";
+    metadata.nested.category = "mutated";
+
+    const first = await store.search("alpha", { filter: { source: "docs" } });
+    assertEquals(first.length, 1);
+    first[0]!.metadata!.source = "output-mutation";
+    (first[0]!.metadata!.nested as { category: string }).category = "output-mutation";
+
+    const second = await store.search("alpha", { filter: { source: "docs" } });
+    assertEquals(second[0]?.metadata, {
+      source: "docs",
+      nested: { category: "guide" },
+    });
+  });
+
+  it("snapshots add cancellation options before embedding", async () => {
+    const first = new AbortController();
+    const second = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const store = vectorStore({
+      embedder: {
+        model: "test/options-snapshot",
+        async embed(): Promise<number[]> {
+          return [1];
+        },
+        async embedMany(_texts, options): Promise<number[][]> {
+          await Promise.resolve();
+          receivedSignal = options?.signal;
+          return [[1]];
+        },
+      },
+    });
+    const options = { signal: first.signal };
+
+    const pendingAdd = store.add(["text"], undefined, options);
+    options.signal = second.signal;
+    await pendingAdd;
+
+    assert(receivedSignal === first.signal);
+  });
+
+  it("searches a stable entry snapshot while query embedding is in flight", async () => {
+    let resolveQuery!: (value: number[]) => void;
+    const queryEmbedding = new Promise<number[]>((resolve) => {
+      resolveQuery = resolve;
+    });
+    const store = vectorStore({
+      embedder: {
+        model: "test/concurrent-search",
+        embed() {
+          return queryEmbedding;
+        },
+        async embedMany(texts: string[]) {
+          return texts.map((text) => text === "alpha" ? [1, 0] : [0, 1]);
+        },
+      },
+    });
+    await store.add(["alpha"]);
+
+    const pendingSearch = store.search("query");
+    store.clear();
+    await store.add(["beta"]);
+    resolveQuery([1, 0]);
+
+    const results = await pendingSearch;
+    assertEquals(results.map((result) => result.text), ["alpha"]);
+  });
+
+  it("rejects malformed search options", async () => {
+    const { embedder } = createTestEmbedder();
+    const store = vectorStore({ embedder });
+    await store.add(["alpha document"]);
+
+    await assertRejects(
+      () => store.search("alpha", null as never),
+      Error,
+      "Vector search options must be an object",
+    );
   });
 });

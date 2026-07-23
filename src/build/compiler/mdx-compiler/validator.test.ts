@@ -5,7 +5,12 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
-import { pathExists, validateCompileParams, validateFileExists } from "./validator.ts";
+import {
+  getMDXSourceDirectories,
+  pathExists,
+  validateCompileParams,
+  validateFileExists,
+} from "./validator.ts";
 import type { CompileOptions } from "./types.ts";
 import {
   makeTempDir,
@@ -106,6 +111,34 @@ describe("MDX compiler validator", () => {
     it("should accept production mode", () => {
       const opts = { ...validOptions, mode: "production" as const };
       expect(() => validateCompileParams("test.mdx", "# Hello", opts)).not.toThrow();
+    });
+
+    it("accepts normalized project-relative source directories", () => {
+      const opts = { ...validOptions, sourceDirectories: ["content", "docs/guides"] };
+      expect(() => validateCompileParams("test.mdx", "# Hello", opts)).not.toThrow();
+      expect(getMDXSourceDirectories(opts)).toEqual(["content", "docs/guides"]);
+    });
+
+    it("rejects unsafe or duplicate source directories", () => {
+      for (
+        const sourceDirectories of [
+          [] as string[],
+          ["../content"],
+          ["/content"],
+          ["C:\\content"],
+          ["content", "./content"],
+        ]
+      ) {
+        const opts = { ...validOptions, sourceDirectories };
+        expect(() => validateCompileParams("test.mdx", "# Hello", opts)).toThrow();
+      }
+    });
+
+    it("rejects a non-AbortSignal watcher signal", () => {
+      const opts = { ...validOptions, signal: {} as AbortSignal };
+      expect(() => validateCompileParams("test.mdx", "# Hello", opts)).toThrow(
+        "options.signal must be an AbortSignal",
+      );
     });
   });
 

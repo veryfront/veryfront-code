@@ -8,6 +8,7 @@ import {
   defaultTextMapGetter,
   defaultTextMapSetter,
   getGlobalMetricsAPI,
+  getGlobalMetricsAPIRevision,
   getGlobalTracerProvider,
   getTracer,
   type MetricsAPI,
@@ -127,10 +128,21 @@ describe("observability/tracing/api-shim", () => {
   });
 
   describe("context API", () => {
+    it("keeps fallback contexts immutable", () => {
+      const key = Symbol("immutable-context");
+      const root = context.active();
+      const child = root.setValue(key, "child");
+
+      assertEquals(root.getValue(key), undefined);
+      assertEquals(child.getValue(key), "child");
+      assertEquals(child.deleteValue(key).getValue(key), undefined);
+      assertEquals(child.getValue(key), "child");
+    });
+
     // A minimal, hand-rolled Context that is a NEW object reference distinct
     // from the no-op `context.active()`. The no-op Context.setValue returns
     // `this`, so deriving a "scoped" context via setValue would yield the same
-    // singleton — making any identity assertion tautological. Building a fresh
+    // singleton, making any identity assertion tautological. Building a fresh
     // object lets us prove `context.with` actually swaps and restores the
     // active context.
     function makeScopedContext(): Context {
@@ -193,6 +205,38 @@ describe("observability/tracing/api-shim", () => {
       assertEquals(context.active() === base, true);
     });
 
+    it("isolates concurrent fallback async contexts", async () => {
+      const key = Symbol("concurrent-context");
+      const root = context.active();
+      const contextA = root.setValue(key, "a");
+      const contextB = root.setValue(key, "b");
+      let releaseA!: () => void;
+      let notifyAStarted!: () => void;
+      const aStarted = new Promise<void>((resolve) => {
+        notifyAStarted = resolve;
+      });
+      const waitForRelease = new Promise<void>((resolve) => {
+        releaseA = resolve;
+      });
+
+      const operationA = context.with(contextA, async () => {
+        assertEquals(context.active().getValue(key), "a");
+        notifyAStarted();
+        await waitForRelease;
+        assertEquals(context.active().getValue(key), "a");
+      });
+
+      await aStarted;
+      await context.with(contextB, async () => {
+        assertEquals(context.active().getValue(key), "b");
+        await Promise.resolve();
+        assertEquals(context.active().getValue(key), "b");
+      });
+      releaseA();
+      await operationA;
+      assertEquals(context.active().getValue(key), undefined);
+    });
+
     it("delegates active and with to a registered context accessor", () => {
       const scoped = makeScopedContext();
       let withContext: Context | null = null;
@@ -250,14 +294,25 @@ describe("observability/tracing/api-shim", () => {
       defaultTextMapSetter.set(carrier, "traceparent", "tp");
       assertEquals(carrier.traceparent, "tp");
     });
+
+    it("setter cannot mutate a carrier prototype", () => {
+      const carrier: Record<string, string> = {};
+      defaultTextMapSetter.set(carrier, "__proto__", "polluted");
+
+      assertEquals(Object.getPrototypeOf(carrier), Object.prototype);
+      assertEquals(Object.hasOwn(carrier, "__proto__"), true);
+      assertEquals(carrier.__proto__, "polluted");
+    });
   });
 
   describe("metrics API registry", () => {
     it("is null by default and round-trips a registered API", () => {
       assertEquals(getGlobalMetricsAPI(), null);
+      const revision = getGlobalMetricsAPIRevision();
       const api = { getMeter: () => ({}) } as unknown as MetricsAPI;
       setGlobalMetricsAPI(api);
       assertEquals(getGlobalMetricsAPI(), api);
+      assertEquals(getGlobalMetricsAPIRevision(), revision + 1);
     });
   });
 

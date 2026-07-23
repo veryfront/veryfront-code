@@ -1,6 +1,17 @@
-import { isNumberArray } from "./runtime-loader/provider-embedding-responses.ts";
 import {
+  extractGoogleEmbedding,
+  extractGoogleUsageTokens,
+  extractOpenAIEmbeddings,
+  extractOpenAIUsageTokens,
+  isNumberArray,
+} from "./runtime-loader/provider-embedding-responses.ts";
+import {
+  extractAnthropicUsage,
+  extractGoogleUsage,
+  extractOpenAIResponsesUsage,
+  extractOpenAIUsage,
   mergeUsage,
+  normalizeRuntimeUsage,
   readGatewayBillingMode,
   type RuntimeUsage,
 } from "./runtime-loader/provider-usage.ts";
@@ -12,10 +23,18 @@ import {
   requestStream,
 } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
+
+const MAX_PROVIDER_CONTENT_PARTS = 4_096;
+const MAX_PROVIDER_MESSAGES = 1_024;
+const MAX_PROVIDER_TEXT_CHARACTERS = 8 * 1_024 * 1_024;
+const MAX_PROVIDER_TOOLS = 128;
+const MAX_TOOL_CALL_ID_CHARACTERS = 1_024;
+const MAX_TOOL_NAME_CHARACTERS = 256;
 
 export {
   ProviderError,
@@ -27,8 +46,17 @@ export {
 export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 export {
   buildProviderError,
+  extractAnthropicUsage,
+  extractGoogleEmbedding,
+  extractGoogleUsage,
+  extractGoogleUsageTokens,
+  extractOpenAIEmbeddings,
+  extractOpenAIResponsesUsage,
+  extractOpenAIUsage,
+  extractOpenAIUsageTokens,
   isNumberArray,
   mergeUsage,
+  normalizeRuntimeUsage,
   parseRetryAfterMs,
   readGatewayBillingMode,
   readRecord,
@@ -81,7 +109,8 @@ export type RuntimePromptMessage =
       output: { type: "json"; value: unknown };
     }>;
   };
-type RuntimeToolDefinition =
+/** Tool definition accepted by the shared provider request builders. */
+export type RuntimeToolDefinition =
   | {
     type: "function";
     name: string;
@@ -146,7 +175,7 @@ type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
  * Providers that do not support reasoning treat this as a no-op. On
  * Anthropic + OpenAI, enabling reasoning also disables sampling params
  * that the providers reject in combination (`temperature`, `topP`,
- * `topK`, `presencePenalty`, `frequencyPenalty`) — silently dropping
+ * `topK`, `presencePenalty`, `frequencyPenalty`) - silently dropping
  * them rather than failing the request.
  */
 type ProviderReasoningOption = {
@@ -201,11 +230,11 @@ type OpenAICompatibleLanguageOptions = {
    * OpenAI-specific. Maps to the `service_tier` field on Chat Completions
    * which trades latency for cost. Documented values:
    *
-   *  - `default` — standard processing (default if unset)
-   *  - `flex` — lower-priority queue, lower per-token cost, longer
+   *  - `default` - standard processing (default if unset)
+   *  - `flex` - lower-priority queue, lower per-token cost, longer
    *    expected latency. Useful for batchy or non-interactive workloads.
-   *  - `scale` — reserved-capacity tier with strict latency SLOs.
-   *  - `auto` — let OpenAI pick.
+   *  - `scale` - reserved-capacity tier with strict latency SLOs.
+   *  - `auto` - let OpenAI pick.
    *
    * Forwarded verbatim. Anthropic and Google have no equivalent and
    * the field is silently omitted on those providers.
@@ -221,10 +250,10 @@ type OpenAICompatibleLanguageOptions = {
    * Structured-output response format. Maps to OpenAI's `response_format`
    * field on Chat Completions (and Responses). Three variants:
    *
-   *  - `{ type: "text" }` — the default (no constraint).
-   *  - `{ type: "json" }` — emits OpenAI's `response_format:
+   *  - `{ type: "text" }` - the default (no constraint).
+   *  - `{ type: "json" }` - emits OpenAI's `response_format:
    *    { type: "json_object" }` to force the model to return valid JSON.
-   *  - `{ type: "json_schema", name, schema, strict? }` — emits
+   *  - `{ type: "json_schema", name, schema, strict? }` - emits
    *    OpenAI's `response_format: { type: "json_schema", json_schema: {
    *    name, schema, strict } }` for fully constrained structured
    *    outputs (gpt-4o-2024-08-06+).
@@ -250,7 +279,7 @@ type OpenAICompatibleLanguageOptions = {
    * sandboxed container (e.g. for Computer Use, code execution
    * sandboxes, or skills loaded from a container). Forwarded verbatim.
    *
-   * The shape varies — string container id or a structured object
+   * The shape varies - string container id or a structured object
    * depending on the feature. Caller passes whatever Anthropic's docs
    * specify for the target feature.
    */
@@ -351,7 +380,8 @@ export type ProviderWarning = {
  * they can append entries during the build pass instead of plumbing a
  * return-tuple shape through every helper.
  */
-type WarningCollector = {
+/** Bounded collector for warnings produced while translating a request. */
+export type WarningCollector = {
   push(warning: ProviderWarning): void;
   drain(): ProviderWarning[];
 };
@@ -361,10 +391,13 @@ export function createWarningCollector(): WarningCollector {
   const list: ProviderWarning[] = [];
   return {
     push(warning) {
+      if (list.length >= 128) {
+        throw new RangeError("Provider warning limit exceeded");
+      }
       list.push(warning);
     },
     drain() {
-      return list.slice();
+      return list.splice(0, list.length);
     },
   };
 }
@@ -372,84 +405,239 @@ export function createWarningCollector(): WarningCollector {
 /** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
   if (typeof value === "string") {
+    if (value.length > MAX_PROVIDER_TEXT_CHARACTERS) {
+      throw new RangeError("Provider JSON value exceeded the supported size");
+    }
     return value;
   }
 
-  return JSON.stringify(value);
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value) ?? "null";
+  } catch {
+    throw new TypeError("Provider tool value must be JSON serializable");
+  }
+  if (serialized.length > MAX_PROVIDER_TEXT_CHARACTERS) {
+    throw new RangeError("Provider JSON value exceeded the supported size");
+  }
+  return serialized;
 }
 
 /** Read text content parts from provider messages. */
 export function readTextParts(parts: Array<{ type: string; text?: string }>): string {
-  let text = "";
+  return readTextPartRecords(readContentPartRecords(parts));
+}
+
+function readContentPartRecords(parts: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(parts) || parts.length > MAX_PROVIDER_CONTENT_PARTS) {
+    throw new RangeError("Provider message contains too many content parts");
+  }
+  return parts.map((part) => {
+    const record = readRecord(part);
+    if (!record || typeof record.type !== "string") {
+      throw new TypeError("Provider message contains an invalid content part");
+    }
+    return record;
+  });
+}
+
+function readTextPartRecords(parts: Record<string, unknown>[]): string {
+  const chunks: string[] = [];
+  let totalLength = 0;
   for (const part of parts) {
-    if (part.type === "text" && typeof part.text === "string") {
-      text += part.text;
+    if (part.type === "text") {
+      if (typeof part.text !== "string") {
+        throw new TypeError("Provider text content part is invalid");
+      }
+      totalLength += part.text.length;
+      if (totalLength > MAX_PROVIDER_TEXT_CHARACTERS) {
+        throw new RangeError("Provider message text exceeded the supported size");
+      }
+      chunks.push(part.text);
     }
   }
-  return text;
+  return chunks.join("");
+}
+
+function assertBoundedString(
+  value: unknown,
+  label: string,
+  maximum: number,
+): asserts value is string {
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > maximum ||
+    hasUnsafeControlCharacters(value)
+  ) {
+    throw new TypeError(`${label} is invalid`);
+  }
+}
+
+function assertSafeProviderMediaUrl(value: string): void {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_PROVIDER_TEXT_CHARACTERS
+  ) {
+    throw new TypeError("Provider image URL is invalid");
+  }
+  if (value.startsWith("data:")) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new TypeError("Provider image URL is invalid");
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username ||
+    parsed.password
+  ) {
+    throw new TypeError("Provider image URL is invalid");
+  }
 }
 
 function toOpenAICompatibleUserContent(
-  parts: RuntimePromptUserContent,
+  parts: unknown,
+  consumeCharacters: (value: string) => void,
 ): OpenAICompatibleUserContent {
-  if (!parts.some((part) => part.type !== "text" && part.mediaType.startsWith("image/"))) {
-    return readTextParts(parts);
+  const partRecords = readContentPartRecords(parts);
+  const textContent = readTextPartRecords(partRecords);
+  consumeCharacters(textContent);
+  let containsImage = false;
+  for (const part of partRecords) {
+    if (part.type === "text") continue;
+    if (
+      (part.type !== "image" && part.type !== "file") ||
+      typeof part.mediaType !== "string" || typeof part.url !== "string"
+    ) {
+      throw new TypeError("Provider message contains an invalid content part");
+    }
+    if (part.type === "file" && !part.mediaType.startsWith("image/")) {
+      throw new TypeError("Provider chat prompt contains an unsupported non-image file");
+    }
+    containsImage = true;
+  }
+  if (!containsImage) {
+    return textContent;
   }
 
   const content: Exclude<OpenAICompatibleUserContent, string> = [];
 
-  for (const part of parts) {
+  for (const part of partRecords) {
     if (part.type === "text") {
-      if (part.text.length > 0) {
+      if (typeof part.text === "string" && part.text.length > 0) {
         content.push({ type: "text", text: part.text });
       }
       continue;
     }
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
+    if (
+      (part.type === "image" || part.type === "file") &&
+      typeof part.url === "string"
+    ) {
+      assertSafeProviderMediaUrl(part.url);
+      consumeCharacters(part.url);
       content.push({ type: "image_url", image_url: { url: part.url } });
     }
   }
 
-  return content.length > 0 ? content : readTextParts(parts);
+  return content.length > 0 ? content : textContent;
 }
 
 /** Convert runtime prompt messages into OpenAI-compatible chat messages. */
 export function toOpenAICompatibleMessages(
   prompt: RuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
+  if (!Array.isArray(prompt) || prompt.length > MAX_PROVIDER_MESSAGES) {
+    throw new RangeError("Provider prompt must contain at most 1024 messages");
+  }
+  if (prompt.length === 0) {
+    throw new RangeError("Provider prompt must contain at least one message");
+  }
   const messages: OpenAICompatibleChatMessage[] = [];
+  let totalCharacters = 0;
+  let totalContentParts = 0;
 
-  for (const message of prompt) {
+  const consumeCharacters = (value: string): void => {
+    totalCharacters += value.length;
+    if (totalCharacters > MAX_PROVIDER_TEXT_CHARACTERS) {
+      throw new RangeError("Provider prompt exceeded the supported size");
+    }
+  };
+
+  const consumeContentParts = (parts: unknown[]): void => {
+    totalContentParts += parts.length;
+    if (totalContentParts > MAX_PROVIDER_CONTENT_PARTS) {
+      throw new RangeError("Provider prompt contains too many content parts");
+    }
+  };
+
+  for (const messageValue of prompt) {
+    const message = readRecord(messageValue);
+    if (!message) {
+      throw new TypeError("Provider prompt contains an invalid message");
+    }
     switch (message.role) {
       case "system":
+        if (
+          typeof message.content !== "string" ||
+          message.content.length > MAX_PROVIDER_TEXT_CHARACTERS
+        ) {
+          throw new RangeError("Provider message text exceeded the supported size");
+        }
+        consumeCharacters(message.content);
         messages.push({ role: "system", content: message.content });
         break;
-      case "user":
-        messages.push({ role: "user", content: toOpenAICompatibleUserContent(message.content) });
+      case "user": {
+        if (!Array.isArray(message.content)) {
+          throw new TypeError("Provider user message content must be an array");
+        }
+        consumeContentParts(message.content);
+        messages.push({
+          role: "user",
+          content: toOpenAICompatibleUserContent(message.content, consumeCharacters),
+        });
         break;
+      }
       case "assistant": {
-        let text = "";
+        if (!Array.isArray(message.content)) {
+          throw new TypeError("Provider assistant message content must be an array");
+        }
+        consumeContentParts(message.content);
+        const contentParts = readContentPartRecords(message.content);
+        const text = readTextPartRecords(contentParts);
+        consumeCharacters(text);
         const toolCalls: NonNullable<
           Extract<OpenAICompatibleChatMessage, { role: "assistant" }>["tool_calls"]
         > = [];
 
-        for (const part of message.content) {
+        for (const part of contentParts) {
           if (part.type === "text") {
-            text += part.text;
             continue;
           }
           // OpenAI Chat Completions has no roundtrip slot for Anthropic
-          // thinking blocks — they get dropped on replay. Anthropic-only.
+          // thinking blocks - they get dropped on replay. Anthropic-only.
           if (part.type === "reasoning") {
             continue;
           }
+
+          if (part.type !== "tool-call") {
+            throw new TypeError("Provider assistant message contains an invalid content part");
+          }
+          assertBoundedString(
+            part.toolCallId,
+            "Provider tool call ID",
+            MAX_TOOL_CALL_ID_CHARACTERS,
+          );
+          assertBoundedString(part.toolName, "Provider tool name", MAX_TOOL_NAME_CHARACTERS);
+          const input = stringifyJsonValue(part.input);
+          consumeCharacters(part.toolCallId);
+          consumeCharacters(part.toolName);
+          consumeCharacters(input);
 
           toolCalls.push({
             id: part.toolCallId,
             type: "function",
             function: {
               name: part.toolName,
-              arguments: stringifyJsonValue(part.input),
+              arguments: input,
             },
           });
         }
@@ -461,15 +649,35 @@ export function toOpenAICompatibleMessages(
         });
         break;
       }
-      case "tool":
-        for (const part of message.content) {
+      case "tool": {
+        if (!Array.isArray(message.content)) {
+          throw new TypeError("Provider tool message content must be an array");
+        }
+        consumeContentParts(message.content);
+        const contentParts = readContentPartRecords(message.content);
+        for (const part of contentParts) {
+          const outputRecord = readRecord(part.output);
+          if (part.type !== "tool-result" || outputRecord?.type !== "json") {
+            throw new TypeError("Provider tool message contains an invalid content part");
+          }
+          assertBoundedString(
+            part.toolCallId,
+            "Provider tool call ID",
+            MAX_TOOL_CALL_ID_CHARACTERS,
+          );
+          const output = stringifyJsonValue(outputRecord.value);
+          consumeCharacters(part.toolCallId);
+          consumeCharacters(output);
           messages.push({
             role: "tool",
             tool_call_id: part.toolCallId,
-            content: stringifyJsonValue(part.output.value),
+            content: output,
           });
         }
         break;
+      }
+      default:
+        throw new TypeError("Provider prompt contains an invalid role");
     }
   }
 
@@ -483,19 +691,37 @@ export function toOpenAICompatibleTools(
   if (!tools) {
     return undefined;
   }
+  if (!Array.isArray(tools) || tools.length > MAX_PROVIDER_TOOLS) {
+    throw new RangeError(`Provider request must contain at most ${MAX_PROVIDER_TOOLS} tools`);
+  }
 
-  const functions = tools.flatMap((tool) =>
-    tool.type === "function"
-      ? [{
-        type: "function" as const,
-        function: {
-          name: tool.name,
-          parameters: unwrapToolInputSchema(tool.inputSchema),
-          ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-        },
-      }]
-      : []
-  );
+  const functions: NonNullable<OpenAICompatibleChatRequest["tools"]> = [];
+  for (const toolValue of tools) {
+    const tool = readRecord(toolValue);
+    if (!tool) {
+      throw new TypeError("Provider tool definition is invalid");
+    }
+    if (tool.type === "provider") continue;
+    if (tool.type !== "function") {
+      throw new TypeError("Provider tool definition is invalid");
+    }
+    assertBoundedString(tool.name, "Provider tool name", MAX_TOOL_NAME_CHARACTERS);
+    if (
+      tool.description !== undefined &&
+      (typeof tool.description !== "string" ||
+        tool.description.length > MAX_PROVIDER_TEXT_CHARACTERS)
+    ) {
+      throw new TypeError("Provider tool description is invalid");
+    }
+    functions.push({
+      type: "function",
+      function: {
+        name: tool.name,
+        parameters: unwrapToolInputSchema(tool.inputSchema),
+        ...(tool.description !== undefined ? { description: tool.description } : {}),
+      },
+    });
+  }
 
   return functions.length > 0 ? functions : undefined;
 }
@@ -509,12 +735,22 @@ export function readProviderOptions(
     return {};
   }
 
+  const optionsRecord = readRecord(providerOptions);
+  if (!optionsRecord) return {};
+
   const merged: Record<string, unknown> = {};
   for (const key of providerNames) {
-    const value = providerOptions[key];
+    const value = optionsRecord[key];
     const record = readRecord(value);
     if (record) {
-      Object.assign(merged, record);
+      for (const [field, fieldValue] of Object.entries(record)) {
+        Object.defineProperty(merged, field, {
+          configurable: true,
+          enumerable: true,
+          value: fieldValue,
+          writable: true,
+        });
+      }
     }
   }
 
@@ -527,6 +763,13 @@ export function unwrapToolInputSchema(inputSchema: unknown): unknown {
     return inputSchema;
   }
 
-  const candidate = Reflect.get(inputSchema, "jsonSchema");
-  return candidate ?? inputSchema;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(inputSchema, "jsonSchema");
+  } catch {
+    return inputSchema;
+  }
+  return descriptor && "value" in descriptor && descriptor.value !== undefined
+    ? descriptor.value
+    : inputSchema;
 }

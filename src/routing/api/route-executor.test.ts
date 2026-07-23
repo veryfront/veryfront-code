@@ -438,6 +438,72 @@ describe("routing/api/route-executor", () => {
       assertEquals(await response.text(), "pages get");
     });
 
+    it("should serve HEAD through GET without returning a body", async () => {
+      const response = await executePagesRoute(
+        { GET: () => new Response("pages get", { headers: { "x-route": "get" } }) },
+        new Request("http://localhost/api/test", { method: "HEAD" }),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("x-route"), "get");
+      assertEquals(await response.text(), "");
+    });
+
+    it("should reject filesystem paths outside the project scope", async () => {
+      const adapter = makeAdapter();
+      let readPath: string | undefined;
+      adapter.fs.readFile = (path) => {
+        readPath = path;
+        return Promise.resolve("secret");
+      };
+      const response = await executePagesRoute(
+        {
+          GET: async (ctx: { fs: { readFile(path: string): Promise<string> } }) => {
+            await ctx.fs.readFile("../secret.txt");
+            return new Response("unreachable");
+          },
+        },
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        adapter,
+        "/project",
+      );
+
+      assertEquals(response.status, 400);
+      assertEquals(readPath, undefined);
+    });
+
+    it("should reject symlinks whose canonical target leaves the project", async () => {
+      const adapter = makeAdapter();
+      let readCalled = false;
+      adapter.fs.realPath = (path) =>
+        Promise.resolve(path === "/project/link/secret.txt" ? "/outside/secret.txt" : path);
+      adapter.fs.readFile = () => {
+        readCalled = true;
+        return Promise.resolve("secret");
+      };
+      const response = await executePagesRoute(
+        {
+          GET: async (ctx: { fs: { readFile(path: string): Promise<string> } }) => {
+            await ctx.fs.readFile("link/secret.txt");
+            return new Response("unreachable");
+          },
+        },
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        adapter,
+        "/project",
+      );
+
+      assertEquals(response.status, 400);
+      assertEquals(readCalled, false);
+    });
+
     it("should fall back to default handler", async () => {
       const handler = {
         default: (_ctx: unknown) => new Response("pages default"),
@@ -707,7 +773,7 @@ describe("routing/api/route-executor", () => {
       );
 
       // Should get an error response due to body size limit
-      assertEquals(response.status, 500);
+      assertEquals(response.status, 400);
     });
 
     it("should allow normal-sized request bodies in isolated app route execution", async () => {
@@ -774,7 +840,7 @@ describe("routing/api/route-executor", () => {
         { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
       );
 
-      assertEquals(response.status, 500);
+      assertEquals(response.status, 400);
     });
 
     it("should reject via Content-Length header before buffering the body", async () => {
@@ -804,7 +870,7 @@ describe("routing/api/route-executor", () => {
         { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
       );
 
-      assertEquals(response.status, 500);
+      assertEquals(response.status, 400);
     });
 
     it("should reject large body without Content-Length via fallback check", async () => {
@@ -843,7 +909,39 @@ describe("routing/api/route-executor", () => {
         { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
       );
 
-      assertEquals(response.status, 500);
+      assertEquals(response.status, 400);
+    });
+
+    it("should cancel a streaming body as soon as it exceeds the limit", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      let chunk = 0;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (chunk++ < 11) {
+            controller.enqueue(new Uint8Array(1024 * 1024));
+          } else {
+            controller.close();
+          }
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const response = await executeAppRoute(
+        { POST: () => new Response("ok") },
+        new Request("http://localhost/api/test", { method: "POST", body }),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      assertEquals(response.status, 400);
+      assertEquals(cancelled, true);
     });
 
     it("should skip body size guard for requests without a body", async () => {
@@ -875,7 +973,25 @@ describe("routing/api/route-executor", () => {
       );
     });
 
-    it("should allow requests with malformed Content-Length header", async () => {
+    it("does not require a host-loaded route for isolated execution", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const response = await executePagesRoute(
+        null,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
+      );
+
+      assertEquals(response.status, 500);
+    });
+
+    it("should reject requests with malformed Content-Length headers", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
       __resetPoolForTests();
@@ -884,7 +1000,6 @@ describe("routing/api/route-executor", () => {
         POST: (_req: Request) => new Response("ok"),
       };
 
-      // Malformed Content-Length — parseInt returns NaN, NaN > limit is false
       const request = new Request("http://localhost/api/test", {
         method: "POST",
         body: "small body",
@@ -900,12 +1015,9 @@ describe("routing/api/route-executor", () => {
         { modulePath: "/tmp/test/handler.ts", projectDir: "/tmp/test" },
       );
 
-      // Should not reject — NaN comparison passes through
       const body = await response.json();
-      assert(
-        !(body.detail ?? "").includes("too large"),
-        "should not reject malformed Content-Length",
-      );
+      assertEquals(response.status, 400);
+      assertEquals(body.detail, "Invalid Content-Length header");
     });
   });
 
@@ -942,6 +1054,45 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.json(), policy);
+    });
+  });
+
+  describe("isolated error boundary", () => {
+    afterEach(() => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+    });
+
+    it("does not expose remote worker diagnostics", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const modulePath = new URL("./fixtures/worker-error-route.ts", import.meta.url).pathname;
+      const projectDir = new URL("../../../", import.meta.url).pathname;
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({
+          allow: { confluence: { allowedTools: ["get_page"] } },
+        }),
+        () =>
+          executeAppRoute(
+            null,
+            new Request("http://localhost/api/private"),
+            makeMatch(),
+            "/api/private",
+            makeAdapter(),
+            { modulePath, projectDir, isLocalProject: false },
+          ),
+      );
+
+      const body = await response.text();
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("Cache-Control"), "no-store");
+      assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
+      assertEquals(body.includes("Sensitive worker failure"), false);
+      assertEquals(body.includes("/private/project/route.ts"), false);
+      assertEquals(body.includes("stack"), false);
     });
   });
 });

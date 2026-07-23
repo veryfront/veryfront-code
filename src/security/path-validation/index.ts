@@ -38,12 +38,14 @@ export { ValidationPresets } from "./presets.ts";
 import { getCanonicalBaseDir, getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
 import {
   isAbsolutePath,
+  isWithinDirectory,
   joinPaths,
   normalizeSeparators,
   resolvePathSegments,
 } from "./normalization.ts";
 import { validatePathBasics } from "./rules.ts";
 import { PathValidationError, type ValidationOptions, type ValidationResult } from "./types.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 function getTargetPath(
   inputPath: string,
@@ -82,6 +84,14 @@ export async function validatePath(
     allowAbsolute = false,
   } = options;
 
+  if (!baseDir) {
+    return {
+      valid: false,
+      error: "Base directory is required",
+      code: PathValidationError.INVALID_PATH,
+    };
+  }
+
   const basicResult = validatePathBasics(path);
   if (!basicResult.valid) return basicResult;
 
@@ -112,11 +122,11 @@ export async function validatePath(
   if (checkExists && adapter) {
     try {
       await adapter.fs.stat(canonicalPath);
-    } catch (_) {
-      /* expected: file does not exist at canonicalPath */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       return {
         valid: false,
-        error: `File not found: ${canonicalPath}`,
+        error: "File not found",
         code: PathValidationError.FILE_NOT_FOUND,
       };
     }
@@ -130,6 +140,14 @@ export function validatePathSync(
   options: ValidationOptions,
 ): ValidationResult {
   const { level = "normal", baseDir, allowedDirs = [], allowAbsolute = false } = options;
+
+  if (!baseDir) {
+    return {
+      valid: false,
+      error: "Base directory is required",
+      code: PathValidationError.INVALID_PATH,
+    };
+  }
 
   const basicResult = validatePathBasics(path);
   if (!basicResult.valid) return basicResult;
@@ -150,9 +168,10 @@ export function createValidator(
 
 export function sanitizePathForDisplay(path: string, baseDir: string): string {
   const normalized = normalizeSeparators(path);
-  const normalizedBase = normalizeSeparators(baseDir);
+  const normalizedBase = normalizeSeparators(baseDir).replace(/\/+$/, "") ||
+    (normalizeSeparators(baseDir).startsWith("/") ? "/" : "");
 
-  if (normalized.startsWith(normalizedBase)) {
+  if (isWithinDirectory(normalizedBase, normalized)) {
     return normalized.slice(normalizedBase.length).replace(/^\//, "");
   }
 

@@ -18,6 +18,8 @@ export type {
   RuntimeAdapter,
   RuntimeCapabilities,
   RuntimeId,
+  RuntimeRequestHandler,
+  RuntimeResponse,
   ServeOptions,
   Server,
   ServerAdapter,
@@ -59,6 +61,24 @@ export {
 } from "./node.ts";
 export type { NodeHttpServer, NodeIncomingMessage, NodeServerResponse } from "./node.ts";
 
+export {
+  CloudflareAdapter,
+  CloudflareKVStoreAdapter,
+  createCloudflareAdapter,
+  createWorker,
+} from "./runtime/cloudflare/index.ts";
+export type {
+  CloudflareAdapterOptions,
+  CloudflareEnv,
+  CloudflarePipelineSource,
+  CloudflareRequestPipeline,
+  KVNamespace,
+} from "./runtime/cloudflare/index.ts";
+export type {
+  CloudflareWorker,
+  ExecutionContext as CloudflareExecutionContext,
+} from "./runtime/cloudflare/index.ts";
+
 // Security namespace
 export * as security from "./security/index.ts";
 
@@ -86,15 +106,20 @@ export type {
 
 export {
   API_CLIENT_ERROR,
+  DEFAULT_VERYFRONT_API_REQUEST_POLICY,
   type FileContext,
   type FileDetail,
   type FileListResult,
+  type ListAllFilesOptions,
   type ListFilesOptions,
   type LookupDomainResponse,
   type Project,
   type ProjectFile,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
   VeryfrontApiClient,
   type VeryfrontAPIConfig,
+  type VeryfrontAPIRequestIdentity,
+  type VeryfrontAPIRequestPolicy,
   VeryfrontError,
 } from "./veryfront-api-client/index.ts";
 
@@ -109,6 +134,8 @@ export {
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
   TokenStorageApiClient,
+  type TokenStorageApiClientDependencies,
+  type TokenStorageRequestOptions,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./token/index.ts";

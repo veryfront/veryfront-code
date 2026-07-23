@@ -1,5 +1,5 @@
 /**
- * Database category barrel — DatabaseClient contract.
+ * Database category barrel for the DatabaseClient contract.
  *
  * @module extensions/database
  */

@@ -1,8 +1,15 @@
 import { serverLogger } from "#veryfront/utils";
 import type { ReloadProjectInfo } from "../../reload-notifier.ts";
-import { getClientCount, getOpenSockets } from "./hmr-client-manager.ts";
+import {
+  disconnectClient,
+  getClientCount,
+  getOpenClients,
+  type HMRClientScope,
+} from "./hmr-client-manager.ts";
 
 const logger = serverLogger.component("hmr-handler");
+const HMR_CLOSE_CONNECTION_FAILED = 1011;
+const STYLE_ASSET_PATH_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
 
 interface HMRMetrics {
   broadcastsSent: number;
@@ -16,15 +23,17 @@ const metrics: HMRMetrics = {
   lastBroadcastTime: 0,
 };
 
-export function getMetrics(): { clients: number } & HMRMetrics {
-  return { clients: getClientCount(), ...metrics };
+export function getMetrics(scope?: HMRClientScope): { clients: number } & HMRMetrics {
+  return { clients: getClientCount(scope), ...metrics };
 }
 
 function buildStyleUpdatePayload(project?: ReloadProjectInfo): Record<string, string> {
-  const payload: Record<string, string> = {};
-  if (project?.styleAssetPath) payload.styleHref = project.styleAssetPath;
-  if (project?.styleArtifactHash) payload.styleHash = project.styleArtifactHash;
-  return payload;
+  const assetPath = project?.styleAssetPath;
+  const artifactHash = project?.styleArtifactHash;
+  if (!assetPath || !artifactHash) return {};
+
+  const pathHash = assetPath.match(STYLE_ASSET_PATH_PATTERN)?.[1];
+  return pathHash === artifactHash ? { styleHref: assetPath, styleHash: artifactHash } : {};
 }
 
 function requiresFullReload(path: string): boolean {
@@ -32,16 +41,36 @@ function requiresFullReload(path: string): boolean {
   return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
 }
 
+function getProjectScope(project?: ReloadProjectInfo): HMRClientScope | null | undefined {
+  if (!project) return undefined;
+  if (!project.projectId && !project.projectSlug && !project.projectDir) return null;
+  const scope: HMRClientScope = {
+    projectSlug: project.projectSlug,
+    projectId: project.projectId,
+    projectDir: project.projectDir,
+    environment: project.environment,
+    branch: project.branch,
+  };
+  return scope;
+}
+
 /**
- * Broadcast update to all connected HMR clients, optionally filtered by projectSlug.
- * No server-side debounce here — ReloadNotifier already debounces (300ms).
+ * Broadcast update to all connected HMR clients, optionally filtered by project identity.
+ * No server-side debounce is needed here because ReloadNotifier already debounces (300ms).
  */
 export function broadcastUpdate(changedPaths?: string[], project?: ReloadProjectInfo): void {
+  const scope = getProjectScope(project);
+  if (scope === null) {
+    logger.warn("Skipped scoped HMR broadcast without project identity", {
+      changedPathCount: changedPaths?.length ?? 0,
+      totalClients: getClientCount(),
+    });
+    return;
+  }
+
   logger.debug("broadcastUpdate called", {
-    changedPaths,
+    changedPathCount: changedPaths?.length ?? 0,
     totalClients: getClientCount(),
-    projectSlug: project?.projectSlug,
-    styleAssetPath: project?.styleAssetPath,
   });
 
   const timestamp = Date.now();
@@ -53,35 +82,37 @@ export function broadcastUpdate(changedPaths?: string[], project?: ReloadProject
 
   if (needsFullReload) {
     const message = JSON.stringify({ type: "reload", timestamp });
-    broadcastMessage(message, project?.projectSlug);
+    broadcastMessage(message, scope);
     metrics.messagesForwarded++;
   } else {
     const stylePayload = buildStyleUpdatePayload(project);
     for (const path of changedPaths) {
       const message = JSON.stringify({ type: "update", path, timestamp, ...stylePayload });
-      broadcastMessage(message, project?.projectSlug);
+      broadcastMessage(message, scope);
       metrics.messagesForwarded++;
     }
   }
 }
 
-function broadcastMessage(message: string, projectSlug?: string): void {
-  const sockets = getOpenSockets(projectSlug);
+function broadcastMessage(message: string, scope?: HMRClientScope): void {
+  const clients = getOpenClients(scope);
   let sentCount = 0;
 
-  for (const socket of sockets) {
+  for (const client of clients) {
     try {
-      socket.send(message);
+      client.socket.send(message);
       sentCount++;
     } catch (error) {
-      logger.warn("Failed to send to client", { error });
+      disconnectClient(client.id, HMR_CLOSE_CONNECTION_FAILED, "Connection failed");
+      logger.warn("Failed to send to HMR client", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      });
     }
   }
 
   logger.debug("broadcastMessage complete", {
     sentCount,
     totalClients: getClientCount(),
-    projectSlug,
   });
 }
 

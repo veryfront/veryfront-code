@@ -1,6 +1,9 @@
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import type { LocalImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
+import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
+
+const MAX_PREFLIGHT_IMPORTS = 5_000;
 
 interface PreflightImportsResult {
   validImports: LocalImport[];
@@ -12,9 +15,15 @@ export async function preflightLocalImports(
   filePath: string,
   fs: { stat: (path: string) => Promise<{ isFile: boolean }> } = createFileSystem(),
 ): Promise<PreflightImportsResult> {
+  if (imports.length > MAX_PREFLIGHT_IMPORTS) {
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: `Module exceeds the import limit of ${MAX_PREFLIGHT_IMPORTS}`,
+    });
+  }
   const validImports: LocalImport[] = [];
   const missingImports: MissingImport[] = [];
   const localFs = createFileSystem();
+  const statResults = new Map<string, Promise<boolean>>();
 
   for (const imp of imports) {
     if (!imp.absolutePath.startsWith("/")) {
@@ -25,14 +34,18 @@ export async function preflightLocalImports(
     const statFs = isFrameworkSourcePath(imp.absolutePath) ? localFs : fs;
 
     try {
-      const stat = await statFs.stat(imp.absolutePath);
-      if (stat?.isFile) {
+      let statResult = statResults.get(imp.absolutePath);
+      if (!statResult) {
+        statResult = statFs.stat(imp.absolutePath).then((stat) => stat.isFile);
+        statResults.set(imp.absolutePath, statResult);
+      }
+      if (await statResult) {
         validImports.push(imp);
       } else {
         missingImports.push({
           specifier: imp.specifier,
           fromFile: filePath,
-          reason: `Pre-flight: not a file on disk: ${imp.absolutePath}`,
+          reason: "Pre-flight: dependency is not a file on disk",
         });
       }
     } catch (_) {
@@ -40,7 +53,7 @@ export async function preflightLocalImports(
       missingImports.push({
         specifier: imp.specifier,
         fromFile: filePath,
-        reason: `Pre-flight: file not accessible: ${imp.absolutePath}`,
+        reason: "Pre-flight: dependency is not accessible",
       });
     }
   }

@@ -9,10 +9,24 @@ import { validateDevFilePath } from "./path-validator.ts";
 import { bundleDevFile } from "./esbuild-bundler.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
+  HTTP_METHOD_NOT_ALLOWED,
   HTTP_NOT_FOUND,
+  HTTP_UNAUTHORIZED,
   PRIORITY_MEDIUM_DEV_FILES,
 } from "#veryfront/utils/constants/index.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isAuthorizedDevControlRequest } from "../access-policy.ts";
+import { classifyTelemetryError } from "#veryfront/observability/telemetry-safety.ts";
+
+const DEV_FILE_ROUTE_PREFIX = "/_veryfront/fs/";
+
+function hasSameBrowserOrigin(req: Request): boolean {
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
+  const origin = req.headers.get("origin");
+  return origin === null || origin === new URL(req.url).origin;
+}
 
 export class DevFileHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -28,9 +42,19 @@ export class DevFileHandler extends BaseHandler {
     const { pathname } = new URL(req.url);
 
     if (!ctx.isLocalProject) return this.continue();
+    if (!pathname.startsWith(DEV_FILE_ROUTE_PREFIX)) return this.continue();
 
-    if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
-      return this.continue();
+    if (!isAuthorizedDevControlRequest(req, ctx) || !hasSameBrowserOrigin(req)) {
+      return this.respond(
+        this.createErrorModule(req, ctx, "Unauthorized", HTTP_UNAUTHORIZED),
+      );
+    }
+
+    if (req.method.toUpperCase() !== "GET") {
+      const response = this.createPrivateResponseBuilder(req, ctx)
+        .withAllow("GET")
+        .javascript("export default null; // Method not allowed", HTTP_METHOD_NOT_ALLOWED);
+      return this.respond(response);
     }
 
     const fsAdapter = ctx.adapter.fs;
@@ -54,40 +78,62 @@ export class DevFileHandler extends BaseHandler {
     pathname: string,
     ctx: HandlerContext,
   ): Promise<HandlerResult> {
-    const encoded = pathname.slice("/_veryfront/fs/".length).replace(/\.js$/, "");
-    const absPath = await validateDevFilePath(encoded, ctx);
+    const encoded = pathname.slice(DEV_FILE_ROUTE_PREFIX.length).replace(/\.js$/, "");
+    const validation = await validateDevFilePath(encoded, ctx);
 
-    if (absPath.startsWith("Error:")) {
-      const message = absPath.slice("Error: ".length);
-      this.logDebug("dev fs validation failed", { message }, ctx);
-      return this.respond(this.createErrorModule(message, HTTP_NOT_FOUND));
+    if (!validation.ok) {
+      this.logDebug("dev fs validation failed", { reason: validation.reason }, ctx);
+      const unavailable = validation.reason === "unavailable";
+      return this.respond(
+        this.createErrorModule(
+          req,
+          ctx,
+          unavailable ? "Module unavailable" : "Module not found",
+          unavailable ? HTTP_INTERNAL_SERVER_ERROR : HTTP_NOT_FOUND,
+        ),
+      );
     }
 
     try {
-      const code = await bundleDevFile(absPath, ctx);
-      const response = this.createResponseBuilder(ctx)
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined, req)
-        .withCache("no-cache")
-        .javascript(code);
+      const code = await bundleDevFile(validation.path, ctx);
+      const response = this.createPrivateResponseBuilder(req, ctx).javascript(code);
 
       return this.respond(response);
     } catch (error) {
-      const reason = this.getErrorMessage(error);
-      this.logDebug("esbuild failed for dev fs", { path: absPath, reason }, ctx);
+      this.logDebug(
+        "dev fs build failed",
+        { errorCategory: classifyTelemetryError(error) },
+        ctx,
+      );
       return this.respond(
         this.createErrorModule(
-          `Build error: ${reason}`,
+          req,
+          ctx,
+          "Module build failed",
           HTTP_INTERNAL_SERVER_ERROR,
         ),
       );
     }
   }
 
-  private createErrorModule(message: string, status: number): Response {
-    return new Response(`export default null; // ${message}`, {
+  private createPrivateResponseBuilder(req: Request, ctx: HandlerContext) {
+    const builder = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withCache("no-store")
+      .withHeaders({ "X-Content-Type-Options": "nosniff" });
+    if (ctx.securityConfig) builder.withSecurity(ctx.securityConfig, req);
+    return builder;
+  }
+
+  private createErrorModule(
+    req: Request,
+    ctx: HandlerContext,
+    message: string,
+    status: number,
+  ): Response {
+    return this.createPrivateResponseBuilder(req, ctx).javascript(
+      `export default null; // ${message}`,
       status,
-      headers: { "content-type": "application/javascript" },
-    });
+    );
   }
 }

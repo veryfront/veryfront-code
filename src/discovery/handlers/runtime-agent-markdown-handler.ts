@@ -4,9 +4,11 @@ import {
   type RuntimeAgentMarkdownDefinition,
 } from "../../agent/runtime/agent-definition.ts";
 import { agentRegistry, registerAgent } from "../../agent/composition/index.ts";
+import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { ensureError } from "#veryfront/errors";
 import type { DiscoveryResult, FileDiscoveryContext } from "../types.ts";
-import { trackAgentPath } from "../discovery-utils.ts";
+import { discoveryFileLabel, trackAgentPath } from "../discovery-utils.ts";
 import {
   discoveryFileExists,
   listDiscoveryDirectoryEntries,
@@ -18,6 +20,7 @@ import {
   registerAgentColocatedTools,
   sanitizeCapabilityNamespace,
 } from "../agent-scoped-capabilities.ts";
+import { recordDiscoveryError } from "../discovery-errors.ts";
 
 const MARKDOWN_AGENT_FILE_PATTERN = /^[A-Za-z0-9._-]+\.md$/;
 const DIRECTORY_AGENT_FILENAME = "AGENT.md";
@@ -71,9 +74,24 @@ async function getDirectoryAgentCandidate(
 /** Tracks sanitized capability namespaces to the agent that owns them. */
 type CapabilityNamespaceOwners = Map<string, string>;
 
+function getRegisteredCapabilityNamespaceOwners(): CapabilityNamespaceOwners {
+  const owners: CapabilityNamespaceOwners = new Map();
+  const capabilities = [
+    ...toolRegistry.getAll().values(),
+    ...skillRegistry.getAll().values(),
+  ];
+  for (const capability of capabilities) {
+    const owner = capability.ownerAgentId;
+    if (typeof owner !== "string" || owner.length === 0) continue;
+    const namespace = sanitizeCapabilityNamespace(owner);
+    if (!owners.has(namespace)) owners.set(namespace, owner);
+  }
+  return owners;
+}
+
 /**
  * Registers a directory agent's colocated capabilities. This is PURE
- * REGISTRATION — binding (`skills:` / `tools:` selectors) happens at
+ * REGISTRATION. Binding (`skills:` / `tools:` selectors) happens at
  * invocation time via the owner-aware resolvers, identically for flat and
  * directory agents.
  *
@@ -91,8 +109,8 @@ async function registerColocatedCapabilities(
   const namespace = sanitizeCapabilityNamespace(definition.id);
   const existingOwner = namespaceOwners.get(namespace);
   if (existingOwner !== undefined && existingOwner !== definition.id) {
-    result.errors.push({
-      file: rootPath,
+    recordDiscoveryError(result.errors, {
+      file: discoveryFileLabel(rootPath, context.baseDir),
       error: ensureError(
         `Agent "${definition.id}" shares the sanitized capability namespace ` +
           `"${namespace}" with agent "${existingOwner}". Rename one to avoid ` +
@@ -103,11 +121,11 @@ async function registerColocatedCapabilities(
   }
   namespaceOwners.set(namespace, definition.id);
 
-  // Skills and tools live in disjoint subtrees; register them concurrently.
-  await Promise.all([
-    registerAgentColocatedSkills({ agentId: definition.id, rootPath, context, result }),
-    registerAgentColocatedTools({ agentId: definition.id, rootPath, context, result }),
-  ]);
+  // Preserve deterministic diagnostics and transaction context while project
+  // modules initialize. Registry savepoints must not race sibling discovery
+  // work through separate asynchronous context branches.
+  await registerAgentColocatedSkills({ agentId: definition.id, rootPath, context, result });
+  await registerAgentColocatedTools({ agentId: definition.id, rootPath, context, result });
 }
 
 async function registerMarkdownAgent(
@@ -119,8 +137,8 @@ async function registerMarkdownAgent(
   namespaceOwners: CapabilityNamespaceOwners,
 ): Promise<void> {
   if (result.agents.has(definition.id)) {
-    result.errors.push({
-      file,
+    recordDiscoveryError(result.errors, {
+      file: discoveryFileLabel(file, context.baseDir),
       error: ensureError(
         `Duplicate agent id "${definition.id}". An agent with this id was already ` +
           `discovered (e.g. both a flat "${definition.id}.md" and a "${definition.id}/" ` +
@@ -163,7 +181,10 @@ async function discoverMarkdownAgentCandidate(
       namespaceOwners,
     );
   } catch (error) {
-    result.errors.push({ file: candidate.file, error: ensureError(error) });
+    recordDiscoveryError(result.errors, {
+      file: discoveryFileLabel(candidate.file, context.baseDir),
+      error: ensureError(error),
+    });
   }
 }
 
@@ -187,7 +208,7 @@ export async function discoverRuntimeAgentMarkdownDefinitions(
   const entries = (await listDiscoveryDirectoryEntries(dir, context)).sort((left, right) =>
     left.name.localeCompare(right.name)
   );
-  const namespaceOwners: CapabilityNamespaceOwners = new Map();
+  const namespaceOwners = getRegisteredCapabilityNamespaceOwners();
 
   for (const entry of entries) {
     const candidate = entry.isDirectory

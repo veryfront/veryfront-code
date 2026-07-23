@@ -5,7 +5,7 @@ import { MemoryCacheStore } from "./memory-store.ts";
 
 const logger = rendererLogger.component("redis");
 
-interface RedisClient {
+export interface RedisCacheClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   get(key: string): Promise<string | null>;
@@ -30,23 +30,36 @@ export interface RedisCacheStoreOptions {
   enableFallback?: boolean;
   /** TTL in seconds for cache entries (default: 3600 = 1 hour) */
   ttlSeconds?: number;
+  /** Redis client factory override for embedding and deterministic tests. */
+  clientFactory?: () => Promise<RedisCacheClient>;
 }
 
 export class RedisCacheStore implements CacheStore {
-  private client: RedisClient | null = null;
+  private client: RedisCacheClient | null = null;
+  private clientInitPromise: Promise<RedisCacheClient> | null = null;
   private readonly url?: string;
   private readonly keyPrefix: string;
   private readonly enableFallback: boolean;
   private readonly ttlSeconds: number;
   private fallbackStore: MemoryCacheStore | null = null;
-  private redisUnavailable = false;
   private errorLogged = false;
+  private readonly clientFactory?: () => Promise<RedisCacheClient>;
 
   constructor(options: RedisCacheStoreOptions = {}) {
     this.url = options.url;
     this.keyPrefix = options.keyPrefix ?? "veryfront:render:";
     this.enableFallback = options.enableFallback ?? false;
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    this.clientFactory = options.clientFactory;
+    if (!Number.isSafeInteger(this.ttlSeconds) || this.ttlSeconds <= 0) {
+      throw new TypeError("Redis cache ttlSeconds must be a positive integer");
+    }
+    if (
+      this.keyPrefix === "" || this.keyPrefix.length > 512 ||
+      /[\0\r\n*?\[\]\\]/.test(this.keyPrefix)
+    ) {
+      throw new TypeError("Redis cache keyPrefix contains unsupported characters");
+    }
   }
 
   private getFallbackStore(): MemoryCacheStore {
@@ -61,16 +74,35 @@ export class RedisCacheStore implements CacheStore {
     return this.fallbackStore;
   }
 
-  private async ensureClient(): Promise<RedisClient> {
+  private async ensureClient(): Promise<RedisCacheClient> {
     if (this.client) return this.client;
+    if (this.clientInitPromise) return await this.clientInitPromise;
 
-    let createClient: ((options: { url?: string }) => RedisClient) | undefined;
+    const initialization = this.createAndConnectClient();
+    this.clientInitPromise = initialization;
+    try {
+      return await initialization;
+    } finally {
+      if (this.clientInitPromise === initialization) this.clientInitPromise = null;
+    }
+  }
+
+  private async createAndConnectClient(): Promise<RedisCacheClient> {
+    if (this.clientFactory) {
+      const client = await this.clientFactory();
+      await client.connect();
+      this.client = client;
+      this.markRedisAvailable();
+      return client;
+    }
+
+    let createClient: ((options: { url?: string }) => RedisCacheClient) | undefined;
     try {
       // Construct module name dynamically to prevent Deno static analyzer
       // from trying to resolve this npm package during lint/check
       const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
       const mod = await import(redisClientModule);
-      createClient = mod.createClient as (options: { url?: string }) => RedisClient;
+      createClient = mod.createClient as (options: { url?: string }) => RedisCacheClient;
     } catch (_) {
       /* expected: redis client package may not be installed */
       throw toError(
@@ -86,16 +118,16 @@ export class RedisCacheStore implements CacheStore {
     client.on?.("error", (err: unknown) => {
       // Only log the first error to avoid flooding logs during reconnection attempts
       if (!this.errorLogged) {
-        logger.error("client error", err);
+        logger.error("Redis client error", {
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
         this.errorLogged = true;
       }
-      this.redisUnavailable = true;
     });
 
     await client.connect();
     this.client = client;
-    this.redisUnavailable = false;
-    this.errorLogged = false;
+    this.markRedisAvailable();
     return client;
   }
 
@@ -103,120 +135,115 @@ export class RedisCacheStore implements CacheStore {
     return `${this.keyPrefix}${key}`;
   }
 
-  private shouldUseFallback(): boolean {
-    return this.redisUnavailable && this.enableFallback;
-  }
-
-  private shouldSkipRedis(): boolean {
-    return this.redisUnavailable && !this.enableFallback;
-  }
-
-  private markRedisUnavailable(): void {
-    this.redisUnavailable = true;
+  private markRedisAvailable(): void {
+    this.errorLogged = false;
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
-    if (this.shouldUseFallback()) return this.getFallbackStore().get(key);
-    if (this.shouldSkipRedis()) return undefined;
-
     try {
       const client = await this.ensureClient();
       const raw = await client.get(this.storageKey(key));
-      if (!raw) return undefined;
+      this.markRedisAvailable();
+      if (!raw) return await this.fallbackStore?.get(key);
 
       try {
-        return JSON.parse(raw) as CachePayload;
-      } catch (_) {
+        const payload = JSON.parse(raw) as unknown;
+        if (isCachePayload(payload)) return payload;
+        await client.del(this.storageKey(key));
+        return undefined;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
         /* expected: cached data may be corrupted or malformed JSON */
+        await client.del(this.storageKey(key));
         return undefined;
       }
     } catch (error) {
-      this.markRedisUnavailable();
-
       if (!this.enableFallback) {
-        logger.warn("get failed, skipping fallback", { key, error });
+        logger.warn("Redis get failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
         return undefined;
       }
 
-      logger.warn("get failed, using fallback", { key, error });
+      logger.warn("Redis get failed, using memory fallback", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       return this.getFallbackStore().get(key);
     }
   }
 
   async set(key: string, value: CachePayload): Promise<void> {
-    if (this.shouldUseFallback()) return this.getFallbackStore().set(key, value);
-    if (this.shouldSkipRedis()) return;
-
     try {
       const client = await this.ensureClient();
       // Apply TTL to prevent unbounded Redis growth
       await client.set(this.storageKey(key), JSON.stringify(value), { EX: this.ttlSeconds });
+      this.markRedisAvailable();
+      await this.fallbackStore?.delete(key);
     } catch (error) {
-      this.markRedisUnavailable();
-
       if (!this.enableFallback) {
-        logger.warn("set failed, skipping fallback", { key, error });
+        logger.warn("Redis set failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
         return;
       }
 
-      logger.warn("set failed, using fallback", { key, error });
+      logger.warn("Redis set failed, using memory fallback", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       await this.getFallbackStore().set(key, value);
     }
   }
 
   async delete(key: string): Promise<void> {
-    if (this.shouldUseFallback()) return this.getFallbackStore().delete(key);
-    if (this.shouldSkipRedis()) return;
+    await this.fallbackStore?.delete(key);
 
     try {
       const client = await this.ensureClient();
       await client.del(this.storageKey(key));
+      this.markRedisAvailable();
     } catch (error) {
-      this.markRedisUnavailable();
-
       if (!this.enableFallback) {
-        logger.warn("delete failed, skipping fallback", { key, error });
+        logger.warn("Redis delete failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
         return;
       }
 
-      logger.warn("delete failed, using fallback", { key, error });
-      await this.getFallbackStore().delete(key);
+      logger.warn("Redis delete failed after clearing memory fallback", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
     const localDeleted = (await this.fallbackStore?.deleteByPrefix?.(prefix)) ?? 0;
 
-    if (this.redisUnavailable) return localDeleted;
-
     try {
       const client = await this.ensureClient();
       let cursor = 0;
-      const keysToDelete: string[] = [];
+      let distributedDeleted = 0;
 
       do {
         const [nextCursor, keys] = await client.scan(cursor, {
-          MATCH: `${this.keyPrefix}${prefix}*`,
+          MATCH: `${escapeRedisGlob(this.keyPrefix)}${escapeRedisGlob(prefix)}*`,
           COUNT: REDIS_SCAN_COUNT,
         });
         cursor = nextCursor;
-        if (keys.length) keysToDelete.push(...keys);
+        if (keys.length) distributedDeleted += await client.del(keys);
       } while (cursor !== 0);
-
-      if (!keysToDelete.length) return localDeleted;
-
-      const deleteResults = await Promise.all(keysToDelete.map((key) => client.del(key)));
-      const deleted = deleteResults.reduce((sum, count) => sum + count, 0);
-      return localDeleted + deleted;
+      this.markRedisAvailable();
+      return localDeleted + distributedDeleted;
     } catch (error) {
-      this.markRedisUnavailable();
-
       if (!this.enableFallback) {
-        logger.warn("deleteByPrefix failed, skipping fallback", { prefix, error });
+        logger.warn("Redis prefix deletion failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
         return localDeleted;
       }
 
-      logger.warn("deleteByPrefix failed, using fallback", { prefix, error });
+      logger.warn("Redis prefix deletion failed after clearing memory fallback", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       return localDeleted;
     }
   }
@@ -224,15 +251,13 @@ export class RedisCacheStore implements CacheStore {
   async clear(): Promise<void> {
     await this.fallbackStore?.clear();
 
-    if (this.redisUnavailable) return;
-
     try {
       const client = await this.ensureClient();
       let cursor = 0;
 
       do {
         const [nextCursor, keys] = await client.scan(cursor, {
-          MATCH: `${this.keyPrefix}*`,
+          MATCH: `${escapeRedisGlob(this.keyPrefix)}*`,
           COUNT: REDIS_CLEAR_SCAN_COUNT,
         });
         cursor = nextCursor;
@@ -241,15 +266,18 @@ export class RedisCacheStore implements CacheStore {
           await client.del(key);
         }
       } while (cursor !== 0);
+      this.markRedisAvailable();
     } catch (error) {
-      this.markRedisUnavailable();
-
       if (!this.enableFallback) {
-        logger.warn("clear failed, skipping fallback", { error });
+        logger.warn("Redis clear failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
         return;
       }
 
-      logger.warn("clear failed", { error });
+      logger.warn("Redis clear failed after clearing memory fallback", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
@@ -268,4 +296,23 @@ export class RedisCacheStore implements CacheStore {
   getStats(): CacheStoreStats {
     return this.fallbackStore?.getStats() ?? { size: 0 };
   }
+}
+
+function escapeRedisGlob(value: string): string {
+  return value.replace(/[\\*?\[\]]/g, "\\$&");
+}
+
+function isCachePayload(value: unknown): value is CachePayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const payload = value as Record<string, unknown>;
+  if (typeof payload.storedAt !== "number" || !Number.isFinite(payload.storedAt)) return false;
+  if (
+    typeof payload.result !== "object" || payload.result === null || Array.isArray(payload.result)
+  ) {
+    return false;
+  }
+  const result = payload.result as Record<string, unknown>;
+  return typeof result.html === "string" &&
+    typeof result.frontmatter === "object" && result.frontmatter !== null &&
+    !Array.isArray(result.frontmatter);
 }

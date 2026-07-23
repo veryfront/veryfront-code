@@ -1,3 +1,13 @@
+/**
+ * Portable expect adapter for Veryfront's cross-runtime test suite.
+ *
+ * Deno and Bun delegate to their native matcher implementations. The Node.js
+ * adapter intentionally implements the matcher surface used in this repository,
+ * not the standard library's mock, snapshot, or extension APIs.
+ *
+ * @module
+ */
+
 import { isBun, isDeno } from "../runtime.ts";
 import { deepEquals, safeStringify } from "#veryfront/testing/utils.ts";
 import {
@@ -56,6 +66,61 @@ interface Matchers<T> {
 type ExternalExpectFn = (actual: unknown) => unknown;
 // deno-lint-ignore no-explicit-any -- external matchers (Deno std, Bun) may expose additional methods beyond our Matchers<T> interface
 type ExpectFn = <T>(actual: T) => Matchers<T> & Record<string, any>;
+
+function matchesObjectSubset(
+  actual: unknown,
+  expected: unknown,
+  seen = new WeakMap<object, WeakSet<object>>(),
+): boolean {
+  if (Object.is(actual, expected)) return true;
+  if (
+    actual === null || expected === null ||
+    typeof actual !== "object" || typeof expected !== "object"
+  ) {
+    return false;
+  }
+
+  if (expected instanceof Date) {
+    return actual instanceof Date && Object.is(actual.getTime(), expected.getTime());
+  }
+  if (expected instanceof RegExp) {
+    return actual instanceof RegExp && actual.source === expected.source &&
+      actual.flags === expected.flags;
+  }
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual) && actual.length === expected.length &&
+      expected.every((value, index) => matchesObjectSubset(actual[index], value, seen));
+  }
+  if (Array.isArray(actual)) return false;
+
+  let actuals = seen.get(expected);
+  if (actuals?.has(actual)) return true;
+  if (!actuals) {
+    actuals = new WeakSet();
+    seen.set(expected, actuals);
+  }
+  actuals.add(actual);
+
+  const expectedKeys: PropertyKey[] = [
+    ...Object.keys(expected),
+    ...Object.getOwnPropertySymbols(expected).filter((key) =>
+      Object.getOwnPropertyDescriptor(expected, key)?.enumerable
+    ),
+  ];
+  return expectedKeys.every((key) =>
+    key in actual &&
+    matchesObjectSubset(
+      (actual as Record<PropertyKey, unknown>)[key],
+      (expected as Record<PropertyKey, unknown>)[key],
+      seen,
+    )
+  );
+}
+
+function matchesErrorInstance(actual: unknown, expected: Error): boolean {
+  const ExpectedError = expected.constructor as new (...args: never[]) => Error;
+  return actual instanceof ExpectedError && actual.message === expected.message;
+}
 
 function createNodeExpect(): ExpectFn {
   function createMatchers<T>(actual: T, isNot = false): Matchers<T> {
@@ -270,6 +335,8 @@ function createNodeExpect(): ExpectFn {
           break;
         }
 
+        hasProperty = hasProperty && current !== undefined;
+
         if (value !== undefined && hasProperty) {
           hasProperty = deepEquals(current, value);
         }
@@ -297,10 +364,7 @@ function createNodeExpect(): ExpectFn {
       },
 
       toMatchObject(expected: Record<string, unknown>) {
-        const actualObj = actual as Record<string, unknown>;
-        const matches = Object.keys(expected).every((key) =>
-          deepEquals(actualObj[key], expected[key])
-        );
+        const matches = matchesObjectSubset(actual, expected);
 
         check(
           matches,
@@ -351,7 +415,7 @@ function createNodeExpect(): ExpectFn {
 
         if (expected instanceof Error) {
           check(
-            threw && thrownError instanceof Error && thrownError.message === expected.message,
+            threw && matchesErrorInstance(thrownError, expected),
             getMessage(
               `Expected function to throw ${expected}`,
               `Expected function not to throw ${expected}`,
@@ -689,8 +753,7 @@ function createNodeExpect(): ExpectFn {
             }
 
             if (expected instanceof Error) {
-              const matches = rejected && error instanceof Error &&
-                error.message === expected.message;
+              const matches = rejected && matchesErrorInstance(error, expected);
               if (isNot) {
                 if (matches) {
                   throw new Error(`Expected promise not to reject with ${expected.message}`);

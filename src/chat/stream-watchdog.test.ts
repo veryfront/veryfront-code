@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -175,7 +175,7 @@ describe("chat/stream-watchdog", () => {
     watchdog.dispose();
   });
 
-  it("does not arm a timer while a configured long-running tool is running", () => {
+  it("requires activity from configured long-running tools instead of waiting forever", () => {
     using time = new FakeTime();
     const watchdog = createChatStreamWatchdog(watchdogOptions);
     watchdog.observe({
@@ -185,10 +185,99 @@ describe("chat/stream-watchdog", () => {
       input: {},
     });
 
+    time.tick(301);
+
+    assertEquals(watchdog.signal.aborted, true);
+    assertEquals(watchdog.lastTimeoutState, {
+      phase: "tool_running",
+      timeoutMs: 300,
+      toolCallId: "fork-2",
+      toolName: "invoke_agent",
+    });
+    watchdog.dispose();
+  });
+
+  it("uses heartbeat metadata to extend an active long-running tool deadline", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "fork-3",
+      toolName: "invoke_agent",
+      input: {},
+    });
+
+    time.tick(250);
+    watchdog.observe({ type: "message-metadata", messageMetadata: {} });
+    time.tick(250);
+    assertEquals(watchdog.signal.aborted, false);
+    time.tick(51);
+    assertEquals(watchdog.signal.aborted, true);
+    watchdog.dispose();
+  });
+
+  it("continues tracking an earlier parallel tool after a later tool completes", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "tool-a",
+      toolName: "search_a",
+      input: {},
+    });
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "tool-b",
+      toolName: "search_b",
+      input: {},
+    });
+    watchdog.observe({ type: "tool-output-available", toolCallId: "tool-b", output: "ok" });
+
+    time.tick(301);
+
+    assertEquals(watchdog.lastTimeoutState, {
+      phase: "tool_running",
+      timeoutMs: 300,
+      toolCallId: "tool-a",
+      toolName: "search_a",
+    });
+    watchdog.dispose();
+  });
+
+  it("treats abort chunks as terminal", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+    watchdog.observe({ type: "abort" });
+
     time.tick(10_000);
 
     assertEquals(watchdog.signal.aborted, false);
     assertEquals(watchdog.lastTimeoutState, null);
+  });
+
+  it("keeps dispose terminal even if late stream activity arrives", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+
     watchdog.dispose();
+    watchdog.keepAlive();
+    watchdog.observe({ type: "text-delta", id: "text-1", delta: "late" });
+    time.tick(10_000);
+
+    assertEquals(watchdog.signal.aborted, false);
+    assertEquals(watchdog.lastTimeoutState, null);
+  });
+
+  it("rejects timeout values that host timers cannot represent safely", () => {
+    assertThrows(
+      () => createChatStreamWatchdog({ idleTimeoutMs: 0 }),
+      RangeError,
+      "idleTimeoutMs must be a positive safe timer duration",
+    );
+    assertThrows(
+      () => createChatStreamWatchdog({ toolRunningTimeoutMs: Number.POSITIVE_INFINITY }),
+      RangeError,
+      "toolRunningTimeoutMs must be a positive safe timer duration",
+    );
   });
 });

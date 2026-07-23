@@ -113,5 +113,20 @@ describe("ext-parser-babel", () => {
       });
       assertEquals(count, 2);
     });
+
+    it("exposes parent nodes separately from parent traversal paths", async () => {
+      const ast = await parser.parse({ code: "const value = 1;", filePath: "f.ts" });
+      let parentType: string | undefined;
+      let parentPathType: string | undefined;
+      parser.traverse(ast, {
+        VariableDeclarator: (path) => {
+          parentType = path.parent?.type;
+          parentPathType = path.parentPath?.node.type;
+        },
+      });
+
+      assertEquals(parentType, "VariableDeclaration");
+      assertEquals(parentPathType, "VariableDeclaration");
+    });
   });
 });

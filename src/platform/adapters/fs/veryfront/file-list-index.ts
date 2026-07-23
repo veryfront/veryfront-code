@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = baseLogger.component("read-operations");
 
@@ -14,23 +14,11 @@ export interface FileListMatchResult {
   content?: string;
 }
 
-function hashPreview(content: string): number {
-  return content
-    .slice(0, 100)
-    .split("")
-    .reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
-}
-
-function previewText(content: string, max = 80): string {
-  return content.length > max ? `${content.slice(0, max)}...` : content;
-}
-
 const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export class FileListIndex {
   private index: Map<string, string> | null = null;
   private pathSet: Set<string> | null = null;
-  private indexKey: string | null = null;
   private indexBuiltAt = 0;
   private indexFresh = false;
   private readyPromise: Promise<void> | null = null;
@@ -49,7 +37,6 @@ export class FileListIndex {
     const indexedWithContent = this.index.size;
     this.index = null;
     this.pathSet = null;
-    this.indexKey = null;
     this.indexBuiltAt = 0;
     this.indexFresh = false;
     logger.debug("Cleared file list index", { indexedWithContent });
@@ -82,7 +69,6 @@ export class FileListIndex {
 
     if (!snapshot.paths.has(normalizedPath)) {
       logger.debug("Content not in file list index", {
-        path: normalizedPath,
         indexSize: snapshot.content.size,
         fresh: snapshot.fresh,
       });
@@ -92,7 +78,6 @@ export class FileListIndex {
     const content = snapshot.content.get(normalizedPath);
     if (!content) {
       logger.debug("File list index contains path without inline content", {
-        path: normalizedPath,
         fresh: snapshot.fresh,
       });
       return {
@@ -103,10 +88,7 @@ export class FileListIndex {
     }
 
     logger.debug("FILE_LIST_CACHE_HIT - serving from file list cache", {
-      path: normalizedPath,
       contentLength: content.length,
-      contentHash: hashPreview(content),
-      contentPreview: previewText(content, 200).replace(/\n/g, "\\n"),
     });
 
     return {
@@ -195,7 +177,6 @@ export class FileListIndex {
         });
         this.index = null;
         this.pathSet = null;
-        this.indexKey = null;
         this.indexFresh = false;
       }
       logger.debug(
@@ -204,19 +185,12 @@ export class FileListIndex {
       return null;
     }
 
-    const cacheCheckSample = fileList.find((f) => /welcome/i.test(f.path));
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
       filesWithContent: fileList.filter((f) => f.content).length,
-      sampleFilePath: cacheCheckSample?.path,
-      sampleContentLength: cacheCheckSample?.content?.length,
-      sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
-    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.index && this.pathSet && this.indexKey === indexKey) {
+    if (this.index && this.pathSet && this.matchesFileList(fileList)) {
       this.indexBuiltAt = Date.now();
       this.indexFresh = true;
       return {
@@ -235,19 +209,12 @@ export class FileListIndex {
 
     this.index = index;
     this.pathSet = pathSet;
-    this.indexKey = indexKey;
     this.indexBuiltAt = Date.now();
     this.indexFresh = true;
 
-    const sampleFile = fileList.find((f) => /welcome/i.test(f.path));
-    const sampleContent = sampleFile?.content;
     logger.debug("Built file list index", {
       fileListSize: fileList.length,
       indexedWithContent: index.size,
-      sampleFilePath: sampleFile?.path,
-      sampleContentLength: sampleContent?.length,
-      sampleContentHash: sampleContent ? hashPreview(sampleContent) : undefined,
-      sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
     return {
@@ -255,5 +222,21 @@ export class FileListIndex {
       paths: pathSet,
       fresh: true,
     };
+  }
+
+  private matchesFileList(fileList: FileListCacheEntry[]): boolean {
+    if (!this.index || !this.pathSet || this.pathSet.size !== fileList.length) return false;
+
+    for (const file of fileList) {
+      if (!this.pathSet.has(file.path)) return false;
+
+      if (file.content === undefined) {
+        if (this.index.has(file.path)) return false;
+      } else if (this.index.get(file.path) !== file.content) {
+        return false;
+      }
+    }
+
+    return true;
   }
 }

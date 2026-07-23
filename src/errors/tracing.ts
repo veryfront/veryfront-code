@@ -4,9 +4,28 @@
  * Attaches error metadata to spans for distributed tracing and error correlation.
  */
 
-import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
 import type { VeryfrontError } from "./types.ts";
+import { snapshotVeryfrontError } from "./error-snapshot.ts";
+
+/** Minimal tracing span contract used by error instrumentation. */
+export interface ErrorTraceSpan {
+  /** Set the span status. */
+  setStatus(status: { code: number; message?: string }): unknown;
+  /** Set stable error attributes. */
+  setAttributes(attributes: Record<string, string | number | boolean>): unknown;
+  /** Add a stable error event. */
+  addEvent(
+    name: string,
+    attributes?: Record<string, string | number | boolean>,
+  ): unknown;
+}
+
+/** Minimal trace API needed to resolve the active span. */
+export interface ErrorTraceApi {
+  /** Return the active span when one exists. */
+  getActiveSpan(): ErrorTraceSpan | undefined;
+}
 
 /**
  * Attach error metadata to an OpenTelemetry span
@@ -20,7 +39,7 @@ import type { VeryfrontError } from "./types.ts";
  * - error.status: HTTP status code
  *
  * Span status: Set to ERROR with error title as message
- * Span event: "error" event with slug and detail
+ * Span event: "error" event with the stable slug only
  *
  * @param error - The VeryfrontError to attach
  * @param span - The OpenTelemetry span to attach to
@@ -35,26 +54,32 @@ import type { VeryfrontError } from "./types.ts";
  * }
  * ```
  */
-export function attachErrorToSpan(error: VeryfrontError, span: Span): void {
-  // Set span status to ERROR
-  span.setStatus({
-    code: SpanStatusCode.ERROR,
-    message: error.title,
-  });
+export function attachErrorToSpan(error: VeryfrontError, span: ErrorTraceSpan): void {
+  const snapshot = snapshotVeryfrontError(error);
+  try {
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: snapshot.title,
+    });
+  } catch {
+    // Instrumentation must never replace the application failure.
+  }
 
-  // Set error attributes for filtering and grouping
-  span.setAttributes({
-    "error.slug": error.slug,
-    "error.category": error.category,
-    "error.status": error.status,
-  });
+  try {
+    span.setAttributes({
+      "error.slug": snapshot.slug,
+      "error.category": snapshot.category,
+      "error.status": snapshot.status,
+    });
+  } catch {
+    // Instrumentation must never replace the application failure.
+  }
 
-  // Add error event with details
-  span.addEvent("error", {
-    "error.slug": error.slug,
-    "error.detail": error.detail ?? "",
-    "error.suggestion": error.suggestion ?? "",
-  });
+  try {
+    span.addEvent("error", { "error.slug": snapshot.slug });
+  } catch {
+    // Instrumentation must never replace the application failure.
+  }
 }
 
 /**
@@ -81,10 +106,14 @@ export function attachErrorToSpan(error: VeryfrontError, span: Span): void {
  */
 export function attachErrorToActiveSpan(
   error: VeryfrontError,
-  trace: { getActiveSpan(): Span | undefined },
+  trace: ErrorTraceApi,
 ): void {
-  const span = trace.getActiveSpan();
-  if (span) {
-    attachErrorToSpan(error, span);
+  try {
+    const span = trace.getActiveSpan();
+    if (span) {
+      attachErrorToSpan(error, span);
+    }
+  } catch {
+    // Instrumentation must never replace the application failure.
   }
 }

@@ -3,8 +3,10 @@ import {
   type ControlPlaneSurface,
   verifyControlPlaneJws,
 } from "#veryfront/channels/control-plane.ts";
+export type { ControlPlaneClaims, ControlPlaneSurface } from "#veryfront/channels/control-plane.ts";
+export { CONTROL_PLANE_SURFACES } from "#veryfront/channels/control-plane.ts";
+import { getRuntimeAgentCredentialsSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
 
@@ -15,14 +17,35 @@ const logger = serverLogger.component("internal-agents-auth");
 
 declare const verifiedControlPlaneRequestBrand: unique symbol;
 
+/** Control-plane claims that passed signature and request-body verification. */
 export type VerifiedControlPlaneRequestClaims = ControlPlaneClaims & {
   readonly [verifiedControlPlaneRequestBrand]: true;
 };
 
+/** Cache credential derived from a verified host-signed request. */
 export interface VerifiedControlPlaneCacheCredential {
+  /** Request-scoped API token. */
   readonly token: string;
+  /** Project identifier bound by the verified claims. */
   readonly projectId: string;
+  /** Project slug bound by the verified claims. */
   readonly projectSlug: string;
+}
+
+/** Minimal request context needed for control-plane verification. */
+export interface ControlPlaneVerificationContext {
+  /** Runtime adapter that supplies framework configuration. */
+  readonly adapter: {
+    /** Environment reader for the runtime adapter. */
+    readonly env: {
+      /** Returns the configured value for an environment key. */
+      get(key: string): string | undefined;
+    };
+  };
+  /** Resolved project identifier, when available. */
+  readonly projectId?: string;
+  /** Resolved project slug used as the signature audience. */
+  readonly projectSlug?: string;
 }
 
 interface VerifiedControlPlaneCacheCredentialGrant {
@@ -41,16 +64,13 @@ function extractVerifiedCacheCredential(
 ): VerifiedControlPlaneCacheCredential | null {
   try {
     const body = JSON.parse(rawBody) as Record<string, unknown>;
-    const credentials = body.credentials;
-    if (!credentials || typeof credentials !== "object" || Array.isArray(credentials)) {
+    const parsed = getRuntimeAgentCredentialsSchema().safeParse(body.credentials);
+    if (!parsed.success) {
       return null;
     }
 
-    const token = (credentials as Record<string, unknown>).authToken;
-    if (typeof token !== "string" || token.length === 0) return null;
-
     return Object.freeze({
-      token,
+      token: parsed.data.authToken,
       projectId: claims.project_id,
       projectSlug: claims.aud,
     });
@@ -59,6 +79,7 @@ function extractVerifiedCacheCredential(
   }
 }
 
+/** Consumes the one-time cache credential associated with verified claims. */
 export function consumeVerifiedControlPlaneCacheCredential(
   claims: VerifiedControlPlaneRequestClaims,
 ): VerifiedControlPlaneCacheCredential | null {
@@ -68,9 +89,12 @@ export function consumeVerifiedControlPlaneCacheCredential(
   return grant.credential;
 }
 
+/** Error mapped to a stable HTTP response for invalid control-plane requests. */
 export class ControlPlaneRequestError extends Error {
+  /** HTTP status returned for the request failure. */
   readonly status: number;
 
+  /** Creates a control-plane request error. */
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
@@ -78,7 +102,10 @@ export class ControlPlaneRequestError extends Error {
   }
 }
 
-export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): string | undefined {
+/** Resolves the control-plane verification key from adapter or host configuration. */
+export function getControlPlaneVerificationPublicKey(
+  ctx: ControlPlaneVerificationContext,
+): string | undefined {
   // Project env overlays intentionally hide host secrets from request-scoped reads.
   // Control-plane verification is framework-owned config, so it must fall back to
   // the host environment when the runtime adapter env is overlay-aware.
@@ -86,9 +113,10 @@ export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): strin
     getHostEnv(CONTROL_PLANE_SIGNING_KEY_ENV);
 }
 
+/** Verifies a signed control-plane request and binds it to the request context. */
 export async function verifyControlPlaneRequest(
   req: Request,
-  ctx: HandlerContext,
+  ctx: ControlPlaneVerificationContext,
   rawBody: string,
   options: {
     expectedSubject?: string;
@@ -150,17 +178,14 @@ export async function verifyControlPlaneRequest(
       }),
     );
     return verifiedClaims;
-  } catch (error) {
+  } catch {
     // verifyControlPlaneJws performs only crypto and claim validation with no
-    // external I/O — any error it throws means the signature is invalid.
+    // external I/O. Any error it throws means the signature is invalid.
     // Mapping all errors to 401 is the safe-fail path: it avoids leaking
     // internal error detail and doesn't depend on message-string matching
     // that breaks when upstream wording changes.
     logger.warn("Invalid control-plane signature", {
-      error,
-      projectSlug,
-      expectedSubject: options.expectedSubject,
-      expectedSurface: options.expectedSurface,
+      failureCategory: "signature-invalid",
     });
     throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
   }

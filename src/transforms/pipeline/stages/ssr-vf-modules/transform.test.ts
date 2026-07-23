@@ -4,7 +4,12 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
-import { isCyclePlaceholder, reactReExportToEsmUrl, transformFrameworkCode } from "./transform.ts";
+import {
+  cacheTransformedCode,
+  isCyclePlaceholder,
+  reactReExportToEsmUrl,
+  transformFrameworkCode,
+} from "./transform.ts";
 import {
   buildFrameworkTransformCacheKey,
   FRAMEWORK_ROOT,
@@ -69,6 +74,49 @@ describe("reactReExportToEsmUrl", () => {
         true,
         `react/${name} has no esm.sh routing entry in REACT_REEXPORT_SPECIFIERS`,
       );
+    }
+  });
+});
+
+describe("cacheTransformedCode", () => {
+  it("atomically publishes transformed framework modules", async () => {
+    const baseFs = createFileSystem();
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
+    const fs = new Proxy(baseFs, {
+      get(target, property, receiver) {
+        if (property === "writeTextFile") {
+          return async (path: string, data: string) => {
+            writes.push(path);
+            await target.writeTextFile(path, data);
+          };
+        }
+        if (property === "rename") {
+          return async (from: string, to: string) => {
+            renames.push([from, to]);
+            await target.rename?.(from, to);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const transformed = "export const atomicCache = true;";
+    let cachePath: string | undefined;
+
+    try {
+      cachePath = await cacheTransformedCode(
+        transformed,
+        `_veryfront/tests/atomic-${crypto.randomUUID()}.ts`,
+        fs,
+      );
+
+      const temporaryWrite = writes.find((path) => path.startsWith(`${cachePath}.tmp-`));
+      assertEquals(typeof temporaryWrite, "string");
+      assertEquals(renames, [[temporaryWrite!, cachePath]]);
+      assertEquals(await baseFs.readTextFile(cachePath), transformed);
+    } finally {
+      if (cachePath) await baseFs.remove(cachePath).catch(() => {});
     }
   });
 });
@@ -223,6 +271,7 @@ describe("transformFrameworkCode depth-limit fallback", {
       });
 
       assertEquals(isCyclePlaceholder(result), true);
+      assertEquals(result.includes(tmp), false);
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
@@ -311,8 +360,8 @@ describe("transformFrameworkCode depth-limit fallback", {
       assertEquals(transformed.includes('from "./build.js"'), false);
       assertEquals(transformed.includes('from "./buffers.js"'), false);
       // It should rewrite them to file:// URLs pointing at the resolved sources:
-      assertStringIncludes(transformed, `from "file://${buildJs}"`);
-      assertStringIncludes(transformed, `from "file://${buffersJs}"`);
+      assertStringIncludes(transformed, `from "file://${await Deno.realPath(buildJs)}"`);
+      assertStringIncludes(transformed, `from "file://${await Deno.realPath(buffersJs)}"`);
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }

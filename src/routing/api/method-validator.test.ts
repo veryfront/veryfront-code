@@ -25,6 +25,11 @@ describe("method-validator", () => {
       }
     });
 
+    it("should advertise HEAD when GET is supported", () => {
+      const response = createAppRouteMethodNotAllowed({ GET: () => new Response("ok") });
+      assertEquals(response.headers.get("Allow")?.includes("HEAD"), true);
+    });
+
     it("should handle handler with no methods", () => {
       const response = createAppRouteMethodNotAllowed({});
       assertEquals(response.status, 405);
@@ -77,6 +82,18 @@ describe("method-validator", () => {
       assertEquals(allowHeader.includes("GET"), true);
       assertEquals(allowHeader.includes("notAMethod"), false);
       assertEquals(allowHeader.includes("config"), false);
+    });
+
+    it("should include only standard methods and infer HEAD from GET", () => {
+      const response = createPagesRouteMethodNotAllowed({
+        GET: () => new Response("ok"),
+        helper: () => "not a route handler",
+      });
+      const allowHeader = response.headers.get("Allow") ?? "";
+
+      assertEquals(allowHeader.includes("GET"), true);
+      assertEquals(allowHeader.includes("HEAD"), true);
+      assertEquals(allowHeader.includes("helper"), false);
     });
   });
 });

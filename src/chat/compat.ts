@@ -5,7 +5,7 @@
  * Each alias points at a canonical symbol that lives in its originating module
  * (`ag-ui.ts`, `types.ts`, `conversation.ts`, `message-prep.ts`).
  *
- * Imports here are **one-way** — `compat.ts` imports from those modules, and
+ * Imports here are **one-way**: `compat.ts` imports from those modules, and
  * they never import back from `compat.ts`. Keeping the dependency acyclic is
  * deliberate: an earlier attempt that had the public modules re-export these
  * aliases from `compat.ts` introduced a circular import that broke bundled SSR

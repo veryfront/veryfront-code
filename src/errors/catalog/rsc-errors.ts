@@ -1,7 +1,8 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const RSC_ERROR_CATALOG: PartialErrorCatalog = {
+/** Immutable error-solution catalog fragment. */
+export const RSC_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "client-boundary-violation": createErrorSolution("client-boundary-violation", {
     title: "Client/Server boundary violation",
     message: "Server-only code used in Client Component.",
@@ -79,4 +80,4 @@ import React from 'react'`,
       "Check for circular references",
     ],
   ),
-};
+});

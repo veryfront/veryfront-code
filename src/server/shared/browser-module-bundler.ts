@@ -16,6 +16,7 @@ import {
   inspectBrowserModuleBoundary,
 } from "./browser-module-boundary.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 function createIgnoreCSSImportsPlugin(): Plugin {
   return {
@@ -86,7 +87,7 @@ function createTrackingAdapter(adapter: RuntimeAdapter): TrackingAdapterResult {
             );
             return info;
           } catch (error) {
-            probes.set(path, "missing");
+            if (isNotFoundError(error)) probes.set(path, "missing");
             throw error;
           }
         };
@@ -149,6 +150,7 @@ export function bundleBrowserModuleWithMetadata(
         format: "esm",
         platform: "browser",
         target: "es2020",
+        logLevel: "silent",
         jsx: "automatic",
         jsxImportSource: "react",
         external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
@@ -196,8 +198,7 @@ export function bundleBrowserModuleWithMetadata(
       };
     },
     {
-      "bundle.filePath": getSafeBrowserModuleIdentity(absPath, options.projectDir),
-      "bundle.projectSlug": options.projectSlug ?? "unknown",
+      "bundle.loader": getEsbuildLoader(absPath),
     },
   );
 }
@@ -231,7 +232,8 @@ export async function validateBrowserModuleBundle(
     try {
       const info = await options.adapter.fs.stat(probe.path);
       currentState = info.isFile ? "file" : info.isDirectory ? "directory" : "other";
-    } catch {
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       currentState = "missing";
     }
     if (currentState !== probe.state) return false;

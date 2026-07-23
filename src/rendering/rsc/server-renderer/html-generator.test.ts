@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { renderAttributes } from "./html-generator.ts";
+import { renderAttributes, treeToHTML } from "./html-generator.ts";
 
 describe("rendering/rsc/server-renderer/html-generator", () => {
   describe("renderAttributes", () => {
@@ -75,6 +75,44 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       assertEquals(result.includes('htmlFor="field"'), true);
       assertEquals(result.includes('aria-label="Field"'), true);
       assertEquals(result.includes('data-test-id="field"'), true);
+    });
+
+    it("does not stringify executable or structured values into attributes", () => {
+      const result = renderAttributes({
+        dangerouslySetInnerHTML: { __html: "<script>alert(1)</script>" },
+        payload: { secret: true },
+        callback: () => undefined,
+        marker: Symbol("marker"),
+        id: "safe",
+      });
+
+      assertEquals(result, ' id="safe"');
+    });
+  });
+
+  describe("treeToHTML", () => {
+    it("generates deterministic boundary identifiers", async () => {
+      const node = {
+        type: "client" as const,
+        component: "Button",
+        props: { label: "Save" },
+      };
+
+      assertEquals(await treeToHTML(node), await treeToHTML(node));
+    });
+
+    it("assigns distinct deterministic identifiers to sibling boundaries", async () => {
+      const html = await treeToHTML({
+        type: "fragment",
+        children: [
+          { type: "client", component: "Button" },
+          { type: "client", component: "Button" },
+        ],
+      });
+      const ids = [...html.matchAll(/data-rsc-id="([^"]+)"/g)].map((match) => match[1]);
+
+      assertEquals(ids.length, 2);
+      assertEquals(ids[0] !== ids[1], true);
     });
   });
 });

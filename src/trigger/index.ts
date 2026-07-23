@@ -33,4 +33,4 @@ export type {
   TriggerDiscoveryOptions,
 } from "./discovery.ts";
 export type { RunTriggerTargetOptions, TriggerTargetRunResult } from "./local-runner.ts";
-export type { TriggerTarget } from "./target.ts";
+export type { TriggerTarget, TriggerTargetKind } from "./target.ts";

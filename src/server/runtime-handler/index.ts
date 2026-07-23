@@ -8,10 +8,15 @@
  */
 
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  isWebSocketUpgradeResponse,
+  type RuntimeAdapter,
+  type RuntimeRequestHandler,
+  type RuntimeResponse,
+} from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
-import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
+import { createErrorResponse, UNKNOWN_ERROR } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
@@ -66,7 +71,6 @@ import { AgentRunCancelHandler } from "../handlers/request/agent-run-cancel.hand
 import { ProjectRunExecuteHandler } from "../handlers/request/project-run-execute.handler.ts";
 import { ChannelInvokeHandler } from "../handlers/request/channel-invoke.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
-import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 
 // Extracted modules
 import {
@@ -98,11 +102,12 @@ import {
   startIsolatedRequest,
 } from "./isolation.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
-import { defaultDiscoveryCache } from "./local-project-discovery.ts";
+import { canonicalizeLocalProjectSlug, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
 import {
+  getWebSocketProjectSlugOverride,
   HTTP_GATEWAY_TIMEOUT,
   isLightweightPath,
   isMonitoringPath,
@@ -126,6 +131,20 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
+
+function getSafeErrorName(error: unknown): string {
+  const name = error instanceof Error ? error.name : typeof error;
+  return /^[A-Za-z][A-Za-z0-9.]{0,127}$/.test(name) ? name : "Error";
+}
+
+/** Build a generic response when the handler chain violates its response invariant. */
+export function createNoHandlerResponse(): Response {
+  return createErrorResponse(
+    UNKNOWN_ERROR.create({
+      detail: "No handler available to process this request",
+    }),
+  );
+}
 
 /** Handler names in registration order. */
 export const HANDLER_NAMES = [
@@ -151,7 +170,6 @@ export const HANDLER_NAMES = [
   "ProjectRunExecuteHandler",
   "ChannelInvokeHandler",
   "DevDashboardHandler",
-  "ProjectsHandler",
   "StudioBridgeModulesHandler",
   "ProdHydrationModuleHandler",
   "CSSHandler",
@@ -172,20 +190,22 @@ export type HandlerName = (typeof HANDLER_NAMES)[number];
 
 /**
  * Dependencies for handler registry creation.
- * All fields are optional — when omitted, the real handler implementation is used.
+ * All fields are optional. When omitted, the real handler implementation is used.
  * This allows tests to inject mock handlers for specific slots.
  */
 export interface HandlerDependencies {
   /** Override any handler by its typed name. */
-  overrides?: Partial<Record<HandlerName, Handler>>;
+  overrides?: Partial<Record<HandlerName, Handler<RuntimeResponse>>>;
   /** When true, log handler registration details. */
   debug?: boolean;
+  /** Instance-scoped readiness state for the health handler. */
+  isServerReady?: () => boolean;
 }
 
 /** Factory for each handler. Only called when no override is provided (lazy instantiation). */
 const handlerFactories: Record<
   HandlerName,
-  (projectDir: string, adapter: RuntimeAdapter) => Handler
+  (projectDir: string, adapter: RuntimeAdapter) => Handler<RuntimeResponse>
 > = {
   AuthHandler: () => new AuthHandler(),
   CsrfHandler: () => new CsrfHandler(),
@@ -209,7 +229,6 @@ const handlerFactories: Record<
   ProjectRunExecuteHandler: () => new ProjectRunExecuteHandler(),
   ChannelInvokeHandler: () => new ChannelInvokeHandler(),
   DevDashboardHandler: () => new DevDashboardHandler(),
-  ProjectsHandler: () => new ProjectsHandler(),
   StudioBridgeModulesHandler: () => new StudioBridgeModulesHandler(),
   ProdHydrationModuleHandler: () => new ProdHydrationModuleHandler(),
   CSSHandler: () => new CSSHandler(),
@@ -228,7 +247,7 @@ const handlerFactories: Record<
 /**
  * Creates a RouteRegistry populated with the standard handler chain.
  *
- * Handlers are instantiated lazily — overridden slots skip construction
+ * Handlers are instantiated lazily. Overridden slots skip construction
  * of the default handler entirely.
  *
  * @param projectDir - Root project directory
@@ -248,7 +267,7 @@ export function createHandlerRegistry(
 
   const overrides = deps.overrides ?? {};
 
-  // Create the ApiHandlerWrapper first — it's special because callers need
+  // Create the ApiHandlerWrapper first. It is special because callers need
   // the returned instance for initialization regardless of overrides.
   const apiHandler = overrides.ApiHandlerWrapper
     ? (overrides.ApiHandlerWrapper as ApiHandlerWrapper)
@@ -257,6 +276,9 @@ export function createHandlerRegistry(
   const handlers = HANDLER_NAMES.map((name) => {
     if (name === "ApiHandlerWrapper") return apiHandler;
     if (overrides[name]) return overrides[name]!;
+    if (name === "HealthHandler" && deps.isServerReady) {
+      return new HealthHandler(deps.isServerReady);
+    }
     return handlerFactories[name](projectDir, adapter);
   });
 
@@ -281,15 +303,17 @@ export interface RuntimeHandlerOptions {
   defaultProjectId?: string;
   /** Default release ID when not provided via proxy headers (for standalone production mode) */
   defaultReleaseId?: string;
-  /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
+  /** Override the host-derived environment in standalone mode. */
   defaultEnvironment?: "preview" | "production";
+  /** Instance-scoped readiness state used by the health endpoint. */
+  isServerReady?: () => boolean;
 }
 
 export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
-): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+): RuntimeRequestHandler & { ready?: Promise<void> } {
   const isDebugEnabled = !!(opts.debug || adapter.env.get("VERYFRONT_DEBUG"));
 
   function logDebug(message: string, extra?: Record<string, unknown>): void {
@@ -301,15 +325,23 @@ export function createVeryfrontHandler(
     logger.debug(message);
   }
 
-  logDebug("[runtime-handler] handler initialized", { projectDir });
+  logDebug("Handler initialized");
+
+  // Keep project discovery and adapter state scoped to this handler. A process may
+  // host multiple servers with overlapping slugs backed by different filesystems.
+  const discoveryCache = new ProjectDiscoveryCache();
 
   // Seed local project cache from explicit mappings (for tests and capability injection)
   if (opts.localProjects) {
+    let seededProjectCount = 0;
     for (const [slug, path] of Object.entries(opts.localProjects)) {
-      defaultDiscoveryCache.projects.set(slug, path);
+      const canonicalSlug = canonicalizeLocalProjectSlug(slug);
+      if (!canonicalSlug) continue;
+      discoveryCache.projects.set(canonicalSlug, path);
+      seededProjectCount++;
     }
-    logDebug("[runtime-handler] Seeded local project cache", {
-      projects: Object.keys(opts.localProjects),
+    logDebug("Seeded local project cache", {
+      count: seededProjectCount,
     });
   }
 
@@ -336,14 +368,14 @@ export function createVeryfrontHandler(
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
     debug: opts.debug,
+    isServerReady: opts.isServerReady,
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
     logger.error("API handler initialization failed", {
-      error: getErrorMessage(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      errorName: getSafeErrorName(error),
     });
     throw error;
   });
@@ -352,7 +384,7 @@ export function createVeryfrontHandler(
     logger.debug("Running in proxy mode - lazy initialization enabled");
   }
 
-  const handler = async (req: Request): Promise<Response> => {
+  const handler = async (req: Request): Promise<RuntimeResponse> => {
     const url = new URL(req.url);
     const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
 
@@ -380,7 +412,6 @@ export function createVeryfrontHandler(
 
     // Build logger context
     const hostHeader = req.headers.get("host") ?? url.host;
-    const domain = hostHeader.replace(/:\d+$/, "");
     const proxyTrustPublicKeyPem = adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
       getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
     const proxyTrusted = isProxyMode
@@ -390,27 +421,18 @@ export function createVeryfrontHandler(
 
     const loggerContext: RequestContext = {
       logger: logger.child({
-        requestId: lifecycle.requestId,
-        request_url: req.url,
-        domain,
-        project_slug: headers.projectSlug,
-        project_id: headers.projectId,
-        release_id: headers.releaseId,
-        branch_id: headers.branchId,
-        branch_name: headers.branchName,
-        pathname: url.pathname,
+        method: req.method,
       }),
       requestId: lifecycle.requestId,
       projectSlug: headers.projectSlug,
       projectId: headers.projectId,
-      domain,
     };
 
     return runWithRequestContextAsync(loggerContext, async () => {
       const spanInfo = startRequestTracing(req, url.pathname);
       setRequestAttributes(spanInfo.span, req, url);
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         lifecycle.requestId,
         headers.projectSlug,
         url.pathname,
@@ -428,15 +450,19 @@ export function createVeryfrontHandler(
       );
 
       if (!isolationCheck.allowed) {
-        endContentMetrics({
-          requestId: lifecycle.requestId,
-          pathname: url.pathname,
-          mode: "isolation",
-        });
-        completeRequestTracking(lifecycle.requestId, 503, false);
-        const response = createIsolationErrorResponse(isolationCheck);
-        endRequestTracing(spanInfo.span, response.status);
-        return response;
+        try {
+          endContentMetrics({
+            requestId: lifecycle.requestId,
+            pathname: url.pathname,
+            mode: "isolation",
+          });
+          completeRequestTracking(trackingKey, 503, false);
+          const response = createIsolationErrorResponse(isolationCheck);
+          endRequestTracing(spanInfo.span, response.status);
+          return response;
+        } finally {
+          endRequestLifecycle(lifecycle);
+        }
       }
 
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
@@ -473,24 +499,29 @@ export function createVeryfrontHandler(
           const proxyGuardError = missingHeader ?? proxyContextError;
 
           if (proxyGuardError) {
-            logger.warn(proxyGuardError.detail, {
-              pathname: url.pathname,
-              domain,
-              projectSlug: headers.projectSlug,
-              host: req.headers.get("host"),
-              forwardedHost: req.headers.get("x-forwarded-host"),
+            logger.warn("Proxy request rejected", {
+              reason: missingHeader
+                ? headers.projectSlug ? "missing_authentication_context" : "missing_project_context"
+                : "untrusted_proxy_context",
             });
             endContentMetrics({
               requestId: lifecycle.requestId,
               pathname: url.pathname,
               mode: "proxy",
             });
-            completeRequestTracking(lifecycle.requestId, 502, false);
+            completeRequestTracking(trackingKey, 502, false);
             completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
             endRequestTracing(spanInfo.span, 502);
             return new Response(
               JSON.stringify(proxyGuardError),
-              { status: 502, headers: { "Content-Type": "application/json" } },
+              {
+                status: 502,
+                headers: {
+                  "Cache-Control": "no-store",
+                  "Content-Type": "application/json",
+                  "X-Content-Type-Options": "nosniff",
+                },
+              },
             );
           }
         }
@@ -504,7 +535,7 @@ export function createVeryfrontHandler(
           : "html";
         let requestProfileRecord: ReturnType<typeof finalizeRequestProfiling> = null;
 
-        const executeHandler = async (request: Request): Promise<Response> => {
+        const executeHandler = async (request: Request): Promise<RuntimeResponse> => {
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
             return new Response("Not Found", { status: 404 });
@@ -525,7 +556,10 @@ export function createVeryfrontHandler(
 
           const reqCtx = createRequestContext(request, { proxyTrusted });
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
+          const wsSlugOverride = getWebSocketProjectSlugOverride(url, {
+            effectiveHost: hostHeader,
+            proxyTrusted: proxyTrusted === true,
+          });
 
           // Resolve project from various sources
           const projectRes = await profilePhase(
@@ -560,6 +594,7 @@ export function createVeryfrontHandler(
                 opts.debug,
                 config,
               ),
+              discoveryCache,
             );
             if (response) return response;
           }
@@ -585,6 +620,7 @@ export function createVeryfrontHandler(
               pathname: url.pathname,
               isProxyMode,
               proxyTrusted,
+              cache: discoveryCache,
             }));
 
           // Resolve environment and validate
@@ -651,12 +687,11 @@ export function createVeryfrontHandler(
                   environmentId,
                   reqCtx.token,
                   projectSlug,
+                  { scope: envRes.releaseId },
                 ),
             );
 
-            logDebug("[runtime-handler] Project env vars fetched", {
-              projectSlug,
-              environmentId,
+            logDebug("Project env vars fetched", {
               count: Object.keys(envVarsForRequest).length,
             });
           }
@@ -694,29 +729,23 @@ export function createVeryfrontHandler(
                 }
                 return executeRoute();
               }),
-            {
-              "handler.project_slug": projectRes.projectSlug || "unknown",
-              "handler.path": url.pathname,
-              "handler.method": request.method,
-            },
+            { "handler.method": request.method },
           );
 
           if (response) return response;
 
-          logDebug("[runtime-handler] No handler produced response (unexpected)", {
-            path: url.pathname,
-          });
-          // RFC 9457 error response for no handler case (env-aware filtering)
-          const noHandlerError = UNKNOWN_ERROR.create({
-            detail: "No handler available to process this request",
-            instance: url.pathname,
-          });
-          return errorToRFC9457Response(noHandlerError, ctx, request);
+          logDebug("No handler produced response (unexpected)");
+          return createNoHandlerResponse();
         };
 
         const { response, error, settled } = await withRequestTimeout(
           (signal) => {
-            const timeoutRequest = new Request(req, { signal });
+            // Runtime adapters associate upgrade state with the original Request object.
+            // Keep that identity for WebSocket handshakes while the timeout race still
+            // bounds the handler execution.
+            const timeoutRequest = req.headers.get("upgrade")?.toLowerCase() === "websocket"
+              ? req
+              : new Request(req, { signal });
             return runWithRequestProfiling(
               {
                 category: profileCategory,
@@ -726,7 +755,7 @@ export function createVeryfrontHandler(
                 requestMode: headers.environment,
               },
               async () => {
-                let profiledResponse: Response | undefined;
+                let profiledResponse: RuntimeResponse | undefined;
                 try {
                   profiledResponse = await executeWithTracingContext(
                     spanInfo,
@@ -761,8 +790,18 @@ export function createVeryfrontHandler(
           settled,
         );
 
+        if (isWebSocketUpgradeResponse(response) || response.status === 101) {
+          completeRequestTracking(
+            trackingKey,
+            response.status,
+            false,
+            requestProfileRecord,
+          );
+          return response;
+        }
+
         return completeRequestTrackingOnResponseEnd(
-          lifecycle.requestId,
+          trackingKey,
           withServerTimingHeader(response, requestProfileRecord),
           isTimeout,
           requestProfileRecord,

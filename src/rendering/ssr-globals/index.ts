@@ -11,10 +11,16 @@ export {
   disableSSRClientOnlyFetching,
   enableSSRClientOnlyFetching,
   isSSRGlobalsActive,
+  runWithSSRRequestGlobals,
   setSSRServerPort,
+  type SSRRequestGlobals,
 } from "./context.ts";
 
-export { disableSSRFetchInterception, enableSSRFetchInterception } from "./fetch-interceptor.ts";
+export {
+  acquireSSRFetchInterception,
+  disableSSRFetchInterception,
+  enableSSRFetchInterception,
+} from "./fetch-interceptor.ts";
 
 export {
   createDocumentStub,

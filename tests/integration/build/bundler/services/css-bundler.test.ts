@@ -3,7 +3,6 @@ import { describe, it } from "#veryfront/testing/bdd";
 import {
   bundleCss,
   extractCssVariables,
-  processCssImports,
 } from "../../../../../src/build/renderer/services/css-bundler.ts";
 import type {
   BundleResult,
@@ -97,7 +96,7 @@ describe("CSS Bundler", () => {
       });
     });
 
-    it("removes quotes from URLs when minifying", async () => {
+    it("preserves URL quotes when minifying", async () => {
       await withTestContext("css-bundle-url", (context) => {
         const source = {
           path: "/test/styles.css",
@@ -123,11 +122,8 @@ describe("CSS Bundler", () => {
 
         const output = result.outputs.get(source.path)!;
 
-        // Should remove quotes from URLs
-        assertEquals(output.content.includes("url(image.png)"), true);
-        assertEquals(output.content.includes("url(icon.svg)"), true);
-        assertEquals(output.content.includes('url("'), false);
-        assertEquals(output.content.includes("url('"), false);
+        assertEquals(output.content.includes('url("image.png")'), true);
+        assertEquals(output.content.includes("url('icon.svg')"), true);
       });
     });
 
@@ -162,7 +158,7 @@ describe("CSS Bundler", () => {
       });
     });
 
-    it("handles malformed CSS gracefully", async () => {
+    it("rejects malformed CSS without publishing partial output", async () => {
       await withTestContext("css-bundle-error", (context) => {
         const source = {
           path: "/test/malformed.css",
@@ -181,11 +177,10 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        // Should not throw - just process as best as possible
         bundleCss(source, options, result);
 
-        // Should have output even for malformed CSS
-        assertExists(result.outputs.get(source.path));
+        assertEquals(result.outputs.has(source.path), false);
+        assertEquals(result.errors.length, 1);
       });
     });
 
@@ -209,67 +204,6 @@ describe("CSS Bundler", () => {
         const output = result.outputs.get(source.path)!;
         assertEquals(output.content, "");
       });
-    });
-  });
-
-  describe("processCssImports", () => {
-    it("preserves relative imports", () => {
-      const css = `
-        @import "./variables.css";
-        @import "../base/reset.css";
-
-        .component { color: red; }
-      `;
-
-      const processed = processCssImports(css, "/styles/components.css");
-
-      // Should preserve relative imports
-      assertEquals(processed.includes('@import "./variables.css"'), true);
-      assertEquals(processed.includes('@import "../base/reset.css"'), true);
-    });
-
-    it("preserves absolute imports", () => {
-      const css = `
-        @import "normalize.css";
-        @import url("https://fonts.googleapis.com/css?family=Roboto");
-
-        .component { color: red; }
-      `;
-
-      const processed = processCssImports(css, "/styles/components.css");
-
-      // Should preserve absolute imports
-      assertEquals(processed.includes('@import "normalize.css"'), true);
-      assertEquals(processed.includes('url("https://fonts.googleapis.com'), true);
-    });
-
-    it("handles imports without semicolons", () => {
-      const css = `
-        @import "./variables.css"
-        @import "./theme.css";
-
-        .component { color: red; }
-      `;
-
-      const processed = processCssImports(css, "/styles/components.css");
-
-      // Should handle both forms
-      assertEquals(processed.includes('@import "./variables.css"'), true);
-      assertEquals(processed.includes('@import "./theme.css"'), true);
-    });
-
-    it("handles CSS without imports", () => {
-      const css = `
-        .component {
-          color: red;
-          padding: 10px;
-        }
-      `;
-
-      const processed = processCssImports(css, "/styles/components.css");
-
-      // Should return unchanged
-      assertEquals(processed, css);
     });
   });
 
@@ -414,8 +348,7 @@ describe("CSS Bundler", () => {
         assertEquals(output.content.includes(".button"), true);
         assertEquals(output.content.includes("--primary"), true);
 
-        // Should optimize URLs
-        assertEquals(output.content.includes("url(background.jpg)"), true);
+        assertEquals(output.content.includes('url("background.jpg")'), true);
 
         // Extract variables from original CSS
         const variables = extractCssVariables(source.content);

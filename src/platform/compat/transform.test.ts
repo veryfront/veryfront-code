@@ -1,13 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isUsingEsbuild, transformJsx } from "./transform.ts";
+import { initializeTransform, isUsingEsbuild, transformJsx } from "./transform.ts";
 
 // esbuild starts a child process that lives across tests, so we disable sanitizers
 describe("platform/compat/transform", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("isUsingEsbuild", () => {
     it("should return true", () => {
       assertEquals(isUsingEsbuild(), true);
+    });
+  });
+
+  describe("initializeTransform", () => {
+    it("delegates concurrent and repeated initialization to the bundler owner", async () => {
+      await Promise.all([initializeTransform(), initializeTransform(), initializeTransform()]);
+      await initializeTransform();
     });
   });
 

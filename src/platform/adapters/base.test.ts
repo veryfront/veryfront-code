@@ -12,6 +12,8 @@ import type {
   KVStoreAdapter,
   RuntimeCapabilities,
   RuntimeId,
+  RuntimeRequestHandler,
+  RuntimeResponse,
   ServeOptions,
   ServerAdapter,
   ShellAdapter,
@@ -32,6 +34,17 @@ describe("base.ts type exports", () => {
       assertEquals(response instanceof Response, false);
       assertEquals(isWebSocketUpgradeResponse(response), true);
       assertEquals(isWebSocketUpgradeResponse(new Response()), false);
+    });
+
+    it("is accepted by the runtime request handler contract", async () => {
+      const upgradeResponse = createWebSocketUpgradeResponse();
+      const handler: RuntimeRequestHandler = () => upgradeResponse;
+
+      const response: RuntimeResponse = await handler(
+        new Request("http://localhost/_ws"),
+      );
+
+      assertEquals(Object.is(response, upgradeResponse), true);
     });
   });
 

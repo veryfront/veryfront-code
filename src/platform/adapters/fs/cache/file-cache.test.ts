@@ -1,11 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import {
   FileCache,
   initializeFileCacheBackend,
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
+import { CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -32,6 +44,21 @@ describe("FileCache", () => {
           maxMemory: 50 * 1024 * 1024,
         }),
       );
+    });
+
+    it("rejects non-positive and non-finite capacity options", () => {
+      for (
+        const options of [
+          { maxSize: 0 },
+          { maxSize: -1 },
+          { maxSize: Number.NaN },
+          { maxMemory: 0 },
+          { maxMemory: Number.POSITIVE_INFINITY },
+          { ttl: 0 },
+        ]
+      ) {
+        assertThrows(() => new FileCache(options), Error, "positive finite");
+      }
     });
   });
 
@@ -132,6 +159,24 @@ describe("FileCache", () => {
       assertEquals(typeof stats.memoryUsed, "number");
       assertEquals(typeof stats.backend, "string");
     });
+
+    it("keeps memory accounting exact when an existing key is replaced", () => {
+      cache.set("key1", "a");
+      cache.set("key1", "replacement");
+
+      assertEquals(cache.stats().size, 1);
+      assertEquals(cache.stats().memoryUsed, "replacement".length * 2);
+    });
+
+    it("does not evict an existing key merely because it is replaced at max size", () => {
+      const singleEntryCache = new FileCache({ maxSize: 1 });
+      singleEntryCache.set("key1", "first");
+      singleEntryCache.set("key1", "second");
+
+      assertEquals(singleEntryCache.get("key1"), "second");
+      assertEquals(singleEntryCache.stats().size, 1);
+      singleEntryCache.clear();
+    });
   });
 
   describe("disabled cache", () => {
@@ -204,6 +249,20 @@ describe("FileCache", () => {
       assertEquals(smallCache.has("key3"), true);
       smallCache.clear();
     });
+
+    it("evicts the least recently read entry", () => {
+      const smallCache = new FileCache({ maxSize: 2 });
+      smallCache.set("key1", "v1");
+      smallCache.set("key2", "v2");
+      assertEquals(smallCache.get("key1"), "v1");
+
+      smallCache.set("key3", "v3");
+
+      assertEquals(smallCache.has("key1"), true);
+      assertEquals(smallCache.has("key2"), false);
+      assertEquals(smallCache.has("key3"), true);
+      smallCache.clear();
+    });
   });
 
   describe("eviction on memory limit", () => {
@@ -227,6 +286,29 @@ describe("FileCache", () => {
       tinyCache.set("key1", "this is a long string that exceeds 5 bytes");
       assertEquals(tinyCache.has("key1"), false);
       tinyCache.clear();
+    });
+
+    it("does not write cache keys to logs", () => {
+      const previousLevel = Deno.env.get("LOG_LEVEL");
+      const originalWarn = console.warn;
+      const entries: LogEntry[] = [];
+      const privateKey = "file:branch:private-project:PRIVATE_PATH_CANARY";
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      console.warn = () => {};
+      __resetLoggerConfigForTests();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      try {
+        const tinyCache = new FileCache({ maxMemory: 5 });
+        tinyCache.set(privateKey, "this value exceeds the cache capacity");
+        assertEquals(JSON.stringify(entries).includes(privateKey), false);
+      } finally {
+        __resetLogRecordEmitterForTests();
+        console.warn = originalWarn;
+        if (previousLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLevel);
+        __resetLoggerConfigForTests();
+      }
     });
   });
 
@@ -327,6 +409,41 @@ describe("Distributed cache functions", () => {
     it("should export initializeFileCacheBackend function", () => {
       assertExists(initializeFileCacheBackend);
       assertEquals(typeof initializeFileCacheBackend, "function");
+    });
+
+    it("fails all concurrent callers explicitly and retries backend initialization", async () => {
+      const originalFactory = CacheBackends.file;
+      let attempts = 0;
+      CacheBackends.file = () => {
+        attempts++;
+        return attempts === 1
+          ? Promise.reject(new Error("PRIVATE_BACKEND_FAILURE"))
+          : Promise.resolve(new MemoryCacheBackend(1));
+      };
+
+      try {
+        const firstAttempt = initializeFileCacheBackend();
+        const concurrentAttempt = initializeFileCacheBackend();
+        const [firstError, concurrentError] = await Promise.all([
+          assertRejects(
+            () => firstAttempt,
+            Error,
+            "File cache backend initialization failed",
+          ),
+          assertRejects(
+            () => concurrentAttempt,
+            Error,
+            "File cache backend initialization failed",
+          ),
+        ]);
+        assertEquals(firstError.message.includes("PRIVATE_BACKEND_FAILURE"), false);
+        assertEquals(concurrentError.message.includes("PRIVATE_BACKEND_FAILURE"), false);
+        assertEquals(attempts, 1);
+        assertEquals(await initializeFileCacheBackend(), false);
+        assertEquals(attempts, 2);
+      } finally {
+        CacheBackends.file = originalFactory;
+      }
     });
 
     it("should return boolean", async () => {

@@ -14,14 +14,19 @@ export type DefaultResearchArtifacts = DefaultResearchArtifactPaths;
 
 /** Context for default research artifact. */
 export interface DefaultResearchArtifactContext {
+  /** Available tool names value. */
   availableToolNames?: string[];
+  /** Project ID value. */
   projectId?: string | null;
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Default research artifacts value. */
   defaultResearchArtifacts?: DefaultResearchArtifacts | null;
 }
 
 /** Public API contract for default research artifact logger. */
 export interface DefaultResearchArtifactLogger {
+  /** Callback that handles debug. */
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
@@ -362,7 +367,12 @@ export async function mirrorDefaultResearchRunArtifact(input: {
 export function createDefaultResearchRunArtifactMirrorHandler(input: {
   taskContext: DefaultResearchArtifactContext;
   remoteToolSource?: Pick<RemoteToolSource, "executeTool"> | null;
-}) {
+}): (request: {
+  toolName: string;
+  input: Record<string, unknown>;
+  result: unknown;
+  context?: Record<string, unknown>;
+}) => Promise<void> {
   return async (request: {
     toolName: string;
     input: Record<string, unknown>;

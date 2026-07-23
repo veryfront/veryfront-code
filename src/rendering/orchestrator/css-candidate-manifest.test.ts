@@ -181,6 +181,49 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
   });
 
   describe("getProjectCandidates", () => {
+    it("does not treat sibling path prefixes as project files", () => {
+      invalidateProjectCandidateManifests();
+      const result = getRouteCandidates({
+        projectScope: "project-prefix-boundary",
+        projectVersion: "v1",
+        projectDir: "/project",
+        routeKey: "outside",
+        routeFilePaths: ["-other/pages/outside.tsx"],
+        files: [
+          {
+            path: "/project-other/pages/outside.tsx",
+            content: '<div className="outside-project-only">Outside</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      assertEquals(result.has("outside-project-only"), false);
+      assertEquals(result.size, 0);
+    });
+
+    it("keeps cache scopes distinct when key fields contain delimiters", () => {
+      invalidateProjectCandidateManifests();
+      const first = getProjectCandidates({
+        projectScope: "scope:version",
+        projectVersion: "one",
+        projectDir: "/project",
+        files: [{ path: "/project/a.tsx", content: '<div className="first-scope" />' }],
+        developmentMode: false,
+      });
+      const second = getProjectCandidates({
+        projectScope: "scope",
+        projectVersion: "version:one",
+        projectDir: "/project",
+        files: [{ path: "/project/b.tsx", content: '<div className="second-scope" />' }],
+        developmentMode: false,
+      });
+
+      assertEquals(first.has("first-scope"), true);
+      assertEquals(second.has("second-scope"), true);
+      assertEquals(second.has("first-scope"), false);
+    });
+
     it("should return all extracted candidates for a project manifest", () => {
       invalidateProjectCandidateManifests();
       const result = getProjectCandidates({

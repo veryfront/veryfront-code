@@ -15,6 +15,7 @@ import {
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyEncodingError,
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
@@ -62,12 +63,7 @@ export class InternalAgentsListHandler extends BaseHandler {
           (ctx.projectId !== undefined && payload.projectId !== ctx.projectId)
         ) {
           this.logWarn("Internal agents list request body did not match signed claims", {
-            projectSlug: ctx.projectSlug,
-            projectId: ctx.projectId,
-            requestId: payload.requestId,
-            signedRequestId: claims.sub,
-            surface: payload.surface,
-            signedSurface: claims.surface,
+            failureCategory: "claim-mismatch",
           });
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
@@ -80,18 +76,19 @@ export class InternalAgentsListHandler extends BaseHandler {
 
         if (error instanceof ControlPlaneRequestError) {
           this.logWarn("Internal agents list signature verification failed", {
-            error: error.message,
-            projectSlug: ctx.projectSlug,
-            projectId: ctx.projectId,
+            status: error.status,
+            failureCategory: "verification-error",
           });
           return this.respond(builder.json({ error: error.message }, error.status));
         }
 
-        if (error instanceof SyntaxError || (error instanceof Error && "issues" in error)) {
+        if (
+          error instanceof InternalAgentRequestBodyEncodingError ||
+          error instanceof SyntaxError ||
+          (error instanceof Error && "issues" in error)
+        ) {
           this.logWarn("Internal agents list request validation failed", {
-            error: error instanceof Error ? error.message : String(error),
-            projectSlug: ctx.projectSlug,
-            projectId: ctx.projectId,
+            failureCategory: "invalid-request",
           });
           return this.respond(builder.json({ error: "Invalid internal agents request" }, 400));
         }

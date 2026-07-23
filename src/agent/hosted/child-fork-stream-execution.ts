@@ -58,23 +58,33 @@ const MAX_SOFT_IDLE_HEARTBEATS = 2;
 
 /** State for hosted child fork stream handling. */
 export interface HostedChildForkStreamHandlingState {
+  /** Active tool call ID value. */
   activeToolCallId: string | null;
+  /** Final text value. */
   finalText: string;
+  /** Whether separate next text block. */
   shouldSeparateNextTextBlock: boolean;
 }
 
 /** Public API contract for hosted child fork stream logger. */
 export interface HostedChildForkStreamLogger {
+  /** Callback that handles debug. */
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
+  /** Callback that handles info. */
   info?: (message: string, metadata?: Record<string, unknown>) => void;
+  /** Writes a warning log entry. */
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
 /** Public API contract for hosted child fork pending tool lifecycle. */
 export interface HostedChildForkPendingToolLifecycle {
+  /** Callback that handles emit tool input start if needed. */
   emitToolInputStartIfNeeded: (toolCallId: string, toolName: string) => Promise<void> | void;
+  /** Callback that handles upsert pending tool call. */
   upsertPendingToolCall: (toolCallId: string, state: HostedChildPendingToolCallState) => void;
+  /** Callback that handles delete pending tool call. */
   deletePendingToolCall: (toolCallId: string) => void;
+  /** Close pending tool calls value. */
   closePendingToolCalls: (
     reason: HostedChildPendingToolLifecycleCloseReason,
   ) => Promise<void> | void;
@@ -82,59 +92,105 @@ export interface HostedChildForkPendingToolLifecycle {
 
 /** Input payload for hosted child fork stream trace. */
 export interface HostedChildForkStreamTraceInput {
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Part type value. */
   partType: ForkPart["type"];
 }
 
 /** Input payload for execute hosted child fork stream. */
 export interface ExecuteHostedChildForkStreamInput {
+  /** Stream result value. */
   streamResult: ForkRuntimeStreamResult;
+  /** Abort signal value. */
   abortSignal?: AbortSignal;
+  /** Callback that handles abort fork stream. */
   abortForkStream: (error: Error) => void;
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Description value. */
   description: string;
+  /** Kind value. */
   kind: string;
+  /** Whether durable run mirror. */
   durableRunMirror: boolean;
+  /** Durable message ID value. */
   durableMessageId: string | null;
+  /** Durable reasoning message ID value. */
   durableReasoningMessageId: string | null;
+  /** Whether durable mirror state. */
   durableMirrorState: { reasoningStarted: boolean; textStarted: boolean };
+  /** Callback that handles append durable mirror chunk. */
   appendDurableMirrorChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void>;
+  /** Callback that handles close durable mirror reasoning. */
   closeDurableMirrorReasoning: () => Promise<void>;
+  /** Callback that handles close durable mirror text. */
   closeDurableMirrorText: () => Promise<void>;
+  /** Callback that handles mark durable step started. */
   markDurableStepStarted: () => void;
+  /** Callback that handles durable mirror has emitted progress. */
   durableMirrorHasEmittedProgress: () => boolean;
+  /** Pending tool lifecycle value. */
   pendingToolLifecycle: HostedChildForkPendingToolLifecycle;
+  /** Tool calls value. */
   toolCalls: Array<{ toolName: string; toolCallId: string; input?: unknown }>;
+  /** Tool results value. */
   toolResults: Array<{ toolName: string; toolCallId: string; input: unknown; output: unknown }>;
+  /** Stream state value. */
   streamState: { finalText: string };
+  /** Usage value. */
   usage?: ChildRunExecutionUsage;
+  /** Max steps value. */
   maxSteps: number;
+  /** Result mode value. */
   resultMode?: ChildRunResultMode;
+  /** Start time value. */
   startTime: number;
+  /** Finalization timeout ms value. */
   finalizationTimeoutMs: number;
+  /** Callback invoked when settled. */
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
+  /** Idle timeout ms value. */
   idleTimeoutMs: number;
+  /** Active tool timeout ms value. */
   activeToolTimeoutMs: number;
+  /** Post tool idle timeout ms value. */
   postToolIdleTimeoutMs: number;
+  /** Logger value. */
   logger?: HostedChildForkStreamLogger;
+  /** Callback that handles write log. */
   writeLog?: (entry: HostedChildExecutionLogEntry) => void;
+  /** Callback that handles trace part. */
   tracePart?: (input: HostedChildForkStreamTraceInput) => void | Promise<void>;
 }
 
 /** Input payload for handle hosted child fork failure. */
 export interface HandleHostedChildForkFailureInput {
+  /** Error associated with the operation. */
   error: unknown;
+  /** Description value. */
   description: string;
+  /** Kind value. */
   kind: string;
+  /** Final text value. */
   finalText: string;
+  /** Tool calls value. */
   toolCalls: Array<{ toolName: string; toolCallId: string; input?: unknown }>;
+  /** Tool results value. */
   toolResults: Array<{ toolName: string; toolCallId: string; input: unknown; output: unknown }>;
+  /** Usage value. */
   usage?: ChildRunExecutionUsage;
+  /** Start time value. */
   startTime: number;
+  /** Callback invoked when settled. */
   onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
+  /** Callback that handles should rethrow error. */
   shouldRethrowError?: (error: unknown) => boolean;
+  /** Callback that handles write log. */
   writeLog?: (entry: HostedChildExecutionLogEntry) => void;
 }
 

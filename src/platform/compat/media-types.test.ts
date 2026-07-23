@@ -36,6 +36,24 @@ describe("media types compat", () => {
       const result = contentType("image.png");
       assertEquals(result, "image/png");
     });
+
+    it("accepts an existing media type without treating it as a path", () => {
+      assertEquals(contentType("text/html"), "text/html; charset=UTF-8");
+      assertEquals(contentType("application/json"), "application/json; charset=UTF-8");
+    });
+
+    it("looks up filenames that contain directory separators", () => {
+      assertEquals(contentType("assets/app.js"), "application/javascript; charset=UTF-8");
+      assertEquals(contentType("/tmp/image.png"), "image/png");
+      assertEquals(contentType("assets/file.unknown-extension"), undefined);
+    });
+
+    it("preserves an explicit charset parameter", () => {
+      assertEquals(
+        contentType("text/html; charset=iso-8859-1"),
+        "text/html; charset=iso-8859-1",
+      );
+    });
   });
 
   describe("extension", () => {
@@ -46,6 +64,10 @@ describe("media types compat", () => {
 
     it("should return falsy for unknown types", () => {
       assertEquals(!!extension("application/x-unknown-custom"), false);
+    });
+
+    it("normalizes case, whitespace, and parameters", () => {
+      assertEquals(extension(" TEXT/HTML; charset=UTF-8 "), "html");
     });
   });
 
@@ -72,6 +94,10 @@ describe("media types compat", () => {
 
     it("should return falsy for non-text types", () => {
       assertEquals(!!charset("image/png"), false);
+    });
+
+    it("normalizes case, whitespace, and parameters", () => {
+      assertEquals(charset(" TEXT/PLAIN; charset=iso-8859-1 "), "UTF-8");
     });
   });
 });

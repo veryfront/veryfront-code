@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RateLimiter } from "./rate-limiter.ts";
 
@@ -51,6 +51,26 @@ describe("modules/server/rate-limiter", () => {
 
       limiter.cleanup(socket);
 
+      assertEquals(limiter.check(socket), true);
+    });
+
+    it("rejects invalid limits and windows", () => {
+      for (const limit of [0, -1, 1.5, Number.NaN]) {
+        assertThrows(() => new RateLimiter(limit), RangeError);
+      }
+      for (const windowMs of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => new RateLimiter(1, { windowMs }), RangeError);
+      }
+    });
+
+    it("starts a new window at the exact reset time", () => {
+      let now = 1_000;
+      const limiter = new RateLimiter(1, { windowMs: 100, now: () => now });
+      const socket = mockSocket();
+
+      assertEquals(limiter.check(socket), true);
+      assertEquals(limiter.check(socket), false);
+      now = 1_100;
       assertEquals(limiter.check(socket), true);
     });
   });

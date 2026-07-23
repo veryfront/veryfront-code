@@ -7,6 +7,37 @@ import {
   type FileOperationContext,
 } from "#veryfront/cache";
 
+export type FileCacheEntryKind = "file" | "stat" | "dir" | "files";
+export type FileCacheSourceKind = "branch" | "release" | "env";
+
+const FILE_CACHE_ENTRY_KINDS: readonly FileCacheEntryKind[] = [
+  "file",
+  "stat",
+  "dir",
+  "files",
+];
+const FILE_CACHE_SOURCE_KINDS: readonly FileCacheSourceKind[] = [
+  "branch",
+  "release",
+  "env",
+];
+
+export function buildProjectCachePrefix(
+  entryKind: FileCacheEntryKind,
+  sourceKind: FileCacheSourceKind,
+  projectSlug: string,
+): string {
+  return `${entryKind}:${sourceKind}:${projectSlug}:`;
+}
+
+export function buildProjectCachePrefixes(projectSlug: string): string[] {
+  return FILE_CACHE_ENTRY_KINDS.flatMap((entryKind) =>
+    FILE_CACHE_SOURCE_KINDS.map((sourceKind) =>
+      buildProjectCachePrefix(entryKind, sourceKind, projectSlug)
+    )
+  );
+}
+
 function toFileOperationContext(
   ctx: ResolvedContentContext | null | undefined,
 ): FileOperationContext | null | undefined {

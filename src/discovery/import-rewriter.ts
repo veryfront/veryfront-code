@@ -8,7 +8,13 @@
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import {
+  parseImports,
+  replaceSpecifiers,
+  rewriteImports,
+} from "#veryfront/transforms/esm/lexer.ts";
+import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/defaults.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation/normalization.ts";
 
 export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/agent",
@@ -23,6 +29,10 @@ export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/metrics",
   "veryfront/schemas",
   "veryfront/integrations",
+  "veryfront/schedule",
+  "veryfront/task",
+  "veryfront/trigger",
+  "veryfront/webhook",
   // Server-side chat upload route handler (app/api/uploads/route.ts).
   "veryfront/chat/uploads",
 ] as const;
@@ -44,55 +54,152 @@ function toDestructuredBindings(imports: string): string {
     .join(", ");
 }
 
-function rewriteDenoPublicVeryfrontImports(
+async function rewriteDenoPublicVeryfrontImports(
   code: string,
   resolveSpecifier: (specifier: string) => string,
-): string {
-  const resolve = (specifier: string): string | null => {
-    try {
-      return resolveSpecifier(specifier);
-    } catch (_) {
-      return null;
-    }
-  };
-
-  return code
-    .replace(/from\s+["'](veryfront(?:\/[^"']+)?)["']/g, (match, specifier: string) => {
-      const resolved = resolve(specifier);
-      return resolved ? `from "${resolved}"` : match;
-    })
-    .replace(/import\s*\(\s*["'](veryfront(?:\/[^"']+)?)["']\s*\)/g, (match, specifier: string) => {
-      const resolved = resolve(specifier);
-      return resolved ? `import("${resolved}")` : match;
-    });
+): Promise<string> {
+  return await replaceSpecifiers(code, (specifier) => {
+    if (specifier !== "veryfront" && !specifier.startsWith("veryfront/")) return null;
+    return resolveSpecifier(specifier);
+  });
 }
 
-function rewriteDenoCompiledVeryfrontImports(code: string): string {
+function rewriteDenoCompiledVeryfrontImportStatement(
+  code: string,
+  nextReexportName: () => string,
+): string {
   let transformed = code;
 
   for (const mod of DISCOVERY_GLOBAL_VERYFRONT_MODULES) {
     const escapedMod = escapeRegExp(mod);
+    const moduleExpression = `globalThis.__VERYFRONT_MODULES__["${mod}"]`;
+
+    const wildcardReexportPattern = new RegExp(
+      `export\\s*\\*\\s*from\\s*["']${escapedMod}["'];?`,
+    );
+    if (wildcardReexportPattern.test(transformed)) {
+      throw new TypeError(
+        `Wildcard re-exports from ${mod} are not supported in compiled discovery modules`,
+      );
+    }
+
+    const namespaceReexportPattern = new RegExp(
+      `export\\s*\\*\\s*as\\s+([A-Za-z_$][\\w$]*)\\s*from\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(namespaceReexportPattern, (_match, name: string) => {
+      return `const ${name} = ${moduleExpression}; export { ${name} };`;
+    });
+
+    const namedReexportPattern = new RegExp(
+      `export\\s*\\{([^}]+)\\}\\s*from\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(namedReexportPattern, (_match, exportsList: string) => {
+      const bindings: string[] = [];
+      const exports: string[] = [];
+      for (const part of exportsList.split(",")) {
+        const parsed = part.trim().match(
+          /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/,
+        );
+        if (!parsed) {
+          throw new TypeError(`Unsupported re-export syntax from ${mod}`);
+        }
+        const sourceName = parsed[1]!;
+        const exportedName = parsed[2] ?? sourceName;
+        const localName = nextReexportName();
+        bindings.push(`${sourceName}: ${localName}`);
+        exports.push(`${localName} as ${exportedName}`);
+      }
+      return `const { ${bindings.join(", ")} } = ${moduleExpression};\n` +
+        `export { ${exports.join(", ")} };`;
+    });
+
+    const mixedImportPattern = new RegExp(
+      `import\\s+([A-Za-z_$][\\w$]*)\\s*,\\s*\\{([^}]+)\\}\\s*from\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(
+      mixedImportPattern,
+      (_match, defaultName: string, imports: string) =>
+        `const ${defaultName} = ${moduleExpression}.default;\n` +
+        `const { ${toDestructuredBindings(imports)} } = ${moduleExpression};`,
+    );
 
     const importPattern = new RegExp(
       `import\\s*\\{([^}]+)\\}\\s*from\\s*["']${escapedMod}["'];?`,
       "g",
     );
     transformed = transformed.replace(importPattern, (_match, imports: string) => {
-      return `const { ${
-        toDestructuredBindings(imports)
-      } } = globalThis.__VERYFRONT_MODULES__["${mod}"];`;
+      return `const { ${toDestructuredBindings(imports)} } = ${moduleExpression};`;
+    });
+
+    const defaultImportPattern = new RegExp(
+      `import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(defaultImportPattern, (_match, name: string) => {
+      return `const ${name} = ${moduleExpression}.default;`;
     });
 
     const namespacePattern = new RegExp(
-      `import\\s*\\*\\s*as\\s+(\\w+)\\s*from\\s*["']${escapedMod}["'];?`,
+      `import\\s*\\*\\s*as\\s+([A-Za-z_$][\\w$]*)\\s*from\\s*["']${escapedMod}["'];?`,
       "g",
     );
     transformed = transformed.replace(namespacePattern, (_match, name: string) => {
-      return `const ${name} = globalThis.__VERYFRONT_MODULES__["${mod}"];`;
+      return `const ${name} = ${moduleExpression};`;
     });
+
+    const dynamicImportPattern = new RegExp(
+      `import\\s*\\(\\s*["']${escapedMod}["']\\s*\\)`,
+      "g",
+    );
+    transformed = transformed.replace(
+      dynamicImportPattern,
+      `Promise.resolve(${moduleExpression})`,
+    );
+
+    const sideEffectImportPattern = new RegExp(
+      `import\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(sideEffectImportPattern, `void ${moduleExpression};`);
   }
 
   return transformed;
+}
+
+async function rewriteDenoCompiledVeryfrontImports(code: string): Promise<string> {
+  let reexportIndex = 0;
+  const generatedNames = new Set<string>();
+  const nextReexportName = (): string => {
+    while (true) {
+      const candidate = `__vf_reexport_${reexportIndex++}`;
+      if (generatedNames.has(candidate)) continue;
+      if (new RegExp(`\\b${escapeRegExp(candidate)}\\b`).test(code)) continue;
+      generatedNames.add(candidate);
+      return candidate;
+    }
+  };
+
+  return await rewriteImports(code, (imp, statement) => {
+    if (!imp.n) return null;
+    if (imp.d < 0 && TYPE_ONLY_STATIC_RE.test(statement)) return null;
+    if (imp.n === "veryfront") {
+      throw new TypeError(
+        "Root veryfront imports are unavailable in compiled discovery; use an explicit supported subpath",
+      );
+    }
+    if (!imp.n.startsWith("veryfront/")) return null;
+    if (
+      !DISCOVERY_GLOBAL_VERYFRONT_MODULES.includes(
+        imp.n as (typeof DISCOVERY_GLOBAL_VERYFRONT_MODULES)[number],
+      )
+    ) {
+      throw new TypeError("The requested veryfront module is not embedded in compiled discovery");
+    }
+    return rewriteDenoCompiledVeryfrontImportStatement(statement, nextReexportName);
+  });
 }
 
 /**
@@ -104,6 +211,8 @@ function rewriteDenoCompiledVeryfrontImports(code: string): string {
 function isUnprefixedNpmSpecifier(specifier: string): boolean {
   if (!specifier) return false;
   if (specifier.startsWith(".") || specifier.startsWith("/")) return false;
+  if (specifier.startsWith("#")) return false;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier)) return false;
   if (specifier.startsWith("npm:") || specifier.startsWith("jsr:")) return false;
   if (specifier.startsWith("node:")) return false;
   if (
@@ -119,29 +228,27 @@ function isUnprefixedNpmSpecifier(specifier: string): boolean {
 // by TypeScript and must not trigger filesystem resolution.
 const TYPE_ONLY_STATIC_RE = /(?:^|[\s;{}])(?:import|export)\s+type\b/;
 
-function rewriteBareNpmImportsForDeno(code: string): string {
-  return code
-    // `import x from "spec"`, `export { x } from "spec"`, `export * from "spec"`.
-    // The leading-context capture lets us skip `import type` / `export type`.
-    .replace(
-      /(^|[\s;{}])((?:import|export)\b[^"']*?\bfrom\s+)["']([^"']+)["']/g,
-      (match, lead: string, head: string, specifier: string) => {
-        if (TYPE_ONLY_STATIC_RE.test(lead + head)) return match;
-        return isUnprefixedNpmSpecifier(specifier) ? `${lead}${head}"npm:${specifier}"` : match;
-      },
-    )
-    .replace(/import\s*\(\s*["']([^"']+)["']\s*\)/g, (match, specifier: string) => {
-      return isUnprefixedNpmSpecifier(specifier) ? `import("npm:${specifier}")` : match;
-    })
-    // Side-effect-only imports: `import "reflect-metadata";`, `import "dotenv/config";`.
-    .replace(
-      /(^|[\n;{}])(\s*)import\s+["']([^"']+)["'](\s*;?)/g,
-      (match, lead: string, indent: string, specifier: string, tail: string) => {
-        return isUnprefixedNpmSpecifier(specifier)
-          ? `${lead}${indent}import "npm:${specifier}"${tail}`
-          : match;
-      },
-    );
+function replaceImportSpecifierInStatement(
+  statement: string,
+  specifier: string,
+  replacement: string,
+): string {
+  for (const quote of ['"', "'", "`"]) {
+    const token = `${quote}${specifier}${quote}`;
+    const index = statement.indexOf(token);
+    if (index === -1) continue;
+    return statement.slice(0, index) + `${quote}${replacement}${quote}` +
+      statement.slice(index + token.length);
+  }
+  throw new TypeError("Discovery import statement could not be rewritten safely");
+}
+
+async function rewriteBareNpmImportsForDeno(code: string): Promise<string> {
+  return await rewriteImports(code, (imp, statement) => {
+    if (!imp.n || !isUnprefixedNpmSpecifier(imp.n)) return null;
+    if (imp.d < 0 && TYPE_ONLY_STATIC_RE.test(statement)) return null;
+    return replaceImportSpecifierInStatement(statement, imp.n, `npm:${imp.n}`);
+  });
 }
 
 /**
@@ -150,25 +257,27 @@ function rewriteBareNpmImportsForDeno(code: string): string {
  * - Resolves relative imports to absolute file:// URLs
  * - For compiled binaries, rewrites veryfront imports to use globals
  */
-export function rewriteForDeno(
+export async function rewriteForDeno(
   code: string,
   fileDir: string,
   options: DenoRewriteOptions = {},
-): string {
+): Promise<string> {
+  await ensureDefaultBundlerContracts();
+  await inspectDiscoveryImports(code);
   let transformed = code;
 
   // Handle relative imports
-  transformed = transformed.replace(
-    /from\s+["'](\.\.\/[^"']+)["']/g,
-    (_match, relativePath: string) => `from "file://${pathHelper.resolve(fileDir, relativePath)}"`,
-  );
+  transformed = await replaceSpecifiers(transformed, (specifier, isDynamic) => {
+    if (isDynamic || !specifier.startsWith("../")) return null;
+    return pathHelper.toFileUrl(pathHelper.resolve(fileDir, specifier)).href;
+  });
 
   // For compiled binaries, rewrite veryfront imports to use globals
   const compiled = options.compiled ?? isDenoCompiled;
   if (compiled) {
-    transformed = rewriteDenoCompiledVeryfrontImports(transformed);
+    transformed = await rewriteDenoCompiledVeryfrontImports(transformed);
   } else {
-    transformed = rewriteDenoPublicVeryfrontImports(
+    transformed = await rewriteDenoPublicVeryfrontImports(
       transformed,
       options.resolveSpecifier ?? ((specifier) => import.meta.resolve(specifier)),
     );
@@ -178,27 +287,50 @@ export function rewriteForDeno(
   // them from the temp directory the discovery module is loaded from. Covers
   // `zod` plus arbitrary npm packages a tool/agent depends on, after the
   // discovery bundler externalizes them via `packages: "external"`.
-  transformed = rewriteBareNpmImportsForDeno(transformed);
+  transformed = await rewriteBareNpmImportsForDeno(transformed);
 
   return transformed;
 }
 
-// Memoizes resolved bare-specifier → file:// URL lookups across all
-// `rewriteDiscoveryImports` calls. Keyed by `${projectDir}::${specifier}`.
-// Most projects re-resolve the same handful of packages (react, zod,
-// pdf-parse, …) across every discovered tool/agent file — without this
-// cache, each discovery pass re-reads the same package.json files.
-// Bounded so the per-project specifier map cannot grow without limit in a
-// long-running server. Only positive resolutions are stored (see below), so
-// entries are deterministic and safe to evict/recompute.
-const RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES = 1000;
-const resolvedSpecifierCache = new LRUCache<string, string>({
-  maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
-});
+const MAX_PACKAGE_JSON_BYTES = 1 * 1_024 * 1_024;
+const MAX_PACKAGE_SPECIFIER_LENGTH = 2_048;
+const MAX_PACKAGE_ENTRY_LENGTH = 4_096;
+const MAX_NODE_MODULE_SEARCH_DEPTH = 128;
+const MAX_DISCOVERY_IMPORT_SPECIFIERS = 2_000;
+const MAX_PACKAGE_RESOLUTION_CONCURRENCY = 32;
+const MAX_PACKAGE_EXPORT_TRAVERSAL_DEPTH = 64;
+const MAX_PACKAGE_EXPORT_TRAVERSAL_NODES = 4_096;
+const LEGACY_PACKAGE_EXTENSIONS = [".js", ".mjs", ".cjs", ".json"] as const;
+const importRewriterTextEncoder = new TextEncoder();
+
+async function inspectDiscoveryImports(code: string): Promise<Set<string>> {
+  const parsedImports = await parseImports(code);
+  if (parsedImports.length > MAX_DISCOVERY_IMPORT_SPECIFIERS) {
+    throw new RangeError("Discovery module import count exceeds the supported limit");
+  }
+
+  const specifiers = new Set<string>();
+  for (const imported of parsedImports) {
+    if (!imported.n) continue;
+    const statement = code.slice(imported.ss, imported.se);
+    if (imported.d < 0 && TYPE_ONLY_STATIC_RE.test(statement)) continue;
+    if (
+      isUnprefixedNpmSpecifier(imported.n) &&
+      imported.n.length > MAX_PACKAGE_SPECIFIER_LENGTH
+    ) {
+      throw new RangeError("Package specifier exceeds the discovery size limit");
+    }
+    specifiers.add(imported.n);
+  }
+  return specifiers;
+}
 
 // Split `react/jsx-runtime` → { name: "react", subpath: "./jsx-runtime" } and
 // `@scope/pkg/sub/path` → { name: "@scope/pkg", subpath: "./sub/path" }.
 function splitPackageSubpath(specifier: string): { name: string; subpath: string } {
+  if (specifier.length > MAX_PACKAGE_SPECIFIER_LENGTH) {
+    throw new RangeError("Package specifier exceeds the discovery size limit");
+  }
   const parts = specifier.split("/");
   const segments = specifier.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1);
   const name = segments.join("/");
@@ -206,14 +338,66 @@ function splitPackageSubpath(specifier: string): { name: string; subpath: string
   return { name, subpath: rest ? `./${rest}` : "." };
 }
 
+function isSafePackageEntry(entry: string): boolean {
+  return entry.length > 0 && entry.length <= MAX_PACKAGE_ENTRY_LENGTH &&
+    !entry.includes("\0") && !entry.includes("\\");
+}
+
+function isSafePackageName(name: string): boolean {
+  const segments = name.split("/");
+  const hasExpectedShape = name.startsWith("@")
+    ? segments.length === 2 && segments[0]!.length > 1
+    : segments.length === 1;
+  return hasExpectedShape &&
+    segments.every((segment) =>
+      segment.length > 0 && segment !== "." && segment !== ".." &&
+      !segment.includes("\0") && !segment.includes("\\")
+    );
+}
+
+async function resolveLegacyPackageEntry(
+  packagePath: string,
+  entryPoint: string,
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<string | null> {
+  if (!isSafePackageEntry(entryPoint)) return null;
+  const basePath = pathHelper.resolve(packagePath, entryPoint);
+  const candidates = [basePath];
+  if (!pathHelper.extname(basePath)) {
+    for (const extension of LEGACY_PACKAGE_EXTENSIONS) {
+      candidates.push(basePath + extension);
+    }
+  }
+  for (const extension of LEGACY_PACKAGE_EXTENSIONS) {
+    candidates.push(pathHelper.join(basePath, `index${extension}`));
+  }
+
+  for (const candidate of candidates) {
+    if (!(await fs.exists(candidate))) continue;
+    if ((await fs.stat(candidate)).isFile) return candidate;
+  }
+  return null;
+}
+
 // Pick the relative file path from a `package.json#exports` entry, which can
 // be a string, a conditional object (`{ import, default, ... }`), or an
 // array of those.
-function pickExportEntry(entry: unknown): string | null {
+function pickExportEntry(
+  entry: unknown,
+  depth = 0,
+  state: { visited: number } = { visited: 0 },
+): string | null {
+  state.visited++;
+  if (
+    depth > MAX_PACKAGE_EXPORT_TRAVERSAL_DEPTH ||
+    state.visited > MAX_PACKAGE_EXPORT_TRAVERSAL_NODES
+  ) {
+    throw new RangeError("Package export traversal exceeds the discovery limit");
+  }
   if (typeof entry === "string") return entry;
   if (Array.isArray(entry)) {
     for (const e of entry) {
-      const v = pickExportEntry(e);
+      const v = pickExportEntry(e, depth + 1, state);
       if (v) return v;
     }
     return null;
@@ -221,9 +405,44 @@ function pickExportEntry(entry: unknown): string | null {
   if (entry && typeof entry === "object") {
     const obj = entry as Record<string, unknown>;
     const candidate = obj.import ?? obj.node ?? obj.default;
-    return candidate ? pickExportEntry(candidate) : null;
+    return candidate ? pickExportEntry(candidate, depth + 1, state) : null;
   }
   return null;
+}
+
+async function mapWithBoundedConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  transform: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  let failed = false;
+  let failure: unknown;
+
+  const worker = async (): Promise<void> => {
+    while (!failed) {
+      const index = nextIndex++;
+      if (index >= values.length) return;
+      try {
+        results[index] = await transform(values[index]!, index);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, values.length) },
+      () => worker(),
+    ),
+  );
+  if (failed) throw failure;
+  return results;
 }
 
 // Resolve a subpath (`.` or `./foo/bar`) against a `package.json#exports`
@@ -232,8 +451,16 @@ function pickExportEntry(entry: unknown): string | null {
 // Returns the resolved relative path (e.g. `./debounce.js`) or null when
 // no entry matches.
 function resolveExportPath(exports: unknown, subpath: string): string | null {
+  if (subpath === "." && (typeof exports === "string" || Array.isArray(exports))) {
+    return pickExportEntry(exports);
+  }
   if (!exports || typeof exports !== "object") return null;
   const map = exports as Record<string, unknown>;
+  const keys = Object.keys(map);
+
+  if (subpath === "." && !keys.some((key) => key.startsWith("."))) {
+    return pickExportEntry(exports);
+  }
 
   // Literal key (covers "." and exact subpaths like "./jsx-runtime").
   if (subpath in map) return pickExportEntry(map[subpath]);
@@ -278,254 +505,140 @@ export async function rewriteDiscoveryImports(
   fs: ReturnType<typeof createFileSystem>,
   fileDir: string,
 ): Promise<string> {
-  let transformed = code;
+  await ensureDefaultBundlerContracts();
 
-  try {
-    const { pathToFileURL } = await import("node:url");
+  // Resolve a bare specifier (optionally with subpath) to a file URL while
+  // honoring package exports. Resolutions are intentionally not cached: a
+  // package can be installed or replaced while a development process runs.
+  const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
+    const { name: packageName, subpath } = splitPackageSubpath(specifier);
+    if (!isSafePackageName(packageName)) return null;
+    let searchDir = pathHelper.resolve(fileDir || projectDir);
 
-    // Handle relative imports
-    transformed = transformed.replace(
-      /from\s+["'](\.\.\/[^"']+)["']/g,
-      (_match, relativePath: string) =>
-        `from "${pathToFileURL(pathHelper.resolve(fileDir, relativePath)).href}"`,
-    );
+    for (let depth = 0; depth < MAX_NODE_MODULE_SEARCH_DEPTH; depth++) {
+      const packagePath = pathHelper.join(searchDir, "node_modules", packageName);
+      const packageJsonPath = pathHelper.join(packagePath, "package.json");
 
-    // Resolve a bare specifier (optionally with subpath) to a file:// URL,
-    // honoring the package's `exports` map for subpath imports such as
-    // `react/jsx-runtime` or `lodash-es/debounce`. Successful resolutions
-    // are memoized per (projectDir, specifier); failures are NOT cached
-    // so a subsequent `npm install` of the missing dep is picked up
-    // without a process restart.
-    const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
-      const cacheKey = `${projectDir}::${specifier}`;
-      const cached = resolvedSpecifierCache.get(cacheKey);
-      if (cached !== undefined) return cached;
-
-      const { name: packageName, subpath } = splitPackageSubpath(specifier);
-      let searchDir = projectDir;
-
-      for (let i = 0; i < 10; i++) {
-        const packagePath = pathHelper.join(searchDir, "node_modules", packageName);
-        const packageJsonPath = pathHelper.join(packagePath, "package.json");
-
-        try {
-          const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          const exportPath = resolveExportPath(pkgJson.exports, subpath);
-
-          const entryPoint = exportPath ??
-            (subpath === "."
-              ? (pkgJson.module ?? pkgJson.main ?? "index.js")
-              // No exports entry matched: fall back to joining the subpath
-              // onto the package dir (e.g. `dotenv/config.js`).
-              : subpath.replace(/^\.\//, ""));
-
-          // Defense in depth: refuse resolved paths that escape the package
-          // directory. A malicious package shipping `exports: { ".": "../foo" }`
-          // would otherwise yield a `file://` URL outside `node_modules/<pkg>`
-          // that the discovery loader would still `import()`. `path.resolve`
-          // (unlike `path.join`) normalizes `..` segments, so the prefix
-          // check correctly catches escape attempts.
-          const normalized = pathHelper.resolve(packagePath, entryPoint);
-          const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
-            ? packagePath
-            : packagePath + pathHelper.SEPARATOR;
-          if (normalized !== packagePath && !normalized.startsWith(packagePathPrefix)) {
-            return null;
-          }
-
-          const resolved = pathToFileURL(normalized).href;
-          resolvedSpecifierCache.set(cacheKey, resolved);
-          return resolved;
-        } catch (_) {
-          /* expected: package.json not found at this level, walk up */
-          const parent = pathHelper.dirname(searchDir);
-          if (parent === searchDir) break;
-          searchDir = parent;
+      if (await fs.exists(packageJsonPath)) {
+        const packageJsonInfo = await fs.stat(packageJsonPath);
+        if (
+          !Number.isSafeInteger(packageJsonInfo.size) || packageJsonInfo.size < 0 ||
+          packageJsonInfo.size > MAX_PACKAGE_JSON_BYTES
+        ) {
+          throw new RangeError("Package metadata exceeds the discovery size limit");
         }
+        const packageJson = await fs.readTextFile(packageJsonPath);
+        if (importRewriterTextEncoder.encode(packageJson).byteLength > MAX_PACKAGE_JSON_BYTES) {
+          throw new RangeError("Package metadata exceeds the discovery size limit");
+        }
+        const parsed = JSON.parse(packageJson);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new TypeError("Package metadata must be a JSON object");
+        }
+        const pkgJson = parsed as Record<string, unknown>;
+        const exportPath = resolveExportPath(pkgJson.exports, subpath);
+        if (pkgJson.exports !== undefined && !exportPath) return null;
+
+        if (
+          exportPath !== null &&
+          (!exportPath.startsWith("./") || !isSafePackageEntry(exportPath))
+        ) {
+          return null;
+        }
+
+        const entryPoint = exportPath ??
+          (subpath === "."
+            ? (typeof pkgJson.module === "string"
+              ? pkgJson.module
+              : typeof pkgJson.main === "string"
+              ? pkgJson.main
+              : "index.js")
+            // Packages without an exports map retain legacy subpath access.
+            : subpath.replace(/^\.\//, ""));
+
+        if (!isSafePackageEntry(entryPoint)) return null;
+
+        // Defense in depth: refuse resolved paths that escape the package
+        // directory. A malicious package shipping `exports: { ".": "../foo" }`
+        // would otherwise yield a `file://` URL outside `node_modules/<pkg>`
+        // that the discovery loader would still `import()`. `path.resolve`
+        // (unlike `path.join`) normalizes `..` segments, so the prefix
+        // check correctly catches escape attempts.
+        const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
+          ? packagePath
+          : packagePath + pathHelper.SEPARATOR;
+        const unresolvedEntry = pathHelper.resolve(packagePath, entryPoint);
+        if (unresolvedEntry !== packagePath && !unresolvedEntry.startsWith(packagePathPrefix)) {
+          return null;
+        }
+        const normalized = exportPath
+          ? unresolvedEntry
+          : await resolveLegacyPackageEntry(packagePath, entryPoint, fs);
+        if (!normalized) return null;
+        if (exportPath && (!(await fs.exists(normalized)) || !(await fs.stat(normalized)).isFile)) {
+          return null;
+        }
+        if (typeof fs.realPath === "function") {
+          const [canonicalPackage, canonicalEntry] = await Promise.all([
+            fs.realPath(packagePath),
+            fs.realPath(normalized),
+          ]);
+          if (!isWithinDirectory(canonicalPackage, canonicalEntry)) return null;
+        }
+        return pathHelper.toFileUrl(normalized).href;
       }
 
-      // Intentionally do NOT cache nulls — a missing-then-installed package
-      // should be resolvable on the next pass without a process restart.
-      return null;
-    };
+      const parent = pathHelper.dirname(searchDir);
+      if (parent === searchDir) break;
+      searchDir = parent;
 
-    const rewritePackageImports = (input: string, pkg: string, resolvedUrl: string): string => {
-      const escapedPkg = escapeRegExp(pkg);
-      const staticImportRegex = new RegExp(
-        `(^|[\\s;{}])((?:import|export)\\b[^"']*?\\bfrom\\s+)["']${escapedPkg}["']`,
-        "g",
-      );
-      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
-      const sideEffectRegex = new RegExp(
-        `(^|[\\n;{}])(\\s*)import\\s+["']${escapedPkg}["'](\\s*;?)`,
-        "g",
-      );
-
-      return input
-        .replace(staticImportRegex, (match, lead: string, head: string) => {
-          if (TYPE_ONLY_STATIC_RE.test(lead + head)) return match;
-          return `${lead}${head}"${resolvedUrl}"`;
-        })
-        .replace(dynamicImportRegex, `import("${resolvedUrl}")`)
-        .replace(
-          sideEffectRegex,
-          (_m, lead: string, indent: string, tail: string) =>
-            `${lead}${indent}import "${resolvedUrl}"${tail}`,
-        );
-    };
-
-    // Collect every bare specifier the transformed source still imports,
-    // then resolve each to a file:// URL in the project's node_modules.
-    // With `packages: "external"` in the discovery bundler, npm packages a
-    // tool/agent depends on (e.g. `pdf-parse`, `mammoth`, `react/jsx-runtime`)
-    // survive as bare imports here and need explicit resolution before the
-    // temp module is loaded from outside the project's resolution root.
-    const collectBareSpecifiers = (input: string): string[] => {
-      const specifiers = new Set<string>();
-      // Matches `import x from "spec"`, `export { x } from "spec"`,
-      // `export * from "spec"`. The leading-context capture lets us skip
-      // `import type` / `export type` lines, which TypeScript erases at
-      // emit time and must not trigger filesystem resolution.
-      for (
-        const match of input.matchAll(
-          /(?:^|[\s;{}])((?:import|export)\b[^"']*?\bfrom\s+)["']([^"']+)["']/g,
-        )
-      ) {
-        const head = match[1] ?? "";
-        const s = match[2];
-        if (TYPE_ONLY_STATIC_RE.test(head)) continue;
-        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+      if (depth === MAX_NODE_MODULE_SEARCH_DEPTH - 1) {
+        throw new RangeError("Node module search depth exceeds the discovery limit");
       }
-      for (const match of input.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-        const s = match[1];
-        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
-      }
-      // Side-effect imports: `import "reflect-metadata";`, `import "dotenv/config";`.
-      for (
-        const match of input.matchAll(
-          /(?:^|[\n;{}])\s*import\s+["']([^"']+)["']\s*;?/g,
-        )
-      ) {
-        const s = match[1];
-        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
-      }
-      return [...specifiers];
-    };
-
-    // Resolve every bare specifier in parallel — each lookup is independent
-    // node_modules I/O. Apply the resulting rewrites sequentially against
-    // the same source string.
-    const specifiers = collectBareSpecifiers(transformed);
-    const resolvedPairs = await Promise.all(
-      specifiers.map(async (pkg) => [pkg, await resolvePackageToFileUrl(pkg)] as const),
-    );
-    for (const [pkg, resolvedUrl] of resolvedPairs) {
-      if (!resolvedUrl) continue;
-      transformed = rewritePackageImports(transformed, pkg, resolvedUrl);
     }
 
-    const resolveRuntimeSpecifierToFileUrl = (specifier: string): string | null => {
-      try {
-        const resolved = import.meta.resolve(specifier);
-        return resolved && resolved !== specifier ? resolved : null;
-      } catch (_) {
-        return null;
-      }
-    };
+    return null;
+  };
 
-    const rewriteResolvedSpecifierImports = (
-      input: string,
-      specifier: string,
-      resolvedUrl: string,
-    ): string => {
-      const escapedSpecifier = escapeRegExp(specifier);
-      return input
-        .replace(new RegExp(`from\\s*["']${escapedSpecifier}["']`, "g"), `from "${resolvedUrl}"`)
-        .replace(
-          new RegExp(`import\\s*\\(\\s*["']${escapedSpecifier}["']\\s*\\)`, "g"),
-          `import("${resolvedUrl}")`,
-        );
-    };
-
-    // Handle veryfront package imports
-    let vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-    let exportsMap: Record<string, string | { import?: string }> = {};
-
+  const resolveRuntimeSpecifierToFileUrl = (specifier: string): string | null => {
     try {
-      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
-      const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-      exportsMap = pkgJson.exports || {};
+      const resolved = import.meta.resolve(specifier);
+      return resolved && resolved !== specifier ? resolved : null;
     } catch (_) {
-      /* expected: veryfront package.json not found, fallback to deno.json search */
-      // Search for deno.json in parent directories
-      let searchDir = projectDir;
+      return null;
+    }
+  };
 
-      for (let i = 0; i < 5; i++) {
-        try {
-          const denoJsonPath = pathHelper.join(searchDir, "deno.json");
-          const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
-          if (denoJson.name === "veryfront" && denoJson.exports) {
-            exportsMap = denoJson.exports;
-            vfPackagePath = searchDir;
-            break;
-          }
-        } catch (_) {
-          /* expected: deno.json not found at this level */
-        }
-        searchDir = pathHelper.dirname(searchDir);
+  const specifiers = await inspectDiscoveryImports(code);
+
+  const resolvedPairs = await mapWithBoundedConcurrency(
+    [...specifiers],
+    MAX_PACKAGE_RESOLUTION_CONCURRENCY,
+    async (specifier) => {
+      if (specifier.startsWith(".")) {
+        return [
+          specifier,
+          pathHelper.toFileUrl(pathHelper.resolve(fileDir, specifier)).href,
+        ] as const;
       }
-    }
-
-    const getExportPath = (entry: string | { import?: string } | undefined): string | null => {
-      if (!entry) return null;
-      if (typeof entry === "string") return entry;
-      return entry.import ?? null;
-    };
-
-    const veryfrontSpecifiers = new Set<string>();
-    for (const match of transformed.matchAll(/from\s+["'](veryfront(?:\/[^"']+)?)["']/g)) {
-      const specifier = match[1];
-      if (specifier) veryfrontSpecifiers.add(specifier);
-    }
-    for (
-      const match of transformed.matchAll(/import\s*\(\s*["'](veryfront(?:\/[^"']+)?)["']\s*\)/g)
-    ) {
-      const specifier = match[1];
-      if (specifier) veryfrontSpecifiers.add(specifier);
-    }
-
-    for (const specifier of veryfrontSpecifiers) {
-      const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
-      if (resolvedUrl) {
-        transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+      if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
+        return [
+          specifier,
+          resolveRuntimeSpecifierToFileUrl(specifier) ??
+            await resolvePackageToFileUrl(specifier),
+        ] as const;
       }
-    }
+      if (!isUnprefixedNpmSpecifier(specifier)) return [specifier, null] as const;
+      return [specifier, await resolvePackageToFileUrl(specifier)] as const;
+    },
+  );
+  const resolutions = new Map(resolvedPairs);
 
-    // Rewrite veryfront subpath imports
-    transformed = transformed.replace(
-      /from\s+["'](veryfront\/[^"']+)["']/g,
-      (match, fullSpecifier: string) => {
-        const subpath = "./" + fullSpecifier.replace("veryfront/", "");
-        const exportPath = getExportPath(exportsMap[subpath]);
-        if (!exportPath) return match;
-
-        const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-        return `from "${pathToFileURL(resolvedPath).href}"`;
-      },
-    );
-
-    // Rewrite bare veryfront import
-    transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
-      const exportPath = getExportPath(exportsMap["."]);
-      if (!exportPath) return 'from "veryfront"';
-
-      const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-      return `from "${pathToFileURL(resolvedPath).href}"`;
-    });
-  } catch (_) {
-    /* expected: Node.js URL module unavailable in non-Node runtime */
-    return transformed;
-  }
-
-  return transformed;
+  return await rewriteImports(code, (imported, statement) => {
+    if (!imported.n) return null;
+    if (imported.d < 0 && TYPE_ONLY_STATIC_RE.test(statement)) return null;
+    const replacement = resolutions.get(imported.n);
+    if (!replacement || replacement === imported.n) return null;
+    return replaceImportSpecifierInStatement(statement, imported.n, replacement);
+  });
 }

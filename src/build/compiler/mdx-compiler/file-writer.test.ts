@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { writeCompiledFile } from "./file-writer.ts";
 
 describe("build/compiler/mdx-compiler/file-writer", () => {
@@ -103,6 +103,27 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
         );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("rejects source files outside the project directory", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const outsideDir = await Deno.makeTempDir();
+
+      try {
+        await assertRejects(
+          () =>
+            writeCompiledFile(`${outsideDir}/page.mdx`, "code", {
+              projectDir,
+              outputDir: `${projectDir}/out`,
+              mode: "production",
+            }),
+          Error,
+          "outside projectDir",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(outsideDir, { recursive: true });
       }
     });
   });

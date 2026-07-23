@@ -7,14 +7,99 @@ import {
 } from "./conversation.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "./types.ts";
 import { parseKnownProblemBody, safeJsonParse } from "./provider-errors.ts";
+import { formatToolErrorText } from "./ag-ui-helpers.ts";
 
-function toToolInput(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
+const MAX_FALLBACK_TOOL_INPUT_DEPTH = 64;
+const MAX_FALLBACK_TOOL_INPUT_ENTRIES = 10_000;
+const MAX_FINAL_STEP_RESPONSE_BODY_CHARS = 1_048_576;
+
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-const STREAM_PROMISE_TIMEOUT_TOKEN = Symbol("stream-promise-timeout");
+function snapshotToolInputValue(
+  value: unknown,
+  context: { active: WeakSet<object>; remainingEntries: number },
+  depth: number,
+): unknown {
+  if (depth > MAX_FALLBACK_TOOL_INPUT_DEPTH) return "[MaxDepth]";
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value !== "object") return null;
+  if (context.active.has(value)) return "[Circular]";
+
+  context.active.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      for (
+        let index = 0;
+        index < value.length && context.remainingEntries > 0;
+        index += 1
+      ) {
+        context.remainingEntries -= 1;
+        const descriptor = Object.getOwnPropertyDescriptor(value, index);
+        result.push(snapshotToolInputValue(
+          descriptor && "value" in descriptor ? descriptor.value : undefined,
+          context,
+          depth + 1,
+        ));
+      }
+      return result;
+    }
+
+    const entries: Array<[string, unknown]> = [];
+    for (const key of Object.keys(value)) {
+      if (context.remainingEntries <= 0) break;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) continue;
+      context.remainingEntries -= 1;
+      entries.push([key, snapshotToolInputValue(descriptor.value, context, depth + 1)]);
+    }
+    return Object.fromEntries(entries);
+  } catch {
+    return "[Unserializable]";
+  } finally {
+    context.active.delete(value);
+  }
+}
+
+function toToolInput(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const snapshot = snapshotToolInputValue(value, {
+    active: new WeakSet<object>(),
+    remainingEntries: MAX_FALLBACK_TOOL_INPUT_ENTRIES,
+  }, 0);
+  return isRecord(snapshot) ? snapshot : {};
+}
+
+function toFallbackValue(value: unknown): unknown {
+  return snapshotToolInputValue(value, {
+    active: new WeakSet<object>(),
+    remainingEntries: MAX_FALLBACK_TOOL_INPUT_ENTRIES,
+  }, 0);
+}
+
 /** Default value for stream promise timeout ms. */
 export const DEFAULT_STREAM_PROMISE_TIMEOUT_MS = 10_000;
+const MAX_TIMER_DURATION_MS = 2_147_483_647;
+
+/** Raised when final stream steps do not settle before the configured deadline. */
+export class StreamStepsTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Stream steps did not settle within ${timeoutMs}ms`);
+    this.name = "StreamStepsTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
 
 // --- Shared types ---
 
@@ -36,6 +121,10 @@ export interface FinalStepToolResult {
   toolName: string;
   input: unknown;
   output: unknown;
+  /** Whether the provider reported this tool result as an error. */
+  isError?: boolean;
+  /** Normalized public error text when `isError` is true. */
+  errorText?: string;
 }
 
 /** State for fallback tool chunk. */
@@ -66,6 +155,26 @@ type FallbackParsedPart =
   | { kind: "reasoning"; text: string; signature?: string; redactedData?: string }
   | ({ kind: "tool" } & FallbackToolChunkDescriptor);
 
+function getProviderToolResultErrorText(output: unknown): string | null {
+  if (!isRecord(output) || readOwnDataProperty(output, "type") !== "error-text") {
+    return null;
+  }
+
+  const value = readOwnDataProperty(output, "value");
+  return formatToolErrorText(value ?? "Tool execution failed");
+}
+
+function getFallbackToolResultFields(
+  result: FinalStepToolResult,
+): Pick<FallbackToolChunkDescriptor, "outputState" | "output" | "errorText"> {
+  return result.isError
+    ? {
+      outputState: "output-error",
+      errorText: result.errorText ?? formatToolErrorText(result.output),
+    }
+    : { outputState: "output-available", output: result.output };
+}
+
 function buildToolUiPart(descriptor: FallbackToolChunkDescriptor): ChatPart {
   return {
     type: "dynamic-tool",
@@ -73,7 +182,9 @@ function buildToolUiPart(descriptor: FallbackToolChunkDescriptor): ChatPart {
     toolCallId: descriptor.toolCallId,
     input: descriptor.input,
     state: descriptor.outputState === "started" ? "pending" : descriptor.outputState,
-    ...(descriptor.outputState === "output-available" ? { output: descriptor.output } : {}),
+    ...(descriptor.outputState === "output-available"
+      ? { output: toFallbackValue(descriptor.output) }
+      : {}),
     ...(descriptor.outputState === "output-error" && descriptor.errorText
       ? { errorText: descriptor.errorText }
       : {}),
@@ -116,8 +227,7 @@ function upsertParsedToolResult(
 
     parts[existingIndex] = {
       ...existingPart,
-      outputState: "output-available",
-      output: result.output,
+      ...getFallbackToolResultFields(result),
     };
     return;
   }
@@ -127,22 +237,33 @@ function upsertParsedToolResult(
     toolName: result.toolName,
     toolCallId: result.toolCallId,
     input: toToolInput(result.input),
-    outputState: "output-available",
-    output: result.output,
+    ...getFallbackToolResultFields(result),
   });
 }
 
 // --- Ordered-part building ---
 
+function getActiveTurnMessages(messages: unknown[]): unknown[] {
+  let activeTurnStart = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (isRecord(message) && (message.role === "user" || message.role === "system")) {
+      activeTurnStart = index + 1;
+    }
+  }
+  return activeTurnStart === 0 ? messages : messages.slice(activeTurnStart);
+}
+
 function buildOrderedFallbackParsedPartsFromContentMessages(
   messages: unknown[],
 ): FallbackParsedPart[] {
+  const activeMessages = getActiveTurnMessages(messages);
   const orderedParts: FallbackParsedPart[] = [];
   const toolCallsById = new Map<string, FinalStepToolCall>();
   const toolResultsById = new Map<string, FinalStepToolResult>();
 
   for (
-    const toolCall of messages.flatMap((message) => {
+    const toolCall of activeMessages.flatMap((message) => {
       if (!isRecord(message) || !Array.isArray(message.content)) {
         return [];
       }
@@ -164,29 +285,31 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
   }
 
   for (
-    const toolResult of messages.flatMap((message) => {
+    const toolResult of activeMessages.flatMap((message) => {
       if (!isRecord(message) || !Array.isArray(message.content)) {
         return [];
       }
 
-      return message.content.flatMap((part) =>
-        isToolResultPart(part)
-          ? [
-            {
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              input: toolCallsById.get(part.toolCallId)?.input ?? {},
-              output: part.output,
-            } satisfies FinalStepToolResult,
-          ]
-          : []
-      );
+      return message.content.flatMap((part) => {
+        if (!isToolResultPart(part)) return [];
+        const output = readOwnDataProperty(part, "output");
+        const errorText = getProviderToolResultErrorText(output);
+        return [
+          {
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: toolCallsById.get(part.toolCallId)?.input ?? {},
+            output,
+            ...(errorText ? { isError: true, errorText } : {}),
+          } satisfies FinalStepToolResult,
+        ];
+      });
     })
   ) {
     toolResultsById.set(toolResult.toolCallId, toolResult);
   }
 
-  for (const message of messages) {
+  for (const message of activeMessages) {
     if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content)) {
       continue;
     }
@@ -221,19 +344,23 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
           toolName: part.toolName,
           toolCallId: part.toolCallId,
           input: toToolInput(toolCall?.input ?? part.input),
-          outputState: toolResult ? "output-available" : "input-available",
-          ...(toolResult ? { output: toolResult.output } : {}),
+          ...(toolResult
+            ? getFallbackToolResultFields(toolResult)
+            : { outputState: "input-available" as const }),
         });
         continue;
       }
 
       if (isToolResultPart(part)) {
         const toolCall = toolCallsById.get(part.toolCallId);
+        const output = readOwnDataProperty(part, "output");
+        const errorText = getProviderToolResultErrorText(output);
         upsertParsedToolResult(orderedParts, {
           toolName: part.toolName,
           toolCallId: part.toolCallId,
-          input: toolCall?.input ?? part.output,
-          output: part.output,
+          input: toolCall?.input ?? {},
+          output,
+          ...(errorText ? { isError: true, errorText } : {}),
         });
       }
     }
@@ -245,7 +372,7 @@ function buildOrderedFallbackParsedPartsFromContentMessages(
 function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): FallbackParsedPart[] {
   const orderedParts: FallbackParsedPart[] = [];
 
-  for (const message of messages) {
+  for (const message of getActiveTurnMessages(messages)) {
     if (!isRecord(message) || !Array.isArray(message.parts)) {
       continue;
     }
@@ -290,12 +417,30 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
           continue;
         }
 
+        const input = toToolInput("args" in part ? part.args : "input" in part ? part.input : {});
+        const state = typeof part.state === "string" ? part.state : "input-available";
+        const outputState = state === "pending" || state === "input-streaming"
+          ? "started"
+          : state === "output-available" || state === "completed"
+          ? "output-available"
+          : state === "output-error" || state === "error"
+          ? "output-error"
+          : state === "output-denied"
+          ? "output-denied"
+          : "input-available";
+
         orderedParts.push({
           kind: "tool",
           toolName: derivedToolName,
           toolCallId,
-          input: toToolInput("args" in part ? part.args : "input" in part ? part.input : {}),
-          outputState: "input-available",
+          input,
+          outputState,
+          ...(outputState === "output-available" && "output" in part
+            ? { output: part.output }
+            : {}),
+          ...(outputState === "output-error" && typeof part.errorText === "string"
+            ? { errorText: part.errorText }
+            : {}),
         });
       }
       continue;
@@ -303,13 +448,24 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
 
     if (message.role === "tool") {
       for (const part of message.parts) {
-        if (!isRecord(part) || part.type !== "tool-result" || typeof part.toolCallId !== "string") {
+        if (
+          !isRecord(part) ||
+          (part.type !== "tool-result" && part.type !== "tool_result")
+        ) {
           continue;
         }
 
+        const toolCallId = typeof part.toolCallId === "string"
+          ? part.toolCallId
+          : typeof part.tool_call_id === "string"
+          ? part.tool_call_id
+          : typeof part.id === "string"
+          ? part.id
+          : null;
+        if (!toolCallId) continue;
+
         const existingIndex = orderedParts.findIndex(
-          (existingPart) =>
-            existingPart.kind === "tool" && existingPart.toolCallId === part.toolCallId,
+          (existingPart) => existingPart.kind === "tool" && existingPart.toolCallId === toolCallId,
         );
         if (existingIndex < 0) {
           continue;
@@ -320,11 +476,21 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
           continue;
         }
 
-        orderedParts[existingIndex] = {
-          ...existingPart,
-          outputState: "output-available",
-          output: "result" in part ? part.result : null,
-        };
+        const output = toFallbackValue(
+          "output" in part ? part.output : "result" in part ? part.result : null,
+        );
+        const isError = part.is_error === true || part.isError === true;
+        orderedParts[existingIndex] = isError
+          ? {
+            ...existingPart,
+            outputState: "output-error",
+            errorText: formatToolErrorText(output),
+          }
+          : {
+            ...existingPart,
+            outputState: "output-available",
+            output,
+          };
       }
     }
   }
@@ -380,9 +546,20 @@ function buildFallbackParsedPartsFromInput(input: {
   extractFinalStepToolCalls: (step: unknown) => FinalStepToolCall[];
   extractFinalStepToolResults: (step: unknown) => FinalStepToolResult[];
 }): FallbackParsedPart[] {
+  const appendMissingExtractedText = (
+    parts: FallbackParsedPart[],
+  ): FallbackParsedPart[] => {
+    const text = extractMissingFallbackText({
+      parts: toChatParts(parts),
+      step: input.step,
+      extractFinalStepText: input.extractFinalStepText,
+    });
+    return text.length > 0 ? [...parts, { kind: "text", text }] : parts;
+  };
+
   const orderedResponseParts = buildFallbackParsedPartsFromResponseMessages(input.step);
   if (orderedResponseParts.length > 0) {
-    return orderedResponseParts;
+    return appendMissingExtractedText(orderedResponseParts);
   }
 
   if (isRecord(input.step) && Array.isArray(input.step.messages)) {
@@ -390,13 +567,13 @@ function buildFallbackParsedPartsFromInput(input: {
       input.step.messages,
     );
     if (orderedTopLevelContentParts.length > 0) {
-      return orderedTopLevelContentParts;
+      return appendMissingExtractedText(orderedTopLevelContentParts);
     }
   }
 
   const orderedUiResponseParts = buildFallbackParsedPartsFromUiResponseMessages(input.step);
   if (orderedUiResponseParts.length > 0) {
-    return orderedUiResponseParts;
+    return appendMissingExtractedText(orderedUiResponseParts);
   }
 
   if (isRecord(input.step) && Array.isArray(input.step.messages)) {
@@ -404,7 +581,7 @@ function buildFallbackParsedPartsFromInput(input: {
       input.step.messages,
     );
     if (orderedUiTopLevelParts.length > 0) {
-      return orderedUiTopLevelParts;
+      return appendMissingExtractedText(orderedUiTopLevelParts);
     }
   }
 
@@ -438,7 +615,7 @@ function extractTextFromResponseMessages(step: unknown): string {
     return "";
   }
 
-  const assistantTexts = step.response.messages
+  const assistantTexts = getActiveTurnMessages(step.response.messages)
     .flatMap((message) =>
       isRecord(message) && message.role === "assistant"
         ? [extractTextFromAssistantContent(message.content)]
@@ -563,18 +740,6 @@ function buildMissingFallbackTextChunksFromInput(input: {
 
 // --- Tool-chunk assembly ---
 
-function createFallbackToolChunkState(
-  state?: Partial<FallbackToolChunkState>,
-): FallbackToolChunkState {
-  return {
-    startedToolCallIds: state?.startedToolCallIds ?? new Set<string>(),
-    inputAvailableToolCallIds: state?.inputAvailableToolCallIds ?? new Set<string>(),
-    outputAvailableToolCallIds: state?.outputAvailableToolCallIds ?? new Set<string>(),
-    outputErrorToolCallIds: state?.outputErrorToolCallIds ?? new Set<string>(),
-    outputDeniedToolCallIds: state?.outputDeniedToolCallIds ?? new Set<string>(),
-  };
-}
-
 function buildToolChunkDescriptorsFromStep(input: {
   step: unknown;
   extractFinalStepToolCalls: (step: unknown) => FinalStepToolCall[];
@@ -597,8 +762,9 @@ function buildToolChunkDescriptorsFromStep(input: {
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName,
       input: toToolInput(toolCall.input),
-      outputState: toolResult ? "output-available" : "input-available",
-      ...(toolResult ? { output: toolResult.output } : {}),
+      ...(toolResult
+        ? getFallbackToolResultFields(toolResult)
+        : { outputState: "input-available" as const }),
     });
   }
 
@@ -611,8 +777,7 @@ function buildToolChunkDescriptorsFromStep(input: {
       toolCallId: toolResult.toolCallId,
       toolName: toolResult.toolName,
       input: toToolInput(toolResult.input),
-      outputState: "output-available",
-      output: toolResult.output,
+      ...getFallbackToolResultFields(toolResult),
     });
   }
 
@@ -654,6 +819,7 @@ function buildToolChunkDescriptorsFromParts(
       case "input-available":
       case "approval-requested":
       case "approval-responded":
+      case "output-streaming":
         descriptors.push({ toolCallId, toolName, input, outputState: "input-available" });
         break;
       case "output-available":
@@ -691,7 +857,7 @@ function buildToolFallbackChunks(
   descriptors: readonly FallbackToolChunkDescriptor[],
   state?: Partial<FallbackToolChunkState>,
 ): ChatUiMessageChunk<MessageMetadata>[] {
-  const normalizedState = createFallbackToolChunkState(state);
+  const normalizedState = createMutableFallbackToolChunkState(state);
   const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
 
   for (const descriptor of descriptors) {
@@ -721,7 +887,7 @@ function buildToolFallbackChunks(
           chunks.push({
             type: "tool-output-available",
             toolCallId: descriptor.toolCallId,
-            output: descriptor.output,
+            output: toFallbackValue(descriptor.output),
           });
         }
         break;
@@ -743,6 +909,8 @@ function buildToolFallbackChunks(
         }
         break;
     }
+
+    markToolDescriptorEmitted(normalizedState, descriptor);
   }
 
   return chunks;
@@ -757,13 +925,31 @@ function createMutableFallbackToolChunkState(
   outputErrorToolCallIds: Set<string>;
   outputDeniedToolCallIds: Set<string>;
 } {
-  return {
+  const mutableState = {
     startedToolCallIds: new Set(state?.startedToolCallIds ?? []),
     inputAvailableToolCallIds: new Set(state?.inputAvailableToolCallIds ?? []),
     outputAvailableToolCallIds: new Set(state?.outputAvailableToolCallIds ?? []),
     outputErrorToolCallIds: new Set(state?.outputErrorToolCallIds ?? []),
     outputDeniedToolCallIds: new Set(state?.outputDeniedToolCallIds ?? []),
   };
+
+  for (const toolCallId of mutableState.inputAvailableToolCallIds) {
+    mutableState.startedToolCallIds.add(toolCallId);
+  }
+  for (
+    const terminalIds of [
+      mutableState.outputAvailableToolCallIds,
+      mutableState.outputErrorToolCallIds,
+      mutableState.outputDeniedToolCallIds,
+    ]
+  ) {
+    for (const toolCallId of terminalIds) {
+      mutableState.startedToolCallIds.add(toolCallId);
+      mutableState.inputAvailableToolCallIds.add(toolCallId);
+    }
+  }
+
+  return mutableState;
 }
 
 function markToolDescriptorEmitted(
@@ -789,7 +975,11 @@ function markToolDescriptorEmitted(
   }
 }
 
-function getIndexedFallbackChunkId(baseId: string, kind: "reasoning" | "text", index: number) {
+function getIndexedFallbackChunkId(
+  baseId: string,
+  kind: "reasoning" | "text",
+  index: number,
+): string {
   if (kind === "text" && index === 0) {
     return baseId;
   }
@@ -872,7 +1062,7 @@ function buildMissingFallbackToolChunksFromPartsFromInput(
 }
 
 /** Error shape for final step terminal. */
-interface FinalStepTerminalError {
+export interface FinalStepTerminalError {
   code: string;
   message: string;
 }
@@ -880,29 +1070,40 @@ interface FinalStepTerminalError {
 async function resolveStreamPromiseWithTimeout<T>(
   promise: PromiseLike<T>,
   timeoutMs: number,
-  fallback: T,
 ): Promise<T> {
+  if (
+    !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DURATION_MS
+  ) {
+    throw new RangeError("timeoutMs must be a positive safe timer duration");
+  }
+
   let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   try {
-    const resolved = await Promise.race([
+    return await Promise.race([
       Promise.resolve(promise),
-      new Promise<typeof STREAM_PROMISE_TIMEOUT_TOKEN>((resolve) => {
-        timeoutId = globalThis.setTimeout(() => resolve(STREAM_PROMISE_TIMEOUT_TOKEN), timeoutMs);
+      new Promise<never>((_resolve, reject) => {
+        timeoutId = globalThis.setTimeout(
+          () => reject(new StreamStepsTimeoutError(timeoutMs)),
+          timeoutMs,
+        );
+        maybeUnrefTimer(timeoutId);
       }),
     ]);
-
-    if (resolved === STREAM_PROMISE_TIMEOUT_TOKEN) {
-      return fallback;
-    }
-
-    return resolved;
-  } catch {
-    return fallback;
   } finally {
-    if (timeoutId) {
+    if (timeoutId !== null) {
       globalThis.clearTimeout(timeoutId);
     }
+  }
+}
+
+function maybeUnrefTimer(timer: ReturnType<typeof globalThis.setTimeout>): void {
+  if (typeof timer !== "object" || timer === null || !("unref" in timer)) {
+    return;
+  }
+  const candidate: { unref?: unknown } = timer;
+  if (typeof candidate.unref === "function") {
+    candidate.unref();
   }
 }
 
@@ -911,7 +1112,7 @@ export async function getLastStreamStep(
   result: { steps: PromiseLike<readonly unknown[]> },
   timeoutMs = DEFAULT_STREAM_PROMISE_TIMEOUT_MS,
 ): Promise<unknown | null> {
-  const steps = await resolveStreamPromiseWithTimeout(result.steps, timeoutMs, []);
+  const steps = await resolveStreamPromiseWithTimeout(result.steps, timeoutMs);
   return steps.at(-1) ?? null;
 }
 
@@ -920,7 +1121,7 @@ export async function getStreamSteps(
   result: { steps: PromiseLike<readonly unknown[]> },
   timeoutMs = DEFAULT_STREAM_PROMISE_TIMEOUT_MS,
 ): Promise<{ steps: readonly unknown[]; lastStep: unknown | null }> {
-  const steps = await resolveStreamPromiseWithTimeout(result.steps, timeoutMs, []);
+  const steps = await resolveStreamPromiseWithTimeout(result.steps, timeoutMs);
   return { steps, lastStep: steps.at(-1) ?? null };
 }
 
@@ -984,16 +1185,21 @@ export function extractFinalStepToolResults(step: unknown): FinalStepToolResult[
       return [];
     }
 
-    return [
-      {
-        toolCallId: toolResult.toolCallId,
-        toolName: toolResult.toolName,
-        input: "input" in toolResult
-          ? toolResult.input
-          : (toolInputs.get(toolResult.toolCallId) ?? {}),
-        output: "output" in toolResult ? toolResult.output : null,
-      },
-    ];
+    const output = "output" in toolResult ? toolResult.output : null;
+    const providerErrorText = getProviderToolResultErrorText(output);
+    const isError = toolResult.isError === true || toolResult.is_error === true ||
+      providerErrorText !== null;
+    return [{
+      toolCallId: toolResult.toolCallId,
+      toolName: toolResult.toolName,
+      input: "input" in toolResult
+        ? toolResult.input
+        : (toolInputs.get(toolResult.toolCallId) ?? {}),
+      output,
+      ...(isError
+        ? { isError: true, errorText: providerErrorText ?? formatToolErrorText(output) }
+        : {}),
+    }];
   });
 }
 
@@ -1022,6 +1228,9 @@ export function extractFinalStepTerminalError(step: unknown): FinalStepTerminalE
   }
 
   if (typeof responseBody === "string") {
+    if (responseBody.length > MAX_FINAL_STEP_RESPONSE_BODY_CHARS) {
+      return null;
+    }
     const parsedResponseBody = safeJsonParse(responseBody);
     if (!parsedResponseBody.ok) {
       return null;

@@ -15,7 +15,7 @@ import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, releaseAssetUrl } from "./constants.ts";
 import { getReadyManifestForRenderAsync, type ReadyManifestReadOptions } from "./manifest-cache.ts";
-import type { ReleaseAssetManifest } from "./manifest-schema.ts";
+import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 
 export interface RewriteReleaseDependencyImportsOptions {
   releaseId?: string | null;
@@ -124,9 +124,10 @@ export async function rewriteReleaseDependencyImportsForModule(
   if (!isReleaseDependencyImportMapRewriteEnabled()) return code;
   if (!code.includes("http") && !code.includes("veryfront-http-bundle")) return code;
 
-  const manifest = options.manifest !== undefined
+  const manifestCandidate = options.manifest !== undefined
     ? options.manifest
     : await getReadyManifestForRenderAsync(options.releaseId, options.manifestReadOptions);
+  const manifest = parseReleaseAssetManifest(manifestCandidate);
   if (!manifest || Object.keys(manifest.dependencies).length === 0) return code;
 
   const replacements = new Map<string, string>();

@@ -1,7 +1,15 @@
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import { createError, errorToRFC9457Response, NOT_SUPPORTED, toError } from "#veryfront/errors";
+import {
+  createError,
+  ERROR_REGISTRY,
+  errorToRFC9457Response,
+  INVALID_ARGUMENT,
+  NOT_SUPPORTED,
+  toError,
+} from "#veryfront/errors";
+import { sanitizeErrorText } from "#veryfront/errors/sanitization.ts";
 import type {
   APIRoute,
   AppRouteContext,
@@ -13,7 +21,9 @@ import {
   createAppRouteMethodNotAllowed,
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
-import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
+import { dirname, resolve } from "#veryfront/compat/path/index.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { isDevelopment as isDevelopmentEnv } from "#veryfront/platform/environment.ts";
@@ -29,6 +39,7 @@ import {
   type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { readBodyBytesWithLimit } from "#veryfront/security/input-validation/limits.ts";
 /**
  * Read the current project env snapshot via the globalThis bridge registered by
  * server/project-env/storage.ts.  This avoids a direct import from the server/
@@ -60,33 +71,126 @@ function handleAPIError(
   error: unknown,
   pathname: string,
   adapter: RuntimeAdapter,
+  isLocalProject?: boolean,
 ): Response {
-  logger.error(`API route error in ${pathname}:`, error);
+  logger.error("API route failed", {
+    errorName: sanitizeErrorText(error instanceof Error ? error.name : typeof error, 256),
+  });
 
-  const ctx = { isLocalProject: isDevelopment(adapter) } as HandlerContext;
+  const ctx = {
+    isLocalProject: isLocalProject !== false && isDevelopment(adapter),
+  } as HandlerContext;
   const req = new Request(`http://localhost${pathname}`);
   return errorToRFC9457Response(error, ctx, req);
 }
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {
-  const resolvePath = (path: string): string => (isAbsolute(path) ? path : join(projectDir, path));
+  const root = resolve(projectDir);
+  let canonicalRootPromise: Promise<string> | undefined;
+
+  const resolveLexicalPath = (path: string): string => {
+    const candidate = resolve(root, path);
+    if (isWithinDirectory(root, candidate)) return candidate;
+    throw INVALID_ARGUMENT.create({
+      message: "Filesystem path must stay within the project directory",
+    });
+  };
+
+  const canonicalRoot = (): Promise<string> => {
+    if (!fs.realPath) return Promise.resolve(root);
+    canonicalRootPromise ??= fs.realPath(root);
+    return canonicalRootPromise;
+  };
+
+  const guardPath = async (path: string): Promise<string> => {
+    const candidate = resolveLexicalPath(path);
+    if (!fs.realPath) return candidate;
+
+    const realRoot = await canonicalRoot();
+    let current = candidate;
+    while (true) {
+      try {
+        const canonical = await fs.realPath(current);
+        if (!isWithinDirectory(realRoot, canonical)) {
+          throw INVALID_ARGUMENT.create({
+            message: "Filesystem path must stay within the project directory",
+          });
+        }
+        return candidate === current ? canonical : candidate;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+        if (current === root) return candidate;
+        const parent = dirname(current);
+        if (parent === current || !isWithinDirectory(root, parent)) return candidate;
+        current = parent;
+      }
+    }
+  };
+
+  const createScopedWatcher: FileSystemAdapter["watch"] = (paths, options) => {
+    let closed = false;
+    const watcherPromise = (async () => {
+      const guarded = Array.isArray(paths)
+        ? await Promise.all(paths.map(guardPath))
+        : await guardPath(paths);
+      const watcher = fs.watch(guarded, options);
+      if (closed) watcher.close();
+      return watcher;
+    })();
+
+    return {
+      close() {
+        closed = true;
+        void watcherPromise.then((watcher) => watcher.close());
+      },
+      async *[Symbol.asyncIterator]() {
+        const watcher = await watcherPromise;
+        if (closed) return;
+        for await (const event of watcher) yield event;
+      },
+    };
+  };
 
   return {
-    readFile: (path: string) => fs.readFile(resolvePath(path)),
+    readFile: async (path: string) => await fs.readFile(await guardPath(path)),
     readFileBytes: fs.readFileBytes
-      ? (path: string) => fs.readFileBytes!(resolvePath(path))
+      ? async (path: string) => await fs.readFileBytes!(await guardPath(path))
       : undefined,
-    writeFile: (path: string, content: string) => fs.writeFile(resolvePath(path), content),
-    exists: (path: string) => fs.exists(resolvePath(path)),
-    readDir: (path: string) => fs.readDir(resolvePath(path)),
-    stat: (path: string) => fs.stat(resolvePath(path)),
-    mkdir: (path: string, options?: { recursive?: boolean }) =>
-      fs.mkdir(resolvePath(path), options),
-    remove: (path: string, options?: { recursive?: boolean }) =>
-      fs.remove(resolvePath(path), options),
-    makeTempDir: fs.makeTempDir,
-    watch: fs.watch,
-    resolveFile: fs.resolveFile ? (path: string) => fs.resolveFile!(resolvePath(path)) : undefined,
+    writeFile: async (path: string, content: string) =>
+      await fs.writeFile(await guardPath(path), content),
+    exists: async (path: string) => await fs.exists(await guardPath(path)),
+    readDir: async function* (path: string) {
+      for await (const entry of fs.readDir(await guardPath(path))) yield entry;
+    },
+    stat: async (path: string) => await fs.stat(await guardPath(path)),
+    lstat: fs.lstat ? async (path: string) => await fs.lstat!(await guardPath(path)) : undefined,
+    realPath: fs.realPath ? async (path: string) => await guardPath(path) : undefined,
+    mkdir: async (path: string, options?: { recursive?: boolean }) =>
+      await fs.mkdir(await guardPath(path), options),
+    remove: async (path: string, options?: { recursive?: boolean }) =>
+      await fs.remove(await guardPath(path), options),
+    makeTempDir: async (prefix: string) => {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(prefix)) {
+        throw INVALID_ARGUMENT.create({
+          message: "Temporary directory prefix must use letters, numbers, underscores, or hyphens",
+        });
+      }
+      const tempRoot = await guardPath(".veryfront/tmp");
+      await fs.mkdir(tempRoot, { recursive: true });
+      const tempDir = await guardPath(`${tempRoot}/${prefix}-${crypto.randomUUID()}`);
+      await fs.mkdir(tempDir);
+      return tempDir;
+    },
+    watch: createScopedWatcher,
+    resolveFile: fs.resolveFile
+      ? async (path: string, options) => {
+        const result = await fs.resolveFile!(await guardPath(path), options);
+        return result ? await guardPath(result) : null;
+      }
+      : undefined,
+    refreshSourceSnapshot: fs.refreshSourceSnapshot
+      ? async (reason?: string) => await fs.refreshSourceSnapshot!(reason)
+      : undefined,
   };
 }
 
@@ -139,21 +243,6 @@ function toHeadResponse(response: Response): Response {
 // Worker Isolation Helpers
 // ---------------------------------------------------------------------------
 
-function checkContentLengthLimit(request: Request): void {
-  const contentLength = request.headers.get("content-length");
-  if (!contentLength) return;
-
-  const bytes = parseInt(contentLength, 10);
-  if (bytes > MAX_WORKER_BODY_BYTES) {
-    throw createError({
-      type: "api",
-      message: `Request body too large for isolated execution (${
-        (bytes / 1024 / 1024).toFixed(1)
-      } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-    });
-  }
-}
-
 let warnedUntrustedInProcessExecution = false;
 
 export function __resetInProcessIsolationWarningForTests(): void {
@@ -162,7 +251,6 @@ export function __resetInProcessIsolationWarningForTests(): void {
 
 function warnIfUntrustedInProcessExecution(
   routeKind: "app" | "pages",
-  pathname: string,
   options?: ExecuteRouteOptions,
 ): void {
   if (options?.isLocalProject !== false) return;
@@ -174,9 +262,6 @@ function warnIfUntrustedInProcessExecution(
     logger.warn(
       "Untrusted project code is executing in-process with worker isolation disabled. Enable WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_API=1 to run project routes in a permission-restricted worker.",
       {
-        modulePath: options.modulePath,
-        pathname,
-        projectDir: options.projectDir,
         requiredEnv: ["WORKER_ISOLATION_ENABLED", "WORKER_ISOLATION_API"],
         routeKind,
         workerIsolationEnabled: false,
@@ -189,23 +274,7 @@ function warnIfUntrustedInProcessExecution(
 
 async function readBodyWithSizeGuard(request: Request): Promise<Uint8Array | null> {
   if (!request.body) return null;
-
-  // Fast path: reject before buffering if Content-Length is known
-  checkContentLengthLimit(request);
-
-  const body = new Uint8Array(await request.arrayBuffer());
-
-  // Fallback: check actual size for chunked/streaming bodies
-  if (body.byteLength > MAX_WORKER_BODY_BYTES) {
-    throw createError({
-      type: "api",
-      message: `Request body too large for isolated execution (${
-        (body.byteLength / 1024 / 1024).toFixed(1)
-      } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-    });
-  }
-
-  return body;
+  return await readBodyBytesWithLimit(request, MAX_WORKER_BODY_BYTES);
 }
 
 async function serializeRequest(request: Request): Promise<SerializedRequest> {
@@ -229,31 +298,28 @@ function workerResponseToResponse(
   workerResponse: WorkerResponse,
   pathname: string,
   adapter: RuntimeAdapter,
+  isLocalProject?: boolean,
 ): Response {
   if (workerResponse.type === "error") {
     const { error } = workerResponse;
-    logger.error(`API route error in ${pathname} (worker):`, error.message);
+    logger.error("Isolated API route failed", {
+      errorName: sanitizeErrorText(error.name, 256),
+    });
 
-    // If the worker serialized RFC 9457 fields, return them directly
-    // to preserve the original status code, type, and detail.
-    if (error.status && error.type) {
-      return Response.json(
-        {
-          type: error.type,
-          title: error.name,
-          status: error.status,
-          detail: error.detail ?? error.message,
-          instance: pathname,
-        },
-        { status: error.status },
-      );
-    }
-
-    const ctx = { isLocalProject: isDevelopment(adapter) } as HandlerContext;
+    const definition = typeof error.slug === "string" && Object.hasOwn(ERROR_REGISTRY, error.slug)
+      ? ERROR_REGISTRY[error.slug as keyof typeof ERROR_REGISTRY]
+      : undefined;
+    const detail = sanitizeErrorText(error.detail ?? error.message, 16_384);
+    const normalizedError = definition
+      ? definition.create({ detail })
+      : Object.assign(new Error(detail || "Isolated API route failed"), {
+        name: sanitizeErrorText(error.name, 256) || "Error",
+      });
+    const ctx = {
+      isLocalProject: isLocalProject !== false && isDevelopment(adapter),
+    } as HandlerContext;
     const req = new Request(`http://localhost${pathname}`);
-    const err = new Error(error.message);
-    err.name = error.name;
-    return errorToRFC9457Response(err, ctx, req);
+    return errorToRFC9457Response(normalizedError, ctx, req);
   }
 
   if (workerResponse.type === "result") {
@@ -275,6 +341,7 @@ function executeAppRouteIsolated(
   pathname: string,
   adapter: RuntimeAdapter,
   projectDir: string,
+  isLocalProject?: boolean,
 ): Promise<Response> {
   const method = request.method.toUpperCase() as HTTPMethod;
 
@@ -301,16 +368,19 @@ function executeAppRouteIsolated(
           },
         );
 
-        const response = workerResponseToResponse(workerResponse, pathname, adapter);
+        const response = workerResponseToResponse(
+          workerResponse,
+          pathname,
+          adapter,
+          isLocalProject,
+        );
         return method === "HEAD" ? toHeadResponse(response) : response;
       } catch (error) {
-        return handleAPIError(error, pathname, adapter);
+        return handleAPIError(error, pathname, adapter, isLocalProject);
       }
     },
     {
       "http.method": method,
-      "http.path": pathname,
-      "api.route.pattern": match.route.pattern,
       "api.isolated": true,
     },
   );
@@ -323,8 +393,9 @@ function executePagesRouteIsolated(
   pathname: string,
   adapter: RuntimeAdapter,
   projectDir: string,
+  isLocalProject?: boolean,
 ): Promise<Response> {
-  const method = request.method as string;
+  const method = request.method;
 
   return withSpan(
     "api.executePagesRoute.isolated",
@@ -355,15 +426,19 @@ function executePagesRouteIsolated(
           },
         );
 
-        return workerResponseToResponse(workerResponse, pathname, adapter);
+        const response = workerResponseToResponse(
+          workerResponse,
+          pathname,
+          adapter,
+          isLocalProject,
+        );
+        return request.method === "HEAD" ? toHeadResponse(response) : response;
       } catch (error) {
-        return handleAPIError(error, pathname, adapter);
+        return handleAPIError(error, pathname, adapter, isLocalProject);
       }
     },
     {
       "http.method": method,
-      "http.path": pathname,
-      "api.route.pattern": match.route.pattern,
       "api.isolated": true,
     },
   );
@@ -383,14 +458,14 @@ export interface ExecuteRouteOptions {
 }
 
 export function executeAppRoute(
-  handler: APIRoute,
+  handler: APIRoute | null,
   request: Request,
   match: RouteMatch,
   pathname: string,
   adapter: RuntimeAdapter,
   options?: ExecuteRouteOptions,
 ): Promise<Response> {
-  // Isolated path: execute in per-project Worker, fall back to main process on error
+  // Isolated path: execute in a per-project Worker.
   if (
     isWorkerIsolationEnabled() &&
     options?.modulePath &&
@@ -403,11 +478,23 @@ export function executeAppRoute(
       pathname,
       adapter,
       options.projectDir,
+      options.isLocalProject,
+    );
+  }
+
+  if (!handler) {
+    return Promise.resolve(
+      handleAPIError(
+        createError({ type: "api", message: "API route handler is unavailable" }),
+        pathname,
+        adapter,
+        options?.isLocalProject,
+      ),
     );
   }
 
   // Default path: execute in main process (existing behavior)
-  warnIfUntrustedInProcessExecution("app", pathname, options);
+  warnIfUntrustedInProcessExecution("app", options);
   const method = request.method.toUpperCase() as HTTPMethod;
 
   return withSpan(
@@ -430,15 +517,15 @@ export function executeAppRoute(
         const response = validateResponse(await resolvedFn(request, appContext));
         return method === "HEAD" ? toHeadResponse(response) : response;
       } catch (error) {
-        return handleAPIError(error, pathname, adapter);
+        return handleAPIError(error, pathname, adapter, options?.isLocalProject);
       }
     },
-    { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern },
+    { "http.method": method },
   );
 }
 
 export function executePagesRoute(
-  handler: APIRoute,
+  handler: APIRoute | null,
   request: Request,
   match: RouteMatch,
   pathname: string,
@@ -446,7 +533,9 @@ export function executePagesRoute(
   projectDir?: string,
   options?: ExecuteRouteOptions,
 ): Promise<Response> {
-  // Isolated path: execute in per-project Worker, fall back to main process on error
+  const requestedMethod = request.method.toUpperCase();
+
+  // Isolated path: execute in a per-project Worker.
   if (
     isWorkerIsolationEnabled() &&
     options?.modulePath &&
@@ -459,17 +548,35 @@ export function executePagesRoute(
       pathname,
       adapter,
       options.projectDir ?? projectDir!,
+      options.isLocalProject,
     );
   }
 
+  if (!handler) {
+    return Promise.resolve(
+      handleAPIError(
+        createError({ type: "api", message: "API route handler is unavailable" }),
+        pathname,
+        adapter,
+        options?.isLocalProject,
+      ),
+    );
+  }
+
+  const handlerRecord = handler as Record<string, unknown>;
+  const effectiveMethod = requestedMethod === "HEAD" && typeof handlerRecord.HEAD !== "function" &&
+      typeof handlerRecord.GET === "function"
+    ? "GET"
+    : requestedMethod;
+
   // Default path: execute in main process (existing behavior)
-  warnIfUntrustedInProcessExecution("pages", pathname, options);
-  const method = request.method as keyof APIRoute;
+  warnIfUntrustedInProcessExecution("pages", options);
+  const method = requestedMethod as keyof APIRoute;
 
   return withSpan(
     "api.executePagesRoute",
     async () => {
-      const methodHandler = handler[method] ?? handler.default;
+      const methodHandler = handler[effectiveMethod as keyof APIRoute] ?? handler.default;
 
       if (!methodHandler) {
         return createPagesRouteMethodNotAllowed(handler as Record<string, unknown>);
@@ -478,11 +585,12 @@ export function executePagesRoute(
       try {
         const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
         const ctx = createContext(request, match, fs);
-        return validateResponse(await (methodHandler as PagesRouteHandler)(ctx));
+        const response = validateResponse(await (methodHandler as PagesRouteHandler)(ctx));
+        return requestedMethod === "HEAD" ? toHeadResponse(response) : response;
       } catch (error) {
-        return handleAPIError(error, pathname, adapter);
+        return handleAPIError(error, pathname, adapter, options?.isLocalProject);
       }
     },
-    { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern },
+    { "http.method": method },
   );
 }

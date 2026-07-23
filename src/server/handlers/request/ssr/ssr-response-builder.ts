@@ -24,7 +24,9 @@ async function cancelHeadResponseBody(body: ReadableStream<Uint8Array> | null): 
   try {
     await body.cancel();
   } catch (error) {
-    logger.debug("SSR response body cancellation failed during HEAD cleanup", { error });
+    logger.debug("SSR response body cancellation failed during HEAD cleanup", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
   }
 }
 
@@ -72,11 +74,27 @@ export async function buildSSRResponse(
   }
 
   // Buffered response path
-  const content = typeof result.html === "string"
+  const content: string | null = typeof result.html === "string"
     ? result.html
     : typeof result.stream === "string"
     ? result.stream
-    : ErrorPages.serverError();
+    : null;
+
+  if (content === null) {
+    logger.error("SSR render result contained no response content");
+    const errorHtml = addNonceToHtmlTags(ErrorPages.serverError(), builder.nonce);
+    return builder
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withClientHints()
+      .withCache("no-store")
+      .withContentType(
+        getContentType(".html"),
+        isHeadRequest ? null : errorHtml,
+        500,
+      );
+  }
+
   const html = addNonceToHtmlTags(content, builder.nonce);
   const body = isHeadRequest ? null : html;
 

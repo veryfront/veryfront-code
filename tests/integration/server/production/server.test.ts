@@ -487,7 +487,7 @@ describe(
       });
     });
 
-    it("streams RSC NDJSON with root and sidebar slots in order", async () => {
+    it("streams the rendered RSC root slot", async () => {
       await withTestContext("production-server-rsc-stream-order", async (context: TestContext) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -539,17 +539,10 @@ describe(
           })
           .filter((e): e is { type: string; id: string; html: string } => Boolean(e));
 
-        if (events.length === 0) throw new Error("no stream events parsed");
-
-        const ids = events.map((e) => e.id);
-        if (!ids.includes("root")) throw new Error("root slot missing");
-        if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
-
-        const lastRootIndex = events.map((e) => e.id).lastIndexOf("root");
-        const anySidebarBefore = events.slice(0, Math.max(0, lastRootIndex)).some((e) =>
-          e.id === "sidebar"
-        );
-        if (!anySidebarBefore) throw new Error("sidebar did not appear before final root");
+        assertEquals(events.length, 1);
+        assertEquals(events[0]?.type, "slot");
+        assertEquals(events[0]?.id, "root");
+        assertStringIncludes(events[0]?.html ?? "", "RSC Stream");
 
         controller.abort();
         await server.stop();
@@ -718,7 +711,7 @@ describe(
         const allow = clientRes.headers.get("access-control-allow-origin");
         if (allow) assertEquals(allow, "https://rsc.test");
 
-        const s = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream`, {
+        const s = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream?page=/rsc`, {
           headers: { origin: "https://rsc.test" },
         });
         assertEquals(s.status, 200);

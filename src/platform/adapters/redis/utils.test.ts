@@ -29,6 +29,24 @@ describe("platform/adapters/redis/utils", () => {
       assertEquals(arrayToObject(["key", ""]), { key: "" });
     });
 
+    it("preserves special Redis field names without changing the object prototype", () => {
+      const result = arrayToObject([
+        "__proto__",
+        "prototype-field",
+        "constructor",
+        "constructor-field",
+      ]);
+
+      assertEquals(Object.getPrototypeOf(result), Object.prototype);
+      assertEquals(Object.hasOwn(result, "__proto__"), true);
+      assertEquals(result.__proto__, "prototype-field");
+      assertEquals(
+        Object.getOwnPropertyDescriptor(result, "constructor")?.value,
+        "constructor-field",
+      );
+      assertEquals(Object.hasOwn(Object.prototype, "prototype-field"), false);
+    });
+
     it("should handle large arrays", () => {
       const arr: string[] = [];
       for (let i = 0; i < 100; i++) {

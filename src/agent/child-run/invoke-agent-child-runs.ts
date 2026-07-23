@@ -1,5 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   appendConversationRunEvents,
   isIgnorableConversationRunAppendError,
@@ -7,8 +7,36 @@ import {
 
 const AG_UI_CUSTOM_EVENT_TYPE = "CUSTOM";
 
-/** Zod schema for get invoke agent child run lifecycle value. */
-export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
+/** Lifecycle state published for an invoke-agent child run. */
+export interface InvokeAgentChildRunLifecycleValue {
+  /** Parent tool call identifier. */
+  toolCallId: string;
+  /** Child conversation identifier. */
+  childConversationId: string;
+  /** Child run identifier. */
+  childRunId: string;
+  /** Child message identifier. */
+  childMessageId: string;
+  /** Child agent identifier. */
+  childAgentId: string;
+  /** Optional child task description. */
+  description?: string;
+  /** Current child run status. */
+  status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
+  /** Source target selected for the child run. */
+  sourceTargetKind?: "project" | "main_branch" | "environment" | "preview_branch" | null;
+  /** Runtime target selected for the child run. */
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  /** Optional target environment identifier. */
+  targetEnvironmentId?: string | null;
+  /** Optional target branch identifier. */
+  targetBranchId?: string | null;
+}
+
+/** Returns the invoke-agent child lifecycle value schema. */
+export const getInvokeAgentChildRunLifecycleValueSchema: () => Schema<
+  InvokeAgentChildRunLifecycleValue
+> = defineSchema((v) =>
   v.object({
     toolCallId: v.string().min(1),
     childConversationId: v.string().uuid(),
@@ -16,10 +44,26 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
     childMessageId: v.string().uuid(),
     childAgentId: v.string().min(1),
     description: v.string().min(1).optional(),
-    status: v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
-    sourceTargetKind: v.enum(["project", "main_branch", "environment", "preview_branch"]).nullable()
+    status: v.enum(
+      [
+        "pending",
+        "running",
+        "waiting_for_tool",
+        "completed",
+        "failed",
+        "cancelled",
+      ] as const,
+    ),
+    sourceTargetKind: v.enum(
+      [
+        "project",
+        "main_branch",
+        "environment",
+        "preview_branch",
+      ] as const,
+    ).nullable()
       .optional(),
-    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"]).nullable()
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"] as const).nullable()
       .optional(),
     targetEnvironmentId: v.string().uuid().nullable().optional(),
     targetBranchId: v.string().uuid().nullable().optional(),
@@ -29,22 +73,34 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
 /** Schema for invoke agent child run lifecycle value.
  * @deprecated Use getInvokeAgentChildRunLifecycleValueSchema()
  */
-export const InvokeAgentChildRunLifecycleValueSchema = lazySchema(
-  getInvokeAgentChildRunLifecycleValueSchema,
-);
+export const InvokeAgentChildRunLifecycleValueSchema: Schema<InvokeAgentChildRunLifecycleValue> =
+  lazySchema(
+    getInvokeAgentChildRunLifecycleValueSchema,
+  );
 
-/** Public API contract for invoke agent child run lifecycle value. */
-export type InvokeAgentChildRunLifecycleValue = InferSchema<
-  ReturnType<typeof getInvokeAgentChildRunLifecycleValueSchema>
->;
+/** State delta that updates invoke-agent child lifecycle state. */
+export interface InvokeAgentChildRunStateDelta {
+  /** Additional event fields accepted by AG-UI transport. */
+  [key: string]: unknown;
+  /** Event discriminator. */
+  type: "STATE_DELTA";
+  /** JSON patch-like child lifecycle operations. */
+  delta: Array<{
+    op: "add" | "replace";
+    path: string;
+    value: InvokeAgentChildRunLifecycleValue;
+  }>;
+}
 
-/** Zod schema for get invoke agent child run state delta. */
-export const getInvokeAgentChildRunStateDeltaSchema = defineSchema((v) =>
+/** Returns the invoke-agent child state delta schema. */
+export const getInvokeAgentChildRunStateDeltaSchema: () => Schema<
+  InvokeAgentChildRunStateDelta
+> = defineSchema((v) =>
   v.object({
     type: v.literal("STATE_DELTA"),
     delta: v.array(
       v.object({
-        op: v.enum(["add", "replace"]),
+        op: v.enum(["add", "replace"] as const),
         path: v.string().min(1),
         value: getInvokeAgentChildRunLifecycleValueSchema(),
       }),
@@ -55,17 +111,27 @@ export const getInvokeAgentChildRunStateDeltaSchema = defineSchema((v) =>
 /** Schema for invoke agent child run state delta.
  * @deprecated Use getInvokeAgentChildRunStateDeltaSchema()
  */
-export const InvokeAgentChildRunStateDeltaSchema = lazySchema(
-  getInvokeAgentChildRunStateDeltaSchema,
-);
+export const InvokeAgentChildRunStateDeltaSchema: Schema<InvokeAgentChildRunStateDelta> =
+  lazySchema(
+    getInvokeAgentChildRunStateDeltaSchema,
+  );
 
-/** Public API contract for invoke agent child run state delta. */
-export type InvokeAgentChildRunStateDelta = InferSchema<
-  ReturnType<typeof getInvokeAgentChildRunStateDeltaSchema>
->;
+/** Custom AG-UI event carrying invoke-agent child lifecycle state. */
+export interface InvokeAgentChildRunLifecycleCustomEvent {
+  /** Additional event fields accepted by AG-UI transport. */
+  [key: string]: unknown;
+  /** Event discriminator. */
+  type: "CUSTOM";
+  /** Stable custom event name. */
+  name: "veryfront.invoke_agent.lifecycle";
+  /** Child lifecycle payload. */
+  value: InvokeAgentChildRunLifecycleValue;
+}
 
-/** Zod schema for get invoke agent child run lifecycle custom event. */
-export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v) =>
+/** Returns the invoke-agent child lifecycle custom event schema. */
+export const getInvokeAgentChildRunLifecycleCustomEventSchema: () => Schema<
+  InvokeAgentChildRunLifecycleCustomEvent
+> = defineSchema((v) =>
   v.object({
     type: v.literal(AG_UI_CUSTOM_EVENT_TYPE),
     name: v.literal("veryfront.invoke_agent.lifecycle"),
@@ -76,14 +142,11 @@ export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v)
 /** Schema for invoke agent child run lifecycle custom event.
  * @deprecated Use getInvokeAgentChildRunLifecycleCustomEventSchema()
  */
-export const InvokeAgentChildRunLifecycleCustomEventSchema = lazySchema(
+export const InvokeAgentChildRunLifecycleCustomEventSchema: Schema<
+  InvokeAgentChildRunLifecycleCustomEvent
+> = lazySchema(
   getInvokeAgentChildRunLifecycleCustomEventSchema,
 );
-
-/** Event emitted for invoke agent child run lifecycle custom. */
-export type InvokeAgentChildRunLifecycleCustomEvent = InferSchema<
-  ReturnType<typeof getInvokeAgentChildRunLifecycleCustomEventSchema>
->;
 
 /** Input payload for invoke agent child run progress. */
 export type InvokeAgentChildRunProgressInput = {

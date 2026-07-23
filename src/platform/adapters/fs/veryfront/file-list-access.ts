@@ -63,10 +63,7 @@ export async function loadAllProjectFiles({
   const cacheKey = buildFileListCacheKey(ctx);
 
   if (skipPersistentCache) {
-    logger.debug("getAllFilesRaw - skipping persistent cache", {
-      cacheKey,
-      cacheKeyPrefix,
-    });
+    logger.debug("getAllFilesRaw - skipping persistent cache");
   }
 
   const cached = skipPersistentCache ? undefined : await cache.getAsync<ProjectFile[]>(cacheKey);
@@ -74,7 +71,6 @@ export async function loadAllProjectFiles({
 
   if (cached) {
     logger.debug("getAllFilesRaw - fallback cache HIT", {
-      cacheKey,
       cacheMs,
       fileCount: cached.length,
     });
@@ -82,14 +78,12 @@ export async function loadAllProjectFiles({
   }
 
   logger.warn("getAllFilesRaw - cache MISS, fetching from API", {
-    cacheKey,
     cacheMs,
   });
 
   const isPublished = ctx?.sourceType !== "branch";
   logger.debug("Fetching files from API", {
     sourceType: ctx?.sourceType,
-    cacheKey,
   });
 
   const files = await withRetryOnTransient(

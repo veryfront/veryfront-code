@@ -1,5 +1,6 @@
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import type {
   FSAdapterConfig,
   InvalidationProjectContext,
@@ -31,7 +32,7 @@ import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { getErrorMessage, INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
@@ -57,6 +58,7 @@ import {
   createServerStyleInvalidationCallbacks,
 } from "./style-callbacks.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
+import { getSafeErrorName } from "./utils/error-name.ts";
 
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
@@ -110,7 +112,7 @@ function assertRequiredContracts(): void {
   }
   if (!tryResolve("ModuleLexer")) {
     bootstrapLog.warn(
-      `[bootstrap] no ModuleLexer extension registered — dev-server import rewriting will fail. Recommended: ${
+      `[bootstrap] no ModuleLexer extension registered. Dev-server import rewriting will fail. Recommended: ${
         getRecommendation("ModuleLexer") ?? "@veryfront/ext-bundler-esbuild"
       }`,
     );
@@ -142,11 +144,13 @@ export function wireTracingShim(): void {
       );
     }
     const logRecordEmitter = tracing.getLogRecordEmitter?.();
-    __registerLogRecordEmitter(logRecordEmitter ?? null);
+    __registerLogRecordEmitter(
+      logRecordEmitter ? (entry) => logRecordEmitter({ ...entry }) : null,
+    );
     bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
   } else {
     __registerLogRecordEmitter(null);
-    bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
+    bootstrapLog.debug("[bootstrap] no TracingExporter extension. Using no-op tracer");
   }
 }
 
@@ -166,6 +170,25 @@ const DEFAULT_FILE_LOG_FORMAT = "json" as const;
 interface FileLogHandle {
   subscriber: FileLogSubscriber;
   unsubscribe: () => void;
+  closePromise?: Promise<void>;
+}
+
+export interface BootstrapCleanupActions {
+  teardownExtensions: () => void | Promise<void>;
+  teardownFileLog?: () => void | Promise<void>;
+  clearTracing?: () => void | Promise<void>;
+  disposeFileSystem?: () => void | Promise<void>;
+}
+
+export function getFileLogAttachmentLogContext(
+  config: Pick<FileLogConfig, "path" | "level" | "format">,
+  customPath: boolean,
+): { customPath: boolean; level: FileLogConfig["level"]; format: FileLogConfig["format"] } {
+  return {
+    customPath,
+    level: config.level,
+    format: config.format,
+  };
 }
 
 function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | null {
@@ -183,40 +206,102 @@ function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | 
 
   const subscriber = createFileLogSubscriber(resolved);
   const unsubscribe = getLogBuffer().subscribe(subscriber.getSubscriber());
-  bootstrapLog.debug("[bootstrap] File log subscriber attached", {
-    path: resolved.path,
-    level: resolved.level,
-    format: resolved.format,
-  });
+  bootstrapLog.debug(
+    "[bootstrap] File log subscriber attached",
+    getFileLogAttachmentLogContext(resolved, fileConfig.path !== undefined),
+  );
   return { subscriber, unsubscribe };
 }
 
 async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
   if (!handle) return;
-  handle.unsubscribe();
-  await handle.subscriber.close();
+  if (!handle.closePromise) {
+    handle.closePromise = (async () => {
+      const failures: unknown[] = [];
+      try {
+        handle.unsubscribe();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await handle.subscriber.close();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "File log cleanup failed");
+      }
+    })();
+  }
+  await handle.closePromise;
+}
+
+async function replaceFileLogSubscriber(
+  current: FileLogHandle | null,
+  config: VeryfrontConfig,
+): Promise<FileLogHandle | null> {
+  const replacement = maybeAttachFileLogSubscriber(config);
+  try {
+    await teardownFileLog(current);
+  } catch (error) {
+    try {
+      await teardownFileLog(replacement);
+    } catch (replacementError) {
+      throw new AggregateError(
+        [error, replacementError],
+        "Failed to replace the file log subscriber",
+      );
+    }
+    throw error;
+  }
+  return replacement;
+}
+
+/** Build an ordered, idempotent bootstrap cleanup operation. */
+export function createBootstrapDisposer(
+  actions: BootstrapCleanupActions,
+): () => Promise<void> {
+  let disposePromise: Promise<void> | undefined;
+
+  return () => {
+    if (disposePromise) return disposePromise;
+    disposePromise = (async () => {
+      const failures: unknown[] = [];
+      for (
+        const action of [
+          actions.teardownExtensions,
+          actions.teardownFileLog,
+          actions.clearTracing,
+          actions.disposeFileSystem,
+        ]
+      ) {
+        if (!action) continue;
+        try {
+          await action();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "Bootstrap cleanup failed");
+      }
+    })();
+    return disposePromise;
+  };
 }
 
 function combineDispose(
   extensionLoader: ExtensionLoader,
-  fsDispose?: () => void,
+  fsDispose?: () => void | Promise<void>,
   fileLogHandle?: FileLogHandle | null,
 ): () => Promise<void> {
-  return async () => {
-    try {
-      await extensionLoader.teardownAll();
-    } finally {
-      try {
-        await teardownFileLog(fileLogHandle ?? null);
-      } finally {
-        try {
-          __registerLogRecordEmitter(null);
-        } finally {
-          if (fsDispose) fsDispose();
-        }
-      }
-    }
-  };
+  return createBootstrapDisposer({
+    teardownExtensions: () => extensionLoader.teardownAll(),
+    teardownFileLog: () => teardownFileLog(fileLogHandle ?? null),
+    clearTracing: () => __registerLogRecordEmitter(null),
+    disposeFileSystem: fsDispose,
+  });
 }
 
 /**
@@ -230,14 +315,39 @@ function combineDispose(
  */
 export async function orchestrateOrDisposeFS(
   orchestrate: () => Promise<ExtensionLoader>,
-  fsDispose: (() => void) | undefined,
+  fsDispose: (() => void | Promise<void>) | undefined,
 ): Promise<ExtensionLoader> {
   try {
     return await orchestrate();
   } catch (err) {
-    if (fsDispose) fsDispose();
+    try {
+      await fsDispose?.();
+    } catch (cleanupError) {
+      bootstrapLog.warn("Failed to dispose the filesystem after extension setup failed", {
+        errorName: getSafeErrorName(cleanupError),
+      });
+    }
     throw err;
   }
+}
+
+/** Check virtual-project config presence without guessing from loaded values. */
+export async function hasVirtualConfigFile(
+  fs: Pick<FileSystemAdapter, "exists">,
+): Promise<boolean> {
+  for (const filename of VERYFRONT_CONFIG_FILES) {
+    if (await fs.exists(`/${filename}`)) return true;
+  }
+  return false;
+}
+
+function getFileSystemDisposer(
+  adapter: RuntimeAdapter,
+): (() => void | Promise<void>) | undefined {
+  if (!isExtendedFSAdapter(adapter.fs)) return undefined;
+  const underlying = adapter.fs.getUnderlyingAdapter();
+  const dispose = (underlying as { dispose?: () => void | Promise<void> }).dispose;
+  return typeof dispose === "function" ? () => dispose.call(underlying) : undefined;
 }
 
 let envLogged = false;
@@ -257,8 +367,9 @@ async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Pro
       refreshEnvironmentConfig();
     } catch (error) {
       bootstrapLog.warn("Failed to load .env files", {
-        error: getErrorMessage(error),
+        errorName: getSafeErrorName(error),
       });
+      throw error;
     }
   }
   markEnvLoaded();
@@ -273,18 +384,11 @@ function logEnvConfig(): void {
   const apiBaseUrlSource = getEnvSource("VERYFRONT_API_BASE_URL");
   const apiTokenSource = getEnvSource("VERYFRONT_API_TOKEN");
 
-  if (apiBaseUrlSource.source === "env-file") {
-    bootstrapLog.debug(`VERYFRONT_API_BASE_URL loaded from ${apiBaseUrlSource.file}`);
-  }
-  if (apiTokenSource.source === "env-file") {
-    bootstrapLog.debug(`VERYFRONT_API_TOKEN loaded from ${apiTokenSource.file}`);
-  }
-
-  bootstrapLog.debug("API base URL", {
-    apiBaseUrl: envConfig.apiBaseUrl,
-    apiBaseUrlSource,
+  bootstrapLog.debug("Environment configuration loaded", {
+    apiBaseUrlPresent: Boolean(envConfig.apiBaseUrl),
+    apiBaseUrlSource: apiBaseUrlSource.source,
     apiTokenPresent: Boolean(envConfig.apiToken),
-    apiTokenSource,
+    apiTokenSource: apiTokenSource.source,
   });
 }
 
@@ -293,7 +397,7 @@ export async function bootstrap(
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
   bootstrapLog.debug("Starting framework initialization", {
-    projectDir,
+    projectDirectoryPresent: Boolean(projectDir),
     runtime: adapter.id,
   });
 
@@ -305,16 +409,15 @@ export async function bootstrap(
 
   bootstrapLog.debug("Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);
-
-  let fileLog = maybeAttachFileLogSubscriber(config);
+  let fileLog: FileLogHandle | null = null;
+  let extensionLoader: ExtensionLoader | undefined;
+  let fsDispose: (() => void | Promise<void>) | undefined;
 
   try {
-    const fsType = config.fs?.type;
-    const needsFSAdapter = fsType != null && fsType !== "local";
+    fileLog = maybeAttachFileLogSubscriber(config);
 
-    if (!needsFSAdapter) {
-      bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
-      const extensionLoader = await orchestrateExtensions({
+    const setupExtensions = async (): Promise<ExtensionLoader> => {
+      extensionLoader = await orchestrateExtensions({
         projectDir,
         config,
         logger: bootstrapLog,
@@ -324,12 +427,21 @@ export async function bootstrap(
       });
       wireTracingShim();
       assertRequiredContracts();
+      return extensionLoader;
+    };
+
+    const fsType = config.fs?.type;
+    const needsFSAdapter = fsType != null && fsType !== "local";
+
+    if (!needsFSAdapter) {
+      bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
+      const loader = await setupExtensions();
       return {
         adapter,
         config,
         usingFSAdapter: false,
-        extensionLoader,
-        dispose: combineDispose(extensionLoader, undefined, fileLog),
+        extensionLoader: loader,
+        dispose: combineDispose(loader, undefined, fileLog),
       };
     }
 
@@ -361,29 +473,24 @@ export async function bootstrap(
 
     if (enhancedAdapter === adapter) {
       bootstrapLog.debug("Framework initialized successfully", {
-        projectDir,
+        projectDirectoryPresent: Boolean(projectDir),
         runtime: adapter.id,
         fsAdapter: "local",
       });
 
-      const extensionLoader = await orchestrateExtensions({
-        projectDir,
-        config,
-        logger: bootstrapLog,
-        primeContracts: createBootstrapPrimeContracts(),
-        builtinExtensions: createBuiltinExtensions(),
-        setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
-      });
-      wireTracingShim();
-      assertRequiredContracts();
+      const loader = await setupExtensions();
       return {
         adapter,
         config,
         usingFSAdapter: false,
-        extensionLoader,
-        dispose: combineDispose(extensionLoader, undefined, fileLog),
+        extensionLoader: loader,
+        dispose: combineDispose(loader, undefined, fileLog),
       };
     }
+
+    // Capture ownership immediately. Config reload and contract validation can
+    // both fail after the adapter has opened connections or background work.
+    fsDispose = getFileSystemDisposer(enhancedAdapter);
 
     const isProxyMode = config.fs?.veryfront?.proxyMode === true;
     const isProductionMode = config.fs?.veryfront?.productionMode === true;
@@ -393,82 +500,47 @@ export async function bootstrap(
     } else if (isProductionMode) {
       bootstrapLog.debug("Skipping config reload in production mode (using local config)");
     } else {
-      bootstrapLog.debug("Reloading config with FSAdapter");
-      clearConfigCache();
-
-      const originalConfig = config;
-      const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
-
-      // HEURISTIC: detect whether FSAdapter returned a "default dev config" (i.e., the remote
-      // source had no config file) by checking for the exact default values veryfront uses when
-      // no config is found. Known limitation: a user whose real config happens to use port=3000,
-      // host=localhost, and no HMR block will have their config silently discarded here.
-      // A future improvement would be for FSAdapter to return an explicit "config not found"
-      // signal instead of the default-value object.
-      const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
-        reloadedConfig.dev?.host === "localhost" &&
-        !reloadedConfig.dev?.hmr;
-
-      if (usesDefaultDevConfig && originalConfig.dev) {
-        bootstrapLog.debug("Keeping original config (FSAdapter returned defaults)");
-        config = originalConfig;
+      const hasRemoteConfig = await hasVirtualConfigFile(enhancedAdapter.fs);
+      if (hasRemoteConfig) {
+        bootstrapLog.debug("Reloading config with FSAdapter");
+        clearConfigCache();
+        config = await getConfig(projectDir, enhancedAdapter);
+        fileLog = await replaceFileLogSubscriber(fileLog, config);
       } else {
-        config = reloadedConfig;
-      }
-
-      // Re-attach file log subscriber if config was reloaded with different settings
-      const newFileLog = maybeAttachFileLogSubscriber(config);
-      if (newFileLog) {
-        await teardownFileLog(fileLog);
-        fileLog = newFileLog;
+        bootstrapLog.debug("Keeping original config (FSAdapter has no config file)");
       }
     }
 
     bootstrapLog.debug("Framework initialized successfully", {
-      projectDir,
+      projectDirectoryPresent: Boolean(projectDir),
       runtime: adapter.id,
       fsAdapter: fsType,
     });
 
-    let fsDispose: (() => void) | undefined;
-    if (isExtendedFSAdapter(enhancedAdapter.fs)) {
-      const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
-      if (
-        "dispose" in underlying &&
-        typeof (underlying as { dispose?: () => void }).dispose === "function"
-      ) {
-        fsDispose = () => (underlying as { dispose: () => void }).dispose();
-      }
-    }
-
-    // If extension orchestration fails after the FS adapter has been wired up,
-    // release the FS resources (WebSocket connections, caches) before
-    // propagating the error — otherwise the adapter would leak.
-    const extensionLoader = await orchestrateOrDisposeFS(
-      () =>
-        orchestrateExtensions({
-          projectDir,
-          config,
-          logger: bootstrapLog,
-          primeContracts: createBootstrapPrimeContracts(),
-          builtinExtensions: createBuiltinExtensions(),
-          setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
-        }),
-      fsDispose,
-    );
-    wireTracingShim();
-    assertRequiredContracts();
+    const loader = await setupExtensions();
 
     return {
       adapter: enhancedAdapter,
       config,
       usingFSAdapter: true,
       fsAdapterType: fsType,
-      extensionLoader,
-      dispose: combineDispose(extensionLoader, fsDispose, fileLog),
+      extensionLoader: loader,
+      dispose: combineDispose(loader, fsDispose, fileLog),
     };
   } catch (err) {
-    await teardownFileLog(fileLog);
+    const cleanup = createBootstrapDisposer({
+      teardownExtensions: () => extensionLoader?.teardownAll(),
+      teardownFileLog: () => teardownFileLog(fileLog),
+      clearTracing: () => __registerLogRecordEmitter(null),
+      disposeFileSystem: fsDispose,
+    });
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      bootstrapLog.warn("Bootstrap cleanup failed after initialization failed", {
+        errorName: getSafeErrorName(cleanupError),
+      });
+    }
     throw err;
   }
 }
@@ -484,7 +556,7 @@ export async function bootstrapDev(
   if (result.usingFSAdapter) {
     bootstrapDevLog.debug("FSAdapter active", {
       type: result.fsAdapterType,
-      projectSlug: result.config.fs?.veryfront?.projectSlug,
+      projectConfigured: Boolean(result.config.fs?.veryfront?.projectSlug),
     });
   }
 
@@ -515,7 +587,7 @@ export async function bootstrapProd(
     return result;
   } catch (error) {
     bootstrapProdLog.error("Initialization failed", {
-      error: getErrorMessage(error),
+      errorName: getSafeErrorName(error),
     });
     throw error;
   }
@@ -534,30 +606,16 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
 
   // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
   if (proxyMode === "1") {
-    if (!nodeEnv) {
+    if (nodeEnv !== "production") {
       logger.error(
-        "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
-          "Set NODE_ENV=production in your pod configuration.",
+        "[Bootstrap:Prod] NODE_ENV must be set to production in proxy mode.",
       );
       throw INVALID_ARGUMENT.create({
         detail: "NODE_ENV must be set to 'production' when running in proxy mode (PROXY_MODE=1)",
       });
     }
 
-    if (nodeEnv !== "production") {
-      logger.warn(
-        "[Bootstrap:Prod] NODE_ENV is set to '%s' in proxy mode. " +
-          "Expected 'production'. This may enable dev features.",
-        nodeEnv,
-      );
-    }
-
-    if (!controlPlanePublicKey && nodeEnv === "development") {
-      logger.warn(
-        "[Bootstrap:Prod] CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set. " +
-          "Channel dispatch verification will be unavailable (local dev mode).",
-      );
-    } else if (!controlPlanePublicKey) {
+    if (!controlPlanePublicKey) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
           "Hosted runtimes cannot verify control-plane requests without it.",

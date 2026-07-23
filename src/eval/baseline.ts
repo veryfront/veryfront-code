@@ -8,6 +8,59 @@ import type {
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+function assertComparisonPolicy(policy: EvalReportComparisonPolicy): void {
+  for (const [name, value] of Object.entries(policy)) {
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Eval report comparison ${name} must be a finite non-negative number.`,
+      });
+    }
+  }
+  for (
+    const [name, value] of [
+      ["passRateDropThreshold", policy.passRateDropThreshold],
+      ["metricPassRateDropThreshold", policy.metricPassRateDropThreshold],
+    ] as const
+  ) {
+    if (value !== undefined && value > 1) {
+      throw INVALID_ARGUMENT.create({ detail: `${name} must not exceed 1.` });
+    }
+  }
+  if (
+    policy.failedDeltaThreshold !== undefined &&
+    !Number.isSafeInteger(policy.failedDeltaThreshold)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "failedDeltaThreshold must be an integer." });
+  }
+}
+
+function assertComparableReport(report: EvalReport, label: string): void {
+  if (
+    !Number.isFinite(report.summary.passRate) || report.summary.passRate < 0 ||
+    report.summary.passRate > 1
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} report passRate must be between 0 and 1.` });
+  }
+  for (
+    const [name, value] of [
+      ["passed", report.summary.passed],
+      ["failed", report.summary.failed],
+    ] as const
+  ) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw INVALID_ARGUMENT.create({ detail: `${label} report ${name} must be non-negative.` });
+    }
+  }
+  for (const metric of report.summary.metrics) {
+    if (!Number.isFinite(metric.passRate) || metric.passRate < 0 || metric.passRate > 1) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} metric passRate must be between 0 and 1.`,
+      });
+    }
+  }
+}
+
 function metricKey(metric: EvalMetricSummary): string {
   return `${metric.name}:${metric.family}:${metric.severity}`;
 }
@@ -195,6 +248,9 @@ export function compareEvalReports(
   baseline: EvalReport,
   policy: EvalReportComparisonPolicy = {},
 ): EvalReportComparison {
+  assertComparisonPolicy(policy);
+  assertComparableReport(current, "Current");
+  assertComparableReport(baseline, "Baseline");
   const resolvedPolicy = {
     passRateDropThreshold: policy.passRateDropThreshold ?? 0,
     metricPassRateDropThreshold: policy.metricPassRateDropThreshold ?? 0,

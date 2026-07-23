@@ -8,6 +8,7 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
+import * as pathHelper from "#veryfront/compat/path";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -220,6 +221,167 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.value, 42);
     });
 
+    it("rejects oversized dependencies before reading their contents", async () => {
+      const entryPath = "/project/agents/assistant.ts";
+      const dependencyPath = "/project/agents/oversized.ts";
+      const adapter = createMockAdapter({
+        [entryPath]: 'import { value } from "./oversized.ts"; export default { value };',
+        [dependencyPath]: "x".repeat(2 * 1_024 * 1_024 + 1),
+      });
+      const originalReadFile = adapter.readFile.bind(adapter);
+      let dependencyReads = 0;
+      adapter.readFile = (path: string) => {
+        if (path === dependencyPath) dependencyReads++;
+        return originalReadFile(path);
+      };
+
+      await assertRejects(
+        () =>
+          importModule(`file://${entryPath}`, {
+            platform: "node",
+            fsAdapter: adapter,
+            baseDir: "/project",
+          }),
+        Error,
+        "Discovery module compilation failed",
+      );
+      assertEquals(dependencyReads, 0);
+    });
+
+    it("rejects bundled dependencies outside the project root", async () => {
+      const files: Record<string, string> = {
+        "/project/agents/assistant.ts": [
+          'import { secret } from "../../outside/secret.ts";',
+          "export default { secret };",
+        ].join("\n"),
+        "/outside/secret.ts": 'export const secret = "private";',
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files),
+        baseDir: "/project",
+      };
+
+      await assertRejects(
+        () => importModule("file:///project/agents/assistant.ts", context),
+        Error,
+        "Discovery module compilation failed",
+      );
+    });
+
+    it("rejects dependency escapes before probing the adapter", async () => {
+      const files: Record<string, string> = {
+        "/project/agents/assistant.ts": [
+          'import { secret } from "../../outside/secret.ts";',
+          "export default { secret };",
+        ].join("\n"),
+        "/outside/secret.ts": 'export const secret = "private";',
+      };
+      const adapter = createMockAdapter(files);
+      const originalExists = adapter.exists.bind(adapter);
+      const probedPaths: string[] = [];
+      adapter.exists = (path: string) => {
+        probedPaths.push(path);
+        return originalExists(path);
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "/project",
+      };
+
+      await assertRejects(
+        () => importModule("file:///project/agents/assistant.ts", context),
+        Error,
+        "Discovery module compilation failed",
+      );
+      assertEquals(probedPaths.some((path) => path.startsWith("/outside/")), false);
+    });
+
+    it("rejects absolute host imports from adapter-backed modules", async () => {
+      const hostDir = await Deno.makeTempDir();
+      try {
+        const hostFile = `${hostDir}/secret.ts`;
+        await Deno.writeTextFile(hostFile, 'export const secret = "private";');
+        const files: Record<string, string> = {
+          "/project/agents/assistant.ts": [
+            `import { secret } from ${JSON.stringify(hostFile)};`,
+            "export default { secret };",
+          ].join("\n"),
+        };
+        const context: FileDiscoveryContext = {
+          platform: "node",
+          fsAdapter: createMockAdapter(files),
+          baseDir: "/project",
+        };
+
+        await assertRejects(
+          () => importModule("file:///project/agents/assistant.ts", context),
+          Error,
+          "Discovery module compilation failed",
+        );
+      } finally {
+        await Deno.remove(hostDir, { recursive: true });
+      }
+    });
+
+    it("rejects local filesystem dependencies outside the project root", async () => {
+      const root = await Deno.makeTempDir();
+      const projectDir = `${root}/project`;
+      try {
+        await Deno.mkdir(`${projectDir}/agents`, { recursive: true });
+        await Deno.mkdir(`${root}/outside`, { recursive: true });
+        await Deno.writeTextFile(
+          `${projectDir}/agents/assistant.ts`,
+          [
+            'import { secret } from "../../outside/secret.ts";',
+            "export default { secret };",
+          ].join("\n"),
+        );
+        await Deno.writeTextFile(`${root}/outside/secret.ts`, 'export const secret = "private";');
+
+        await assertRejects(
+          () =>
+            importModule(pathHelper.toFileUrl(`${projectDir}/agents/assistant.ts`).href, {
+              platform: "deno",
+              baseDir: projectDir,
+            }),
+          Error,
+          "Discovery module compilation failed",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("invalidates a local module when a bundled dependency changes", async () => {
+      const root = await Deno.makeTempDir();
+      try {
+        await Deno.mkdir(`${root}/agents`, { recursive: true });
+        const entry = `${root}/agents/assistant.ts`;
+        const dependency = `${root}/agents/config.ts`;
+        await Deno.writeTextFile(
+          entry,
+          'import { value } from "./config.ts"; export default { value };',
+        );
+        await Deno.writeTextFile(dependency, "export const value = 1;");
+        const context: FileDiscoveryContext = { platform: "deno", baseDir: root };
+
+        const first = await importModule(pathHelper.toFileUrl(entry).href, context) as {
+          default: { value: number };
+        };
+        await Deno.writeTextFile(dependency, "export const value = 2;");
+        const second = await importModule(pathHelper.toFileUrl(entry).href, context) as {
+          default: { value: number };
+        };
+
+        assertEquals(first.default.value, 1);
+        assertEquals(second.default.value, 2);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
     it("should resolve parent-directory imports on hosted runs with relative baseDir", async () => {
       // Hosted (cloud) discovery uses baseDir "" and addresses the VFS with
       // project-relative paths like "tools/foo.ts". Regression test for the
@@ -249,35 +411,87 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals(mod.default.value, "baseline");
     });
 
+    it("rejects hosted virtual imports that traverse above the project root", async () => {
+      const escapedPath = pathHelper.resolve(Deno.cwd(), "tools", "../../outside/secret.ts");
+      const files: Record<string, string> = {
+        "tools/escape.ts": [
+          'import { secret } from "../../outside/secret.ts";',
+          "export default { secret };",
+        ].join("\n"),
+        [escapedPath]: 'export const secret = "private";',
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files, { projectDir: Deno.cwd() }),
+        baseDir: "",
+      };
+
+      await assertRejects(
+        () => importModule("file://tools/escape.ts", context),
+        Error,
+        "Discovery module compilation failed",
+      );
+    });
+
     it("should not serve a stale cached module when content changes at the same path", async () => {
       // The shared hosted runtime serves many projects and releases from one
       // process; the same relative path recurs across them. A path-only cache
       // key kept serving the previous release's module after a deploy.
       const path = "/project/agents/assistant.ts";
-      const contextFor = (content: string): FileDiscoveryContext => ({
+      const files = { [path]: `export default { version: "release-1" };` };
+      const context: FileDiscoveryContext = {
         platform: "node",
-        fsAdapter: createMockAdapter({ [path]: content }),
+        fsAdapter: createMockAdapter(files),
         baseDir: "/project",
-      });
+      };
 
       const first = await importModule(
         `file://${path}`,
-        contextFor(`export default { version: "release-1" };`),
+        context,
       ) as { default: { version: string } };
       assertEquals(first.default.version, "release-1");
 
+      files[path] = `export default { version: "release-2" };`;
       const second = await importModule(
         `file://${path}`,
-        contextFor(`export default { version: "release-2" };`),
+        context,
       ) as { default: { version: string } };
       assertEquals(second.default.version, "release-2");
 
       // Unchanged content is still served from the cache (same module object).
       const third = await importModule(
         `file://${path}`,
-        contextFor(`export default { version: "release-2" };`),
+        context,
       );
       assertEquals(third === second, true);
+    });
+
+    it("does not reuse initialized modules across hosted project contexts", async () => {
+      const globalRecord = globalThis as typeof globalThis & { __discoveryTenant?: string };
+      const path = "tools/tenant.ts";
+      const source = "export default { tenant: globalThis.__discoveryTenant };";
+      const adapter = createMockAdapter({ [path]: source });
+
+      try {
+        globalRecord.__discoveryTenant = "tenant-a";
+        const first = await importModule(`file://${path}`, {
+          platform: "node",
+          fsAdapter: adapter,
+          baseDir: "",
+        }) as { default: { tenant: string } };
+
+        globalRecord.__discoveryTenant = "tenant-b";
+        const second = await importModule(`file://${path}`, {
+          platform: "node",
+          fsAdapter: adapter,
+          baseDir: "",
+        }) as { default: { tenant: string } };
+
+        assertEquals(first.default.tenant, "tenant-a");
+        assertEquals(second.default.tenant, "tenant-b");
+      } finally {
+        delete globalRecord.__discoveryTenant;
+      }
     });
 
     it("should not serve a stale cached module when a bundled dependency changes", async () => {
@@ -290,32 +504,35 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         `import { CONFIG } from "./config";`,
         `export default { model: CONFIG.model };`,
       ].join("\n");
-      const contextFor = (depSource: string): FileDiscoveryContext => ({
+      const files = {
+        [entryPath]: entrySource,
+        "/project/agents/config.ts": `export const CONFIG = { model: "gpt-4" };`,
+      };
+      const context: FileDiscoveryContext = {
         platform: "node",
-        fsAdapter: createMockAdapter({
-          [entryPath]: entrySource,
-          "/project/agents/config.ts": depSource,
-        }),
+        fsAdapter: createMockAdapter(files),
         baseDir: "/project",
-      });
+      };
 
       const first = await importModule(
         `file://${entryPath}`,
-        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+        context,
       ) as { default: { model: string } };
       assertEquals(first.default.model, "gpt-4");
 
+      files["/project/agents/config.ts"] = `export const CONFIG = { model: "gpt-5.5" };`;
       const second = await importModule(
         `file://${entryPath}`,
-        contextFor(`export const CONFIG = { model: "gpt-5.5" };`),
+        context,
       ) as { default: { model: string } };
       assertEquals(second.default.model, "gpt-5.5");
 
       // Both dependency versions stay cached: reverting to the original
       // dependency contents serves the originally built module object.
+      files["/project/agents/config.ts"] = `export const CONFIG = { model: "gpt-4" };`;
       const third = await importModule(
         `file://${entryPath}`,
-        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+        context,
       );
       assertEquals(third === first, true);
     });
@@ -328,11 +545,39 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         baseDir: "/project",
       };
 
-      await assertRejects(
+      const error = await assertRejects(
         () => importModule("file:///project/agents/missing.ts", context),
         Error,
         "Failed to read file",
       );
+      assertEquals(error.message.includes("/project/agents/missing.ts"), false);
+      assertEquals(error.message.includes("File not found"), false);
+    });
+
+    it("rejects oversized discovery source before compilation", async () => {
+      const path = "/project/tools/oversized.ts";
+      let readCount = 0;
+      const adapter = createMockAdapter({
+        [path]: "x".repeat(2 * 1_024 * 1_024 + 1),
+      });
+      const originalReadFile = adapter.readFile.bind(adapter);
+      adapter.readFile = (filePath: string) => {
+        readCount++;
+        return originalReadFile(filePath);
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "/project",
+      };
+
+      const error = await assertRejects(
+        () => importModule(`file://${path}`, context),
+        Error,
+        "source exceeds the size limit",
+      );
+      assertEquals(error.message.includes(path), false);
+      assertEquals(readCount, 0);
     });
   });
 });

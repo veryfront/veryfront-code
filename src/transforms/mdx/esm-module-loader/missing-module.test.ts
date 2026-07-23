@@ -15,17 +15,31 @@ describe("transforms/mdx/esm-module-loader/missing-module", () => {
       assertEquals(err.name, "MissingModuleError");
     });
 
-    it("includes module path in message", () => {
+    it("includes only the bounded module filename in the message", () => {
       const err = buildMissingModuleError({ modulePath: "components/Button.tsx" });
-      assertEquals(err.message.includes("components/Button.tsx"), true);
+      assertEquals(err.message.includes("Button.tsx"), true);
+      assertEquals(err.message.includes("components/Button.tsx"), false);
     });
 
-    it("includes importer when provided", () => {
+    it("does not expose importer identity when provided", () => {
       const err = buildMissingModuleError({
         modulePath: "lib/utils.ts",
-        importer: "my-project",
+        importer: "private-project-slug",
       });
-      assertEquals(err.message.includes("my-project"), true);
+      assertEquals(err.message.includes("private-project-slug"), false);
+    });
+
+    it("removes local paths, queries, and controls from public error details", () => {
+      const err = buildMissingModuleError({
+        modulePath: "/private/project/components/Button\n.tsx?token=secret-value",
+        importer: "/private/project/pages/index.tsx",
+        projectSlug: "private-project-slug",
+      });
+
+      assertEquals(err.message.includes("/private/project"), false);
+      assertEquals(err.message.includes("secret-value"), false);
+      assertEquals(err.message.includes("private-project-slug"), false);
+      assertEquals(err.message.includes("\n"), false);
     });
 
     it("provides suggestion for lib/utils", () => {

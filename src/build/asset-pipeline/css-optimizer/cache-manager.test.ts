@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
-import type { CSSBundle } from "#veryfront/types";
+import type { CSSBundle } from "./types/index.ts";
 
 const TEST_DIR = "./.veryfront/test-cache";
 
@@ -154,8 +154,8 @@ describe("loadCSSManifest", () => {
       "test.css": {
         file: "test.css",
         size: 100,
-        minifiedSize: 50,
-        savings: 50,
+        minifiedSize: 16,
+        savings: 84,
       },
     };
 
@@ -163,6 +163,7 @@ describe("loadCSSManifest", () => {
       join(TEST_DIR, "css-manifest.json"),
       JSON.stringify(manifest, null, 2),
     );
+    await writeTextFile(join(TEST_DIR, "test.min.css"), ".test{color:red}");
 
     const loaded = await loadCSSManifest(TEST_DIR);
 
@@ -170,6 +171,7 @@ describe("loadCSSManifest", () => {
     const bundle = loaded.get("test.css");
     assertExists(bundle);
     assertEquals(bundle.size, 100);
+    assertEquals(bundle.content, ".test{color:red}");
 
     await cleanupTestDir();
   });
@@ -183,14 +185,63 @@ describe("loadCSSManifest", () => {
     await cleanupTestDir();
   });
 
-  it("handles corrupted manifest", async () => {
+  it("rejects corrupted manifests", async () => {
     await cleanupTestDir();
     await ensureDir(TEST_DIR);
 
     await writeTextFile(join(TEST_DIR, "css-manifest.json"), "invalid{json}");
 
-    const loaded = await loadCSSManifest(TEST_DIR);
-    assertEquals(loaded.size, 0);
+    await assertRejects(
+      () => loadCSSManifest(TEST_DIR),
+      SyntaxError,
+      "Invalid CSS manifest JSON",
+    );
+
+    await cleanupTestDir();
+  });
+
+  it("rejects invalid manifest paths and metadata", async () => {
+    await cleanupTestDir();
+    await ensureDir(TEST_DIR);
+
+    await writeTextFile(
+      join(TEST_DIR, "css-manifest.json"),
+      JSON.stringify({
+        "../escape.css": {
+          file: "../escape.css",
+          size: 100,
+          minifiedSize: 50,
+          savings: 50,
+        },
+      }),
+    );
+
+    await assertRejects(
+      () => loadCSSManifest(TEST_DIR),
+      TypeError,
+      "Invalid CSS manifest entry",
+    );
+
+    await cleanupTestDir();
+  });
+
+  it("rejects manifests whose optimized CSS file is missing", async () => {
+    await cleanupTestDir();
+    await ensureDir(TEST_DIR);
+
+    await writeTextFile(
+      join(TEST_DIR, "css-manifest.json"),
+      JSON.stringify({
+        "test.css": {
+          file: "test.css",
+          size: 100,
+          minifiedSize: 50,
+          savings: 50,
+        },
+      }),
+    );
+
+    await assertRejects(() => loadCSSManifest(TEST_DIR), Deno.errors.NotFound);
 
     await cleanupTestDir();
   });

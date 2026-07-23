@@ -113,4 +113,25 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
     assertEquals(second.response?.headers.get("pragma"), null);
     assertEquals(second.response?.headers.get("expires"), null);
   });
+
+  it("accepts a weak matching validator inside an If-None-Match list", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const runtimePath = getProdHydrationModulePath();
+    const first = await handler.handle(
+      new Request(`http://localhost${runtimePath}`),
+      makeCtx(),
+    );
+    const etag = first.response?.headers.get("etag");
+    assertExists(etag);
+
+    const second = await handler.handle(
+      new Request(`http://localhost${runtimePath}`, {
+        headers: { "if-none-match": `"stale", W/${etag}` },
+      }),
+      makeCtx(),
+    );
+
+    assertEquals(second.response?.status, 304);
+    assertEquals(second.response?.headers.get("etag"), etag);
+  });
 });

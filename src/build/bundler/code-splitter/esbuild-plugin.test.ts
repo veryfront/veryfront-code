@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
+import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 
 describe("build/bundler/code-splitter/esbuild-plugin", () => {
   describe("createSplitterPlugin", () => {
@@ -140,8 +141,11 @@ describe("build/bundler/code-splitter/esbuild-plugin", () => {
       assertEquals(result?.path.includes("pages/testxxx.md"), true);
     });
 
-    it("should provide stub content for MDX files", () => {
-      const plugin = createSplitterPlugin("/project");
+    it("compiles MDX source instead of returning placeholder content", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const sourcePath = `${projectDir}/page.mdx`;
+      await Deno.writeTextFile(sourcePath, "# Real heading");
+      const plugin = createSplitterPlugin(projectDir);
       // deno-lint-ignore no-explicit-any
       let mdxLoader: (args: any) => any = () => null;
 
@@ -159,10 +163,70 @@ describe("build/bundler/code-splitter/esbuild-plugin", () => {
       // deno-lint-ignore no-explicit-any
       plugin.setup(mockBuild as any);
 
-      const result = mdxLoader({ path: "/project/page.mdx" });
-      assertEquals(result?.loader, "jsx");
-      assertEquals(typeof result?.contents, "string");
-      assertEquals(result?.contents.includes("MDXComponent"), true);
+      try {
+        const result = await mdxLoader({ path: sourcePath });
+        assertEquals(result?.loader, "js");
+        assertEquals(typeof result?.contents, "string");
+        assertEquals(result?.contents.includes("Real heading"), true);
+        assertEquals(result?.contents.includes('return "MDX Component"'), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects MDX paths outside the project directory", () => {
+      const plugin = createSplitterPlugin("/project");
+      // deno-lint-ignore no-explicit-any
+      let mdxResolver: (args: any) => any = () => null;
+      const mockBuild = {
+        // deno-lint-ignore no-explicit-any
+        onResolve(opts: { filter: RegExp }, cb: (args: any) => any) {
+          if (opts.filter.test("page.mdx")) mdxResolver = cb;
+        },
+        onLoad() {},
+        onDispose() {},
+      };
+      // deno-lint-ignore no-explicit-any
+      plugin.setup(mockBuild as any);
+
+      assertThrows(
+        () => mdxResolver({ path: "../outside/page.mdx", resolveDir: "/project" }),
+        TypeError,
+        "outside projectDir",
+      );
+    });
+
+    it("rejects MDX sources that are symbolic links", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const outsideDir = await Deno.makeTempDir();
+      const outsidePath = `${outsideDir}/outside.mdx`;
+      const sourcePath = `${projectDir}/page.mdx`;
+      try {
+        await Deno.writeTextFile(outsidePath, "# Outside");
+        await Deno.symlink(outsidePath, sourcePath);
+        const plugin = createSplitterPlugin(projectDir);
+        // deno-lint-ignore no-explicit-any
+        let mdxLoader: (args: any) => any = () => null;
+        const mockBuild = {
+          onResolve() {},
+          // deno-lint-ignore no-explicit-any
+          onLoad(opts: { namespace?: string }, cb: (args: unknown) => unknown) {
+            if (opts.namespace === "mdx") mdxLoader = cb;
+          },
+          onDispose() {},
+        };
+        // deno-lint-ignore no-explicit-any
+        plugin.setup(mockBuild as any);
+
+        await assertRejects(
+          () => mdxLoader({ path: sourcePath }),
+          TypeError,
+          "regular project files",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(outsideDir, { recursive: true });
+      }
     });
   });
 });

@@ -5,7 +5,18 @@ import type { DirectoryEntry } from "../shared-types.ts";
 
 export type { DirectoryEntry };
 
+declare const fsAdapterKindType: unique symbol;
+
+/** Stable identity for built-in filesystem adapters across package copies. */
+export const FS_ADAPTER_KIND: typeof fsAdapterKindType = Symbol.for(
+  "veryfront.fs-adapter.kind",
+) as typeof fsAdapterKindType;
+
+export type BuiltInFSAdapterKind = "veryfront" | "veryfront-multi-project" | "github" | "memory";
+
 export interface FSAdapter {
+  /** Stable built-in identity. Third-party adapters should leave this unset. */
+  readonly [FS_ADAPTER_KIND]?: BuiltInFSAdapterKind;
   readFile(path: string): Promise<Uint8Array | string>;
   readTextFile?(path: string): Promise<string>;
   readOptionalTextFile?(path: string): Promise<string>;
@@ -96,6 +107,9 @@ export interface StyleCallbacks {
 export interface FSAdapterConfig {
   type?: "local" | "veryfront-api" | "memory" | "github";
   projectDir?: string;
+  memory?: {
+    files?: Readonly<Record<string, string | Uint8Array>>;
+  };
   veryfront?: {
     apiToken?: string;
     projectSlug?: string;
@@ -109,6 +123,9 @@ export interface FSAdapterConfig {
     };
     retry?: {
       maxRetries?: number;
+      initialDelay?: number;
+      maxDelay?: number;
+      /** @deprecated Use initialDelay. */
       retryDelay?: number;
     };
   };

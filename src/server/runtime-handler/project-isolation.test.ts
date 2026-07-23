@@ -1,15 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { ProjectIsolationManager } from "./project-isolation.ts";
 
 describe("server/runtime-handler/project-isolation", () => {
+  afterEach(() => {
+    __resetLogRecordEmitterForTests();
+  });
+
   function createManager(
     overrides: Partial<{
       maxConcurrentPerProject: number;
       circuitBreakerThreshold: number;
       circuitResetTimeMs: number;
       failureWindowMs: number;
+      maxTrackedProjects: number;
     }> = {},
   ): ProjectIsolationManager {
     return new ProjectIsolationManager({
@@ -194,6 +204,61 @@ describe("server/runtime-handler/project-isolation", () => {
       assertEquals(Object.keys(stats).length, 2);
       assertEquals(stats["proj-a"]?.inFlight, 1);
       assertEquals(stats["proj-b"]?.inFlight, 1);
+      manager.shutdown();
+    });
+  });
+
+  describe("bounded project state", () => {
+    it("rejects invalid capacity and timing configuration", () => {
+      for (
+        const overrides of [
+          { maxTrackedProjects: 0 },
+          { maxConcurrentPerProject: 0 },
+          { circuitBreakerThreshold: 0 },
+          { circuitResetTimeMs: -1 },
+          { failureWindowMs: Number.NaN },
+        ]
+      ) {
+        assertThrows(() => createManager(overrides), TypeError);
+      }
+    });
+
+    it("evicts the least-recent inactive project at capacity", () => {
+      const manager = createManager({ maxTrackedProjects: 2 });
+      assertEquals(manager.checkRequest("project-a").allowed, true);
+      assertEquals(manager.checkRequest("project-b").allowed, true);
+      assertEquals(manager.checkRequest("project-c").allowed, true);
+
+      const stats = manager.getStats();
+      assertEquals(Object.keys(stats).length, 2);
+      assertEquals(stats["project-a"], undefined);
+      assertEquals(stats["project-c"] !== undefined, true);
+      manager.shutdown();
+    });
+
+    it("does not evict active circuit state to admit another project", () => {
+      const manager = createManager({
+        maxTrackedProjects: 1,
+        circuitBreakerThreshold: 1,
+        circuitResetTimeMs: 60_000,
+      });
+      manager.startRequest("project-a");
+      manager.completeRequest("project-a", true);
+
+      const result = manager.checkRequest("project-b");
+      assertEquals(result, { allowed: false, reason: "capacity" });
+      assertEquals(manager.getStats()["project-a"]?.circuitOpen, true);
+      manager.shutdown();
+    });
+
+    it("does not log project identifiers in isolation failures", () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const manager = createManager({ maxConcurrentPerProject: 1 });
+      manager.startRequest("private-project-value");
+      manager.checkRequest("private-project-value");
+
+      assertEquals(JSON.stringify(entries).includes("private-project-value"), false);
       manager.shutdown();
     });
   });

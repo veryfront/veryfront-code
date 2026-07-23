@@ -220,6 +220,17 @@ describe("isolation", () => {
       assertEquals(body.reason, "max_concurrent");
     });
 
+    it("returns a non-cacheable capacity response", async () => {
+      const check: IsolationCheckResult = { allowed: false, reason: "capacity" };
+      const response = createIsolationErrorResponse(check);
+      const body = await response.json();
+
+      assertStringIncludes(body.error, "temporarily unavailable");
+      assertEquals(body.reason, "capacity");
+      assertEquals(response.headers.get("Cache-Control"), "no-store");
+      assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
+    });
+
     it("returns generic isolation policy message for unknown reason", async () => {
       const check: IsolationCheckResult = {
         allowed: false,

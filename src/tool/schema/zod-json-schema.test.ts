@@ -4,6 +4,9 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { isOptionalSchema, zodToJsonSchema } from "./zod-json-schema.ts";
+import { zodToJsonSchema as convertNativeZod } from "../../../extensions/ext-schema-zod/src/json-schema.ts";
+import { z as zod3 } from "npm:zod@3.25.76";
+import { z as zod4 } from "npm:zod@4.3.6";
 
 const s = <T>(factory: (v: Parameters<Parameters<typeof defineSchema>[0]>[0]) => Schema<T>) =>
   defineSchema(factory)();
@@ -16,6 +19,23 @@ describe("zodToJsonSchema", () => {
 
     it("should convert v.number()", () => {
       assertEquals(zodToJsonSchema(s((v) => v.number())), { type: "number" });
+    });
+
+    it("should preserve integer and inclusive number bounds", () => {
+      assertEquals(
+        zodToJsonSchema(s((v) => v.number().int().min(1).max(100))),
+        { type: "integer", minimum: 1, maximum: 100 },
+      );
+    });
+
+    it("preserves string length bounds across supported Zod versions", () => {
+      for (const schema of [zod3.string().min(2).max(5), zod4.string().min(2).max(5)]) {
+        assertEquals(convertNativeZod(schema as never), {
+          type: "string",
+          minLength: 2,
+          maxLength: 5,
+        });
+      }
     });
 
     it("should convert v.boolean()", () => {
@@ -131,12 +151,34 @@ describe("zodToJsonSchema", () => {
       assertEquals(result.minItems, 2);
       assertEquals(result.maxItems, 2);
     });
+
+    it("preserves array length bounds across supported Zod versions", () => {
+      for (
+        const schema of [
+          zod3.array(zod3.string()).min(2).max(5),
+          zod4.array(zod4.string()).min(2).max(5),
+        ]
+      ) {
+        assertEquals(convertNativeZod(schema as never), {
+          type: "array",
+          items: { type: "string" },
+          minItems: 2,
+          maxItems: 5,
+        });
+      }
+    });
   });
 
   describe("nullable types", () => {
     it("should wrap nullable types with anyOf", () => {
       const result = zodToJsonSchema(s((v) => v.string().nullable()));
       assertEquals(result, { anyOf: [{ type: "string" }, { type: "null" }] });
+    });
+
+    it("converts explicit null schemas across supported Zod versions", () => {
+      for (const schema of [zod3.null(), zod4.null()]) {
+        assertEquals(convertNativeZod(schema as never), { type: "null" });
+      }
     });
   });
 
@@ -221,6 +263,25 @@ describe("zodToJsonSchema", () => {
         Error,
         "Invalid Veryfront schema",
       );
+    });
+
+    it("should not invoke accessor-backed schema markers", () => {
+      let markerReads = 0;
+      const accessorSchema = Object.defineProperty({}, "__zod", {
+        enumerable: true,
+        get() {
+          markerReads += 1;
+          throw new Error("schema marker getter executed");
+        },
+      }) as Schema<unknown>;
+
+      assertThrows(
+        () => zodToJsonSchema(accessorSchema),
+        Error,
+        "Invalid Veryfront schema",
+      );
+      assertEquals(isOptionalSchema(accessorSchema), false);
+      assertEquals(markerReads, 0);
     });
   });
 });

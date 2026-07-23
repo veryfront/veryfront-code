@@ -22,10 +22,17 @@ import { join, toFileUrl } from "#veryfront/platform/compat/path/index.ts";
 import {
   bareName,
   PACKAGE_SPEC_RE,
+  resolveApprovedTailwindPluginSpecifier,
   TAILWIND_PLUGIN_ALLOWLIST,
 } from "./tailwind-plugin-allowlist.ts";
+import { readResponseTextWithinLimit } from "./bounded-response-reader.ts";
 
 const logger = serverLogger.component("tailwind");
+const MAX_PLUGIN_SPEC_LENGTH = 256;
+const MAX_PLUGIN_STUB_BYTES = 64 * 1024;
+const MAX_PLUGIN_BUNDLE_BYTES = 8 * 1024 * 1024;
+const PLUGIN_FETCH_TIMEOUT_MS = 15_000;
+const MAX_PLUGIN_CACHE_ENTRIES = 64;
 
 /**
  * Enforce the Tailwind plugin allowlist (VULN-FS-1).
@@ -34,43 +41,29 @@ const logger = serverLogger.component("tailwind");
  * code. Rejects anything that is not a syntactically valid npm package
  * specifier, and anything whose bare name is not on the allowlist.
  */
-function assertPluginAllowed(spec: string): void {
-  if (!PACKAGE_SPEC_RE.test(spec)) {
+function assertPluginAllowed(spec: string): string {
+  if (spec.length > MAX_PLUGIN_SPEC_LENGTH || !PACKAGE_SPEC_RE.test(spec)) {
     throw SECURITY_VIOLATION.create({ detail: `Invalid Tailwind plugin specifier: ${spec}` });
   }
   const name = bareName(spec);
   if (!TAILWIND_PLUGIN_ALLOWLIST.has(name)) {
     throw SECURITY_VIOLATION.create({
-      detail: `Package "${name}" is not on the Tailwind plugin allowlist. ` +
-        `See src/html/styles-builder/tailwind-plugin-allowlist.ts.`,
+      detail: `Package "${name}" is not on the Tailwind plugin allowlist.`,
     });
   }
-}
 
-// Provide localStorage shim for plugins that use util-deprecate (which checks localStorage)
-// This prevents "LocalStorage is not supported in this context" errors in Deno.
-try {
-  void (globalThis as Record<string, unknown>).localStorage;
-} catch {
-  const localStorageShim = {
-    getItem: () => null,
-    setItem: () => {},
-    removeItem: () => {},
-    clear: () => {},
-    key: () => null,
-    length: 0,
-  };
-  Object.defineProperty(globalThis, "localStorage", {
-    value: localStorageShim,
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  const approvedSpecifier = resolveApprovedTailwindPluginSpecifier(spec);
+  if (!approvedSpecifier) {
+    throw SECURITY_VIOLATION.create({
+      detail: `Package "${name}" is not an approved Tailwind plugin version.`,
+    });
+  }
+  return approvedSpecifier;
 }
 
 // Global shims for `tailwindcss/plugin`, `tailwindcss/defaultTheme`, and
 // `tailwindcss/colors` used by dynamically loaded plugin bundles are installed
-// by the `@veryfront/ext-css-tailwind` extension's `setup()` hook — they depend on
+// by the `@veryfront/ext-css-tailwind` extension's `setup()` hook. They depend on
 // tailwindcss imports that live in the extension package, not in core.
 
 function encodeToBase64(source: string): string {
@@ -130,17 +123,53 @@ async function importBundledModule(code: string): Promise<unknown> {
   const tempDir = await deno.makeTempDir({ prefix: "vf_tw_plugin_" });
   const tempPath = join(tempDir, "plugin.mjs");
   await deno.writeTextFile(tempPath, code);
-  logger.debug("Wrote plugin to temp file", { path: tempPath });
 
   try {
     return await import(toFileUrl(tempPath).href);
   } finally {
     await deno.remove(tempDir, { recursive: true }).catch((error) => {
       logger.error("Failed to clean up temp plugin directory", {
-        path: tempDir,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : "UnknownError",
       });
     });
+  }
+}
+
+async function fetchPluginText(
+  url: string,
+  resource: "stub" | "bundle",
+  maxBytes: number,
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PLUGIN_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw NETWORK_ERROR.create({
+        detail: `Failed to fetch ${resource}: ${response.status}`,
+      });
+    }
+
+    return await readResponseTextWithinLimit(
+      response,
+      maxBytes,
+      () =>
+        IMPORT_RESOLUTION_ERROR.create({
+          detail: `Tailwind plugin ${resource} exceeds the size limit`,
+        }),
+    );
+  } catch (error) {
+    if (error instanceof VeryfrontError) throw error;
+    if (controller.signal.aborted) {
+      throw NETWORK_ERROR.create({ detail: `Tailwind plugin ${resource} request timed out` });
+    }
+    throw NETWORK_ERROR.create({
+      detail: `Tailwind plugin ${resource} request failed`,
+      cause: error instanceof Error ? error : undefined,
+    });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -151,32 +180,23 @@ async function importBundledModule(code: string): Promise<unknown> {
  * dynamic imports from URLs. Fetches bundled code, rewrites imports, loads via temp file.
  */
 export async function loadModuleFromEsmSh(packageName: string): Promise<unknown> {
-  assertPluginAllowed(packageName);
+  const approvedPackageName = assertPluginAllowed(packageName);
 
-  const stubUrl = getTailwindPluginBundleUrl(packageName);
-  logger.debug("Fetching esm.sh stub", { url: stubUrl });
-
-  const stubResponse = await fetch(stubUrl);
-  if (!stubResponse.ok) {
-    throw NETWORK_ERROR.create({ detail: `Failed to fetch stub: ${stubResponse.status}` });
-  }
-  const stubCode = await stubResponse.text();
+  const stubUrl = getTailwindPluginBundleUrl(approvedPackageName);
+  const stubCode = await fetchPluginText(stubUrl, "stub", MAX_PLUGIN_STUB_BYTES);
 
   const bundleMatch = stubCode.match(/from\s*["'](\/[^"']+\.bundle\.mjs)["']/);
   if (!bundleMatch) {
     throw IMPORT_RESOLUTION_ERROR.create({
-      detail: `Could not find bundle path in esm.sh response: ${stubCode.substring(0, 200)}`,
+      detail: "Could not find bundle path in esm.sh response",
     });
   }
 
-  const bundleUrl = `https://esm.sh${bundleMatch[1]}`;
-  logger.debug("Fetching actual bundle", { url: bundleUrl });
-
-  const bundleResponse = await fetch(bundleUrl);
-  if (!bundleResponse.ok) {
-    throw NETWORK_ERROR.create({ detail: `Failed to fetch bundle: ${bundleResponse.status}` });
+  const bundleUrl = new URL(bundleMatch[1]!, "https://esm.sh");
+  if (bundleUrl.origin !== "https://esm.sh" || bundleUrl.username || bundleUrl.password) {
+    throw IMPORT_RESOLUTION_ERROR.create({ detail: "esm.sh returned an invalid bundle path" });
   }
-  let code = await bundleResponse.text();
+  let code = await fetchPluginText(bundleUrl.href, "bundle", MAX_PLUGIN_BUNDLE_BYTES);
   code = rewriteEsmShRootRelativeImports(code);
 
   // Step 3: Verify it's actually JavaScript (not an HTML error page)
@@ -219,48 +239,60 @@ export async function loadPlugin(
   pluginErrors: Map<string, Error>,
 ): Promise<unknown> {
   // Enforce the allowlist before consulting any caches so a disallowed id can
-  // never be served from a pre-seeded or stale cache entry — defence-in-depth
-  // against future changes that might pre-populate these maps.
+  // never be served from a pre-seeded or stale cache entry. This is defense in
+  // depth against future changes that might pre-populate these maps.
   assertPluginAllowed(id);
 
   const cachedError = pluginErrors.get(id);
   if (cachedError) throw cachedError;
 
   if (pluginCache.has(id)) {
-    return pluginCache.get(id);
+    return await pluginCache.get(id);
   }
 
-  try {
+  if (pluginCache.size >= MAX_PLUGIN_CACHE_ENTRIES) {
+    throw IMPORT_RESOLUTION_ERROR.create({ detail: "Tailwind plugin cache capacity reached" });
+  }
+
+  const loadPromise = (async () => {
     let mod: unknown;
 
     if (isDeno) {
-      logger.debug("Loading plugin via dynamic esm.sh fetch", { id });
       mod = await loadModuleFromEsmSh(id);
     } else {
-      logger.debug("Loading plugin from node_modules", { id });
       try {
         mod = await import(id);
       } catch {
-        logger.debug("Plugin not found in node_modules, falling back to esm.sh", { id });
         mod = await loadModuleFromEsmSh(id);
       }
     }
 
-    const pluginExport = (mod as { default?: unknown }).default ?? mod;
-    pluginCache.set(id, pluginExport);
+    return (mod as { default?: unknown }).default ?? mod;
+  })();
+  pluginCache.set(id, loadPromise);
+
+  try {
+    const pluginExport = await loadPromise;
+    if (pluginCache.get(id) === loadPromise) pluginCache.set(id, pluginExport);
     return pluginExport;
   } catch (error) {
+    if (pluginCache.get(id) === loadPromise) pluginCache.delete(id);
     const wrappedError = wrapPluginError(id, error);
-    logger.warn(wrappedError.message);
+    logger.warn("Tailwind plugin load failed", {
+      errorName: wrappedError.name,
+    });
+    if (pluginErrors.size >= MAX_PLUGIN_CACHE_ENTRIES) {
+      const oldest = pluginErrors.keys().next().value;
+      if (oldest) pluginErrors.delete(oldest);
+    }
     pluginErrors.set(id, wrappedError);
     throw wrappedError;
   }
 }
 
 function wrapPluginError(id: string, error: unknown): Error {
-  const detail = `Failed to load plugin "${id}": ${
-    error instanceof Error ? error.message : String(error)
-  }`;
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  const detail = `Failed to load plugin "${id}" (${errorName})`;
 
   if (error instanceof VeryfrontError) {
     return getErrorBySlug(error.slug as ErrorSlug).create({

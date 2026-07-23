@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { GitHubFSAdapter } from "./adapter.ts";
 import { createGitHubConfig } from "./types.ts";
+import { FS_ADAPTER_KIND } from "../veryfront/types.ts";
 
 const mockTreeResponse = {
   sha: "abc123",
@@ -43,6 +45,10 @@ function createTreeFetch(tree: unknown): typeof fetch {
   };
 }
 
+function jsonTreeResponse(tree: unknown[]): Response {
+  return new Response(JSON.stringify({ sha: "root", tree, truncated: false }), { status: 200 });
+}
+
 function assertThrowsMessageIncludes(fn: () => void, includes: string): void {
   try {
     fn();
@@ -66,10 +72,74 @@ describe("GitHubFSAdapter", () => {
     globalThis.fetch = originalFetch;
   });
 
+  it("exposes a stable built-in adapter identity", () => {
+    assertEquals(createAdapter()[FS_ADAPTER_KIND], "github");
+  });
+
+  it("preserves an absolute project directory when normalizing absolute file paths", async () => {
+    globalThis.fetch = createTreeFetch(mockTreeResponse);
+    const adapter = new GitHubFSAdapter({
+      type: "github",
+      projectDir: "/workspace/project",
+      github: { token: "test", owner: "owner", repo: "repo" },
+    });
+
+    await adapter.initialize();
+
+    assertEquals(await adapter.exists("/workspace/project/src/index.ts"), true);
+    adapter.dispose();
+  });
+
+  it("rejects unreadable adapter configuration without retaining trap data", () => {
+    const secret = "PRIVATE_ADAPTER_CONFIG/project-321";
+    const input = Object.create(null);
+    Object.defineProperty(input, "github", {
+      get() {
+        throw new Error(secret);
+      },
+    });
+
+    let error: unknown;
+    try {
+      new GitHubFSAdapter(input);
+    } catch (caught) {
+      error = caught;
+    }
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals(JSON.stringify(error).includes(secret), false);
+  });
+
+  it("rejects unreadable nested GitHub configuration without retaining trap data", () => {
+    const secret = "PRIVATE_GITHUB_TOKEN/project-654";
+    const github = Object.create(null);
+    Object.defineProperty(github, "token", {
+      get() {
+        throw new Error(secret);
+      },
+    });
+
+    let error: unknown;
+    try {
+      new GitHubFSAdapter({ github });
+    } catch (caught) {
+      error = caught;
+    }
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals(JSON.stringify(error).includes(secret), false);
+  });
+
   describe("createGitHubConfig", () => {
     it("should throw if token is missing", () => {
       assertThrowsMessageIncludes(() => {
         createGitHubConfig({ token: "", owner: "test", repo: "test" });
+      }, "token");
+    });
+
+    it("should reject a token containing only whitespace", () => {
+      assertThrowsMessageIncludes(() => {
+        createGitHubConfig({ token: "   ", owner: "test", repo: "test" });
       }, "token");
     });
 
@@ -90,6 +160,114 @@ describe("GitHubFSAdapter", () => {
       assertEquals(config.cache.enabled, true);
       assertEquals(config.cache.ttl, 60_000);
       assertEquals(config.retry.maxRetries, 3);
+      assertEquals(config.retry.requestTimeout, 30_000);
+      assertEquals(config.retry.totalTimeout, 120_000);
+      assertEquals(config.retry.maxResponseBytes, 64 * 1024 * 1024);
+    });
+
+    it("reads hostile configuration once and returns an immutable snapshot", () => {
+      const secret = "PRIVATE_GITHUB_CONFIG/project-123";
+      let tokenReads = 0;
+      const retry = { maxRetries: 1 };
+      const input = {
+        get token() {
+          tokenReads++;
+          if (tokenReads > 1) throw new Error(secret);
+          return "token";
+        },
+        owner: "owner",
+        repo: "repo",
+        retry,
+      };
+
+      const config = createGitHubConfig(input);
+      retry.maxRetries = 2;
+
+      assertEquals(tokenReads, 1);
+      assertEquals(config.retry.maxRetries, 1);
+      assertEquals(Object.isFrozen(config), true);
+      assertEquals(Object.isFrozen(config.retry), true);
+      assertEquals(JSON.stringify(config).includes(secret), false);
+    });
+
+    it("rejects unreadable configuration without retaining trap data", () => {
+      const secret = "PRIVATE_GITHUB_CONFIG/project-456";
+      const input = Object.create(null);
+      Object.defineProperty(input, "token", {
+        get() {
+          throw new Error(secret);
+        },
+      });
+
+      let error: unknown;
+      try {
+        createGitHubConfig(input);
+      } catch (caught) {
+        error = caught;
+      }
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals(JSON.stringify(error).includes(secret), false);
+    });
+
+    for (
+      const [field, retry] of [
+        ["maxRetries", { maxRetries: -1 }],
+        ["maxRetries", { maxRetries: 1.5 }],
+        ["maxRetries", { maxRetries: 21 }],
+        ["initialDelay", { initialDelay: -1 }],
+        ["initialDelay", { initialDelay: 1.5 }],
+        ["maxDelay", { initialDelay: 2, maxDelay: 1 }],
+        ["requestTimeout", { requestTimeout: 0 }],
+        ["requestTimeout", { requestTimeout: 1.5 }],
+        ["totalTimeout", { totalTimeout: 0 }],
+        ["maxResponseBytes", { maxResponseBytes: 0 }],
+      ] as const
+    ) {
+      it(`should reject invalid retry.${field}`, () => {
+        assertThrowsMessageIncludes(() => {
+          createGitHubConfig({ token: "token", owner: "owner", repo: "repo", retry });
+        }, field);
+      });
+    }
+
+    for (const field of ["owner", "repo", "ref"] as const) {
+      it(`should reject unsafe ${field}`, () => {
+        assertThrowsMessageIncludes(() => {
+          createGitHubConfig({
+            token: "token",
+            owner: field === "owner" ? "bad\nowner" : "owner",
+            repo: field === "repo" ? "bad\0repo" : "repo",
+            ref: field === "ref" ? "bad\rref" : "main",
+          });
+        }, field);
+      });
+    }
+
+    for (
+      const [field, cache] of [
+        ["ttl", { ttl: 0 }],
+        ["ttl", { ttl: 1.5 }],
+        ["maxSize", { maxSize: 1.5 }],
+        ["maxMemory", { maxMemory: Number.POSITIVE_INFINITY }],
+      ] as const
+    ) {
+      it(`should reject invalid cache.${field}`, () => {
+        assertThrowsMessageIncludes(() => {
+          createGitHubConfig({ token: "token", owner: "owner", repo: "repo", cache });
+        }, field);
+      });
+    }
+
+    it("should reject a non-boolean cache.enabled value", () => {
+      assertThrowsMessageIncludes(() => {
+        createGitHubConfig({
+          token: "token",
+          owner: "owner",
+          repo: "repo",
+          cache: { enabled: "yes" as unknown as boolean },
+        });
+      }, "enabled");
     });
   });
 
@@ -112,6 +290,58 @@ describe("GitHubFSAdapter", () => {
       await adapter.initialize();
 
       assertEquals(treeRequested, true);
+    });
+
+    it("should refresh the repository snapshot", async () => {
+      let revision = 1;
+      let requests = 0;
+      globalThis.fetch = (url) => {
+        if (!String(url).includes("/git/trees/")) {
+          return Promise.resolve(new Response("Not found", { status: 404 }));
+        }
+        requests++;
+        return Promise.resolve(jsonTreeResponse([
+          { path: `revision-${revision}.ts`, type: "blob", sha: `sha-${revision}`, size: 1 },
+        ]));
+      };
+
+      const adapter = createAdapter();
+      await adapter.initialize();
+      assertEquals(await adapter.exists("revision-1.ts"), true);
+
+      revision = 2;
+      await adapter.refreshSourceSnapshot("test-refresh");
+      assertEquals(await adapter.exists("revision-1.ts"), false);
+      assertEquals(await adapter.exists("revision-2.ts"), true);
+      assertEquals(requests, 2);
+    });
+
+    it("should not restore a stale index after disposal during initialization", async () => {
+      let releaseFirstResponse: ((response: Response) => void) | undefined;
+      const firstResponse = new Promise<Response>((resolve) => {
+        releaseFirstResponse = resolve;
+      });
+      let requests = 0;
+      globalThis.fetch = () => {
+        requests++;
+        if (requests === 1) return firstResponse;
+        return Promise.resolve(jsonTreeResponse([
+          { path: "current.ts", type: "blob", sha: "current", size: 1 },
+        ]));
+      };
+
+      const adapter = createAdapter();
+      const staleInitialization = adapter.initialize();
+      adapter.dispose();
+      releaseFirstResponse?.(jsonTreeResponse([
+        { path: "stale.ts", type: "blob", sha: "stale", size: 1 },
+      ]));
+      await staleInitialization;
+
+      await adapter.initialize();
+      assertEquals(await adapter.exists("stale.ts"), false);
+      assertEquals(await adapter.exists("current.ts"), true);
+      assertEquals(requests, 2);
     });
   });
 

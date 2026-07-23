@@ -3,11 +3,13 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { type ChunkManifest, createCodeSplitter } from "#veryfront/build/bundler/index.ts";
 import type { RouteInfo } from "#veryfront/server/build-types.ts";
 
+/** Chunk manifest and generated chunk count for the splitting stage. */
 export interface SplitResult {
   manifest: ChunkManifest | null;
   chunks: number;
 }
 
+/** Generate route chunks unless splitting is disabled, dry, or unnecessary. */
 export async function runCodeSplitting(
   projectDir: string,
   outputDir: string,
@@ -30,7 +32,6 @@ export async function runCodeSplitting(
       file,
       name: slug.replaceAll("/", "-"),
     })),
-    shared: ["react", "react-dom"],
     external: [],
   });
 

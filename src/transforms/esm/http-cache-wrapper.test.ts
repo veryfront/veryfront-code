@@ -13,6 +13,8 @@ import { CACHE_DIR_TOKEN } from "./http-cache-invariants.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { fingerprintImportMap } from "./http-cache-helpers.ts";
+import { gzipSync } from "node:zlib";
+import { MAX_HTTP_MODULE_RESPONSE_BYTES } from "#veryfront/transforms/shared/http-module-response.ts";
 
 class RecordingCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
@@ -34,6 +36,31 @@ class RecordingCacheBackend implements CacheBackend {
 }
 
 describe("transforms/esm/http-cache-wrapper", () => {
+  it("rejects gzip cache values that expand beyond the module size limit", async () => {
+    const backend = new RecordingCacheBackend();
+    __setDistributedCacheAccessorForTests(async () => backend);
+
+    try {
+      await httpBundleCache.setCode(
+        "gzip-bomb",
+        "export {};" as never,
+        "https://modules.example.test/gzip-bomb.js",
+      );
+      const codeKey = [...backend.entries.keys()].find((key) => key.endsWith(":code:gzip-bomb"));
+      assertExists(codeKey);
+
+      const compressed = gzipSync(new Uint8Array(MAX_HTTP_MODULE_RESPONSE_BYTES + 2));
+      const encoded = btoa(String.fromCharCode(...compressed));
+      backend.entries.set(codeKey, `gz:${encoded}`);
+
+      const result = await httpBundleCache.getCodeByHash("gzip-bomb");
+      assertEquals(result.code, null);
+      assertEquals(result.failReason, "content_too_large");
+    } finally {
+      __setDistributedCacheAccessorForTests(null);
+    }
+  });
+
   describe("initializeHttpModuleDistributedCache", () => {
     it("returns false when no distributed cache is available", async () => {
       __setDistributedCacheAccessorForTests(async () => null);

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   intersectSourceIntegrationPolicies,
+  parseSourceIntegrationPolicyManifest,
   resolveSourceIntegrationPolicyManifest,
   type SourceIntegrationPolicyManifest,
 } from "./source-policy.ts";
@@ -33,7 +34,7 @@ export function runWithExactSourceIntegrationPolicy<T>(
   policy: SourceIntegrationPolicyManifest,
   fn: () => T,
 ): T {
-  return sourceIntegrationPolicyStorage.run(policy, fn);
+  return sourceIntegrationPolicyStorage.run(parseSourceIntegrationPolicyManifest(policy), fn);
 }
 
 /** Resolve the one effective restriction consumed by an agent runtime. */

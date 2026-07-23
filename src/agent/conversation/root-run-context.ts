@@ -3,17 +3,25 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Public API contract for conversation root run descriptor. */
 export interface ConversationRootRunDescriptor {
+  /** Run ID value. */
   runId: string;
+  /** Message ID value. */
   messageId: string;
+  /** Latest event ID value. */
   latestEventId?: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence?: number;
 }
 
 /** Context for conversation root run. */
 export interface ConversationRootRunContext {
+  /** Run value. */
   run: ConversationRunProjection | null;
+  /** Effective parent run ID value. */
   effectiveParentRunId?: string;
+  /** Effective parent message ID value. */
   effectiveParentMessageId?: string;
+  /** Callback that handles publish parent run events. */
   publishParentRunEvents?: (events: unknown[]) => Promise<void> | void;
 }
 

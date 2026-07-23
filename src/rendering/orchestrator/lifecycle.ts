@@ -108,6 +108,7 @@ export class RendererLifecycle {
       undefined,
       this.projectId,
       this.contentSourceId,
+      mode === "development",
     );
 
     const renderCacheConfig = config.cache?.render ?? {};
@@ -148,7 +149,7 @@ export class RendererLifecycle {
       contentSourceId: this.contentSourceId,
     });
 
-    const mdxCacheAdapter = new MDXCacheAdapter({ config, mode });
+    const mdxCacheAdapter = new MDXCacheAdapter({ config, mode, projectDir });
 
     const compilerService = new CompilerService();
     const compileMDXProxy = compilerService.getCompileFunction();

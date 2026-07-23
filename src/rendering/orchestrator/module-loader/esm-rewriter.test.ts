@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteEsmPaths } from "./esm-rewriter.ts";
 
@@ -53,6 +53,27 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const result = rewriteEsmPaths(code, urlBase);
       // Bare specifiers should be untouched
       assertEquals(result.includes('"react"'), true);
+    });
+
+    it("does not rewrite import-looking text in comments or strings", () => {
+      const code = [
+        `// import value from "/comment.js"`,
+        `const example = 'from "/string.js"';`,
+        `import value from "/actual.js";`,
+      ].join("\n");
+      const result = rewriteEsmPaths(code, urlBase);
+
+      assertEquals(result.includes(`import value from "https://esm.sh/actual.js"`), true);
+      assertEquals(result.includes(`// import value from "/comment.js"`), true);
+      assertEquals(result.includes(`'from "/string.js"'`), true);
+    });
+
+    it("rejects URL bases outside the approved esm.sh origin", () => {
+      assertThrows(
+        () => rewriteEsmPaths(`import value from "./value.js"`, "https://example.com/"),
+        TypeError,
+        "approved HTTPS origin",
+      );
     });
   });
 });

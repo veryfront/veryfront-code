@@ -1,14 +1,16 @@
-import { defineError } from "../types.ts";
+import { defineError, type ErrorRegistryFragment, type RegisteredError } from "../types.ts";
 
-export const CONFIG_NOT_FOUND = defineError({
+/** Registered error definition for the config-not-found slug. */
+export const CONFIG_NOT_FOUND: RegisteredError = defineError({
   slug: "config-not-found",
   category: "CONFIG",
   status: 404,
   title: "Configuration file not found",
-  suggestion: "Run 'vf init' to create a configuration file",
+  suggestion: "Run 'veryfront init' to create a configuration file",
 });
 
-export const CONFIG_INVALID = defineError({
+/** Registered error definition for the config-invalid slug. */
+export const CONFIG_INVALID: RegisteredError = defineError({
   slug: "config-invalid",
   category: "CONFIG",
   status: 400,
@@ -16,7 +18,8 @@ export const CONFIG_INVALID = defineError({
   suggestion: "Check your veryfront.config.ts for syntax errors",
 });
 
-export const CONFIG_PARSE_ERROR = defineError({
+/** Registered error definition for the config-parse-error slug. */
+export const CONFIG_PARSE_ERROR: RegisteredError = defineError({
   slug: "config-parse-error",
   category: "CONFIG",
   status: 400,
@@ -25,7 +28,8 @@ export const CONFIG_PARSE_ERROR = defineError({
 });
 
 /** Schema-level config validation (e.g. Zod schema mismatch at runtime) */
-export const CONFIG_VALIDATION_ERROR = defineError({
+/** Registered error definition for the config-validation-error slug. */
+export const CONFIG_VALIDATION_ERROR: RegisteredError = defineError({
   slug: "config-validation-error",
   category: "CONFIG",
   status: 422,
@@ -33,7 +37,8 @@ export const CONFIG_VALIDATION_ERROR = defineError({
   suggestion: "Check the configuration against the schema requirements",
 });
 
-export const CONFIG_TYPE_ERROR = defineError({
+/** Registered error definition for the config-type-error slug. */
+export const CONFIG_TYPE_ERROR: RegisteredError = defineError({
   slug: "config-type-error",
   category: "CONFIG",
   status: 400,
@@ -41,7 +46,8 @@ export const CONFIG_TYPE_ERROR = defineError({
   suggestion: "Ensure configuration values match expected types",
 });
 
-export const IMPORT_MAP_INVALID = defineError({
+/** Registered error definition for the import-map-invalid slug. */
+export const IMPORT_MAP_INVALID: RegisteredError = defineError({
   slug: "import-map-invalid",
   category: "CONFIG",
   status: 400,
@@ -49,7 +55,8 @@ export const IMPORT_MAP_INVALID = defineError({
   suggestion: "Check your import map syntax and paths",
 });
 
-export const CORS_CONFIG_INVALID = defineError({
+/** Registered error definition for the cors-config-invalid slug. */
+export const CORS_CONFIG_INVALID: RegisteredError = defineError({
   slug: "cors-config-invalid",
   category: "CONFIG",
   status: 400,
@@ -58,7 +65,8 @@ export const CORS_CONFIG_INVALID = defineError({
 });
 
 /** Config file validation failures (replaces ConfigValidationError) */
-export const CONFIG_VALIDATION_FAILED = defineError({
+/** Registered error definition for the config-validation-failed slug. */
+export const CONFIG_VALIDATION_FAILED: RegisteredError = defineError({
   slug: "config-validation-failed",
   category: "CONFIG",
   status: 400,
@@ -67,7 +75,8 @@ export const CONFIG_VALIDATION_FAILED = defineError({
 });
 
 /** Webhook definition validation failures (required fields, target, eventFilter) */
-export const WEBHOOK_CONFIG_INVALID = defineError({
+/** Registered error definition for the webhook-config-invalid slug. */
+export const WEBHOOK_CONFIG_INVALID: RegisteredError = defineError({
   slug: "webhook-config-invalid",
   category: "CONFIG",
   status: 400,
@@ -76,7 +85,8 @@ export const WEBHOOK_CONFIG_INVALID = defineError({
 });
 
 /** Schedule definition validation failures (required fields, cron, concurrencyPolicy, target) */
-export const SCHEDULE_CONFIG_INVALID = defineError({
+/** Registered error definition for the schedule-config-invalid slug. */
+export const SCHEDULE_CONFIG_INVALID: RegisteredError = defineError({
   slug: "schedule-config-invalid",
   category: "CONFIG",
   status: 400,
@@ -86,7 +96,8 @@ export const SCHEDULE_CONFIG_INVALID = defineError({
 });
 
 /** Trigger ID format and input serialization validation failures */
-export const TRIGGER_CONFIG_INVALID = defineError({
+/** Registered error definition for the trigger-config-invalid slug. */
+export const TRIGGER_CONFIG_INVALID: RegisteredError = defineError({
   slug: "trigger-config-invalid",
   category: "CONFIG",
   status: 400,
@@ -95,17 +106,64 @@ export const TRIGGER_CONFIG_INVALID = defineError({
     "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
 });
 
+/** Registered error definition for the extension-validation slug. */
+export const EXTENSION_VALIDATION_ERROR: RegisteredError = defineError({
+  slug: "extension-validation",
+  category: "CONFIG",
+  status: 422,
+  title: "Extension validation failed",
+  suggestion: "Check the extension name, version, capabilities, and options",
+});
+
+/** Registered error definition for the extension-circular-dependency slug. */
+export const CIRCULAR_DEPENDENCY_ERROR: RegisteredError = defineError({
+  slug: "extension-circular-dependency",
+  category: "CONFIG",
+  status: 422,
+  title: "Circular dependency detected between extensions",
+  suggestion: "Review extension dependency declarations and break the cycle",
+});
+
+/** Registered error definition for the extension-conflict slug. */
+export const EXTENSION_CONFLICT_ERROR: RegisteredError = defineError({
+  slug: "extension-conflict",
+  category: "CONFIG",
+  status: 409,
+  title: "Conflicting extensions detected",
+  suggestion: "Remove or disable one of the conflicting extensions",
+});
+
 /** Registry fragment for CONFIG errors (slug → definition). */
-export const CONFIG_REGISTRY = {
-  "config-not-found": CONFIG_NOT_FOUND,
-  "config-invalid": CONFIG_INVALID,
-  "config-parse-error": CONFIG_PARSE_ERROR,
-  "config-validation-error": CONFIG_VALIDATION_ERROR,
-  "config-type-error": CONFIG_TYPE_ERROR,
-  "import-map-invalid": IMPORT_MAP_INVALID,
-  "cors-config-invalid": CORS_CONFIG_INVALID,
-  "config-validation-failed": CONFIG_VALIDATION_FAILED,
-  "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,
-  "schedule-config-invalid": SCHEDULE_CONFIG_INVALID,
-  "trigger-config-invalid": TRIGGER_CONFIG_INVALID,
-} as const;
+export const CONFIG_REGISTRY: ErrorRegistryFragment<
+  | "config-not-found"
+  | "config-invalid"
+  | "config-parse-error"
+  | "config-validation-error"
+  | "config-type-error"
+  | "import-map-invalid"
+  | "cors-config-invalid"
+  | "config-validation-failed"
+  | "webhook-config-invalid"
+  | "schedule-config-invalid"
+  | "trigger-config-invalid"
+  | "extension-validation"
+  | "extension-circular-dependency"
+  | "extension-conflict"
+> = Object.freeze(
+  {
+    "config-not-found": CONFIG_NOT_FOUND,
+    "config-invalid": CONFIG_INVALID,
+    "config-parse-error": CONFIG_PARSE_ERROR,
+    "config-validation-error": CONFIG_VALIDATION_ERROR,
+    "config-type-error": CONFIG_TYPE_ERROR,
+    "import-map-invalid": IMPORT_MAP_INVALID,
+    "cors-config-invalid": CORS_CONFIG_INVALID,
+    "config-validation-failed": CONFIG_VALIDATION_FAILED,
+    "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,
+    "schedule-config-invalid": SCHEDULE_CONFIG_INVALID,
+    "trigger-config-invalid": TRIGGER_CONFIG_INVALID,
+    "extension-validation": EXTENSION_VALIDATION_ERROR,
+    "extension-circular-dependency": CIRCULAR_DEPENDENCY_ERROR,
+    "extension-conflict": EXTENSION_CONFLICT_ERROR,
+  } as const,
+);

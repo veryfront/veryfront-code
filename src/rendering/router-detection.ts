@@ -7,14 +7,15 @@
  * - Route file presence detection
  **************************/
 
-import { join } from "#veryfront/compat/path";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isAbsolute, join } from "#veryfront/compat/path";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { CONFIG_INVALID } from "#veryfront/errors/error-registry/config.ts";
 
 const logger = rendererLogger.component("router-detection");
 
@@ -111,19 +112,25 @@ async function detectAppRouterImpl(
   const appDirName = config?.directories?.app ?? "app";
   const pagesDirName = config?.directories?.pages ?? "pages";
 
+  if (!isSafeRouterDirectory(appDirName) || !isSafeRouterDirectory(pagesDirName)) {
+    throw CONFIG_INVALID.create({
+      detail: "Router directories must stay inside the project",
+    });
+  }
+
   const appDir = join(projectDir, appDirName);
   const pagesDir = join(projectDir, pagesDirName);
 
   const [appStat, pagesStat] = await Promise.all([
-    statWithFallback(appDir, adapter),
-    statWithFallback(pagesDir, adapter),
+    statFromAdapter(appDir, adapter),
+    statFromAdapter(pagesDir, adapter),
   ]);
 
   const hasAppDir = Boolean(appStat?.isDirectory);
   const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
-  if (hasAppDir && (await hasRouteFiles(appDir, adapter))) return true;
-  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter))) return false;
+  if (hasAppDir && (await hasRouteFiles(appDir, adapter, new Set(), 0))) return true;
+  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter, new Set(), 0))) return false;
 
   if (hasPagesDir && !hasAppDir) return false;
   return true;
@@ -132,23 +139,39 @@ async function detectAppRouterImpl(
 const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);
 const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
 
-async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<boolean> {
-  const entries = await readDirWithFallback(dir, adapter);
+const MAX_ROUTE_SCAN_DEPTH = 64;
+
+async function hasRouteFiles(
+  dir: string,
+  adapter: RuntimeAdapter,
+  visited: Set<string>,
+  depth: number,
+): Promise<boolean> {
+  if (depth > MAX_ROUTE_SCAN_DEPTH || visited.has(dir)) return false;
+  visited.add(dir);
+
+  const entries = await readDirFromAdapter(dir, adapter);
 
   for (const entry of entries) {
+    if (entry.isSymlink || !isSafeDirectoryEntryName(entry.name)) continue;
+
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
       const dotIndex = name.lastIndexOf(".");
       const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
+      const stem = dotIndex === -1 ? name : name.slice(0, dotIndex);
 
-      if (ROUTE_EXTENSIONS.has(ext) && ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))) {
+      if (ROUTE_EXTENSIONS.has(ext) && ROUTE_PATTERNS.includes(stem)) {
         return true;
       }
 
       continue;
     }
 
-    if (entry.isDirectory && (await hasRouteFiles(join(dir, entry.name), adapter))) {
+    if (
+      entry.isDirectory &&
+      (await hasRouteFiles(join(dir, entry.name), adapter, visited, depth + 1))
+    ) {
       return true;
     }
   }
@@ -171,44 +194,16 @@ type NormalizedDirEntry = {
   isSymlink: boolean;
 };
 
-async function withAdapterFallback<T>(
-  adapterFn: () => Promise<T>,
-  fallbackFn: () => Promise<T>,
-  defaultValue: T,
-): Promise<T> {
-  try {
-    return await adapterFn();
-  } catch (_) {
-    /* expected: adapter may not support this operation */
-    try {
-      return await fallbackFn();
-    } catch (_) {
-      /* expected: fallback may also fail */
-      return defaultValue;
-    }
-  }
-}
-
-async function statWithFallback(
+async function statFromAdapter(
   path: string,
   adapter: RuntimeAdapter,
 ): Promise<NormalizedStat | null> {
-  const fs = createFileSystem();
-
-  return await withAdapterFallback(
-    async () => (await adapter.fs.stat(path)) as NormalizedStat,
-    async () => {
-      const stat = await fs.stat(path);
-      return {
-        size: stat.size,
-        isFile: stat.isFile,
-        isDirectory: stat.isDirectory,
-        isSymlink: stat.isSymlink,
-        mtime: stat.mtime,
-      };
-    },
-    null,
-  );
+  try {
+    return (await adapter.fs.stat(path)) as NormalizedStat;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
 }
 
 async function collectDirEntries(
@@ -233,15 +228,24 @@ async function collectDirEntries(
   return entries;
 }
 
-async function readDirWithFallback(
+async function readDirFromAdapter(
   dir: string,
   adapter: RuntimeAdapter,
 ): Promise<NormalizedDirEntry[]> {
-  const fs = createFileSystem();
+  try {
+    return await collectDirEntries(adapter.fs.readDir(dir));
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    throw error;
+  }
+}
 
-  return await withAdapterFallback(
-    () => collectDirEntries(adapter.fs.readDir(dir)),
-    () => collectDirEntries(fs.readDir(dir)),
-    [],
-  );
+function isSafeRouterDirectory(path: string): boolean {
+  return path !== "" && !path.includes("\0") && !path.includes("\\") &&
+    !isAbsolute(path) && path.split("/").every((segment) => segment !== "" && segment !== "..");
+}
+
+function isSafeDirectoryEntryName(name: string): boolean {
+  return name !== "" && name !== "." && name !== ".." && !name.includes("\0") &&
+    !name.includes("/") && !name.includes("\\");
 }

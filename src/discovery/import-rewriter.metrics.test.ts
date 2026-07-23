@@ -17,4 +17,20 @@ describe("discovery import rewriter metrics module", () => {
       "veryfront/knowledge should be available to discovered project modules",
     );
   });
+
+  it("includes every source-discovered primitive definition module", () => {
+    for (
+      const specifier of [
+        "veryfront/schedule",
+        "veryfront/task",
+        "veryfront/trigger",
+        "veryfront/webhook",
+      ] as const
+    ) {
+      assert(
+        DISCOVERY_GLOBAL_VERYFRONT_MODULES.includes(specifier),
+        `${specifier} should be available to discovered project modules`,
+      );
+    }
+  });
 });

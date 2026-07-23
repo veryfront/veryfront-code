@@ -43,6 +43,7 @@ import {
 } from "../source-integration-policy.ts";
 import {
   createIsolatedWorkflowExecutor,
+  createTenantFSConfig,
   failRunExecution,
   getFinalRunExitCode,
   getRunExecutionWorkerId,
@@ -134,18 +135,10 @@ export async function runDynamicWorkflowRun(
         // Set up FS adapter with Veryfront API backend
         const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
 
-        const fsConfig = {
-          fs: {
-            type: "veryfront-api" as const,
-            veryfront: {
-              baseUrl: apiUrl,
-              proxyMode: false, // We're setting context directly
-              projectSlug: tenant.projectSlug,
-            },
-          },
-        };
-
-        const adapter = await enhanceAdapterWithFS(denoAdapter, fsConfig);
+        const adapter = await enhanceAdapterWithFS(
+          denoAdapter,
+          createTenantFSConfig(tenant, apiUrl),
+        );
 
         if (debug) {
           logger.info("FS adapter initialized");

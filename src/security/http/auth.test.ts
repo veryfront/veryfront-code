@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { AuthHandler } from "./auth.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 
 /**
  * Tests that the AuthHandler sanitizes the Basic auth realm value
@@ -73,5 +74,93 @@ describe("AuthHandler realm sanitization", () => {
     const handler = createHandler();
     const header = await getWwwAuthenticate(handler, 12345);
     expect(header).toBe('Basic realm="12345"');
+  });
+});
+
+describe("AuthHandler authentication schemes", () => {
+  const adapter = { env: { get: () => "" } };
+
+  it("accepts case-insensitive Basic authentication schemes", async () => {
+    const handler = new AuthHandler();
+    const credentials = btoa("admin:secret");
+    const result = await handler.handle(
+      new Request("http://localhost", {
+        headers: { authorization: `basic ${credentials}` },
+      }),
+      {
+        securityConfig: { auth: { basic: { username: "admin", password: "secret" } } },
+        adapter,
+      } as never,
+    );
+
+    assertEquals(result.continue, true);
+  });
+
+  it("allows either configured authentication scheme", async () => {
+    const handler = new AuthHandler();
+    const result = await handler.handle(
+      new Request("http://localhost", {
+        headers: { authorization: "Bearer bearer-secret" },
+      }),
+      {
+        securityConfig: {
+          auth: {
+            basic: { username: "admin", password: "secret" },
+            bearer: { token: "bearer-secret" },
+          },
+        },
+        adapter,
+      } as never,
+    );
+
+    assertEquals(result.continue, true);
+  });
+
+  it("fails closed for explicitly configured empty credentials", async () => {
+    const handler = new AuthHandler();
+
+    await assertRejects(
+      () =>
+        handler.handle(
+          new Request("http://localhost"),
+          {
+            securityConfig: { auth: { bearer: { token: "" } } },
+            adapter,
+          } as never,
+        ),
+      TypeError,
+      "non-empty",
+    );
+  });
+
+  it("fails closed when environment Basic authentication is only partially configured", async () => {
+    const handler = new AuthHandler();
+    const env = new Map([["VERYFRONT_BASIC_USER", "admin"]]);
+
+    await assertRejects(
+      () =>
+        handler.handle(
+          new Request("http://localhost"),
+          {
+            securityConfig: null,
+            adapter: { env: { get: (name: string) => env.get(name) } },
+          } as never,
+        ),
+      TypeError,
+      "non-empty",
+    );
+  });
+
+  it("advertises bearer authentication on unauthorized responses", async () => {
+    const handler = new AuthHandler();
+    const result = await handler.handle(
+      new Request("http://localhost"),
+      {
+        securityConfig: { auth: { bearer: { token: "bearer-secret" } } },
+        adapter,
+      } as never,
+    );
+
+    assertEquals(result.response?.headers.get("WWW-Authenticate"), "Bearer");
   });
 });

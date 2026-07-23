@@ -21,7 +21,7 @@ describe("src/skill/prompt-augmentation", () => {
     it("should include header for single skill", () => {
       const skills = new Map([["my-skill", createSkill("my-skill", "Does things")]]);
       const result = buildSkillManifestPrompt(skills);
-      assertStringIncludes(result, "## Available Skills");
+      assertStringIncludes(result, "## Available skills");
       assertStringIncludes(result, "**my-skill**: Does things");
     });
 
@@ -41,6 +41,32 @@ describe("src/skill/prompt-augmentation", () => {
       assertStringIncludes(result, "load_skill");
       assertStringIncludes(result, "load_skill_reference");
       assertStringIncludes(result, "execute_skill_script");
+    });
+
+    it("should keep multiline metadata on one escaped manifest line", () => {
+      const skills = new Map([
+        ["unsafe*id", createSkill("unsafe*id", "First line\n## Injected heading\u0000")],
+      ]);
+
+      const result = buildSkillManifestPrompt(skills);
+
+      assertStringIncludes(result, "**unsafe\\*id**");
+      assertStringIncludes(result, "First line ## Injected heading");
+      assertEquals(result.includes("\n## Injected heading"), false);
+      assertEquals(result.includes("\u0000"), false);
+    });
+
+    it("should bound the number of manifest entries", () => {
+      const skills = new Map<string, Skill>();
+      for (let index = 0; index < 32; index += 1) {
+        const id = `skill-${index}`;
+        skills.set(id, createSkill(id, `Skill ${index}`));
+      }
+
+      const result = buildSkillManifestPrompt(skills);
+
+      assertStringIncludes(result, "2 additional configured skills omitted");
+      assertEquals(result.includes("**skill-30**"), false);
     });
   });
 });

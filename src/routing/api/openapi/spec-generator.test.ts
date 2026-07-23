@@ -25,10 +25,10 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertIncludes(yaml, "openapi: 3.1.0");
+      assertIncludes(yaml, 'openapi: "3.1.0"');
       assertIncludes(yaml, "title: Test API");
-      assertIncludes(yaml, "version: 1.0.0");
-      assertIncludes(yaml, "paths:{}");
+      assertIncludes(yaml, 'version: "1.0.0"');
+      assertIncludes(yaml, "paths: {}");
     });
 
     it("should handle spec with description", () => {
@@ -180,7 +180,38 @@ describe("routing/api/openapi/spec-generator", () => {
       };
 
       const yaml = specToYaml(spec);
-      assertIncludes(yaml, "paths:{}");
+      assertIncludes(yaml, "paths: {}");
+    });
+
+    it("renders objects containing only omitted values as {}", () => {
+      const spec: OpenAPISpec = {
+        openapi: "3.1.0",
+        info: {
+          title: "API",
+          version: "1.0.0",
+          contact: { name: undefined },
+        } as OpenAPISpec["info"],
+        paths: {},
+      };
+
+      assertIncludes(specToYaml(spec), "contact: {}");
+    });
+
+    it("quotes YAML implicit values and escapes control characters", () => {
+      const spec: OpenAPISpec = {
+        openapi: "3.1.0",
+        info: {
+          title: "true",
+          version: "2026-07-20",
+          description: "line one\nline two\\tail",
+        },
+        paths: {},
+      };
+
+      const yaml = specToYaml(spec);
+      assertIncludes(yaml, 'title: "true"');
+      assertIncludes(yaml, 'version: "2026-07-20"');
+      assertIncludes(yaml, 'description: "line one\\nline two\\\\tail"');
     });
   });
 });

@@ -223,6 +223,18 @@ describe("define-config", () => {
       );
       expect(result.title).toBe("Third");
     });
+
+    it("does not interpret an own __proto__ key as the result prototype", () => {
+      const config = JSON.parse(
+        '{"title":"Safe","__proto__":{"polluted":true}}',
+      ) as Partial<VeryfrontConfigInput>;
+
+      const result = mergeConfigs(config) as VeryfrontConfigInput & Record<string, unknown>;
+
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+      expect(Object.hasOwn(result, "__proto__")).toBe(true);
+      expect(result.__proto__).toEqual({ polluted: true });
+    });
   });
 
   describe("validateConfig", () => {
@@ -244,6 +256,7 @@ describe("define-config", () => {
       await expect(validateConfig("string")).rejects.toThrow(message);
       await expect(validateConfig(123)).rejects.toThrow(message);
       await expect(validateConfig(true)).rejects.toThrow(message);
+      await expect(validateConfig([])).rejects.toThrow(message);
     });
 
     it("should accept config without dev.port", async () => {
@@ -269,6 +282,12 @@ describe("define-config", () => {
       );
     });
 
+    it("should reject fractional dev.port values", async () => {
+      await expect(validateConfig({ dev: { port: 3000.5 } })).rejects.toThrow(
+        "dev.port must be a number between",
+      );
+    });
+
     it("should accept valid port within range", async () => {
       const config: VeryfrontConfig = { dev: { port: 3009 } };
       await expect(validateConfig(config)).resolves.toBeUndefined();
@@ -277,6 +296,18 @@ describe("define-config", () => {
     it("should reject non-string build.outDir", async () => {
       await expect(validateConfig({ build: { outDir: 123 } })).rejects.toThrow(
         "build.outDir must be a string",
+      );
+    });
+
+    it("validates fields beyond the legacy port and output checks", async () => {
+      await expect(
+        validateConfig({ cache: { render: { maxEntries: -1 } } }),
+      ).rejects.toThrow("Invalid veryfront.config");
+    });
+
+    it("rejects unknown top-level fields", async () => {
+      await expect(validateConfig({ unknownSetting: true })).rejects.toThrow(
+        "Unknown config keys: unknownSetting",
       );
     });
 

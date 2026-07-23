@@ -3,17 +3,27 @@ import { agentLogger } from "#veryfront/utils";
 
 /** Public API contract for hosted child run identifiers. */
 export interface HostedChildRunIdentifiers {
+  /** Child conversation ID value. */
   childConversationId: string;
+  /** Child run ID value. */
   childRunId: string;
+  /** Child message ID value. */
   childMessageId: string;
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
 }
 
-type HostedConversationRunStatus = ConversationRunProjection["status"];
+/** Status values observed while monitoring a hosted conversation run. */
+export type HostedConversationRunStatus = ConversationRunProjection["status"];
 
 /** Shared hosted child terminal error codes value. */
-export const hostedChildTerminalErrorCodes = Object.freeze({
+export const hostedChildTerminalErrorCodes: Readonly<{
+  cancelled: "DURABLE_CHILD_CANCELLED";
+  failed: "DURABLE_CHILD_FAILED";
+  completedExternally: "DURABLE_CHILD_COMPLETED_EXTERNALLY";
+}> = Object.freeze({
   cancelled: "DURABLE_CHILD_CANCELLED",
   failed: "DURABLE_CHILD_FAILED",
   completedExternally: "DURABLE_CHILD_COMPLETED_EXTERNALLY",
@@ -36,7 +46,9 @@ export function isHostedChildTerminalErrorCode(
 
 /** Public API contract for hosted child same turn retry block signal. */
 export interface HostedChildSameTurnRetryBlockSignal {
+  /** Terminal error code value. */
   terminalErrorCode?: string | null;
+  /** Terminal error message value. */
   terminalErrorMessage?: string | null;
 }
 
@@ -70,6 +82,7 @@ export type HostedChildTerminalStatus = Extract<
 
 /** Error shape for hosted child terminal state. */
 export class HostedChildTerminalStateError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(
     readonly status: HostedChildTerminalStatus,
     readonly identifiers: HostedChildRunIdentifiers,
@@ -133,11 +146,17 @@ const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 
 /** Input payload for monitor hosted child run status. */
 export interface MonitorHostedChildRunStatusInput {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Identifiers value. */
   identifiers: HostedChildRunIdentifiers;
+  /** Abort signal value. */
   abortSignal?: AbortSignal;
+  /** Poll interval ms value. */
   pollIntervalMs: number;
+  /** Callback invoked when terminal. */
   onTerminal: (error: HostedChildTerminalStateError) => void;
   /** Called when a poll attempt fails; receives the error and consecutive failure count. */
   onMonitoringError?: (error: unknown, consecutiveFailures: number) => void;

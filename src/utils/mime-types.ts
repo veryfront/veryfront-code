@@ -133,10 +133,12 @@ export function lookup(path: string): string | false {
  * Returns `false` otherwise — matching the original module's sentinel.
  */
 export function charset(mime: string): string | false {
+  const normalizedMime = mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   if (
-    mime.startsWith("text/") ||
-    mime === "application/javascript" ||
-    mime === "application/json"
+    normalizedMime.startsWith("text/") ||
+    normalizedMime === "application/javascript" ||
+    normalizedMime === "application/json" ||
+    normalizedMime.endsWith("+json")
   ) {
     return "UTF-8";
   }
@@ -149,5 +151,6 @@ export function charset(mime: string): string | false {
  * the same reason `lookup()` does (avoid prototype-property leaks).
  */
 export function extension(mime: string): string | false {
-  return Object.hasOwn(EXT_BY_MIME, mime) ? EXT_BY_MIME[mime]! : false;
+  const normalizedMime = mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return Object.hasOwn(EXT_BY_MIME, normalizedMime) ? EXT_BY_MIME[normalizedMime]! : false;
 }

@@ -14,6 +14,8 @@ import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { unbrand } from "./http-cache-types.ts";
 import { extractSourceUrl } from "./source-url-embed.ts";
 import { ensureAbsoluteDir, hasIncompatibleFilePaths } from "./http-cache-helpers.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { errorLogName } from "../shared/log-context.ts";
 
 const logger = rendererLogger.component("http-cache");
 
@@ -128,15 +130,23 @@ export async function validateBundleDepsExist(
 
       const canonicalPath = join(absoluteCacheDir, `http-${hash}.mjs`);
       try {
-        await fs.mkdir(absoluteCacheDir, { recursive: true });
-        await fs.writeTextFile(canonicalPath, code);
+        const written = await writeCacheFile(
+          fs,
+          canonicalPath,
+          code,
+          "HTTP-CACHE-RECOVERY",
+        );
+        if (!written) return false;
         logger.debug("Recovered dep from Redis", { hash });
 
         for (const dep of extractBundleDeps(code)) {
           if (!seen.has(dep.hash)) pending.push(dep);
         }
       } catch (error) {
-        logger.error("Failed to write recovered dep", { hash, error });
+        logger.error("Failed to write recovered dep", {
+          hash,
+          errorName: errorLogName(error),
+        });
         return false;
       }
     }
@@ -181,7 +191,10 @@ export async function findParentBundleWithEmbeddedUrl(
       }
     }
   } catch (error) {
-    logger.debug("Error scanning for parent bundle", { targetHash, error });
+    logger.debug("Error scanning for parent bundle", {
+      targetHash,
+      errorName: errorLogName(error),
+    });
   }
 
   return null;

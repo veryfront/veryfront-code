@@ -15,33 +15,44 @@ export const getRendererScript = () => `
 
       const dataScript = document.getElementById('veryfront-hydration-data');
       if (!dataScript) {
-        logError('Hydration data not found');
+        const error = new Error('Hydration data not found');
+        logError(error.message);
+        if (window.__veryfrontHydrationFailed) window.__veryfrontHydrationFailed(error);
         return;
       }
 
       let data = {};
       try {
-        data = JSON.parse(dataScript.textContent || '{}');
+        const serializedData = dataScript.textContent || '{}';
+        if (
+          serializedData.length > MAX_PAGE_DATA_BYTES ||
+          new TextEncoder().encode(serializedData).byteLength > MAX_PAGE_DATA_BYTES
+        ) {
+          throw new TypeError('Hydration data exceeds the size limit');
+        }
+        data = assertValidPageData(JSON.parse(serializedData));
       } catch (parseError) {
-        logError('Failed to parse hydration data:', parseError);
+        logError('Failed to parse hydration data (' + getErrorName(parseError) + ')');
+        if (window.__veryfrontHydrationFailed) {
+          window.__veryfrontHydrationFailed(parseError);
+        }
         return;
       }
 
-      log('Hydration data:', data);
-
-      // Set studioEmbed flag for module loading (affects query params)
-      if (data.studioEmbed && window.__veryfrontSetStudioEmbed) {
-        window.__veryfrontSetStudioEmbed(true);
-      }
-      if (window.__veryfrontSetReleaseId) {
-        window.__veryfrontSetReleaseId(data.releaseId || null);
-      }
-      if (data.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
-        window.__veryfrontSetReleaseAssetModules(data.releaseAssetModules);
-      }
+      log('Hydration data loaded');
 
       try {
-        let pageModule;
+        // Set module-loading state inside the guarded initialization lifecycle.
+        if (window.__veryfrontSetStudioEmbed) {
+          window.__veryfrontSetStudioEmbed(data.studioEmbed === true);
+        }
+        if (window.__veryfrontSetReleaseId) {
+          window.__veryfrontSetReleaseId(data.releaseId || null);
+        }
+        if (window.__veryfrontSetReleaseAssetModules) {
+          window.__veryfrontSetReleaseAssetModules(data.releaseAssetModules || null);
+        }
+
         const pagePath = typeof data.pagePath === 'string' ? data.pagePath : '';
         const normalizedPagePath = pagePath.replace(/^\\/+/, '');
         const normalizedAppRouterRoot =
@@ -67,12 +78,12 @@ export const getRendererScript = () => `
           shouldRenderRscClientPage && data.isolatedClientPage === true;
 
         async function loadHydrationComponent(path, preferRscModule) {
+          assertSafeModulePath(path);
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
           if (preferRscModule && isAppRouterPath(normalizedPath)) {
             const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
-            log('Loading App Router component from RSC module:', moduleUrl);
             const module = await import(moduleUrl);
-            return module.default || module;
+            return selectComponentExport(module, path);
           }
 
           return loadComponent(path);
@@ -92,43 +103,44 @@ export const getRendererScript = () => `
           };
         }
 
+        let PageComponent = null;
         if (data.pagePath) {
-          const moduleUrl = shouldRenderRscClientPage
-            ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
-            : pathToModuleUrl(data.pagePath, data.studioEmbed);
-          log('Loading page from hydration data:', moduleUrl);
-
           try {
-            pageModule = await import(moduleUrl);
+            if (shouldRenderRscClientPage) {
+              assertSafeModulePath(data.pagePath);
+              const moduleUrl =
+                '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath);
+              const pageModule = await import(moduleUrl);
+              PageComponent = selectComponentExport(pageModule, data.pagePath);
+            } else {
+              PageComponent = await loadComponent(data.pagePath);
+            }
           } catch (error) {
-            logError('Failed to load page from hydration data:', error);
+            logError('Failed to load page from hydration data (' + getErrorName(error) + ')');
+            throw new Error('Page module failed to load');
           }
         }
 
-        if (!pageModule) {
+        if (data.pagePath && !PageComponent) {
+          throw new Error('Page module failed to load');
+        }
+
+        if (!data.pagePath) {
           const pageSlug = resolvedPathname === '/' ? 'index' : resolvedPathname.slice(1);
-          log('Falling back to Pages Router pattern:', pageSlug);
+          log('Falling back to Pages Router pattern:', getSafeRoutePath(resolvedPathname));
 
-          const prefix = pageSlug.startsWith('@/') ? '' : '/pages';
-          const basePath = MODULE_SERVER_URL + prefix + '/' + pageSlug;
-
-          try {
-            pageModule = await import(basePath + '.js');
-          } catch (error) {
-            if (pageSlug === 'index' || pageSlug.endsWith('/index')) throw error;
-            pageModule = await import(basePath + '/index.js');
+          const candidates = ['pages/' + pageSlug];
+          if (pageSlug !== 'index' && !pageSlug.endsWith('/index')) {
+            candidates.push('pages/' + pageSlug + '/index');
+          }
+          for (const candidate of candidates) {
+            PageComponent = await loadComponent(candidate);
+            if (PageComponent) break;
           }
         }
 
-        if (!pageModule) {
-          logError('Page module failed to load');
-          return;
-        }
-
-        const PageComponent = pageModule.default || pageModule;
         if (!PageComponent) {
-          logError('Page component not found');
-          return;
+          throw new Error('Page module failed to load');
         }
 
         // Normalize catch-all params (arrays -> joined strings) so the hydrated
@@ -145,33 +157,34 @@ export const getRendererScript = () => `
               layouts[i].path,
               shouldRenderRscClientPage,
             );
-            if (LayoutComponent) {
-              const WrappedLayoutComponent =
-                shouldRenderRscClientPage && isRootAppLayoutPath(layouts[i].path)
-                  ? unwrapAppRouterDocumentLayout(LayoutComponent)
-                  : LayoutComponent;
-              const layoutProps = data.layoutProps?.[layouts[i].path] || {};
-              tree = React.createElement(
-                WrappedLayoutComponent,
-                { ...layoutProps, children: tree },
-              );
-            }
+            if (!LayoutComponent) throw new Error('Layout component failed to load');
+            const WrappedLayoutComponent =
+              shouldRenderRscClientPage && isRootAppLayoutPath(layouts[i].path)
+                ? unwrapAppRouterDocumentLayout(LayoutComponent)
+                : LayoutComponent;
+            const layoutProps = data.layoutProps &&
+                Object.prototype.hasOwnProperty.call(data.layoutProps, layouts[i].path)
+              ? data.layoutProps[layouts[i].path]
+              : {};
+            tree = React.createElement(
+              WrappedLayoutComponent,
+              { ...layoutProps, children: tree },
+            );
           }
         }
 
         if (data.appPath && !isolatedClientPage) {
           const AppComponent = await loadHydrationComponent(data.appPath, shouldRenderRscClientPage);
-          if (AppComponent) {
-            tree = React.createElement(AppComponent, { children: tree });
-          }
+          if (!AppComponent) throw new Error('App component failed to load');
+          tree = React.createElement(AppComponent, { children: tree });
         }
 
-        const headings = data.headings || [];
+        const headings = Array.isArray(data.headings) ? data.headings : [];
         const pageContext = {
           slug: data.slug || '',
           path: data.pagePath || resolvedPathname,
           params: normalizedParams,
-          query: Object.fromEntries(new URLSearchParams(window.location.search)),
+          query: { ...router.query },
           frontmatter: data.frontmatter || {},
           headings,
           mdxHeadings: headings, // Alias for backwards compatibility
@@ -187,12 +200,13 @@ export const getRendererScript = () => `
           if (isolatedClientPage) {
             throw new Error('Isolated client page root not found');
           }
-          return;
+          throw new Error('Hydration root not found');
         }
 
         if (container.__reactRoot) {
           container.__reactRoot.render(tree);
           log('Page re-rendered');
+          window.__veryfrontHydrationComplete?.();
           return;
         }
 
@@ -205,9 +219,8 @@ export const getRendererScript = () => `
           const options = {
             identifierPrefix: 'vf',
             onRecoverableError: (error) => {
-              if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
-                log('Hydration mismatch (suppressed):', error.message);
-              }
+              const errorName = error instanceof Error ? error.name : 'UnknownError';
+              logError('Hydration recovery failed (' + errorName + ')');
             },
           };
 
@@ -219,7 +232,7 @@ export const getRendererScript = () => `
           window.__veryfrontHydrationComplete();
         }
       } catch (error) {
-        logError('Client initialization error:', error);
+        logError('Client initialization error (' + getErrorName(error) + ')');
 
         if (window.__veryfrontHydrationFailed) {
           window.__veryfrontHydrationFailed(error);
@@ -236,7 +249,14 @@ export const getRendererScript = () => `
     const initialDataScript = document.getElementById('veryfront-hydration-data');
     if (initialDataScript) {
       try {
-        const pageData = JSON.parse(initialDataScript.textContent || '{}');
+        const serializedData = initialDataScript.textContent || '{}';
+        if (
+          serializedData.length > MAX_PAGE_DATA_BYTES ||
+          new TextEncoder().encode(serializedData).byteLength > MAX_PAGE_DATA_BYTES
+        ) {
+          throw new TypeError('Hydration data exceeds the size limit');
+        }
+        const pageData = assertValidPageData(JSON.parse(serializedData));
         if (pageData.pagePath) {
           window.history.replaceState({ pageData, scrollY: 0 }, '', window.location.href);
           log('Stored initial page data in history state');

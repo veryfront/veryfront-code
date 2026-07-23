@@ -21,6 +21,7 @@ import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-re
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("rsc");
+const JSON_MEDIA_TYPE = "application/json";
 
 interface ActionGuardModule {
   rscActionGuard?: (
@@ -58,6 +59,9 @@ export async function handleActionRequestWithGuardLoader(
   }: ActionRequestParams,
   actionGuardLoader: ActionGuardLoader,
 ): Promise<Response> {
+  const requestValidationError = validateActionRequest(req);
+  if (requestValidationError) return requestValidationError;
+
   let body: unknown;
   try {
     body = JSON.parse(await readBodyWithLimit(req, DEFAULT_MAX_BODY_SIZE_BYTES));
@@ -65,7 +69,9 @@ export async function handleActionRequestWithGuardLoader(
     if (isRequestBodyTooLargeError(error)) {
       return jsonErrorResponse(HTTP_PAYLOAD_TOO_LARGE, "Request body too large");
     }
-    logger.warn("Failed to parse action request body", { error });
+    logger.warn("Failed to parse action request body", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
     return jsonErrorResponse(HttpStatus.BAD_REQUEST, "Invalid JSON body");
   }
 
@@ -88,7 +94,9 @@ export async function handleActionRequestWithGuardLoader(
       const ok = await guard(req, { id, args });
       if (!ok) return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");
     } catch (error) {
-      logger.error("Action guard execution failed", { error });
+      logger.error("Action guard execution failed", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
       return jsonErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "action guard failed");
     }
   }
@@ -127,6 +135,29 @@ export async function handleActionRequestWithGuardLoader(
   });
 }
 
+function validateActionRequest(req: Request): Response | null {
+  const mediaType = req.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== JSON_MEDIA_TYPE) {
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "Content-Type must be application/json");
+  }
+
+  const fetchSite = req.headers.get("sec-fetch-site")?.trim().toLowerCase();
+  if (fetchSite === "cross-site" || fetchSite === "same-site") {
+    return jsonErrorResponse(HttpStatus.FORBIDDEN, "Cross-origin action request denied");
+  }
+
+  const origin = req.headers.get("origin");
+  if (!origin) return null;
+
+  try {
+    if (new URL(origin).origin === new URL(req.url).origin) return null;
+  } catch {
+    // Invalid and opaque origins are not same-origin with the request target.
+  }
+
+  return jsonErrorResponse(HttpStatus.FORBIDDEN, "Cross-origin action request denied");
+}
+
 async function loadGuardModule(
   loader: ActionGuardLoader,
 ): Promise<ActionGuardModule | null | Response> {
@@ -134,7 +165,9 @@ async function loadGuardModule(
     return await loader();
   } catch (error) {
     if (isMissingActionGuardModule(error)) return null;
-    logger.error("Action guard module failed to load", { error });
+    logger.error("Action guard module failed to load", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
     return jsonErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "action guard failed");
   }
 }

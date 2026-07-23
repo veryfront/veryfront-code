@@ -9,6 +9,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
@@ -16,6 +17,7 @@ import { asLocalModuleCode } from "./http-cache-invariants.ts";
 import { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 import type { BundleEntry } from "./bundle-manifest-types.ts";
 import type { HttpCacheIdentityMetadata, HttpCacheLike } from "./http-cache-helpers.ts";
+import { errorLogName } from "../shared/log-context.ts";
 
 const logger = rendererLogger.component("http-cache");
 
@@ -39,6 +41,18 @@ export function __clearInFlightHttpFetches(): void {
   inFlightHttpFetches.clear();
 }
 
+/** Remove an in-flight fetch only when the caller still owns the map entry. */
+export function clearInFlightHttpFetchIfOwned(
+  cacheKey: string,
+  fetchPromise: Promise<string | null>,
+): void {
+  if (inFlightHttpFetches.get(cacheKey) === fetchPromise) {
+    inFlightHttpFetches.delete(cacheKey);
+  }
+}
+
+registerProcessStateReset("HTTP module in-flight fetches", __clearInFlightHttpFetches);
+
 /** Jitter to spread out timeout retries and prevent thundering herd (0-5s) */
 const IN_FLIGHT_JITTER_MS = 5_000;
 
@@ -48,7 +62,7 @@ const IN_FLIGHT_JITTER_MS = 5_000;
  */
 export async function waitForInFlightFetch(
   promise: Promise<string | null>,
-  cacheKey: string,
+  _cacheKey: string,
 ): Promise<string | null | undefined> {
   const jitter = Math.floor(Math.random() * IN_FLIGHT_JITTER_MS);
   const timeoutMs = IN_FLIGHT_WAIT_TIMEOUT_MS + jitter;
@@ -57,7 +71,6 @@ export async function waitForInFlightFetch(
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
       logger.warn("In-flight fetch wait timed out, will retry", {
-        cacheKey,
         timeoutMs,
       });
       resolve(undefined);
@@ -106,16 +119,19 @@ export function refreshDistributedCacheAsync(
           refreshManifestTTL(manifestId).catch((err) => {
             logger.debug("Manifest TTL refresh failed", {
               manifestId: manifestId.slice(0, 12),
-              err,
+              errorName: errorLogName(err),
             });
           });
         }
       } catch (error) {
-        logger.debug("Distributed cache refresh failed", { hash, error });
+        logger.debug("Distributed cache refresh failed", {
+          hash,
+          errorName: errorLogName(error),
+        });
       }
     }
   })().catch((err) => {
-    logger.debug("Distributed cache async refresh error", { err });
+    logger.debug("Distributed cache async refresh error", { errorName: errorLogName(err) });
   });
 }
 
@@ -126,20 +142,29 @@ export function trackBundleAccumulator(
   hash: string,
   normalizedUrl: string,
   cachePath: string,
-): void {
+  knownSizeBytes?: number,
+): Promise<void> {
   const accumulator = bundleAccumulatorStorage.getStore();
-  if (accumulator) {
-    void (async () => {
+  if (!accumulator || accumulator.some((entry) => entry.hash === hash)) {
+    return Promise.resolve();
+  }
+
+  return (async () => {
+    let sizeBytes = knownSizeBytes;
+    if (sizeBytes === undefined) {
       try {
         const stat = await createFileSystem().stat(cachePath);
-        accumulator.push({
-          hash: String(hash),
-          url: normalizedUrl,
-          sizeBytes: stat?.size ?? 0,
-        });
+        sizeBytes = stat?.size ?? 0;
       } catch {
-        // Ignore stat errors
+        return;
       }
-    })();
-  }
+    }
+
+    if (accumulator.some((entry) => entry.hash === hash)) return;
+    accumulator.push({
+      hash: String(hash),
+      url: normalizedUrl,
+      sizeBytes,
+    });
+  })();
 }

@@ -14,6 +14,7 @@
  */
 
 import { createError, toError } from "#veryfront/errors";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
@@ -31,10 +32,76 @@ import type { ModelRuntime } from "./types.ts";
 /** Public API contract for model provider factory. */
 export type ModelProviderFactory = (modelId: string) => ModelRuntime;
 
+const MAX_PROVIDER_NAME_LENGTH = 128;
+const MAX_MODEL_STRING_LENGTH = 4_096;
+
 const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
   "model-provider",
 );
 let autoInitialized = false;
+
+function throwConfigError(message: string): never {
+  throw toError(createError({ type: "config", message }));
+}
+
+function hasControlOrWhitespace(value: string): boolean {
+  return /\s/u.test(value) || hasUnsafeControlCharacters(value);
+}
+
+function assertProviderName(name: unknown): asserts name is string {
+  if (
+    typeof name !== "string" || name.length === 0 || name.length > MAX_PROVIDER_NAME_LENGTH ||
+    hasControlOrWhitespace(name) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(name)
+  ) {
+    throwConfigError("Model provider name is invalid.");
+  }
+}
+
+function assertProviderFactory(factory: unknown): asserts factory is ModelProviderFactory {
+  if (typeof factory !== "function") {
+    throwConfigError("Model provider factory must be a function.");
+  }
+}
+
+function parseModelString(value: unknown): { providerName: string; modelId: string } {
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > MAX_MODEL_STRING_LENGTH ||
+    hasControlOrWhitespace(value)
+  ) {
+    throwConfigError('Model string must use the "provider/model" format.');
+  }
+
+  const slashIndex = value.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === value.length - 1) {
+    throwConfigError('Model string must use the "provider/model" format.');
+  }
+  const providerName = value.slice(0, slashIndex);
+  const modelId = value.slice(slashIndex + 1);
+  assertProviderName(providerName);
+  if (modelId.length > MAX_MODEL_STRING_LENGTH - providerName.length - 1) {
+    throwConfigError('Model string must use the "provider/model" format.');
+  }
+
+  return { providerName, modelId };
+}
+
+function assertModelRuntime(value: unknown): asserts value is ModelRuntime {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throwConfigError("Model provider returned an invalid runtime.");
+  }
+
+  let doGenerate: unknown;
+  let doStream: unknown;
+  try {
+    doGenerate = Reflect.get(value, "doGenerate");
+    doStream = Reflect.get(value, "doStream");
+  } catch {
+    throwConfigError("Model provider returned an unreadable runtime.");
+  }
+  if (typeof doGenerate !== "function" || typeof doStream !== "function") {
+    throwConfigError("Model provider returned an invalid runtime.");
+  }
+}
 
 function isOpenAIBaseURL(baseURL: string | undefined): boolean {
   if (!baseURL) return true;
@@ -62,6 +129,8 @@ export function registerModelProvider(
   name: string,
   factory: ModelProviderFactory,
 ): void {
+  assertProviderName(name);
+  assertProviderFactory(factory);
   manager.register(name, factory);
 }
 
@@ -70,149 +139,137 @@ export function registerModelProvider(
  *
  * Factories are registered as shared (available to all projects) but read
  * env vars lazily at call time via getEnv() / AsyncLocalStorage so each
- * request resolves the **current project's** API key — not whichever key
+ * request resolves the **current project's** API key - not whichever key
  * happened to be active when the factory was first created.
  *
  * Called once; subsequent calls are no-ops.
  */
 function autoInitializeFromEnv(): void {
   if (autoInitialized) return;
-  autoInitialized = true;
 
   // Register lazy factories that resolve credentials per-request.
   // createOpenAI/createAnthropic/createGoogleGenerativeAI are lightweight
   // constructors (no network calls), so instantiating per-resolution is fine.
 
-  if (!manager.has("openai")) {
-    manager.registerShared("openai", (id) => {
-      const config = getOpenAIEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("openai");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-          baseURL: config.baseURL,
-          providerName: getOpenAIEnvProviderName(config.baseURL),
-        });
-      }
-      throw toError(createError({
-        type: "config",
-        message:
-          "OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* models.",
-      }));
-    });
-  }
-
-  if (!manager.has("anthropic")) {
-    manager.registerShared("anthropic", (id) => {
-      const config = getAnthropicEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "ANTHROPIC_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("anthropic");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-          baseURL: config.baseURL,
-        });
-      }
-      throw toError(createError({
-        type: "config",
-        message:
-          "Anthropic provider not installed. Add @veryfront/ext-llm-anthropic to use anthropic/* models.",
-      }));
-    });
-  }
-
-  if (!manager.has("google")) {
-    manager.registerShared("google", (id) => {
-      const config = getGoogleGenAIEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("google");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-        });
-      }
+  manager.registerShared("openai", (id) => {
+    const config = getOpenAIEnvConfig();
+    if (!config.apiKey) {
       throw toError(
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.",
+            "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
         }),
       );
-    });
-  }
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("openai");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+        baseURL: config.baseURL,
+        providerName: getOpenAIEnvProviderName(config.baseURL),
+      });
+    }
+    throw toError(createError({
+      type: "config",
+      message:
+        "OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* models.",
+    }));
+  });
 
-  if (!manager.has("mistral")) {
-    manager.registerShared("mistral", (id) => {
-      const config = getMistralEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "MISTRAL_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("openai");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-          baseURL: config.baseURL,
-        });
-      }
-      throw toError(createError({
+  manager.registerShared("anthropic", (id) => {
+    const config = getAnthropicEnvConfig();
+    if (!config.apiKey) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "ANTHROPIC_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        }),
+      );
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("anthropic");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+        baseURL: config.baseURL,
+      });
+    }
+    throw toError(createError({
+      type: "config",
+      message:
+        "Anthropic provider not installed. Add @veryfront/ext-llm-anthropic to use anthropic/* models.",
+    }));
+  });
+
+  manager.registerShared("google", (id) => {
+    const config = getGoogleGenAIEnvConfig();
+    if (!config.apiKey) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        }),
+      );
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("google");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+      });
+    }
+    throw toError(
+      createError({
         type: "config",
         message:
-          "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models " +
-          "(Mistral uses the OpenAI-compatible wire format and is routed through the openai extension).",
-      }));
-    });
-  }
+          "Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.",
+      }),
+    );
+  });
+
+  manager.registerShared("mistral", (id) => {
+    const config = getMistralEnvConfig();
+    if (!config.apiKey) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "MISTRAL_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        }),
+      );
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("openai");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+        baseURL: config.baseURL,
+      });
+    }
+    throw toError(createError({
+      type: "config",
+      message:
+        "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models " +
+        "(Mistral uses the OpenAI-compatible wire format and is routed through the openai extension).",
+    }));
+  });
 
   // Register the local provider (always available, no API key needed).
-  // createLocalModel is a lightweight synchronous constructor — the actual
+  // createLocalModel is a lightweight synchronous constructor - the actual
   // @huggingface/transformers import and model loading happen lazily on
   // the first doGenerate/doStream call, so this doesn't add startup overhead.
-  if (!manager.has("local")) {
-    manager.registerShared("local", (id) => {
-      return createLocalModel(id);
-    });
-  }
+  manager.registerShared("local", (id) => {
+    return createLocalModel(id);
+  });
 
-  if (!manager.has("veryfront-cloud")) {
-    manager.registerShared("veryfront-cloud", (id) => {
-      return createVeryfrontCloudModel(id);
-    });
-  }
+  manager.registerShared("veryfront-cloud", (id) => {
+    return createVeryfrontCloudModel(id);
+  });
+  autoInitialized = true;
 }
 
 /**
@@ -227,43 +284,16 @@ function autoInitializeFromEnv(): void {
  */
 export function resolveModel(modelString: string): ModelRuntime {
   autoInitializeFromEnv();
-
-  const slashIndex = modelString.indexOf("/");
-  if (slashIndex === -1) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          `Invalid model string: "${modelString}". Expected "provider/model" (e.g. "openai/gpt-4o").`,
-      }),
-    );
-  }
-
-  const providerName = modelString.slice(0, slashIndex);
-  const modelId = modelString.slice(slashIndex + 1);
-
-  if (!providerName || !modelId) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          `Invalid model string: "${modelString}". Both provider and model name are required.`,
-      }),
-    );
-  }
+  const { providerName, modelId } = parseModelString(modelString);
 
   const factory = manager.get(providerName);
   if (!factory) {
-    const available = getRegisteredModelProviders().join(", ") || "none";
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Model provider "${providerName}" not registered. Available: ${available}`,
-      }),
-    );
+    throw toError(createError({ type: "agent", message: "Model provider is not registered." }));
   }
 
-  return factory(modelId);
+  const runtime = factory(modelId);
+  assertModelRuntime(runtime);
+  return runtime;
 }
 
 /**
@@ -271,6 +301,7 @@ export function resolveModel(modelString: string): ModelRuntime {
  */
 export function hasModelProvider(name: string): boolean {
   autoInitializeFromEnv();
+  assertProviderName(name);
   return manager.has(name);
 }
 
@@ -299,8 +330,12 @@ export async function ensureModelReady(
   model: ModelRuntime,
 ): Promise<void> {
   if (!hasLocalModelRuntimeMarker(model)) return;
-  // modelId is "local/<id>" — strip the prefix to get the catalog id.
-  const catalogId = getModelRuntimeId(model)?.replace(/^local\//, "");
+  const runtimeId = getModelRuntimeId(model);
+  if (!runtimeId?.startsWith("local/") || runtimeId.length === "local/".length) {
+    throwConfigError("Marked local model runtime has an invalid model ID.");
+  }
+  // modelId is "local/<id>" - strip the prefix to get the catalog id.
+  const catalogId = runtimeId.slice("local/".length);
   await verifyLocalRuntime(catalogId);
 }
 

@@ -1,7 +1,18 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+export type {
+  InferSchema,
+  InferShape,
+  RefinementCtx,
+  Schema,
+  ValidationFailure,
+  ValidationIssue,
+  ValidationResult,
+  ValidationSuccess,
+} from "#veryfront/extensions/schema/index.ts";
 import {
   type AgUiRuntimeContextItem,
+  type AgUiRuntimeInjectedTool,
   type AgUiRuntimeMessage,
   type AgUiRuntimeRequest,
   getAgUiRuntimeContextItemSchema,
@@ -12,21 +23,74 @@ import {
   getAgUiRuntimeRunIdSchema,
   getAgUiRuntimeToolCallSchema,
 } from "#veryfront/agent/runtime/ag-ui-contract.ts";
+export type {
+  AgUiRuntimeContextItem,
+  AgUiRuntimeInjectedTool,
+  AgUiRuntimeMessage,
+  AgUiRuntimeRequest,
+} from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
+import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+export type {
+  RuntimeAgentMarkdownDefinition,
+  RuntimeAgentThinkingConfig,
+} from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   getRuntimeAgentCredentialsSchema,
   getRuntimeAgentSourceContextSchema,
   type RuntimeAgentSourceContext,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
+import { INTERNAL_AGENT_STREAM_MAX_BODY_BYTES } from "./request-body.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_TOOL_RESULT_BYTES = 65_536;
 const MAX_RUNTIME_MESSAGES = 100;
+const MAX_COMPATIBILITY_MESSAGE_PARTS = 100;
 
 const encoder = new TextEncoder();
+
+/** Legacy parts-based message accepted by the internal stream endpoint. */
+export interface InternalAgentCompatibilityMessage {
+  /** Message identifier. */
+  id: string;
+  /** Message role. */
+  role: "user" | "assistant" | "system" | "tool";
+  /** Message parts preserved during compatibility conversion. */
+  parts: Array<{ type: string } & Record<string, unknown>>;
+  /** Optional message metadata. */
+  metadata?: Record<string, unknown>;
+  /** Optional creation timestamp. */
+  createdAt?: string;
+}
+
+/** Validated request accepted by the internal agent stream endpoint. */
+export interface InternalAgentStreamRequest extends Omit<AgUiRuntimeRequest, "messages"> {
+  /** Agent identifier resolved by the runtime. */
+  agentId: string;
+  /** Canonical or compatibility messages supplied to the run. */
+  messages: Array<AgUiRuntimeMessage | InternalAgentCompatibilityMessage>;
+  /** Source revision used to load the agent. */
+  agentSource: RuntimeAgentSourceContext;
+  /** Optional inline agent definition. */
+  agentConfig?: RuntimeAgentMarkdownDefinition;
+  /** Optional request-scoped runtime credential. */
+  credentials?: { authToken: string };
+}
+
+/** Validated signal that resumes a run waiting for a tool result. */
+export interface ResumeSignal {
+  /** Signal discriminator. */
+  type: "tool_result";
+  /** Tool call receiving the result. */
+  toolCallId: string;
+  /** JSON-compatible tool result. */
+  result: unknown;
+  /** Whether the tool result represents a failure. */
+  isError: boolean;
+}
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
@@ -36,29 +100,50 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   }
 }
 
-export const getRunIdSchema = getAgUiRuntimeRunIdSchema;
+/** Returns the schema for an internal run identifier. */
+export const getRunIdSchema: () => Schema<string> = getAgUiRuntimeRunIdSchema;
 
-export const getAgentIdSchema = defineSchema((v) =>
+/** Returns the schema for an internal agent identifier. */
+export const getAgentIdSchema: () => Schema<string> = defineSchema((v) =>
   v.string().min(1).max(128).regex(AGENT_ID_PATTERN)
 );
 
-export const getRuntimeInjectedToolSchema = getAgUiRuntimeInjectedToolSchema;
-export const getRuntimeContextItemSchema = getAgUiRuntimeContextItemSchema;
-export const getRuntimeMessageSchema = getAgUiRuntimeMessageSchema;
-export const getRuntimeContextSchema = getAgUiRuntimeContextSchema;
-export const getRuntimeRunAgentInputSchema = getAgUiRuntimeRequestSchema;
+/** Returns the schema for a caller-injected runtime tool. */
+export const getRuntimeInjectedToolSchema: () => Schema<AgUiRuntimeInjectedTool> =
+  getAgUiRuntimeInjectedToolSchema;
+/** Returns the schema for a structured runtime context item. */
+export const getRuntimeContextItemSchema: () => Schema<AgUiRuntimeContextItem> =
+  getAgUiRuntimeContextItemSchema;
+/** Returns the schema for a canonical runtime message. */
+export const getRuntimeMessageSchema: () => Schema<AgUiRuntimeMessage> =
+  getAgUiRuntimeMessageSchema;
+/** Returns the schema for a legacy or structured runtime context item. */
+export const getRuntimeContextSchema: () => Schema<
+  { description: string; value: string } | AgUiRuntimeContextItem
+> = getAgUiRuntimeContextSchema;
+/** Returns the schema for the provider-neutral runtime run input. */
+export const getRuntimeRunAgentInputSchema: () => Schema<AgUiRuntimeRequest> =
+  getAgUiRuntimeRequestSchema;
 
-export const getInternalAgentCompatibilityMessageSchema = defineSchema((v) =>
+/** Returns the schema for a legacy parts-based internal message. */
+export const getInternalAgentCompatibilityMessageSchema: () => Schema<
+  InternalAgentCompatibilityMessage
+> = defineSchema((v) =>
   v.object({
-    id: v.string().min(1),
+    id: v.string().min(1).max(128),
     role: v.enum(["user", "assistant", "system", "tool"] as const),
-    parts: v.array(v.object({ type: v.string().min(1) }).passthrough()).default([]),
+    parts: v.array(v.object({ type: v.string().min(1).max(128) }).passthrough()).max(
+      MAX_COMPATIBILITY_MESSAGE_PARTS,
+    ).default([]),
     metadata: v.record(v.string(), v.unknown()).optional(),
-    createdAt: v.string().optional(),
+    createdAt: v.string().max(128).optional(),
   })
 );
 
-export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) =>
+/** Returns the schema for a signed internal agent stream request. */
+export const getInternalAgentControlPlaneStreamRequestSchema: () => Schema<
+  InternalAgentStreamRequest
+> = defineSchema((v) =>
   v.object({
     agentId: getAgentIdSchema(),
     threadId: v.string().uuid(),
@@ -83,7 +168,10 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
-  }).strict().superRefine((input, ctx) => {
+  }).strict().refine(
+    (input) => isWithinJsonSizeLimit(input, INTERNAL_AGENT_STREAM_MAX_BODY_BYTES),
+    { message: "Internal agent stream request must be less than 1 MB" },
+  ).superRefine((input, ctx) => {
     if (input.agentConfig && input.agentConfig.id !== input.agentId) {
       ctx.addIssue({
         code: "custom",
@@ -91,16 +179,25 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
         path: ["agentConfig", "id"],
       });
     }
+    const toolNames = new Set<string>();
+    for (const [index, tool] of input.tools.entries()) {
+      if (toolNames.has(tool.name)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Tool names must be unique",
+          path: ["tools", index, "name"],
+        });
+      }
+      toolNames.add(tool.name);
+    }
   })
 );
 
-export const getInternalAgentStreamRequestSchema = getInternalAgentControlPlaneStreamRequestSchema;
+/** Alias for the internal agent stream request schema factory. */
+export const getInternalAgentStreamRequestSchema: () => Schema<InternalAgentStreamRequest> =
+  getInternalAgentControlPlaneStreamRequestSchema;
 
 type RuntimeMessage = AgUiRuntimeMessage;
-type InternalAgentCompatibilityMessage = InferSchema<
-  ReturnType<typeof getInternalAgentCompatibilityMessageSchema>
->;
-
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -307,8 +404,9 @@ function toRuntimeMessage(
   }
 }
 
+/** Converts a validated stream request into provider-neutral runtime input. */
 export function toRuntimeRunAgentInput(
-  input: InferSchema<ReturnType<typeof getInternalAgentStreamRequestSchema>>,
+  input: InternalAgentStreamRequest,
 ): AgUiRuntimeRequest {
   return {
     threadId: input.threadId,
@@ -322,29 +420,31 @@ export function toRuntimeRunAgentInput(
   } as AgUiRuntimeRequest;
 }
 
-export const getResumeSignalSchema = defineSchema((v) =>
+/** Returns the schema for an external tool-result resume signal. */
+export const getResumeSignalSchema: () => Schema<ResumeSignal> = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
       type: v.literal("tool_result"),
       toolCallId: v.string().min(1).max(128),
       result: v.unknown().refine(
-        (value) => isWithinJsonSizeLimit(value, MAX_TOOL_RESULT_BYTES),
-        { message: "Tool result must be less than 64 KB" },
+        (value) => value !== undefined && isWithinJsonSizeLimit(value, MAX_TOOL_RESULT_BYTES),
+        { message: "Tool result must be present and less than 64 KB" },
       ),
       isError: v.boolean().optional().default(false),
     }),
-  ])
+  ]).transform((signal): ResumeSignal => ({
+    type: signal.type,
+    toolCallId: signal.toolCallId,
+    result: signal.result,
+    isError: signal.isError,
+  }))
 );
 
 export { getRuntimeAgentSourceContextSchema };
 export type { RuntimeAgentSourceContext };
-export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
+/** Caller-injected tool definition accepted by an internal run. */
+export type RuntimeInjectedTool = AgUiRuntimeInjectedTool;
+/** Structured context item accepted by an internal run. */
 export type RuntimeContextItem = AgUiRuntimeContextItem;
+/** Provider-neutral input passed to the agent runtime. */
 export type RuntimeRunAgentInput = AgUiRuntimeRequest;
-export type InternalAgentStreamRequest = InferSchema<
-  ReturnType<typeof getInternalAgentStreamRequestSchema>
->;
-export type ResumeSignal = InferSchema<ReturnType<typeof getResumeSignalSchema>>;
-
-// Convenience local Schema export for downstream consumers.
-export type { Schema };

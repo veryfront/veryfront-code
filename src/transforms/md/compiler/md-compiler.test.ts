@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { compileMarkdownRuntime } from "./md-compiler.ts";
 
@@ -11,7 +11,7 @@ describe(
     describe("compileMarkdownRuntime", () => {
       it("compiles simple markdown to a React component", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Hello World\n\nSome paragraph text.",
         );
@@ -22,7 +22,7 @@ describe(
 
       it("returns frontmatter object", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "---\ntitle: Test\nauthor: Jane\n---\n# Content",
         );
@@ -33,21 +33,22 @@ describe(
 
       it("extracts headings", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# First\n## Second\n### Third",
         );
-        assertEquals(Array.isArray(result.headings), true);
-        assertEquals(result.headings.length, 3);
-        assertEquals(result.headings[0]!.text, "First");
-        assertEquals(result.headings[0]!.level, 1);
-        assertEquals(result.headings[1]!.text, "Second");
-        assertEquals(result.headings[1]!.level, 2);
+        const headings = result.headings;
+        assertExists(headings);
+        assertEquals(headings.length, 3);
+        assertEquals(headings[0]!.text, "First");
+        assertEquals(headings[0]!.level, 1);
+        assertEquals(headings[1]!.text, "Second");
+        assertEquals(headings[1]!.level, 2);
       });
 
       it("returns rawHtml", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Hello",
         );
@@ -57,7 +58,7 @@ describe(
 
       it("handles empty content", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "",
         );
@@ -67,7 +68,7 @@ describe(
       it("passes frontmatter through when provided as parameter", async () => {
         const fm = { title: "Override", custom: "value" };
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Content",
           fm,
@@ -83,7 +84,7 @@ describe(
 | Cell 1   | Cell 2   |
 `;
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           markdown,
         );
@@ -92,17 +93,19 @@ describe(
 
       it("generates heading IDs (slugs)", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Hello World",
         );
-        assertEquals(result.headings[0]!.id, "hello-world");
+        const headings = result.headings;
+        assertExists(headings);
+        assertEquals(headings[0]!.id, "hello-world");
       });
 
       it("compiles code blocks with syntax highlighting", async () => {
         const markdown = "```js\nconst x = 1;\n```";
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           markdown,
         );
@@ -112,7 +115,7 @@ describe(
 
       it("uses preview wrapper for non-routable files", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Readme Content",
           undefined,
@@ -123,7 +126,7 @@ describe(
 
       it("uses standard wrapper for pages/ files", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Page Content",
           undefined,
@@ -136,7 +139,7 @@ describe(
     describe("HTML sanitization", () => {
       it("strips script tags from markdown", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           '# Title\n\n<script>alert("xss")</script>\n\nSafe text.',
         );
@@ -147,7 +150,7 @@ describe(
 
       it("strips onclick event handlers from HTML", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           '<div onclick="alert(1)">Click me</div>',
         );
@@ -156,7 +159,7 @@ describe(
 
       it("strips iframe tags", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           '<iframe src="https://evil.com"></iframe>\n\nSafe text.',
         );
@@ -166,7 +169,7 @@ describe(
 
       it("strips javascript: URLs from links", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "[click me](javascript:alert(1))",
         );
@@ -175,7 +178,7 @@ describe(
 
       it("preserves safe HTML elements", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "**bold** and *italic* and [link](https://example.com)",
         );
@@ -186,7 +189,7 @@ describe(
 
       it("preserves images with safe src", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           '![alt text](https://example.com/img.png "title")',
         );
@@ -199,7 +202,7 @@ describe(
 
       it("preserves safe embedded HTML like details/summary", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "<details><summary>Click</summary>\n\nHidden content\n\n</details>",
         );
@@ -210,7 +213,7 @@ describe(
 
       it("strips style tags", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Title\n\n<style>body{display:none}</style>\n\nVisible text.",
         );
@@ -220,7 +223,7 @@ describe(
 
       it("preserves data-node attributes in studio embed mode", async () => {
         const result = await compileMarkdownRuntime(
-          "runtime",
+          "production",
           "/tmp/project",
           "# Hello\n\nSome paragraph.",
           undefined,

@@ -41,10 +41,23 @@ import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
 import { handleHmrClientMessage } from "./handlers/preview/hmr-client-message.ts";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
-import { HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
+import { HMR_MAX_MESSAGES_PER_MINUTE, serverLogger } from "#veryfront/utils";
+import { createNodeWebSocketUpgradeController } from "#veryfront/platform/adapters/runtime/node/http-server.ts";
+import {
+  isWebSocketUpgradeResponse,
+  type RuntimeResponse,
+} from "#veryfront/platform/adapters/base.ts";
+import type {
+  NodeIncomingMessage,
+  NodeUpgradeSocket,
+} from "#veryfront/platform/adapters/runtime/node/types.ts";
+import { getSafeErrorName } from "./utils/error-name.ts";
 
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
+const HMR_CLOSE_GOING_AWAY = 1001;
+const HMR_CLOSE_CONNECTION_FAILED = 1011;
+const handlerLog = serverLogger.component("handler-lifecycle");
 
 export { DevServer, startDevServer, startProductionServer };
 export {
@@ -114,7 +127,7 @@ export interface StartProductionModeOptions extends BaseServerOptions {
   mode?: "production";
   /** When true, expose additional debug logging. */
   debug?: boolean;
-  /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
+  /** Override the host-derived environment in standalone mode. */
   defaultEnvironment?: "preview" | "production";
   /** Discovery configuration for AI primitives. Runs discoverAll() before serving. */
   discoveryConfig?: DiscoveryOptions;
@@ -153,6 +166,8 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
    * instead of `handler.upgrade(server)`.
    */
   connectHMR: (ws: WebSocket) => void;
+  /** Release bootstrap, watcher, HMR, and other handler-owned resources. */
+  dispose: () => Promise<void>;
 };
 
 /**
@@ -181,7 +196,10 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
 const _nativeGlobal = new Function("return this")() as typeof globalThis;
 const _NativeResponse: typeof Response = _nativeGlobal.Response;
 
-function toNativeResponse(res: Response): Response {
+function toNativeResponse(res: RuntimeResponse): Response {
+  if (isWebSocketUpgradeResponse(res)) {
+    throw new TypeError("WebSocket upgrades require the server upgrade handler");
+  }
   if (res instanceof _NativeResponse) return res;
   // TS narrows to `never` after the instanceof check because it can't see the
   // runtime class divergence between DNT's polyfill Response and native Response.
@@ -193,6 +211,43 @@ function toNativeResponse(res: Response): Response {
   });
 }
 
+function createHandlerDisposer(
+  actions: Array<() => void | Promise<void>>,
+): () => Promise<void> {
+  let disposePromise: Promise<void> | undefined;
+  return () => {
+    if (disposePromise) return disposePromise;
+    disposePromise = (async () => {
+      const failures: unknown[] = [];
+      for (const action of actions) {
+        try {
+          await action();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "Veryfront handler cleanup failed");
+      }
+    })();
+    return disposePromise;
+  };
+}
+
+async function cleanupHandlerCreationFailure(
+  error: unknown,
+  cleanup: () => void | Promise<void>,
+): Promise<never> {
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    handlerLog.warn("Handler cleanup failed after creation failed", {
+      errorName: getSafeErrorName(cleanupError),
+    });
+  }
+  throw error;
+}
+
 /** Create a Veryfront request handler for development or production. */
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
@@ -202,9 +257,24 @@ export async function createHandler(
   if (options.mode === "production") {
     const adapter = await runtime.get();
     const bootstrap = await bootstrapProd(projectDir, adapter);
-    const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, { projectDir });
-    const handler = async (req: Request) => toNativeResponse(await internalHandler(req));
-    return Object.assign(handler, { upgrade: () => {}, connectHMR: () => {} });
+    const dispose = createHandlerDisposer([
+      async () => await bootstrap.dispose?.(),
+    ]);
+    try {
+      const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, {
+        projectDir,
+        config: bootstrap.config,
+      });
+      await internalHandler.ready;
+      const handler = async (req: Request) => toNativeResponse(await internalHandler(req));
+      return Object.assign(handler, {
+        upgrade: () => {},
+        connectHMR: () => {},
+        dispose,
+      });
+    } catch (error) {
+      return await cleanupHandlerCreationFailure(error, dispose);
+    }
   }
 
   // Development mode (default), includes file watching, HMR, cache invalidation
@@ -224,65 +294,74 @@ export async function createHandler(
   const internalFetch = devServer.handler;
   const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
   const hmrRateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
+  const upgradedServers = new Map<
+    object,
+    {
+      server: import("node:http").Server;
+      controller: ReturnType<typeof createNodeWebSocketUpgradeController>;
+      onUpgrade: (
+        request: import("node:http").IncomingMessage,
+        socket: import("node:stream").Duplex,
+        head: Uint8Array,
+      ) => void;
+      onClose: () => void;
+    }
+  >();
+  const connectedHMRDisposers = new Set<() => void>();
+  let disposed = false;
 
   const upgrade = (server: unknown) => {
+    if (typeof server !== "object" || server === null) {
+      throw new TypeError("A Node HTTP server is required");
+    }
+    if (disposed) throw new TypeError("The Veryfront handler has been disposed");
+    if (upgradedServers.has(server)) return;
+
     const httpServer = server as import("node:http").Server;
-    let wsServer: import("ws").WebSocketServer | null = null;
-
-    httpServer.on("upgrade", async (request, socket, head) => {
-      try {
-        const { WebSocketServer } = await import("ws");
-        if (!wsServer) wsServer = new WebSocketServer({ noServer: true });
-
-        const key = request.headers["sec-websocket-key"];
-        const requestId = typeof key === "string" ? key : Array.isArray(key) ? key[0] ?? "" : "";
-
-        // Run request through handler pipeline so HMRHandler registers the WebSocket client
-        const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-        const headersRecord: Record<string, string> = {};
-        for (const [key, value] of Object.entries(request.headers)) {
-          if (typeof value === "string") headersRecord[key] = value;
-          else if (Array.isArray(value)) headersRecord[key] = value[0] ?? "";
-        }
-        await fetch(new Request(url.toString(), { method: "GET", headers: headersRecord }));
-
-        // Complete transport-level WebSocket upgrade
-        const { resolveWebSocketUpgrade } = await import(
-          "#veryfront/platform/adapters/runtime/node/http-server.ts"
-        );
-
-        const server = wsServer;
-        server.handleUpgrade(request, socket, head, (ws: import("ws").WebSocket) => {
-          resolveWebSocketUpgrade(requestId, ws);
-          server.emit("connection", ws, request);
-        });
-      } catch (_error) {
-        socket.destroy();
-      }
-    });
+    const controller = createNodeWebSocketUpgradeController(
+      internalFetch,
+      "localhost",
+      port,
+    );
+    const onUpgrade = (
+      request: import("node:http").IncomingMessage,
+      socket: import("node:stream").Duplex,
+      head: Uint8Array,
+    ) => {
+      void controller
+        .then((value) =>
+          value.handle(
+            request as unknown as NodeIncomingMessage,
+            socket as unknown as NodeUpgradeSocket,
+            head,
+          )
+        )
+        .catch(() => socket.destroy());
+    };
+    const onClose = () => {
+      upgradedServers.delete(server);
+      void controller.then((value) => value.close()).catch(() => {});
+    };
+    upgradedServers.set(server, { server: httpServer, controller, onUpgrade, onClose });
+    httpServer.on("upgrade", onUpgrade);
+    httpServer.once("close", onClose);
   };
 
   const connectHMR = (ws: WebSocket) => {
-    const clientId = crypto.randomUUID().slice(0, 8);
-    addClient({
+    if (disposed) throw new TypeError("The Veryfront handler has been disposed");
+    const clientId = crypto.randomUUID();
+    const accepted = addClient({
       id: clientId,
       socket: ws,
       connectedAt: Date.now(),
       lastActivity: Date.now(),
+      projectDir,
     });
+    if (!accepted) return;
 
     let cleanedUp = false;
-    const cleanup = () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      hmrRateLimiter.cleanup(ws);
-      removeClient(clientId);
-    };
-    ws.addEventListener("close", cleanup);
-    ws.addEventListener("error", cleanup);
-
-    ws.addEventListener("message", (event) => {
-      handleHmrClientMessage({
+    function onMessage(event: MessageEvent): void {
+      const keepOpen = handleHmrClientMessage({
         socket: ws,
         data: event.data,
         rateLimiter: hmrRateLimiter,
@@ -291,21 +370,91 @@ export async function createHandler(
           if (client) client.lastActivity = Date.now();
         },
       });
-    });
-
-    const sendConnected = () => {
+      if (!keepOpen) cleanup();
+    }
+    function sendConnected(): void {
       try {
         ws.send(JSON.stringify({ type: "connected" }));
-      } catch (_) {
-        /* expected: socket may have closed immediately */
+      } catch {
+        closeAndCleanup(HMR_CLOSE_CONNECTION_FAILED, "Connection failed");
       }
-    };
+    }
+    function onError(): void {
+      closeAndCleanup(HMR_CLOSE_CONNECTION_FAILED, "Connection failed");
+    }
+    function cleanup(): void {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      ws.removeEventListener("close", cleanup);
+      ws.removeEventListener("error", onError);
+      ws.removeEventListener("message", onMessage);
+      ws.removeEventListener("open", sendConnected);
+      hmrRateLimiter.cleanup(ws);
+      removeClient(clientId);
+      connectedHMRDisposers.delete(shutdown);
+    }
+    function closeAndCleanup(code: number, reason: string): void {
+      try {
+        if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+          ws.close(code, reason);
+        }
+      } finally {
+        cleanup();
+      }
+    }
+    function shutdown(): void {
+      closeAndCleanup(HMR_CLOSE_GOING_AWAY, "Server shutting down");
+    }
+
+    connectedHMRDisposers.add(shutdown);
+    ws.addEventListener("close", cleanup, { once: true });
+    ws.addEventListener("error", onError, { once: true });
+    ws.addEventListener("message", onMessage);
 
     if (ws.readyState === WebSocket.OPEN) sendConnected();
-    else ws.addEventListener("open", sendConnected, { once: true });
+    else if (ws.readyState === WebSocket.CONNECTING) {
+      ws.addEventListener("open", sendConnected, { once: true });
+    } else cleanup();
   };
 
-  return Object.assign(fetch, { upgrade, connectHMR });
+  const disposeHandler = createHandlerDisposer([
+    async () => {
+      const failures: unknown[] = [];
+      for (const [key, registration] of upgradedServers) {
+        upgradedServers.delete(key);
+        registration.server.off("upgrade", registration.onUpgrade);
+        registration.server.off("close", registration.onClose);
+        try {
+          await registration.controller.then((value) => value.close());
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "WebSocket upgrade cleanup failed");
+      }
+    },
+    () => {
+      const failures: unknown[] = [];
+      for (const close of [...connectedHMRDisposers]) {
+        try {
+          close();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "HMR client cleanup failed");
+      }
+    },
+    () => devServer.stop(),
+  ]);
+  const dispose = () => {
+    disposed = true;
+    return disposeHandler();
+  };
+
+  return Object.assign(fetch, { upgrade, connectHMR, dispose });
 }
 
 /**

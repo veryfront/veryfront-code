@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BINARY_TAILWIND_PLUGIN_PACKAGES,
@@ -41,5 +41,31 @@ describe("build/binary-plugin-includes", () => {
         `https://esm.sh/${pkg}?bundle&external=tailwindcss&target=denonext`
       ),
     );
+  });
+
+  it("rejects package specifiers that can alter the bundle URL", () => {
+    for (
+      const packageName of [
+        "",
+        " tailwindcss-animate",
+        "tailwindcss-animate ",
+        "tailwindcss-animate?target=node",
+        "tailwindcss-animate#fragment",
+        "tailwindcss-animate/extra",
+        "../tailwindcss-animate",
+        "https://example.com/plugin",
+        "@scope",
+        "@scope/plugin@",
+        "@scope/plugin@1.0.0/path",
+        "plugin%3Ftarget=node",
+        "plugin\n@1.0.0",
+      ]
+    ) {
+      assertThrows(
+        () => getTailwindPluginBundleUrl(packageName),
+        TypeError,
+        "valid npm package specifier",
+      );
+    }
   });
 });

@@ -2,96 +2,161 @@
  * Skill frontmatter parser
  *
  * Parses SKILL.md files with YAML frontmatter.
- * Primary parser: gray-matter shim (#std/front-matter/yaml.ts)
- * Fallback: regex + line-by-line parser
  *
  * @module
  */
 
+import { extract } from "#std/front-matter/yaml.ts";
 import { createError, toError } from "#veryfront/errors";
 import { validateAllowedToolPatterns } from "./allowed-tools.ts";
-import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_REGEX, type SkillMetadata } from "./types.ts";
+import {
+  SKILL_COMPATIBILITY_MAX_LENGTH,
+  SKILL_DEFINITION_MAX_BYTES,
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_NAME_REGEX,
+  type SkillMetadata,
+} from "./types.ts";
 
 /** Result of parsing a SKILL.md file */
-interface ParsedSkillContent {
+export interface ParsedSkillContent {
+  /** Parsed YAML frontmatter fields. */
   frontmatter: Record<string, unknown>;
+  /** Markdown content following the frontmatter. */
   body: string;
+}
+
+const MAX_FRONTMATTER_FIELDS = 64;
+const MAX_ALLOWED_TOOLS_TEXT_LENGTH = 65_536;
+const MAX_LICENSE_LENGTH = 500;
+const MAX_METADATA_ENTRIES = 64;
+const MAX_METADATA_KEY_LENGTH = 128;
+const MAX_METADATA_VALUE_LENGTH = 1_024;
+
+function invalidMetadata(message: string): never {
+  throw toError(createError({ type: "agent", message }));
+}
+
+function snapshotPlainRecord(
+  value: unknown,
+  label: string,
+  maxEntries: number,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalidMetadata(`${label} must be a key-value mapping.`);
+  }
+
+  let prototype: object | null;
+  let keys: (string | symbol)[];
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    invalidMetadata(`${label} must be a readable key-value mapping.`);
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    invalidMetadata(`${label} must be a plain key-value mapping.`);
+  }
+  if (keys.length > maxEntries) {
+    invalidMetadata(`${label} must contain at most ${maxEntries} fields.`);
+  }
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      invalidMetadata(`${label} must use string keys.`);
+    }
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    } catch {
+      invalidMetadata(`${label} must be a readable key-value mapping.`);
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      invalidMetadata(`${label} must contain data properties only.`);
+    }
+    Object.defineProperty(snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    });
+  }
+  return snapshot;
+}
+
+function utf8SizeWithin(value: string, maxBytes: number): boolean {
+  return value.length <= maxBytes && new TextEncoder().encode(value).byteLength <= maxBytes;
 }
 
 /**
  * Parse SKILL.md content into frontmatter + body.
  *
- * Uses gray-matter shim as primary parser with a regex fallback
- * for environments where gray-matter is not available.
+ * Malformed YAML is rejected so policy-bearing fields cannot be interpreted
+ * with weaker fallback rules.
  */
 export async function parseSkillFrontmatter(content: string): Promise<ParsedSkillContent> {
-  // Try primary parser: gray-matter shim
+  if (typeof content !== "string" || !utf8SizeWithin(content, SKILL_DEFINITION_MAX_BYTES)) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `SKILL.md must not exceed ${SKILL_DEFINITION_MAX_BYTES} bytes.`,
+      }),
+    );
+  }
+  let result: ReturnType<typeof extract<Record<string, unknown>>>;
   try {
-    const { extract } = await import("#std/front-matter/yaml.ts");
-    const result = extract<Record<string, unknown>>(content);
-    return { frontmatter: result.attrs, body: result.body };
+    result = extract<Record<string, unknown>>(content);
   } catch {
-    // expected: front-matter parser unavailable, fall through to regex fallback
+    throw toError(
+      createError({
+        type: "agent",
+        message: "Skill frontmatter contains invalid YAML",
+      }),
+    );
   }
-
-  // Fallback: regex-based parser
-  return parseFrontmatterFallback(content);
-}
-
-/**
- * Regex-based fallback parser for YAML frontmatter.
- * Handles simple key: value pairs (no nested YAML).
- */
-function parseFrontmatterFallback(content: string): ParsedSkillContent {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) {
-    return { frontmatter: {}, body: content };
-  }
-
-  const rawFrontmatter = match[1] ?? "";
-  const body = match[2] ?? "";
-  const frontmatter: Record<string, unknown> = {};
-
-  for (const line of rawFrontmatter.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    const colonIndex = trimmed.indexOf(":");
-    if (colonIndex === -1) continue;
-
-    const key = trimmed.slice(0, colonIndex).trim();
-    const value = trimmed.slice(colonIndex + 1).trim();
-    frontmatter[key] = value;
-  }
-
-  return { frontmatter, body };
+  const frontmatter = snapshotPlainRecord(
+    result.attrs,
+    "Skill frontmatter",
+    MAX_FRONTMATTER_FIELDS,
+  );
+  return { frontmatter, body: result.body };
 }
 
 /**
  * Validate and normalize parsed frontmatter into SkillMetadata.
  *
  * @param frontmatter - Parsed frontmatter object
- * @param directoryName - Directory name used as fallback for skill name
+ * @param directoryName - Expected parent directory name for the skill
  */
 export function validateSkillMetadata(
   frontmatter: Record<string, unknown>,
   directoryName: string,
 ): SkillMetadata {
-  // Name: from frontmatter or directory name
-  const rawName = typeof frontmatter.name === "string" ? frontmatter.name.trim() : directoryName;
+  const fields = snapshotPlainRecord(frontmatter, "Skill frontmatter", MAX_FRONTMATTER_FIELDS);
+  const nameValue = fields.name;
+  if (typeof nameValue !== "string" || !nameValue.trim()) {
+    invalidMetadata('Skill frontmatter is missing a required "name" field.');
+  }
+  const rawName = nameValue.trim();
 
   if (!SKILL_NAME_REGEX.test(rawName)) {
     throw toError(
       createError({
         type: "agent",
         message:
-          `Invalid skill name "${rawName}": must be lowercase alphanumeric with hyphens, 1-64 characters`,
+          "Invalid skill name: use 1-64 lowercase alphanumeric characters with single hyphen separators",
       }),
     );
   }
+  if (typeof directoryName !== "string" || !SKILL_NAME_REGEX.test(directoryName)) {
+    invalidMetadata("Skill directory name is invalid.");
+  }
+  if (rawName !== directoryName) {
+    invalidMetadata(`Skill name "${rawName}" must match its directory name "${directoryName}".`);
+  }
 
   // Description: required
-  const rawDescription = frontmatter.description;
+  const rawDescription = fields.description;
   if (!rawDescription || typeof rawDescription !== "string" || !rawDescription.trim()) {
     throw toError(
       createError({
@@ -101,27 +166,41 @@ export function validateSkillMetadata(
     );
   }
 
-  const description = rawDescription.trim().slice(0, SKILL_DESCRIPTION_MAX_LENGTH);
+  const description = rawDescription.trim();
+  if (description.length > SKILL_DESCRIPTION_MAX_LENGTH) {
+    invalidMetadata(
+      `Skill "${rawName}" description must not exceed ${SKILL_DESCRIPTION_MAX_LENGTH} characters.`,
+    );
+  }
 
   // Allowed-tools: parse from space-delimited string or array
-  const allowedToolPatterns = frontmatter["allowed-tools"] ?? frontmatter.allowed_tools;
+  const hasCanonicalAllowedTools = Object.hasOwn(fields, "allowed-tools");
+  const hasLegacyAllowedTools = Object.hasOwn(fields, "allowed_tools");
+  if (hasCanonicalAllowedTools && hasLegacyAllowedTools) {
+    invalidMetadata(
+      `Skill "${rawName}" must not define both "allowed-tools" and "allowed_tools".`,
+    );
+  }
+  const allowedToolPatterns = hasCanonicalAllowedTools
+    ? fields["allowed-tools"]
+    : fields.allowed_tools;
   const allowedTools = parseAllowedTools(allowedToolPatterns, rawName);
 
-  // License: optional string passthrough
-  const license = typeof frontmatter.license === "string" ? frontmatter.license.trim() : undefined;
+  const license = parseOptionalString(fields.license, rawName, "license", MAX_LICENSE_LENGTH);
 
-  // Compatibility: optional string passthrough
-  const compatibility = typeof frontmatter.compatibility === "string"
-    ? frontmatter.compatibility.trim()
-    : undefined;
+  const compatibility = parseOptionalString(
+    fields.compatibility,
+    rawName,
+    "compatibility",
+    SKILL_COMPATIBILITY_MAX_LENGTH,
+  );
 
-  // Metadata: convert nested object values to strings
-  const metadata = parseMetadata(frontmatter.metadata);
+  const metadata = parseMetadata(fields.metadata, rawName);
 
   return {
     name: rawName,
     description,
-    ...(allowedTools && { allowedTools }),
+    ...(allowedTools !== undefined && { allowedTools }),
     ...(license && { license }),
     ...(compatibility && { compatibility }),
     ...(metadata && { metadata }),
@@ -137,15 +216,58 @@ function parseAllowedTools(
   value: unknown,
   skillName: string,
 ): string[] | undefined {
-  if (value === undefined || value === null) return undefined;
+  if (value === undefined) return undefined;
 
   let patterns: string[];
 
   if (typeof value === "string") {
+    if (value.length > MAX_ALLOWED_TOOLS_TEXT_LENGTH) {
+      invalidMetadata(`Skill "${skillName}" allowed-tools value is too long.`);
+    }
     patterns = value.split(/\s+/).filter(Boolean);
-  } else if (Array.isArray(value)) {
+  } else {
+    let isArray = false;
+    let arrayLength: number | undefined;
+    try {
+      isArray = Array.isArray(value);
+      if (isArray) {
+        const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value as object, "length");
+        const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+          ? lengthDescriptor.value
+          : undefined;
+        if (
+          typeof lengthValue === "number" && Number.isSafeInteger(lengthValue) && lengthValue >= 0
+        ) {
+          arrayLength = lengthValue;
+        }
+      }
+    } catch {
+      invalidMetadata(`Skill "${skillName}" allowed-tools value must be readable.`);
+    }
+    if (!isArray || arrayLength === undefined) {
+      throw toError(
+        createError({
+          type: "agent",
+          message:
+            `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
+        }),
+      );
+    }
+    if (arrayLength > 256) {
+      invalidMetadata(`Skill "${skillName}" allowed-tools has too many entries.`);
+    }
     patterns = [];
-    for (const rawPattern of value) {
+    for (let index = 0; index < arrayLength; index += 1) {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = Reflect.getOwnPropertyDescriptor(value as object, String(index));
+      } catch {
+        invalidMetadata(`Skill "${skillName}" allowed-tools value must be readable.`);
+      }
+      if (!descriptor || !("value" in descriptor)) {
+        invalidMetadata(`Skill "${skillName}" allowed-tools must be a dense array.`);
+      }
+      const rawPattern = descriptor.value;
       if (typeof rawPattern !== "string") {
         throw toError(
           createError({
@@ -166,17 +288,9 @@ function parseAllowedTools(
       }
       patterns.push(pattern);
     }
-  } else {
-    throw toError(
-      createError({
-        type: "agent",
-        message:
-          `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
-      }),
-    );
   }
 
-  if (patterns.length === 0) return undefined;
+  if (patterns.length === 0) return [];
 
   try {
     return validateAllowedToolPatterns(patterns);
@@ -191,18 +305,54 @@ function parseAllowedTools(
   }
 }
 
-/** Convert metadata object values to strings */
+function parseOptionalString(
+  value: unknown,
+  skillName: string,
+  field: string,
+  maxLength: number,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    invalidMetadata(`Skill "${skillName}" ${field} must be a string.`);
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) {
+    invalidMetadata(
+      `Skill "${skillName}" ${field} must contain 1-${maxLength} characters.`,
+    );
+  }
+  return normalized;
+}
+
+/** Validate metadata as a bounded string-to-string mapping. */
 function parseMetadata(
   value: unknown,
+  skillName: string,
 ): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (value === undefined) return undefined;
+  const metadata = snapshotPlainRecord(value, "Skill metadata", MAX_METADATA_ENTRIES);
 
-  const entries = Object.entries(value as Record<string, unknown>);
+  const entries = Object.entries(metadata);
   if (entries.length === 0) return undefined;
 
   const result: Record<string, string> = {};
   for (const [k, v] of entries) {
-    result[k] = String(v);
+    if (!k || k.length > MAX_METADATA_KEY_LENGTH || typeof v !== "string") {
+      invalidMetadata(
+        `Skill "${skillName}" metadata must use bounded string keys and string values.`,
+      );
+    }
+    if (v.length > MAX_METADATA_VALUE_LENGTH) {
+      invalidMetadata(
+        `Skill "${skillName}" metadata values must not exceed ${MAX_METADATA_VALUE_LENGTH} characters.`,
+      );
+    }
+    Object.defineProperty(result, k, {
+      configurable: true,
+      enumerable: true,
+      value: v,
+      writable: true,
+    });
   }
   return result;
 }

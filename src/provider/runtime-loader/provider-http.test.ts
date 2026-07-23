@@ -7,6 +7,8 @@ import {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
+  requestJson,
+  requestStream,
 } from "./provider-http.ts";
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>): Response {
@@ -26,6 +28,12 @@ describe("provider-http", () => {
     it("returns undefined for a missing or non-numeric, non-date header", () => {
       assertEquals(parseRetryAfterMs(null), undefined);
       assertEquals(parseRetryAfterMs("not-a-date"), undefined);
+      assertEquals(parseRetryAfterMs("1e308"), undefined);
+      assertEquals(parseRetryAfterMs("2147484"), undefined);
+      assertEquals(parseRetryAfterMs("-1"), undefined);
+      assertEquals(parseRetryAfterMs("1e2"), undefined);
+      assertEquals(parseRetryAfterMs("0x10"), undefined);
+      assertEquals(parseRetryAfterMs(" "), undefined);
     });
 
     it("parses an HTTP-date into a non-negative delay", () => {
@@ -33,6 +41,84 @@ describe("provider-http", () => {
       const ms = parseRetryAfterMs(future);
       assertEquals(typeof ms, "number");
       assertEquals(ms !== undefined && ms >= 0, true);
+    });
+  });
+
+  describe("request boundaries", () => {
+    it("fails safely when a provider returns malformed JSON", async () => {
+      let caught: unknown;
+      try {
+        await requestJson({
+          url: "https://provider.example/v1/models",
+          fetchImpl: () => Promise.resolve(new Response("private malformed payload")),
+          init: {},
+          providerLabel: "provider",
+          providerKind: "openai",
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      assertEquals(caught instanceof ProviderRequestError, true);
+      assertEquals((caught as Error).message.includes("private malformed payload"), false);
+    });
+
+    it("wraps network failures without exposing thrown credential material", async () => {
+      let caught: unknown;
+      try {
+        await requestStream({
+          url: "https://provider.example/v1/models",
+          fetchImpl: () => Promise.reject(new Error("Bearer private-network-token")),
+          init: {},
+          providerLabel: "provider",
+          providerKind: "openai",
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      assertEquals(caught instanceof ProviderOverloadedError, true);
+      assertEquals((caught as ProviderOverloadedError).retryable, true);
+      assertEquals((caught as Error).message.includes("private-network-token"), false);
+    });
+
+    it("preserves request cancellation", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      let caught: unknown;
+      try {
+        await requestJson({
+          url: "https://provider.example/v1/models",
+          fetchImpl: () => Promise.reject(new DOMException("Aborted", "AbortError")),
+          init: { signal: controller.signal },
+          providerLabel: "provider",
+          providerKind: "openai",
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      assertEquals(caught instanceof DOMException, true);
+      assertEquals((caught as DOMException).name, "AbortError");
+    });
+
+    it("rejects invalid custom fetch responses at the transport boundary", async () => {
+      let caught: unknown;
+      try {
+        await requestJson({
+          url: "https://provider.example/v1/models",
+          fetchImpl: (() => Promise.resolve(undefined)) as unknown as typeof fetch,
+          init: {},
+          providerLabel: "provider",
+          providerKind: "openai",
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      assertEquals(caught instanceof ProviderRequestError, true);
+      assertEquals((caught as ProviderRequestError).retryable, false);
+      assertEquals((caught as Error).message.includes("undefined"), false);
     });
   });
 
@@ -90,6 +176,23 @@ describe("provider-http", () => {
       assertEquals(err.retryable, true);
     });
 
+    it("fails closed for unknown OpenAI 429 error codes", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(429, { error: { code: "unknown_limit" } }),
+      );
+      assertEquals(err instanceof ProviderRequestError, true);
+      assertEquals(err.retryable, false);
+    });
+
+    it("classifies request timeout and conflict responses as retryable", async () => {
+      for (const status of [408, 409, 425]) {
+        const err = await buildProviderError("openai", jsonResponse(status, {}));
+        assertEquals(err instanceof ProviderOverloadedError, true);
+        assertEquals(err.retryable, true);
+      }
+    });
+
     it("mistral 429 insufficient_quota -> non-retryable quota", async () => {
       const err = await buildProviderError(
         "mistral",
@@ -99,13 +202,13 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
-    it("google 429 RESOURCE_EXHAUSTED -> non-retryable quota", async () => {
+    it("google 429 RESOURCE_EXHAUSTED -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "google",
         jsonResponse(429, { error: { status: "RESOURCE_EXHAUSTED" } }),
       );
-      assertEquals(err instanceof ProviderQuotaError, true);
-      assertEquals(err.retryable, false);
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryable, true);
     });
 
     it("fails closed when an oversized Google 429 body is truncated", async () => {

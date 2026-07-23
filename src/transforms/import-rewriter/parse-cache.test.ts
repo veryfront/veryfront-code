@@ -132,6 +132,22 @@ const url = "https://example.com/api";
       const result = applyRewrites(code, parsed, rewrites);
       assertEquals(result.includes("https://example.com/api"), true);
     });
+
+    it("does not unmask placeholder-like text from the original source", async () => {
+      const code =
+        `const sentinel = "__VF_HTTP_MASK_0__";\nimport value from "https://example.com/value.js";`;
+      const parsed = await parseAllImports(code);
+      const result = applyRewrites(
+        code,
+        parsed,
+        new Map([[0, { specifier: "./value.js" }]]),
+      );
+
+      assertEquals(
+        result,
+        `const sentinel = "__VF_HTTP_MASK_0__";\nimport value from "./value.js";`,
+      );
+    });
   });
 
   describe("replaceSpecifiers", () => {

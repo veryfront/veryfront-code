@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
@@ -105,6 +105,25 @@ describe("module-loader/module-cache-lookup", () => {
       );
       assertEquals(moduleCache.has("cache-key"), false);
     });
+  });
+
+  it("propagates operational cache reads and keeps the cache pointer for retry", async () => {
+    const moduleCache = new Map([["cache-key", "/cache/module.mjs"]]);
+
+    await assertRejects(
+      () =>
+        resolveCachedModulePath({
+          cacheKey: "cache-key",
+          filePath: "/project/app/page.tsx",
+          projectDir: "/project",
+          moduleCache,
+          readTextFile: () =>
+            Promise.reject(Object.assign(new Error("cache permission denied"), { code: "EACCES" })),
+        }),
+      Error,
+      "cache permission denied",
+    );
+    assertEquals(moduleCache.get("cache-key"), "/cache/module.mjs");
   });
 
   it("promotes an MDX-ESM cache hit into the in-memory cache", async () => {

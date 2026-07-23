@@ -9,7 +9,11 @@
  * can intercept and forward it to Studio.
  */
 
+import { snapshotStudioValue } from "./bridge-messaging.ts";
+
 type LogContext = Record<string, unknown> | Error;
+
+const MAX_LOG_MESSAGE_LENGTH = 4_096;
 
 interface BridgeLogger {
   debug(message: string, context?: LogContext): void;
@@ -20,18 +24,29 @@ interface BridgeLogger {
 
 function normalizeContext(context?: LogContext): Record<string, unknown> | undefined {
   if (!context) return undefined;
-  if (context instanceof Error) {
-    return { error: context.message, ...(context.stack ? { stack: context.stack } : {}) };
+  try {
+    if (context instanceof Error) {
+      const descriptor = Object.getOwnPropertyDescriptor(context, "message");
+      return {
+        error: descriptor && !descriptor.get && !descriptor.set &&
+            typeof descriptor.value === "string"
+          ? descriptor.value.slice(0, MAX_LOG_MESSAGE_LENGTH)
+          : "Bridge operation failed",
+      };
+    }
+  } catch {
+    return { error: "Bridge operation failed" };
   }
-  return context;
+  const snapshot = snapshotStudioValue(context);
+  return snapshot?.value && typeof snapshot.value === "object" && !Array.isArray(snapshot.value)
+    ? snapshot.value as Record<string, unknown>
+    : { error: "Bridge log context unavailable" };
 }
 
 function formatArgs(message: string, context?: LogContext): unknown[] {
   const normalized = normalizeContext(context);
-  if (!normalized || Object.keys(normalized).length === 0) {
-    return [message];
-  }
-  return [message, normalized];
+  const boundedMessage = message.slice(0, MAX_LOG_MESSAGE_LENGTH);
+  return normalized ? [boundedMessage, normalized] : [boundedMessage];
 }
 
 export const logger: BridgeLogger = {

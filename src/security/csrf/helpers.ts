@@ -14,6 +14,18 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 /** Default CSRF token TTL: 24 hours (longer than session action TTL to avoid stale-form 403s). */
 const CSRF_DEFAULT_TTL_SEC = 86_400;
 const DEFAULT_CSRF_COOKIE_NAME = "__Host-vf_csrf";
+const CSRF_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+const HTTP_TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+function assertTokenName(name: string, value: string): void {
+  if (HTTP_TOKEN_RE.test(value)) return;
+  throw new TypeError(`CSRF ${name} must be a valid HTTP token`);
+}
+
+function assertPositiveSafeInteger(name: string, value: number): void {
+  if (Number.isSafeInteger(value) && value > 0) return;
+  throw new TypeError(`CSRF ${name} must be a positive safe integer`);
+}
 
 export interface CsrfConfig {
   cookieName?: string;
@@ -38,8 +50,12 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
 } {
   const cookieName = options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
   const maxAge = options?.ttlSec ?? CSRF_DEFAULT_TTL_SEC;
+  assertTokenName("cookieName", cookieName);
+  assertPositiveSafeInteger("ttlSec", maxAge);
   const httpOnly = options?.httpOnly ?? true;
-  const secure = cookieName.startsWith("__Host-") ? true : options?.secure ?? true;
+  const secure = cookieName.startsWith("__Host-") || cookieName.startsWith("__Secure-")
+    ? true
+    : options?.secure ?? true;
 
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -69,6 +85,13 @@ function timingSafeEqual(a: string, b: string): boolean {
   return result === 0;
 }
 
+function isGeneratedCsrfToken(value: string): boolean {
+  // generateCsrfToken() encodes exactly 32 random bytes as unpadded base64url.
+  // Reject arbitrary matching values so the cookie is evidence that this
+  // helper generated the token, not merely an attacker-selected double submit.
+  return CSRF_TOKEN_RE.test(value);
+}
+
 /** Validate CSRF token by comparing header and cookie */
 export function validateCsrf(
   req: Request,
@@ -76,6 +99,8 @@ export function validateCsrf(
 ): boolean {
   const cookieName = options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
   const headerName = options?.headerName ?? "x-csrf-token";
+  assertTokenName("cookieName", cookieName);
+  assertTokenName("headerName", headerName);
 
   let cookieToken: string | undefined;
   try {
@@ -84,10 +109,10 @@ export function validateCsrf(
     /* expected: malformed cookie (e.g. bad percent-encoding) → treat as missing */
     return false;
   }
-  if (!cookieToken) return false;
+  if (!cookieToken || !isGeneratedCsrfToken(cookieToken)) return false;
 
   const headerToken = req.headers.get(headerName) ?? "";
-  if (!headerToken) return false;
+  if (!isGeneratedCsrfToken(headerToken)) return false;
 
   return timingSafeEqual(cookieToken, headerToken);
 }
@@ -127,7 +152,7 @@ export function applyCsrfCookie(
     /* expected: malformed cookie header — issue a fresh token */
     cookies = {};
   }
-  if (cookies[cookieName]) return;
+  if (isGeneratedCsrfToken(cookies[cookieName] ?? "")) return;
 
   // Detect HTTPS from the request URL, or from x-forwarded-proto only when the
   // deployment trusts the upstream proxy (VERYFRONT_TRUST_FORWARDED_HEADERS=1).

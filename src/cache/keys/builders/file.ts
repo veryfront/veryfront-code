@@ -11,7 +11,11 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { CacheKeyPrefix, type FileOperationContext } from "../prefixes.ts";
 import { hashPathWithName } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
-import { encodeCacheSourceIdentity, type EncodedCacheSourceIdentity } from "../source-identity.ts";
+import {
+  encodeCacheIdentitySegment,
+  encodeCacheSourceIdentity,
+  type EncodedCacheSourceIdentity,
+} from "../source-identity.ts";
 
 function encodeFileSourceIdentity(ctx: FileOperationContext): EncodedCacheSourceIdentity {
   if (ctx.sourceType === "branch") {
@@ -20,7 +24,7 @@ function encodeFileSourceIdentity(ctx: FileOperationContext): EncodedCacheSource
 
   if (!ctx.releaseId) {
     throw CACHE_INVARIANT_VIOLATION.create({
-      detail: `Missing releaseId for ${ctx.sourceType} sourceType (project: ${ctx.projectSlug})`,
+      detail: `Missing releaseId for ${ctx.sourceType} cache source`,
     });
   }
 
@@ -43,21 +47,26 @@ function buildFileOperationPrefix(
   if (!ctx) return unknownKey;
   const source = encodeFileSourceIdentity(ctx);
   const sourceTypeKey = source.type === "environment" ? "env" : source.type;
-  return `${prefix}:${sourceTypeKey}:${ctx.projectSlug}:${source.qualifier}`;
+  const projectSlug = encodeCacheIdentitySegment(ctx.projectSlug, "projectSlug");
+  return `${prefix}:${sourceTypeKey}:${projectSlug}:${source.qualifier}`;
 }
 
+/** Build the source-isolated prefix for a file read cache entry. */
 export function buildFileCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
   return buildFileOperationPrefix(CacheKeyPrefix.FILE, ctx, "file:unknown");
 }
 
+/** Build the source-isolated prefix for a file stat cache entry. */
 export function buildStatCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
   return buildFileOperationPrefix(CacheKeyPrefix.STAT, ctx, "stat:unknown");
 }
 
+/** Build the source-isolated prefix for a directory cache entry. */
 export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
   return buildFileOperationPrefix(CacheKeyPrefix.DIR, ctx, "dir:unknown");
 }
 
+/** Build the source-isolated key for a project file listing. */
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {
   return buildFileOperationPrefix(CacheKeyPrefix.FILES, ctx, "files:unknown");
 }
@@ -104,7 +113,7 @@ export function buildConfigCacheKey(
   sourceContext?: VirtualConfigSourceContext,
 ): string {
   const baseKey = isVirtualFilesystem
-    ? `${CacheKeyPrefix.CONFIG_VIRTUAL}:${projectIdOrDir}${
+    ? `${CacheKeyPrefix.CONFIG_VIRTUAL}:${encodeCacheIdentitySegment(projectIdOrDir, "projectId")}${
       sourceContext ? `:${buildVirtualConfigSourceQualifier(sourceContext)}` : ""
     }`
     : `${CacheKeyPrefix.CONFIG}:${hashPathWithName(projectIdOrDir)}`;

@@ -1,6 +1,7 @@
-import { defineError } from "../types.ts";
+import { defineError, type ErrorRegistryFragment, type RegisteredError } from "../types.ts";
 
-export const ROUTE_CONFLICT = defineError({
+/** Registered error definition for the route-conflict slug. */
+export const ROUTE_CONFLICT: RegisteredError = defineError({
   slug: "route-conflict",
   category: "ROUTE",
   status: 409,
@@ -8,7 +9,8 @@ export const ROUTE_CONFLICT = defineError({
   suggestion: "Rename or reorganize conflicting route files",
 });
 
-export const INVALID_ROUTE_FILE = defineError({
+/** Registered error definition for the invalid-route-file slug. */
+export const INVALID_ROUTE_FILE: RegisteredError = defineError({
   slug: "invalid-route-file",
   category: "ROUTE",
   status: 400,
@@ -16,7 +18,8 @@ export const INVALID_ROUTE_FILE = defineError({
   suggestion: "Ensure route file exports required functions",
 });
 
-export const ROUTE_HANDLER_INVALID = defineError({
+/** Registered error definition for the route-handler-invalid slug. */
+export const ROUTE_HANDLER_INVALID: RegisteredError = defineError({
   slug: "route-handler-invalid",
   category: "ROUTE",
   status: 400,
@@ -24,7 +27,8 @@ export const ROUTE_HANDLER_INVALID = defineError({
   suggestion: "Export a valid handler function from the route file",
 });
 
-export const DYNAMIC_ROUTE_ERROR = defineError({
+/** Registered error definition for the dynamic-route-error slug. */
+export const DYNAMIC_ROUTE_ERROR: RegisteredError = defineError({
   slug: "dynamic-route-error",
   category: "ROUTE",
   status: 500,
@@ -32,7 +36,8 @@ export const DYNAMIC_ROUTE_ERROR = defineError({
   suggestion: "Check dynamic route segment syntax",
 });
 
-export const ROUTE_PARAMS_ERROR = defineError({
+/** Registered error definition for the route-params-error slug. */
+export const ROUTE_PARAMS_ERROR: RegisteredError = defineError({
   slug: "route-params-error",
   category: "ROUTE",
   status: 400,
@@ -40,7 +45,8 @@ export const ROUTE_PARAMS_ERROR = defineError({
   suggestion: "Validate route parameter values",
 });
 
-export const API_ROUTE_ERROR = defineError({
+/** Registered error definition for the api-route-error slug. */
+export const API_ROUTE_ERROR: RegisteredError = defineError({
   slug: "api-route-error",
   category: "ROUTE",
   status: 500,
@@ -49,11 +55,20 @@ export const API_ROUTE_ERROR = defineError({
 });
 
 /** Registry fragment for ROUTE errors (slug → definition). */
-export const ROUTE_REGISTRY = {
-  "route-conflict": ROUTE_CONFLICT,
-  "invalid-route-file": INVALID_ROUTE_FILE,
-  "route-handler-invalid": ROUTE_HANDLER_INVALID,
-  "dynamic-route-error": DYNAMIC_ROUTE_ERROR,
-  "route-params-error": ROUTE_PARAMS_ERROR,
-  "api-route-error": API_ROUTE_ERROR,
-} as const;
+export const ROUTE_REGISTRY: ErrorRegistryFragment<
+  | "route-conflict"
+  | "invalid-route-file"
+  | "route-handler-invalid"
+  | "dynamic-route-error"
+  | "route-params-error"
+  | "api-route-error"
+> = Object.freeze(
+  {
+    "route-conflict": ROUTE_CONFLICT,
+    "invalid-route-file": INVALID_ROUTE_FILE,
+    "route-handler-invalid": ROUTE_HANDLER_INVALID,
+    "dynamic-route-error": DYNAMIC_ROUTE_ERROR,
+    "route-params-error": ROUTE_PARAMS_ERROR,
+    "api-route-error": API_ROUTE_ERROR,
+  } as const,
+);

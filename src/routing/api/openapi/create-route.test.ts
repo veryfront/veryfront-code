@@ -138,4 +138,31 @@ describe("createRoute", () => {
     const response = await handler(new Request("http://test.com"), mockContext);
     assertEquals(await response.text(), "success");
   });
+
+  it("does not overwrite metadata when the same handler is reused", () => {
+    const sharedHandler = () => new Response("ok");
+    const first = createRoute({ summary: "First route", handler: sharedHandler });
+    const second = createRoute({ summary: "Second route", handler: sharedHandler });
+
+    assertEquals(first === second, false);
+    assertEquals(getMetadata(first).summary, "First route");
+    assertEquals(getMetadata(second).summary, "Second route");
+    assertEquals(OPENAPI_METADATA in sharedHandler, false);
+  });
+
+  it("rejects response status codes outside the HTTP range", () => {
+    let message = "";
+    try {
+      createRoute({
+        response: {
+          999: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+        },
+        handler: () => new Response("ok"),
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    assertEquals(message.includes("HTTP status code"), true);
+  });
 });

@@ -1,13 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  acquireConfiguredMemoryMonitoring,
   checkMemoryPressure,
   forceGC,
   getCacheStats,
   getHeapStats,
   getInitialRapidHeapGrowthState,
+  getMemoryMonitoringConfig,
   getMemoryMonitoringLogContext,
+  getMemoryMonitoringState,
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
   registerCache,
@@ -45,6 +48,37 @@ describe("memory/profiler", () => {
     it("should handle unregistering a cache that does not exist", () => {
       unregisterCache("nonexistent");
     });
+
+    it("rejects unsafe cache registrations", () => {
+      const stats = () => ({ name: "cache", entries: 1 });
+
+      assertThrows(() => registerCache("", stats), Error, "cache name");
+      assertThrows(() => registerCache("cache\nsecret", stats), Error, "cache name");
+      assertThrows(
+        () => registerCache("cache", null as unknown as () => never),
+        Error,
+        "stats callback",
+      );
+    });
+
+    it("bounds distinct cache registrations", async () => {
+      const isolated = await import("./profiler.ts?cache-registry-cap-test");
+      const stats = (name: string) => () => ({ name, entries: 1 });
+      let capacityError: unknown;
+
+      for (let index = 0; index < 1_100; index++) {
+        const name = `bounded-cache-${index}`;
+        try {
+          isolated.registerCache(name, stats(name));
+        } catch (error) {
+          capacityError = error;
+          break;
+        }
+      }
+
+      assert(capacityError instanceof Error);
+      assert(capacityError.message.includes("registry capacity"));
+    });
   });
 
   describe("getCacheStats", () => {
@@ -68,6 +102,32 @@ describe("memory/profiler", () => {
       const names = getCacheStats().map((s) => s.name);
       assert(names.includes("test-cache-1"));
       assert(names.includes("test-cache-2"));
+    });
+
+    it("fails closed for malformed or identity-changing cache stats", () => {
+      registerCache("test-cache", () => ({
+        name: "different-cache",
+        entries: Number.NaN,
+      }));
+
+      assertEquals(
+        getCacheStats().find((stats) => stats.name === "test-cache"),
+        { name: "test-cache", entries: -1 },
+      );
+    });
+
+    it("preserves bounded cache-specific diagnostic fields", () => {
+      registerCache("test-cache", () => ({
+        name: "test-cache",
+        entries: 2,
+        cacheDirs: 2,
+        mode: "memory",
+      }));
+
+      assertEquals(
+        getCacheStats().find((stats) => stats.name === "test-cache"),
+        { name: "test-cache", entries: 2, cacheDirs: 2, mode: "memory" },
+      );
     });
   });
 
@@ -247,6 +307,47 @@ describe("memory/profiler", () => {
     it("should clamp threshold to maximum 0.99", () => {
       setHeapWarningThreshold(1.5);
     });
+
+    it("rejects non-finite thresholds", () => {
+      assertThrows(() => setHeapWarningThreshold(Number.NaN), Error, "finite number");
+      assertThrows(() => setHeapWarningThreshold(Number.POSITIVE_INFINITY), Error, "finite number");
+    });
+  });
+
+  describe("getMemoryMonitoringConfig", () => {
+    it("accepts only bounded decimal interval values", () => {
+      assertEquals(
+        getMemoryMonitoringConfig({
+          get: (key) => key === "ENABLE_MEMORY_MONITORING" ? "true" : "1000",
+        }),
+        { enabled: true, intervalMs: 1000 },
+      );
+
+      for (const raw of ["0", "999", "1000ms", "2147483648"]) {
+        assertThrows(
+          () =>
+            getMemoryMonitoringConfig({
+              get: (key) => key === "MEMORY_MONITORING_INTERVAL_MS" ? raw : "true",
+            }),
+          Error,
+          "integer between",
+        );
+      }
+    });
+
+    it("sanitizes unreadable environment access", () => {
+      const error = assertThrows(
+        () =>
+          getMemoryMonitoringConfig({
+            get() {
+              throw new Error("private-memory-env-canary");
+            },
+          }),
+        Error,
+      );
+
+      assertEquals((error as Error).message.includes("private-memory-env-canary"), false);
+    });
   });
 
   describe("startMemoryMonitoring / stopMemoryMonitoring", () => {
@@ -263,6 +364,67 @@ describe("memory/profiler", () => {
 
     it("should handle stop when not started", () => {
       stopMemoryMonitoring();
+    });
+
+    it("rejects intervals that could overflow or spin the timer", () => {
+      for (const interval of [0, 999, 1.5, Number.NaN, 2_147_483_648]) {
+        assertThrows(() => startMemoryMonitoring(interval), Error, "integer between");
+        assertEquals(getMemoryMonitoringState().active, false);
+      }
+    });
+
+    it("shares configured monitoring until every owning lease is released", () => {
+      const env = {
+        get: (key: string) => key === "ENABLE_MEMORY_MONITORING" ? "true" : "60000",
+      };
+      const first = acquireConfiguredMemoryMonitoring(env);
+      const second = acquireConfiguredMemoryMonitoring(env);
+
+      first.release();
+      first.release();
+      assertEquals(getMemoryMonitoringState(), { active: true, intervalMs: 60000 });
+
+      second.release();
+      assertEquals(getMemoryMonitoringState(), { active: false, intervalMs: undefined });
+    });
+
+    it("does not allow a process monitor to replace an owned lease", () => {
+      const lease = acquireConfiguredMemoryMonitoring({
+        get: (key: string) => key === "ENABLE_MEMORY_MONITORING" ? "true" : "60000",
+      });
+
+      assertThrows(
+        () => startMemoryMonitoring(61000),
+        Error,
+        "cannot be replaced",
+      );
+      assertThrows(
+        () => stopMemoryMonitoring(),
+        Error,
+        "cannot be stopped",
+      );
+      lease.release();
+
+      assertEquals(getMemoryMonitoringState(), { active: false, intervalMs: undefined });
+    });
+
+    it("rejects conflicting intervals while a server lease is active", () => {
+      const lease = acquireConfiguredMemoryMonitoring({
+        get: (key: string) => key === "ENABLE_MEMORY_MONITORING" ? "true" : "60000",
+      });
+
+      try {
+        assertThrows(
+          () =>
+            acquireConfiguredMemoryMonitoring({
+              get: (key: string) => key === "ENABLE_MEMORY_MONITORING" ? "true" : "61000",
+            }),
+          Error,
+          "conflicts",
+        );
+      } finally {
+        lease.release();
+      }
     });
   });
 });

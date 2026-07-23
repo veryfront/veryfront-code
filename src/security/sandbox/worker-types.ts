@@ -8,6 +8,7 @@
  */
 
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { AgentRunExecutionBundle } from "./agent-run-worker-contract.ts";
 
 /**
  * Serialized request data that can cross the Worker boundary via postMessage.
@@ -51,6 +52,7 @@ export interface SerializedError {
   name: string;
   stack?: string;
   /** RFC 9457 fields if the error originated from VFError */
+  slug?: string;
   type?: string;
   status?: number;
   detail?: string;
@@ -87,7 +89,18 @@ export type WorkerRequest =
   | ExecuteAppRouteRequest
   | ExecutePagesRouteRequest
   | FetchDataRequest
-  | RenderSSRRequest;
+  | RenderSSRRequest
+  | GenerateOpenAPISpecRequest
+  | ExecuteProjectRunRequest
+  | ExecuteAgentRunRequest;
+
+/** Start one streaming agent run in a fresh, non-reused project Worker. */
+export interface ExecuteAgentRunRequest {
+  type: "execute-agent-run";
+  id: string;
+  bundle: AgentRunExecutionBundle;
+  initialCreditBytes: number;
+}
 
 export interface ExecuteAppRouteRequest {
   type: "execute-app-route";
@@ -142,6 +155,98 @@ export interface RenderSSRRequest {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 }
 
+export interface OpenAPIWorkerModule {
+  pattern: string;
+  moduleCode: string;
+}
+
+export interface GenerateOpenAPISpecRequest {
+  type: "generate-openapi-spec";
+  id: string;
+  projectDir: string;
+  routes: OpenAPIWorkerModule[];
+  info: {
+    title: string;
+    version: string;
+    description?: string;
+    servers: Array<{ url: string; description?: string }>;
+  };
+  /** Exact source-owned integration policy for module evaluation. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  /** Per-project env var overlay for module initialization. */
+  projectEnv?: Record<string, string>;
+}
+
+/** One bundled project definition module evaluated only inside a Worker. */
+export interface ProjectRunWorkerModule {
+  /** Discovery file identity used to derive the definition id. */
+  file: string;
+  /** Discovery root containing the module. */
+  dir: string;
+  /** Self-contained ESM produced without importing the module in the host. */
+  moduleCode: string;
+}
+
+/** A bounded project data file available to an isolated eval dataset loader. */
+export interface ProjectRunWorkerDatasetFile {
+  /** Canonical project-relative path. */
+  path: string;
+  /** UTF-8 JSON or JSONL content. */
+  content: string;
+}
+
+/** Structured-cloneable subset of the agent-service eval adapter configuration. */
+export interface ProjectRunWorkerEvalAgentAdapter {
+  endpoint: string;
+  authToken: string;
+  agentId?: string;
+  projectId?: string;
+  projectSlug?: string;
+  releaseId?: string;
+  contentSourceId?: string;
+  branchId?: string;
+  branchName?: string;
+  environment?: string;
+  environmentId?: string;
+  forwardedHost?: string;
+  forwardedProto?: string;
+  model?: string;
+  allowedTools?: string[];
+  maxSteps?: number;
+}
+
+interface ExecuteProjectRunRequestBase {
+  type: "execute-project-run";
+  id: string;
+  projectDir: string;
+  targetId: string;
+  modules: ProjectRunWorkerModule[];
+  config: Record<string, unknown>;
+  datasetFiles: ProjectRunWorkerDatasetFile[];
+  /** Exact source-owned integration policy for module evaluation and execution. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  /** Exact per-request project environment overlay. */
+  projectEnv?: Record<string, string>;
+}
+
+export interface ExecuteProjectTaskRunRequest extends ExecuteProjectRunRequestBase {
+  kind: "task";
+  projectId: string;
+  environmentId?: string;
+  debug: boolean;
+}
+
+export interface ExecuteProjectEvalRunRequest extends ExecuteProjectRunRequestBase {
+  kind: "eval";
+  runId: string;
+  evalAgentAdapter: ProjectRunWorkerEvalAgentAdapter;
+}
+
+/** Execute one project task or eval in an ephemeral isolation Worker. */
+export type ExecuteProjectRunRequest =
+  | ExecuteProjectTaskRunRequest
+  | ExecuteProjectEvalRunRequest;
+
 // ---------------------------------------------------------------------------
 // Streaming SSR Protocol
 // ---------------------------------------------------------------------------
@@ -161,6 +266,8 @@ export type WorkerResponse =
   | WorkerResultResponse
   | WorkerDataResultResponse
   | WorkerSSRResultResponse
+  | WorkerOpenAPIResultResponse
+  | WorkerProjectRunResultResponse
   | WorkerErrorResponse;
 
 export interface WorkerSSRResultResponse {
@@ -179,6 +286,27 @@ export interface WorkerDataResultResponse {
   type: "data-result";
   id: string;
   result: SerializedDataResult;
+}
+
+export interface WorkerOpenAPIResultResponse {
+  type: "openapi-result";
+  id: string;
+  /** Untrusted process-boundary value. The consumer must validate it. */
+  spec: unknown;
+}
+
+/** JSON-detached result returned by isolated task and eval execution. */
+export interface SerializedProjectRunResult {
+  success: boolean;
+  result?: unknown;
+  error?: string;
+  durationMs: number;
+}
+
+export interface WorkerProjectRunResultResponse {
+  type: "project-run-result";
+  id: string;
+  result: SerializedProjectRunResult;
 }
 
 export interface WorkerErrorResponse {
@@ -204,12 +332,34 @@ export interface WorkerPoolConfig {
   maxRequestsPerWorker: number;
   /** Maximum age of a worker in ms before recycling (default: 600_000 = 10 minutes) */
   maxWorkerAgeMs: number;
-  /** Per-worker memory budget in MB (default: 64). Workers exceeding this are evicted. */
+  /**
+   * Legacy advisory value reported in pool statistics. Deno does not expose a
+   * per-Worker heap limit, so this value is not enforced.
+   * @deprecated Do not rely on this value as an isolation boundary.
+   */
   memoryBudgetMb: number;
 }
 
 /** Maximum request body size for worker isolation (10 MB) */
 export const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
+
+/** Maximum buffered response body size transferred out of worker isolation (16 MB). */
+export const MAX_WORKER_RESPONSE_BODY_BYTES = 16 * 1024 * 1024;
+
+/** Bounds the executable module payload accepted by OpenAPI worker requests. */
+export const MAX_OPENAPI_WORKER_ROUTES = 10_000;
+export const MAX_OPENAPI_WORKER_MODULE_BYTES = 10 * 1024 * 1024;
+export const MAX_OPENAPI_WORKER_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
+
+/** Bounds project-run code, data, configuration, environment, and output transfers. */
+export const MAX_PROJECT_RUN_WORKER_MODULES = 10_000;
+export const MAX_PROJECT_RUN_WORKER_MODULE_BYTES = 10 * 1024 * 1024;
+export const MAX_PROJECT_RUN_WORKER_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
+export const MAX_PROJECT_RUN_WORKER_DATASET_FILES = 10_000;
+export const MAX_PROJECT_RUN_WORKER_DATASET_BYTES = 32 * 1024 * 1024;
+export const MAX_PROJECT_RUN_WORKER_JSON_BYTES = 16 * 1024 * 1024;
+export const MAX_PROJECT_RUN_WORKER_ENV_ENTRIES = 10_000;
+export const MAX_PROJECT_RUN_WORKER_ENV_BYTES = 16 * 1024 * 1024;
 
 export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   maxPoolSize: 20,

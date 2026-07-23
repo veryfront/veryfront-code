@@ -1,8 +1,9 @@
 import { logger } from "#veryfront/utils";
-import type { CriticalCSSResult, CSSOptimizationOptions } from "#veryfront/types";
+import type { CriticalCSSResult, CSSOptimizationOptions } from "./types/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { basicMinify, extractSelectorsFromHTML } from "./utils.ts";
+import { partitionCriticalCSS } from "./css-rule-parser.ts";
 
 const fs = createFileSystem();
 const encoder = new TextEncoder();
@@ -17,37 +18,24 @@ export function extractCriticalCSS(
   return withSpan(
     "build.asset.extractCriticalCSS",
     async (): Promise<CriticalCSSResult> => {
-      logger.debug(`Extracting critical CSS from ${cssPath}`);
+      logger.debug("Extracting critical CSS");
 
       const css = await fs.readTextFile(cssPath);
-      const criticalSelectors = extractSelectorsFromHTML(htmlContent);
-
-      const critical: string[] = [];
-      const remaining: string[] = [];
-
-      for (const rule of css.split("}")) {
-        if (!rule.trim()) continue;
-
-        const fullRule = `${rule}}`;
-        const selector = fullRule.match(/^([^{]+)\{/)?.[1]?.trim();
-        if (!selector) continue;
-
-        const isCritical = criticalSelectors.some((s) => selector.includes(s));
-        (isCritical ? critical : remaining).push(fullRule);
-      }
-
-      const criticalCSS = critical.join("\n");
-      const remainingCSS = remaining.join("\n");
+      const criticalSelectors = new Set(extractSelectorsFromHTML(htmlContent));
+      const partitioned = partitionCriticalCSS(css, criticalSelectors);
+      const criticalCSS = shouldMinify ? basicMinify(partitioned.critical) : partitioned.critical;
+      const remainingCSS = shouldMinify
+        ? basicMinify(partitioned.remaining)
+        : partitioned.remaining;
 
       return {
-        critical: shouldMinify ? basicMinify(criticalCSS) : criticalCSS,
-        remaining: shouldMinify ? basicMinify(remainingCSS) : remainingCSS,
+        critical: criticalCSS,
+        remaining: remainingCSS,
         criticalSize: encoder.encode(criticalCSS).length,
         remainingSize: encoder.encode(remainingCSS).length,
       };
     },
     {
-      "css.path": cssPath,
       "css.minify": shouldMinify,
     },
   );

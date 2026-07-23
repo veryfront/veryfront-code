@@ -1,4 +1,5 @@
 import type { OAuthServiceConfig } from "../types.ts";
+import { freezeOAuthServiceConfigs } from "./freeze-config.ts";
 
 const graphApiBaseUrl = "https://graph.microsoft.com/v1.0";
 
@@ -27,7 +28,8 @@ export const outlookConfig: OAuthServiceConfig = {
     "Mail.ReadWrite",
     "Calendars.Read",
     "Calendars.ReadWrite",
-    "User.Read",
+    "Group.Read.All",
+    "Group-Conversation.Read.All",
     "offline_access",
   ],
 };
@@ -39,12 +41,11 @@ export const teamsConfig: OAuthServiceConfig = {
   displayName: "Microsoft Teams",
   apiBaseUrl: graphApiBaseUrl,
   defaultScopes: [
-    "Team.ReadBasic.All",
-    "Channel.ReadBasic.All",
     "Chat.Read",
     "Chat.ReadWrite",
-    "ChannelMessage.Read.All",
-    "User.Read",
+    "ChannelMessage.Send",
+    "Channel.ReadBasic.All",
+    "Team.ReadBasic.All",
     "offline_access",
   ],
 };
@@ -60,7 +61,6 @@ export const sharePointConfig: OAuthServiceConfig = {
     "Sites.ReadWrite.All",
     "Files.Read.All",
     "Files.ReadWrite.All",
-    "User.Read",
     "offline_access",
   ],
 };
@@ -76,7 +76,6 @@ export const oneDriveConfig: OAuthServiceConfig = {
     "Files.ReadWrite",
     "Files.Read.All",
     "Files.ReadWrite.All",
-    "User.Read",
     "offline_access",
   ],
 };
@@ -87,3 +86,5 @@ export const microsoftServices = {
   sharepoint: sharePointConfig,
   onedrive: oneDriveConfig,
 } as const;
+
+freezeOAuthServiceConfigs(microsoftServices);

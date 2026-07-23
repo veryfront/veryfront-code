@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
 
@@ -30,13 +30,16 @@ describe("rendering/orchestrator/file-resolver/candidates", () => {
     it("should return first path that resolves", async () => {
       const existing = new Set(["/b.ts"]);
       const statFn = (p: string) =>
-        existing.has(p) ? Promise.resolve({}) : Promise.reject(new Error("not found"));
+        existing.has(p)
+          ? Promise.resolve({})
+          : Promise.reject(Object.assign(new Error("not found"), { code: "ENOENT" }));
 
       assertEquals(await findFirstExisting(["/a.ts", "/b.ts", "/c.ts"], statFn), "/b.ts");
     });
 
     it("should return null when no candidates exist", async () => {
-      const statFn = () => Promise.reject(new Error("not found"));
+      const statFn = () =>
+        Promise.reject(Object.assign(new Error("not found"), { code: "ENOENT" }));
       assertEquals(await findFirstExisting(["/a.ts", "/b.ts"], statFn), null);
     });
 
@@ -48,6 +51,18 @@ describe("rendering/orchestrator/file-resolver/candidates", () => {
     it("should return first match when multiple exist", async () => {
       const statFn = () => Promise.resolve({});
       assertEquals(await findFirstExisting(["/a.ts", "/b.ts"], statFn), "/a.ts");
+    });
+
+    it("propagates operational stat failures", async () => {
+      await assertRejects(
+        () =>
+          findFirstExisting(
+            ["/a.ts"],
+            () => Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+          ),
+        Error,
+        "permission denied",
+      );
     });
   });
 });

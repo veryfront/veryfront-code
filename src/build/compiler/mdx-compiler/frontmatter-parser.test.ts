@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractExports, parseFrontmatter } from "./frontmatter-parser.ts";
 
@@ -93,10 +93,36 @@ describe("build/compiler/mdx-compiler/frontmatter-parser", () => {
       assertEquals(frontmatter.name, "test");
     });
 
-    it("should handle export with complex value that is not valid JSON", () => {
+    it("preserves executable ESM exports instead of coercing them into strings", () => {
       const code = "export const fn = someFunction()";
-      const { frontmatter } = extractExports(code);
-      assertEquals(frontmatter.fn, "someFunction()");
+      const { frontmatter, content } = extractExports(code);
+      assertEquals(frontmatter.fn, undefined);
+      assertEquals(content, code);
+    });
+
+    it("extracts multiline serializable exports without consuming page content", () => {
+      const code = [
+        "export const meta = {",
+        '  "nested": [1, 2, 3]',
+        "};",
+        "",
+        "# Page",
+      ].join("\n");
+      const { frontmatter, content } = extractExports(code);
+      assertEquals(frontmatter.meta, { nested: [1, 2, 3] });
+      assertEquals(content.includes("# Page"), true);
+      assertEquals(content.includes("export const meta"), false);
+    });
+
+    it("does not treat export-like text inside a string as metadata", () => {
+      const code = [
+        "export const example = `first line",
+        'export const fake = "value"',
+        "`;",
+      ].join("\n");
+      const { frontmatter, content } = extractExports(code);
+      assertEquals(frontmatter.fake, undefined);
+      assertEquals(content, code);
     });
   });
 
@@ -127,6 +153,14 @@ describe("build/compiler/mdx-compiler/frontmatter-parser", () => {
       const content = "---\n---\nBody text";
       const result = await parseFrontmatter(content);
       assertEquals(result.content.includes("Body text"), true);
+    });
+
+    it("rejects malformed YAML frontmatter instead of compiling it as page content", async () => {
+      await assertRejects(
+        () => parseFrontmatter("---\ntitle: [unterminated\n---\n# Content"),
+        Error,
+        "Invalid MDX frontmatter",
+      );
     });
   });
 });

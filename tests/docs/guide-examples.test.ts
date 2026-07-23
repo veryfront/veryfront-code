@@ -661,6 +661,7 @@ describe("Guide: mcp-server.mdx", () => {
     clearMCPRegistry();
 
     const customTool = tool({
+      id: "custom-tool",
       description: "A custom tool",
       inputSchema: defineSchema((v) =>
         v.object({ input: v.string().describe("Text to transform") })

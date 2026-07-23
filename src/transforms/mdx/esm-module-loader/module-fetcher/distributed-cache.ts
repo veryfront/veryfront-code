@@ -15,7 +15,7 @@ import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-modu
 import { createBundleManifest, storeBundleManifest } from "../../../esm/bundle-manifest.ts";
 import { validateCachedBundlesByManifestOrCode } from "../../../esm/cached-bundle-validation.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
+import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { hasUnresolvedImports } from "./nested-imports.ts";
@@ -26,6 +26,7 @@ import {
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 import { buildMdxEsmModuleFileName, buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { hashString } from "../utils/hash.ts";
+import { errorLogName, fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -65,7 +66,7 @@ export async function readDistributedCache(
   projectId: string,
   contentSourceId: string | undefined,
   normalizedPath: string,
-  projectSlug: string,
+  _projectSlug: string,
   projectDir: string,
   reactVersion: string | undefined,
   log: Logger,
@@ -79,17 +80,16 @@ export async function readDistributedCache(
 
     // Detokenize all cache paths for local environment
     let moduleCode: string | null = detokenizeAllCachePaths(cached);
+    const moduleFile = fileLogLabel(normalizedPath);
     log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
-      projectSlug,
-      normalizedPath,
-      cacheKey: transformCacheKey,
+      moduleFile,
     });
 
     const bundleManifestKey = `${transformCacheKey}:bm`;
     const manifestId = await distributedCache.get(bundleManifestKey).catch((error) => {
       log.warn(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed for bundle manifest key`, {
-        cacheKey: bundleManifestKey,
-        error,
+        moduleFile,
+        errorName: errorLogName(error),
       });
       return null;
     });
@@ -103,11 +103,8 @@ export async function readDistributedCache(
       );
       if (!validation.valid) {
         log.warn(`${LOG_PREFIX_MDX_LOADER} Cached HTTP bundle validation failed`, {
-          normalizedPath,
-          manifestId: manifestId?.slice(0, 12),
-          failedHashes: validation.failedHashes,
-          reason: validation.reason,
-          source: validation.source,
+          moduleFile,
+          failedCount: validation.failedHashes.length,
         });
         moduleCode = null;
       }
@@ -116,8 +113,7 @@ export async function readDistributedCache(
     // Use detokenized code for framework path checks
     if (moduleCode && await hasIncompatibleFrameworkPaths(moduleCode, log)) {
       log.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
-        normalizedPath,
-        frameworkRoot: FRAMEWORK_ROOT,
+        moduleFile,
       });
       moduleCode = null;
     }
@@ -129,7 +125,7 @@ export async function readDistributedCache(
       if (unresolved.count > 0) {
         log.warn(
           `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolved.count} unresolved imports, invalidating`,
-          { normalizedPath, unresolved: unresolved.paths },
+          { moduleFile, unresolvedCount: unresolved.count },
         );
         moduleCode = null;
       }
@@ -149,8 +145,8 @@ export async function readDistributedCache(
         });
         if (recovered.recovered.length > 0) {
           log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered missing vfmod dependencies from cache`, {
-            normalizedPath,
-            recovered: recovered.recovered.slice(0, 5),
+            moduleFile,
+            recoveredCount: recovered.recovered.length,
           });
         }
       }
@@ -159,7 +155,7 @@ export async function readDistributedCache(
       if (unresolvedDeps.length > 0) {
         log.debug(
           `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolvedDeps.length} missing file dependencies, invalidating`,
-          { normalizedPath, missingDeps: unresolvedDeps.slice(0, 5) },
+          { moduleFile, missingCount: unresolvedDeps.length },
         );
         moduleCode = null;
       }
@@ -177,7 +173,7 @@ export async function readDistributedCache(
       });
       if (cacheResult.code !== moduleCode) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} Converted HTTP imports from legacy cache entry`, {
-          normalizedPath,
+          moduleFile,
         });
         moduleCode = cacheResult.code;
       }
@@ -186,8 +182,8 @@ export async function readDistributedCache(
     return { code: moduleCode, distributedCache };
   } catch (error) {
     log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
-      normalizedPath,
-      error,
+      moduleFile: fileLogLabel(normalizedPath),
+      errorName: errorLogName(error),
     });
     return { code: null, distributedCache };
   }
@@ -219,8 +215,8 @@ export function writeDistributedCache(
     .set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
     .catch((error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
-        normalizedPath,
-        error,
+        moduleFile: fileLogLabel(normalizedPath),
+        errorName: errorLogName(error),
       });
     });
 
@@ -235,9 +231,8 @@ export function writeDistributedCache(
     .set(moduleRecoveryKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS)
     .catch((error) => {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed vfmod recovery set failed`, {
-        normalizedPath,
-        moduleRecoveryKey,
-        error,
+        moduleFile: fileLogLabel(normalizedPath),
+        errorName: errorLogName(error),
       });
     });
 
@@ -257,8 +252,8 @@ export function writeDistributedCache(
         );
       } catch (error) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
-          normalizedPath,
-          error,
+          moduleFile: fileLogLabel(normalizedPath),
+          errorName: errorLogName(error),
         });
       }
     })();

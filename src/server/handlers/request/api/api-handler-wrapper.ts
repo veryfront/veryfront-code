@@ -6,25 +6,19 @@ import type {
   HandlerResult,
 } from "../../types.ts";
 import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
-import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { HTTP_SERVER_ERROR, PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
+import { resolveApiProjectExecution } from "./api-project-context.ts";
 
-type FsWrapper = {
-  isMultiProjectMode?: () => boolean;
-  runWithContext?: <T>(
-    slug: string,
-    token: string,
-    fn: () => Promise<T>,
-    projectId?: string,
-    options?: {
-      productionMode?: boolean;
-      releaseId?: string | null;
-      branch?: string | null;
-      environmentName?: string | null;
-    },
-  ) => Promise<T>;
-};
+let injectedEnsureProjectDiscovery: typeof ensureProjectDiscovery | undefined;
+
+/** @internal Test seam for proving remote requests do not run host discovery. */
+export function __injectProjectDiscoveryForTests(
+  dependency: typeof ensureProjectDiscovery | undefined,
+): void {
+  injectedEnsureProjectDiscovery = dependency;
+}
 
 export class ApiHandlerWrapper extends BaseHandler {
   private projectDir: string;
@@ -57,60 +51,38 @@ export class ApiHandlerWrapper extends BaseHandler {
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const { pathname } = new URL(req.url);
+    this.logDebug("[API-Wrapper] Handling request", { method: req.method }, ctx);
 
-    this.logDebug(
-      "[API-Wrapper] Handling request",
-      {
-        pathname,
-        projectDir: ctx.projectDir,
-        projectSlug: ctx.projectSlug,
-      },
-      ctx,
-    );
-
-    const fsWrapper = ctx.adapter.fs as FsWrapper;
-
-    const isMultiProject = !!ctx.projectSlug &&
-      typeof fsWrapper.isMultiProjectMode === "function" &&
-      fsWrapper.isMultiProjectMode();
-
-    if (!isMultiProject) {
-      return this.handleWithContext(req, ctx, pathname);
+    const execution = resolveApiProjectExecution(ctx);
+    if (execution.kind === "single") {
+      return this.handleWithContext(req, ctx);
     }
-
-    const isProduction = ctx.requestContext?.mode === "production";
+    if (execution.kind === "invalid") {
+      this.logDebug("[API-Wrapper] Missing authenticated multi-project context", undefined, ctx);
+      return this.apiFailure(req, ctx);
+    }
 
     this.logDebug(
       "[API-Wrapper] Using multi-project context",
       {
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        hasProxyToken: !!ctx.proxyToken,
-        productionMode: isProduction,
+        productionMode: execution.productionMode,
       },
       ctx,
     );
 
-    return fsWrapper.runWithContext!(
-      ctx.projectSlug!,
-      ctx.proxyToken ?? "",
-      () => this.handleWithContext(req, ctx, pathname),
-      ctx.projectId,
-      {
-        productionMode: isProduction,
-        releaseId: ctx.releaseId,
-        branch: isProduction ? null : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ??
-          null,
-        environmentName: ctx.environmentName,
-      },
-    );
+    try {
+      return await execution.execute(() => this.handleWithContext(req, ctx));
+    } catch (error) {
+      this.logDebug("[API-Wrapper] Multi-project context failed", {
+        errorType: error instanceof Error ? error.name : typeof error,
+      }, ctx);
+      return this.apiFailure(req, ctx);
+    }
   }
 
   private handleWithContext(
     req: Request,
     ctx: HandlerContext,
-    pathname: string,
   ): Promise<HandlerResult> {
     return withSpan(
       "api.handleWithContext",
@@ -118,14 +90,16 @@ export class ApiHandlerWrapper extends BaseHandler {
         try {
           // Lazy per-project primitive discovery (agents, tools) on first access.
           // Must run within runWithContext so VFS and registry scope are correct.
-          await ensureProjectDiscovery(ctx);
+          if (ctx.isLocalProject !== false) {
+            await (injectedEnsureProjectDiscovery ?? ensureProjectDiscovery)(ctx);
+          }
 
           const apiRes = await withApiHandler(ctx, (api) => api.handle(req, ctx));
 
           if (!apiRes) {
             this.logDebug(
               "[API-Wrapper] API handler returned null, continuing to next handler",
-              { pathname },
+              undefined,
               ctx,
             );
             return this.continue();
@@ -133,37 +107,43 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           this.logDebug(
             "[API-Wrapper] API handler returned response",
-            { pathname, status: apiRes.status },
+            { status: apiRes.status },
             ctx,
           );
 
           const builder = this.createResponseBuilder(ctx);
           const finalRes = builder
+            .withHeaders(apiRes.headers)
             .withCORS(req, ctx.securityConfig?.cors)
             .withSecurity(ctx.securityConfig ?? undefined, req)
-            .withHeaders(apiRes.headers)
             .build(apiRes.body, apiRes.status);
 
           return this.respond(finalRes);
         } catch (error) {
           this.logDebug(
-            "[API-Wrapper] API handler error - falling through to next handler",
+            "[API-Wrapper] API request failed",
             {
-              pathname,
-              error: this.getErrorMessage(error),
-              stack: error instanceof Error ? error.stack : undefined,
+              errorType: error instanceof Error ? error.name : typeof error,
             },
             ctx,
           );
 
-          return this.continue();
+          return this.apiFailure(req, ctx);
         }
       },
       {
-        "api.pathname": pathname,
         "api.method": req.method,
-        "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  private apiFailure(req: Request, ctx: HandlerContext): HandlerResult {
+    const response = this.createResponseBuilder(ctx)
+      .withCache("no-cache")
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .json({ error: "API request failed" }, HTTP_SERVER_ERROR);
+
+    return this.respond(response);
   }
 }

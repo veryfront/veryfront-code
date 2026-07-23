@@ -33,6 +33,8 @@ import { APICacheStore } from "#veryfront/rendering/cache/stores/api-store.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { resolve } from "#veryfront/compat/path/index.ts";
 
 const logger = rendererLogger.component("renderer-adapter");
 
@@ -48,14 +50,6 @@ export interface RendererAdapter {
   getAllPages(): Promise<string[]>;
   clearCache(slug?: string): void;
   clearAllState(): void;
-  getVirtualModuleSystem(): {
-    handleRequest(req: Request): Response | null;
-    register(id: string, source: string, projectDir: string): Promise<string>;
-    registerModule(id: string, source: string, projectDir: string): Promise<string>;
-    getModule(id: string): unknown;
-    clear(): void;
-  };
-  initializeComponents(): Promise<void>;
   compileMDX(
     content: string,
     frontmatter?: Record<string, unknown>,
@@ -99,7 +93,7 @@ function scheduleInitializerDestroy(
       await initializer.destroy();
     } catch (error) {
       logger.warn("Failed to destroy renderer initializer", {
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : "UnknownError",
       });
     }
   };
@@ -119,14 +113,14 @@ function scheduleInitializerDestroy(
  * Replace the renderer initializer used by the adapter layer.
  * Pass `undefined` to restore the default (real) initializer.
  *
- * Returns a disposer that restores the previous initializer — use in
+ * Returns a disposer that restores the previous initializer. Use in
  * `afterEach` or with `using` to prevent test pollution:
  *
  * ```ts
  * afterEach(() => setRendererInitializer(undefined));
  * ```
  *
- * @internal Test-only — not part of the public API.
+ * @internal Test-only, not part of the public API.
  */
 export function setRendererInitializer(
   initializer?: RendererInitializer,
@@ -212,13 +206,8 @@ function resolveEnvironment(ctx: HandlerContext): "preview" | "production" {
 }
 
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
-  // "unknown" is used only for debug logging below — actual cache keys and enriched context
-  // use ctx.projectSlug ?? ctx.projectId ?? derivedProjectId (never "unknown"), so there
-  // is no cross-project cache pollution from this sentinel.
-  const projectSlug = ctx.projectSlug ?? "unknown";
-
   if (ctx.enriched) {
-    logger.debug("Using pre-built EnrichedContext", { projectSlug });
+    logger.debug("Using pre-built EnrichedContext");
     return createRenderContextFromEnriched(ctx.enriched);
   }
 
@@ -226,16 +215,12 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   if (!config) {
     const cacheKey = ctx.projectId ?? ctx.projectSlug;
     logger.debug("Loading config from adapter START", {
-      projectDir: ctx.projectDir,
-      projectSlug,
-      projectId: ctx.projectId,
-      cacheKey,
+      hasProjectIdentity: cacheKey !== undefined,
     });
 
     const configStartTime = performance.now();
     config = await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
     logger.debug("Loading config from adapter DONE", {
-      projectSlug,
       duration: `${(performance.now() - configStartTime).toFixed(2)}ms`,
     });
   }
@@ -251,12 +236,10 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   // Use shared utility for contentSourceId (fallback path when no enriched context)
   const contentSourceId = computeContentSourceId(isLocal, environment, branch, ctx.releaseId);
 
-  // Derive a unique identifier from projectDir when no explicit projectId/slug is available
-  // This prevents cache pollution between different local projects
+  // Hash the canonical local path so equal basenames in different workspaces
+  // cannot share renderer caches, without exposing the path in cache keys.
   const derivedProjectId = ctx.projectId ?? ctx.projectSlug ??
-    (ctx.projectDir
-      ? ctx.projectDir.split("/").filter(Boolean).pop() ?? "__single__"
-      : "__single__");
+    `local-${(await computeHash(resolve(ctx.projectDir))).slice(0, 24)}`;
 
   const enriched = buildEnrichedContext({
     projectId: derivedProjectId,
@@ -287,7 +270,6 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
 
   const renderContext = createRenderContextFromEnriched(enriched);
   logger.debug("createRenderContext DONE (built EnrichedContext)", {
-    projectSlug,
     duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
   });
 
@@ -356,35 +338,18 @@ class RendererAdapterImpl implements RendererAdapter {
   clearCache(slug?: string): void {
     // The interface requires void return, so cache-clear failures are fire-and-forget.
     // The warn log below surfaces failures in monitoring. Callers (e.g., HMR invalidation)
-    // cannot observe the failure — if stale content is served after a deploy, check logs
+    // cannot observe the failure. If stale content is served after a deploy, check logs.
     // for "Failed to clear cache" entries.
     this.renderer.clearCache(this.ctx, slug).catch((error) => {
-      logger.warn("Failed to clear cache", { error: String(error), slug });
+      logger.warn("Failed to clear cache", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
     });
   }
 
   clearAllState(): void {
     this.clearCache();
   }
-
-  getVirtualModuleSystem(): {
-    handleRequest(req: Request): Response | null;
-    register(id: string, source: string, projectDir: string): Promise<string>;
-    registerModule(id: string, source: string, projectDir: string): Promise<string>;
-    getModule(id: string): unknown;
-    clear(): void;
-  } {
-    logger.warn("getVirtualModuleSystem called - not supported");
-    return {
-      handleRequest: () => null,
-      register: async () => "",
-      registerModule: async () => "",
-      getModule: () => undefined,
-      clear: () => {},
-    };
-  }
-
-  async initializeComponents(): Promise<void> {}
 
   async compileMDX(
     content: string,
@@ -398,6 +363,7 @@ class RendererAdapterImpl implements RendererAdapter {
       const mdxCacheAdapter = new MDXCacheAdapter({
         config: this.ctx.config,
         mode: this.ctx.mode,
+        projectDir: this.ctx.projectDir,
       });
 
       const compiler = new MDXCompiler({
@@ -415,33 +381,27 @@ class RendererAdapterImpl implements RendererAdapter {
 
 export async function getRendererForProject(ctx: HandlerContext): Promise<RendererAdapter> {
   const startTime = performance.now();
-  const projectSlug = ctx.projectSlug ?? "unknown";
 
   logger.debug("getRendererForProject START", {
-    projectSlug,
-    projectId: ctx.projectId,
     hasConfig: !!ctx.config,
+    isLocalProject: ctx.isLocalProject === true,
   });
 
   const rendererStartTime = performance.now();
-  logger.debug("getOrInitRenderer START", { projectSlug });
+  logger.debug("getOrInitRenderer START");
   const renderer = await getOrInitRenderer();
   logger.debug("getOrInitRenderer DONE", {
-    projectSlug,
     duration: `${(performance.now() - rendererStartTime).toFixed(2)}ms`,
   });
 
   const contextStartTime = performance.now();
-  logger.debug("createContextFromHandler START", { projectSlug });
+  logger.debug("createContextFromHandler START");
   const renderCtx = await runWithProjectContext(ctx, () => createContextFromHandler(ctx));
   logger.debug("createContextFromHandler DONE", {
-    projectSlug,
     duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
   });
 
   logger.debug("getRendererForProject DONE", {
-    projectId: renderCtx.projectId,
-    projectSlug: renderCtx.projectSlug,
     duration: `${(performance.now() - startTime).toFixed(2)}ms`,
   });
 

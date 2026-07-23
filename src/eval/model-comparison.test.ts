@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalReport } from "veryfront/eval";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
@@ -612,6 +612,37 @@ describe("eval/model-comparison", () => {
         "| 7000 | 2000 | 9000 | 7000 | 2000 | 0.12 | 0.08 | 0.20 | 0.30 | 0.20 | 0.50 | 0.50 | 5.00 | gateway | deferred |",
       ),
       true,
+    );
+  });
+
+  it("rejects malformed comparison policy and duplicate model reports", () => {
+    const baseline = createReport("baseline", { runId: "baseline-run" });
+    const candidate = createReport("candidate", { runId: "candidate-run" });
+    for (
+      const options of [
+        { baselineModel: "" },
+        { baselineModel: "baseline", minGroundedness: 2 },
+        { baselineModel: "baseline", minCostImprovementPct: -1 },
+        {
+          baselineModel: "baseline",
+          constraints: { p95Ms: { min: 10, max: 1 } },
+        },
+        {
+          baselineModel: "baseline",
+          objectives: { totalTokens: { weight: 0, direction: "minimize" as const } },
+        },
+      ]
+    ) {
+      assertThrows(() => compareEvalModelReports([baseline, candidate], options), Error);
+    }
+
+    assertThrows(
+      () =>
+        compareEvalModelReports([baseline, candidate, candidate], {
+          baselineModel: "baseline",
+        }),
+      Error,
+      "Duplicate model",
     );
   });
 });

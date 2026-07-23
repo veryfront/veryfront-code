@@ -30,6 +30,8 @@ export type {
 export {
   SKILL_ALLOWED_TOOL_PATTERN_REGEX,
   SKILL_ASSETS_DIR,
+  SKILL_COMPATIBILITY_MAX_LENGTH,
+  SKILL_DEFINITION_MAX_BYTES,
   SKILL_DESCRIPTION_MAX_LENGTH,
   SKILL_MD_FILENAME,
   SKILL_NAME_REGEX,
@@ -50,7 +52,7 @@ export {
 } from "./registry.ts";
 
 // Parser
-export { parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";
+export { type ParsedSkillContent, parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";
 
 // Path Safety
 export { listSkillSubdir, validateSkillPath } from "./path-safety.ts";
@@ -72,5 +74,6 @@ export { buildSkillManifestPrompt } from "./prompt-augmentation.ts";
 export {
   filterToolsForSkill,
   isToolAllowedBySkill,
+  type SkillToolAvailability,
   validateAllowedToolPatterns,
 } from "./allowed-tools.ts";

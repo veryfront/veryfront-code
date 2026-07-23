@@ -8,10 +8,8 @@
  * the CSS content in the HTML output).
  *
  * For CSS Module imports (`import styles from "./X.module.css"`), the
- * import is replaced with a Proxy stub that returns the property name
- * as the class name. This matches the Next.js convention where
- * `styles.container` → `"container"` (identity mapping), which works
- * correctly with Tailwind CSS class-based styling.
+ * import is replaced with a Proxy stub that returns the same deterministic
+ * scoped class name used when the corresponding stylesheet is rewritten.
  */
 
 import type { TransformPlugin } from "../types.ts";
@@ -24,11 +22,11 @@ import {
 } from "#veryfront/transforms/css-modules/naming.ts";
 
 function isCSSImport(specifier: string | undefined): boolean {
-  return specifier?.endsWith(".css") || false;
+  return specifier !== undefined && /\.css(?:[?#].*)?$/.test(specifier);
 }
 
 function isCssModuleImport(specifier: string | undefined): boolean {
-  return specifier?.endsWith(".module.css") || false;
+  return specifier !== undefined && /\.module\.css(?:[?#].*)?$/.test(specifier);
 }
 
 function cssModuleProxyExpression(): string {
@@ -79,17 +77,17 @@ function generateCSSStub(statement: string, specifier: string): string {
   // Re-export from CSS: export { default as styles } from './module.css'
   // → strip entirely, the CSS is collected separately
   if (/^export\s/.test(trimmed)) {
-    return `/* css re-export stripped: ${specifier} */`;
+    return "/* css re-export stripped */";
   }
 
   // Side-effect import: import "./globals.css"
   if (/^import\s+['"`]/.test(trimmed)) {
-    return `/* css import: ${specifier} */`;
+    return "/* css import stripped */";
   }
 
   const fromIndex = trimmed.lastIndexOf(" from ");
   if (fromIndex === -1) {
-    return `/* css import: ${specifier} */`;
+    return "/* css import stripped */";
   }
 
   const cssModuleKey = isCssModuleImport(specifier) ? specifier : undefined;
@@ -102,7 +100,7 @@ function generateCSSStub(statement: string, specifier: string): string {
     const expr = cssModuleKey
       ? scopedCssModuleProxyExpression(cssModuleKey)
       : cssModuleProxyExpression();
-    return `const ${importClause} = ${expr}; /* css module: ${specifier} */`;
+    return `const ${importClause} = ${expr}; /* css module */`;
   }
 
   // Namespace import: import * as styles from "./X.module.css"
@@ -111,7 +109,7 @@ function generateCSSStub(statement: string, specifier: string): string {
     const expr = cssModuleKey
       ? scopedCssModuleProxyExpression(cssModuleKey)
       : cssModuleProxyExpression();
-    return `const ${nsMatch[1]} = ${expr}; /* css module: ${specifier} */`;
+    return `const ${nsMatch[1]} = ${expr}; /* css module */`;
   }
 
   // Named imports: import { container, header } from "./X.module.css"
@@ -127,7 +125,7 @@ function generateCSSStub(statement: string, specifier: string): string {
           return `${binding.local} = "${value}"`;
         })
         .join(", ");
-      return `const ${stubs}; /* css module: ${specifier} */`;
+      return `const ${stubs}; /* css module */`;
     }
   }
 
@@ -148,11 +146,11 @@ function generateCSSStub(statement: string, specifier: string): string {
       ? scopedCssModuleProxyExpression(cssModuleKey)
       : cssModuleProxyExpression();
     return namedStubs.length > 0
-      ? `const ${defaultName} = ${defaultExpr}, ${namedStubs}; /* css module: ${specifier} */`
-      : `const ${defaultName} = ${defaultExpr}; /* css module: ${specifier} */`;
+      ? `const ${defaultName} = ${defaultExpr}, ${namedStubs}; /* css module */`
+      : `const ${defaultName} = ${defaultExpr}; /* css module */`;
   }
 
-  return `/* css import: ${specifier} */`;
+  return "/* css import stripped */";
 }
 
 /**
@@ -163,10 +161,10 @@ function generateDynamicCSSStub(specifier: string): string {
   if (isCssModuleImport(specifier)) {
     return `Promise.resolve({ default: ${
       scopedCssModuleProxyExpression(specifier)
-    } }) /* css import: ${specifier} */`;
+    } }) /* css import stripped */`;
   }
 
-  return `Promise.resolve({}) /* css import: ${specifier} */`;
+  return "Promise.resolve({}) /* css import stripped */";
 }
 
 export const cssStripPlugin: TransformPlugin = {
@@ -179,11 +177,14 @@ export const cssStripPlugin: TransformPlugin = {
     const hasCssImports = imports.some((imp) => isCSSImport(imp.n));
     if (!hasCssImports) return ctx.code;
 
-    const cssSpecifiers: string[] = [];
+    const cssSpecifiers = new Map<string, number>();
 
     const result = await rewriteImports(ctx.code, (imp, statement) => {
       if (!isCSSImport(imp.n)) return null;
-      cssSpecifiers.push(imp.n!);
+      const currentStart = cssSpecifiers.get(imp.n!);
+      if (currentStart === undefined || imp.ss < currentStart) {
+        cssSpecifiers.set(imp.n!, imp.ss);
+      }
       const moduleKey = isCssModuleImport(imp.n)
         ? resolveCssModuleKey(imp.n!, ctx.filePath, ctx.projectDir)
         : undefined;
@@ -192,8 +193,13 @@ export const cssStripPlugin: TransformPlugin = {
       return generateCSSStub(statement, specifierForStub);
     });
 
-    if (cssSpecifiers.length > 0) {
-      ctx.metadata.set("cssImports", cssSpecifiers);
+    if (cssSpecifiers.size > 0) {
+      ctx.metadata.set(
+        "cssImports",
+        [...cssSpecifiers.entries()]
+          .sort((left, right) => left[1] - right[1])
+          .map(([specifier]) => specifier),
+      );
     }
 
     return result;

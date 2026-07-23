@@ -13,12 +13,12 @@ describe("build/renderer/utils/plugin-utils", () => {
       assertEquals(normalizePlugins([]), []);
     });
 
-    it("should flatten nested plugin arrays", () => {
+    it("preserves plugin tuples instead of flattening their options", () => {
       const pluginA = () => {};
-      const pluginB = () => {};
-      const result = normalizePlugins([[pluginA], [pluginB]]);
+      const tuple = [pluginA, { option: true }];
+      const result = normalizePlugins([tuple]);
 
-      assertEquals(result, [pluginA, pluginB]);
+      assertEquals(result, [tuple]);
     });
 
     it("should pass through a flat array of plugins", () => {

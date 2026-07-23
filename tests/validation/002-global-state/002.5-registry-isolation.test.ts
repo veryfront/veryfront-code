@@ -45,7 +45,7 @@ function createMockPrompt(id: string, projectMarker: string): Prompt {
 function createMockResource(id: string, projectMarker: string): Resource {
   return {
     id,
-    pattern: `/${projectMarker}/:id`,
+    pattern: `/${encodeURIComponent(projectMarker)}/:id`,
     description: `Resource from ${projectMarker}`,
     paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
     load: () => Promise.resolve({ data: projectMarker }),

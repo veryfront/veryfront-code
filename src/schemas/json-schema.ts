@@ -8,6 +8,7 @@
 
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { resolveSchemaValidator } from "./define.ts";
+import { assertSchema } from "./schema-guard.ts";
 
 /**
  * Convert an opaque `Schema<T>` to a JSON Schema document.
@@ -17,6 +18,7 @@ import { resolveSchemaValidator } from "./define.ts";
  * by `defineSchema` or any other contract-aware builder.
  */
 export function schemaToJsonSchema(schema: Schema<unknown>): JsonSchema {
+  assertSchema(schema, "argument");
   return resolveSchemaValidator().toJsonSchema(schema);
 }
 
@@ -27,6 +29,7 @@ export function schemaToJsonSchema(schema: Schema<unknown>): JsonSchema {
  * `isOptional` implementation.
  */
 export function isOptionalSchema(schema: Schema<unknown>): boolean {
+  assertSchema(schema, "argument");
   return resolveSchemaValidator().isOptional(schema);
 }
 

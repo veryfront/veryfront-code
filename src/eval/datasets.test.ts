@@ -91,4 +91,36 @@ describe("eval/datasets", () => {
       await Deno.remove(root, { recursive: true });
     }
   });
+
+  it("rejects invalid paths, malformed JSON, and oversized dataset files", async () => {
+    assertThrows(() => datasets.json(""), Error, "path");
+    assertThrows(() => datasets.jsonl("bad\0path"), Error, "path");
+
+    const root = await Deno.makeTempDir({ prefix: "vf-eval-dataset-limits-" });
+    try {
+      await Deno.writeTextFile(`${root}/malformed.json`, "{");
+      await assertRejects(
+        () => datasets.json("malformed.json").load({ baseDir: root }),
+        Error,
+        "malformed.json must be valid JSON",
+      );
+
+      const oversized = await Deno.open(`${root}/oversized.json`, {
+        create: true,
+        write: true,
+      });
+      try {
+        await oversized.truncate(32 * 1024 * 1024 + 1);
+      } finally {
+        oversized.close();
+      }
+      await assertRejects(
+        () => datasets.json("oversized.json").load({ baseDir: root }),
+        Error,
+        "exceeds",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
 });

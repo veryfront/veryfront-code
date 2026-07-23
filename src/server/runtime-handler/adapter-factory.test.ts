@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { __resetLogRecordEmitterForTests } from "#veryfront/utils/logger/logger.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -44,7 +45,7 @@ async function mintTrustedDispatchJws(): Promise<string> {
     sub: "dispatch-adapter-test",
     project_id: "proj_123",
     platform: "slack",
-    body_sha256: "n/a",
+    body_sha256: "a".repeat(43),
     iat: now,
     exp: now + 60,
   };
@@ -104,7 +105,9 @@ function createMockAdapter(
       readDir: async function* () {},
       stat: async (path: string) => {
         const entry = files[path];
-        if (!entry) throw new Error(`Not found: ${path}`);
+        if (!entry) {
+          throw Object.assign(new Error(`Not found: ${path}`), { code: "ENOENT" });
+        }
         return {
           size: 0,
           isFile: entry.isFile ?? !entry.isDirectory,
@@ -140,6 +143,7 @@ describe("adapter-factory", () => {
   afterEach(() => {
     localProjectCache.clear();
     localAdapterCache.clear();
+    __resetLogRecordEmitterForTests();
   });
 
   it("ignores x-project-path override outside proxy mode", async () => {
@@ -613,112 +617,90 @@ describe("adapter-factory", () => {
     );
   });
 
-  describe("proxy mode config loading", () => {
-    function createExtendedMockAdapter() {
-      const calls: Record<string, unknown[]> = {};
+  describe("proxy mode config isolation", () => {
+    it("uses trusted host config without entering the remote project context", async () => {
       const base = createMockAdapter({});
-      // Add extended FS adapter properties to pass isExtendedFSAdapter type guard
-      const extendedFs = {
-        ...base.fs,
-        isVeryfrontAdapter: () => true,
-        getUnderlyingAdapter: () => ({}),
-        isMultiProjectMode: () => false,
-        runWithContext: (
-          slug: string,
-          token: string,
-          fn: () => Promise<unknown>,
-          projectId?: string,
-          opts?: unknown,
-        ) => {
-          calls.runWithContext = [slug, token, projectId, opts];
-          return fn();
-        },
-      };
-      return {
-        adapter: { ...base, fs: extendedFs } as unknown as RuntimeAdapter,
-        calls,
-      };
-    }
-
-    it("enters proxy mode config path when isProxyMode + slug + token", async () => {
-      const { adapter, calls } = createExtendedMockAdapter();
-
-      // Proxy mode with slug + token enters the config loading path.
-      // getConfig will either succeed (returning config) or throw (re-thrown in proxy mode).
-      let threw = false;
-      try {
-        await resolveAdapter({
-          projectDir: "/base/project",
-          adapter,
-          config: undefined,
-          projectSlug: "proxy-slug",
-          projectId: "proj_proxy",
-          proxyToken: "tok-123",
-          releaseId: "rel-1",
-          proxyEnv: "production",
-          branch: "main",
-          environmentName: "staging",
-          parsedDomain: {
-            slug: null,
-            branch: null,
-            environment: null,
-            isVeryfrontDomain: false,
-            isDraft: false,
-            allowIframeEmbed: false,
+      let contextCalls = 0;
+      const adapter = {
+        ...base,
+        fs: {
+          ...base.fs,
+          isVeryfrontAdapter: () => true,
+          getUnderlyingAdapter: () => ({}),
+          isMultiProjectMode: () => false,
+          runWithContext: () => {
+            contextCalls++;
+            throw new Error("remote config must not execute");
           },
-          req: await makeReq(),
-          isProxyMode: true,
-        });
-      } catch {
-        threw = true;
-      }
+        },
+      } as unknown as RuntimeAdapter;
+      const trustedConfig = { title: "Trusted host" } as never;
 
-      // Verify the proxy config path was entered: runWithContext should have been called
-      assertEquals(calls.runWithContext !== undefined || threw, true);
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: trustedConfig,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: "rel-1",
+        proxyEnv: "production",
+        branch: "main",
+        environmentName: "staging",
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+      });
+
+      assertEquals(contextCalls, 0);
+      assertEquals(result.config?.title, "Trusted host");
+      assertEquals(result.config?.build?.outDir, "dist");
     });
 
-    it("re-throws config loading errors in proxy mode", async () => {
-      // Use an extended adapter whose runWithContext throws
-      const base = createMockAdapter({});
-      const extendedFs = {
-        ...base.fs,
-        isVeryfrontAdapter: () => true,
-        getUnderlyingAdapter: () => ({}),
-        isMultiProjectMode: () => false,
-        runWithContext: () => {
-          throw new Error("proxy config fail");
-        },
+    it("does not inspect or import virtual project config", async () => {
+      const adapter = createMockAdapter({});
+      let filesystemCalls = 0;
+      adapter.fs.exists = () => {
+        filesystemCalls++;
+        return Promise.resolve(true);
       };
-      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
-      const req = await makeReq();
+      adapter.fs.readFile = () => {
+        filesystemCalls++;
+        return Promise.resolve("globalThis.remoteConfigExecuted = true");
+      };
 
-      await assertRejects(
-        () =>
-          resolveAdapter({
-            projectDir: "/base/project",
-            adapter,
-            config: undefined,
-            projectSlug: "proxy-slug",
-            projectId: "proj_proxy",
-            proxyToken: "tok-123",
-            releaseId: undefined,
-            proxyEnv: "preview",
-            branch: null,
-            environmentName: undefined,
-            parsedDomain: {
-              slug: null,
-              branch: null,
-              environment: null,
-              isVeryfrontDomain: false,
-              isDraft: false,
-              allowIframeEmbed: false,
-            },
-            req,
-            isProxyMode: true,
-          }),
-        Error,
-        "proxy config fail",
-      );
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+      });
+
+      assertEquals(filesystemCalls, 0);
+      assertEquals(result.config?.title, "Veryfront App");
     });
 
     for (
@@ -774,15 +756,17 @@ describe("adapter-factory", () => {
       });
     }
 
-    it("keeps config errors strict for control-plane execute requests", async () => {
+    it("does not execute remote config for control-plane execute requests", async () => {
       const base = createMockAdapter({});
+      let contextCalls = 0;
       const extendedFs = {
         ...base.fs,
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
         isMultiProjectMode: () => false,
         runWithContext: () => {
-          throw new Error("execute config fail");
+          contextCalls++;
+          throw new Error("execute config must not run in the host");
         },
       };
       const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
@@ -790,38 +774,36 @@ describe("adapter-factory", () => {
         method: "POST",
       });
 
-      await assertRejects(
-        () =>
-          resolveAdapter({
-            projectDir: "/base/project",
-            adapter,
-            config: undefined,
-            projectSlug: "proxy-slug",
-            projectId: "proj_proxy",
-            proxyToken: "tok-123",
-            releaseId: "rel-stale",
-            proxyEnv: "production",
-            branch: null,
-            environmentName: "production",
-            parsedDomain: {
-              slug: null,
-              branch: null,
-              environment: null,
-              isVeryfrontDomain: false,
-              isDraft: false,
-              allowIframeEmbed: false,
-            },
-            req,
-            pathname: "/api/control-plane/runs/run_1/execute",
-            isProxyMode: true,
-          }),
-        Error,
-        "execute config fail",
-      );
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: "rel-stale",
+        proxyEnv: "production",
+        branch: null,
+        environmentName: "production",
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req,
+        pathname: "/api/control-plane/runs/run_1/execute",
+        isProxyMode: true,
+      });
+
+      assertEquals(contextCalls, 0);
+      assertEquals(result.config?.title, "Veryfront App");
     });
 
     it("skips proxy config path when token is missing", async () => {
-      const { adapter } = createExtendedMockAdapter();
+      const adapter = createMockAdapter({});
 
       const result = await resolveAdapter({
         projectDir: "/base/project",
@@ -851,46 +833,32 @@ describe("adapter-factory", () => {
       assertEquals(result.config, undefined);
     });
 
-    it("uses non-extended path for adapter without runWithContext", async () => {
+    it("does not require an extended adapter", async () => {
       const base = createMockAdapter({});
-
-      // Non-extended adapter (no runWithContext) takes the direct getConfig path.
-      // Config loading may succeed or throw — either outcome is valid.
-      let succeeded = false;
-      let threw = false;
-      try {
-        const result = await resolveAdapter({
-          projectDir: "/base/project",
-          adapter: base,
-          config: undefined,
-          projectSlug: "proxy-slug",
-          projectId: "proj_proxy",
-          proxyToken: "tok-123",
-          releaseId: undefined,
-          proxyEnv: "preview",
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter: base,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
           branch: null,
-          environmentName: undefined,
-          parsedDomain: {
-            slug: null,
-            branch: null,
-            environment: null,
-            isVeryfrontDomain: false,
-            isDraft: false,
-            allowIframeEmbed: false,
-          },
-          req: await makeReq(),
-          isProxyMode: true,
-        });
-        succeeded = true;
-        // If it succeeds, verify the result has the expected shape
-        assertEquals("projectDir" in result, true);
-        assertEquals("adapter" in result, true);
-      } catch {
-        threw = true;
-      }
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+      });
 
-      // One of the two paths must have been taken
-      assertEquals(succeeded || threw, true);
+      assertEquals(result.config?.title, "Veryfront App");
     });
   });
 });

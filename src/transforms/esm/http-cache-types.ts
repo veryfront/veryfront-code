@@ -87,6 +87,8 @@ export interface DecodeResult {
   wasGzipped: boolean;
   /** Whether decoding failed (code may still be gzip-prefixed) */
   decodeFailed: boolean;
+  /** Stable reason for rejecting the cache value. */
+  failureReason?: "gzip_decode_failed" | "content_too_large";
 }
 
 /**

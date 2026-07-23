@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
@@ -7,7 +7,6 @@ import {
   getCachedConfigSync,
   getConfig,
   mergeConfigs,
-  rewriteBareVeryfrontConfigImports,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
@@ -16,10 +15,82 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { FS_ADAPTER_KIND } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import { ESBUILD_VERSION } from "#veryfront/platform/compat/esbuild-shared.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/logger.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { unregister as unregisterExtensionContract } from "#veryfront/extensions/contracts.ts";
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolved) => {
+    resolve = resolved;
+  });
+  return { promise, resolve };
+}
 
 function setup() {
   clearConfigCache();
   return createMockAdapter();
+}
+
+function withHostEnvironment<T>(
+  values: Record<string, string | undefined>,
+  run: () => T,
+): T {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, Deno.env.get(key));
+    if (value === undefined) Deno.env.delete(key);
+    else Deno.env.set(key, value);
+  }
+
+  try {
+    return run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    }
+  }
+}
+
+async function withHostEnvironmentAsync<T>(
+  values: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, Deno.env.get(key));
+    if (value === undefined) Deno.env.delete(key);
+    else Deno.env.set(key, value);
+  }
+
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    }
+  }
+}
+
+function markAdapterAsVirtual(
+  adapter: ReturnType<typeof createMockAdapter>,
+  isMultiProjectMode: boolean,
+): void {
+  Object.assign(adapter.fs, {
+    [FS_ADAPTER_KIND]: isMultiProjectMode ? "veryfront-multi-project" : "veryfront",
+    getUnderlyingAdapter: () => adapter.fs,
+    isMultiProjectMode: () => isMultiProjectMode,
+    isVeryfrontAdapter: () => true,
+  });
 }
 
 describe("config/loader", () => {
@@ -51,66 +122,18 @@ export default config as const;
       assertEquals(module.default.title, "Typed Project");
       assertEquals(module.default.description, "keep as const text");
     });
-  });
 
-  describe("rewriteBareVeryfrontConfigImports", () => {
-    afterAll(async () => {
-      await stopEsbuild();
-    });
+    it("initializes its bundler contract when used outside server bootstrap", async () => {
+      unregisterExtensionContract("Bundler");
+      unregisterExtensionContract("ModuleLexer");
 
-    it("rewrites bare veryfront specifiers to a loadable shim", () => {
-      const rewritten = rewriteBareVeryfrontConfigImports(
-        'import { defineConfig } from "veryfront";\nexport default defineConfig({});',
+      const result = await transpileConfigSourceForImport(
+        "const title: string = 'Standalone'; export default { title };",
+        "/app/veryfront.config.ts",
       );
 
-      assert(!rewritten.includes('"veryfront"'), "bare specifier must be replaced");
-      assert(rewritten.includes("data:text/javascript,"), "specifier must point at the shim");
-    });
-
-    it("handles single quotes and leaves other specifiers untouched", () => {
-      const rewritten = rewriteBareVeryfrontConfigImports(
-        "import { defineConfig } from 'veryfront';\nimport other from './local.ts';\nimport 'veryfront';",
-      );
-
-      assert(!rewritten.includes("'veryfront'"));
-      assert(rewritten.includes("./local.ts"), "relative imports must stay untouched");
-    });
-
-    it("does not rewrite veryfront subpath or lookalike specifiers", () => {
-      const source =
-        'import { a } from "veryfront/head";\nimport { b } from "not-veryfront";\nconst s = "veryfront";';
-      assertEquals(rewriteBareVeryfrontConfigImports(source), source);
-    });
-
-    it("produces a module whose defineConfig behaves as identity end to end", async () => {
-      const source = [
-        'import { defineConfig } from "veryfront";',
-        'export default defineConfig({ projectSlug: "shimmed", title: "Shim" });',
-      ].join("\n");
-
-      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
-      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
-      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
-        default: { projectSlug: string; title: string };
-      };
-
-      assertEquals(module.default.projectSlug, "shimmed");
-      assertEquals(module.default.title, "Shim");
-    });
-
-    it("shims defineConfigWithEnv with a working environment factory", async () => {
-      const source = [
-        'import { defineConfigWithEnv } from "veryfront";',
-        "export default defineConfigWithEnv((env) => ({ title: `env:${env}` }));",
-      ].join("\n");
-
-      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
-      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
-      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
-        default: { title: string };
-      };
-
-      assert(module.default.title.startsWith("env:"), "factory must receive an env name");
+      assert(result.includes("Standalone"));
+      assert(!result.includes(": string"));
     });
   });
 
@@ -132,6 +155,39 @@ export default config as const;
       const config3 = await getConfig("/test-project", adapter);
       assert(config3 !== null);
       assert(config3 !== config1, "Expected new object after cache clear");
+    });
+
+    it("does not let a load started before clear repopulate the cache", async () => {
+      const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-stale-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { title: "Stale load" };';
+      const started = createDeferred();
+      const release = createDeferred();
+      const originalExists = adapter.fs.exists.bind(adapter.fs);
+
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+        Object.assign(adapter.fs, {
+          exists: async (path: string) => {
+            started.resolve();
+            await release.promise;
+            return originalExists(path);
+          },
+        });
+
+        const pending = getConfig(projectDir, adapter);
+        await started.promise;
+        clearConfigCache();
+        release.resolve();
+        await pending;
+
+        assertEquals(getCachedConfigSync(projectDir), null);
+      } finally {
+        release.resolve();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 
@@ -183,6 +239,81 @@ export default config as const;
       assertEquals(config1, config2);
     });
 
+    it("keeps cached configuration immutable across consumers", async () => {
+      const adapter = setup();
+      const config = await getConfig("/immutable-cache-test", adapter);
+
+      assert(Object.isFrozen(config));
+      assert(Object.isFrozen(config.dev));
+      assert(Object.isFrozen(config.resolve?.importMap?.imports));
+      assertThrows(() => {
+        if (config.dev) config.dev.port = 9_999;
+      }, TypeError);
+
+      const cached = await getConfig("/immutable-cache-test", adapter);
+      assertEquals(cached.dev?.port, 3_000);
+    });
+
+    it("does not freeze opaque extension and middleware instances", async () => {
+      const adapter = setup();
+      markAdapterAsVirtual(adapter, false);
+      adapter.fs.files.set(
+        "/veryfront.config.js",
+        [
+          'const extension = { name: "custom", capabilities: [] };',
+          'const middleware = { name: "custom-middleware" };',
+          "export default { extensions: [extension], middleware: { custom: [middleware] } };",
+        ].join("\n"),
+      );
+
+      const config = await getConfig("/opaque-config-values", adapter);
+      const extension = config.extensions?.[0];
+      const middleware = config.middleware?.custom?.[0];
+
+      assert(Object.isFrozen(config.extensions));
+      assert(Object.isFrozen(config.middleware?.custom));
+      assertEquals(typeof extension, "object");
+      assertEquals(typeof middleware, "object");
+      assert(!Object.isFrozen(extension));
+      assert(!Object.isFrozen(middleware));
+    });
+
+    it("deduplicates concurrent persistent loads for the same project", async () => {
+      const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-concurrent-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { title: "Concurrent" };';
+      const started = createDeferred();
+      const release = createDeferred();
+      const originalExists = adapter.fs.exists.bind(adapter.fs);
+      let existsCalls = 0;
+
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+        Object.assign(adapter.fs, {
+          exists: async (path: string) => {
+            existsCalls++;
+            started.resolve();
+            await release.promise;
+            return originalExists(path);
+          },
+        });
+
+        const first = getConfig(projectDir, adapter);
+        await started.promise;
+        const second = getConfig(projectDir, adapter);
+        release.resolve();
+
+        const [firstConfig, secondConfig] = await Promise.all([first, second]);
+        assertEquals(firstConfig, secondConfig);
+        assertEquals(existsCalls, 1);
+      } finally {
+        release.resolve();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("should cache separately for different project directories", async () => {
       const adapter = setup();
 
@@ -212,13 +343,65 @@ export default config as const;
       }
     });
 
+    it("loads config from paths containing spaces and fragment characters", async () => {
+      const adapter = setup();
+      const parentDir = await Deno.makeTempDir({ prefix: "vf-config-path-" });
+      const projectDir = `${parentDir}/project #1`;
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { title: "Special path" };';
+
+      try {
+        await Deno.mkdir(projectDir);
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const config = await getConfig(projectDir, adapter);
+        assertEquals(config.title, "Special path");
+      } finally {
+        await Deno.remove(parentDir, { recursive: true });
+      }
+    });
+
+    it("uses schema-normalized output instead of retaining nested unknown fields", async () => {
+      const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-normalized-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { dev: { port: 4321, internalMarker: "must-be-stripped" } };';
+
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const config = await getConfig(projectDir, adapter);
+        assertEquals((config.dev as Record<string, unknown>).internalMarker, undefined);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("validates a falsy default export instead of falling back to the module namespace", async () => {
+      const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-falsy-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = "export default false;";
+
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Expected object, received boolean",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("loads canonical source integration restrictions", async () => {
       const adapter = setup();
-      Object.assign(adapter.fs, {
-        getUnderlyingAdapter: () => adapter.fs,
-        isMultiProjectMode: () => false,
-        isVeryfrontAdapter: () => true,
-      });
+      markAdapterAsVirtual(adapter, false);
       const projectDir = "/typed-integration-config";
       const configPath = "/veryfront.config.ts";
       const source = [
@@ -234,13 +417,56 @@ export default config as const;
       });
     });
 
+    it("provides supported authoring helpers to temporary config modules", async () => {
+      await withHostEnvironmentAsync(
+        { NODE_ENV: undefined, DENO_ENV: undefined },
+        async () => {
+          const adapter = setup();
+          markAdapterAsVirtual(adapter, false);
+          adapter.fs.files.set(
+            "/veryfront.config.ts",
+            [
+              "import { defineConfig, defineConfigWithEnv, mergeConfigs } from 'veryfront';",
+              'const base = defineConfig({ title: "Temporary module" });',
+              "export default defineConfigWithEnv((env) =>",
+              "  mergeConfigs(base, { description: `Environment: ${env}` })",
+              ");",
+            ].join("\n"),
+          );
+
+          const config = await getConfig("/temporary-helper-config", adapter);
+
+          assertEquals(config.title, "Temporary module");
+          assertEquals(config.description, "Environment: development");
+        },
+      );
+    });
+
+    it("does not rewrite import-like text outside module specifiers", async () => {
+      const adapter = setup();
+      markAdapterAsVirtual(adapter, false);
+      adapter.fs.files.set(
+        "/veryfront.config.ts",
+        [
+          'if (true) /from "veryfront"/.test(\'from "veryfront"\');',
+          "const from = 1;",
+          "from",
+          '"veryfront";',
+          'import { defineConfig } from "veryfront";',
+          'export default defineConfig({ title: "Lexer-safe" });',
+        ].join("\n"),
+      );
+
+      const config = await getConfig("/import-like-config", adapter);
+
+      assertEquals(config.title, "Lexer-safe");
+    });
+
     it("isolates virtual config values by exact branch, release, and environment", async () => {
       const adapter = setup();
       const reads: string[] = [];
+      markAdapterAsVirtual(adapter, true);
       Object.assign(adapter.fs, {
-        getUnderlyingAdapter: () => adapter.fs,
-        isMultiProjectMode: () => true,
-        isVeryfrontAdapter: () => true,
         exists: async (path: string) => path === "/veryfront.config.ts",
         readFile: async () => {
           const source = getCurrentRequestContext();
@@ -320,10 +546,8 @@ export default config as const;
     it("reloads mutable branch config across request contexts", async () => {
       const adapter = setup();
       let revision = "first";
+      markAdapterAsVirtual(adapter, true);
       Object.assign(adapter.fs, {
-        getUnderlyingAdapter: () => adapter.fs,
-        isMultiProjectMode: () => true,
-        isVeryfrontAdapter: () => true,
         exists: async (path: string) => path === "/veryfront.config.ts",
         readFile: async () => `export default { title: ${JSON.stringify(revision)} };`,
       });
@@ -350,10 +574,8 @@ export default config as const;
     it("does not persist virtual config without an exact source", async () => {
       const adapter = setup();
       let revision = "first";
+      markAdapterAsVirtual(adapter, true);
       Object.assign(adapter.fs, {
-        getUnderlyingAdapter: () => adapter.fs,
-        isMultiProjectMode: () => true,
-        isVeryfrontAdapter: () => true,
         exists: async (path: string) => path === "/veryfront.config.ts",
         readFile: async () => `export default { title: ${JSON.stringify(revision)} };`,
       });
@@ -369,10 +591,8 @@ export default config as const;
     it("rejects an explicit source that differs from the request context", async () => {
       const adapter = setup();
       let reads = 0;
+      markAdapterAsVirtual(adapter, true);
       Object.assign(adapter.fs, {
-        getUnderlyingAdapter: () => adapter.fs,
-        isMultiProjectMode: () => true,
-        isVeryfrontAdapter: () => true,
         exists: async () => true,
         readFile: async () => {
           reads++;
@@ -408,11 +628,7 @@ export default config as const;
 
     it("rejects legacy integration policy fields instead of normalizing them", async () => {
       const adapter = setup();
-      Object.assign(adapter.fs, {
-        getUnderlyingAdapter: () => adapter.fs,
-        isMultiProjectMode: () => false,
-        isVeryfrontAdapter: () => true,
-      });
+      markAdapterAsVirtual(adapter, false);
       const projectDir = "/legacy-integration-config";
       const configPath = "/veryfront.config.ts";
       const source = [
@@ -457,7 +673,100 @@ export default config as const;
 
       assertEquals(error instanceof VeryfrontError, true);
       assertEquals((error as VeryfrontError).slug, "config-parse-error");
+      assertEquals((error as Error & { cause?: unknown }).cause, undefined);
       assertEquals(getCachedConfigSync("/broken-project"), null);
+    });
+
+    it("sanitizes filesystem failures while checking for config files", async () => {
+      const adapter = setup();
+      Object.assign(adapter.fs, {
+        exists: async () => {
+          throw new Error("FILESYSTEM_FAILURE_CANARY");
+        },
+      });
+
+      const error = await assertRejects(() => getConfig("/filesystem-failure", adapter));
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "config-parse-error");
+      assert(!JSON.stringify(error).includes("FILESYSTEM_FAILURE_CANARY"));
+      assertEquals((error as Error & { cause?: unknown }).cause, undefined);
+    });
+
+    it("rejects invalid UTF-8 from a virtual config source", async () => {
+      const adapter = setup();
+      markAdapterAsVirtual(adapter, false);
+      const prefix = new TextEncoder().encode('export default { title: "');
+      const suffix = new TextEncoder().encode('" };');
+      const invalidSource = new Uint8Array(prefix.length + 1 + suffix.length);
+      invalidSource.set(prefix);
+      invalidSource[prefix.length] = 0xff;
+      invalidSource.set(suffix, prefix.length + 1);
+      adapter.fs.files.set("/veryfront.config.ts", "");
+      Object.assign(adapter.fs, {
+        readFile: async () => invalidSource,
+      });
+
+      const error = await assertRejects(() => getConfig("/invalid-encoding", adapter));
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "config-parse-error");
+      assertEquals(getCachedConfigSync("/invalid-encoding"), null);
+    });
+
+    it("rejects oversized virtual config source before importing it", async () => {
+      const adapter = setup();
+      markAdapterAsVirtual(adapter, false);
+      adapter.fs.files.set(
+        "/veryfront.config.ts",
+        `//${"x".repeat(4 * 1024 * 1024)}\nexport default {};`,
+      );
+
+      const error = await assertRejects(() => getConfig("/oversized-config", adapter));
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "config-parse-error");
+      assertEquals(getCachedConfigSync("/oversized-config"), null);
+    });
+
+    it("does not emit config source, project paths, or cache identifiers in logs", async () => {
+      const adapter = setup();
+      const entries: LogEntry[] = [];
+      const previousLevel = Deno.env.get("LOG_LEVEL");
+      const originalDebug = console.debug;
+      markAdapterAsVirtual(adapter, false);
+      adapter.fs.files.set(
+        "/veryfront.config.ts",
+        '// CONFIG_SOURCE_CANARY\nexport default { title: "Safe" };',
+      );
+
+      try {
+        Deno.env.set("LOG_LEVEL", "DEBUG");
+        refreshLoggerConfig();
+        console.debug = () => {};
+        __registerLogRecordEmitter((entry) => entries.push(entry));
+
+        await getConfig("/PROJECT_PATH_CANARY", adapter, {
+          cacheKey: "CACHE_IDENTIFIER_CANARY",
+        });
+
+        const serialized = JSON.stringify(entries);
+        for (
+          const marker of [
+            "CONFIG_SOURCE_CANARY",
+            "PROJECT_PATH_CANARY",
+            "CACHE_IDENTIFIER_CANARY",
+          ]
+        ) {
+          assert(!serialized.includes(marker), `logs must not contain ${marker}`);
+        }
+      } finally {
+        __resetLogRecordEmitterForTests();
+        console.debug = originalDebug;
+        if (previousLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLevel);
+        refreshLoggerConfig();
+      }
     });
 
     it("should produce fresh defaults per call after cache clear", async () => {
@@ -514,6 +823,148 @@ export default config as const;
   });
 
   describe("mergeConfigs deep merge", () => {
+    it("fails closed when proxy mode has no API filesystem endpoint", () => {
+      withHostEnvironment(
+        { PROXY_MODE: "1", VERYFRONT_API_BASE_URL: undefined },
+        () => {
+          assertThrows(
+            () => mergeConfigs({}),
+            VeryfrontError,
+            "Proxy mode requires VERYFRONT_API_BASE_URL",
+          );
+        },
+      );
+    });
+
+    it("rejects unsafe proxy filesystem endpoints before building defaults", () => {
+      for (
+        const apiBaseUrl of [
+          "not a URL",
+          "file:///tmp/veryfront-api",
+          "https://user:password@api.example.test",
+          " https://api.example.test/api ",
+          "https://api.example.test/\napi",
+          "https://api.example.test/api?tenant=unexpected",
+          "https://api.example.test/api#fragment",
+          `https://api.example.test/${"x".repeat(2_048)}`,
+        ]
+      ) {
+        withHostEnvironment(
+          { PROXY_MODE: "1", VERYFRONT_API_BASE_URL: apiBaseUrl },
+          () => {
+            assertThrows(
+              () => mergeConfigs({}),
+              VeryfrontError,
+              "Proxy mode requires a safe HTTP or HTTPS API base URL",
+            );
+          },
+        );
+      }
+    });
+
+    it("uses a validated proxy filesystem endpoint", () => {
+      withHostEnvironment(
+        {
+          PROXY_MODE: "1",
+          VERYFRONT_API_BASE_URL: "http://internal-api.example.test:8080/api",
+        },
+        () => {
+          const merged = mergeConfigs({});
+          assertEquals(merged.fs?.type, "veryfront-api");
+          assertEquals(
+            merged.fs?.veryfront?.apiBaseUrl,
+            "http://internal-api.example.test:8080/api",
+          );
+        },
+      );
+    });
+
+    it("does not let project config override proxy filesystem routing", () => {
+      withHostEnvironment(
+        {
+          PROXY_MODE: "1",
+          VERYFRONT_API_BASE_URL: "https://api.example.test/api",
+        },
+        () => {
+          for (
+            const fs of [
+              { type: "local" as const },
+              { type: "github" as const, github: {} },
+              {
+                type: "veryfront-api" as const,
+                veryfront: { apiBaseUrl: "https://tenant.example.test/api" },
+              },
+            ]
+          ) {
+            assertThrows(
+              () => mergeConfigs({ fs }),
+              VeryfrontError,
+              "Project config cannot override filesystem routing in proxy mode",
+            );
+          }
+        },
+      );
+    });
+
+    it("keeps host proxy filesystem settings for a canonical project marker", () => {
+      withHostEnvironment(
+        {
+          PROXY_MODE: "1",
+          VERYFRONT_API_BASE_URL: "https://api.example.test/api",
+        },
+        () => {
+          const merged = mergeConfigs({ fs: { type: "veryfront-api" } });
+          assertEquals(merged.fs?.type, "veryfront-api");
+          assertEquals(merged.fs?.veryfront?.apiBaseUrl, "https://api.example.test/api");
+          assertEquals(merged.fs?.veryfront?.proxyMode, true);
+          assert(Object.isFrozen(merged));
+          assert(Object.isFrozen(merged.fs));
+          assert(Object.isFrozen(merged.fs?.veryfront));
+          assert(Object.isFrozen(merged.fs?.veryfront?.cache));
+          assert(Object.isFrozen(merged.fs?.veryfront?.retry));
+        },
+      );
+    });
+
+    it("does not let project environment overlays select proxy filesystem routing", () => {
+      withHostEnvironment(
+        { PROXY_MODE: undefined, VERYFRONT_API_BASE_URL: undefined },
+        () => {
+          const merged = runWithProjectEnv(
+            {
+              PROXY_MODE: "1",
+              VERYFRONT_API_BASE_URL: "https://tenant.example.test/api",
+            },
+            () => mergeConfigs({}),
+          );
+          assertEquals(merged.fs?.type, "local");
+          assertEquals(merged.fs?.veryfront, undefined);
+        },
+      );
+    });
+
+    it("does not let project environment overlays replace the host proxy endpoint", () => {
+      withHostEnvironment(
+        {
+          PROXY_MODE: "1",
+          VERYFRONT_API_BASE_URL: "https://host.example.test/api",
+        },
+        () => {
+          const merged = runWithProjectEnv(
+            { VERYFRONT_API_BASE_URL: "https://tenant.example.test/api" },
+            () => mergeConfigs({ fs: { type: "veryfront-api" } }),
+          );
+          assertEquals(merged.fs?.veryfront?.apiBaseUrl, "https://host.example.test/api");
+        },
+      );
+    });
+
+    it("does not synthesize Veryfront API settings for a local filesystem", () => {
+      const merged = mergeConfigs({});
+      assertEquals(merged.fs?.type, "local");
+      assertEquals(merged.fs?.veryfront, undefined);
+    });
+
     it("keeps default cache.render when user overrides only cache.dir", () => {
       const merged = mergeConfigs({ cache: { dir: "/custom" } });
       assertEquals(merged.cache?.dir, "/custom");
@@ -528,6 +979,7 @@ export default config as const;
       assertEquals(merged.build?.outDir, "out");
       assertEquals(merged.build?.esbuild?.worker, false);
       assert(typeof merged.build?.esbuild?.wasmURL === "string");
+      assert(merged.build?.esbuild?.wasmURL?.includes(`@v${ESBUILD_VERSION}/`));
     });
 
     it("keeps default theme colors when user sets an unrelated color", () => {

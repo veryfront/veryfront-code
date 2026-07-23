@@ -8,6 +8,27 @@
 
 import type { Skill } from "./types.ts";
 
+const MAX_SKILL_MANIFEST_ENTRIES = 30;
+
+function normalizePromptText(value: string, maxLength: number): string {
+  let normalized = "";
+  for (let index = 0; index < value.length && normalized.length < maxLength; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 9 || code === 10 || code === 13) {
+      normalized += " ";
+    } else if (code <= 31 || code === 127) {
+      normalized += "\uFFFD";
+    } else {
+      normalized += value[index];
+    }
+  }
+  return normalized.replace(/\s+/gu, " ").trim();
+}
+
+function escapeMarkdownInline(value: string): string {
+  return value.replaceAll("\\", "\\\\").replace(/([`*_\[\]])/gu, "\\$1");
+}
+
 /**
  * Build the skill manifest prompt section for an agent's system prompt.
  *
@@ -21,27 +42,47 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   if (skills.size === 0) return "";
 
   const lines: string[] = [
-    "## Available Skills",
+    "## Available skills",
     "",
-    "You have access to skills via tool calling. IMPORTANT: You MUST call the load_skill tool (not write it as text) to activate a skill before performing skill-related tasks.",
+    "Use skills through tool calls. You must call `load_skill` to activate a skill before starting skill-specific work.",
     "",
   ];
 
+  let displayed = 0;
   for (const [id, skill] of skills) {
-    lines.push(`- **${id}**: ${skill.metadata.description}`);
+    if (displayed >= MAX_SKILL_MANIFEST_ENTRIES) break;
+    let description: unknown;
+    try {
+      description = skill.metadata.description;
+    } catch {
+      continue;
+    }
+    if (typeof id !== "string" || typeof description !== "string") continue;
+    const safeId = escapeMarkdownInline(normalizePromptText(id, 256));
+    const safeDescription = escapeMarkdownInline(normalizePromptText(description, 1_024));
+    if (!safeId || !safeDescription) continue;
+    lines.push(`- **${safeId}**: ${safeDescription}`);
+    displayed += 1;
+  }
+
+  const omitted = Math.max(0, skills.size - displayed);
+  if (omitted > 0) {
+    lines.push(`- (${omitted} additional configured skills omitted from this bounded manifest)`);
   }
 
   lines.push("");
-  lines.push("### Skill Tools (call these as tools, never write them as text)");
+  lines.push("### Skill tools");
+  lines.push("");
+  lines.push("Call these as tools. Writing a tool name in text does not invoke it.");
   lines.push("");
   lines.push(
-    "- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
+    "- `load_skill`: Use `{ skillId }` to load a skill's instructions and available references, resources, and scripts.",
   );
   lines.push(
-    "- load_skill_reference: Call with { skillId, reference } only after load_skill lists reference files for that skill",
+    "- `load_skill_reference`: Use `{ skillId, reference }` only after `load_skill` lists the file for that skill.",
   );
   lines.push(
-    "- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
+    "- `execute_skill_script`: Use `{ skillId, script, args?, env?, timeoutMs? }` only after `load_skill` lists the script for that skill.",
   );
 
   return lines.join("\n");

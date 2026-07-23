@@ -1,6 +1,27 @@
 import type { LiveEvalRuntime } from "./performance.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+const MAX_LIVE_EVAL_CASES = 100_000;
+
+function validateLiveEvalCases<TCase extends { id: string }>(cases: TCase[]): Set<string> {
+  if (!Array.isArray(cases) || cases.length > MAX_LIVE_EVAL_CASES) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Live eval selection accepts at most ${MAX_LIVE_EVAL_CASES} cases`,
+    });
+  }
+  const ids = new Set<string>();
+  for (const testCase of cases) {
+    if (typeof testCase.id !== "string" || testCase.id.trim().length === 0) {
+      throw INVALID_ARGUMENT.create({ detail: "Live eval case id must be a non-empty string" });
+    }
+    if (ids.has(testCase.id)) {
+      throw INVALID_ARGUMENT.create({ detail: `Duplicate live eval case id "${testCase.id}"` });
+    }
+    ids.add(testCase.id);
+  }
+  return ids;
+}
+
 /** Public API contract for live eval case metadata. */
 export interface LiveEvalCaseMetadata {
   tags: readonly string[];
@@ -64,6 +85,14 @@ export function selectLiveEvalCases<
 >(
   input: LiveEvalCaseSelectionInput<TCase>,
 ): TCase[] {
+  const knownCaseIds = validateLiveEvalCases(input.allCases);
+  for (const requestedCaseId of input.requestedCaseIds) {
+    if (!knownCaseIds.has(requestedCaseId)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Unknown live eval case id "${requestedCaseId}"`,
+      });
+    }
+  }
   const configuredCases = input.runWriteEvals
     ? [
       ...input.readOnlyCases,
@@ -98,8 +127,10 @@ export function resolveLiveEvalRequestedCaseIds(input: {
     return resolved;
   }
 
-  const caseIds = input.caseSets[requestedCaseSetId];
-  if (!caseIds) {
+  const caseIds = Object.hasOwn(input.caseSets, requestedCaseSetId)
+    ? input.caseSets[requestedCaseSetId]
+    : undefined;
+  if (!Array.isArray(caseIds)) {
     throw INVALID_ARGUMENT.create({
       detail: `Unknown AG_UI_EVAL_CASE_SET "${requestedCaseSetId}". Known sets: ${
         Object.keys(input.caseSets).join(", ")

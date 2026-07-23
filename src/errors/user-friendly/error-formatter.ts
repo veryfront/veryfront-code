@@ -2,6 +2,9 @@ import { bold, cyan, dim, red, yellow } from "#veryfront/compat/console";
 import { box } from "#veryfront/utils/box.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 import { identifyError } from "./error-identifier.ts";
+import { sanitizeErrorText } from "../sanitization.ts";
+import { getErrorMessage } from "../veryfront-error.ts";
+import { safeErrorStack } from "../error-snapshot.ts";
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
 
@@ -41,7 +44,7 @@ export function formatErrorBox(error: Error): string {
   const errorKey = identifyError(error);
   const solution = ERROR_SOLUTIONS[errorKey];
 
-  const content: string[] = [error.message];
+  const content: string[] = [sanitizeErrorText(getErrorMessage(error))];
 
   if (!solution) {
     content.push("", dim("For help, run: ") + cyan("veryfront doctor"));
@@ -66,7 +69,11 @@ export function formatErrorBox(error: Error): string {
  * Format error with plain text (existing behavior)
  */
 export function formatUserError(error: Error): string {
-  const output: string[] = ["", red(bold("✖ Error: ")) + bold(error.message), ""];
+  const output: string[] = [
+    "",
+    red(bold("✖ Error: ")) + bold(sanitizeErrorText(getErrorMessage(error))),
+    "",
+  ];
 
   const errorKey = identifyError(error);
   const solution = ERROR_SOLUTIONS[errorKey];
@@ -79,10 +86,11 @@ export function formatUserError(error: Error): string {
     return output.join("\n");
   }
 
-  if (error.stack) {
+  const stack = safeErrorStack(error);
+  if (stack) {
     output.push(yellow("Stack trace:"));
-    for (const line of error.stack.split("\n").slice(1, 4)) {
-      output.push(dim(`  ${line.trim()}`));
+    for (const line of stack.split("\n").slice(1, 4)) {
+      output.push(dim(`  ${sanitizeErrorText(line.trim(), 2_048)}`));
     }
     output.push("");
   }

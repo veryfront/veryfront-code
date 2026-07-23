@@ -12,16 +12,24 @@ import type { AgentResponse } from "../types.ts";
 
 /** Input payload for create AG-UI runtime browser response. */
 export interface CreateAgUiRuntimeBrowserResponseInput<TChunk, TState> {
+  /** AG-UI input value. */
   agUiInput: AgUiRuntimeRequest;
+  /** Defaults value. */
   defaults?: {
     threadId?: string;
     runId?: string;
   };
+  /** Agent ID value. */
   agentId: string;
+  /** Execution value. */
   execution: AgUiBrowserResponseExecution<TChunk>;
+  /** Encoder value. */
   encoder: AgUiBrowserResponseEncoder<TChunk>;
+  /** Initial state value. */
   initialState: TState;
+  /** Callback invoked when chunk. */
   onChunk?: (state: TState, chunk: TChunk) => void;
+  /** Callback that handles get final response. */
   getFinalResponse?: (state: TState) => AgentResponse | null;
 }
 

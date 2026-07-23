@@ -6,7 +6,7 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import {
   generateCacheKey as generateTransformCacheKey,
@@ -114,10 +114,10 @@ export async function transformModuleCodeWithCache(
 ): Promise<ModuleTransformCacheResult> {
   const deps = input.deps ?? defaultDeps;
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
-  const contentHash = hashCodeHex(input.fileContent);
-  const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
+  const contentHash = await computeHash(input.fileContent);
+  const scopedPath = JSON.stringify([input.effectiveProjectId, input.filePath]);
   const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
-  const configHash = hashCodeHex(JSON.stringify([
+  const configHash = await computeHash(JSON.stringify([
     input.projectDir,
     input.mode,
     reactVersion,
@@ -141,7 +141,7 @@ export async function transformModuleCodeWithCache(
   const transformResult = await deps.getOrComputeTransform(
     cacheKey,
     () => {
-      logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
+      logger.debug("Transform cache miss, transforming");
       return deps.transformToESM(
         input.fileContent,
         input.filePath,
@@ -163,7 +163,6 @@ export async function transformModuleCodeWithCache(
     );
     if (!validation.valid) {
       logger.warn("Cached HTTP bundle validation failed, re-transforming", {
-        filePath: input.filePath,
         manifestId: transformResult.bundleManifestId?.slice(0, 12),
         failedHashes: validation.failedHashes,
         reason: validation.reason,
@@ -185,8 +184,7 @@ export async function transformModuleCodeWithCache(
         ttlSeconds,
       ).catch((error) => {
         logger.debug("Failed to update transform cache after re-transform", {
-          filePath: input.filePath,
-          error,
+          errorName: error instanceof Error ? error.name : "UnknownError",
         });
       });
     }
@@ -196,13 +194,9 @@ export async function transformModuleCodeWithCache(
   // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
   // If they're still present, retry the transform bypassing all caches.
   if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
-    const match = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
-    const unresolvedImport = match?.[1] || "unknown";
     logger.warn(
       "[ModuleLoader] Transform has unresolved _vf_modules import, retrying without cache",
       {
-        filePath: input.filePath.slice(-60),
-        unresolvedImport: unresolvedImport.slice(0, 80),
         cacheHit: transformResult.cacheHit,
       },
     );
@@ -216,23 +210,16 @@ export async function transformModuleCodeWithCache(
     transformedCode = pipelineResult.code;
 
     if (UNRESOLVED_VF_MODULES_RE.test(transformedCode)) {
-      const retryMatch = transformedCode.match(UNRESOLVED_VF_MODULES_RE);
-      logger.error("Transform still has unresolved _vf_modules after retry", {
-        filePath: input.filePath.slice(-60),
-        unresolvedImport: retryMatch?.[1]?.slice(0, 80) || "unknown",
-        hint:
-          "Check that framework sources exist in dist/framework-src/ and ssrVfModulesPlugin is running",
-      });
+      throw new TypeError("SSR transform retained an unresolved framework module import");
     } else {
       deps.setCachedTransformAsync(
         cacheKey,
         transformedCode,
-        hashCodeHex(transformedCode).slice(0, 16),
+        await computeHash(transformedCode),
         ttlSeconds,
       ).catch((error) => {
         logger.debug("Failed to update cache after retry", {
-          filePath: input.filePath,
-          error,
+          errorName: error instanceof Error ? error.name : "UnknownError",
         });
       });
     }

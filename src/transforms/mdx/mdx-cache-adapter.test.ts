@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
-import { MDXCacheAdapter, type MDXCompilationResult } from "./mdx-cache-adapter.ts";
+import {
+  createMDXCacheKey,
+  MDXCacheAdapter,
+  type MDXCompilationResult,
+} from "./mdx-cache-adapter.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   type BundleManifestStore,
@@ -30,6 +34,7 @@ describe("MDXCacheAdapter", () => {
     return {
       compiledCode: "export default function() {}",
       frontmatter: {},
+      globals: {},
       headings: [],
       nodeMap: new Map<number, unknown>(),
       ...overrides,
@@ -43,6 +48,7 @@ describe("MDXCacheAdapter", () => {
     adapter = new MDXCacheAdapter({
       config: testConfig,
       mode: "development",
+      projectDir: "/project",
     });
   });
 
@@ -86,7 +92,6 @@ describe("MDXCacheAdapter", () => {
     const testContent = "# Test Page\n\nThis is test content.";
     const testBundle = createBundle({
       compiledCode: "export default function MDXContent() { return null; }",
-      frontmatter: { title: "Test Page" },
     });
 
     it("should return undefined on cache miss", async () => {
@@ -97,7 +102,7 @@ describe("MDXCacheAdapter", () => {
     it("should return cached bundle on cache hit", async () => {
       await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
 
-      const cached = await adapter.getCachedBundle(testContent);
+      const cached = await adapter.getCachedBundle(testContent, undefined, "test.mdx");
 
       expect(cached).toBeDefined();
       expect(cached?.compiledCode).toBe(testBundle.compiledCode);
@@ -110,8 +115,13 @@ describe("MDXCacheAdapter", () => {
         description: "Custom Description",
       };
 
-      await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
-      const cached = await adapter.getCachedBundle(testContent, frontmatter);
+      await adapter.setCachedBundle(
+        testContent,
+        createBundle({ compiledCode: testBundle.compiledCode, frontmatter }),
+        "test.mdx",
+        { frontmatter },
+      );
+      const cached = await adapter.getCachedBundle(testContent, frontmatter, "test.mdx");
 
       expect(cached?.frontmatter).toEqual(frontmatter);
     });
@@ -132,8 +142,8 @@ describe("MDXCacheAdapter", () => {
       await adapter.setCachedBundle(content1, bundle1, "page1.mdx");
       await adapter.setCachedBundle(content2, bundle2, "page2.mdx");
 
-      const cached1 = await adapter.getCachedBundle(content1);
-      const cached2 = await adapter.getCachedBundle(content2);
+      const cached1 = await adapter.getCachedBundle(content1, undefined, "page1.mdx");
+      const cached2 = await adapter.getCachedBundle(content2, undefined, "page2.mdx");
 
       expect(cached1?.compiledCode).toBe("// Page 1");
       expect(cached2?.compiledCode).toBe("// Page 2");
@@ -146,8 +156,233 @@ describe("MDXCacheAdapter", () => {
         "test.mdx",
       );
 
-      const cached = await adapter.getCachedBundle(testContent);
+      const cached = await adapter.getCachedBundle(testContent, undefined, "test.mdx");
       expect(cached).toBeUndefined();
+    });
+  });
+
+  describe("Compilation identity", () => {
+    const content = "# Shared source";
+    const filePath = "pages/page.mdx";
+
+    it("canonicalizes bounded plain-object frontmatter keys", async () => {
+      const contentHash = await adapter.computeHash(content);
+      const first = await createMDXCacheKey({
+        mode: "development",
+        contentHash,
+        projectDir: "/project",
+        filePath,
+        frontmatter: { title: "Page", nested: { first: 1, second: 2 } },
+      });
+      const second = await createMDXCacheKey({
+        mode: "development",
+        contentHash,
+        projectDir: "/project",
+        filePath,
+        frontmatter: { nested: { second: 2, first: 1 }, title: "Page" },
+      });
+
+      expect(first).toBe(second);
+    });
+
+    it("rejects over-limit project and file path identities", async () => {
+      const contentHash = await adapter.computeHash(content);
+      const overLimitPath = `/${"x".repeat(17_000)}`;
+
+      expect(
+        await createMDXCacheKey({
+          mode: "development",
+          contentHash,
+          projectDir: overLimitPath,
+          filePath,
+        }),
+      ).toBeUndefined();
+      expect(
+        await createMDXCacheKey({
+          mode: "development",
+          contentHash,
+          projectDir: "/project",
+          filePath: overLimitPath,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("does not share cached output across file paths", async () => {
+      await adapter.setCachedBundle(
+        content,
+        createBundle({ compiledCode: "// pages/a/page.mdx" }),
+        "pages/a/page.mdx",
+      );
+
+      expect(
+        await adapter.getCachedBundle(content, undefined, "pages/b/page.mdx"),
+      ).toBeUndefined();
+    });
+
+    it("does not share cached output across projects", async () => {
+      const projectA = new MDXCacheAdapter({
+        config: testConfig,
+        mode: "development",
+        projectDir: "/projects/a",
+      });
+      const projectB = new MDXCacheAdapter({
+        config: testConfig,
+        mode: "development",
+        projectDir: "/projects/b",
+      });
+
+      await projectA.setCachedBundle(
+        content,
+        createBundle({ compiledCode: "// project a" }),
+        filePath,
+      );
+
+      expect(await projectB.getCachedBundle(content, undefined, filePath)).toBeUndefined();
+    });
+
+    it("does not share cached output between Studio and standard compilation", async () => {
+      await adapter.setCachedBundle(
+        content,
+        createBundle({ compiledCode: "// standard" }),
+        filePath,
+        { studioEmbed: false },
+      );
+
+      expect(
+        await adapter.getCachedBundle(content, undefined, filePath, { studioEmbed: true }),
+      ).toBeUndefined();
+    });
+
+    it("does not share cached output across provided frontmatter", async () => {
+      await adapter.setCachedBundle(
+        content,
+        createBundle({ compiledCode: "// light theme", frontmatter: { theme: "light" } }),
+        filePath,
+        { studioEmbed: false, frontmatter: { theme: "light" } },
+      );
+
+      expect(
+        await adapter.getCachedBundle(
+          content,
+          { theme: "dark" },
+          filePath,
+          { studioEmbed: false },
+        ),
+      ).toBeUndefined();
+    });
+  });
+
+  describe("Artifact contract", () => {
+    it("bypasses cache when source-derived frontmatter cannot be reconstructed", async () => {
+      const content = "---\ntitle: From source\n---\n# Page";
+      await adapter.setCachedBundle(
+        content,
+        createBundle({ frontmatter: { title: "From source" } }),
+        "page.mdx",
+      );
+
+      expect((await adapter.getStats()).totalBundles).toBe(0);
+      expect(await adapter.getCachedBundle(content, undefined, "page.mdx")).toBeUndefined();
+    });
+
+    it("bypasses cache for non-reconstructable compilation artifacts", async () => {
+      const cases: MDXCompilationResult[] = [
+        createBundle({ globals: { theme: "dark" } }),
+        createBundle({ nodeMap: new Map([[1, { line: 1 }]]) }),
+        createBundle({ rawHtml: "<h1>Page</h1>" }),
+      ];
+
+      for (const [index, bundle] of cases.entries()) {
+        await adapter.setCachedBundle(`# Page ${index}`, bundle, `page-${index}.mdx`);
+      }
+
+      expect((await adapter.getStats()).totalBundles).toBe(0);
+    });
+
+    it("bypasses cache for unsupported or over-limit frontmatter identities", async () => {
+      const unsupported = { transform: () => "value" };
+      expect(
+        await createMDXCacheKey({
+          mode: "development",
+          contentHash: "unsupported",
+          projectDir: "/project",
+          filePath: "unsupported.mdx",
+          frontmatter: unsupported,
+        }),
+      ).toBeUndefined();
+      await adapter.setCachedBundle(
+        "# Unsupported",
+        createBundle({ frontmatter: unsupported }),
+        "unsupported.mdx",
+        { frontmatter: unsupported },
+      );
+
+      const tooManyFields = { values: Array.from({ length: 10_001 }, (_, index) => index) };
+      expect(
+        await createMDXCacheKey({
+          mode: "development",
+          contentHash: "too-many-fields",
+          projectDir: "/project",
+          filePath: "too-many-fields.mdx",
+          frontmatter: tooManyFields,
+        }),
+      ).toBeUndefined();
+      await adapter.setCachedBundle(
+        "# Too many fields",
+        createBundle({ frontmatter: tooManyFields }),
+        "too-many-fields.mdx",
+        { frontmatter: tooManyFields },
+      );
+
+      const tooLarge = { value: "x".repeat(600_000) };
+      expect(
+        await createMDXCacheKey({
+          mode: "development",
+          contentHash: "too-large",
+          projectDir: "/project",
+          filePath: "too-large.mdx",
+          frontmatter: tooLarge,
+        }),
+      ).toBeUndefined();
+      await adapter.setCachedBundle(
+        "# Too large",
+        createBundle({ frontmatter: tooLarge }),
+        "too-large.mdx",
+        { frontmatter: tooLarge },
+      );
+
+      expect((await adapter.getStats()).totalBundles).toBe(0);
+    });
+
+    it("rejects hidden, symbol, and accessor identity fields", async () => {
+      const hidden: Record<string, unknown> = {};
+      Object.defineProperty(hidden, "value", { value: "hidden", enumerable: false });
+
+      const symbolKey = Symbol("value");
+      const symbolRecord = { [symbolKey]: "symbol" };
+
+      const accessor: Record<string, unknown> = {};
+      let accessorReads = 0;
+      Object.defineProperty(accessor, "value", {
+        enumerable: true,
+        get: () => {
+          accessorReads++;
+          return "accessor";
+        },
+      });
+
+      for (const [index, frontmatter] of [hidden, symbolRecord, accessor].entries()) {
+        expect(
+          await createMDXCacheKey({
+            mode: "development",
+            contentHash: `unsupported-own-field-${index}`,
+            projectDir: "/project",
+            filePath: "page.mdx",
+            frontmatter,
+          }),
+        ).toBeUndefined();
+      }
+      expect(accessorReads).toBe(0);
     });
   });
 
@@ -166,17 +401,18 @@ describe("MDXCacheAdapter", () => {
       const shortAdapter = new MDXCacheAdapter({
         config: shortTTLConfig,
         mode: "development",
+        projectDir: "/project",
       });
 
       const content = "# Short TTL Test";
       await shortAdapter.setCachedBundle(content, createBundle(), "test.mdx");
 
-      const cached1 = await shortAdapter.getCachedBundle(content);
+      const cached1 = await shortAdapter.getCachedBundle(content, undefined, "test.mdx");
       expect(cached1).toBeDefined();
 
       await delay(150);
 
-      const cached2 = await shortAdapter.getCachedBundle(content);
+      const cached2 = await shortAdapter.getCachedBundle(content, undefined, "test.mdx");
       expect(cached2).toBeUndefined();
     });
 
@@ -184,12 +420,13 @@ describe("MDXCacheAdapter", () => {
       const prodAdapter = new MDXCacheAdapter({
         config: testConfig,
         mode: "production",
+        projectDir: "/project",
       });
 
       const content = "# Production Test";
       await prodAdapter.setCachedBundle(content, createBundle(), "prod.mdx");
 
-      const cached = await prodAdapter.getCachedBundle(content);
+      const cached = await prodAdapter.getCachedBundle(content, undefined, "prod.mdx");
       expect(cached).toBeDefined();
     });
   });
@@ -201,11 +438,26 @@ describe("MDXCacheAdapter", () => {
     it("should invalidate specific bundle by content", async () => {
       await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
 
-      expect(await adapter.getCachedBundle(testContent)).toBeDefined();
+      expect(await adapter.getCachedBundle(testContent, undefined, "test.mdx")).toBeDefined();
 
-      await adapter.invalidateBundle(testContent);
+      await adapter.invalidateBundle(testContent, undefined, "test.mdx");
 
-      expect(await adapter.getCachedBundle(testContent)).toBeUndefined();
+      expect(await adapter.getCachedBundle(testContent, undefined, "test.mdx")).toBeUndefined();
+    });
+
+    it("invalidates only the exact identity across adapter instances", async () => {
+      const otherAdapter = new MDXCacheAdapter({
+        config: testConfig,
+        mode: "development",
+        projectDir: "/project",
+      });
+
+      await adapter.setCachedBundle(testContent, testBundle, "a.mdx");
+      await adapter.setCachedBundle(testContent, testBundle, "b.mdx");
+      await otherAdapter.invalidateBundle(testContent, undefined, "a.mdx");
+
+      expect(await adapter.getCachedBundle(testContent, undefined, "a.mdx")).toBeUndefined();
+      expect(await adapter.getCachedBundle(testContent, undefined, "b.mdx")).toBeDefined();
     });
 
     it("should invalidate all bundles for a source file", async () => {
@@ -317,43 +569,47 @@ describe("MDXCacheAdapter", () => {
       const devAdapter = new MDXCacheAdapter({
         config: testConfig,
         mode: "development",
+        projectDir: "/project",
       });
 
       const content = "# Dev Test";
       await devAdapter.computeHash(content);
 
       await devAdapter.setCachedBundle(content, createBundle(), "dev.mdx");
-      expect(await devAdapter.getCachedBundle(content)).toBeDefined();
+      expect(await devAdapter.getCachedBundle(content, undefined, "dev.mdx")).toBeDefined();
     });
 
     it("should use production mode cache key", async () => {
       const prodAdapter = new MDXCacheAdapter({
         config: testConfig,
         mode: "production",
+        projectDir: "/project",
       });
 
       const content = "# Prod Test";
       await prodAdapter.setCachedBundle(content, createBundle(), "prod.mdx");
 
-      expect(await prodAdapter.getCachedBundle(content)).toBeDefined();
+      expect(await prodAdapter.getCachedBundle(content, undefined, "prod.mdx")).toBeDefined();
     });
 
     it("should not share cache between modes", async () => {
       const devAdapter = new MDXCacheAdapter({
         config: testConfig,
         mode: "development",
+        projectDir: "/project",
       });
 
       const prodAdapter = new MDXCacheAdapter({
         config: testConfig,
         mode: "production",
+        projectDir: "/project",
       });
 
       const content = "# Shared Content";
       await devAdapter.setCachedBundle(content, createBundle(), "test.mdx");
 
-      expect(await prodAdapter.getCachedBundle(content)).toBeUndefined();
-      expect(await devAdapter.getCachedBundle(content)).toBeDefined();
+      expect(await prodAdapter.getCachedBundle(content, undefined, "test.mdx")).toBeUndefined();
+      expect(await devAdapter.getCachedBundle(content, undefined, "test.mdx")).toBeDefined();
     });
   });
 
@@ -366,10 +622,20 @@ describe("MDXCacheAdapter", () => {
         headings: [{ id: "test", text: "Test", level: 1 }],
       });
 
-      await adapter.setCachedBundle(content, bundle, "/path/to/test.mdx");
+      await adapter.setCachedBundle(content, bundle, "/path/to/test.mdx", {
+        frontmatter: { title: "Test" },
+      });
 
       const hash = await adapter.computeHash(content);
-      const cacheKey = `mdx:development:${hash}`;
+      const cacheKey = await createMDXCacheKey({
+        mode: "development",
+        contentHash: hash,
+        projectDir: "/project",
+        filePath: "/path/to/test.mdx",
+        frontmatter: { title: "Test" },
+      });
+      expect(cacheKey).toMatch(/^mdx:v2:development:[a-f0-9]{64}$/);
+      if (!cacheKey) throw new Error("Expected a cache key for serializable frontmatter");
       const metadata = await manifestStore.getBundleMetadata(cacheKey);
 
       expect(metadata).toBeDefined();
@@ -389,7 +655,7 @@ describe("MDXCacheAdapter", () => {
       });
 
       await adapter.setCachedBundle(content, bundle, "no-http.mdx");
-      const cached = await adapter.getCachedBundle(content);
+      const cached = await adapter.getCachedBundle(content, undefined, "no-http.mdx");
 
       expect(cached).toBeDefined();
       expect(cached?.compiledCode).toBe(bundle.compiledCode);
@@ -404,7 +670,7 @@ describe("MDXCacheAdapter", () => {
       });
 
       await adapter.setCachedBundle(content, bundle, "local-file.mdx");
-      const cached = await adapter.getCachedBundle(content);
+      const cached = await adapter.getCachedBundle(content, undefined, "local-file.mdx");
 
       expect(cached).toBeDefined();
       expect(cached?.compiledCode).toBe(bundle.compiledCode);

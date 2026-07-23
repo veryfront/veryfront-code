@@ -5,9 +5,9 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, isAbsolute, join, relative } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
   saveModulePathCache,
@@ -16,37 +16,8 @@ import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-lo
 
 const logger = rendererLogger.component("module-loader");
 
-/** Maximum number of directories to track to prevent memory leaks. */
-const MAX_CREATED_DIRS = 5_000;
-
-/** Cache for created directories to avoid repeated mkdir calls (LRU-style). */
-const createdDirs = new Set<string>();
-
-/** Prune oldest entries when cache exceeds limit. */
-function pruneCreatedDirs(): void {
-  if (createdDirs.size <= MAX_CREATED_DIRS) return;
-
-  const toDelete = createdDirs.size - MAX_CREATED_DIRS;
-  let deleted = 0;
-
-  for (const dir of createdDirs) {
-    if (deleted >= toDelete) break;
-    createdDirs.delete(dir);
-    deleted++;
-  }
-}
-
 async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
-  if (createdDirs.has(dir)) return;
-
-  try {
-    await adapter.fs.mkdir(dir, { recursive: true });
-  } catch (_) {
-    /* expected: directory might already exist */
-  } finally {
-    createdDirs.add(dir);
-    pruneCreatedDirs();
-  }
+  await adapter.fs.mkdir(dir, { recursive: true });
 }
 
 export interface PersistTransformedModuleInput {
@@ -65,25 +36,33 @@ export interface PersistTransformedModuleInput {
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
 ): Promise<string> {
-  const transformedHash = hashCodeHex(input.transformedCode).slice(0, 8);
+  const transformedHash = (await computeHash(input.transformedCode)).slice(0, 16);
 
-  const relativePath = input.filePath.startsWith(input.projectDir)
-    ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
-    : input.filePath.replace(/^\/+/, "");
+  const relativePath = relative(input.projectDir, input.filePath).replaceAll("\\", "/");
+  if (
+    !relativePath || relativePath === ".." || relativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new TypeError("Transformed module source path is outside the project");
+  }
 
-  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
+  // These files are imported directly as native ESM. Use an explicit ESM
+  // extension so the bounded path cache can reject executable CommonJS files
+  // without also rejecting artifacts produced by this loader.
+  const lastSlash = relativePath.lastIndexOf("/");
+  const lastDot = relativePath.lastIndexOf(".");
+  const pathWithoutExtension = lastDot > lastSlash ? relativePath.slice(0, lastDot) : relativePath;
+  const jsPath = `${pathWithoutExtension}.${transformedHash}.mjs`;
   const tempFilePath = join(input.tmpDir, jsPath);
 
-  const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
+  const tempDir = dirname(tempFilePath);
   await ensureDir(input.localAdapter, tempDir);
 
   try {
     await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
   } catch (error) {
     logger.error("Failed to write module:", {
-      filePath: input.filePath,
-      tempFilePath,
-      error: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : "UnknownError",
     });
     throw error;
   }
@@ -94,15 +73,9 @@ export async function persistTransformedModule(
     const cache = await getModulePathCache(input.tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
 
-    saveModulePathCache(input.tmpDir).catch((err) => {
-      logger.debug("Failed to save module cache", { error: String(err) });
-    });
+    await saveModulePathCache(input.tmpDir);
 
-    logger.debug("Registered module in MDX-ESM cache", {
-      file: input.filePath.slice(-40),
-      mdxCacheKey,
-      tempFilePath: tempFilePath.slice(-60),
-    });
+    logger.debug("Registered module in MDX-ESM cache");
   }
 
   input.moduleCache.set(input.cacheKey, tempFilePath);

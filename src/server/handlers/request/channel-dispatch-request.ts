@@ -2,6 +2,7 @@ import { verifyDispatchJws } from "#veryfront/channels/invoke.ts";
 import { getControlPlaneVerificationPublicKey } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyEncodingError,
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
@@ -17,6 +18,17 @@ type ParseSchema<T> = {
 };
 
 type LogWarn = (message: string, extra?: Record<string, unknown>) => void;
+
+function safeDispatchErrorName(error: unknown): string {
+  try {
+    if (error instanceof SyntaxError) return "SyntaxError";
+    if (error instanceof TypeError) return "TypeError";
+    if (error instanceof Error && error.name === "ZodError") return "ValidationError";
+    return error instanceof Error ? "Error" : "NonError";
+  } catch {
+    return "UnknownError";
+  }
+}
 
 export type SignedChannelDispatchRequest<T> =
   | {
@@ -37,6 +49,11 @@ export interface ReadSignedChannelDispatchRequestOptions<T> {
   logLabel?: string;
   logWarn: LogWarn;
   schema: ParseSchema<T>;
+  /** Validate signed claims against the parsed payload. */
+  validateClaims?: (
+    claims: Awaited<ReturnType<typeof verifyDispatchJws>>,
+    payload: T,
+  ) => boolean;
 }
 
 export async function readSignedChannelDispatchRequest<T>(
@@ -91,6 +108,12 @@ export async function readSignedChannelDispatchRequest<T>(
         response: options.builder.json({ error: "Request body too large" }, 413),
       };
     }
+    if (error instanceof InternalAgentRequestBodyEncodingError) {
+      return {
+        ok: false,
+        response: options.builder.json({ error: options.invalidRequestError }, error.status),
+      };
+    }
     throw error;
   }
 
@@ -104,9 +127,7 @@ export async function readSignedChannelDispatchRequest<T>(
     });
   } catch (error) {
     options.logWarn(`${logLabel} signature verification failed`, {
-      error: error instanceof Error ? error.message : String(error),
-      projectSlug,
-      projectId: ctx.projectId,
+      errorName: safeDispatchErrorName(error),
     });
     return {
       ok: false,
@@ -115,17 +136,24 @@ export async function readSignedChannelDispatchRequest<T>(
   }
 
   try {
+    const payload = options.schema.parse(JSON.parse(rawBody));
+    if (options.validateClaims && !options.validateClaims(claims, payload)) {
+      options.logWarn(`${logLabel} signature claims did not match the request payload`);
+      return {
+        ok: false,
+        response: options.builder.json({ error: "Invalid dispatch signature" }, 401),
+      };
+    }
+
     return {
       ok: true,
       claims,
-      payload: options.schema.parse(JSON.parse(rawBody)),
+      payload,
       rawBody,
     };
   } catch (error) {
     options.logWarn(`${logLabel} request validation failed`, {
-      error: error instanceof Error ? error.message : String(error),
-      projectSlug,
-      projectId: ctx.projectId,
+      errorName: safeDispatchErrorName(error),
     });
     return {
       ok: false,

@@ -8,50 +8,75 @@
 
 /** Location of an error or warning in source. */
 export interface BundlerMessageLocation {
+  /** Source file associated with the diagnostic. */
   file: string;
+  /** One-based source line. */
   line: number;
+  /** Zero-based source column. */
   column: number;
+  /** Length of the highlighted source range. */
   length?: number;
+  /** Source line text, when supplied by the bundler. */
   lineText?: string;
 }
 
 /** A diagnostic message (error or warning) from a bundler. */
 export interface BundlerMessage {
+  /** Human-readable diagnostic text. */
   text: string;
+  /** Primary source location, when known. */
   location?: BundlerMessageLocation | null;
+  /** Additional diagnostic notes. */
   notes?: { text: string; location?: BundlerMessageLocation | null }[];
+  /** Plugin that emitted the diagnostic. */
   pluginName?: string;
+  /** Implementation-specific diagnostic detail. */
   detail?: unknown;
 }
 
 /** Input file entry in a {@link Metafile}. */
 export interface MetafileInput {
+  /** Input size in bytes. */
   bytes: number;
+  /** Imports referenced by this input. */
   imports: { path: string; kind?: string; external?: boolean; original?: string }[];
+  /** Detected module format. */
   format?: "cjs" | "esm";
 }
 
 /** Output file entry in a {@link Metafile}. */
 export interface MetafileOutput {
+  /** Output size in bytes. */
   bytes: number;
+  /** Input contribution sizes keyed by input path. */
   inputs: Record<string, { bytesInOutput: number }>;
+  /** Imports referenced by this output. */
   imports: { path: string; kind?: string; external?: boolean }[];
+  /** Export names emitted by this output. */
   exports: string[];
+  /** Source entry point associated with the output. */
   entryPoint?: string;
+  /** Related CSS bundle path. */
   cssBundle?: string;
 }
 
 /** Dependency-graph metadata produced by a bundler when `metafile: true`. */
 export interface Metafile {
+  /** Input metadata keyed by input path. */
   inputs: Record<string, MetafileInput>;
+  /** Output metadata keyed by output path. */
   outputs: Record<string, MetafileOutput>;
 }
 
 /** In-memory source input for {@link BundleOptions.stdin}. */
 export interface StdinOptions {
+  /** Source text to bundle. */
   contents: string;
+  /** Base directory used to resolve relative imports. */
   resolveDir?: string;
+  /** Virtual source file name used in diagnostics. */
   sourcefile?: string;
+  /** Loader applied to the virtual source. */
   loader?: Loader | string;
 }
 
@@ -182,48 +207,73 @@ export interface TransformResult {
 
 /** Arguments passed to an `onResolve` callback. */
 export interface OnResolveArgs {
+  /** Import path being resolved. */
   path: string;
+  /** Source path containing the import. */
   importer: string;
+  /** Active plugin namespace. */
   namespace: string;
+  /** Directory used to resolve relative paths. */
   resolveDir: string;
   /** e.g. "import-statement", "dynamic-import", "require-call", "entry-point". */
   kind: string;
+  /** Data passed from an earlier plugin callback. */
   pluginData?: unknown;
 }
 
 /** Result returned from an `onResolve` callback. */
 export interface OnResolveResult {
+  /** Resolved path. */
   path?: string;
+  /** Namespace assigned to the resolved path. */
   namespace?: string;
+  /** Leave the resolved path outside the bundle. */
   external?: boolean;
+  /** Errors emitted by the resolver. */
   errors?: BundlerMessage[];
+  /** Warnings emitted by the resolver. */
   warnings?: BundlerMessage[];
+  /** Data forwarded to later plugin callbacks. */
   pluginData?: unknown;
+  /** Whether loading the module may produce side effects. */
   sideEffects?: boolean;
+  /** Files whose changes invalidate this resolution. */
   watchFiles?: string[];
 }
 
 /** Arguments passed to an `onLoad` callback. */
 export interface OnLoadArgs {
+  /** Resolved path being loaded. */
   path: string;
+  /** Active plugin namespace. */
   namespace: string;
+  /** Path suffix excluded from filesystem resolution. */
   suffix?: string;
+  /** Data passed from an earlier plugin callback. */
   pluginData?: unknown;
 }
 
 /** Result returned from an `onLoad` callback. */
 export interface OnLoadResult {
+  /** Loaded source contents. */
   contents?: string | Uint8Array;
+  /** Loader applied to the contents. */
   loader?: string;
+  /** Base directory used to resolve imports in the contents. */
   resolveDir?: string;
+  /** Errors emitted by the loader. */
   errors?: BundlerMessage[];
+  /** Warnings emitted by the loader. */
   warnings?: BundlerMessage[];
+  /** Data forwarded to later plugin callbacks. */
   pluginData?: unknown;
+  /** Files whose changes invalidate this load. */
   watchFiles?: string[];
 }
 
 /** Build context exposed to bundler plugins. */
 export interface BundlerPluginBuild {
+  /** Register an import-resolution callback. */
   onResolve(
     options: { filter: RegExp; namespace?: string },
     callback: (
@@ -235,6 +285,7 @@ export interface BundlerPluginBuild {
       | void
       | Promise<OnResolveResult | null | undefined | void>,
   ): void;
+  /** Register a module-loading callback. */
   onLoad(
     options: { filter: RegExp; namespace?: string },
     callback: (
@@ -246,6 +297,7 @@ export interface BundlerPluginBuild {
       | void
       | Promise<OnLoadResult | null | undefined | void>,
   ): void;
+  /** Register a callback invoked when the build is disposed. */
   onDispose(callback: () => void): void;
 }
 
@@ -267,7 +319,9 @@ export interface BuildContext {
 
 /** Failure thrown by {@link Bundler.bundle} or {@link Bundler.transform}. */
 export interface BuildFailure extends Error {
+  /** Bundler errors associated with the failure. */
   errors: BundlerMessage[];
+  /** Bundler warnings emitted before the failure. */
   warnings: BundlerMessage[];
 }
 

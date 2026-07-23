@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getAppRouteEntity } from "./app-route-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -7,15 +7,20 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 function createMockAdapter(
   files: Map<string, string>,
   dirs: Set<string> = new Set(),
+  options: {
+    resolveFile?: (path: string) => Promise<string | null>;
+    readError?: Error;
+  } = {},
 ): RuntimeAdapter {
   const allPaths = () => [...files.keys(), ...dirs];
 
   return {
     fs: {
       readFile: (path: string) => {
+        if (options.readError) return Promise.reject(options.readError);
         const content = files.get(path);
         if (content === undefined) {
-          return Promise.reject(new Error(`ENOENT: ${path}`));
+          return Promise.reject(Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" }));
         }
         return Promise.resolve(content);
       },
@@ -59,6 +64,8 @@ function createMockAdapter(
       writeFile: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       mkdir: () => Promise.resolve(),
+      realPath: (path: string) => Promise.resolve(path),
+      resolveFile: options.resolveFile,
     },
     env: { get: () => undefined },
   } as unknown as RuntimeAdapter;
@@ -208,6 +215,51 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "about", adapter);
       assertEquals(result !== null, true);
+    });
+
+    it("rejects route and app-directory traversal without reading outside the project", async () => {
+      const reads: string[] = [];
+      const adapter = createMockAdapter(new Map()) as RuntimeAdapter;
+      const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+      adapter.fs.readFile = (path: string) => {
+        reads.push(path);
+        return originalReadFile(path);
+      };
+
+      assertEquals(await getAppRouteEntity("/project", "../secret", adapter), null);
+      assertEquals(await getAppRouteEntity("/project", "safe", adapter, "../outside"), null);
+      assertEquals(reads, []);
+    });
+
+    it("rejects a resolveFile result outside the app root", async () => {
+      const files = new Map([["/outside/page.tsx", "export default function Page() {}"]]);
+      const adapter = createMockAdapter(files, new Set(), {
+        resolveFile: () => Promise.resolve("/outside/page.tsx"),
+      });
+
+      assertEquals(await getAppRouteEntity("/project", "", adapter), null);
+    });
+
+    it("propagates filesystem failures other than a missing path", async () => {
+      const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+      const adapter = createMockAdapter(new Map(), new Set(), { readError: failure });
+
+      await assertRejects(
+        () => getAppRouteEntity("/project", "", adapter),
+        Error,
+        "permission denied",
+      );
+    });
+
+    it("rejects ambiguous dynamic directories", async () => {
+      const dirs = new Set(["/project/app", "/project/app/[id]", "/project/app/[slug]"]);
+      const adapter = createMockAdapter(new Map(), dirs);
+
+      await assertRejects(
+        () => getAppRouteEntity("/project", "value", adapter),
+        Error,
+        "Multiple dynamic route directories",
+      );
     });
   });
 });

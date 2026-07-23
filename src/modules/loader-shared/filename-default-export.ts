@@ -1,13 +1,10 @@
+import { type JavaScriptSourceToken, tokenizeJavaScriptSource } from "./import-specifiers.ts";
+
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
-const DEFAULT_EXPORT_PATTERN = /\bexport\s+default\b|\bexport\s*\{[^}]*\bas\s+default\b[^}]*\}/;
 
 interface ExportMatch {
   localName: string;
   sourceClause: string;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getModuleIdentifier(normalizedPath: string): string | null {
@@ -17,60 +14,160 @@ function getModuleIdentifier(normalizedPath: string): string | null {
   return identifier;
 }
 
-function findExportMatch(moduleCode: string, exportName: string): ExportMatch | null {
-  const declarationPattern = new RegExp(
-    `\\bexport\\s+(?:const|let|var|function|class)\\s+${escapeRegex(exportName)}\\b`,
-  );
-  if (declarationPattern.test(moduleCode)) return { localName: exportName, sourceClause: "" };
+function splitExportSpecifiers(
+  tokens: JavaScriptSourceToken[],
+  start: number,
+): { end: number; specifiers: JavaScriptSourceToken[][] } | null {
+  const specifiers: JavaScriptSourceToken[][] = [];
+  let current: JavaScriptSourceToken[] = [];
+  let depth = 1;
 
-  const exportListPattern = /\bexport\s*\{([^}]*)\}\s*(from\s*["'][^"']+["'])?\s*(?:;|$)/gm;
-  let match: RegExpExecArray | null;
-  while ((match = exportListPattern.exec(moduleCode)) !== null) {
-    const specifiers = match[1]?.split(",") ?? [];
-    const sourceClause = match[2] ? ` ${match[2]}` : "";
-    for (const rawSpecifier of specifiers) {
-      const specifier = rawSpecifier.trim();
-      if (specifier === exportName) return { localName: exportName, sourceClause };
-
-      const alias = specifier.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (alias?.[2] === exportName && alias[1]) {
-        return { localName: alias[1], sourceClause };
-      }
+  for (let index = start; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (token.value === "{") {
+      depth++;
+      current.push(token);
+      continue;
     }
+    if (token.value === "}") {
+      depth--;
+      if (depth === 0) {
+        if (current.length > 0) specifiers.push(current);
+        return { end: index, specifiers };
+      }
+      current.push(token);
+      continue;
+    }
+    if (token.value === "," && depth === 1) {
+      if (current.length > 0) specifiers.push(current);
+      current = [];
+      continue;
+    }
+    current.push(token);
   }
 
   return null;
 }
 
+function getExportedName(specifier: JavaScriptSourceToken[]): {
+  localName: string;
+  exportedName: string;
+} | null {
+  const meaningful = specifier.filter((token) =>
+    token.type === "identifier" || token.type === "string"
+  );
+  if (meaningful[0]?.value === "type") meaningful.shift();
+  const asIndex = meaningful.findIndex((token) => token.value === "as");
+  if (asIndex === -1) {
+    const name = meaningful[0]?.value;
+    return name ? { localName: name, exportedName: name } : null;
+  }
+
+  const localName = meaningful[asIndex - 1]?.value;
+  const exportedName = meaningful[asIndex + 1]?.value;
+  return localName && exportedName ? { localName, exportedName } : null;
+}
+
+function getSourceClause(
+  moduleCode: string,
+  tokens: JavaScriptSourceToken[],
+  closingBraceIndex: number,
+): string {
+  const fromToken = tokens[closingBraceIndex + 1];
+  const sourceToken = tokens[closingBraceIndex + 2];
+  if (fromToken?.value !== "from" || sourceToken?.type !== "string") return "";
+  return " " + moduleCode.slice(fromToken.start, sourceToken.end + 1);
+}
+
+function inspectExports(moduleCode: string, exportName: string): {
+  hasDefault: boolean;
+  match: ExportMatch | null;
+} {
+  const tokens = tokenizeJavaScriptSource(moduleCode);
+  let match: ExportMatch | null = null;
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (
+      token?.type !== "identifier" || token.value !== "export" ||
+      tokens[index - 1]?.value === "."
+    ) {
+      continue;
+    }
+
+    let nextIndex = index + 1;
+    if (tokens[nextIndex]?.value === "default") {
+      return { hasDefault: true, match };
+    }
+    if (tokens[nextIndex]?.value === "type") continue;
+    if (
+      tokens[nextIndex]?.value === "*" &&
+      tokens[nextIndex + 1]?.value === "as" &&
+      tokens[nextIndex + 2]?.value === "default"
+    ) {
+      return { hasDefault: true, match };
+    }
+    if (tokens[nextIndex]?.value === "async") nextIndex++;
+
+    const declarationKind = tokens[nextIndex]?.value;
+    if (
+      declarationKind === "const" || declarationKind === "let" ||
+      declarationKind === "var" || declarationKind === "function" ||
+      declarationKind === "class"
+    ) {
+      let nameIndex = nextIndex + 1;
+      if (declarationKind === "function" && tokens[nameIndex]?.value === "*") nameIndex++;
+      if (tokens[nameIndex]?.value === exportName && match === null) {
+        match = { localName: exportName, sourceClause: "" };
+      }
+      continue;
+    }
+
+    if (tokens[nextIndex]?.value !== "{") continue;
+    const list = splitExportSpecifiers(tokens, nextIndex + 1);
+    if (!list) continue;
+    const sourceClause = getSourceClause(moduleCode, tokens, list.end);
+    for (const specifier of list.specifiers) {
+      const names = getExportedName(specifier);
+      if (!names) continue;
+      if (names.exportedName === "default") return { hasDefault: true, match };
+      if (names.exportedName === exportName && match === null) {
+        match = { localName: names.localName, sourceClause };
+      }
+    }
+    index = list.end;
+  }
+
+  return { hasDefault: false, match };
+}
+
 function appendExportBeforeSourceMap(moduleCode: string, exportStatement: string): string {
   const sourceMapMarker = "//# sourceMappingURL=";
-  let sourceMapIndex = moduleCode.lastIndexOf(`\n${sourceMapMarker}`);
+  let sourceMapIndex = moduleCode.lastIndexOf("\n" + sourceMapMarker);
   if (sourceMapIndex < 0 && moduleCode.startsWith(sourceMapMarker)) {
     sourceMapIndex = 0;
   }
 
   if (sourceMapIndex < 0) {
-    return `${moduleCode.trimEnd()}\n${exportStatement}\n`;
+    return moduleCode.trimEnd() + "\n" + exportStatement + "\n";
   }
 
   const beforeSourceMap = moduleCode.slice(0, sourceMapIndex).trimEnd();
   const sourceMap = moduleCode.slice(sourceMapIndex);
-  return `${beforeSourceMap}\n${exportStatement}${
-    sourceMap.endsWith("\n") ? sourceMap : `${sourceMap}\n`
-  }`;
+  const terminatedSourceMap = sourceMap.endsWith("\n") ? sourceMap : sourceMap + "\n";
+  return beforeSourceMap + "\n" + exportStatement + terminatedSourceMap;
 }
 
 export function ensureFilenameDefaultExport(normalizedPath: string, moduleCode: string): string {
-  if (DEFAULT_EXPORT_PATTERN.test(moduleCode)) return moduleCode;
-
   const exportName = getModuleIdentifier(normalizedPath);
   if (!exportName) return moduleCode;
 
-  const exportMatch = findExportMatch(moduleCode, exportName);
-  if (!exportMatch) return moduleCode;
+  const inspected = inspectExports(moduleCode, exportName);
+  if (inspected.hasDefault || !inspected.match) return moduleCode;
 
   return appendExportBeforeSourceMap(
     moduleCode,
-    `export { ${exportMatch.localName} as default }${exportMatch.sourceClause};`,
+    "export { " + inspected.match.localName + " as default }" +
+      inspected.match.sourceClause + ";",
   );
 }

@@ -13,10 +13,17 @@ import { isRedisConfigured, RedisCacheBackend } from "./redis.ts";
 import { ApiCacheBackend } from "./api.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { getEnvValue } from "./helpers.ts";
+import { CACHE_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { containsUnsafeCacheStringCharacter } from "../validation.ts";
 
 const logger = baseLogger.component("cache-backend");
 
 const DEFAULT_MEMORY_MAX_ENTRIES = 500;
+const MAX_MEMORY_MAX_ENTRIES = 1_000_000;
+const MAX_KEY_PREFIX_LENGTH = 512;
+const MAX_API_BASE_URL_LENGTH = 2048;
+const MAX_CIRCUIT_BREAKER_NAME_LENGTH = 128;
+const MAX_ACCESSOR_NAME_LENGTH = 128;
 
 // Re-export gateway types for backward compatibility
 export type { CodeCacheGateway, TokenizingCacheGateway };
@@ -29,14 +36,117 @@ export interface CacheBackendConfig {
   circuitBreakerName?: string;
 }
 
+function invalidArgument(message: string): never {
+  throw INVALID_ARGUMENT.create({ message });
+}
+
+function readConfig(config: object, key: keyof CacheBackendConfig): unknown {
+  try {
+    return Reflect.get(config, key);
+  } catch {
+    invalidArgument("Cache backend configuration must be readable");
+  }
+}
+
+function normalizeOptionalString(
+  value: unknown,
+  label: string,
+  maxLength: number,
+  allowEmpty = false,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" || (!allowEmpty && value.length === 0) ||
+    value.length > maxLength || containsUnsafeCacheStringCharacter(value)
+  ) {
+    invalidArgument(
+      `${label} must be a bounded string without control characters or unpaired UTF-16 surrogates`,
+    );
+  }
+  return value;
+}
+
+function normalizeConfig(value: unknown):
+  & Required<
+    Pick<CacheBackendConfig, "keyPrefix" | "memoryMaxEntries">
+  >
+  & Omit<CacheBackendConfig, "keyPrefix" | "memoryMaxEntries"> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalidArgument("Cache backend configuration must be an object");
+  }
+  const config = value as object;
+  const preferredBackend = readConfig(config, "preferredBackend");
+  if (
+    preferredBackend !== undefined && preferredBackend !== "api" &&
+    preferredBackend !== "redis" && preferredBackend !== "disk" &&
+    preferredBackend !== "memory"
+  ) {
+    invalidArgument("Preferred cache backend is not supported");
+  }
+
+  const memoryMaxEntries = readConfig(config, "memoryMaxEntries") ?? DEFAULT_MEMORY_MAX_ENTRIES;
+  if (
+    typeof memoryMaxEntries !== "number" || !Number.isSafeInteger(memoryMaxEntries) ||
+    memoryMaxEntries < 1 || memoryMaxEntries > MAX_MEMORY_MAX_ENTRIES
+  ) {
+    invalidArgument("Memory cache entry capacity must be a positive safe integer");
+  }
+
+  return Object.freeze({
+    keyPrefix: normalizeOptionalString(
+      readConfig(config, "keyPrefix") ?? "",
+      "Cache key prefix",
+      MAX_KEY_PREFIX_LENGTH,
+      true,
+    )!,
+    memoryMaxEntries,
+    preferredBackend,
+    apiBaseUrl: normalizeOptionalString(
+      readConfig(config, "apiBaseUrl"),
+      "API cache base URL",
+      MAX_API_BASE_URL_LENGTH,
+    ),
+    circuitBreakerName: normalizeOptionalString(
+      readConfig(config, "circuitBreakerName"),
+      "Cache circuit breaker name",
+      MAX_CIRCUIT_BREAKER_NAME_LENGTH,
+    ),
+  });
+}
+
+function assertAccessorInputs(
+  factory: unknown,
+  name: unknown,
+): asserts factory is () => Promise<CacheBackend> {
+  if (typeof factory !== "function") invalidArgument("Cache backend factory must be a function");
+  if (
+    typeof name !== "string" || name.length === 0 || name.length > MAX_ACCESSOR_NAME_LENGTH ||
+    containsUnsafeCacheStringCharacter(name)
+  ) {
+    invalidArgument(
+      "Cache accessor name must be a bounded string without control characters or unpaired UTF-16 surrogates",
+    );
+  }
+}
+
 export function isApiCacheAvailable(): boolean {
   const proxyMode = getEnv("PROXY_MODE");
   const nodeEnv = getEnv("NODE_ENV");
   const apiUrl = getHostEnv("VERYFRONT_API_BASE_URL") ?? getEnvValue("VERYFRONT_API_BASE_URL");
 
-  const isProduction = proxyMode === "1" ||
-    nodeEnv === "production" ||
-    !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
+  let isRemoteApi = false;
+  if (apiUrl) {
+    try {
+      const hostname = new URL(apiUrl).hostname.toLowerCase();
+      isRemoteApi = hostname !== "localhost" && hostname !== "127.0.0.1" &&
+        hostname !== "::1" && hostname !== "lvh.me" &&
+        !hostname.endsWith(".localhost") && !hostname.endsWith(".lvh.me");
+    } catch {
+      return false;
+    }
+  }
+
+  const isProduction = proxyMode === "1" || nodeEnv === "production" || isRemoteApi;
 
   return isProduction && !!apiUrl;
 }
@@ -45,16 +155,17 @@ export function isDiskCacheConfigured(): boolean {
   return getEnv("VF_CACHE_BACKEND") === "disk" || !!getEnv("VF_DISK_CACHE_DIR");
 }
 
-export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
+export async function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
+  const normalizedConfig = normalizeConfig(config);
   const {
     keyPrefix = "",
     memoryMaxEntries = DEFAULT_MEMORY_MAX_ENTRIES,
     preferredBackend,
     apiBaseUrl,
     circuitBreakerName,
-  } = config;
+  } = normalizedConfig;
 
-  return withSpan(
+  return await withSpan(
     SpanNames.CACHE_BACKEND_CREATE,
     async (span?: Span) => {
       const shouldUseApi = preferredBackend === "api" ||
@@ -68,11 +179,17 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       const shouldUseRedis = preferredBackend === "redis" ||
         (!preferredBackend && isRedisConfigured());
       if (shouldUseRedis) {
+        if (preferredBackend === "redis" && !isRedisConfigured()) {
+          throw CACHE_ERROR.create({ detail: "The configured Redis cache is unavailable" });
+        }
         const redisBackend = new RedisCacheBackend(keyPrefix ? `vf:${keyPrefix}:` : "vf:cache:");
         if (await redisBackend.initialize()) {
           logger.debug("Using Redis backend");
           span?.setAttribute("cache.backend.type", "redis");
           return redisBackend;
+        }
+        if (preferredBackend === "redis") {
+          throw CACHE_ERROR.create({ detail: "The configured Redis cache could not initialize" });
         }
       }
 
@@ -90,14 +207,13 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       return new MemoryCacheBackend(memoryMaxEntries);
     },
     {
-      "cache.key_prefix": keyPrefix,
       "cache.preferred_backend": preferredBackend ?? "auto",
     },
   );
 }
 
 export function isDistributedBackend(backend: CacheBackend): boolean {
-  return backend.type !== "memory";
+  return backend.type === "api" || backend.type === "redis" || backend.type === "disk";
 }
 
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
@@ -106,6 +222,7 @@ export function createDistributedCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
 ): () => Promise<CacheBackend | null> {
+  assertAccessorInputs(factory, name);
   let backend: CacheBackend | null | undefined;
   let lastFailureTime = 0;
 
@@ -118,7 +235,7 @@ export function createDistributedCacheAccessor(
         Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
       ) {
         backend = undefined;
-        logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
+        logger.debug("Retrying distributed cache initialization after failure");
       }
 
       if (backend !== undefined) return Promise.resolve(backend);
@@ -131,16 +248,18 @@ export function createDistributedCacheAccessor(
           if (!isDistributedBackend(b)) {
             backend = null;
             lastFailureTime = 0;
-            logger.debug(`[${name}] No distributed cache available (memory only)`);
+            logger.debug("No distributed cache available (memory only)");
             return null;
           }
 
           backend = b;
           lastFailureTime = 0;
-          logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
+          logger.debug("Distributed cache initialized", { type: b.type });
           return b;
         } catch (error) {
-          logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+          logger.debug("Failed to initialize distributed cache", {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
           backend = null;
           lastFailureTime = Date.now();
           return null;
@@ -154,7 +273,7 @@ export function createDistributedCacheAccessor(
   };
 }
 
-export const CacheBackends = {
+export const CacheBackends = Object.freeze({
   transform: () => createCacheBackend({ keyPrefix: "transform" }),
   file: () => createCacheBackend(),
   module: () => createCacheBackend({ keyPrefix: "module" }),
@@ -185,7 +304,7 @@ export const CacheBackends = {
     const backend = await createCacheBackend(config);
     return createTokenizingGateway(backend, name);
   },
-};
+});
 
 /**
  * Create a distributed cache accessor that returns a TokenizingCacheGateway.

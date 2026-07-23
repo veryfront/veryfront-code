@@ -26,7 +26,7 @@ describe("hydration-script-builder/prod-scripts", () => {
       const runtimePath = getProdHydrationModulePath();
 
       assertEquals(
-        /^\/_veryfront\/hydration-runtime\.[0-9a-f]+\.js$/.test(runtimePath),
+        /^\/_veryfront\/hydration-runtime\.[0-9a-z]{13}\.js$/.test(runtimePath),
         true,
       );
       assertEquals(getProdHydrationModulePath(), runtimePath);
@@ -45,6 +45,11 @@ describe("hydration-script-builder/prod-scripts", () => {
   });
 
   describe("generateProdHydrationModule", () => {
+    it("generates parseable module body JavaScript", () => {
+      const moduleBody = generateProdHydrationModule().replace(/^import .*;$/gm, "");
+      new Function(moduleBody);
+    });
+
     it("should import React", () => {
       const result = generateProdHydrationModule();
       assertEquals(result.includes("import * as React from 'react'"), true);

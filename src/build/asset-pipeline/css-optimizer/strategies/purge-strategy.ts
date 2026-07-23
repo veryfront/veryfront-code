@@ -5,7 +5,8 @@ import type {
   CSSOptimizationStrategy,
   CSSProcessingResult,
 } from "../types/index.ts";
-import { extractSelectors, globFiles, shouldKeepSelector } from "../utils.ts";
+import { extractSelectors, globFiles } from "../utils.ts";
+import { purgeCSSRules } from "../css-rule-parser.ts";
 
 const fs = createFileSystem();
 
@@ -23,24 +24,24 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
     logger.debug("Analyzing content for CSS purging");
 
     this.usedSelectors.clear();
+    let analyzedFiles = 0;
 
     for (const pattern of purgeContent) {
       const files = await globFiles(pattern);
 
       for (const file of files) {
-        try {
-          const content = await fs.readTextFile(file);
-          const { selectors } = extractSelectors(content);
+        analyzedFiles++;
+        const content = await fs.readTextFile(file);
+        const { selectors } = extractSelectors(content);
 
-          for (const selector of selectors) {
-            this.usedSelectors.add(selector);
-          }
-        } catch (error) {
-          logger.warn(`Failed to analyze ${file}`, {
-            error: error instanceof Error ? error.message : String(error),
-          });
+        for (const selector of selectors) {
+          this.usedSelectors.add(selector);
         }
       }
+    }
+
+    if (analyzedFiles === 0) {
+      throw new TypeError("purgeContent did not match any source files");
     }
 
     logger.debug(`Found ${this.usedSelectors.size} used selectors`);
@@ -59,27 +60,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
   }
 
   private purgeUnusedCSS(css: string): string {
-    const lines = css.split("\n");
-    const kept: string[] = [];
-    let currentRule = "";
-    let keepRule = false;
-
-    for (const line of lines) {
-      currentRule += `${line}\n`;
-
-      const selector = line.match(/^([^{]+)\s*\{/)?.[1]?.trim();
-      if (selector) {
-        keepRule = shouldKeepSelector(selector, this.usedSelectors);
-      }
-
-      if (!line.includes("}")) continue;
-
-      if (keepRule) kept.push(currentRule);
-      currentRule = "";
-      keepRule = false;
-    }
-
-    return kept.join("");
+    return purgeCSSRules(css, this.usedSelectors);
   }
 
   getUsedSelectors(): Set<string> {

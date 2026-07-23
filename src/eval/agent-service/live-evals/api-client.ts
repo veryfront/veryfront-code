@@ -3,8 +3,21 @@ import { API_CLIENT_ERROR, INVALID_ARGUMENT, TIMEOUT_ERROR } from "#veryfront/er
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { LiveEvalProjectFile } from "./runner.ts";
+import {
+  assertRequestTimeoutMs,
+  createRequestTimeoutSignal,
+  encodeApiPathSegment,
+  readBoundedJsonResponse,
+  stringifyBoundedJsonRequest,
+  waitForDelay,
+} from "../http-safety.ts";
 
 ensureBuiltinSchemaValidator();
+
+const MAX_LIVE_EVAL_UPLOAD_BYTES = 64 * 1024 * 1024;
+const MAX_LIVE_EVAL_POLL_ATTEMPTS = 10_000;
+const MAX_LIVE_EVAL_PATH_LENGTH = 4_096;
+const MAX_LIVE_EVAL_TEXT_LENGTH = 16_384;
 
 /** Context for live eval API. */
 export interface LiveEvalApiContext {
@@ -17,6 +30,7 @@ export interface LiveEvalApiContext {
 /** Input payload for live eval request timeout. */
 export interface LiveEvalRequestTimeoutInput {
   requestTimeoutMs: number;
+  abortSignal?: AbortSignal;
 }
 
 /** Input payload for live eval create conversation. */
@@ -96,7 +110,7 @@ const getProjectUploadListResponseSchema = defineSchema((v) =>
 const getProjectFileResponseSchema = defineSchema((v) =>
   v.object({
     path: v.string().optional(),
-    content: v.string().optional(),
+    content: v.string(),
   })
 );
 
@@ -109,7 +123,7 @@ const getInputRequestRecordSchema = defineSchema((v) =>
 
 const getInputRequestListResponseSchema = defineSchema((v) =>
   v.object({
-    data: v.array(v.unknown()).optional(),
+    data: v.array(getInputRequestRecordSchema()).optional(),
   })
 );
 
@@ -152,8 +166,25 @@ function requireLiveEvalProjectId(projectId: string | null, errorMessage: string
   return projectId;
 }
 
+function assertLiveEvalText(
+  value: string,
+  label: string,
+  maxLength = MAX_LIVE_EVAL_TEXT_LENGTH,
+): void {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a non-empty string of at most ${maxLength} characters`,
+    });
+  }
+}
+
 function createFetch(context: LiveEvalApiContext) {
   return context.fetch ?? fetch;
+}
+
+function createLiveEvalRequestSignal(input: LiveEvalRequestTimeoutInput): AbortSignal {
+  const timeoutSignal = createRequestTimeoutSignal(input.requestTimeoutMs);
+  return input.abortSignal ? AbortSignal.any([input.abortSignal, timeoutSignal]) : timeoutSignal;
 }
 
 function createApiUrl(context: LiveEvalApiContext, path: string): URL {
@@ -178,27 +209,40 @@ function getProjectUploadBodySize(
   body: BodyInit | Uint8Array,
   explicitSize: number | undefined,
 ): number {
-  if (typeof explicitSize === "number") {
-    return explicitSize;
-  }
+  let inferredSize: number | undefined;
   if (typeof body === "string") {
-    return new TextEncoder().encode(body).byteLength;
+    inferredSize = new TextEncoder().encode(body).byteLength;
+  } else if (body instanceof Blob) {
+    inferredSize = body.size;
+  } else if (body instanceof URLSearchParams) {
+    inferredSize = new TextEncoder().encode(body.toString()).byteLength;
+  } else if (body instanceof ArrayBuffer) {
+    inferredSize = body.byteLength;
+  } else if (ArrayBuffer.isView(body)) {
+    inferredSize = body.byteLength;
   }
-  if (body instanceof Blob) {
-    return body.size;
+  if (explicitSize !== undefined && typeof explicitSize !== "number") {
+    throw INVALID_ARGUMENT.create({
+      detail: "Project upload fixture size must be a number when provided",
+    });
   }
-  if (body instanceof URLSearchParams) {
-    return new TextEncoder().encode(body.toString()).byteLength;
+  if (inferredSize !== undefined && explicitSize !== undefined && explicitSize !== inferredSize) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Project upload fixture size does not match the request body",
+    });
   }
-  if (body instanceof ArrayBuffer) {
-    return body.byteLength;
+  const size = inferredSize ?? explicitSize;
+  if (size === undefined) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Project upload fixtures require size when body length cannot be inferred",
+    });
   }
-  if (ArrayBuffer.isView(body)) {
-    return body.byteLength;
+  if (!Number.isSafeInteger(size) || size < 0 || size > MAX_LIVE_EVAL_UPLOAD_BYTES) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Project upload fixture size must be between 0 and ${MAX_LIVE_EVAL_UPLOAD_BYTES}`,
+    });
   }
-  throw INVALID_ARGUMENT.create({
-    detail: "Project upload fixtures require size when body length cannot be inferred",
-  });
+  return size;
 }
 
 function createProjectUploadBody(body: BodyInit | Uint8Array, contentType: string): BodyInit {
@@ -214,58 +258,63 @@ function createProjectUploadBody(body: BodyInit | Uint8Array, contentType: strin
   return body;
 }
 
-function getResponseText(response: Response): Promise<string> {
-  return response.text();
-}
-
-async function wait(input: { ms: number }): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, input.ms);
-  });
-}
-
 async function waitForProjectUploadFixture(
   context: LiveEvalApiContext,
   input: {
     projectId: string;
     filePath: string;
     requestTimeoutMs: number;
+    abortSignal?: AbortSignal;
     pollIntervalMs?: number;
     maxAttempts?: number;
   },
 ): Promise<string> {
-  const listUrl = createApiUrl(context, `/projects/${input.projectId}/uploads`);
+  const listUrl = createApiUrl(
+    context,
+    `/projects/${encodeApiPathSegment(input.projectId, "projectId")}/uploads`,
+  );
   const requestFetch = createFetch(context);
   const maxAttempts = input.maxAttempts ?? 12;
   const pollIntervalMs = input.pollIntervalMs ?? 2_000;
+  if (
+    !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 ||
+    maxAttempts > MAX_LIVE_EVAL_POLL_ATTEMPTS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: `maxAttempts must be an integer between 1 and ${MAX_LIVE_EVAL_POLL_ATTEMPTS}`,
+    });
+  }
+  if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 10) {
+    throw INVALID_ARGUMENT.create({ detail: "pollIntervalMs must be an integer of at least 10" });
+  }
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const listResponse = await requestFetch(listUrl, {
       headers: createLiveEvalAuthHeaders(context),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     });
 
     if (!listResponse.ok) {
+      await listResponse.body?.cancel();
       throw API_CLIENT_ERROR.create({
-        detail:
-          `Failed to confirm project upload fixture: ${listResponse.status} ${await getResponseText(
-            listResponse,
-          )}`,
+        detail: `Failed to confirm project upload fixture: HTTP ${listResponse.status}`,
       });
     }
 
-    const payload = getProjectUploadListResponseSchema().parse(await listResponse.json());
+    const payload = getProjectUploadListResponseSchema().parse(
+      await readBoundedJsonResponse(listResponse),
+    );
     if (payload.data?.some((upload) => upload.path === input.filePath)) {
       return input.filePath;
     }
 
     if (attempt + 1 < maxAttempts) {
-      await wait({ ms: pollIntervalMs });
+      await waitForDelay(pollIntervalMs, input.abortSignal);
     }
   }
 
   throw TIMEOUT_ERROR.create({
-    detail: `Project upload fixture did not appear in time: ${input.filePath}`,
+    detail: "Project upload fixture did not appear in time",
   });
 }
 
@@ -290,25 +339,25 @@ export async function createLiveEvalConversation(
   context: LiveEvalApiContext,
   input: LiveEvalCreateConversationInput,
 ): Promise<string> {
+  assertLiveEvalText(input.title, "title");
   const response = await createFetch(context)(createApiUrl(context, "/conversations"), {
     method: "POST",
     headers: createLiveEvalJsonHeaders(context),
-    body: JSON.stringify({
+    body: stringifyBoundedJsonRequest({
       ...(context.projectId ? { project_id: context.projectId } : {}),
       title: input.title,
     }),
-    signal: AbortSignal.timeout(input.requestTimeoutMs),
+    signal: createLiveEvalRequestSignal(input),
   });
 
   if (!response.ok) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to create eval conversation: ${response.status} ${await getResponseText(
-        response,
-      )}`,
+      detail: `Failed to create eval conversation: HTTP ${response.status}`,
     });
   }
 
-  const payload = getLiveEvalIdResponseSchema().parse(await response.json());
+  const payload = getLiveEvalIdResponseSchema().parse(await readBoundedJsonResponse(response));
   if (!payload.id) {
     throw INVALID_ARGUMENT.create({ detail: "Conversation creation response did not include id" });
   }
@@ -322,22 +371,24 @@ export async function deleteLiveEvalConversation(
   input: LiveEvalConversationInput,
 ): Promise<void> {
   const response = await createFetch(context)(
-    createApiUrl(context, `/conversations/${input.conversationId}`),
+    createApiUrl(
+      context,
+      `/conversations/${encodeApiPathSegment(input.conversationId, "conversationId")}`,
+    ),
     {
       method: "DELETE",
       headers: createLiveEvalAuthHeaders(context),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!response.ok && response.status !== 404) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail:
-        `Failed to delete eval conversation ${input.conversationId}: ${response.status} ${await getResponseText(
-          response,
-        )}`,
+      detail: `Failed to delete eval conversation: HTTP ${response.status}`,
     });
   }
+  await response.body?.cancel();
 }
 
 /** Create live eval project upload fixture. */
@@ -349,31 +400,36 @@ export async function createLiveEvalProjectUploadFixture(
     context.projectId,
     "Project upload fixtures require a live-eval project id",
   );
+  assertLiveEvalText(input.filePath, "filePath", MAX_LIVE_EVAL_PATH_LENGTH);
+  assertLiveEvalText(input.contentType, "contentType", 1_024);
 
   const createResponse = await createFetch(context)(
-    createApiUrl(context, `/projects/${projectId}/uploads`),
+    createApiUrl(
+      context,
+      `/projects/${encodeApiPathSegment(projectId, "projectId")}/uploads`,
+    ),
     {
       method: "POST",
       headers: createLiveEvalJsonHeaders(context),
-      body: JSON.stringify({
+      body: stringifyBoundedJsonRequest({
         file_path: input.filePath,
         content_type: input.contentType,
         size: getProjectUploadBodySize(input.body, input.size),
       }),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!createResponse.ok) {
+    await createResponse.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail:
-        `Failed to create project upload URL: ${createResponse.status} ${await getResponseText(
-          createResponse,
-        )}`,
+      detail: `Failed to create project upload URL: HTTP ${createResponse.status}`,
     });
   }
 
-  const createPayload = getProjectUploadResponseSchema().parse(await createResponse.json());
+  const createPayload = getProjectUploadResponseSchema().parse(
+    await readBoundedJsonResponse(createResponse),
+  );
   if (!createPayload.file_upload_url) {
     throw INVALID_ARGUMENT.create({
       detail: "Project upload response did not include file_upload_url",
@@ -384,21 +440,22 @@ export async function createLiveEvalProjectUploadFixture(
     method: "PUT",
     headers: createProjectUploadHeaders(createPayload.required_headers, input.contentType),
     body: createProjectUploadBody(input.body, input.contentType),
-    signal: AbortSignal.timeout(input.requestTimeoutMs),
+    signal: createLiveEvalRequestSignal(input),
   });
 
   if (!uploadResponse.ok) {
+    await uploadResponse.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to upload project fixture: ${uploadResponse.status} ${await getResponseText(
-        uploadResponse,
-      )}`,
+      detail: `Failed to upload project fixture: HTTP ${uploadResponse.status}`,
     });
   }
+  await uploadResponse.body?.cancel();
 
   return waitForProjectUploadFixture(context, {
     projectId,
     filePath: input.filePath,
     requestTimeoutMs: input.requestTimeoutMs,
+    abortSignal: input.abortSignal,
     pollIntervalMs: input.pollIntervalMs,
     maxAttempts: input.maxAttempts,
   });
@@ -413,28 +470,36 @@ export async function getLiveEvalProjectFile(
     context.projectId,
     "getLiveEvalProjectFile requires a live-eval project id",
   );
+  assertLiveEvalText(input.filePath, "filePath", MAX_LIVE_EVAL_PATH_LENGTH);
   const response = await createFetch(context)(
-    createApiUrl(context, `/projects/${projectId}/files/${encodeURIComponent(input.filePath)}`),
+    createApiUrl(
+      context,
+      `/projects/${encodeApiPathSegment(projectId, "projectId")}/files/${
+        encodeApiPathSegment(input.filePath, "filePath")
+      }`,
+    ),
     {
       headers: createLiveEvalAuthHeaders(context),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (response.status === 404) {
+    await response.body?.cancel();
     return null;
   }
 
   if (!response.ok) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to read project file: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to read project file: HTTP ${response.status}`,
     });
   }
 
-  const payload = getProjectFileResponseSchema().parse(await response.json());
+  const payload = getProjectFileResponseSchema().parse(await readBoundedJsonResponse(response));
   return {
     path: payload.path ?? input.filePath,
-    content: payload.content ?? "",
+    content: payload.content,
   };
 }
 
@@ -447,25 +512,32 @@ export async function createLiveEvalRelease(
     context.projectId,
     "createLiveEvalRelease requires a live-eval project id",
   );
+  if (input.description !== undefined) {
+    assertLiveEvalText(input.description, "description");
+  }
   const response = await createFetch(context)(
-    createApiUrl(context, `/projects/${projectId}/releases`),
+    createApiUrl(
+      context,
+      `/projects/${encodeApiPathSegment(projectId, "projectId")}/releases`,
+    ),
     {
       method: "POST",
       headers: createLiveEvalJsonHeaders(context),
-      body: JSON.stringify({
+      body: stringifyBoundedJsonRequest({
         description: input.description ?? "eval platform capability release",
       }),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!response.ok) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to create release: ${response.status} ${await getResponseText(response)}`,
+      detail: `Failed to create release: HTTP ${response.status}`,
     });
   }
 
-  const payload = getLiveEvalIdResponseSchema().parse(await response.json());
+  const payload = getLiveEvalIdResponseSchema().parse(await readBoundedJsonResponse(response));
   if (!payload.id) {
     throw INVALID_ARGUMENT.create({ detail: "Release creation response did not include id" });
   }
@@ -482,23 +554,29 @@ export async function deleteLiveEvalProjectFile(
   if (!projectId) {
     return;
   }
+  assertLiveEvalText(input.filePath, "filePath", MAX_LIVE_EVAL_PATH_LENGTH);
 
   const response = await createFetch(context)(
-    createApiUrl(context, `/projects/${projectId}/files/${encodeURIComponent(input.filePath)}`),
+    createApiUrl(
+      context,
+      `/projects/${encodeApiPathSegment(projectId, "projectId")}/files/${
+        encodeApiPathSegment(input.filePath, "filePath")
+      }`,
+    ),
     {
       method: "DELETE",
       headers: createLiveEvalAuthHeaders(context),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!response.ok && response.status !== 404) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to delete project file: ${response.status} ${await getResponseText(
-        response,
-      )}`,
+      detail: `Failed to delete project file: HTTP ${response.status}`,
     });
   }
+  await response.body?.cancel();
 }
 
 /** List open live eval input requests. */
@@ -507,26 +585,29 @@ export async function listOpenLiveEvalInputRequests(
   input: LiveEvalConversationInput,
 ): Promise<LiveEvalInputRequestRecord[]> {
   const response = await createFetch(context)(
-    createApiUrl(context, `/conversations/${input.conversationId}/input-requests?status=open`),
+    createApiUrl(
+      context,
+      `/conversations/${
+        encodeApiPathSegment(input.conversationId, "conversationId")
+      }/input-requests?status=open`,
+    ),
     {
       headers: createLiveEvalAuthHeaders(context),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!response.ok) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to list eval input requests: ${response.status} ${await getResponseText(
-        response,
-      )}`,
+      detail: `Failed to list eval input requests: HTTP ${response.status}`,
     });
   }
 
-  const payload = getInputRequestListResponseSchema().parse(await response.json());
-  return (payload.data ?? []).flatMap((item) => {
-    const parsed = getInputRequestRecordSchema().safeParse(item);
-    return parsed.success ? [parsed.data] : [];
-  });
+  const payload = getInputRequestListResponseSchema().parse(
+    await readBoundedJsonResponse(response),
+  );
+  return payload.data ?? [];
 }
 
 /** Request payload for wait for open live eval input. */
@@ -536,6 +617,12 @@ export async function waitForOpenLiveEvalInputRequest(
 ): Promise<string> {
   const timeoutMs = input.timeoutMs ?? 30_000;
   const pollIntervalMs = input.pollIntervalMs ?? 500;
+  assertRequestTimeoutMs(timeoutMs);
+  if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 10 || pollIntervalMs > timeoutMs) {
+    throw INVALID_ARGUMENT.create({
+      detail: "pollIntervalMs must be an integer between 10 and timeoutMs",
+    });
+  }
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -545,18 +632,23 @@ export async function waitForOpenLiveEvalInputRequest(
       });
     }
 
-    const requests = await listOpenLiveEvalInputRequests(context, input);
+    const requests = await listOpenLiveEvalInputRequests(context, {
+      ...input,
+      requestTimeoutMs: Math.min(input.requestTimeoutMs, Math.max(1, deadline - Date.now())),
+    });
     const request = requests[0];
     if (request) {
       return request.id;
     }
 
-    await wait({ ms: pollIntervalMs });
+    await waitForDelay(
+      Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+      input.abortSignal,
+    );
   }
 
   throw TIMEOUT_ERROR.create({
-    detail:
-      `Timed out while waiting for an open input request in conversation ${input.conversationId}`,
+    detail: "Timed out while waiting for an open input request",
   });
 }
 
@@ -568,23 +660,25 @@ export async function submitLiveEvalInputResponse(
   const response = await createFetch(context)(
     createApiUrl(
       context,
-      `/conversations/${input.conversationId}/input-requests/${input.inputRequestId}/responses`,
+      `/conversations/${
+        encodeApiPathSegment(input.conversationId, "conversationId")
+      }/input-requests/${encodeApiPathSegment(input.inputRequestId, "inputRequestId")}/responses`,
     ),
     {
       method: "POST",
       headers: createLiveEvalJsonHeaders(context),
-      body: JSON.stringify({ values: input.values }),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      body: stringifyBoundedJsonRequest({ values: input.values }),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!response.ok) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to submit eval input response: ${response.status} ${await getResponseText(
-        response,
-      )}`,
+      detail: `Failed to submit eval input response: HTTP ${response.status}`,
     });
   }
+  await response.body?.cancel();
 }
 
 /** Request payload for cancel live eval input. */
@@ -595,20 +689,22 @@ export async function cancelLiveEvalInputRequest(
   const response = await createFetch(context)(
     createApiUrl(
       context,
-      `/conversations/${input.conversationId}/input-requests/${input.inputRequestId}/cancel`,
+      `/conversations/${
+        encodeApiPathSegment(input.conversationId, "conversationId")
+      }/input-requests/${encodeApiPathSegment(input.inputRequestId, "inputRequestId")}/cancel`,
     ),
     {
       method: "POST",
       headers: createLiveEvalAuthHeaders(context),
-      signal: AbortSignal.timeout(input.requestTimeoutMs),
+      signal: createLiveEvalRequestSignal(input),
     },
   );
 
   if (!response.ok) {
+    await response.body?.cancel();
     throw API_CLIENT_ERROR.create({
-      detail: `Failed to cancel eval input request: ${response.status} ${await getResponseText(
-        response,
-      )}`,
+      detail: `Failed to cancel eval input request: HTTP ${response.status}`,
     });
   }
+  await response.body?.cancel();
 }

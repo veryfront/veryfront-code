@@ -4,7 +4,9 @@ description: "OAuth 2.0 helpers with a built-in provider catalog."
 order: 34
 ---
 
-Sign users in with OAuth 2.0 using `veryfront/oauth`.
+Connect a signed-in user to provider APIs with OAuth 2.0 using
+`veryfront/oauth`. This module does not authenticate users or validate OpenID
+Connect ID tokens. Use your application's session system for sign-in.
 
 The module provides:
 
@@ -23,10 +25,10 @@ The module provides:
 
 ## Quick setup
 
-Two routes handle the full OAuth flow: redirect to the provider and handle the
-callback. Both handlers require a `getUserId` function that returns the
-authenticated user's id from your session; unauthenticated requests receive
-a 401.
+Two routes handle the OAuth flow: redirect to the provider and handle the
+callback. The init handler requires a `getUserId` function that returns the
+authenticated user's id from your session. The callback obtains that id from
+the one-time state row created by the init handler.
 
 ```ts
 // app/api/auth/github/route.ts
@@ -51,8 +53,8 @@ export const GET = createOAuthCallbackHandler(githubConfig);
 Set your credentials via environment variables:
 
 ```bash
-GITHUB_CLIENT_ID=your-client-id
-GITHUB_CLIENT_SECRET=your-client-secret
+GITHUB_CLIENT_ID=<CLIENT_ID>
+GITHUB_CLIENT_SECRET=<CLIENT_SECRET>
 ```
 
 Link users to `/api/auth/github` to start the flow. After authorization, they're
@@ -85,10 +87,11 @@ for exact config names.
 
 ## API setup for OAuth credentials
 
-For each OAuth provider, create an application and configure the callback URL:
+For each OAuth provider, create an application and configure its callback URL.
+The service id is the `serviceId` field on the provider config:
 
 ```text
-https://<api-host>/api/oauth/callback/{integration-name}
+https://<APP_HOST>/api/auth/<SERVICE_ID>/callback
 ```
 
 Each provider needs two variables:
@@ -142,36 +145,48 @@ implement a persistent store. The `TokenStore` interface is keyed by
 state rows are consumed atomically (one-shot):
 
 ```ts
-import { createOAuthCallbackHandler, githubConfig } from "veryfront/oauth";
-import type { OAuthTokens, StoredOAuthState, TokenStore } from "veryfront/oauth";
+import {
+  createOAuthCallbackHandler,
+  githubConfig,
+  OAuthTokensSchema,
+  StoredOAuthStateSchema,
+} from "veryfront/oauth";
+import type { TokenStore } from "veryfront/oauth";
 
 const redisTokenStore: TokenStore = {
   async getTokens(serviceId, userId) {
-    const data = await redis.get(`oauth:tokens:${serviceId}:${userId}`);
-    return data ? (JSON.parse(data) as OAuthTokens) : null;
+    const data = await redis.get(tokenKey(serviceId, userId));
+    if (!data) return null;
+    const result = OAuthTokensSchema.safeParse(JSON.parse(data));
+    return result.success ? result.data : null;
   },
   async setTokens(serviceId, userId, tokens) {
     await redis.set(
-      `oauth:tokens:${serviceId}:${userId}`,
+      tokenKey(serviceId, userId),
       JSON.stringify(tokens),
     );
   },
   async clearTokens(serviceId, userId) {
-    await redis.del(`oauth:tokens:${serviceId}:${userId}`);
+    await redis.del(tokenKey(serviceId, userId));
   },
   async setState(state, meta) {
     // Set with a short TTL (e.g. 10 minutes) so abandoned flows don't pile up.
     await redis.set(`oauth:state:${state}`, JSON.stringify(meta), "EX", 600);
   },
   async consumeState(state) {
-    // Atomic read + delete: the state row must be usable exactly once.
+    // Use Redis GETDEL or an equivalent transaction. Separate GET and DEL
+    // calls allow two concurrent callbacks to consume the same state.
     const key = `oauth:state:${state}`;
-    const data = await redis.get(key);
+    const data = await redis.getDel(key);
     if (!data) return null;
-    await redis.del(key);
-    return JSON.parse(data) as StoredOAuthState;
+    const result = StoredOAuthStateSchema.safeParse(JSON.parse(data));
+    return result.success ? result.data : null;
   },
 };
+
+function tokenKey(serviceId: string, userId: string): string {
+  return `oauth:tokens:${encodeURIComponent(serviceId)}:${encodeURIComponent(userId)}`;
+}
 
 export const GET = createOAuthCallbackHandler(githubConfig, {
   tokenStore: redisTokenStore,
@@ -203,6 +218,12 @@ export const POST = createOAuthDisconnectHandler(githubConfig, {
   getUserId: (request) => getSessionUserId(request),
 });
 ```
+
+Mount disconnect handlers on a state-changing method such as `POST`. Apply the
+same session and CSRF protections as other account-setting routes. If the
+provider config has a revocation endpoint, the handler revokes the provider
+token before deleting local state. A provider revocation failure returns `502`
+and keeps the local token so the request can be retried.
 
 ## Custom OAuth provider
 
@@ -245,8 +266,31 @@ import { tokenStore } from "../../lib/token-store.ts";
 const gmail = new OAuthService(gmailConfig, tokenStore);
 
 // Pass the signed-in user's id: never a hardcoded constant.
-const response = await gmail.fetch(session.userId, "/users/me/messages");
+const response = await gmail.fetch(session.userId, "/users/me/messages", {
+  maxResponseBytes: 4 * 1024 * 1024,
+});
 ```
+
+Provider requests time out after 30 seconds by default. Set
+`VF_HTTP_FETCH_TIMEOUT` to a positive millisecond value of at most 300000 to
+change that timeout. `OAuthService.fetch()` accepts JSON responses up to 16 MiB
+by default, rejects cross-origin endpoint URLs, and does not follow redirects.
+
+## Production checklist
+
+- Set `APP_URL` to the exact public HTTPS origin and optional base path. Do not
+  include credentials, a query, or a fragment.
+- Inject the same durable `TokenStore` into the init, callback, status, and
+  disconnect handlers. `MemoryTokenStore` is only for development and tests.
+- Implement `consumeState()` as an atomic read-and-delete operation with a
+  short expiry. State validation cannot be disabled.
+- Keep PKCE enabled. The generated authorization URL uses `S256` by default.
+- Keep success and error redirects on the application origin. Handler options
+  reject cross-origin redirect targets.
+- Encrypt provider tokens at rest and restrict access by both `serviceId` and
+  authenticated `userId`.
+- Treat `idToken` as unverified data. Do not use it for authentication or
+  authorization without complete OpenID Connect validation.
 
 ## Verify it worked
 
@@ -264,7 +308,7 @@ A working setup:
 
   ```ts
   const tokens = await tokenStore.getTokens(githubConfig.serviceId, userId);
-  console.log(tokens.accessToken ? "ok" : "missing");
+  console.log(tokens?.accessToken ? "ok" : "missing");
   ```
 
 - Calling `gmail.fetch(userId, ...)` (or any provider service) returns the

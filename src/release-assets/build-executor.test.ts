@@ -6,6 +6,7 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -16,8 +17,10 @@ import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MAX_SIZE_BYTES,
+  RELEASE_ASSET_UPLOAD_CONCURRENCY,
 } from "./constants.ts";
 import {
+  buildCachedHttpDependencyAssets,
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
   type ReleaseAssetHttpDependencyVendor,
@@ -27,6 +30,140 @@ import {
 } from "./build-executor.ts";
 import { parseReleaseAssetManifest } from "./manifest-schema.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+
+describe("cached HTTP dependency assets", () => {
+  it("rejects a symbolic-link cache root", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-cache-project-" });
+    const outsideDir = await Deno.makeTempDir({ prefix: "vf-release-cache-outside-" });
+    const cacheDir = join(projectDir, ".cache", "veryfront-http-bundle");
+
+    try {
+      await Deno.mkdir(join(projectDir, ".cache"), { recursive: true });
+      await Deno.writeTextFile(
+        join(outsideDir, "http-escape.mjs"),
+        "/*! @vf-source: https://example.com/escape.js */\nexport const escaped = true;\n",
+      );
+      await Deno.symlink(outsideDir, cacheDir);
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir, rootDir: projectDir }),
+        TypeError,
+        "symbolic link",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("rejects a cache root reached through an escaping parent link", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-cache-project-" });
+    const outsideDir = await Deno.makeTempDir({ prefix: "vf-release-cache-outside-" });
+    const cacheDir = join(projectDir, ".cache", "veryfront-http-bundle");
+
+    try {
+      await Deno.mkdir(join(outsideDir, "veryfront-http-bundle"), { recursive: true });
+      await Deno.symlink(outsideDir, join(projectDir, ".cache"));
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir, rootDir: projectDir }),
+        TypeError,
+        "resolves outside",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("rejects an oversized cached source before reading it", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-cache-project-" });
+    const cacheDir = join(projectDir, ".cache", "veryfront-http-bundle");
+
+    try {
+      await Deno.mkdir(cacheDir, { recursive: true });
+      await Deno.writeTextFile(join(cacheDir, "http-oversized.mjs"), "");
+      await Deno.truncate(
+        join(cacheDir, "http-oversized.mjs"),
+        RELEASE_ASSET_MAX_SIZE_BYTES + 1,
+      );
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir, rootDir: projectDir }),
+        TypeError,
+        "source exceeds",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects cached sources whose aggregate bytes exceed the materialization budget", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-cache-project-" });
+    const cacheDir = join(projectDir, ".cache", "veryfront-http-bundle");
+
+    try {
+      await Deno.mkdir(cacheDir, { recursive: true });
+      for (let index = 0; index <= RELEASE_ASSET_UPLOAD_CONCURRENCY; index++) {
+        const path = join(cacheDir, `http-${index}.mjs`);
+        await Deno.writeTextFile(path, "");
+        await Deno.truncate(path, RELEASE_ASSET_MAX_SIZE_BYTES);
+      }
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir, rootDir: projectDir }),
+        TypeError,
+        "aggregate size",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects caches with more than one thousand dependency sources", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-cache-project-" });
+    const cacheDir = join(projectDir, ".cache", "veryfront-http-bundle");
+
+    try {
+      await Deno.mkdir(cacheDir, { recursive: true });
+      await Promise.all(
+        Array.from(
+          { length: 1_001 },
+          (_, index) => Deno.writeTextFile(join(cacheDir, `http-${index}.mjs`), ""),
+        ),
+      );
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir, rootDir: projectDir }),
+        TypeError,
+        "source count",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects a cached source without HTTP source metadata", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-cache-project-" });
+    const cacheDir = join(projectDir, ".cache", "veryfront-http-bundle");
+
+    try {
+      await Deno.mkdir(cacheDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(cacheDir, "http-unidentified.mjs"),
+        "export const source = 'unknown';\n",
+      );
+
+      await assertRejects(
+        () => buildCachedHttpDependencyAssets({ cacheDir, rootDir: projectDir }),
+        TypeError,
+        "source metadata",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
 
 interface Recorded {
   began: boolean;
@@ -1880,6 +2017,111 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(manifest.manifestVersion, 42);
   });
 
+  it("rejects an invalid manifest_version before materializing release files", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let listedFiles = false;
+    const client = makeClient([], rec, {
+      beginReleaseAssetManifestBuild: () => {
+        rec.began = true;
+        return Promise.resolve({ id: "b2", manifest_version: -1, state: "building" });
+      },
+      listAllReleaseFiles: () => {
+        listedFiles = true;
+        return Promise.resolve([]);
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(listedFiles, false);
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("does not publish a manifest that fails canonical validation", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      rec,
+    );
+    const input = { ...baseInput(client, (source) => Promise.resolve(source)), projectId: "" };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertEquals(result.success, false);
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("changes sourceContentHash when release file contents change", async () => {
+    async function buildSourceHash(content: string): Promise<string> {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient([{ path: "pages/index.tsx", content }], rec);
+      await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      return manifest.sourceContentHash;
+    }
+
+    const first = await buildSourceHash("export default () => 'first';");
+    const second = await buildSourceHash("export default () => 'second';");
+
+    assert(first !== second, "sourceContentHash must cover release file contents");
+  });
+
+  it("fails instead of publishing a manifest when an upload is not acknowledged", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      rec,
+      {
+        uploadReleaseAsset: () => Promise.resolve({ stored: false, existed: false }),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("skips oversized compiled CSS instead of uploading it", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      rec,
+      {
+        compileProjectCss: () =>
+          Promise.resolve({
+            css: "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1),
+            styleProfileHash: "sp-1",
+          }),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+
+    assertEquals(manifest.css, []);
+    assert(result.gaps.includes("css:oversized"));
+    assertEquals(rec.uploads.some(({ contentType }) => contentType === "text/css"), false);
+  });
+
   // M2: modules exceeding the 10 MB limit are skipped with a gap.
   it("skips oversized modules with a gap instead of uploading (M2)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
@@ -1907,6 +2149,10 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage("pages/blog/post.tsx"), "/blog/post");
     assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
     assertEquals(routeForPage("components/Button.tsx"), null);
+    assertEquals(routeForPage("pages/../secret.tsx"), null);
+    assertEquals(routeForPage("pages//index.tsx"), null);
+    assertEquals(routeForPage("pages/readme.txt"), null);
+    assertEquals(routeForPage("pages/types.d.ts"), null);
   });
 });
 
@@ -1947,5 +2193,37 @@ describe("manifest fetcher registry (B1 multi-project isolation)", () => {
 
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", origEnv ?? "");
     clearReleaseAssetManifestCache();
+  });
+
+  it("does not let an older adapter unregister the current fetcher", async () => {
+    const {
+      clearReleaseAssetManifestCache,
+      getReadyManifestForRender,
+      registerManifestFetcherForRelease,
+      unregisterManifestFetcherForRelease,
+    } = await import("./manifest-cache.ts");
+    const originalFlag = Deno.env.get("VERYFRONT_RELEASE_ASSET_MANIFEST");
+    const calls: string[] = [];
+    const older = () => Promise.resolve(null);
+    const current = () => {
+      calls.push("current");
+      return Promise.resolve(null);
+    };
+
+    try {
+      clearReleaseAssetManifestCache();
+      registerManifestFetcherForRelease("rel-owner", older);
+      registerManifestFetcherForRelease("rel-owner", current);
+      unregisterManifestFetcherForRelease("rel-owner", older);
+      Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
+
+      getReadyManifestForRender("rel-owner");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      assertEquals(calls, ["current"]);
+    } finally {
+      Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", originalFlag ?? "");
+      clearReleaseAssetManifestCache();
+    }
   });
 });

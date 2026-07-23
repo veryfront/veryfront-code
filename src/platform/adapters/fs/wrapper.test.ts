@@ -4,11 +4,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FSAdapterWrapper,
   isExtendedFSAdapter,
+  isVirtualFilesystem,
   NotSupportedError,
   wrapFSAdapter,
 } from "./wrapper.ts";
 import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
-import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
+import { type ContextualFSAdapter, FS_ADAPTER_KIND, type FSAdapter } from "./veryfront/types.ts";
 
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
   return {
@@ -67,6 +68,10 @@ describe("NotSupportedError", () => {
 });
 
 describe("wrapFSAdapter", () => {
+  it("uses a cross-package adapter identity symbol", () => {
+    assertEquals(FS_ADAPTER_KIND, Symbol.for("veryfront.fs-adapter.kind"));
+  });
+
   it("should create FSAdapterWrapper instance", () => {
     const wrapper = wrapFSAdapter(createMockFSAdapter());
     assertEquals(wrapper instanceof FSAdapterWrapper, true);
@@ -149,7 +154,7 @@ describe("FSAdapterWrapper", () => {
       assertEquals(wrapper.isVeryfrontAdapter(), false);
     });
 
-    it("isVeryfrontAdapter should return true for VeryfrontFSAdapter", () => {
+    it("does not trust an adapter based only on its constructor name", () => {
       class VeryfrontFSAdapter {
         readFile = () => Promise.resolve("content");
         exists = () => Promise.resolve(true);
@@ -164,11 +169,13 @@ describe("FSAdapterWrapper", () => {
       }
 
       const wrapper = new FSAdapterWrapper(new VeryfrontFSAdapter() as FSAdapter);
-      assertEquals(wrapper.isVeryfrontAdapter(), true);
+      assertEquals(wrapper.isVeryfrontAdapter(), false);
+      assertEquals(isVirtualFilesystem(wrapper), false);
     });
 
-    it("isVeryfrontAdapter should return true for MultiProjectFSAdapter", () => {
-      class MultiProjectFSAdapter {
+    it("recognizes an explicitly identified Veryfront adapter after minification", () => {
+      class A {
+        readonly [FS_ADAPTER_KIND] = "veryfront" as const;
         readFile = () => Promise.resolve("content");
         exists = () => Promise.resolve(true);
         stat = () =>
@@ -181,8 +188,29 @@ describe("FSAdapterWrapper", () => {
           });
       }
 
-      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as FSAdapter);
+      const wrapper = new FSAdapterWrapper(new A() as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
+      assertEquals(isVirtualFilesystem(wrapper), true);
+    });
+
+    it("recognizes an explicitly identified GitHub adapter as virtual", () => {
+      const adapter = createMockFSAdapter({
+        [FS_ADAPTER_KIND]: "github",
+      });
+      const wrapper = new FSAdapterWrapper(adapter);
+
+      assertEquals(wrapper.isVeryfrontAdapter(), false);
+      assertEquals(isVirtualFilesystem(wrapper), true);
+    });
+
+    it("recognizes an explicitly identified memory adapter as virtual", () => {
+      const adapter = createMockFSAdapter({
+        [FS_ADAPTER_KIND]: "memory",
+      });
+      const wrapper = new FSAdapterWrapper(adapter);
+
+      assertEquals(wrapper.isVeryfrontAdapter(), false);
+      assertEquals(isVirtualFilesystem(wrapper), true);
     });
   });
 

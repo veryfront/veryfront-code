@@ -60,7 +60,7 @@ export function extractFrontmatter(
     ...exports,
   };
 
-  logger.debug("Extracted frontmatter:", frontmatter);
+  logger.debug("Extracted frontmatter", { keyCount: Object.keys(frontmatter).length });
 
   return { body, frontmatter };
 }

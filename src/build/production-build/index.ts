@@ -1,11 +1,23 @@
 /**
- * Build Production Build
+ * Production build stages for static output, client assets, and manifests.
+ *
+ * @example Generate a dry-run build through the orchestration entry point.
+ * ```ts
+ * import { buildProduction } from "#veryfront/build/production-build/index.ts";
+ *
+ * const stats = await buildProduction({
+ *   projectDir: ".",
+ *   outputDir: ".veryfront/output",
+ *   dryRun: true,
+ * });
+ * ```
  *
  * @module build/production-build
  */
 
 export { type AssetStats, copyStaticAssets, loadClientStyles } from "./asset-generation.ts";
 export {
+  type ClientScriptGenerationOptions,
   generateAppModule,
   generateClientModule,
   generateImportMap,

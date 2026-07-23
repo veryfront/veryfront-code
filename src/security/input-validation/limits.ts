@@ -2,11 +2,22 @@ import { createValidationError, VeryfrontError } from "./errors.ts";
 import { DEFAULT_LIMITS, type RequestLimits } from "./types.ts";
 
 const REQUEST_BODY_TOO_LARGE_DETAIL = "Request body exceeds size limit";
+const DECLARED_BODY_TOO_LARGE_DETAIL = "Request body too large";
+const textEncoder = new TextEncoder();
+
+function validateLimit(name: string, value: number): void {
+  if (Number.isSafeInteger(value) && value >= 0) return;
+  throw createValidationError(
+    `Invalid request limit: ${name} must be a non-negative safe integer`,
+    { name, value: Number.isFinite(value) ? value : String(value) },
+  );
+}
 
 export function isRequestBodyTooLargeError(error: unknown): error is VeryfrontError {
   return error instanceof VeryfrontError &&
     error.slug === "input-validation-failed" &&
-    error.detail === REQUEST_BODY_TOO_LARGE_DETAIL;
+    (error.detail === REQUEST_BODY_TOO_LARGE_DETAIL ||
+      error.detail === DECLARED_BODY_TOO_LARGE_DETAIL);
 }
 
 export function validateRequestLimits(
@@ -18,29 +29,39 @@ export function validateRequestLimits(
     ...limits,
   };
 
+  validateLimit("maxUrlLength", maxUrlLength);
+  validateLimit("maxBodySize", maxBodySize);
+  validateLimit("maxHeaderSize", maxHeaderSize);
+
   validateUrlLength(request.url, maxUrlLength);
   validateContentLength(request, maxBodySize);
   validateHeaderSize(request, maxHeaderSize);
 }
 
 function validateUrlLength(url: string, maxLength: number): void {
-  if (url.length <= maxLength) return;
+  const actualLength = textEncoder.encode(url).byteLength;
+  if (actualLength <= maxLength) return;
 
   throw createValidationError("URL too long", {
     maxLength,
-    actualLength: url.length,
+    actualLength,
   });
 }
 
 function validateContentLength(request: Request, maxSize: number): void {
   const contentLength = request.headers.get("content-length");
-  if (!contentLength) return;
+  if (contentLength === null) return;
 
-  const size = Number.parseInt(contentLength, 10);
-  if (Number.isNaN(size)) throw createValidationError("Invalid Content-Length header");
+  if (!/^\d+$/.test(contentLength)) {
+    throw createValidationError("Invalid Content-Length header");
+  }
+  const size = Number(contentLength);
+  if (!Number.isSafeInteger(size)) {
+    throw createValidationError("Invalid Content-Length header");
+  }
   if (size <= maxSize) return;
 
-  throw createValidationError("Request body too large", {
+  throw createValidationError(DECLARED_BODY_TOO_LARGE_DETAIL, {
     maxSize,
     actualSize: size,
   });
@@ -50,7 +71,7 @@ function validateHeaderSize(request: Request, maxSize: number): void {
   let headerSize = 0;
 
   for (const [key, value] of request.headers) {
-    headerSize += key.length + value.length + 4; // ": " and "\r\n"
+    headerSize += textEncoder.encode(key).byteLength + textEncoder.encode(value).byteLength + 4;
   }
 
   if (headerSize <= maxSize) return;
@@ -81,15 +102,30 @@ export async function readBodyWithLimit(
   request: Request,
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
 ): Promise<string> {
+  const bytes = await readBodyBytesWithLimit(request, maxSize);
+  return new TextDecoder().decode(bytes);
+}
+
+/** Read a request body as bytes while enforcing the configured limit. @internal */
+export async function readBodyBytesWithLimit(
+  request: Request,
+  maxSize: number = DEFAULT_LIMITS.maxBodySize,
+): Promise<Uint8Array> {
+  validateLimit("maxBodySize", maxSize);
+
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     if (!/^\d+$/.test(contentLength)) {
       throw createValidationError("Invalid Content-Length header");
     }
-    if (Number(contentLength) > maxSize) {
+    const declaredSize = Number(contentLength);
+    if (!Number.isSafeInteger(declaredSize)) {
+      throw createValidationError("Invalid Content-Length header");
+    }
+    if (declaredSize > maxSize) {
       throw createValidationError(REQUEST_BODY_TOO_LARGE_DETAIL, {
         maxSize,
-        contentLength: Number(contentLength),
+        contentLength: declaredSize,
       });
     }
   }
@@ -128,5 +164,5 @@ export async function readBodyWithLimit(
     offset += chunk.length;
   }
 
-  return new TextDecoder().decode(combined);
+  return combined;
 }

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalReport } from "veryfront/eval";
 import { compareEvalReports } from "./baseline.ts";
@@ -322,5 +322,21 @@ describe("eval/baseline", () => {
     });
     assertEquals(gated.regressed, true);
     assertEquals(gated.budgetDeltas.map((delta) => delta.regressed), [true, false, false, true]);
+  });
+
+  it("rejects negative and non-finite regression thresholds", () => {
+    const current = createReport({ runId: "current" });
+    const baseline = createReport({ runId: "baseline" });
+    for (
+      const policy of [
+        { passRateDropThreshold: -1 },
+        { metricPassRateDropThreshold: Number.NaN },
+        { failedDeltaThreshold: -1 },
+        { usageIncreaseThreshold: Number.POSITIVE_INFINITY },
+        { latencyIncreaseThreshold: -0.1 },
+      ]
+    ) {
+      assertThrows(() => compareEvalReports(current, baseline, policy), Error);
+    }
   });
 });

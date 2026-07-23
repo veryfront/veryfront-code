@@ -1,7 +1,8 @@
-import { readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError, readDir, readTextFile, stat } from "#veryfront/platform/compat/fs.ts";
 import { extname, join } from "#veryfront/platform/compat/path/basic-operations.ts";
+import { isAbsolute } from "#veryfront/platform/compat/path/resolution.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import {
   createVeryfrontCloudFetch,
@@ -11,34 +12,40 @@ import { chunk } from "../chunk.ts";
 import { embedding } from "../embedding.ts";
 import type {
   RagDocumentMeta,
+  RagIngestMetadata,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
   RagStoreConfig,
 } from "../types.ts";
+import {
+  MAX_IDENTIFIER_LENGTH,
+  MAX_PATH_LENGTH,
+  MAX_RAG_TEXT_LENGTH,
+  MAX_SOURCE_LENGTH,
+  MAX_TITLE_LENGTH,
+  MAX_TYPE_LENGTH,
+  throwIfAborted,
+  validateBoundedString,
+  validateRagTitle,
+} from "../validation.ts";
+import { embeddingFailureContext } from "../logging.ts";
+import { buildContentFileSource } from "../content-source.ts";
 
 const DEFAULT_TOP_K = 5;
-const MAX_TEXT_LENGTH = 5 * 1024 * 1024; // 5 MB text limit per document
 const MAX_API_CHUNK_BATCH = 500;
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
-const SEARCH_OVERSCAN = 25;
 const DOCUMENTS_DIR = ".veryfront/rag/documents";
+const MAX_CLOUD_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_CLOUD_DOCUMENTS = 10_000;
+const MAX_CONTENT_FILES = 10_000;
+const MAX_CONTENT_PAGES = 100;
+const MAX_CONTENT_DEPTH = 32;
+const MAX_CONTENT_FILE_BYTES = MAX_RAG_TEXT_LENGTH * 4;
 
 type SupportedDimension = 768 | 1024 | 1536 | 3072 | 4096;
-
-interface CloudChunkListResponse {
-  data: Array<{
-    id: string;
-    index: number;
-    content: string;
-    metadata?: Record<string, unknown>;
-  }>;
-  page_info?: {
-    next?: string | null;
-  };
-}
 
 interface CloudUpsertChunksResponse {
   chunks: Array<{ id: string; index: number }>;
@@ -67,10 +74,6 @@ interface CloudRagDocumentResponse {
 
 interface CloudListRagDocumentsResponse {
   documents: CloudRagDocumentResponse[];
-}
-
-interface CloudUpsertRagDocumentResponse {
-  document: CloudRagDocumentResponse;
 }
 
 interface CloudStoreContext {
@@ -114,6 +117,14 @@ interface CloudFileListResponse {
 interface CloudFileDetailResponse {
   path: string;
   content: string;
+}
+
+interface CloudRagSearchMetadata {
+  kind: "rag-document";
+  document_id: string;
+  title: string;
+  source: string;
+  type: string;
 }
 
 function buildUrl(base: string, path: string): string {
@@ -176,11 +187,160 @@ function buildRefreshDocumentFilePath(documentId: string, type?: string): string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function toStringValue(value: unknown, fallback = ""): string {
-  return typeof value === "string" ? value : fallback;
+function isBoundedString(value: unknown, maximum: number, allowEmpty = true): value is string {
+  return typeof value === "string" && value.length <= maximum &&
+    (allowEmpty || value.trim().length > 0);
+}
+
+function parseCloudRagSearchMetadata(value: unknown): CloudRagSearchMetadata | null {
+  if (!isRecord(value) || value.kind !== "rag-document") return null;
+  if (
+    !isBoundedString(value.document_id, MAX_IDENTIFIER_LENGTH, false) ||
+    !isBoundedString(value.title, MAX_TITLE_LENGTH, false) ||
+    !isBoundedString(value.source, MAX_SOURCE_LENGTH) ||
+    !isBoundedString(value.type, MAX_TYPE_LENGTH)
+  ) {
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud returned invalid RAG search metadata",
+    });
+  }
+  return {
+    kind: "rag-document",
+    document_id: value.document_id,
+    title: value.title,
+    source: value.source,
+    type: value.type,
+  };
+}
+
+function isCloudRagDocument(value: unknown): value is CloudRagDocumentResponse {
+  if (!isRecord(value)) return false;
+  const createdAt = typeof value.created_at === "string"
+    ? new Date(value.created_at).getTime()
+    : Number.NaN;
+  const updatedAt = typeof value.updated_at === "string"
+    ? new Date(value.updated_at).getTime()
+    : Number.NaN;
+  return isBoundedString(value.id, MAX_IDENTIFIER_LENGTH, false) &&
+    isBoundedString(value.title, MAX_TITLE_LENGTH, false) &&
+    isBoundedString(value.source, MAX_SOURCE_LENGTH) &&
+    isBoundedString(value.type, MAX_TYPE_LENGTH) &&
+    Number.isFinite(createdAt) && Number.isFinite(updatedAt) &&
+    (value.metadata === undefined ||
+      (isRecord(value.metadata) &&
+        (value.metadata.filePath === undefined ||
+          isBoundedString(value.metadata.filePath, MAX_PATH_LENGTH, false))));
+}
+
+function assertCloudDocumentList(value: unknown): asserts value is CloudListRagDocumentsResponse {
+  if (
+    !isRecord(value) || !Array.isArray(value.documents) ||
+    value.documents.length > MAX_CLOUD_DOCUMENTS ||
+    !value.documents.every(isCloudRagDocument)
+  ) {
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud returned an invalid RAG document response",
+    });
+  }
+  const ids = new Set<string>();
+  for (const document of value.documents) {
+    if (ids.has(document.id)) {
+      throw API_ERROR.create({
+        detail: "Veryfront Cloud returned duplicate RAG document IDs",
+      });
+    }
+    ids.add(document.id);
+  }
+}
+
+function assertCloudChunkUpsert(
+  value: unknown,
+  expectedIndexes: Set<number>,
+): asserts value is CloudUpsertChunksResponse {
+  if (!isRecord(value) || !Array.isArray(value.chunks)) {
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud returned an invalid chunk response",
+    });
+  }
+  const ids = new Set<string>();
+  const indexes = new Set<number>();
+  for (const entry of value.chunks) {
+    if (
+      !isRecord(entry) || !isBoundedString(entry.id, MAX_IDENTIFIER_LENGTH, false) ||
+      !Number.isSafeInteger(entry.index) || Number(entry.index) < 0 ||
+      !expectedIndexes.has(Number(entry.index)) || ids.has(entry.id) ||
+      indexes.has(Number(entry.index))
+    ) {
+      throw API_ERROR.create({
+        detail: "Veryfront Cloud returned an invalid chunk response",
+      });
+    }
+    ids.add(entry.id);
+    indexes.add(Number(entry.index));
+  }
+  if (indexes.size !== expectedIndexes.size) {
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud returned an incomplete chunk response",
+    });
+  }
+}
+
+function assertCloudSearchResponse(value: unknown): asserts value is CloudSearchResponse {
+  if (!isRecord(value) || !Array.isArray(value.data) || value.data.length > MAX_SEARCH_LIMIT) {
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud returned an invalid search response",
+    });
+  }
+  for (const result of value.data) {
+    if (
+      !isRecord(result) || typeof result.score !== "number" || !Number.isFinite(result.score) ||
+      !isRecord(result.chunk) ||
+      !isBoundedString(result.chunk.file_path, MAX_PATH_LENGTH, false) ||
+      !isBoundedString(result.chunk.content, MAX_RAG_TEXT_LENGTH) ||
+      (result.chunk.metadata !== undefined && !isRecord(result.chunk.metadata))
+    ) {
+      throw API_ERROR.create({
+        detail: "Veryfront Cloud returned an invalid search response",
+      });
+    }
+  }
+}
+
+function assertCloudFileList(value: unknown): asserts value is CloudFileListResponse {
+  if (!isRecord(value) || !Array.isArray(value.data) || value.data.length > 100) {
+    throw API_ERROR.create({ detail: "Veryfront Cloud returned an invalid file response" });
+  }
+  for (const file of value.data) {
+    if (
+      !isRecord(file) || !isBoundedString(file.path, MAX_PATH_LENGTH, false) ||
+      (file.content !== undefined && !isBoundedString(file.content, MAX_RAG_TEXT_LENGTH))
+    ) {
+      throw API_ERROR.create({
+        detail: "Veryfront Cloud returned an invalid file response",
+      });
+    }
+  }
+  const pageInfo = value.page_info;
+  if (
+    pageInfo !== undefined &&
+    (!isRecord(pageInfo) ||
+      (pageInfo.next !== undefined && pageInfo.next !== null &&
+        !isBoundedString(pageInfo.next, MAX_PATH_LENGTH, false)))
+  ) {
+    throw API_ERROR.create({ detail: "Veryfront Cloud returned an invalid file response" });
+  }
+}
+
+function assertCloudFileDetail(value: unknown): asserts value is CloudFileDetailResponse {
+  if (
+    !isRecord(value) || !isBoundedString(value.path, MAX_PATH_LENGTH, false) ||
+    !isBoundedString(value.content, MAX_RAG_TEXT_LENGTH)
+  ) {
+    throw API_ERROR.create({ detail: "Veryfront Cloud returned an invalid file response" });
+  }
 }
 
 function toPublicRagDocumentMeta(document: CloudRagDocumentMeta): RagDocumentMeta {
@@ -202,7 +362,7 @@ function buildDocumentChunks(
   let searchStart = 0;
 
   return chunkTexts.map((content, index) => {
-    const foundAt = sourceText.indexOf(content, searchStart);
+    const foundAt = sourceText.indexOf(content, Math.max(0, searchStart - content.length));
     const startOffset = foundAt >= 0 ? foundAt : searchStart;
     const endOffset = startOffset + content.length;
     searchStart = Math.max(startOffset + 1, endOffset);
@@ -218,12 +378,12 @@ function buildDocumentChunks(
   });
 }
 
-async function requestJson<T>(
+async function requestJson(
   context: CloudStoreContext,
   path: string,
   init?: RequestInit,
   options?: { allowNotFound?: boolean },
-): Promise<T | null> {
+): Promise<unknown | null> {
   const request = new Request(buildUrl(context.apiBaseUrl, path), init);
   const headers = new Headers(request.headers);
 
@@ -231,17 +391,22 @@ async function requestJson<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await context.fetch(new Request(request, { headers }));
+  let response: Response;
+  try {
+    response = await context.fetch(new Request(request, { headers }));
+  } catch {
+    throwIfAborted(init?.signal ?? undefined);
+    throw API_ERROR.create({ detail: "Veryfront Cloud RAG request could not be completed" });
+  }
   if (options?.allowNotFound && response.status === 404) {
+    await response.body?.cancel().catch(() => undefined);
     return null;
   }
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw INVALID_ARGUMENT.create({
-      detail: `Veryfront Cloud RAG request failed (${response.status} ${response.statusText}): ${
-        body || path
-      }`,
+    await response.body?.cancel().catch(() => undefined);
+    throw API_ERROR.create({
+      detail: `Veryfront Cloud RAG request failed with status ${response.status}`,
     });
   }
 
@@ -249,28 +414,87 @@ async function requestJson<T>(
     return null;
   }
 
-  return await response.json() as T;
+  const text = await readBoundedResponseText(response);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud RAG returned an invalid JSON response",
+    });
+  }
+}
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (
+    contentLength !== null &&
+    (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_CLOUD_RESPONSE_BYTES)
+  ) {
+    await response.body?.cancel().catch(() => undefined);
+    throw API_ERROR.create({
+      detail: "Veryfront Cloud RAG response exceeds the supported size",
+    });
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_CLOUD_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw API_ERROR.create({
+          detail: "Veryfront Cloud RAG response exceeds the supported size",
+        });
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function getCloudStoreContext(config: RagStoreConfig): CloudStoreContext {
   const bootstrap = requireVeryfrontCloudBootstrap();
   const requestContext = getCurrentRequestContext();
-  if (!bootstrap.projectSlug) {
-    throw INVALID_ARGUMENT.create({
+  if (!isContextIdentifier(bootstrap.projectSlug)) {
+    throw CONFIG_INVALID.create({
       detail:
-        "VERYFRONT_PROJECT_SLUG not set. Set the environment variable or runtime projectSlug before using the veryfront-cloud RAG store.",
+        "Veryfront Cloud project context is missing or invalid. Configure a project slug before using the cloud RAG store.",
     });
+  }
+  const branch = config.branch ?? requestContext?.branch ?? "main";
+  const environmentName = requestContext?.environmentName ?? null;
+  const releaseId = requestContext?.releaseId ?? null;
+  if (
+    !isContextIdentifier(branch) ||
+    (environmentName !== null && !isContextIdentifier(environmentName)) ||
+    (releaseId !== null && !isContextIdentifier(releaseId))
+  ) {
+    throw CONFIG_INVALID.create({ detail: "Veryfront Cloud RAG context is invalid" });
   }
 
   return {
     apiBaseUrl: bootstrap.apiBaseUrl,
-    fetch: createVeryfrontCloudFetch(bootstrap.apiToken),
+    fetch: createVeryfrontCloudFetch(bootstrap.apiToken, undefined, bootstrap.apiBaseUrl),
     projectSlug: bootstrap.projectSlug,
-    branch: config.branch ?? requestContext?.branch ?? "main",
-    environmentName: requestContext?.environmentName ?? null,
+    branch,
+    environmentName,
     hasRequestContext: requestContext !== null,
-    releaseId: requestContext?.releaseId ?? null,
+    releaseId,
   };
+}
+
+function isContextIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    value.length <= MAX_IDENTIFIER_LENGTH && value === value.trim() && !/\p{C}/u.test(value);
 }
 
 function getFileChunksPath(
@@ -317,7 +541,7 @@ async function upsertFileChunks(
   const results: Array<{ id: string; index: number }> = [];
   for (let i = 0; i < chunks.length; i += MAX_API_CHUNK_BATCH) {
     const batch = chunks.slice(i, i + MAX_API_CHUNK_BATCH);
-    const response = await requestJson<CloudUpsertChunksResponse>(
+    const response = await requestJson(
       context,
       getFileChunksPath(context, filePath),
       {
@@ -326,12 +550,15 @@ async function upsertFileChunks(
       },
     );
 
-    if (response) {
-      results.push(...response.chunks);
-    }
+    const expectedIndexes = new Set(batch.map((entry) => entry.chunk_index));
+    assertCloudChunkUpsert(response, expectedIndexes);
+    results.push(...response.chunks);
   }
 
   results.sort((a, b) => a.index - b.index);
+  if (new Set(results.map((entry) => entry.id)).size !== results.length) {
+    throw API_ERROR.create({ detail: "Veryfront Cloud returned duplicate chunk IDs" });
+  }
   return results;
 }
 
@@ -367,12 +594,13 @@ async function upsertEmbeddings(
 async function listRagDocuments(
   context: CloudStoreContext,
 ): Promise<CloudRagDocumentMeta[]> {
-  const response = await requestJson<CloudListRagDocumentsResponse>(
+  const response = await requestJson(
     context,
     getRagDocumentsPath(context),
   );
+  assertCloudDocumentList(response);
 
-  return (response?.documents ?? []).map((doc) => ({
+  return response.documents.map((doc) => ({
     id: doc.id,
     title: doc.title,
     source: doc.source,
@@ -392,7 +620,7 @@ async function upsertRagDocument(
     metadata?: Record<string, unknown>;
   },
 ): Promise<void> {
-  await requestJson<CloudUpsertRagDocumentResponse>(
+  await requestJson(
     context,
     getRagDocumentsPath(context),
     {
@@ -429,7 +657,7 @@ async function ingestDocument(
   config: ResolvedCloudRagStoreConfig,
   title: string,
   text: string,
-  meta?: { source?: string; type?: string },
+  meta?: RagIngestMetadata,
 ): Promise<string> {
   const documentId = crypto.randomUUID();
   await writeDocumentContent(context, config, documentId, title, text, meta);
@@ -446,7 +674,7 @@ async function refreshCloudDocument(
   const documents = await listRagDocuments(context);
   const existing = documents.find((doc) => doc.id === documentId);
   if (!existing) {
-    throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
+    throw INVALID_ARGUMENT.create({ detail: "RAG document was not found" });
   }
 
   const type = meta?.type ?? existing.type;
@@ -477,15 +705,9 @@ async function writeDocumentContent(
   documentId: string,
   title: string,
   text: string,
-  meta?: { source?: string; type?: string },
+  meta?: RagIngestMetadata,
   options?: { filePath?: string },
 ): Promise<void> {
-  if (text.length > MAX_TEXT_LENGTH) {
-    throw INVALID_ARGUMENT.create({
-      detail: `Upload text exceeds ${MAX_TEXT_LENGTH / 1024 / 1024} MB limit`,
-    });
-  }
-
   const chunkTexts = await chunk(text, config.chunkOptions);
   if (chunkTexts.length === 0) {
     throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
@@ -508,7 +730,7 @@ async function writeDocumentContent(
     const chunkIds = createdChunks.map((entry) => entry.id);
 
     if (chunkIds.length !== vectors.length) {
-      throw INVALID_ARGUMENT.create({
+      throw API_ERROR.create({
         detail:
           `Expected ${vectors.length} chunk IDs from Veryfront Cloud, received ${chunkIds.length}.`,
       });
@@ -520,24 +742,23 @@ async function writeDocumentContent(
       vectors,
       normalizeEmbeddingModelDescriptor(config.model, dimension),
     );
+
+    await upsertRagDocument(context, {
+      id: documentId,
+      title,
+      source: meta?.source ?? "",
+      type: meta?.type ?? "",
+      metadata: { filePath },
+    });
   } catch (error) {
     await deleteFileChunks(context, filePath).catch((cleanupError) =>
-      serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
-        filePath,
-        error: cleanupError,
-      })
+      serverLogger.debug(
+        "[rag-store/cloud] File chunk cleanup failed",
+        embeddingFailureContext(cleanupError),
+      )
     );
     throw error;
   }
-
-  // Record document in server-side store (atomic, no client-side manifest needed)
-  await upsertRagDocument(context, {
-    id: documentId,
-    title,
-    source: meta?.source ?? "",
-    type: meta?.type ?? "",
-    metadata: { filePath },
-  });
 }
 
 function createEmbedder(config: ResolvedCloudRagStoreConfig) {
@@ -552,20 +773,36 @@ function createEmbedder(config: ResolvedCloudRagStoreConfig) {
 async function listContentFiles(
   contentDir: string,
   contentExtensions: Set<string>,
+  depth = 0,
 ): Promise<ContentFile[]> {
+  if (depth > MAX_CONTENT_DEPTH) {
+    throw INVALID_ARGUMENT.create({ detail: "RAG content directory nesting is too deep" });
+  }
   const files: ContentFile[] = [];
 
   try {
+    if (depth === 0) {
+      const info = await stat(contentDir);
+      if (!info.isDirectory) {
+        throw API_ERROR.create({ detail: "RAG content files could not be read" });
+      }
+    }
     for await (const entry of readDir(contentDir)) {
       const fullPath = join(contentDir, entry.name);
       if (entry.isDirectory) {
-        files.push(...(await listContentFiles(fullPath, contentExtensions)));
-      } else if (entry.isFile && contentExtensions.has(extname(entry.name))) {
+        files.push(...(await listContentFiles(fullPath, contentExtensions, depth + 1)));
+      } else if (entry.isFile && contentExtensions.has(extname(entry.name).toLowerCase())) {
         files.push({ path: fullPath });
       }
+      if (files.length > MAX_CONTENT_FILES) {
+        throw INVALID_ARGUMENT.create({
+          detail: `RAG content indexing supports at most ${MAX_CONTENT_FILES} files`,
+        });
+      }
     }
-  } catch (_) {
-    // expected: directory may not exist yet
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    throw API_ERROR.create({ detail: "RAG content files could not be read" });
   }
 
   return files;
@@ -648,20 +885,47 @@ async function listPublishedContentFiles(
 ): Promise<ContentFile[]> {
   const files: ContentFile[] = [];
   let cursor: string | null | undefined;
+  const seenCursors = new Set<string>();
+  const seenPaths = new Set<string>();
+  let pageCount = 0;
 
   do {
-    const response = await requestJson<CloudFileListResponse>(
+    if (++pageCount > MAX_CONTENT_PAGES) {
+      throw API_ERROR.create({
+        detail: "Veryfront Cloud file pagination exceeded its limit",
+      });
+    }
+    const response = await requestJson(
       context,
       getPublishedFileListPath(context, contentDir, cursor),
     );
+    assertCloudFileList(response);
+
+    for (const file of response.data) {
+      if (seenPaths.has(file.path)) {
+        throw API_ERROR.create({
+          detail: "Veryfront Cloud returned duplicate content file paths",
+        });
+      }
+      seenPaths.add(file.path);
+    }
 
     files.push(
-      ...(response?.data ?? [])
-        .filter((file) => contentExtensions.has(extname(file.path)))
+      ...response.data
+        .filter((file) => contentExtensions.has(extname(file.path).toLowerCase()))
         .map((file) => ({ path: file.path, content: file.content })),
     );
+    if (files.length > MAX_CONTENT_FILES) {
+      throw INVALID_ARGUMENT.create({
+        detail: `RAG content indexing supports at most ${MAX_CONTENT_FILES} files`,
+      });
+    }
 
-    cursor = response?.page_info?.next ?? null;
+    cursor = response.page_info?.next ?? null;
+    if (cursor && seenCursors.has(cursor)) {
+      throw API_ERROR.create({ detail: "Veryfront Cloud pagination cursor repeated" });
+    }
+    if (cursor) seenCursors.add(cursor);
   } while (cursor);
 
   return files;
@@ -670,16 +934,32 @@ async function listPublishedContentFiles(
 async function readContentFile(
   context: CloudStoreContext,
   file: ContentFile,
+  published: boolean,
 ): Promise<string> {
   if (file.content !== undefined) return file.content;
-  if (!context.hasRequestContext) return readTextFile(file.path);
+  if (!published) {
+    try {
+      const info = await stat(file.path);
+      if (info.size > MAX_CONTENT_FILE_BYTES) {
+        serverLogger.warn("[rag-store/cloud] Skipping an oversized content file");
+        return "";
+      }
+      return await readTextFile(file.path);
+    } catch {
+      throw API_ERROR.create({ detail: "RAG content files could not be read" });
+    }
+  }
 
-  const response = await requestJson<CloudFileDetailResponse>(
+  const response = await requestJson(
     context,
     getPublishedFileDetailPath(context, file.path),
   );
 
-  return response?.content ?? "";
+  assertCloudFileDetail(response);
+  if (response.path !== file.path) {
+    throw API_ERROR.create({ detail: "Veryfront Cloud returned an invalid file response" });
+  }
+  return response.content;
 }
 
 export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig): RagStore {
@@ -710,43 +990,39 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       options?: RagSearchOptions,
     ): Promise<RagSearchResult[]> {
       if (!query.trim()) return [];
+      throwIfAborted(options?.signal);
       const context = getCloudStoreContext(config);
       const queryEmbedder = createEmbedder(config);
-      const vector = await queryEmbedder.embed(query);
+      const vector = await queryEmbedder.embed(query, { signal: options?.signal });
       const topK = options?.topK ?? DEFAULT_TOP_K;
-      const limit = Math.min(MAX_SEARCH_LIMIT, topK + SEARCH_OVERSCAN);
       const dimension = toSupportedDimension(vector.length);
-      const response = await requestJson<CloudSearchResponse>(
+      const response = await requestJson(
         context,
         getSearchPath(context),
         {
           method: "POST",
+          signal: options?.signal,
           body: JSON.stringify({
             vector,
             dimension,
-            limit,
+            limit: MAX_SEARCH_LIMIT,
             threshold: options?.threshold ?? 0,
           }),
         },
       );
+      assertCloudSearchResponse(response);
 
-      const results = (response?.data ?? [])
-        .filter((result) =>
-          result.chunk.metadata?.kind !== "rag-manifest" &&
-          result.chunk.metadata?.kind !== "rag-manifest-padding"
-        )
-        .map((result) => {
-          const metadata = isRecord(result.chunk.metadata) ? result.chunk.metadata : {};
-
-          return {
-            text: result.chunk.content,
-            score: result.score,
-            documentId: toStringValue(metadata.document_id, result.chunk.file_path),
-            title: toStringValue(metadata.title, "Unknown"),
-            source: toStringValue(metadata.source, result.chunk.file_path),
-            type: toStringValue(metadata.type, ""),
-          };
-        });
+      const results = response.data.flatMap((result): RagSearchResult[] => {
+        const metadata = parseCloudRagSearchMetadata(result.chunk.metadata);
+        return metadata === null ? [] : [{
+          text: result.chunk.content,
+          score: result.score,
+          documentId: metadata.document_id,
+          title: metadata.title,
+          source: metadata.source,
+          type: metadata.type,
+        }];
+      });
 
       return results.slice(0, topK);
     },
@@ -764,22 +1040,11 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
 
-      // Delete server-side document record first (authoritative)
-      await deleteRagDocument(context, id);
-
-      // Best-effort cleanup of file chunks
       if (target) {
         const filePath = target.filePath ?? buildDocumentFilePath(id, target.type);
-        try {
-          await deleteFileChunks(context, filePath);
-        } catch (error) {
-          serverLogger.warn("[rag-store/cloud] Failed to clean up file chunks for document", {
-            id,
-            filePath,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+        await deleteFileChunks(context, filePath);
       }
+      await deleteRagDocument(context, id);
     },
 
     async indexContentDir(): Promise<void> {
@@ -788,30 +1053,44 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       const context = getCloudStoreContext(config);
       const existingDocuments = await listRagDocuments(context);
       const indexedSources = new Set(existingDocuments.map((doc) => doc.source));
-      const files = context.hasRequestContext
+      const usePublishedContent = context.hasRequestContext && !isAbsolute(contentDir);
+      const files = usePublishedContent
         ? await listPublishedContentFiles(context, contentDir, contentExtensions)
         : await listContentFiles(contentDir, contentExtensions);
-      const newFiles = files.filter((file) => !indexedSources.has(file.path));
+      const fileEntries = files.map((file) => {
+        return {
+          file,
+          ...buildContentFileSource(contentDir, file.path, {
+            preserveContentDir: usePublishedContent,
+          }),
+        };
+      });
+      const newFiles = fileEntries.filter(({ file, source }) =>
+        !indexedSources.has(source) && !indexedSources.has(file.path)
+      );
 
-      for (const file of newFiles) {
-        const content = await readContentFile(context, file);
+      for (const { file, relativeSource, source } of newFiles) {
+        const content = await readContentFile(context, file, usePublishedContent);
         if (!content?.trim()) continue;
-        if (content.length > MAX_TEXT_LENGTH) {
+        if (content.length > MAX_RAG_TEXT_LENGTH) {
           serverLogger.warn(
-            `[rag-store/cloud] Skipping ${file.path}: exceeds ${
-              MAX_TEXT_LENGTH / 1024 / 1024
-            } MB text limit`,
+            "[rag-store/cloud] Skipping an oversized content file",
           );
           continue;
         }
 
-        const title = file.path.startsWith(contentDir + "/")
-          ? file.path.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
-          : file.path.replace(/\.[^.]+$/, "");
+        const title = relativeSource.replace(/\.[^.]+$/, "");
         const type = extname(file.path).slice(1);
+        validateRagTitle(title);
+        validateBoundedString(source, "RAG document source", MAX_SOURCE_LENGTH, {
+          allowEmpty: true,
+        });
+        validateBoundedString(type, "RAG document type", MAX_TYPE_LENGTH, {
+          allowEmpty: true,
+        });
 
         await ingestDocument(context, config, title, content, {
-          source: file.path,
+          source,
           type,
         });
       }

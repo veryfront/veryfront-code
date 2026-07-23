@@ -27,9 +27,23 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 88 registered errors", () => {
+    it("should have 93 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 88);
+      assertEquals(slugs.length, 93);
+    });
+
+    it("includes extension-system definitions in the canonical registry", () => {
+      for (
+        const slug of [
+          "missing-extension",
+          "extension-validation",
+          "extension-circular-dependency",
+          "extension-conflict",
+          "extension-setup-timeout",
+        ]
+      ) {
+        assertEquals(Object.hasOwn(ERROR_REGISTRY, slug), true);
+      }
     });
   });
 
@@ -119,6 +133,12 @@ describe("error-registry", () => {
         );
       }
     });
+
+    it("uses the canonical CLI executable in recovery suggestions", () => {
+      for (const error of Object.values(ERROR_REGISTRY)) {
+        assertEquals(error.suggestion?.includes("'vf ") ?? false, false);
+      }
+    });
   });
 
   describe("getErrorBySlug", () => {
@@ -143,7 +163,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 11);
+      assertEquals(errors.length, 14);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -233,7 +253,7 @@ describe("error-registry", () => {
       assertEquals(rfc9457.category, "CONFIG");
 
       // Optional fields
-      assertEquals(rfc9457.detail, "Could not find veryfront.config.ts in /app/my-project");
+      assertEquals(rfc9457.detail, "Could not find veryfront.config.ts in <LOCAL_PATH>");
       assertEquals(rfc9457.instance, "/api/projects/abc123/build");
       assertExists(rfc9457.suggestion);
     });
@@ -289,9 +309,9 @@ describe("error-registry", () => {
 
   describe("error categories coverage", () => {
     const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 11,
+      CONFIG: 14,
       BUILD: 8,
-      RUNTIME: 10,
+      RUNTIME: 12,
       ROUTE: 6,
       MODULE: 6,
       SERVER: 15,

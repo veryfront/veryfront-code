@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ModuleHandler } from "./module.handler.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -11,6 +11,14 @@ import {
   type RendererInitializer,
   setRendererInitializer,
 } from "../../../shared/renderer/index.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
+
+const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -64,9 +72,108 @@ function createInitializer(renderer: Partial<Renderer>): RendererInitializer {
 }
 
 describe("server/handlers/request/module/module.handler", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   afterEach(async () => {
+    if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+    Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    Deno.env.delete("WORKER_ISOLATION_DATA");
+    Deno.env.delete("WORKER_ISOLATION_SSR");
+    __resetPoolForTests();
+    __resetLogRecordEmitterForTests();
     await destroyRendererAdapter();
     setRendererInitializer(undefined);
+  });
+
+  describe("remote project authentication", () => {
+    it("rejects project module content before the handler when the token is missing", async () => {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      const handler = new ModuleHandler();
+      const ctx = makeCtx({
+        projectSlug: "remote-project",
+        isLocalProject: false,
+        config: {} as HandlerContext["config"],
+      });
+
+      const result = await handler.handle(
+        new Request("https://runtime.example.com/_vf_modules/components/App.js"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 502);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff");
+    });
+
+    it("allows embedded framework modules without a project token", async () => {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      const handler = new ModuleHandler();
+      const ctx = makeCtx({
+        projectSlug: "remote-project",
+        isLocalProject: false,
+        config: {} as HandlerContext["config"],
+      });
+
+      const result = await handler.handle(
+        new Request("https://runtime.example.com/_vf_modules/_veryfront/_dnt.shims.js"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("does not treat encoded framework traversal as an embedded module", async () => {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      const handler = new ModuleHandler();
+      const ctx = makeCtx({
+        projectSlug: "remote-project",
+        isLocalProject: false,
+        config: {} as HandlerContext["config"],
+      });
+
+      const result = await handler.handle(
+        new Request(
+          "https://runtime.example.com/_vf_modules/_veryfront/%2e%2e/components/Secret.js",
+        ),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 502);
+    });
+
+    it("rejects remote render-backed module endpoints even when worker flags are enabled", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_DATA", "1");
+      Deno.env.set("WORKER_ISOLATION_SSR", "1");
+      __resetPoolForTests();
+
+      let rendererCalls = 0;
+      setRendererInitializer(createInitializer({
+        renderPage: () => {
+          rendererCalls++;
+          throw new Error("renderer should not run");
+        },
+      }));
+      const handler = new ModuleHandler();
+      const ctx = makeCtx({
+        projectSlug: "remote-project",
+        proxyToken: "project-token",
+        isLocalProject: false,
+        config: {} as HandlerContext["config"],
+      });
+
+      const result = await handler.handle(
+        new Request("https://runtime.example.com/_veryfront/data/index.json"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(rendererCalls, 0);
+    });
   });
 
   describe("ModuleHandler metadata", () => {
@@ -161,6 +268,96 @@ describe("server/handlers/request/module/module.handler", () => {
 
       assertEquals(result.continue, false);
       assertEquals(result.response?.status, 404);
+    });
+
+    it("does not expose module generation failures in logs or responses", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      setRendererInitializer(createInitializer({
+        renderPage: () => {
+          throw new Error("private-page-module-error at /private/project/page.tsx");
+        },
+      }));
+
+      const result = await new ModuleHandler().handle(
+        new Request("http://localhost/_veryfront/pages/PRIVATE_ROUTE_MARKER.js"),
+        makeCtx(),
+      );
+      const responseBody = await result.response!.text();
+      const logs = JSON.stringify(entries);
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(responseBody.includes("private-page-module-error"), false);
+      assertEquals(logs.includes("private-page-module-error"), false);
+      assertEquals(logs.includes("PRIVATE_ROUTE_MARKER"), false);
+      assertEquals(logs.includes("/private/project/page.tsx"), false);
+    });
+  });
+
+  describe("handle - data modules", () => {
+    it("does not infer not found from an untyped error message", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      setRendererInitializer(createInitializer({
+        renderPage: () => {
+          throw new Error("404 private-data-error at /private/project/page.tsx");
+        },
+      }));
+
+      const result = await new ModuleHandler().handle(
+        new Request("http://localhost/_veryfront/data/PRIVATE_DATA_MARKER.json"),
+        makeCtx(),
+      );
+      const responseBody = await result.response!.text();
+      const logs = JSON.stringify(entries);
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(responseBody.includes("private-data-error"), false);
+      assertEquals(logs.includes("private-data-error"), false);
+      assertEquals(logs.includes("PRIVATE_DATA_MARKER"), false);
+      assertEquals(logs.includes("/private/project/page.tsx"), false);
+    });
+
+    it("returns not found only for a typed not-found error", async () => {
+      setRendererInitializer(createInitializer({
+        renderPage: () => {
+          throw FILE_NOT_FOUND.create({ detail: "Page is unavailable" });
+        },
+      }));
+
+      const result = await new ModuleHandler().handle(
+        new Request("http://localhost/_veryfront/data/missing.json"),
+        makeCtx(),
+      );
+
+      assertEquals(result.response?.status, 404);
+    });
+  });
+
+  describe("deprecated virtual modules", () => {
+    it("returns 410 without initializing a renderer", async () => {
+      let rendererCalls = 0;
+      setRendererInitializer({
+        initialize: () => {
+          rendererCalls++;
+          return Promise.reject(new Error("renderer should not be initialized"));
+        },
+        isInitialized: () => false,
+        get: () => {
+          throw new Error("renderer should not be read");
+        },
+        destroy: () => Promise.resolve(),
+      });
+
+      const handler = new ModuleHandler();
+      const result = await handler.handle(
+        new Request("http://localhost/_veryfront/modules/legacy.js"),
+        makeCtx(),
+      );
+
+      assertEquals(result.response?.status, 410);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(rendererCalls, 0);
     });
   });
 });

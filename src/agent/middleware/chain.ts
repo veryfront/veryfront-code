@@ -5,7 +5,7 @@ export class MiddlewareChain {
   private middleware: AgentMiddleware[];
 
   constructor(middleware: AgentMiddleware[] = []) {
-    this.middleware = middleware;
+    this.middleware = [...middleware];
   }
 
   execute(
@@ -15,22 +15,26 @@ export class MiddlewareChain {
     return withSpan(
       "agent.middleware.chain.execute",
       () => {
-        let index = 0;
+        const middleware = [...this.middleware];
+        let lastDispatchedIndex = -1;
 
-        const dispatch = (): Promise<AgentResponse> => {
-          const middlewareIndex = index++;
-          const currentMiddleware = this.middleware[middlewareIndex];
+        const dispatch = (middlewareIndex: number): Promise<AgentResponse> => {
+          if (middlewareIndex <= lastDispatchedIndex) {
+            return Promise.reject(new Error("Agent middleware next() called multiple times"));
+          }
+          lastDispatchedIndex = middlewareIndex;
+          const currentMiddleware = middleware[middlewareIndex];
 
           if (!currentMiddleware) return finalHandler();
 
           return withSpan(
-            `agent.middleware.chain.dispatch.${index}`,
-            () => currentMiddleware(context, dispatch),
+            `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
+            () => currentMiddleware(context, () => dispatch(middlewareIndex + 1)),
             { "middleware.index": middlewareIndex },
           );
         };
 
-        return dispatch();
+        return dispatch(0);
       },
       { "middleware.count": this.middleware.length },
     );

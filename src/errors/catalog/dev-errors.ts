@@ -1,7 +1,8 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
-export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
+/** Immutable error-solution catalog fragment. */
+export const DEV_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "dev-server-error": createSimpleError(
     "dev-server-error",
     "Development server error",
@@ -37,4 +38,4 @@ export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
       "Check for corrupted build files",
     ],
   ),
-};
+});

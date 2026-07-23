@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import {
   clearReactVersionCache,
   DEFAULT_REACT_VERSION,
@@ -181,6 +181,48 @@ describe("package-registry", () => {
         const second = await readProjectDependencyVersions(dir);
         assertEquals(second.react, "19.0.0");
         assertEquals(second.veryfront, "0.2.0");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("fails closed for malformed package.json", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-invalid-package-json-" });
+
+      try {
+        await Deno.writeTextFile(`${dir}/package.json`, "{ invalid json");
+        let thrown: unknown;
+        try {
+          await readProjectDependencyVersions(dir);
+        } catch (error) {
+          thrown = error;
+        }
+
+        assert(thrown instanceof Error);
+        assertEquals((thrown as { slug?: string }).slug, "config-parse-error");
+        assertEquals(String(thrown).includes(dir), false);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("fails closed for invalid dependency value types", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-invalid-dependency-json-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${dir}/package.json`,
+          JSON.stringify({ dependencies: { react: 19 } }),
+        );
+        let thrown: unknown;
+        try {
+          await readProjectDependencyVersions(dir);
+        } catch (error) {
+          thrown = error;
+        }
+
+        assert(thrown instanceof Error);
+        assertEquals((thrown as { slug?: string }).slug, "config-parse-error");
       } finally {
         await Deno.remove(dir, { recursive: true });
       }

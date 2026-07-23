@@ -52,7 +52,6 @@ import {
   areSharedServicesInitialized,
   getSharedServices,
   initializeSharedServices,
-  setSharedCompileMDX,
   type SharedServicesOptions,
 } from "./shared/shared-services.ts";
 import {
@@ -250,6 +249,8 @@ export class Renderer {
    */
   private renderFlight = new Singleflight<CachedRenderData>();
   private productionPrewarmContexts = new Map<string, Promise<void>>();
+  private activeOperations = new Set<Promise<unknown>>();
+  private lifecycleGeneration = 0;
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
@@ -276,7 +277,7 @@ export class Renderer {
   }
 
   renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
-    return withSpan(
+    return this.trackOperation(withSpan(
       "renderer.renderPage",
       async () => {
         if (!this.initialized) {
@@ -333,7 +334,7 @@ export class Renderer {
         "renderer.projectId": ctx.projectId,
         "renderer.environment": ctx.environment,
       },
-    );
+    ));
   }
 
   private async resolveReleaseAssetManifest(
@@ -424,8 +425,13 @@ export class Renderer {
     });
 
     this.rememberProductionPrewarm(prewarmKey, promise);
+    const generation = this.lifecycleGeneration;
 
     queueMicrotask(() => {
+      if (!this.initialized || generation !== this.lifecycleGeneration) {
+        resolvePromise();
+        return;
+      }
       void this.runProductionRenderPrewarm(currentSlug, ctx, prewarmOptions)
         .then(resolvePromise, rejectPromise);
     });
@@ -526,11 +532,18 @@ export class Renderer {
     });
 
     this.rememberProductionPrewarm(refreshKey, promise);
+    const generation = this.lifecycleGeneration;
 
     setTimeout(() => {
+      if (!this.initialized || generation !== this.lifecycleGeneration) {
+        resolvePromise();
+        return;
+      }
       void this.doRenderPage(slug, ctx, refreshOptions, performance.now(), cacheKey)
         .then(() => {
-          this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cacheKey);
+          if (this.initialized && generation === this.lifecycleGeneration) {
+            this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cacheKey);
+          }
           resolvePromise();
         }, rejectPromise);
     }, 0);
@@ -576,6 +589,7 @@ export class Renderer {
 
     const runWorker = async () => {
       while (true) {
+        if (!this.initialized) return;
         const index = nextIndex++;
         if (index >= slugs.length) return;
 
@@ -696,39 +710,43 @@ export class Renderer {
 
     try {
       const services = this.createServicesForContext(ctx, options?.colorScheme);
-      const result = await withTimeoutThrow(
-        services.pipeline.renderPage(slug, {
-          ...options,
-          delivery: "string",
+      try {
+        const result = await withTimeoutThrow(
+          services.pipeline.renderPage(slug, {
+            ...options,
+            delivery: "string",
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            environment: ctx.environment,
+            contentSourceId: ctx.contentSourceId,
+            skipCacheCheck: true,
+            skipCachePersist: true,
+          }),
+          RENDER_PIPELINE_TIMEOUT_MS,
+          `Render pipeline for ${ctx.projectId}:${slug}`,
+        );
+
+        if (cacheKey !== null) {
+          await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
+        }
+
+        logger.debug("Render complete (leader)", {
+          slug,
           projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-          environment: ctx.environment,
-          contentSourceId: ctx.contentSourceId,
-          skipCacheCheck: true,
-          skipCachePersist: true,
-        }),
-        RENDER_PIPELINE_TIMEOUT_MS,
-        `Render pipeline for ${ctx.projectId}:${slug}`,
-      );
+          duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+          htmlLength: result.html?.length ?? 0,
+        });
 
-      if (cacheKey !== null) {
-        await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);
+        return {
+          html: result.html,
+          frontmatter: result.frontmatter,
+          headings: result.headings,
+          ssrHash: result.ssrHash,
+          pageModule: result.pageModule,
+        };
+      } finally {
+        services.pipeline.destroy();
       }
-
-      logger.debug("Render complete (leader)", {
-        slug,
-        projectId: ctx.projectId,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
-        htmlLength: result.html?.length ?? 0,
-      });
-
-      return {
-        html: result.html,
-        frontmatter: result.frontmatter,
-        headings: result.headings,
-        ssrHash: result.ssrHash,
-        pageModule: result.pageModule,
-      };
     } finally {
       renderSemaphore.release();
       await releaseProjectSlot(ctx.projectId);
@@ -746,25 +764,28 @@ export class Renderer {
       });
     }
 
-    return withSpan("renderer.resolvePageData", async () => {
+    return this.trackOperation(withSpan("renderer.resolvePageData", async () => {
       const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
       const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
       const services = this.createServicesForContext(effectiveCtx);
-
-      return services.pipeline.resolvePageData(slug, {
-        ...options,
-        projectId: effectiveCtx.projectId,
-        projectSlug: effectiveCtx.projectSlug,
-        environment: effectiveCtx.environment,
-        contentSourceId: effectiveCtx.contentSourceId,
-        releaseId: effectiveCtx.releaseId,
-        releaseAssetManifest: releaseManifest,
-      });
+      try {
+        return await services.pipeline.resolvePageData(slug, {
+          ...options,
+          projectId: effectiveCtx.projectId,
+          projectSlug: effectiveCtx.projectSlug,
+          environment: effectiveCtx.environment,
+          contentSourceId: effectiveCtx.contentSourceId,
+          releaseId: effectiveCtx.releaseId,
+          releaseAssetManifest: releaseManifest,
+        });
+      } finally {
+        services.pipeline.destroy();
+      }
     }, {
       "renderer.slug": slug,
       "renderer.projectId": ctx.projectId,
       "renderer.environment": ctx.environment,
-    });
+    }));
   }
 
   getAllPages(ctx: RenderContext): Promise<string[]> {
@@ -829,11 +850,24 @@ export class Renderer {
   }
 
   async destroy(): Promise<void> {
-    await this.cache.destroy();
-    this.productionPrewarmContexts.clear();
     this.initialized = false;
+    this.lifecycleGeneration++;
+    const pending = [
+      ...this.activeOperations,
+      ...this.productionPrewarmContexts.values(),
+    ];
+    await Promise.allSettled(pending);
+    this.productionPrewarmContexts.clear();
+    this.activeOperations.clear();
+    await this.cache.destroy();
     this.initializationPromise = null;
     logger.debug("Destroyed");
+  }
+
+  private trackOperation<T>(operation: Promise<T>): Promise<T> {
+    this.activeOperations.add(operation);
+    void operation.finally(() => this.activeOperations.delete(operation)).catch(() => undefined);
+    return operation;
   }
 
   private createServicesForContext(
@@ -845,6 +879,7 @@ export class Renderer {
     const mdxCacheAdapter = new MDXCacheAdapter({
       config: ctx.config,
       mode: ctx.mode,
+      projectDir: ctx.projectDir,
     });
 
     const mdxCompiler = new MDXCompiler({
@@ -854,7 +889,6 @@ export class Renderer {
     });
 
     const compileMDX = mdxCompiler.compileMDX.bind(mdxCompiler);
-    setSharedCompileMDX(compileMDX);
 
     const virtualModules = createVirtualModuleSystem(ctx);
     const componentRegistry = createComponentRegistry(ctx, virtualModules);

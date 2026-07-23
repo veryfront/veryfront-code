@@ -4,7 +4,7 @@
  * @module routing/api/openapi
  */
 
-export { createRoute, z } from "./create-route.ts";
+export { createRoute, defineSchema } from "./create-route.ts";
 
 export { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
 export { generateOpenAPIJson, generateOpenAPISpec, specToYaml } from "./spec-generator.ts";

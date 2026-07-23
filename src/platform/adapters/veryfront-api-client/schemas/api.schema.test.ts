@@ -13,6 +13,9 @@ import {
   getPageInfoSchema,
   getProjectFileSchema,
   getProjectSchema,
+  getReleaseAssetManifestBuildResponseSchema,
+  getReleaseAssetManifestResponseSchema,
+  getReleaseAssetManifestStateResponseSchema,
   getReleaseFileListItemSchema,
 } from "./index.ts";
 
@@ -92,6 +95,18 @@ describe("schemas", () => {
         updated_at: "2024-01-01T00:00:00Z",
       });
       assertEquals(result.success, false);
+    });
+
+    it("should reject negative or fractional byte sizes", () => {
+      for (const size of [-1, 1.5]) {
+        const result = getProjectFileSchema().safeParse({
+          path: "test.ts",
+          size,
+          type: "file",
+          updated_at: "2024-01-01T00:00:00Z",
+        });
+        assertEquals(result.success, false);
+      }
     });
   });
 
@@ -250,6 +265,12 @@ describe("schemas", () => {
         "lookupDomain",
         "resolveStyleArtifact",
         "ensureStyleArtifactBuild",
+        "upsertStyleArtifact",
+        "beginReleaseAssetManifestBuild",
+        "uploadReleaseAsset",
+        "putReleaseAssetManifest",
+        "reportReleaseAssetManifestState",
+        "getReleaseAssetManifest",
       ] as const;
 
       for (const key of expectedKeys) {
@@ -269,7 +290,7 @@ describe("schemas", () => {
 
     it("should use supported HTTP methods for all endpoints", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
-        assertEquals(["GET", "POST"].includes(endpoint.method), true);
+        assertEquals(["GET", "POST", "PUT"].includes(endpoint.method), true);
       }
     });
 
@@ -281,6 +302,30 @@ describe("schemas", () => {
     it("should have paths starting with /", () => {
       for (const endpoint of Object.values(API_ENDPOINTS)) {
         assertEquals(endpoint.path.startsWith("/"), true);
+      }
+    });
+  });
+
+  describe("ReleaseAssetManifestBuildResponseSchema", () => {
+    it("should require positive integer manifest versions", () => {
+      for (const manifest_version of [0, -1, 1.5]) {
+        const results = [
+          getReleaseAssetManifestBuildResponseSchema().safeParse({
+            id: "build-id",
+            manifest_version,
+            state: "building",
+          }),
+          getReleaseAssetManifestStateResponseSchema().safeParse({
+            manifest_version,
+            state: "ready",
+          }),
+          getReleaseAssetManifestResponseSchema().safeParse({
+            manifest_version,
+            state: "ready",
+            manifest: null,
+          }),
+        ];
+        for (const result of results) assertEquals(result.success, false);
       }
     });
   });

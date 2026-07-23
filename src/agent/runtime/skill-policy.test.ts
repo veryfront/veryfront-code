@@ -2,11 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createInactiveSkillState,
+  createRuntimeLoadedSkillState,
   enforceSkillPolicy,
   extractSkillPolicy,
   extractSkillToolAvailability,
   hasSubmittedFormInputResult,
-  hydrateActiveSkillStateFromMessages,
   removeFormInputAfterSubmission,
 } from "./skill-policy-enforcement.ts";
 import type { Message } from "../types.ts";
@@ -252,164 +253,56 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(
         removeFormInputAfterSubmission("form_input", { submitted: true }, undefined, [
           "form_input",
-          "studio_suggestions",
-          "create_file",
+          "inspect_source",
+          "write_output",
         ]),
-        ["studio_suggestions", "create_file"],
+        ["inspect_source", "write_output"],
       );
     });
 
     it("keeps form_input available for non-submitted or non-form tool results", () => {
       assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: false }, "plan", [
+        removeFormInputAfterSubmission("form_input", { submitted: false }, "any-skill", [
           "form_input",
-          "studio_suggestions",
+          "inspect_source",
         ]),
-        ["form_input", "studio_suggestions"],
+        ["form_input", "inspect_source"],
       );
       assertEquals(
-        removeFormInputAfterSubmission("web_search", { submitted: true }, "plan", [
+        removeFormInputAfterSubmission("inspect_source", { submitted: true }, "any-skill", [
           "form_input",
-          "web_search",
+          "inspect_source",
         ]),
-        ["form_input", "web_search"],
+        ["form_input", "inspect_source"],
       );
     });
 
-    it("narrows terminal starter skills to read, write, and suggestion tools after submission", () => {
-      assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, "plan", [
-          "form_input",
-          "studio_suggestions",
-          "list_files",
-          "get_file",
-          "search_files",
-          "create_file",
-          "update_file",
-          "web_search",
-        ]),
-        [
-          "studio_suggestions",
-          "list_files",
-          "get_file",
-          "search_files",
-          "create_file",
-          "update_file",
-        ],
-      );
-      assertEquals(
-        removeFormInputAfterSubmission(
-          "form_input",
-          { submitted: true },
-          "create-agentic-workflow",
-          [
-            "form_input",
-            "studio_suggestions",
-            "list_files",
-            "create_file",
-          ],
-        ),
-        ["studio_suggestions", "list_files", "create_file"],
-      );
-    });
-
-    it("keeps agent design tools available after create-agent intake", () => {
-      assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, "create-agent", [
-          "form_input",
-          "studio_suggestions",
-          "create_agent",
-          "create_skill",
-          "create_tool",
-          "create_file",
-          "update_file",
-          "list_integrations",
-          "get_integration",
-          "get_user_oauth_status",
-          "list_user_oauth_integrations",
-          "web_fetch",
-        ]),
-        [
-          "studio_suggestions",
-          "create_agent",
-          "create_skill",
-          "create_tool",
-          "create_file",
-          "update_file",
-          "list_integrations",
-          "get_integration",
-          "get_user_oauth_status",
-          "list_user_oauth_integrations",
-          "web_fetch",
-        ],
-      );
-    });
-
-    it("keeps workflow primitive tools available after create-agentic-workflow intake", () => {
-      assertEquals(
-        removeFormInputAfterSubmission(
-          "form_input",
-          { submitted: true },
-          "create-agentic-workflow",
-          [
-            "form_input",
-            "studio_suggestions",
-            "create_workflow",
-            "create_agent",
-            "create_skill",
-            "create_tool",
-            "list_files",
-            "get_file",
-            "search_files",
-            "create_file",
-            "update_file",
-            "web_search",
-            "web_fetch",
-          ],
-        ),
-        [
-          "studio_suggestions",
-          "create_workflow",
-          "create_agent",
-          "create_skill",
-          "create_tool",
-          "list_files",
-          "get_file",
-          "search_files",
-          "create_file",
-          "update_file",
-          "web_search",
-          "web_fetch",
-        ],
-      );
-    });
-
-    it("keeps source tools for research after submission but closes project inspection", () => {
-      assertEquals(
-        removeFormInputAfterSubmission("form_input", { submitted: true }, "research", [
-          "form_input",
-          "studio_suggestions",
-          "web_search",
-          "web_fetch",
-          "list_files",
-          "get_file",
-          "create_file",
-          "update_file",
-        ]),
-        ["studio_suggestions", "web_search", "web_fetch", "create_file", "update_file"],
-      );
+    it("applies the same post-submission transition to every skill id", () => {
+      const policy = ["form_input", "inspect_source", "write_output"];
+      for (const skillId of ["alpha", "plan", "research", "custom-workflow"]) {
+        assertEquals(
+          removeFormInputAfterSubmission("form_input", { submitted: true }, skillId, policy),
+          ["inspect_source", "write_output"],
+        );
+      }
     });
   });
 
-  describe("hydrateActiveSkillStateFromMessages", () => {
+  describe("invocation Skill state", () => {
     it("returns inactive skill tool availability before a skill is loaded", () => {
-      const hydrated = hydrateActiveSkillStateFromMessages([]);
+      const state = createInactiveSkillState();
 
-      assertEquals(hydrated.activeSkillToolAvailability, {
+      assertEquals(state.activeSkillId, undefined);
+      assertEquals(state.activeSkillPolicy, undefined);
+      assertEquals(state.activeSkillDelegationOverrides, undefined);
+      assertEquals(state.activeSkillToolAvailability, {
         hasActiveSkill: false,
         references: [],
         scripts: [],
       });
+      assertEquals(Object.isFrozen(state.activeSkillToolAvailability), true);
+      assertEquals(Object.isFrozen(state.activeSkillToolAvailability.references), true);
+      assertEquals(Object.isFrozen(state.activeSkillToolAvailability.scripts), true);
     });
 
     it("detects a submitted form_input result in message history", () => {
@@ -488,66 +381,25 @@ describe("src/agent/runtime skill policy helpers", () => {
       );
     });
 
-    it("hydrates the latest load_skill policy and delegation overrides from tool history", () => {
-      const messages: Message[] = [
-        {
-          id: "tool_load_skill_old",
-          role: "tool",
-          parts: [{
-            type: "tool-result",
-            toolCallId: "load_skill_old",
-            toolName: "load_skill",
-            result: {
-              skillId: "old",
-              allowedTools: ["Read"],
-              references: ["references/old.md"],
-              scripts: [],
-              model: "anthropic/claude-sonnet-4-5",
-              thinking: true,
-              maxSteps: 4,
-            },
-          }],
-        },
-        {
-          id: "tool_other",
-          role: "tool",
-          parts: [{
-            type: "tool-result",
-            toolCallId: "other_tool",
-            toolName: "read_file",
-            result: { allowedTools: ["Bash"] },
-          }],
-        },
-        {
-          id: "tool_load_skill_new",
-          role: "tool",
-          parts: [{
-            type: "tool-result",
-            toolCallId: "load_skill_new",
-            toolName: "load_skill",
-            result: {
-              skillId: "new",
-              allowedTools: ["Write"],
-              references: [],
-              scripts: ["scripts/run.sh"],
-              model: "openai/gpt-5.1",
-              thinking: false,
-              maxSteps: 8,
-            },
-          }],
-        },
-      ];
+    it("creates active state from a runtime-executed load_skill result", () => {
+      const state = createRuntimeLoadedSkillState({
+        skillId: "new",
+        allowedTools: ["Write"],
+        references: [],
+        scripts: ["scripts/run.sh"],
+        model: "openai/gpt-5.1",
+        thinking: false,
+        maxSteps: 8,
+      });
 
-      const hydrated = hydrateActiveSkillStateFromMessages(messages);
-
-      assertEquals(hydrated.activeSkillId, "new");
-      assertEquals(hydrated.activeSkillPolicy, ["Write"]);
-      assertEquals(hydrated.activeSkillToolAvailability, {
+      assertEquals(state.activeSkillId, "new");
+      assertEquals(state.activeSkillPolicy, ["Write"]);
+      assertEquals(state.activeSkillToolAvailability, {
         hasActiveSkill: true,
         references: [],
         scripts: ["scripts/run.sh"],
       });
-      assertEquals(hydrated.activeSkillDelegationOverrides, {
+      assertEquals(state.activeSkillDelegationOverrides, {
         model: "openai/gpt-5.1",
         thinking: false,
         maxSteps: 8,

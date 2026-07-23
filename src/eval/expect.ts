@@ -15,16 +15,44 @@ import type {
   EvalRecord,
   EvalSeverity,
 } from "./types.ts";
+import { createEvalValidationError } from "./validation.ts";
+
+const MAX_EXPECTATION_TEXT_LENGTH = 16_384;
+const MAX_EVAL_CHECK_RESULTS = 10_000;
+
+function assertExpectationThreshold(threshold: EvalMetricThreshold | undefined): void {
+  if (!threshold) return;
+  if (
+    (threshold.min !== undefined && !Number.isFinite(threshold.min)) ||
+    (threshold.max !== undefined && !Number.isFinite(threshold.max)) ||
+    (threshold.min !== undefined && threshold.max !== undefined && threshold.min > threshold.max)
+  ) {
+    throw createEvalValidationError("Expectation threshold must contain valid finite bounds");
+  }
+}
 
 function createExpectation(
   checks: EvalMetricResult[],
   base: Omit<EvalMetricResult, "severity">,
 ): EvalExpectation {
   function record(severity: EvalSeverity, threshold?: EvalMetricThreshold): EvalMetricResult {
+    assertExpectationThreshold(threshold);
+    if (checks.length >= MAX_EVAL_CHECK_RESULTS) {
+      throw createEvalValidationError(
+        `Eval checks must not exceed ${MAX_EVAL_CHECK_RESULTS} results`,
+      );
+    }
+    const normalizedThreshold = threshold ? { ...threshold } : undefined;
+    const thresholdPass = !normalizedThreshold || typeof base.score !== "number" ||
+      ((normalizedThreshold.min === undefined || base.score >= normalizedThreshold.min) &&
+        (normalizedThreshold.max === undefined || base.score <= normalizedThreshold.max));
     const check = {
       ...base,
       severity,
-      ...(threshold ? { evidence: { ...(base.evidence ?? {}), threshold } } : {}),
+      ...(base.pass === undefined ? { pass: thresholdPass } : { pass: base.pass && thresholdPass }),
+      ...(normalizedThreshold
+        ? { evidence: { ...(base.evidence ?? {}), threshold: normalizedThreshold } }
+        : {}),
     };
     checks.push(check);
     return check;
@@ -50,6 +78,11 @@ export function createEvalExpect(record: EvalRecord, checks: EvalMetricResult[])
     },
 
     outputContains(text: string) {
+      if (
+        typeof text !== "string" || text.length === 0 || text.length > MAX_EXPECTATION_TEXT_LENGTH
+      ) {
+        throw createEvalValidationError("Expected output text must be a non-empty bounded string");
+      }
       const output = getOutputText(record.output);
       const pass = output.includes(text);
       return createExpectation(checks, {

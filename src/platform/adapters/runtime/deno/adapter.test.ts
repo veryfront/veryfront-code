@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function assertFunction(value: unknown): void {
   assertExists(value);
@@ -67,7 +68,7 @@ if (!isDeno) {
       });
 
       it("should have kvStore capability", () => {
-        assertEquals(denoAdapter.capabilities.kvStore, true);
+        assertEquals(denoAdapter.capabilities.kvStore, false);
       });
 
       it("should have writableFs capability", () => {
@@ -144,6 +145,10 @@ if (!isDeno) {
       it("should return false for file that does not exist", async () => {
         const exists = await denoAdapter.fs.exists("/nonexistent/path/file.ts");
         assertEquals(exists, false);
+      });
+
+      it("does not hide invalid path errors as missing files", async () => {
+        await assertRejects(() => denoAdapter.fs.exists("\0"), TypeError);
       });
 
       it("should stat a file", async () => {
@@ -288,11 +293,14 @@ if (!isDeno) {
       });
 
       it("should throw for statSync of non-existent path", () => {
+        const path = "/nonexistent/path/12345";
         try {
-          denoAdapter.shell.statSync("/nonexistent/path/12345");
+          denoAdapter.shell.statSync(path);
           assertEquals(true, false, "Should have thrown");
         } catch (e) {
-          assertExists(e);
+          assertEquals(e instanceof VeryfrontError, true);
+          assertEquals((e as VeryfrontError).slug, "file-not-found");
+          assertEquals((e as Error).message.includes(path), false);
         }
       });
 
@@ -303,11 +311,14 @@ if (!isDeno) {
       });
 
       it("should throw for readFileSync of non-existent file", () => {
+        const path = "/nonexistent/path/12345.ts";
         try {
-          denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts");
+          denoAdapter.shell.readFileSync(path);
           assertEquals(true, false, "Should have thrown");
         } catch (e) {
-          assertExists(e);
+          assertEquals(e instanceof VeryfrontError, true);
+          assertEquals((e as VeryfrontError).slug, "file-not-found");
+          assertEquals((e as Error).message.includes(path), false);
         }
       });
     });

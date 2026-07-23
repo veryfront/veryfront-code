@@ -1,13 +1,22 @@
-interface ToolCallLike {
+/** Minimal tool call shape used to reconcile child-run final steps. */
+export interface ToolCallLike {
+  /** Tool call identifier. */
   toolCallId: string;
+  /** Tool name. */
   toolName: string;
+  /** Parsed tool input, when available. */
   input?: unknown;
 }
 
-interface ToolResultLike {
+/** Minimal tool result shape used to reconcile child-run final steps. */
+export interface ToolResultLike {
+  /** Tool call identifier. */
   toolCallId: string;
+  /** Tool name. */
   toolName: string;
+  /** Parsed tool input. */
   input: unknown;
+  /** Tool output. */
   output: unknown;
 }
 

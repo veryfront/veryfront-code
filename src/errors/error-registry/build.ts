@@ -1,6 +1,7 @@
-import { defineError } from "../types.ts";
+import { defineError, type ErrorRegistryFragment, type RegisteredError } from "../types.ts";
 
-export const BUILD_FAILED = defineError({
+/** Registered error definition for the build-failed slug. */
+export const BUILD_FAILED: RegisteredError = defineError({
   slug: "build-failed",
   category: "BUILD",
   status: 500,
@@ -8,7 +9,8 @@ export const BUILD_FAILED = defineError({
   suggestion: "Check the build output for specific errors",
 });
 
-export const BUNDLE_ERROR = defineError({
+/** Registered error definition for the bundle-error slug. */
+export const BUNDLE_ERROR: RegisteredError = defineError({
   slug: "bundle-error",
   category: "BUILD",
   status: 500,
@@ -16,7 +18,8 @@ export const BUNDLE_ERROR = defineError({
   suggestion: "Review bundler output for details",
 });
 
-export const TYPESCRIPT_ERROR = defineError({
+/** Registered error definition for the typescript-error slug. */
+export const TYPESCRIPT_ERROR: RegisteredError = defineError({
   slug: "typescript-error",
   category: "BUILD",
   status: 500,
@@ -24,7 +27,8 @@ export const TYPESCRIPT_ERROR = defineError({
   suggestion: "Fix TypeScript errors shown in the output",
 });
 
-export const MDX_COMPILE_ERROR = defineError({
+/** Registered error definition for the mdx-compile-error slug. */
+export const MDX_COMPILE_ERROR: RegisteredError = defineError({
   slug: "mdx-compile-error",
   category: "BUILD",
   status: 500,
@@ -32,7 +36,8 @@ export const MDX_COMPILE_ERROR = defineError({
   suggestion: "Check your MDX file syntax",
 });
 
-export const ASSET_OPTIMIZATION_ERROR = defineError({
+/** Registered error definition for the asset-optimization-error slug. */
+export const ASSET_OPTIMIZATION_ERROR: RegisteredError = defineError({
   slug: "asset-optimization-error",
   category: "BUILD",
   status: 500,
@@ -40,7 +45,8 @@ export const ASSET_OPTIMIZATION_ERROR = defineError({
   suggestion: "Check asset file formats and paths",
 });
 
-export const SSG_GENERATION_ERROR = defineError({
+/** Registered error definition for the ssg-generation-error slug. */
+export const SSG_GENERATION_ERROR: RegisteredError = defineError({
   slug: "ssg-generation-error",
   category: "BUILD",
   status: 500,
@@ -48,7 +54,8 @@ export const SSG_GENERATION_ERROR = defineError({
   suggestion: "Review SSG configuration and data fetching",
 });
 
-export const SOURCEMAP_ERROR = defineError({
+/** Registered error definition for the sourcemap-error slug. */
+export const SOURCEMAP_ERROR: RegisteredError = defineError({
   slug: "sourcemap-error",
   category: "BUILD",
   status: 500,
@@ -56,7 +63,8 @@ export const SOURCEMAP_ERROR = defineError({
   suggestion: "Check source map configuration",
 });
 
-export const COMPILATION_ERROR = defineError({
+/** Registered error definition for the compilation-error slug. */
+export const COMPILATION_ERROR: RegisteredError = defineError({
   slug: "compilation-error",
   category: "BUILD",
   status: 500,
@@ -65,13 +73,24 @@ export const COMPILATION_ERROR = defineError({
 });
 
 /** Registry fragment for BUILD errors (slug → definition). */
-export const BUILD_REGISTRY = {
-  "build-failed": BUILD_FAILED,
-  "bundle-error": BUNDLE_ERROR,
-  "typescript-error": TYPESCRIPT_ERROR,
-  "mdx-compile-error": MDX_COMPILE_ERROR,
-  "asset-optimization-error": ASSET_OPTIMIZATION_ERROR,
-  "ssg-generation-error": SSG_GENERATION_ERROR,
-  "sourcemap-error": SOURCEMAP_ERROR,
-  "compilation-error": COMPILATION_ERROR,
-} as const;
+export const BUILD_REGISTRY: ErrorRegistryFragment<
+  | "build-failed"
+  | "bundle-error"
+  | "typescript-error"
+  | "mdx-compile-error"
+  | "asset-optimization-error"
+  | "ssg-generation-error"
+  | "sourcemap-error"
+  | "compilation-error"
+> = Object.freeze(
+  {
+    "build-failed": BUILD_FAILED,
+    "bundle-error": BUNDLE_ERROR,
+    "typescript-error": TYPESCRIPT_ERROR,
+    "mdx-compile-error": MDX_COMPILE_ERROR,
+    "asset-optimization-error": ASSET_OPTIMIZATION_ERROR,
+    "ssg-generation-error": SSG_GENERATION_ERROR,
+    "sourcemap-error": SOURCEMAP_ERROR,
+    "compilation-error": COMPILATION_ERROR,
+  } as const,
+);

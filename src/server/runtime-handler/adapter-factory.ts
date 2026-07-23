@@ -8,11 +8,9 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
-import { getErrorMessage } from "#veryfront/errors";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getConfig } from "#veryfront/config/loader.ts";
+import { getConfig, mergeConfigs } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { timeAsync } from "./request-lifecycle.ts";
@@ -101,7 +99,7 @@ export async function resolveAdapter(
   let effectiveConfig = opts.config;
 
   // Check if this is a local project.
-  // In proxy mode, skip local discovery unless there's an explicit header path override —
+  // In proxy mode, skip local discovery unless there's an explicit header path override.
   // the standard directories (data/projects/, projects/) don't exist in k8s.
   //
   // SECURITY: `x-project-path` is a client-controlled header. Honouring it from any
@@ -110,7 +108,7 @@ export async function resolveAdapter(
   // Only read it when the request is proxy-trusted: either the operator opted in via
   // VERYFRONT_TRUST_FORWARDED_HEADERS=1, or the request carries a dispatch JWS that
   // verifies against CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY. Mere header presence is
-  // NOT sufficient — a direct-access attacker could otherwise spoof `x-project-path`
+  // NOT sufficient. A direct-access attacker could otherwise spoof `x-project-path`
   // by attaching any value in `x-veryfront-dispatch-jws`.
   const publicKeyPem = opts.adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
     getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
@@ -129,19 +127,13 @@ export async function resolveAdapter(
   if (isLocalProject && localProjectPath) {
     effectiveProjectDir = localProjectPath;
 
-    logger.debug("Using local project (filesystem-first)", {
-      projectSlug: opts.projectSlug,
-      projectDir: effectiveProjectDir,
-    });
+    logger.debug("Using local project (filesystem-first)");
 
     // Get or create local adapter
     if (!cache.adapters.has(effectiveProjectDir)) {
       const baseAdapter = await runtime.get();
       cache.adapters.set(effectiveProjectDir, baseAdapter);
-      logger.debug("Created local adapter for project", {
-        projectSlug: opts.projectSlug,
-        projectDir: effectiveProjectDir,
-      });
+      logger.debug("Created local adapter for project");
     }
 
     effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
@@ -154,20 +146,11 @@ export async function resolveAdapter(
         () => getConfig(effectiveProjectDir, effectiveAdapter),
       );
 
-      logger.debug("Loaded project-specific config", {
-        projectSlug: opts.projectSlug,
-        projectDir: effectiveProjectDir,
-        layout: effectiveConfig?.layout,
-        router: effectiveConfig?.router,
-      });
+      logger.debug("Loaded project-specific config");
     }
   } else if (opts.isProxyMode && opts.projectSlug && opts.proxyToken) {
     if (usesExactSourceConfig(opts)) {
-      logger.debug("Skipping outer config load for exact-source control-plane request", {
-        projectSlug: opts.projectSlug,
-        projectId: opts.projectId,
-        pathname: opts.pathname,
-      });
+      logger.debug("Skipping outer config load for exact-source control-plane request");
       effectiveConfig = undefined;
       return {
         projectDir: effectiveProjectDir,
@@ -177,56 +160,14 @@ export async function resolveAdapter(
       };
     }
 
-    // Load config via proxy mode with project context.
-    // Unlike local projects, proxy mode config loading failures are propagated
-    // because proceeding without config causes silent 404s for valid projects.
-    try {
-      effectiveConfig = await timeAsync("config:load-proxy-project", () => {
-        if (isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext) {
-          return effectiveAdapter.fs.runWithContext(
-            opts.projectSlug!,
-            opts.proxyToken!,
-            async () => {
-              return await getConfig(effectiveProjectDir, effectiveAdapter, {
-                cacheKey: opts.projectId ?? opts.projectSlug,
-              });
-            },
-            opts.projectId,
-            {
-              productionMode: opts.proxyEnv === "production",
-              releaseId: opts.releaseId,
-              branch: opts.branch ?? opts.parsedDomain.branch ?? null,
-              environmentName: opts.environmentName,
-            },
-          );
-        }
-
-        return getConfig(effectiveProjectDir, effectiveAdapter, {
-          cacheKey: opts.projectId ?? opts.projectSlug,
-        });
-      });
-
-      logger.debug("Loaded config in proxy mode", {
-        projectSlug: opts.projectSlug,
-        hasConfig: !!effectiveConfig,
-        layout: effectiveConfig?.layout,
-        router: effectiveConfig?.router,
-      });
-    } catch (error) {
-      // Log at error level — this is a real failure that will affect rendering.
-      // Config loading failure in proxy mode means the project's routes, layouts,
-      // and settings won't be available, leading to 404s for valid pages.
-      logger.error("Failed to load project config in proxy mode", {
-        projectSlug: opts.projectSlug,
-        projectId: opts.projectId,
-        releaseId: opts.releaseId,
-        proxyEnv: opts.proxyEnv,
-        error: getErrorMessage(error),
-      });
-      // Re-throw so the caller (runtime-handler) can return a proper error response
-      // instead of silently proceeding with broken defaults.
-      throw error;
-    }
+    // A virtual project config is executable TypeScript. Importing it here would
+    // execute remote project code in the shared host before a route reaches its
+    // worker or fail-closed boundary. Remote requests therefore use only the
+    // trusted host configuration merged over fresh framework defaults. Features
+    // that require executable project config must resolve it inside their own
+    // isolated execution boundary.
+    effectiveConfig = mergeConfigs(opts.config ?? {});
+    logger.debug("Using trusted host config for remote project");
   }
 
   return {

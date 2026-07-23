@@ -2,7 +2,7 @@
  * Cache Path Portability Utilities
  *
  * Centralizes logic for replacing absolute filesystem paths with portable tokens
- * (e.g., __VF_CACHE_DIR__) before storing code in distributed caches (Redis/API).
+ * (e.g., __VF_CACHE_DIR__) before storing code in non-memory caches.
  * This ensures that cached code can be shared across different environments
  * (e.g., Build Server -> Production Pod) without "cache path mismatch" errors.
  *
@@ -10,19 +10,21 @@
  */
 
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
-import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT } from "#veryfront/errors";
 import { logger as baseLogger } from "#veryfront/utils";
+import { containsUnsafeCacheStringCharacter } from "./validation.ts";
 
 const logger = baseLogger.component("cache");
+const MAX_CACHE_DIRECTORY_LENGTH = 4096;
 
 /** Portable cache directory token */
 export const CACHE_DIR_TOKEN = "__VF_CACHE_DIR__";
 
 /**
  * Patterns for hardcoded cache paths that should have been tokenized before a
- * distributed-cache write. This is a last-line INVARIANT check — the actual
+ * distributed-cache write. This is a last-line invariant check. The actual
  * portability mechanism is `tokenizeAllVeryFrontPaths`, which rewrites cache dirs
- * under ANY root. These patterns only decide whether to *raise* when something
+ * under every root. These patterns only decide whether to raise when something
  * slipped through.
  *
  * MAINTENANCE: the goal is to match any absolute `file://` path that still carries
@@ -58,10 +60,11 @@ export function hasHardcodedCachePaths(code: string): boolean {
  * Replace local cache directory with portable token.
  */
 export function tokenizeCachePaths(code: string, localCacheDir: string): string {
+  const { encodedUrl, rawUrl } = normalizeCacheDirectoryUrls(localCacheDir);
   if (!code) return code;
-  // Normalize the cache dir (remove trailing slash if present)
-  const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
-  return code.replaceAll(`file://${normalizedDir}`, `file://${CACHE_DIR_TOKEN}`);
+  return code
+    .replaceAll(encodedUrl, `file://${CACHE_DIR_TOKEN}`)
+    .replaceAll(rawUrl, `file://${CACHE_DIR_TOKEN}`);
 }
 
 /**
@@ -82,7 +85,7 @@ export function tokenizeAllVeryFrontPaths(code: string): string {
 
   // Pattern to match any absolute path to veryfront-http-bundle directory
   // Captures everything up to and including veryfront-http-bundle/
-  // Example: file:///Users/foo/bar/.cache/veryfront-http-bundle/ -> file://__VF_CACHE_DIR__/veryfront-http-bundle/
+  // Example: file:///<CACHE_ROOT>/veryfront-http-bundle/ becomes file://__VF_CACHE_DIR__/veryfront-http-bundle/
   result = result.replace(
     /file:\/\/([^"'\s]*?)\/veryfront-http-bundle\//g,
     `file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/`,
@@ -101,10 +104,41 @@ export function tokenizeAllVeryFrontPaths(code: string): string {
  * Replace portable token with local cache directory.
  */
 export function detokenizeCachePaths(code: string, localCacheDir: string): string {
+  const { encodedUrl } = normalizeCacheDirectoryUrls(localCacheDir);
   if (!code) return code;
-  // Normalize the cache dir (remove trailing slash if present)
-  const normalizedDir = localCacheDir.endsWith("/") ? localCacheDir.slice(0, -1) : localCacheDir;
-  return code.replaceAll(`file://${CACHE_DIR_TOKEN}`, `file://${normalizedDir}`);
+  return code.replaceAll(`file://${CACHE_DIR_TOKEN}`, encodedUrl);
+}
+
+function normalizeCacheDirectoryUrls(localCacheDir: string): {
+  rawUrl: string;
+  encodedUrl: string;
+} {
+  if (
+    typeof localCacheDir !== "string" || localCacheDir.length === 0 ||
+    localCacheDir.length > MAX_CACHE_DIRECTORY_LENGTH ||
+    containsUnsafeCacheStringCharacter(localCacheDir) || localCacheDir.includes(CACHE_DIR_TOKEN)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      message:
+        "Cache directory must be a bounded path without control characters or unpaired UTF-16 surrogates",
+    });
+  }
+
+  const normalizedDir = localCacheDir.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!normalizedDir || normalizedDir === "/" || /^[A-Za-z]:$/.test(normalizedDir)) {
+    throw INVALID_ARGUMENT.create({ message: "Cache directory cannot resolve to the root path" });
+  }
+  if (!(normalizedDir.startsWith("/") || /^[A-Za-z]:\//.test(normalizedDir))) {
+    throw INVALID_ARGUMENT.create({ message: "Cache directory must be an absolute path" });
+  }
+
+  const rawUrl = normalizedDir.startsWith("//")
+    ? `file:${normalizedDir}`
+    : /^[A-Za-z]:\//.test(normalizedDir)
+    ? `file:///${normalizedDir}`
+    : `file://${normalizedDir}`;
+  const encodedUrl = encodeURI(rawUrl).replaceAll("#", "%23").replaceAll("?", "%3F");
+  return { rawUrl, encodedUrl };
 }
 
 /**

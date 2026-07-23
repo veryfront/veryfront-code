@@ -40,31 +40,56 @@ export {
 } from "./schema.ts";
 
 import { connectors, icons } from "./_data.ts";
-import { filterVisibleIntegrations, isVisibleIntegration } from "./feature-flags.ts";
+import {
+  filterVisibleIntegrations,
+  isVisibleIntegration,
+  normalizeIntegrationName,
+} from "./feature-flags.ts";
 import type { IntegrationConfig, IntegrationName } from "./schema.ts";
 
 const iconMap = new Map(Object.entries(icons));
 
-/** Return connector. */
+function deepFreezeCatalog(value: unknown): void {
+  if (typeof value !== "object" || value === null) return;
+  const pending: object[] = [value];
+  const visited = new WeakSet<object>();
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    for (const nested of Object.values(current)) {
+      if (typeof nested === "object" && nested !== null) pending.push(nested);
+    }
+    Object.freeze(current);
+  }
+}
+
+deepFreezeCatalog(connectors);
+deepFreezeCatalog(icons);
+
+/** Return a visible connector by name. */
 export function getConnector(name: IntegrationName | string): IntegrationConfig | undefined {
-  if (!isVisibleIntegration(name)) return undefined;
-  return connectors.find((connector) => connector.name === name);
+  const normalizedName = typeof name === "string" ? normalizeIntegrationName(name) : "";
+  if (!normalizedName || !isVisibleIntegration(normalizedName)) return undefined;
+  return connectors.find((connector) => connector.name === normalizedName);
 }
 
-/** List connectors. */
+/** List visible connectors. */
 export function listConnectors(): readonly IntegrationConfig[] {
-  return filterVisibleIntegrations(connectors);
+  return Object.freeze(filterVisibleIntegrations(connectors));
 }
 
-/** Return connector names. */
+/** Return visible connector names. */
 export function getConnectorNames(): readonly string[] {
-  return listConnectors().map((connector) => connector.name);
+  return Object.freeze(listConnectors().map((connector) => connector.name));
 }
 
-/** Return icon. */
+/** Return a visible connector's SVG icon. */
 export function getIcon(name: IntegrationName | string): string | undefined {
-  if (!isVisibleIntegration(name)) return undefined;
-  return iconMap.get(name);
+  const normalizedName = typeof name === "string" ? normalizeIntegrationName(name) : "";
+  if (!normalizedName || !isVisibleIntegration(normalizedName)) return undefined;
+  return iconMap.get(normalizedName);
 }
 
 // Remote integration tool helpers (per-request, no global registration)
@@ -73,4 +98,19 @@ export {
   getRemoteIntegrationToolDefinitions,
   isRemoteIntegrationTool,
 } from "./remote-tools.ts";
-export type { IntegrationConnector, IntegrationTool } from "./types.ts";
+export type {
+  RemoteIntegrationToolDefinition,
+  RemoteIntegrationToolExecutionContext,
+} from "./remote-tools.ts";
+export type {
+  IntegrationConnector,
+  IntegrationEndpoint,
+  IntegrationEndpointBodyField,
+  IntegrationEndpointParam,
+  IntegrationEndpointResponse,
+  IntegrationEndpointResponseEnrichment,
+  IntegrationHistoricalSummary,
+  IntegrationHistoricalSummaryField,
+  IntegrationHistoricalSummaryFieldKind,
+  IntegrationTool,
+} from "./types.ts";

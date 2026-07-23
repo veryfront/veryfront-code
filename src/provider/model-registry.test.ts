@@ -1,14 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { clearModelProviders, resolveModel } from "./model-registry.ts";
+import {
+  clearModelProviders,
+  ensureModelReady,
+  hasModelProvider,
+  registerModelProvider,
+  resolveModel,
+} from "./model-registry.ts";
+import type { ModelRuntime } from "./types.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { fromError } from "#veryfront/errors";
 
 const MODEL_REGISTRY_ENV_KEYS = [
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
+  "VERYFRONT_DISABLE_LOCAL_AI",
 ] as const;
 
 function clearModelRegistryEnv(): void {
@@ -28,6 +38,100 @@ describe("provider/model-registry", () => {
     globalThis.fetch = originalFetch;
     clearModelRegistryEnv();
     clearModelProviders();
+  });
+
+  it("rejects invalid provider factories at registration", () => {
+    assertThrows(
+      () => registerModelProvider("invalid", undefined as unknown as (id: string) => ModelRuntime),
+      Error,
+      "factory",
+    );
+  });
+
+  it("rejects malformed model strings without reflecting their contents", () => {
+    const malformed = "openai/model\nBearer private-value";
+    const error = assertThrows(
+      () => resolveModel(malformed),
+      Error,
+      "Model string",
+    );
+
+    assertEquals(error.message.includes("private-value"), false);
+    assertThrows(
+      () => resolveModel(undefined as unknown as string),
+      Error,
+      "Model string",
+    );
+  });
+
+  it("rejects provider factories that return an invalid runtime", () => {
+    registerModelProvider(
+      "invalid-runtime",
+      () => ({ provider: "invalid-runtime" }) as unknown as ModelRuntime,
+    );
+
+    assertThrows(
+      () => resolveModel("invalid-runtime/model"),
+      Error,
+      "runtime",
+    );
+  });
+
+  it("treats unreadable local-runtime metadata as untrusted", async () => {
+    const runtime = Object.defineProperty(
+      {
+        doGenerate: async () => ({}),
+        doStream: async () => ({ stream: new ReadableStream() }),
+      },
+      "_isVfLocalModel",
+      {
+        get() {
+          throw new Error("private runtime metadata");
+        },
+      },
+    ) as ModelRuntime;
+
+    await ensureModelReady(runtime);
+  });
+
+  it("rejects marked local runtimes without a valid local model ID", async () => {
+    setEnv("VERYFRONT_DISABLE_LOCAL_AI", "1");
+    const runtime = {
+      _isVfLocalModel: true,
+      doGenerate: async () => ({}),
+      doStream: async () => ({ stream: new ReadableStream() }),
+    } as ModelRuntime;
+
+    const error = await assertRejects(
+      () => ensureModelReady(runtime),
+      Error,
+      "local model runtime",
+    );
+    assertEquals(fromError(error)?.type, "config");
+  });
+
+  it("initializes shared providers even when the first project overrides one", () => {
+    const projectA = { projectId: "project-a", mode: "preview" as const, versionId: "main" };
+    const projectB = { projectId: "project-b", mode: "preview" as const, versionId: "main" };
+
+    runWithCacheKeyContext(projectA, () => {
+      registerModelProvider("openai", () => ({
+        doGenerate: async () => ({}),
+        doStream: async () => ({ stream: new ReadableStream() }),
+      }));
+      resolveModel("openai/custom-model");
+    });
+
+    assertEquals(
+      runWithCacheKeyContext(
+        projectB,
+        () =>
+          ["openai", "anthropic", "google", "mistral", "local", "veryfront-cloud"].every(
+            (name) => hasModelProvider(name),
+          ),
+      ),
+      true,
+    );
   });
 
   it("routes env-backed OpenAI reasoning models with tools through Responses", async () => {

@@ -28,7 +28,7 @@
  * import type { DataContext } from "veryfront";
  *
  * export function getServerData(ctx: DataContext) {
- *   if (!ctx.params.id) throw notFound();
+ *   if (!ctx.params.id) return notFound();
  *   return { title: "Page" };
  * }
  * ```

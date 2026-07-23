@@ -16,6 +16,12 @@ import {
   createSkippedEvalResult,
   type LiveEvalResultRecord,
 } from "./result.ts";
+import {
+  assertRequestTimeoutMs,
+  createRequestTimeoutSignal,
+  stringifyBoundedJsonRequest,
+} from "../http-safety.ts";
+import { formatEvalPublicError } from "../../validation.ts";
 
 /** Input payload for prepared live eval. */
 export interface PreparedLiveEvalInput {
@@ -106,7 +112,14 @@ function resolveFetch(config: Pick<LiveEvalRunnerConfig, "fetch">) {
 function createLiveEvalJudgeSupport(
   config: Pick<
     LiveEvalRunnerConfig,
-    "endpoint" | "authToken" | "projectId" | "branchId" | "model" | "enableLlmJudge" | "fetch"
+    | "endpoint"
+    | "authToken"
+    | "projectId"
+    | "branchId"
+    | "model"
+    | "requestTimeoutMs"
+    | "enableLlmJudge"
+    | "fetch"
   >,
 ): {
   judgeLlm: (input: LiveEvalJudgeRequest) => Promise<LiveEvalJudgeResult>;
@@ -128,8 +141,8 @@ ANSWER: ${input.answer}
 CRITERIA: ${input.criteria}
 
 Respond with exactly one line: PASS or FAIL followed by a brief reason.
-Example: "PASS — correctly explains the pattern with accurate details"
-Example: "FAIL — mentions the wrong file convention"`,
+Example: "PASS: correctly explains the pattern with accurate details"
+Example: "FAIL: mentions the wrong file convention"`,
         projectId: config.projectId,
         ...(config.branchId ? { branchId: config.branchId } : {}),
         ...(config.model ? { model: config.model } : {}),
@@ -144,8 +157,8 @@ Example: "FAIL — mentions the wrong file convention"`,
           "Content-Type": "application/json",
           Authorization: `Bearer ${config.authToken}`,
         },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
+        body: stringifyBoundedJsonRequest(body),
+        signal: createRequestTimeoutSignal(config.requestTimeoutMs),
       });
 
       const run = await parseSseResponse(response);
@@ -156,14 +169,14 @@ Example: "FAIL — mentions the wrong file convention"`,
         .split("\n")
         .map((value) => value.trim())
         .find((value) => value.length > 0) ?? "";
-      if (line.toUpperCase().startsWith("PASS")) {
+      if (/^PASS(?:\s|:|-|$)/i.test(line)) {
         return { pass: true, reason: line };
       }
       return { pass: false, reason: line || "judge returned no decision" };
     } catch (error) {
       return {
         pass: false,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: formatEvalPublicError(error),
       };
     }
   }
@@ -234,13 +247,17 @@ function createLiveEvalProgressReporter(input: {
 }): LiveEvalProgressReporter {
   let latestProgress = createInitialProgressSnapshot();
   const progressTimer = setInterval(() => {
-    input.log(
-      buildProgressLine({
-        caseId: input.caseId,
-        startedAt: input.startedAt,
-        progress: latestProgress,
-      }),
-    );
+    try {
+      input.log(
+        buildProgressLine({
+          caseId: input.caseId,
+          startedAt: input.startedAt,
+          progress: latestProgress,
+        }),
+      );
+    } catch {
+      // Progress reporting must not terminate an eval run.
+    }
   }, input.intervalMs);
   maybeUnrefTimer(progressTimer);
 
@@ -431,6 +448,27 @@ async function resolveCompletedLiveEvalRun(input: {
     runId: input.runId,
     traceSignature,
   });
+  if (input.run.responseStatus < 200 || input.run.responseStatus >= 300) {
+    return createFailedRunEvalResult({
+      context: input.context,
+      details: `AG-UI request failed with HTTP ${input.run.responseStatus}`,
+      runArtifacts,
+    });
+  }
+  if (input.run.runError) {
+    return createFailedRunEvalResult({
+      context: input.context,
+      details: `AG-UI run failed: ${input.run.runError}`,
+      runArtifacts,
+    });
+  }
+  if (!input.run.eventTypes.includes(agUiSseEventTypes.runFinished)) {
+    return createFailedRunEvalResult({
+      context: input.context,
+      details: "AG-UI run did not emit RUN_FINISHED",
+      runArtifacts,
+    });
+  }
   const failure = await input.testCase.verify(input.run, input.prepared);
 
   if (!failure && input.testCase.expectedEventSubsequence) {
@@ -457,9 +495,7 @@ async function resolveCompletedLiveEvalRun(input: {
 
   return createPassedRunEvalResult({
     context: input.context,
-    details: `OK: ${input.run.toolStarts.join(", ") || "no tools"} | ${
-      input.run.text.slice(0, 140) || "no text"
-    }`,
+    details: `OK: ${input.run.toolStarts.join(", ") || "no tools"}`,
     runArtifacts,
   });
 }
@@ -477,7 +513,8 @@ function extractRunId(run: ParsedRun): string | null {
 
 /** Check whether finished is present. */
 export function hasFinished(run: ParsedRun): boolean {
-  return run.eventTypes.includes(agUiSseEventTypes.runFinished) && !run.runError;
+  return run.responseStatus >= 200 && run.responseStatus < 300 &&
+    run.eventTypes.includes(agUiSseEventTypes.runFinished) && !run.runError;
 }
 
 /** Contains skill load helper. */
@@ -500,13 +537,25 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
   ) => (run: ParsedRun) => Promise<string | null>;
   judgeLlm: (input: LiveEvalJudgeRequest) => Promise<LiveEvalJudgeResult>;
 } {
+  assertRequestTimeoutMs(config.requestTimeoutMs);
+  if (
+    !Number.isSafeInteger(config.progressLogIntervalMs) || config.progressLogIntervalMs < 100 ||
+    config.progressLogIntervalMs > 60 * 60 * 1_000
+  ) {
+    throw new TypeError(
+      "progressLogIntervalMs must be an integer between 100 and 3600000",
+    );
+  }
   const fetchImpl = resolveFetch(config);
   const log = config.log ?? console.log;
   const { judgeLlm, withJudge } = createLiveEvalJudgeSupport(config);
 
   async function verifyFileExists(input: FileCheckInput): Promise<string | null> {
-    if (!config.projectId || !config.readProjectFile) {
-      return null;
+    if (!config.projectId) {
+      return `${input.description ?? input.filePath}: project id is not configured`;
+    }
+    if (!config.readProjectFile) {
+      return `${input.description ?? input.filePath}: project file reader is not configured`;
     }
 
     const file = await config.readProjectFile({
@@ -531,18 +580,18 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
       if (missing.length > 0) {
         return `${input.description ?? input.filePath}: missing required content: ${
           missing.join(", ")
-        }. Got: ${file.content.slice(0, 200)}`;
+        }`;
       }
     }
 
     return null;
   }
 
-  async function runEval(
+  async function runEvalUnsafe(
     testCase: LiveEvalCase,
     runtime: LiveEvalRuntime,
+    startedAt: number,
   ): Promise<LiveEvalResultRecord> {
-    const startedAt = Date.now();
     if (testCase.requireProject && !config.projectId) {
       return createSkippedEvalResult({
         id: testCase.id,
@@ -570,9 +619,13 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
       artifactPaths: preparedArtifactPaths,
     });
 
+    let result: LiveEvalResultRecord | undefined;
+    let sidecarCleanup: (() => Promise<void>) | void = undefined;
+    let progressReporter: LiveEvalProgressReporter | undefined;
+    const cleanupErrors: unknown[] = [];
     try {
-      const sidecarCleanup = prepared?.startSidecar ? await prepared.startSidecar() : undefined;
-      const progressReporter = createLiveEvalProgressReporter({
+      sidecarCleanup = prepared?.startSidecar ? await prepared.startSidecar() : undefined;
+      progressReporter = createLiveEvalProgressReporter({
         caseId: testCase.id,
         startedAt,
         intervalMs: config.progressLogIntervalMs,
@@ -593,7 +646,7 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
             "Content-Type": "application/json",
             Authorization: `Bearer ${config.authToken}`,
           },
-          body: JSON.stringify(body),
+          body: stringifyBoundedJsonRequest(body),
           signal: AbortSignal.timeout(config.requestTimeoutMs),
         });
 
@@ -602,7 +655,7 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
         const run = await parseSseResponse(response, {
           onProgress: progressReporter.update,
         });
-        return resolveCompletedLiveEvalRun({
+        result = await resolveCompletedLiveEvalRun({
           testCase,
           run,
           prepared,
@@ -610,18 +663,70 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
           runId: extractRunId(run) ?? undefined,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return createStreamingFailureEvalResult({
+        result = createStreamingFailureEvalResult({
           context: resultContext,
-          details: message,
+          details: formatEvalPublicError(error),
           progress: progressReporter.getSnapshot(),
         });
-      } finally {
-        progressReporter.stop();
-        await sidecarCleanup?.();
       }
+    } catch (error) {
+      result = createFailedEvalResult({
+        id: resultContext.id,
+        label: resultContext.label,
+        runtime: resultContext.runtime,
+        details: formatEvalPublicError(error),
+        startedAt: resultContext.startedAt,
+        ...(resultContext.conversationId ? { conversationId: resultContext.conversationId } : {}),
+        ...(resultContext.artifactPaths?.length
+          ? { artifactPaths: resultContext.artifactPaths }
+          : {}),
+      });
     } finally {
-      await prepared?.cleanup?.();
+      progressReporter?.stop();
+      try {
+        await sidecarCleanup?.();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await prepared?.cleanup?.();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+
+    if (!result) {
+      throw new TypeError("Live eval run completed without a result");
+    }
+    if (cleanupErrors.length > 0) {
+      return {
+        ...result,
+        status: "fail",
+        details: formatEvalPublicError(
+          `${result.details} Cleanup failed: ${
+            cleanupErrors.map(formatEvalPublicError).join("; ")
+          }`,
+        ),
+      };
+    }
+    return result;
+  }
+
+  async function runEval(
+    testCase: LiveEvalCase,
+    runtime: LiveEvalRuntime,
+  ): Promise<LiveEvalResultRecord> {
+    const startedAt = Date.now();
+    try {
+      return await runEvalUnsafe(testCase, runtime, startedAt);
+    } catch (error) {
+      return createFailedEvalResult({
+        id: testCase.id,
+        label: testCase.label,
+        runtime,
+        details: error instanceof Error ? error.message : String(error),
+        startedAt,
+      });
     }
   }
 

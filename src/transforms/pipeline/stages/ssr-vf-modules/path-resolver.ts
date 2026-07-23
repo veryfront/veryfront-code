@@ -14,13 +14,8 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { resolveInternalModuleTarget } from "../../../veryfront-module-urls.ts";
-import {
-  EMBEDDED_SRC_DIR,
-  EXTENSIONS,
-  FRAMEWORK_LOOKUPS,
-  FRAMEWORK_ROOT,
-  LOG_PREFIX,
-} from "./constants.ts";
+import { EXTENSIONS, FRAMEWORK_LOOKUPS, LOG_PREFIX } from "./constants.ts";
+import { fileLogLabel } from "../../../shared/log-context.ts";
 
 export async function tryReadWithExtensions(
   fs: ReturnType<typeof createFileSystem>,
@@ -68,17 +63,14 @@ export async function resolveFrameworkFile(
   if (!isSafeFrameworkSourceKey(frameworkRelativePath)) return null;
 
   logger.debug(`${LOG_PREFIX} resolveFrameworkFile`, {
-    input: vfModulePath,
-    normalizedVfModulePath,
-    pathWithoutPrefix,
-    lookupDirs: FRAMEWORK_LOOKUPS.map(([p, d]) => ({ prefix: p, dir: d })),
+    moduleFile: fileLogLabel(pathWithoutPrefix),
+    lookupCount: FRAMEWORK_LOOKUPS.length,
   });
 
   for (const [prefix, frameworkDir] of FRAMEWORK_LOOKUPS) {
     if (!pathWithoutPrefix.startsWith(prefix)) {
       logger.debug(`${LOG_PREFIX} Skipping lookup - path doesn't start with prefix`, {
         prefix,
-        pathWithoutPrefix,
       });
       continue;
     }
@@ -89,14 +81,15 @@ export async function resolveFrameworkFile(
 
     logger.debug(`${LOG_PREFIX} Trying path with prefix`, {
       prefix,
-      frameworkDir,
-      relativePath,
-      fullPath: pathWithPrefixDir,
+      moduleFile: fileLogLabel(relativePath),
     });
 
     const withPrefix = await tryReadWithExtensions(fs, pathWithPrefixDir, existsFn);
     if (withPrefix) {
-      logger.debug(`${LOG_PREFIX} Found with prefix`, { sourcePath: withPrefix.sourcePath });
+      logger.debug(`${LOG_PREFIX} Found with prefix`, {
+        prefix,
+        moduleFile: fileLogLabel(relativePath),
+      });
       return withPrefix;
     }
 
@@ -105,23 +98,21 @@ export async function resolveFrameworkFile(
     const pathWithoutPrefixDir = join(frameworkDir, relativePath);
     if (!isWithinDirectory(frameworkDir, pathWithoutPrefixDir)) continue;
     logger.debug(`${LOG_PREFIX} Trying path without prefix`, {
-      frameworkDir,
-      relativePath,
-      fullPath: pathWithoutPrefixDir,
+      moduleFile: fileLogLabel(relativePath),
     });
 
     const withoutPrefix = await tryReadWithExtensions(fs, pathWithoutPrefixDir, existsFn);
     if (withoutPrefix) {
-      logger.debug(`${LOG_PREFIX} Found without prefix`, { sourcePath: withoutPrefix.sourcePath });
+      logger.debug(`${LOG_PREFIX} Found without prefix`, {
+        prefix,
+        moduleFile: fileLogLabel(relativePath),
+      });
       return withoutPrefix;
     }
   }
 
   logger.warn(`${LOG_PREFIX} resolveFrameworkFile: not found`, {
-    vfModulePath,
-    pathWithoutPrefix,
-    frameworkRoot: FRAMEWORK_ROOT,
-    embeddedSrcDir: EMBEDDED_SRC_DIR,
+    moduleFile: fileLogLabel(pathWithoutPrefix),
   });
 
   return null;

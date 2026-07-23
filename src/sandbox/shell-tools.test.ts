@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
@@ -191,5 +197,76 @@ describe("sandbox/shell-tools", () => {
     assertEquals(normalizeBashToolSet({ tool: { inputSchemaJson: "bad" } }), {
       tool: { id: "tool" },
     });
+  });
+
+  it("rejects cyclic JSON schemas without overflowing the stack", () => {
+    const schema: Record<string, unknown> = { type: "object" };
+    schema.properties = { nested: schema };
+
+    assertThrows(
+      () => normalizeBashToolSet({ tool: { inputSchemaJson: schema } }),
+      Error,
+      "cycles",
+    );
+  });
+
+  it("normalizes schema unions and rejects cycles inside JSON literals", () => {
+    const normalized = normalizeBashToolSet({
+      tool: {
+        title: "Shell tool",
+        inputSchemaJson: { type: ["string", "null"] },
+      },
+    });
+    assertEquals(normalized.tool?.title, "Shell tool");
+    assertEquals(normalized.tool?.inputSchemaJson, { type: ["string", "null"] });
+
+    const value: Record<string, unknown> = {};
+    value.self = value;
+    assertThrows(
+      () => normalizeBashToolSet({ tool: { inputSchemaJson: { enum: [value] } } }),
+      Error,
+      "cycles",
+    );
+  });
+
+  it("preserves valid empty JSON Schemas at top level and in properties", () => {
+    const normalized = normalizeBashToolSet({
+      unrestricted: { inputSchemaJson: {} },
+      object: {
+        inputSchemaJson: {
+          type: "object",
+          properties: { unrestricted: {} },
+          additionalProperties: {},
+        },
+      },
+    });
+
+    assertEquals(normalized.unrestricted?.inputSchemaJson, {});
+    assertEquals(normalized.object?.inputSchemaJson, {
+      type: "object",
+      properties: { unrestricted: {} },
+      additionalProperties: {},
+    });
+  });
+
+  it("rejects file-tool alias collisions instead of silently overwriting tools", () => {
+    assertThrows(() =>
+      renameSandboxFileTools({
+        readFile: { description: "source" },
+        sandbox_read_file: { description: "existing" },
+      })
+    );
+  });
+
+  it("rejects invalid shell-tool provider results", async () => {
+    await assertRejects(
+      () =>
+        createSandboxShellTools(
+          { executeCommand: async () => ({}) },
+          async () => null as never,
+        ),
+      Error,
+      "tools",
+    );
   });
 });

@@ -13,6 +13,8 @@ import {
   buildProviderError,
   createGoogleRequestInit,
   createWarningCollector,
+  extractGoogleEmbedding,
+  extractGoogleUsageTokens,
   getGoogleEmbeddingUrl,
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
@@ -69,42 +71,6 @@ export interface GoogleRuntimeConfig {
   baseURL?: string;
   name?: string;
   fetch?: typeof globalThis.fetch;
-}
-
-// ---------------------------------------------------------------------------
-// Google-specific types
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Google helper functions
-// ---------------------------------------------------------------------------
-
-function extractGoogleEmbedding(payload: unknown): number[] {
-  const record = readRecord(payload);
-  const embeddings = record?.embeddings;
-
-  if (Array.isArray(embeddings) && embeddings.length > 0) {
-    const firstEmbedding = readRecord(embeddings[0]);
-    const values = firstEmbedding?.values;
-    if (isNumberArray(values)) {
-      return values;
-    }
-  }
-
-  const embedding = readRecord(record?.embedding);
-  const values = embedding?.values;
-  if (isNumberArray(values)) {
-    return values;
-  }
-
-  throw new Error("Invalid Google embedding response: embedding vector missing");
-}
-
-function extractGoogleUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usageMetadata = readRecord(record?.usageMetadata);
-  const promptTokenCount = usageMetadata?.promptTokenCount;
-  return typeof promptTokenCount === "number" ? promptTokenCount : undefined;
 }
 
 function buildGoogleGenerateResult(payload: unknown): {

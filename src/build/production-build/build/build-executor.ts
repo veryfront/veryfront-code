@@ -6,9 +6,11 @@ import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { collectStaticRouteOutputPaths } from "../route-output-paths.ts";
 
 const logger = serverLogger.component("build");
 
+/** Resolved dependencies required to render all collected static routes. */
 export interface BuildExecutorOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
@@ -22,27 +24,27 @@ export interface BuildExecutorOptions {
   releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
+/** Aggregate result from Pages Router and App Router generation. */
 export interface BuildResult {
   pages: number;
   totalSize: number;
   ssgPaths: string[];
 }
 
+/** Validate route output uniqueness and render both static route families. */
 export async function executeBuild(
   pagesRoutes: RouteInfo[],
   appRoutes: AppRouteInfo[],
   options: BuildExecutorOptions,
 ): Promise<BuildResult> {
-  logger.info(
-    `[BUILD] executeBuild: ${pagesRoutes.length} pages routes, ${appRoutes.length} app routes`,
-  );
+  collectStaticRouteOutputPaths(pagesRoutes, appRoutes, options.outputDir);
 
-  logger.info("Building pages...");
+  logger.info("Building static routes", {
+    pagesRoutes: pagesRoutes.length,
+    appRoutes: appRoutes.length,
+  });
   const pagesStats = await buildPagesRoutes(pagesRoutes, options);
-  logger.info(`pagesStats: ${pagesStats.pages} pages built`);
-
   const appStats = await buildAppRoutes(appRoutes, options);
-  logger.info(`appStats: ${appStats.pages} pages built`);
 
   return {
     pages: pagesStats.pages + appStats.pages,

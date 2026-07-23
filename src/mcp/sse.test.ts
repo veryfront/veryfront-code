@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { formatSSEEvent, formatSSEPrimingEvent, formatSSERetry } from "./sse.ts";
 
@@ -22,5 +22,38 @@ describe("mcp/sse", () => {
   it("formats an empty priming event with id", () => {
     const event = formatSSEPrimingEvent("stream-1");
     assertEquals(event, "id: stream-1\ndata: \n\n");
+  });
+
+  it("rejects event IDs that can inject SSE fields", () => {
+    assertThrows(
+      () => formatSSEEvent({ ok: true }, "safe\nevent: injected"),
+      TypeError,
+      "event ID",
+    );
+    assertThrows(
+      () => formatSSEPrimingEvent("safe\rid: injected"),
+      TypeError,
+      "event ID",
+    );
+    assertThrows(
+      () => formatSSEEvent({ ok: true }, 42 as never),
+      TypeError,
+      "event ID",
+    );
+    assertThrows(
+      () => formatSSEPrimingEvent(null as never),
+      TypeError,
+      "event ID",
+    );
+  });
+
+  it("rejects invalid retry intervals", () => {
+    for (const retry of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => formatSSERetry(retry), TypeError, "retry interval");
+    }
+  });
+
+  it("rejects values that cannot be serialized as JSON", () => {
+    assertThrows(() => formatSSEEvent(1n), TypeError, "JSON-serializable");
   });
 });

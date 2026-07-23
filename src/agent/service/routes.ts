@@ -146,6 +146,7 @@ export type HostedAgentServiceRouteSet<TExecution extends object> = {
   }) => Promise<Response>;
 };
 
+/** Route handlers exposed by an agent service. */
 export type AgentServiceRouteSet<TExecution extends object> = HostedAgentServiceRouteSet<
   TExecution
 >;

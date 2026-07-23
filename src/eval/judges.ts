@@ -3,6 +3,7 @@ import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
 
 import type { EvalAnswerGroundednessMetricOptions } from "./types.ts";
+import { createEvalValidationError } from "./validation.ts";
 
 type GroundednessJudge = NonNullable<EvalAnswerGroundednessMetricOptions["judge"]>;
 
@@ -28,6 +29,41 @@ const DEFAULT_MAX_EVIDENCE_CHARS = 12_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
 const MAX_SOURCE_CHARS = 2_000;
 const SOURCE_BUDGET_RATIO = 0.25;
+const MAX_JUDGE_EVIDENCE_CHARS = 1_000_000;
+const MAX_JUDGE_OUTPUT_TOKENS = 32_768;
+
+function assertJudgeOptions(options: EvalLlmGroundednessJudgeOptions): void {
+  if (
+    options.threshold !== undefined &&
+    (!Number.isFinite(options.threshold) || options.threshold < 0 || options.threshold > 1)
+  ) {
+    throw createEvalValidationError("Judge threshold must be a finite number between 0 and 1");
+  }
+  if (
+    options.maxEvidenceChars !== undefined &&
+    (!Number.isSafeInteger(options.maxEvidenceChars) || options.maxEvidenceChars < 0 ||
+      options.maxEvidenceChars > MAX_JUDGE_EVIDENCE_CHARS)
+  ) {
+    throw createEvalValidationError(
+      `Judge maxEvidenceChars must be an integer between 0 and ${MAX_JUDGE_EVIDENCE_CHARS}`,
+    );
+  }
+  if (
+    options.maxOutputTokens !== undefined &&
+    (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens < 1 ||
+      options.maxOutputTokens > MAX_JUDGE_OUTPUT_TOKENS)
+  ) {
+    throw createEvalValidationError(
+      `Judge maxOutputTokens must be an integer between 1 and ${MAX_JUDGE_OUTPUT_TOKENS}`,
+    );
+  }
+  if (
+    options.temperature !== undefined &&
+    (!Number.isFinite(options.temperature) || options.temperature < 0 || options.temperature > 2)
+  ) {
+    throw createEvalValidationError("Judge temperature must be a finite number between 0 and 2");
+  }
+}
 
 function asJson(value: unknown): string {
   try {
@@ -235,6 +271,7 @@ function parseJudgeResponse(
 function createLlmGroundednessJudge(
   options: EvalLlmGroundednessJudgeOptions = {},
 ): GroundednessJudge {
+  assertJudgeOptions(options);
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
   const maxEvidenceChars = options.maxEvidenceChars ?? DEFAULT_MAX_EVIDENCE_CHARS;
   const maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;

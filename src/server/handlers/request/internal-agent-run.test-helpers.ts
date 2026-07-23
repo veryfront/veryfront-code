@@ -1,4 +1,4 @@
-import type { Agent, AgentResponse } from "#veryfront/agent";
+import type { Agent, AgentMessage, AgentResponse } from "#veryfront/agent";
 import { type Tool } from "#veryfront/tool";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
@@ -16,6 +16,24 @@ async function sha256Base64url(body: string): Promise<string> {
   return base64urlEncodeBytes(new Uint8Array(digest));
 }
 
+export interface ControlPlaneTestSigningKey {
+  privateKey: CryptoKey;
+  publicKeyPem: string;
+}
+
+export async function createControlPlaneTestSigningKey(): Promise<ControlPlaneTestSigningKey> {
+  const keyPair = await crypto.subtle.generateKey(
+    "Ed25519",
+    true,
+    ["sign", "verify"],
+  ) as CryptoKeyPair;
+  const publicKeyDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
+  return {
+    privateKey: keyPair.privateKey,
+    publicKeyPem: encodePem("PUBLIC KEY", publicKeyDer),
+  };
+}
+
 export async function createControlPlaneSignature(
   body: string,
   overrides: Partial<{
@@ -24,14 +42,9 @@ export async function createControlPlaneSignature(
     requestId: string;
     surface: "studio" | "channels" | "a2a" | "mcp";
   }> = {},
+  signingKey?: ControlPlaneTestSigningKey,
 ): Promise<{ jws: string; publicKeyPem: string }> {
-  const keyPair = await crypto.subtle.generateKey(
-    "Ed25519",
-    true,
-    ["sign", "verify"],
-  ) as CryptoKeyPair;
-  const publicKeyDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
-  const publicKeyPem = encodePem("PUBLIC KEY", publicKeyDer);
+  const key = signingKey ?? await createControlPlaneTestSigningKey();
   const now = Math.floor(Date.now() / 1000);
 
   const header = base64urlEncode(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
@@ -47,10 +60,10 @@ export async function createControlPlaneSignature(
   }));
 
   const signingInput = encoder.encode(`${header}.${payload}`);
-  const signature = await crypto.subtle.sign("Ed25519", keyPair.privateKey, signingInput);
+  const signature = await crypto.subtle.sign("Ed25519", key.privateKey, signingInput);
 
   return {
-    publicKeyPem,
+    publicKeyPem: key.publicKeyPem,
     jws: `${header}.${payload}.${base64urlEncodeBytes(new Uint8Array(signature))}`,
   };
 }
@@ -116,7 +129,7 @@ export function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Ar
 export function createInjectedToolRuntime(toolName: string, toolCallId: string, result: unknown) {
   return (_agent: Agent, mergedTools: Agent["config"]["tools"]) => ({
     async stream(
-      _messages: Array<Record<string, unknown>>,
+      _messages: AgentMessage[],
       _context?: Record<string, unknown>,
       callbacks?: { onFinish?: (response: AgentResponse) => void },
     ) {

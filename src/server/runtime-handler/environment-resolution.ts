@@ -57,10 +57,13 @@ interface EnvironmentResolutionOptions {
 export function resolveEnvironment(
   opts: EnvironmentResolutionOptions,
 ): EnvironmentResolutionResult {
-  let resolvedEnvironment: "preview" | "production" | undefined =
-    opts.proxyEnv === "preview" || opts.proxyEnv === "production" ? opts.proxyEnv : opts.reqCtxMode;
+  const requestEnvironment = opts.proxyEnv === "preview" || opts.proxyEnv === "production"
+    ? opts.proxyEnv
+    : opts.reqCtxMode;
+  const resolvedEnvironment: "preview" | "production" | undefined =
+    !opts.isProxyMode && opts.defaultEnvironment ? opts.defaultEnvironment : requestEnvironment;
 
-  let releaseId = opts.releaseId;
+  const releaseId = opts.releaseId;
 
   // Some framework control-plane surfaces are routed directly to a runtime owner pod and
   // rely on signed control-plane auth instead of a user-facing release address.
@@ -81,54 +84,20 @@ export function resolveEnvironment(
     !opts.isLocalProject &&
     !canSkipReleaseIdValidation
   ) {
-    logger.warn("No active release found (proxy mode)", {
-      projectSlug: opts.projectSlug,
-      projectId: opts.projectId,
-      environmentName: opts.environmentName,
-      host: opts.host,
-      proxyEnv: opts.proxyEnv,
-      resolvedEnvironment,
-    });
+    logger.warn("No active release found in proxy production mode");
 
     return {
       resolvedEnvironment,
       releaseId,
       errorResponse: new Response(ErrorPages.notFound(), {
         status: 404,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
       }),
     };
-  }
-
-  // Handle standalone mode without release ID
-  const isStandaloneWithoutRelease = !opts.isProxyMode &&
-    resolvedEnvironment === "production" &&
-    !releaseId &&
-    !opts.isLocalProject;
-
-  if (isStandaloneWithoutRelease) {
-    const fallbackEnv = opts.defaultEnvironment ?? "preview";
-    logger.debug(
-      "[environment-resolution] Standalone mode without releaseId, using fallback environment",
-      {
-        projectSlug: opts.projectSlug,
-        resolvedEnvironment,
-        fallbackEnv,
-      },
-    );
-
-    resolvedEnvironment = fallbackEnv;
-
-    if (fallbackEnv === "production" && !releaseId) {
-      releaseId = "standalone-dev";
-      logger.debug(
-        "[environment-resolution] Using synthetic releaseId for standalone production mode",
-        {
-          projectSlug: opts.projectSlug,
-          releaseId,
-        },
-      );
-    }
   }
 
   return {

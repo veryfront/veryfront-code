@@ -89,7 +89,7 @@ function requestDenoPermission(
 
       const descriptor = createPermissionDescriptor(request);
       if (!descriptor) {
-        logger.warn("Unsupported permission request", request);
+        logger.warn("Unsupported permission request", { permission: request.name });
         return { state: "denied" };
       }
 
@@ -100,15 +100,13 @@ function requestDenoPermission(
   );
 }
 
-let warnedNonDenoAutoGrant = false;
+let warnedNonDenoUnavailable = false;
 
-function warnNonDenoAutoGrantOnce(): void {
-  if (warnedNonDenoAutoGrant) return;
-  warnedNonDenoAutoGrant = true;
+function warnNonDenoUnavailableOnce(): void {
+  if (warnedNonDenoUnavailable) return;
+  warnedNonDenoUnavailable = true;
   logger.warn(
-    "Permission sandbox is a no-op on non-Deno runtimes: all permission " +
-      "requests are auto-granted. Do not rely on this guard for isolation " +
-      "when running outside Deno.",
+    "Permission requests are denied because this runtime cannot enforce Deno permissions",
   );
 }
 
@@ -121,20 +119,14 @@ export function requestPermission(
       try {
         if (isDeno) return await requestDenoPermission(request);
 
-        // On non-Deno runtimes there is no OS-level permission API to consult,
-        // so every request is auto-granted — this guard provides NO isolation
-        // here. Warn loudly (once) so an operator running the runtime outside
-        // Deno cannot mistake this for an enforced sandbox.
-        warnNonDenoAutoGrantOnce();
-        serverLogger.debug(
-          "[permissions] Permission auto-granted (non-Deno runtime)",
-          { permission: request.name },
-        );
-        return { state: "granted" };
+        // A runtime without an enforceable permissions API cannot safely grant
+        // a request. Fail closed instead of presenting a no-op as a sandbox.
+        warnNonDenoUnavailableOnce();
+        return { state: "denied" };
       } catch (error) {
         logger.warn("Permission request failed", {
           permission: request.name,
-          error,
+          errorType: error instanceof Error ? error.name : typeof error,
         });
         return { state: "denied" };
       }

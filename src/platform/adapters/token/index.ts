@@ -10,6 +10,8 @@ export {
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
   TokenStorageApiClient,
+  type TokenStorageApiClientDependencies,
+  type TokenStorageRequestOptions,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./veryfront/index.ts";

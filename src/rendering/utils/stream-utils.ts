@@ -63,26 +63,21 @@ export class StreamTimeoutError extends Error {
   }
 }
 
-function concatUint8Arrays(chunks: Uint8Array[], totalLength: number): Uint8Array {
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
-  return result;
-}
+const MAX_SSR_STREAM_BYTES = 16 * 1024 * 1024;
 
 export async function streamToString(
   stream: ReadableStream,
   timeoutMs: number = SSR_TIMEOUT_MS,
+  maxBytes: number = MAX_SSR_STREAM_BYTES,
 ): Promise<string> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > MAX_SSR_STREAM_BYTES) {
+    throw new RangeError(`Stream byte limit must be between 0 and ${MAX_SSR_STREAM_BYTES}`);
+  }
+
   const reader = stream.getReader();
-  const binaryChunks: Uint8Array[] = [];
   let totalBytes = 0;
-  const decoder = new TextDecoder();
+  let content = "";
+  const decoder = new TextDecoder("utf-8", { fatal: true });
 
   let timedOut = false;
   const timeoutId = setTimeout(() => {
@@ -93,12 +88,11 @@ export async function streamToString(
   }, timeoutMs);
 
   function throwTimeout(): never {
-    const partial = decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
     logger.error("STREAM_TIMEOUT stream read timed out", {
       timeoutMs,
-      partialLength: partial.length,
+      partialLength: content.length,
     });
-    throw new StreamTimeoutError(timeoutMs, partial);
+    throw new StreamTimeoutError(timeoutMs, content);
   }
 
   try {
@@ -112,11 +106,15 @@ export async function streamToString(
 
       if (!value) continue;
 
-      binaryChunks.push(value);
       totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel("Stream byte limit exceeded").catch(() => undefined);
+        throw new RangeError(`Stream exceeds the byte limit of ${maxBytes}`);
+      }
+      content += decoder.decode(value, { stream: true });
     }
 
-    return decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
+    return content + decoder.decode();
   } finally {
     clearTimeout(timeoutId);
     try {

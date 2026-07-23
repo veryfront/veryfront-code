@@ -4,12 +4,46 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
-import { logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-const tailwindV4ImportPattern = /@import\s+["']tailwindcss(?:\/[^"']*)?["']/;
+const tailwindV4ImportPattern = /^@import\s+(?:url\(\s*)?(["'])tailwindcss(?:\/[^"']*)?\1\s*\)?/i;
+
+export function hasTailwindV4Import(content: string): boolean {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let blockDepth = 0;
+
+  for (let index = 0; index < content.length; index++) {
+    const current = content[index];
+    if (current === undefined) continue;
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (current === "\\") escaped = true;
+      else if (current === quote) quote = null;
+      continue;
+    }
+    if (current === "/" && content[index + 1] === "*") {
+      const end = content.indexOf("*/", index + 2);
+      if (end === -1) throw new SyntaxError("Unterminated CSS comment");
+      index = end + 1;
+      continue;
+    }
+    if (current === '"' || current === "'") {
+      quote = current;
+      continue;
+    }
+    if (current === "{") blockDepth++;
+    else if (current === "}") blockDepth--;
+    else if (blockDepth === 0 && current === "@") {
+      if (tailwindV4ImportPattern.test(content.slice(index))) return true;
+    }
+  }
+  if (quote) throw new SyntaxError("Unterminated CSS string");
+  if (blockDepth !== 0) throw new SyntaxError("Unbalanced CSS blocks");
+  return false;
+}
 
 export function isTailwindV4File(
   filePath: string,
@@ -23,18 +57,14 @@ export function isTailwindV4File(
         baseDir: projectDir,
         adapter,
         context: "build",
-        throwOnError: false,
+        throwOnError: true,
+        validationOptions: { followSymlinks: false },
       });
 
-      try {
-        const content = await secureFs.readFile(filePath);
-        return tailwindV4ImportPattern.test(content);
-      } catch (error) {
-        logger.debug(`Failed to check file for Tailwind CSS: ${filePath}`, error);
-        return false;
-      }
+      const content = await secureFs.readFile(filePath);
+      return hasTailwindV4Import(content);
     },
-    { "tailwind.filePath": filePath },
+    {},
   );
 }
 

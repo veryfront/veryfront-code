@@ -1,145 +1,110 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createFileWatcher, createWatcherIterator, enqueueWatchEvent } from "./watcher-queue.ts";
+import { createFileWatcher, createWatcherQueue, normalizeWatchPaths } from "./watcher-queue.ts";
 import type { FileChangeEvent } from "../../base.ts";
 
-function makeEvent(kind: FileChangeEvent["kind"], paths: string[]): FileChangeEvent {
-  return { kind, paths };
+function makeEvent(kind: FileChangeEvent["kind"], path: string): FileChangeEvent {
+  return { kind, paths: [path] };
 }
 
 describe("watcher-queue", () => {
-  describe("createWatcherIterator", () => {
-    it("should return an AsyncIterator with next and return methods", () => {
-      const iterator = createWatcherIterator([], () => {}, () => false, () => false);
-      assertExists(iterator.next);
-      assertExists(iterator.return);
+  describe("createWatcherQueue", () => {
+    it("delivers queued events in order", async () => {
+      const queue = createWatcherQueue();
+      queue.enqueue(makeEvent("create", "/a.ts"));
+      queue.enqueue(makeEvent("modify", "/b.ts"));
+
+      assertEquals((await queue.iterator.next()).value, makeEvent("create", "/a.ts"));
+      assertEquals((await queue.iterator.next()).value, makeEvent("modify", "/b.ts"));
     });
 
-    it("should resolve queued events immediately", async () => {
-      const queue: FileChangeEvent[] = [makeEvent("create", ["/a.ts"])];
-      const iterator = createWatcherIterator(queue, () => {}, () => false, () => false);
+    it("supports concurrent next calls without losing a waiter", async () => {
+      const queue = createWatcherQueue();
+      const firstResult = queue.iterator.next();
+      const secondResult = queue.iterator.next();
 
-      const result = await iterator.next();
-      assertEquals(result.done, false);
-      assertEquals(result.value, makeEvent("create", ["/a.ts"]));
+      queue.enqueue(makeEvent("create", "/first.ts"));
+      queue.enqueue(makeEvent("modify", "/second.ts"));
+
+      assertEquals((await firstResult).value, makeEvent("create", "/first.ts"));
+      assertEquals((await secondResult).value, makeEvent("modify", "/second.ts"));
     });
 
-    it("should drain multiple queued events in order", async () => {
-      const queue: FileChangeEvent[] = [
-        makeEvent("create", ["/a.ts"]),
-        makeEvent("modify", ["/b.ts"]),
-      ];
-      const iterator = createWatcherIterator(queue, () => {}, () => false, () => false);
+    it("resolves every pending reader when closed", async () => {
+      const queue = createWatcherQueue();
+      const firstResult = queue.iterator.next();
+      const secondResult = queue.iterator.next();
 
-      const first = await iterator.next();
-      assertEquals(first.value?.paths, ["/a.ts"]);
+      queue.close();
 
-      const second = await iterator.next();
-      assertEquals(second.value?.paths, ["/b.ts"]);
+      assertEquals((await firstResult).done, true);
+      assertEquals((await secondResult).done, true);
+      assertEquals((await queue.iterator.next()).done, true);
     });
 
-    it("should return done when closed", async () => {
-      const iterator = createWatcherIterator([], () => {}, () => true, () => false);
+    it("ignores events after closure", async () => {
+      const queue = createWatcherQueue();
+      queue.close();
+      queue.enqueue(makeEvent("create", "/ignored.ts"));
 
-      const result = await iterator.next();
-      assertEquals(result.done, true);
+      assertEquals((await queue.iterator.next()).done, true);
     });
 
-    it("should return done when aborted", async () => {
-      const iterator = createWatcherIterator([], () => {}, () => false, () => true);
+    it("coalesces overflow into a bounded rescan event", async () => {
+      const queue = createWatcherQueue({
+        maxBufferedEvents: 2,
+        overflowPaths: ["/watched"],
+      });
+      queue.enqueue(makeEvent("create", "/a.ts"));
+      queue.enqueue(makeEvent("modify", "/b.ts"));
+      queue.enqueue(makeEvent("delete", "/c.ts"));
+      queue.enqueue(makeEvent("create", "/d.ts"));
 
-      const result = await iterator.next();
-      assertEquals(result.done, true);
-    });
+      assertEquals(await queue.iterator.next(), {
+        done: false,
+        value: { kind: "any", paths: ["/watched"] },
+      });
 
-    it("should wait for events when queue is empty and not closed", async () => {
-      let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
-
-      const iterator = createWatcherIterator([], (r) => (resolver = r), () => false, () => false);
-
-      const promise = iterator.next();
-
-      const resolve = resolver;
-      if (!resolve) throw new Error("Expected resolver to be set");
-
-      resolve({ done: false, value: makeEvent("modify", ["/c.ts"]) });
-
-      const result = await promise;
-      assertEquals(result.done, false);
-      assertEquals(result.value?.paths, ["/c.ts"]);
-    });
-
-    it("should return done result from return()", async () => {
-      const iterator = createWatcherIterator([], () => {}, () => false, () => false);
-
-      const result = await iterator.return!();
-      assertEquals(result.done, true);
-      assertEquals(result.value, undefined);
+      queue.enqueue(makeEvent("create", "/after-overflow.ts"));
+      assertEquals(
+        (await queue.iterator.next()).value,
+        makeEvent("create", "/after-overflow.ts"),
+      );
+      queue.close();
     });
   });
 
-  describe("enqueueWatchEvent", () => {
-    it("should push to queue when no resolver is set", () => {
-      const queue: FileChangeEvent[] = [];
-      const event = makeEvent("create", ["/a.ts"]);
+  describe("normalizeWatchPaths", () => {
+    it("copies and deduplicates paths", () => {
+      const input = ["first", "second", "first"];
+      const paths = normalizeWatchPaths(input);
+      input[0] = "mutated";
 
-      enqueueWatchEvent(event, queue, () => null, () => {});
-
-      assertEquals(queue.length, 1);
-      assertEquals(queue[0], event);
+      assertEquals(paths, ["first", "second"]);
     });
 
-    it("should resolve immediately when resolver exists", () => {
-      const queue: FileChangeEvent[] = [];
-      let resolvedValue: IteratorResult<FileChangeEvent> | null = null;
-
-      const fakeResolver = (value: IteratorResult<FileChangeEvent>) => {
-        resolvedValue = value;
-      };
-
-      let currentResolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = fakeResolver;
-
-      const event = makeEvent("modify", ["/b.ts"]);
-
-      enqueueWatchEvent(event, queue, () => currentResolver, (r) => (currentResolver = r));
-
-      assertEquals(queue.length, 0);
-
-      assertExists(resolvedValue);
-      assertEquals(resolvedValue.done, false);
-      assertEquals(resolvedValue.value, event);
-
-      assertEquals(currentResolver, null);
+    it("rejects an empty path set", () => {
+      assertThrows(() => normalizeWatchPaths([]), TypeError, "at least one");
+      assertThrows(() => normalizeWatchPaths(""), TypeError, "non-empty");
     });
   });
 
   describe("createFileWatcher", () => {
-    it("should return an object with asyncIterator and close", () => {
-      const iterator = createWatcherIterator([], () => {}, () => false, () => false);
-      const watcher = createFileWatcher(iterator, () => {});
-
-      assertExists(watcher[Symbol.asyncIterator]);
-      assertExists(watcher.close);
-    });
-
-    it("should call cleanup on close", () => {
-      let closed = false;
-      const iterator = createWatcherIterator([], () => {}, () => false, () => false);
-      const watcher = createFileWatcher(iterator, () => {
-        closed = true;
+    it("closes exactly once when iteration returns", async () => {
+      const queue = createWatcherQueue();
+      let cleanupCalls = 0;
+      const watcher = createFileWatcher(queue.iterator, () => {
+        cleanupCalls += 1;
+        queue.close();
       });
 
+      const iterator = watcher[Symbol.asyncIterator]();
+      assertExists(iterator.return);
+      await iterator.return();
       watcher.close();
-      assertEquals(closed, true);
-    });
 
-    it("should return the iterator from asyncIterator", () => {
-      const iterator = createWatcherIterator([], () => {}, () => false, () => false);
-      const watcher = createFileWatcher(iterator, () => {});
-
-      const returned = watcher[Symbol.asyncIterator]();
-      assertEquals(returned, iterator);
+      assertEquals(cleanupCalls, 1);
     });
   });
 });

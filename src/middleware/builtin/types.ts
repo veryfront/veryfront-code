@@ -1,35 +1,28 @@
 import type { Next } from "../core/types.ts";
 export type { Next };
 
-export interface MiddlewareContext {
+/** Minimal context accepted by legacy built-in middleware. */
+export interface LegacyMiddlewareContext {
+  /** Incoming request. */
   request: Request;
 }
 
+/** Middleware signature used by built-in middleware factories. */
 export type Middleware = (
-  ctx: MiddlewareContext,
+  ctx: LegacyMiddlewareContext,
   next: Next,
 ) => Promise<Response | undefined> | Response | undefined;
 
+/** Context shapes accepted by built-in request extraction. */
 export type AnyMiddlewareContext =
-  | MiddlewareContext
+  | LegacyMiddlewareContext
   | { req: Request }
   | { request: Request };
 
+/** Read the incoming request from a supported middleware context. */
 export function getRequest(ctx: AnyMiddlewareContext): Request {
   if ("req" in ctx) return ctx.req;
   return ctx.request;
-}
-
-export type OriginValidator = (origin: string) => boolean | Promise<boolean>;
-
-/** Options accepted by cors. */
-export interface CorsOptions {
-  origin?: string | string[] | OriginValidator;
-  methods?: string[];
-  allowedHeaders?: string[];
-  exposedHeaders?: string[];
-  credentials?: boolean;
-  maxAge?: number;
 }
 
 export interface CorsValidationResult {

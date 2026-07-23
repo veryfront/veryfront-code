@@ -5,6 +5,8 @@ import { agent } from "#veryfront/agent";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
+import type { ModelRuntime } from "../types.ts";
+import { preferStreamedGenerate } from "./provider.ts";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -39,6 +41,39 @@ describe("provider/veryfront-cloud", () => {
     clearCloudEnv();
     clearModelProviders();
     clearEmbeddingProviders();
+  });
+
+  it("preserves class runtime receivers while enabling streamed generation", async () => {
+    class PrivateRuntime {
+      #calls = 0;
+
+      doGenerate() {
+        this.#calls++;
+        return Promise.resolve({});
+      }
+
+      doStream() {
+        this.#calls++;
+        return Promise.resolve({ stream: new ReadableStream() });
+      }
+
+      get calls(): number {
+        return this.#calls;
+      }
+    }
+
+    const source = new PrivateRuntime();
+    const preferred = preferStreamedGenerate(source as unknown as ModelRuntime);
+    await preferred.doGenerate({ prompt: [] });
+
+    assertEquals(preferred._generateViaStream, true);
+    assertEquals(source.calls, 1);
+
+    const nonExtensibleSource = Object.preventExtensions(new PrivateRuntime());
+    const wrapped = preferStreamedGenerate(nonExtensibleSource as unknown as ModelRuntime);
+    await wrapped.doStream({ prompt: [] });
+    assertEquals(wrapped._generateViaStream, true);
+    assertEquals(nonExtensibleSource.calls, 1);
   });
 
   it("resolves veryfront-cloud openai models without project ext-llm-openai installed", () => {
@@ -206,12 +241,12 @@ describe("provider/veryfront-cloud", () => {
     assertThrows(
       () => resolveModel("veryfront-cloud/mistral/mistral-small-2603"),
       Error,
-      'Unsupported Mistral model "mistral/mistral-small-2603"',
+      "Mistral model is not supported",
     );
     assertThrows(
       () => resolveModel("veryfront-cloud/mistral/mistral-medium-3-5"),
       Error,
-      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
+      "Mistral model is not supported",
     );
   });
 
@@ -285,7 +320,7 @@ describe("provider/veryfront-cloud", () => {
     assertThrows(
       () => resolveModel("veryfront-cloud/openai"),
       Error,
-      'Invalid veryfront-cloud model string: "openai"',
+      "Invalid veryfront-cloud model string",
     );
   });
 
@@ -295,7 +330,7 @@ describe("provider/veryfront-cloud", () => {
     assertThrows(
       () => resolveEmbeddingModel("veryfront-cloud/anthropic/claude-sonnet-4-6"),
       Error,
-      'Embedding provider "anthropic" is not supported',
+      "Embedding provider is not supported",
     );
   });
 });

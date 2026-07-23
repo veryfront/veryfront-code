@@ -53,9 +53,9 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
       });
     });
 
-    it("should keep null and undefined values", () => {
+    it("keeps null and rejects undefined values that JSON would silently change", () => {
       const result = serializeProps({ a: null, b: undefined });
-      assertEquals(result, { a: null, b: undefined });
+      assertEquals(result, { a: null });
     });
 
     it("should keep nested serializable objects", () => {
@@ -72,6 +72,56 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
 
     it("should return empty for all-skipped props", () => {
       assertEquals(serializeProps({ children: "x", onClick: () => {} }), {});
+    });
+
+    it("rejects non-finite numbers and non-plain object instances", () => {
+      assertEquals(
+        serializeProps({
+          finite: 4,
+          infinity: Infinity,
+          nan: Number.NaN,
+          date: new Date(0),
+          map: new Map([["key", "value"]]),
+        }),
+        { finite: 4 },
+      );
+    });
+
+    it("does not invoke getters while checking props", () => {
+      let invoked = false;
+      const props: Record<string, unknown> = { safe: "value" };
+      Object.defineProperty(props, "dangerous", {
+        enumerable: true,
+        get() {
+          invoked = true;
+          throw new Error("getter must not run");
+        },
+      });
+
+      assertEquals(serializeProps(props), { safe: "value" });
+      assertEquals(invoked, false);
+    });
+
+    it("drops prototype-pollution keys at every depth", () => {
+      const nested = Object.create(null) as Record<string, unknown>;
+      Object.defineProperty(nested, "__proto__", {
+        enumerable: true,
+        value: { polluted: true },
+      });
+      nested.safe = "yes";
+
+      const result = serializeProps({ nested, constructor: "unsafe", ok: true });
+      assertEquals(result, { nested: { safe: "yes" }, ok: true });
+      assertEquals(({} as { polluted?: boolean }).polluted, undefined);
+    });
+
+    it("returns a detached JSON-safe clone", () => {
+      const source = { nested: { value: 1 }, list: [1, 2] };
+      const result = serializeProps({ source });
+      source.nested.value = 2;
+      source.list.push(3);
+
+      assertEquals(result, { source: { nested: { value: 1 }, list: [1, 2] } });
     });
   });
 
@@ -105,6 +155,19 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
       assertEquals(JSON.parse(stringifyProps({ items: [1, 2, 3] })), {
         items: [1, 2, 3],
       });
+    });
+
+    it("does not invoke toJSON hooks", () => {
+      let invoked = false;
+      const value = {
+        toJSON() {
+          invoked = true;
+          return { secret: "leaked" };
+        },
+      };
+
+      assertEquals(JSON.parse(stringifyProps({ value })), {});
+      assertEquals(invoked, false);
     });
   });
 });

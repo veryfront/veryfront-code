@@ -3,7 +3,7 @@
  */
 
 import "../../../_helpers/contract-init.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   type AssetPipelineOptions,
@@ -30,8 +30,9 @@ describe("Asset Pipeline", () => {
       const result = await runAssetPipeline();
 
       assertExists(result);
-      assertEquals(typeof result.images.enabled, "boolean");
-      assertEquals(typeof result.css.enabled, "boolean");
+      assertEquals(result.images.enabled, false);
+      assertEquals(result.css.enabled, false);
+      assertEquals(result.tailwind.enabled, false);
       assertEquals(typeof result.duration, "number");
     });
 
@@ -109,23 +110,17 @@ describe("Asset Pipeline", () => {
     });
   });
 
-  describe("graceful degradation", () => {
-    it("does not throw when dependencies are missing", async () => {
+  describe("failure handling", () => {
+    it("rejects invalid stage configuration instead of returning a partial success", async () => {
       const options: AssetPipelineOptions = {
         images: {
           enabled: true,
-          inputDir: "./nonexistent",
+          quality: 0,
         },
-        css: {
-          enabled: true,
-          inputDir: "./nonexistent",
-        },
+        css: { enabled: false },
       };
 
-      const result = await runAssetPipeline(options);
-
-      assertExists(result);
-      assertEquals(typeof result.duration, "number");
+      await assertRejects(() => runAssetPipeline(options), TypeError, "quality");
     });
   });
 
@@ -161,22 +156,19 @@ describe("Asset Pipeline", () => {
   });
 
   describe("error handling", () => {
-    it("handles invalid paths without crashing", async () => {
-      const result = await runAssetPipeline({
-        images: {
-          enabled: true,
-          inputDir: "/invalid/path/that/does/not/exist",
-          outputDir: "/invalid/output/path",
-        },
-        css: {
-          enabled: true,
-          inputDir: "/invalid/css/path",
-          outputDir: "/invalid/css/output",
-        },
-      });
-
-      assertExists(result);
-      assertEquals(typeof result.duration, "number");
+    it("rejects invalid paths", async () => {
+      await assertRejects(
+        () =>
+          runAssetPipeline({
+            images: {
+              enabled: true,
+              inputDir: "/invalid/path/that/does/not/exist",
+              outputDir: "/invalid/path/that/does/not/exist/generated",
+            },
+          }),
+        TypeError,
+        "must not contain each other",
+      );
     });
   });
 

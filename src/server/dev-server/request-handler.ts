@@ -6,7 +6,12 @@ import {
   HTTP_UNAVAILABLE,
   serverLogger,
 } from "#veryfront/utils";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { HTTP_METHOD_NOT_ALLOWED } from "#veryfront/utils/constants/index.ts";
+import type {
+  RuntimeAdapter,
+  RuntimeRequestHandler,
+  RuntimeResponse,
+} from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache } from "#veryfront/config";
 import { ErrorOverlay, parseErrorLocation } from "./error-overlay/index.ts";
@@ -16,11 +21,26 @@ import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { getErrorCollector, getLogBuffer } from "#veryfront/observability";
 import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
+import { getSafeErrorName } from "../utils/error-name.ts";
 
 const logger = serverLogger.component("dev");
+const ALLOWED_READ_METHODS = ["GET", "HEAD"] as const;
+const SAFE_HTTP_METHOD = /^[A-Z]{1,32}$/;
+
+function toSafeHttpMethod(method: string): string {
+  const normalized = method.toUpperCase();
+  return SAFE_HTTP_METHOD.test(normalized) ? normalized : "OTHER";
+}
+
+function normalizeRuntimeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error("Unknown runtime error");
+}
+
+type RuntimeHandlerFactory = () => Promise<RuntimeRequestHandler>;
 
 export class RequestHandler {
-  private runtimeHandler?: (req: Request) => Promise<Response>;
+  private runtimeHandler?: RuntimeRequestHandler;
+  private runtimeHandlerPromise?: Promise<RuntimeRequestHandler>;
 
   constructor(
     private projectDir: string,
@@ -31,14 +51,15 @@ export class RequestHandler {
     private defaultProjectSlug?: string,
     private defaultProjectId?: string,
     private localProjects?: Record<string, string>,
+    private runtimeHandlerFactory?: RuntimeHandlerFactory,
   ) {}
 
-  async handleRequest(req: Request): Promise<Response> {
+  async handleRequest(req: Request): Promise<RuntimeResponse> {
     const url = new URL(req.url);
     const start = performance.now();
-    logger.debug(`Request: ${req.method} ${url.pathname}`);
+    logger.debug("Request received", { method: toSafeHttpMethod(req.method) });
 
-    const healthResponse = this.handleHealthCheck(url.pathname);
+    const healthResponse = this.handleHealthCheck(req, url.pathname);
     if (healthResponse) return healthResponse;
 
     this.incrementRequestMetrics();
@@ -63,29 +84,39 @@ export class RequestHandler {
     if (pathname.startsWith("/_dev/") || pathname.startsWith("/_veryfront/")) return;
 
     const duration = Math.round(performance.now() - start);
-    getLogBuffer().info(`${method} ${pathname} → ${status} (${duration}ms)`, "http", {
-      method,
-      path: pathname,
+    getLogBuffer().info("HTTP request completed", "http", {
+      method: toSafeHttpMethod(method),
       status,
       duration,
     });
   }
 
-  private handleHealthCheck(pathname: string): Response | null {
-    if (pathname === "/healthz") {
-      return new Response("ok", {
-        status: HTTP_OK,
-        headers: { "content-type": "text/plain" },
-      });
+  private handleHealthCheck(req: Request, pathname: string): Response | null {
+    if (pathname !== "/healthz" && pathname !== "/readyz") return null;
+
+    const method = req.method.toUpperCase();
+    const builder = createResponseBuilder({ isDev: true })
+      .withCache("no-store")
+      .withHeaders({ "X-Content-Type-Options": "nosniff" });
+    if (!ALLOWED_READ_METHODS.includes(method as (typeof ALLOWED_READ_METHODS)[number])) {
+      return builder
+        .withAllow([...ALLOWED_READ_METHODS])
+        .text("Method Not Allowed", HTTP_METHOD_NOT_ALLOWED);
     }
 
-    if (pathname !== "/readyz") return null;
-
-    const ready = this.isReady();
-    return new Response(ready ? "ready" : "not-ready", {
-      status: ready ? HTTP_OK : HTTP_UNAVAILABLE,
-      headers: { "content-type": "text/plain" },
-    });
+    const ready = pathname === "/healthz" || this.isReady();
+    const body = method === "HEAD"
+      ? null
+      : pathname === "/healthz"
+      ? "ok"
+      : ready
+      ? "ready"
+      : "not-ready";
+    return builder.withContentType(
+      HTTP_CONTENT_TYPES.TEXT,
+      body,
+      ready ? HTTP_OK : HTTP_UNAVAILABLE,
+    );
   }
 
   private async incrementRequestMetrics(): Promise<void> {
@@ -93,7 +124,7 @@ export class RequestHandler {
       const { metrics } = await import("#veryfront/observability/simple-metrics/index.ts");
       metrics.incRequest();
     } catch (error) {
-      logger.debug("[dev] metrics.incRequest failed", error);
+      logger.debug("Request metrics update failed", { errorName: getSafeErrorName(error) });
     }
   }
 
@@ -103,9 +134,15 @@ export class RequestHandler {
 
     const isHeadRequest = req.method.toUpperCase() === "HEAD";
     const builder = createResponseBuilder({ isDev: true }).withHeaders({
-      "cache-control": "no-cache",
+      "cache-control": "no-store",
       "X-Content-Type-Options": "nosniff",
     });
+
+    if (!ALLOWED_READ_METHODS.includes(req.method.toUpperCase() as "GET" | "HEAD")) {
+      return builder
+        .withAllow([...ALLOWED_READ_METHODS])
+        .text("Method Not Allowed", HTTP_METHOD_NOT_ALLOWED);
+    }
 
     switch (normalized) {
       case DEV_SERVER_ENDPOINTS.ERROR_OVERLAY: {
@@ -130,43 +167,69 @@ export class RequestHandler {
     return validEndpoints.has(rewritten) ? rewritten : null;
   }
 
-  private async handleApplicationRequest(req: Request): Promise<Response> {
-    if (!this.runtimeHandler) {
-      const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
-      this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
-        projectDir: this.projectDir,
-        debug: this.isDebug(),
-        moduleServerUrl: "/_vf_modules",
-        config: this.config,
-        defaultProjectSlug: this.defaultProjectSlug,
-        defaultProjectId: this.defaultProjectId,
-        localProjects: this.localProjects,
-      });
-    }
-
-    return this.runtimeHandler(req);
+  private async handleApplicationRequest(req: Request): Promise<RuntimeResponse> {
+    const handler = await this.getRuntimeHandler();
+    return handler(req);
   }
 
-  invalidateRuntimeHandler(): void {
-    this.runtimeHandler = undefined;
-    invalidateRSCHandlersForProject(this.projectDir, this.defaultProjectId);
+  private async getRuntimeHandler(): Promise<RuntimeRequestHandler> {
+    if (this.runtimeHandler) return this.runtimeHandler;
 
-    resetApiHandler(this.projectDir).catch((error) => {
-      logger.debug("resetApiHandler failed", error);
+    let pending = this.runtimeHandlerPromise;
+    if (!pending) {
+      pending = this.createRuntimeHandler();
+      this.runtimeHandlerPromise = pending;
+    }
+
+    try {
+      const handler = await pending;
+      if (this.runtimeHandlerPromise === pending) {
+        this.runtimeHandler = handler;
+        this.runtimeHandlerPromise = undefined;
+      }
+      return handler;
+    } catch (error) {
+      if (this.runtimeHandlerPromise === pending) this.runtimeHandlerPromise = undefined;
+      throw error;
+    }
+  }
+
+  private async createRuntimeHandler(): Promise<RuntimeRequestHandler> {
+    if (this.runtimeHandlerFactory) {
+      const handler = await this.runtimeHandlerFactory();
+      if (typeof handler !== "function") throw new TypeError("Runtime handler factory failed");
+      return handler;
+    }
+
+    const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
+    return createVeryfrontHandler(this.projectDir, this.adapter, {
+      projectDir: this.projectDir,
+      debug: this.isDebug(),
+      moduleServerUrl: "/_vf_modules",
+      config: this.config,
+      defaultProjectSlug: this.defaultProjectSlug,
+      defaultProjectId: this.defaultProjectId,
+      localProjects: this.localProjects,
     });
+  }
 
+  async invalidateRuntimeHandler(): Promise<void> {
+    this.runtimeHandler = undefined;
+    this.runtimeHandlerPromise = undefined;
+    invalidateRSCHandlersForProject(this.projectDir, this.defaultProjectId);
     clearConfigCache();
     clearLayoutDiscoveryCache();
     const rendererProjectKey = this.defaultProjectId ?? this.defaultProjectSlug ?? "local";
-    clearRendererCacheForProject(rendererProjectKey).catch((error) => {
-      logger.debug("clearRendererCacheForProject failed", error);
-    });
+    await Promise.all([
+      resetApiHandler(this.projectDir),
+      clearRendererCacheForProject(rendererProjectKey),
+    ]);
   }
 
   private handleServerError(error: unknown): Response {
-    logger.error("Server error:", error);
+    const err = normalizeRuntimeError(error);
+    logger.error("Server request failed", { errorName: getSafeErrorName(err) });
 
-    const err = error as Error;
     getErrorCollector().addRuntimeError(err.message, err.stack, { source: "request-handler" });
 
     const sourceFile = (err as Error & { sourceFile?: string }).sourceFile;
@@ -180,7 +243,11 @@ export class RequestHandler {
       }, this.defaultProjectSlug),
       {
         status: HTTP_SERVER_ERROR,
-        headers: { "content-type": "text/html; charset=utf-8" },
+        headers: {
+          "cache-control": "no-store",
+          "content-type": "text/html; charset=utf-8",
+          "x-content-type-options": "nosniff",
+        },
       },
     );
   }

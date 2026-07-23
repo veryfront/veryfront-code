@@ -38,6 +38,7 @@ import {
   frameworkTransformFlight,
   LOG_PREFIX,
 } from "./constants.ts";
+import { errorLogName, fileLogLabel } from "../../../shared/log-context.ts";
 
 // Re-export submodules for external consumers
 export { findRelativeImports, findVfModuleImports } from "./import-finder.ts";
@@ -76,11 +77,7 @@ let _initLogged = false;
 function logInitOnce(): void {
   if (_initLogged) return;
   _initLogged = true;
-  logger.debug(`${LOG_PREFIX} Initialized`, {
-    importMetaUrl: import.meta.url,
-    frameworkRoot: FRAMEWORK_ROOT,
-    embeddedSrcDir: EMBEDDED_SRC_DIR,
-  });
+  logger.debug(`${LOG_PREFIX} Initialized`);
 }
 
 // Export internal functions for testing
@@ -106,17 +103,16 @@ export const ssrVfModulesPlugin: TransformPlugin = {
 
     const vfModuleImports = await findVfModuleImports(ctx.code);
     logger.debug(`${LOG_PREFIX} Transform called`, {
-      file: ctx.filePath?.slice(-60) ?? "<unknown>",
+      sourceFile: fileLogLabel(ctx.filePath),
       count: vfModuleImports.length,
-      imports: vfModuleImports.slice(0, 5),
+      imports: vfModuleImports.slice(0, 5).map(fileLogLabel),
     });
 
     if (vfModuleImports.length === 0) return ctx.code;
 
     logger.debug(`${LOG_PREFIX} Found ${vfModuleImports.length} /_vf_modules/ imports`, {
-      file: ctx.filePath?.slice(-60) ?? "<unknown>",
-      imports: vfModuleImports,
-      frameworkRoot: FRAMEWORK_ROOT,
+      sourceFile: fileLogLabel(ctx.filePath),
+      imports: vfModuleImports.map(fileLogLabel),
     });
 
     const fs = createFileSystem();
@@ -125,23 +121,21 @@ export const ssrVfModulesPlugin: TransformPlugin = {
     for (const vfModulePath of vfModuleImports) {
       try {
         logger.debug(`${LOG_PREFIX} Resolving framework file`, {
-          vfModulePath,
-          frameworkRoot: FRAMEWORK_ROOT,
-          embeddedSrcDir: EMBEDDED_SRC_DIR,
+          moduleFile: fileLogLabel(vfModulePath),
         });
 
         const resolved = await resolveFrameworkFile(vfModulePath, fs);
         if (!resolved) {
-          logger.warn(`${LOG_PREFIX} Could not resolve ${vfModulePath}`, {
-            frameworkRoot: FRAMEWORK_ROOT,
-            lookups: FRAMEWORK_LOOKUPS.map(([prefix, dir]) => ({ prefix, dir })),
+          logger.warn(`${LOG_PREFIX} Could not resolve framework module`, {
+            moduleFile: fileLogLabel(vfModulePath),
+            lookupPrefixes: FRAMEWORK_LOOKUPS.map(([prefix]) => prefix),
           });
           continue;
         }
 
         logger.debug(`${LOG_PREFIX} Resolved framework file`, {
-          vfModulePath,
-          sourcePath: resolved.sourcePath,
+          moduleFile: fileLogLabel(vfModulePath),
+          sourceFile: fileLogLabel(resolved.sourcePath),
           contentLength: resolved.content.length,
         });
 
@@ -172,11 +166,14 @@ export const ssrVfModulesPlugin: TransformPlugin = {
         });
         replacements.set(vfModulePath, `file://${cachePath}`);
 
-        logger.debug(`${LOG_PREFIX} Transformed ${vfModulePath} -> file://${cachePath}`);
+        logger.debug(`${LOG_PREFIX} Transformed framework module`, {
+          moduleFile: fileLogLabel(vfModulePath),
+          cacheFile: fileLogLabel(cachePath),
+        });
       } catch (error) {
-        logger.error(`${LOG_PREFIX} Failed to transform ${vfModulePath}`, {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
+        logger.error(`${LOG_PREFIX} Failed to transform framework module`, {
+          moduleFile: fileLogLabel(vfModulePath),
+          errorName: errorLogName(error),
         });
       }
     }

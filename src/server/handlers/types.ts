@@ -19,4 +19,4 @@ export type {
   SecurityConfig,
 } from "#veryfront/types";
 
-export { HandlerPriority } from "#veryfront/types";
+export { HandlerPriority } from "#veryfront/types/server.ts";

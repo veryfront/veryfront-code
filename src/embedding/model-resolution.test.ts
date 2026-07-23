@@ -115,9 +115,9 @@ describe("embedding/model-resolution", () => {
     // NOTE: The compiled-binary cloud fallback (isDenoCompiled branch) cannot
     // be tested in deno test because isDenoCompiled is false at test time.
     // It is verified by the compiled binary integration tests.
-    // The fallback logic itself (OPENAI_API_KEY → openai/..., GOOGLE_API_KEY
-    // → google/...) is exercised indirectly through the tests below that
-    // confirm the local model is returned when no keys are set — proving the
+    // The fallback logic itself maps OPENAI_API_KEY to openai/... and
+    // GOOGLE_API_KEY to google/.... It is exercised indirectly through the tests below that
+    // confirm the local model is returned when no keys are set, proving the
     // fallback path returns undefined and doesn't interfere.
 
     it("returns local model when no API keys or cloud bootstrap are set", () => {

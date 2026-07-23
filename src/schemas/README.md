@@ -1,283 +1,82 @@
-# Schemas Module
+# Shared schema architecture
 
-This directory contains shared validation schemas used across multiple modules in the veryfront codebase.
+Veryfront declares validation schemas through the `SchemaValidator` extension contract. Core
+modules do not import a validator implementation such as Zod. The application bootstrap registers
+the implementation before a schema is first used.
 
-## Architecture
+This directory owns only cross-cutting schemas. A schema used by one domain belongs beside that
+domain, usually in `src/<module>/schemas/`.
 
-The veryfront codebase follows a **schema-first approach** where:
+## Lazy schema construction
 
-1. **`defineSchema` schemas are the single source of truth** for types
-2. **TypeScript types are inferred** from schemas using `InferSchema<ReturnType<typeof getSchema>>`
-3. **Module-local schemas** live in `{module}/schemas/` directories
-4. **Shared schemas** (cross-module) live in `src/schemas/` (this directory)
+`defineSchema(factory)` returns a memoized getter. Creating the getter has no extension dependency.
+The first call resolves the registered validator, builds the schema, and caches it. A failed build is
+not cached, so initialization can be retried after the extension is registered.
 
-## Naming Conventions
+Use `lazySchema(getSchema)` when callers need a schema value at module scope. Do not call a schema
+getter while a public module is loading. An eager call can make importing that module depend on
+bootstrap order. Lazy aliases are resolved to their backing schema, and recursive alias chains fail
+with a `TypeError` instead of overflowing the call stack.
 
-- **Schema files**: `{name}.schema.ts` (e.g., `config.schema.ts`)
-- **Shared schema files**: `common.ts`, `primitives.ts` (no `.schema` suffix since they're collections)
-- **Schema getters**: Use `get` + PascalCase (e.g., `getUserSchema`)
-- **Schema exports**: Backward-compat constant (e.g., `export const UserSchema = getUserSchema()`)
-- **Type exports**: Infer types from schema getters (e.g., `type User = InferSchema<ReturnType<typeof getUserSchema>>`)
-
-## Directory Structure
-
-```
-src/
-├── schemas/                    # Shared schemas (cross-module)
-│   ├── index.ts                # Barrel export
-│   ├── common.ts               # Common validators (email, url, pagination, etc.)
-│   └── primitives.ts           # Primitive validators (non-empty string, positive int, etc.)
-│
-├── config/
-│   ├── schemas/                # Module-local schemas
-│   │   ├── index.ts            # Barrel export
-│   │   └── config.schema.ts    # Config-specific schemas
-│   └── ...
-│
-└── [other modules follow same pattern]
-```
-
-## When to Use Shared vs Module-Local Schemas
-
-### Use `src/schemas/` (shared) for:
-
-- **Cross-cutting validators** used by 3+ modules
-  - Examples: email, URL, UUID, slug validation
-  - Pagination patterns
-  - Date/time schemas
-  - Common primitive types
-
-### Use `{module}/schemas/` (module-local) for:
-
-- **Domain-specific schemas** used primarily within one module
-  - Examples: `AgentConfig`, `WorkflowStep`, `CacheKeyContext`
-- **Module business logic** types
-- **Module-specific enums** and discriminated unions
-
-## Schema Patterns
-
-### 1. Basic Schema with Inferred Type
-
-```typescript
-// schemas/user.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { CommonSchemas } from "#veryfront/schemas";
+```ts
+import { defineSchema, type InferSchema, lazySchema } from "veryfront/schemas";
 
 export const getUserSchema = defineSchema((v) =>
   v.object({
     id: v.string().uuid(),
-    email: CommonSchemas.email,
-    name: v.string().min(1),
-    createdAt: v.string().datetime(),
+    name: v.string().min(1).max(100),
   })
 );
-export const UserSchema = getUserSchema();
 
+export const UserSchema = lazySchema(getUserSchema);
 export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
 
-### 2. Discriminated Union (Event Types)
+The getter is the schema definition and the inferred type is its static contract. The lazy value is
+only a compatibility surface for consumers that require a `Schema<T>` value.
 
-```typescript
-// schemas/events.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+## Schema ownership
 
-export const getEventSchema = defineSchema((v) =>
-  v.discriminatedUnion("type", [
-    v.object({
-      type: v.literal("user_created"),
-      userId: v.string(),
-      email: v.string().email(),
-    }),
-    v.object({
-      type: v.literal("user_deleted"),
-      userId: v.string(),
-    }),
-  ])
-);
-export const EventSchema = getEventSchema();
+Place a schema in this directory when several modules share the same meaning and validation rules.
+Examples include UUIDs, URLs, timestamps, pagination, JSON values, and filesystem path primitives.
 
-export type Event = InferSchema<ReturnType<typeof getEventSchema>>;
-```
+Keep domain concepts in their owning module. Agent, workflow, run, task, schedule, and transport
+schemas must not become generic aliases in this directory. This keeps concept names and runtime
+behavior aligned.
 
-### 3. Composing Schemas
+## Boundary guarantees
 
-```typescript
-// schemas/api.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+Shared schemas reject values that cannot be processed safely:
 
-const getBaseResponseSchema = defineSchema((v) =>
-  v.object({
-    success: v.boolean(),
-    timestamp: v.string().datetime(),
-  })
-);
+- Pagination accepts positive safe integers or canonical positive decimal strings in the safe
+  integer range. It does not coerce booleans, arrays, padded strings, or signed strings.
+- File paths are non-empty, contain no NUL bytes, and contain at most 4,096 characters.
+- Absolute paths support POSIX, Windows drive-letter, and UNC forms.
+- JSON values must be finite, acyclic, at most 100 levels deep, and at most 100,000 nodes.
+- Timestamps, semantic versions, passwords, URLs, emails, slugs, and pagination sort fields have
+  explicit length limits.
 
-export const getSuccessResponseSchema = defineSchema((v) =>
-  getBaseResponseSchema().extend({
-    success: v.literal(true),
-    data: v.unknown(),
-  })
-);
+The JSON structure limits do not cap total serialized bytes or domain-specific string lengths.
+Callers that accept untrusted bodies must also enforce a transport byte limit and bound strings for
+their domain.
 
-export const getErrorResponseSchema = defineSchema((v) =>
-  getBaseResponseSchema().extend({
-    success: v.literal(false),
-    error: v.object({
-      message: v.string(),
-      code: v.string().optional(),
-    }),
-  })
-);
+The path primitives validate representation only. They do not authorize a path or prove that it is
+contained by a project root. Filesystem boundaries must still canonicalize the path and enforce
+containment before access.
 
-export const getApiResponseSchema = defineSchema((v) =>
-  v.union([
-    getSuccessResponseSchema(),
-    getErrorResponseSchema(),
-  ])
-);
-export const ApiResponseSchema = getApiResponseSchema();
+The pagination `sort` field is also representation-only. Data adapters must allowlist supported
+field names before using it to construct a query.
 
-export type ApiResponse = InferSchema<ReturnType<typeof getApiResponseSchema>>;
-```
+`safeParse()` returns a validation result even when hostile input or a custom refinement throws. It
+does not expose the thrown value. `parse()` retains exception-based behavior for callers that choose
+it explicitly.
 
-### 4. Recursive/Lazy Schemas
+## Extension-neutral composition
 
-```typescript
-// schemas/tree.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+Compose schemas only through methods in the `Schema<T>` and `SchemaValidator` contracts. Do not
+reach into validator-specific fields from core code. JSON Schema conversion also routes through the
+registered contract so tool and MCP consumers see the same schema definition.
 
-export const getTreeNodeSchema = defineSchema((v) => {
-  const schema: Schema<{ id: string; children?: TreeNode[] }> = v.lazy(() =>
-    v.object({
-      id: v.string(),
-      children: v.array(schema).optional(),
-    })
-  );
-  return schema;
-});
-export const TreeNodeSchema = getTreeNodeSchema();
-
-export type TreeNode = InferSchema<ReturnType<typeof getTreeNodeSchema>>;
-```
-
-### 5. Using with Runtime Validation
-
-```typescript
-import { getUserSchema } from "./schemas/user.schema.ts";
-
-const UserSchema = getUserSchema();
-
-function createUser(data: unknown) {
-  // Runtime validation
-  const user = UserSchema.parse(data);
-
-  // TypeScript knows user is of type User here
-  return user;
-}
-
-// Or for safer error handling
-function createUserSafe(data: unknown) {
-  const result = UserSchema.safeParse(data);
-
-  if (!result.success) {
-    console.error("Validation failed:", result.issues);
-    return null;
-  }
-
-  return result.data;
-}
-```
-
-## Migration Guidelines
-
-When converting existing `types.ts` files to schemas:
-
-1. **Create the schema file** in `{module}/schemas/`
-2. **Define schemas** using `defineSchema` for each type
-3. **Export inferred types** using `InferSchema<ReturnType<typeof getSchema>>`
-4. **Update imports** throughout the module to use the schemas
-5. **Delete old `types.ts`** file (no legacy cruft)
-6. **Run `deno task verify`** to ensure everything works
-
-### Before (Old Pattern)
-
-```typescript
-// types.ts
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-}
-```
-
-### After (New Pattern)
-
-```typescript
-// schemas/user.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-
-export const getUserSchema = defineSchema((v) =>
-  v.object({
-    id: v.string().uuid(),
-    email: v.string().email(),
-    name: v.string().min(1),
-  })
-);
-export const UserSchema = getUserSchema();
-
-export type User = InferSchema<ReturnType<typeof getUserSchema>>;
-```
-
-## Benefits
-
-1. **Single Source of Truth**: Schema IS the type definition
-2. **Runtime Safety**: Validate data at boundaries
-3. **Type Safety**: TypeScript types derived from runtime validation
-4. **Consistency**: Same validation logic everywhere
-5. **Discoverability**: Clear location for all schemas
-6. **Maintainability**: Change schema once, type updates automatically
-7. **Documentation**: Schemas serve as living documentation
-
-## Testing Schemas
-
-```typescript
-import "#veryfront/schemas/_test-setup.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { expect } from "#std/expect";
-import { getUserSchema } from "./user.schema.ts";
-
-const UserSchema = getUserSchema();
-
-describe("UserSchema", () => {
-  it("validates correct user data", () => {
-    const result = UserSchema.safeParse({
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      email: "test@example.com",
-      name: "John Doe",
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects invalid email", () => {
-    const result = UserSchema.safeParse({
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      email: "not-an-email",
-      name: "John Doe",
-    });
-
-    expect(result.success).toBe(false);
-  });
-});
-```
-
-## References
-
-- [defineSchema Contract](../extensions/schema/schema-validator.ts)
-- [TypeScript Handbook - Type Inference](https://www.typescriptlang.org/docs/handbook/type-inference.html)
+Recursive schemas must include an explicit resource policy. The shared JSON value schema performs
+an iterative structure check before recursive validation, which prevents cycles and excessive depth
+from overflowing the call stack.

@@ -12,6 +12,23 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const logger = serverLogger.component("cors");
 
+function splitHeaderList(value: string): string[] {
+  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+function includesCaseInsensitive(values: readonly string[], candidate: string): boolean {
+  const normalizedCandidate = candidate.toLowerCase();
+  return values.some((value) => value.toLowerCase() === normalizedCandidate);
+}
+
+function forbiddenPreflight(reason: string): Response {
+  logger.warn("Preflight rejected", { reason });
+  return new Response("CORS preflight rejected", {
+    status: HTTP_FORBIDDEN,
+    headers: { "X-CORS-Error": reason },
+  });
+}
+
 export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Response> {
   return withSpan(
     "security.cors.preflight",
@@ -26,19 +43,7 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
           return new Response(null, { status: HTTP_NO_CONTENT });
         }
 
-        logger.warn("Preflight rejected", {
-          origin,
-          error: validation.error,
-        });
-
-        const errorMessage = validation.error ?? "CORS policy: Origin not allowed";
-
-        return new Response(errorMessage, {
-          status: HTTP_FORBIDDEN,
-          headers: {
-            "X-CORS-Error": validation.error ?? "Origin not allowed",
-          },
-        });
+        return forbiddenPreflight(validation.error ?? "Origin not allowed");
       }
 
       const headers = new Headers();
@@ -50,17 +55,33 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
 
       const corsConfig = typeof config === "object" ? config : null;
 
-      const methods = allowMethods ??
-        (corsConfig?.methods?.length ? corsConfig.methods.join(", ") : DEFAULT_METHODS.join(", "));
-      headers.set("Access-Control-Allow-Methods", methods);
+      const methods = allowMethods
+        ? splitHeaderList(allowMethods)
+        : corsConfig?.methods?.length
+        ? corsConfig.methods
+        : DEFAULT_METHODS;
+      const requestedMethod = request.headers.get("access-control-request-method")?.trim();
+      if (!requestedMethod) return forbiddenPreflight("Request method is required");
+      if (!includesCaseInsensitive(methods, requestedMethod)) {
+        return forbiddenPreflight("Request method is not allowed");
+      }
+      headers.set("Access-Control-Allow-Methods", methods.join(", "));
 
       const requestedHeaders = request.headers.get("access-control-request-headers");
-      const resolvedAllowedHeaders = allowHeaders ??
-        requestedHeaders ??
-        (corsConfig?.allowedHeaders?.length
-          ? corsConfig.allowedHeaders.join(", ")
-          : DEFAULT_HEADERS.join(", "));
-      headers.set("Access-Control-Allow-Headers", resolvedAllowedHeaders);
+      const resolvedAllowedHeaders = allowHeaders
+        ? splitHeaderList(allowHeaders)
+        : corsConfig?.allowedHeaders?.length
+        ? corsConfig.allowedHeaders
+        : DEFAULT_HEADERS;
+      if (
+        requestedHeaders &&
+        splitHeaderList(requestedHeaders).some((header) =>
+          !includesCaseInsensitive(resolvedAllowedHeaders, header)
+        )
+      ) {
+        return forbiddenPreflight("Request header is not allowed");
+      }
+      headers.set("Access-Control-Allow-Headers", resolvedAllowedHeaders.join(", "));
 
       headers.set("Access-Control-Max-Age", String(corsConfig?.maxAge ?? DEFAULT_MAX_AGE));
 
@@ -73,7 +94,7 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
         headers,
       });
     },
-    { "cors.origin": options.request.headers.get("origin") ?? "unknown" },
+    {},
   );
 }
 

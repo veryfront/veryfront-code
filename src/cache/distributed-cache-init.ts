@@ -2,16 +2,25 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { isApiCacheAvailable, isDiskCacheConfigured } from "./backend.ts";
 
 const logger = baseLogger.component("distributed-cache");
+const DISTRIBUTED_CACHE_INITIALIZATION_TIMEOUT_MS = 30_000;
 
-interface DistributedCacheStatus {
+/** Result of initializing each distributed cache integration. */
+export interface DistributedCacheStatus {
+  /** Backend selected from the current runtime configuration. */
   backend: "api" | "redis" | "disk" | "memory";
+  /** Whether the transform cache initialized successfully. */
   transformCache: boolean;
+  /** Whether the SSR module cache initialized successfully. */
   ssrModuleCache: boolean;
+  /** Whether the file cache initialized successfully. */
   fileCache: boolean;
+  /** Whether the project CSS cache initialized successfully. */
   projectCSSCache: boolean;
+  /** Whether the HTTP module cache initialized successfully. */
   httpModuleCache: boolean;
 }
 
@@ -25,11 +34,16 @@ interface DistributedCacheStatus {
  * `src/server/distributed-cache-initializers.ts` for the default wiring.
  */
 export type DistributedCacheInitializers = {
-  transformCache: () => Promise<boolean>;
-  ssrModuleCache: () => Promise<boolean>;
-  fileCache: () => Promise<boolean>;
-  projectCSSCache: () => Promise<boolean>;
-  httpModuleCache: () => Promise<boolean>;
+  /** Initialize transformed-module caching. */
+  transformCache: (signal: AbortSignal) => Promise<boolean>;
+  /** Initialize SSR module caching. */
+  ssrModuleCache: (signal: AbortSignal) => Promise<boolean>;
+  /** Initialize filesystem response caching. */
+  fileCache: (signal: AbortSignal) => Promise<boolean>;
+  /** Initialize project CSS caching. */
+  projectCSSCache: (signal: AbortSignal) => Promise<boolean>;
+  /** Initialize HTTP module caching. */
+  httpModuleCache: (signal: AbortSignal) => Promise<boolean>;
 };
 
 function determineBackend(): DistributedCacheStatus["backend"] {
@@ -39,8 +53,52 @@ function determineBackend(): DistributedCacheStatus["backend"] {
   return "memory";
 }
 
-function wasSuccessful(result: PromiseSettledResult<boolean>): boolean {
-  return result.status === "fulfilled" && result.value;
+function wasSuccessful(result: PromiseSettledResult<boolean> | undefined): boolean {
+  return result?.status === "fulfilled" && result.value === true;
+}
+
+function snapshotInitializer(
+  initializers: DistributedCacheInitializers,
+  name: keyof DistributedCacheInitializers,
+): (signal: AbortSignal) => Promise<boolean> {
+  try {
+    const initializer = Reflect.get(initializers, name);
+    if (typeof initializer === "function") {
+      return (signal: AbortSignal) =>
+        Reflect.apply(initializer, initializers, [signal]) as Promise<boolean>;
+    }
+  } catch {
+    // Return a rejected task below so one unreadable initializer does not stop
+    // the remaining independent caches from initializing.
+  }
+
+  return () =>
+    Promise.reject(
+      INITIALIZATION_ERROR.create({ detail: "Cache initializer is invalid or unreadable" }),
+    );
+}
+
+function runInitializerWithTimeout(
+  initialize: (signal: AbortSignal) => Promise<boolean>,
+): Promise<boolean> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const timeoutError = INITIALIZATION_ERROR.create({
+        detail: "Cache initialization exceeded the supported duration",
+      });
+      controller.abort(timeoutError);
+      reject(timeoutError);
+    }, DISTRIBUTED_CACHE_INITIALIZATION_TIMEOUT_MS);
+  });
+
+  return Promise.race([
+    Promise.resolve().then(() => initialize(controller.signal)),
+    timeout,
+  ]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
 }
 
 async function initializeDistributedCachesWithInitializers(
@@ -56,20 +114,17 @@ async function initializeDistributedCachesWithInitializers(
     "projectCSSCache",
     "httpModuleCache",
   ] as const;
-  const results = await Promise.allSettled([
-    initializers.transformCache(),
-    initializers.ssrModuleCache(),
-    initializers.fileCache(),
-    initializers.projectCSSCache(),
-    initializers.httpModuleCache(),
-  ]);
+  const initializerTasks = cacheNames.map((name) => snapshotInitializer(initializers, name));
+  const results = await Promise.allSettled(
+    initializerTasks.map(runInitializerWithTimeout),
+  );
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     if (result && result.status === "rejected") {
       logger.error(`Cache initialization failed: ${cacheNames[i]}`, {
         backend,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        errorName: result.reason instanceof Error ? result.reason.name : "UnknownError",
       });
     }
   }
@@ -118,6 +173,12 @@ export function __runDistributedCacheInitializationForTests(
   return initializeDistributedCachesWithInitializers(backend, initializers);
 }
 
+/**
+ * Initialize the configured distributed cache integrations.
+ *
+ * Memory-only runtimes return a disabled status without invoking the supplied
+ * initializers. Each distributed initializer is isolated and time-bounded.
+ */
 export function initializeDistributedCaches(
   initializers: DistributedCacheInitializers,
 ): Promise<DistributedCacheStatus> {

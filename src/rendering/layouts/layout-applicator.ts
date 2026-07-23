@@ -273,6 +273,7 @@ export class LayoutApplicator {
           this.projectSlug,
           this.contentSourceId,
           reactVersion,
+          this.preloadedImportMap ?? undefined,
         );
       },
       {

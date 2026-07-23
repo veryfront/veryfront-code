@@ -12,6 +12,16 @@ function streamFromText(text: string): ReadableStream<Uint8Array> {
   });
 }
 
+function openStreamWithCancelSpy(text: string, onCancel: () => void): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+    },
+    cancel: onCancel,
+  });
+}
+
 async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown[]> {
   const parts: unknown[] = [];
   for await (const part of streamOpenAICompatibleParts(stream)) {
@@ -143,5 +153,25 @@ describe("ext-llm-openai/openai-chat-stream", () => {
         totalTokens: 3,
       },
     }]);
+  });
+
+  it("cancels the upstream response when the consumer stops early", async () => {
+    let cancelCount = 0;
+    const stream = openStreamWithCancelSpy(
+      data({
+        choices: [{ delta: { content: "partial" } }],
+      }),
+      () => cancelCount++,
+    );
+    const iterator = streamOpenAICompatibleParts(stream)[Symbol.asyncIterator]();
+
+    assertEquals(await iterator.next(), {
+      value: { type: "text-delta", delta: "partial" },
+      done: false,
+    });
+    await iterator.return?.();
+
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
   });
 });

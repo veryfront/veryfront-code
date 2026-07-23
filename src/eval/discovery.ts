@@ -9,6 +9,7 @@ import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { isEvalDefinition } from "./factory.ts";
 import type { EvalDefinition } from "./types.ts";
+import { formatEvalPublicError } from "./validation.ts";
 
 const EVAL_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 const EVAL_IGNORE_PATTERNS = [
@@ -60,7 +61,7 @@ function resolveEvalsBaseDir(
 }
 
 function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return formatEvalPublicError(error);
 }
 
 function stripEvalExtension(relativePath: string): string {
@@ -163,6 +164,7 @@ export async function discoverEvals(
 
   const evals: DiscoveredEval[] = [];
   const errors: Array<{ filePath: string; error: string }> = [];
+  const evalIds = new Set<string>();
   const baseDir = resolveEvalsBaseDir(projectDir, evalsDir, config);
 
   try {
@@ -180,7 +182,17 @@ export async function discoverEvals(
           projectDir,
           moduleLoader,
         );
-        if (evalItem) evals.push(evalItem);
+        if (evalItem) {
+          if (evalIds.has(evalItem.id)) {
+            errors.push({
+              filePath: file.path,
+              error: `Duplicate eval id "${evalItem.id}"`,
+            });
+          } else {
+            evalIds.add(evalItem.id);
+            evals.push(evalItem);
+          }
+        }
       } catch (error) {
         errors.push({ filePath: file.path, error: toErrorMessage(error) });
       }

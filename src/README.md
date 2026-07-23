@@ -83,16 +83,16 @@
 
 ### Supporting Modules
 
-| Module               | Purpose                                      |
-| -------------------- | -------------------------------------------- |
-| **`observability/`** | Metrics, distributed tracing (OpenTelemetry) |
-| **`oauth/`**         | OAuth authentication flows                   |
-| **`studio/`**        | Studio integration (editor UI)               |
-| **`testing/`**       | Test utilities and fixtures                  |
-| **`repositories/`**  | Data repositories abstraction                |
-| **`runtime/`**       | Cross-runtime bridge and detection           |
-| **`issues/`**        | Issue tracking integration                   |
-| **`client/`**        | Client-side utilities                        |
+| Module               | Purpose                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| **`observability/`** | Metrics, distributed tracing (OpenTelemetry)                        |
+| **`oauth/`**         | OAuth authentication flows                                          |
+| **`studio/`**        | Studio iframe bridge, inspection, screenshots, and protocol schemas |
+| **`testing/`**       | Test utilities and fixtures                                         |
+| **`repositories/`**  | Data repositories abstraction                                       |
+| **`runtime/`**       | Cross-runtime bridge and detection                                  |
+| **`issues/`**        | Issue tracking integration                                          |
+| **`client/`**        | Client-side utilities                                               |
 
 ---
 
@@ -722,10 +722,12 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - OAuth authentication flows
 - Token management
 
-#### `studio/` - Studio Integration
+#### `studio/` - Studio integration
 
-- Editor UI integration
-- Studio bridge communication
+- Iframe bridge lifecycle and trusted cross-window messaging
+- DOM tree inspection, selection, and hover overlays
+- Screenshot capture and sectioned results
+- Validated Studio-renderer protocol schemas and resource limits
 
 #### `testing/` - Test Utilities
 

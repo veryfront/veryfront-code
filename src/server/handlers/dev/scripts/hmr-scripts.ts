@@ -383,7 +383,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
       return;
     }
 
-    // Debounce JS updates — batch rapid updates into single re-render
+    // Debounce JS updates by batching rapid updates into a single re-render.
     pendingPaths.push(update.path);
     if (typeof update.styleHref === 'string') {
       pendingStyleHref = update.styleHref;

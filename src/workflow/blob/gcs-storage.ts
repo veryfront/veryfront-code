@@ -1,6 +1,7 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
+import { assertSafeBlobId } from "./blob-id.ts";
 
 const logger = baseLogger.component("gcs-blob-storage");
 
@@ -79,7 +80,16 @@ export class GCSBlobStorage implements BlobStorage {
   }
 
   private getKey(id: string): string {
+    assertSafeBlobId(id);
     return this.config.prefix ? `${this.config.prefix}${id}` : id;
+  }
+
+  private getBucketPath(): string {
+    return encodeURIComponent(this.config.bucket);
+  }
+
+  private getObjectPath(key: string): string {
+    return `${this.getBucketPath()}/o/${encodeURIComponent(key)}`;
   }
 
   private async getAccessToken(): Promise<string> {
@@ -174,7 +184,9 @@ export class GCSBlobStorage implements BlobStorage {
 
     const token = await this.getAccessToken();
     const uploadUrl =
-      `https://storage.googleapis.com/upload/storage/v1/b/${this.config.bucket}/o?uploadType=media&name=${key}`;
+      `https://storage.googleapis.com/upload/storage/v1/b/${this.getBucketPath()}/o?uploadType=media&name=${
+        encodeURIComponent(key)
+      }`;
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
@@ -216,15 +228,18 @@ export class GCSBlobStorage implements BlobStorage {
       createdAt: new Date(gcsObject.timeCreated),
       expiresAt,
       metadata: options.metadata,
-      url: this.config.baseUrl ? `${this.config.baseUrl}/${key}` : gcsObject.mediaLink,
+      url: this.config.baseUrl
+        ? `${this.config.baseUrl}/${encodeURIComponent(key)}`
+        : gcsObject.mediaLink,
     };
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
     const key = this.getKey(id);
     const token = await this.getAccessToken();
-    const downloadUrl =
-      `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}?alt=media`;
+    const downloadUrl = `https://storage.googleapis.com/storage/v1/b/${
+      this.getObjectPath(key)
+    }?alt=media`;
 
     try {
       const response = await fetch(downloadUrl, {
@@ -264,7 +279,7 @@ export class GCSBlobStorage implements BlobStorage {
   async delete(id: string): Promise<void> {
     const key = this.getKey(id);
     const token = await this.getAccessToken();
-    const deleteUrl = `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}`;
+    const deleteUrl = `https://storage.googleapis.com/storage/v1/b/${this.getObjectPath(key)}`;
 
     const response = await fetch(deleteUrl, {
       method: "DELETE",
@@ -285,8 +300,9 @@ export class GCSBlobStorage implements BlobStorage {
   async exists(id: string): Promise<boolean> {
     const key = this.getKey(id);
     const token = await this.getAccessToken();
-    const getUrl =
-      `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}?fields=id`;
+    const getUrl = `https://storage.googleapis.com/storage/v1/b/${
+      this.getObjectPath(key)
+    }?fields=id`;
 
     const response = await fetch(getUrl, {
       method: "GET",
@@ -306,7 +322,7 @@ export class GCSBlobStorage implements BlobStorage {
   async stat(id: string): Promise<BlobRef | null> {
     const key = this.getKey(id);
     const token = await this.getAccessToken();
-    const getUrl = `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}`;
+    const getUrl = `https://storage.googleapis.com/storage/v1/b/${this.getObjectPath(key)}`;
 
     const response = await fetch(getUrl, {
       method: "GET",

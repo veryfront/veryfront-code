@@ -2,6 +2,19 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validatePathSync } from "#veryfront/security";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { HandlerContext } from "../types.ts";
+import { SnippetHandler } from "./snippet.handler.ts";
+
+function makeContext(): HandlerContext {
+  return {
+    projectDir: "/project",
+    adapter: createMockAdapter(),
+    securityConfig: {},
+    cspUserHeader: null,
+    config: {} as HandlerContext["config"],
+  } as HandlerContext;
+}
 
 /**
  * Tests that validatePathSync correctly blocks path traversal for paths
@@ -56,5 +69,68 @@ describe("snippet handler path validation", () => {
       const result = validatePathSync("components/button.mdx", { baseDir });
       assertEquals(result.valid, true);
     });
+  });
+});
+
+describe("SnippetHandler request boundary", () => {
+  it("rejects an explicitly remote snippet before filesystem access", async () => {
+    const ctx = makeContext();
+    ctx.isLocalProject = false;
+    let filesystemCalls = 0;
+    ctx.adapter.fs.stat = () => {
+      filesystemCalls++;
+      return Promise.reject(new Error("must not run"));
+    };
+
+    const result = await new SnippetHandler().handle(
+      new Request("https://runtime.example.com/@/components/private.mdx"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(result.response?.headers.get("cache-control"), "no-store");
+    assertEquals(filesystemCalls, 0);
+  });
+
+  it("returns a private 500 for filesystem permission failures", async () => {
+    const ctx = makeContext();
+    ctx.adapter.fs.stat = () =>
+      Promise.reject(new Deno.errors.PermissionDenied("private filesystem detail"));
+
+    const result = await new SnippetHandler().handle(
+      new Request("http://localhost/@/components/private.mdx"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.headers.get("cache-control")?.includes("no-store"), true);
+    assertEquals((await result.response!.text()).includes("private filesystem detail"), false);
+  });
+
+  it("rejects a symlink before reading snippet source", async () => {
+    const ctx = makeContext();
+    let readCalls = 0;
+    ctx.adapter.fs.lstat = () =>
+      Promise.resolve({
+        isFile: true,
+        isDirectory: false,
+        isSymlink: true,
+        size: 1,
+        mtime: null,
+      });
+    ctx.adapter.fs.realPath = (path) =>
+      Promise.resolve(path === "/project" ? "/project" : "/outside/private.mdx");
+    ctx.adapter.fs.readFile = () => {
+      readCalls++;
+      return Promise.resolve("private");
+    };
+
+    const result = await new SnippetHandler().handle(
+      new Request("http://localhost/@/components/private.mdx"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 403);
+    assertEquals(readCalls, 0);
   });
 });

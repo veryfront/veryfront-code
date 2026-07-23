@@ -12,6 +12,7 @@ import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { assertSafeBlobId } from "./blob-id.ts";
 
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;
 
@@ -77,9 +78,7 @@ export class S3BlobStorage implements BlobStorage {
   private client: S3ClientType | null = null;
   private initPromise: Promise<void> | null = null;
 
-  constructor(private config: S3BlobStorageConfig) {
-    this.initPromise = this.initialize();
-  }
+  constructor(private config: S3BlobStorageConfig) {}
 
   private async initialize(): Promise<void> {
     const { S3Client } = await getS3Module();
@@ -95,6 +94,9 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   private async ensureInitialized(): Promise<S3ClientType> {
+    if (!this.client && !this.initPromise) {
+      this.initPromise = this.initialize();
+    }
     if (this.initPromise) {
       await this.initPromise;
       this.initPromise = null;
@@ -106,6 +108,7 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   private getKey(id: string): string {
+    assertSafeBlobId(id);
     return this.config.prefix ? `${this.config.prefix}${id}` : id;
   }
 
@@ -113,11 +116,10 @@ export class S3BlobStorage implements BlobStorage {
     data: string | Uint8Array | Blob | ReadableStream,
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
-    const client = await this.ensureInitialized();
-    const { PutObjectCommand, CreateBucketCommand, HeadObjectCommand } = await getS3Module();
-
     const id = options.id ?? crypto.randomUUID();
     const key = this.getKey(id);
+    const client = await this.ensureInitialized();
+    const { PutObjectCommand, CreateBucketCommand, HeadObjectCommand } = await getS3Module();
     const mimeType = options.mimeType ?? "application/octet-stream";
     const createdAt = new Date();
     const ttl = options.ttl ?? this.config.defaultTtl;
@@ -195,10 +197,10 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
+    const key = this.getKey(id);
     const client = await this.ensureInitialized();
     const { GetObjectCommand } = await getS3Module();
 
-    const key = this.getKey(id);
     try {
       const response = await client.send(
         new GetObjectCommand({
@@ -227,10 +229,10 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async delete(id: string): Promise<void> {
+    const key = this.getKey(id);
     const client = await this.ensureInitialized();
     const { DeleteObjectCommand } = await getS3Module();
 
-    const key = this.getKey(id);
     try {
       await client.send(
         new DeleteObjectCommand({
@@ -245,10 +247,10 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async exists(id: string): Promise<boolean> {
+    const key = this.getKey(id);
     const client = await this.ensureInitialized();
     const { HeadObjectCommand } = await getS3Module();
 
-    const key = this.getKey(id);
     try {
       await client.send(
         new HeadObjectCommand({
@@ -264,10 +266,10 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async stat(id: string): Promise<BlobRef | null> {
+    const key = this.getKey(id);
     const client = await this.ensureInitialized();
     const { HeadObjectCommand } = await getS3Module();
 
-    const key = this.getKey(id);
     try {
       const headResult = await client.send(
         new HeadObjectCommand({

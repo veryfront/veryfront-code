@@ -105,6 +105,22 @@ describe("composeMiddleware", () => {
     assertEquals(order, ["global"]);
   });
 
+  it("applies stateful scoped patterns consistently across requests", async () => {
+    let calls = 0;
+    const scoped: MiddlewareHandler = async (_ctx, next) => {
+      calls += 1;
+      return await next();
+    };
+    const pattern = /^\/api/g;
+    const composed = composeMiddleware([], [{ pattern, use: [scoped] }]);
+
+    await composed(createContext("/api/one"), finalResponse("one"));
+    await composed(createContext("/api/two"), finalResponse("two"));
+
+    assertEquals(calls, 2);
+    assertEquals(pattern.lastIndex, 0);
+  });
+
   it("should apply multiple scoped middlewares", async () => {
     const order: string[] = [];
 

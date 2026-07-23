@@ -1,12 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   discoverComponentsLayoutPath,
   type FileExistenceChecker,
+  LayoutCollector,
   resolveLayoutRouterRootDir,
 } from "./layout-collector.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
@@ -48,6 +50,42 @@ describe("LayoutCollector", () => {
     assertEquals(
       resolveLayoutRouterRootDir("/project", false, config),
       "/project/src/content",
+    );
+  });
+
+  it("rejects configured router roots outside the project", () => {
+    const config = {
+      directories: { app: "../outside" },
+    } as VeryfrontConfig;
+
+    assertThrows(
+      () => resolveLayoutRouterRootDir("/project", true, config),
+      Error,
+      "Router directories must stay inside the project",
+    );
+  });
+
+  it("propagates operational errors while checking the components fallback", async () => {
+    const failure = new Error("permission denied");
+    const adapter = {
+      fs: {
+        stat: () => Promise.reject(failure),
+      },
+    } as unknown as RuntimeAdapter;
+    const collector = new LayoutCollector({
+      projectDir: "/project",
+      adapter,
+      config: {} as VeryfrontConfig,
+      compileMDX: () => Promise.reject(new Error("unexpected compilation")),
+    });
+    const internals = collector as unknown as {
+      checkComponentsLayoutFallback(): Promise<LayoutItem[]>;
+    };
+
+    await assertRejects(
+      () => internals.checkComponentsLayoutFallback(),
+      Error,
+      "permission denied",
     );
   });
 

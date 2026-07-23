@@ -24,13 +24,28 @@ function createResponse(
   contentType: string,
   init?: ResponseInit,
 ): Response {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("content-type")) headers.set("content-type", contentType);
+
   return new Response(body, {
     ...init,
-    headers: {
-      "Content-Type": contentType,
-      ...init?.headers,
-    },
+    headers,
   });
+}
+
+function cloneParams(
+  params: Record<string, string | string[]>,
+): Record<string, string | string[]> {
+  const cloned: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(params)) {
+    Object.defineProperty(cloned, name, {
+      configurable: true,
+      enumerable: true,
+      value: Array.isArray(value) ? [...value] : value,
+      writable: true,
+    });
+  }
+  return cloned;
 }
 
 export function createContext(
@@ -47,7 +62,7 @@ export function createContext(
   return {
     request,
     req: request,
-    params: match.params,
+    params: cloneParams(match.params),
     query: url.searchParams,
     cookies: parseCookies(request.headers.get("cookie") ?? ""),
     headers: request.headers,

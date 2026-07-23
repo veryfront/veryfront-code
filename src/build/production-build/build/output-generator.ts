@@ -30,7 +30,9 @@ import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { generateManifest, generateRedirects } from "../manifest.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { collectStaticRouteOutputPaths } from "../route-output-paths.ts";
 
+/** Inputs for runtime, asset, manifest, service-worker, and redirects output. */
 export interface OutputGeneratorOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
@@ -48,7 +50,7 @@ export interface OutputGeneratorOptions {
 }
 
 /**
- * Generate client runtime scripts
+ * Write every generated client runtime script.
  */
 export async function generateClientScripts(
   adapter: RuntimeAdapter,
@@ -98,7 +100,7 @@ async function writeOutputFile(
 }
 
 /**
- * Generate manifest and service worker
+ * Validate and write the build manifest and service worker.
  */
 export async function generateManifestAndServiceWorker(
   options: OutputGeneratorOptions,
@@ -137,7 +139,7 @@ export async function generateManifestAndServiceWorker(
 }
 
 /**
- * Generate redirects file
+ * Write the static-host redirects file.
  */
 export async function generateRedirectsFile(
   adapter: RuntimeAdapter,
@@ -149,20 +151,22 @@ export async function generateRedirectsFile(
 }
 
 /**
- * Copy static assets and return statistics
+ * Copy public assets and return their statistics.
  */
 export function copyAssets(
   adapter: RuntimeAdapter,
   projectDir: string,
   outputDir: string,
   dryRun: boolean,
+  reservedOutputPaths: Iterable<string> = [],
 ): Promise<{ assets: number; totalSize: number }> {
-  return copyStaticAssets(adapter, projectDir, outputDir, dryRun);
+  return copyStaticAssets(adapter, projectDir, outputDir, dryRun, reservedOutputPaths);
 }
 
 /**
  * Generate all output files
  */
+/** Generate every non-route output for a production build. */
 export async function generateAllOutputs(options: OutputGeneratorOptions): Promise<void> {
   const { adapter, projectDir, outputDir, dryRun, stats, config, releaseAssetManifest } = options;
 
@@ -177,7 +181,18 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
     });
   }
 
-  const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
+  const reservedOutputPaths = collectStaticRouteOutputPaths(
+    options.routes,
+    options.appRoutes,
+    outputDir,
+  );
+  const assetStats = await copyAssets(
+    adapter,
+    projectDir,
+    outputDir,
+    dryRun,
+    reservedOutputPaths,
+  );
   stats.assets = assetStats.assets;
   stats.totalSize += assetStats.totalSize;
 

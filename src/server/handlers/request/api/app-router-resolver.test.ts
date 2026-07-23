@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveAppRouteFile } from "./app-router-resolver.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -28,9 +28,16 @@ function createMockCtx(opts: {
   statMap?: Record<string, StatResult>;
   dirMap?: Record<string, DirEntry[]>;
   statError?: Set<string>;
+  statFailure?: Set<string>;
   readDirError?: Set<string>;
 }): HandlerContext {
-  const { statMap = {}, dirMap = {}, statError = new Set(), readDirError = new Set() } = opts;
+  const {
+    statMap = {},
+    dirMap = {},
+    statError = new Set(),
+    statFailure = new Set(),
+    readDirError = new Set(),
+  } = opts;
 
   return {
     projectDir: "/project",
@@ -39,9 +46,10 @@ function createMockCtx(opts: {
     adapter: {
       fs: {
         stat: async (path: string) => {
-          if (statError.has(path)) throw new Error("stat error");
+          if (statFailure.has(path)) throw new Error("stat failure");
+          if (statError.has(path)) throw new Deno.errors.NotFound("not found");
           const entry = statMap[path];
-          if (!entry) throw new Error(`ENOENT: ${path}`);
+          if (!entry) throw new Deno.errors.NotFound("not found");
           return entry;
         },
         readDir: async function* (path: string) {
@@ -104,6 +112,24 @@ describe("resolveAppRouteFile", () => {
     const result = await resolveAppRouteFile("/api/hello", ctx);
 
     assertEquals(result, { file: "/project/src/routes/api/hello/route.ts", params: {} });
+  });
+
+  it("rejects configured app directories outside the project", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/outside": { isFile: false, isDirectory: true },
+        "/outside/api/route.ts": { isFile: true, isDirectory: false },
+      },
+      dirMap: {
+        "/outside": [dir("api")],
+        "/outside/api": [],
+      },
+    });
+    ctx.config = { directories: { app: "../outside" } };
+
+    const result = await resolveAppRouteFile("/api", ctx);
+
+    assertEquals(result, null);
   });
 
   it("tries route.tsx, route.ts, route.jsx, route.js in order", async () => {
@@ -337,14 +363,36 @@ describe("resolveAppRouteFile", () => {
     assertEquals(result, null);
   });
 
-  it("returns null when readDir fails (directory not readable)", async () => {
+  it("propagates unexpected directory read failures", async () => {
     const ctx = createMockCtx({
       statMap: {
         "/project/app": { isFile: false, isDirectory: true },
       },
       readDirError: new Set(["/project/app"]),
     });
-    const result = await resolveAppRouteFile("/api/test", ctx);
-    assertEquals(result, null);
+    await assertRejects(
+      () => resolveAppRouteFile("/api/test", ctx),
+      Error,
+      "readDir error",
+    );
+  });
+
+  it("propagates unexpected route-file metadata failures", async () => {
+    const ctx = createMockCtx({
+      statMap: {
+        "/project/app": { isFile: false, isDirectory: true },
+      },
+      dirMap: {
+        "/project/app": [dir("api")],
+        "/project/app/api": [],
+      },
+      statFailure: new Set(["/project/app/api/route.tsx"]),
+    });
+
+    await assertRejects(
+      () => resolveAppRouteFile("/api", ctx),
+      Error,
+      "stat failure",
+    );
   });
 });

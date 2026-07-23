@@ -72,6 +72,12 @@ describe("css-utils", () => {
       );
     });
 
+    it("preserves comment-like text inside quoted values", () => {
+      expect(minifyCSS('.label::before { content: "/* keep */"; }')).toContain(
+        '"/* keep */"',
+      );
+    });
+
     it("should handle CSS with newlines", () => {
       expect(minifyCSS(".btn\n{\n  color:\n  red;\n}")).toBe(".btn{color:red;}");
     });
@@ -149,6 +155,16 @@ describe("css-utils", () => {
 
     it("should handle minified CSS", () => {
       expect(countUtilities(".a{}.b{}.c{}.a{}")).toBe(3);
+    });
+
+    it("does not count decimal values as class selectors", () => {
+      expect(countUtilities(".opacity { opacity: 0.5; margin: 1.25rem; }")).toBe(1);
+    });
+
+    it("counts escaped Tailwind selectors", () => {
+      expect(countUtilities(".sm\\:flex { display: flex; } .w-\\[100px\\] { width: 100px; }")).toBe(
+        2,
+      );
     });
   });
 });

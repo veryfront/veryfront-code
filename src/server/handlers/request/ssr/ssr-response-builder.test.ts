@@ -285,7 +285,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
               controller.enqueue(new TextEncoder().encode("<p>Streamed</p>"));
             },
             cancel() {
-              throw new Error("head cancel failed");
+              throw new Error("HEAD_CANCEL_MARKER");
             },
           });
           const req = new Request("http://localhost/", { method: "HEAD" });
@@ -305,6 +305,7 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(entry.component, "ssr-response-builder");
       assertEquals(entry.level, "debug");
       assertEquals(entry.message, "SSR response body cancellation failed during HEAD cleanup");
+      assertEquals(JSON.stringify(entry).includes("HEAD_CANCEL_MARKER"), false);
     });
 
     it("includes etag header when etag is provided (buffered)", async () => {
@@ -317,16 +318,16 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(response.headers.get("etag"), '"test-etag"');
     });
 
-    it("falls back to error page when no html or stream", async () => {
+    it("returns a non-cacheable 500 when no HTML or stream is available", async () => {
       const req = new Request("http://localhost/");
       const ctx = makeCtx();
       const result = makeResult({ html: undefined, stream: undefined });
       const builder = new ResponseBuilder();
 
       const response = await buildSSRResponse(req, ctx, result, builder);
-      assertEquals(response.status, 200);
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("cache-control")?.includes("no-store"), true);
       const body = await response.text();
-      // ErrorPages.serverError() should produce some HTML
       assertEquals(body.includes("<!DOCTYPE html>") || body.includes("<html"), true);
     });
 

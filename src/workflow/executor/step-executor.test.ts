@@ -86,7 +86,7 @@ describe("workflow tenant registry scoping", () => {
           assertEquals(tryGetCacheKeyContext(), null);
           assertEquals(
             tryGetRegistryScopeId(),
-            "workflow-environment-project-id:production:environment:Development",
+            "scope-v1:31:workflow-environment-project-id:10:production:11:environment:11:Development",
           );
           assertEquals(getCurrentRequestContext()?.environmentName, "Development");
         }),

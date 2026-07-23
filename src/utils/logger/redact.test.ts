@@ -131,14 +131,13 @@ describe("logger/redact", () => {
       assertEquals((result as Record<string, unknown>).password, REDACTED);
     });
 
-    it("leaves primitives and scalar-serializing objects untouched", () => {
+    it("preserves primitives and snapshots scalar-serializing objects", () => {
       const date = new Date(0);
       const result = redactSensitive({ when: date, n: 5, flag: true, nil: null }) as Record<
         string,
         unknown
       >;
-      // Date defines toJSON → serializes to a scalar → returned as-is.
-      assertEquals(result.when, date);
+      assertEquals(result.when, date.toISOString());
       assertEquals(result.n, 5);
       assertEquals(result.flag, true);
       assertEquals(result.nil, null);
@@ -168,6 +167,19 @@ describe("logger/redact", () => {
       });
     });
 
+    it("fails closed on a throwing array element getter", () => {
+      const values: unknown[] = [];
+      Object.defineProperty(values, 0, {
+        enumerable: true,
+        get() {
+          throw new Error("blocked");
+        },
+      });
+      values.length = 1;
+
+      assertEquals(redactSensitive({ values }) as unknown, { values: REDACTED });
+    });
+
     it("fails closed past the max traversal depth", () => {
       // Build a structure deeper than MAX_DEPTH (16) with a secret at the bottom.
       let node: Record<string, unknown> = { token: "deep-secret" };
@@ -192,6 +204,51 @@ describe("logger/redact", () => {
       const serialized = JSON.stringify(redactSensitive({ obj }));
       assertEquals(serialized.includes("t-1"), false);
       assertEquals(serialized.includes("2"), true);
+    });
+
+    it("fails closed when reading toJSON itself throws", () => {
+      const value = {};
+      Object.defineProperty(value, "toJSON", {
+        get() {
+          throw new Error("getter failed");
+        },
+      });
+
+      assertEquals(redactSensitive({ value }), { value: REDACTED });
+    });
+
+    it("converts BigInt values into JSON-safe text", () => {
+      assertEquals(redactSensitive({ count: 42n }) as unknown, { count: "42" });
+    });
+
+    it("scrubs URL credentials from non-sensitive string fields", () => {
+      const result = redactSensitive({
+        endpoint: "https://user:field-secret@example.test/path?token=query-secret&page=2",
+      }) as unknown as { endpoint: string };
+
+      assertEquals(result.endpoint.includes("field-secret"), false);
+      assertEquals(result.endpoint.includes("query-secret"), false);
+      assertEquals(result.endpoint.includes("page=2"), true);
+    });
+
+    it("scrubs bearer tokens and credential assignments in free-form strings", () => {
+      const result = redactSensitive({
+        detail: "Authorization: Bearer abc.def.ghi password=plain-secret mode=test",
+      }) as unknown as { detail: string };
+
+      assertEquals(result.detail.includes("abc.def.ghi"), false);
+      assertEquals(result.detail.includes("plain-secret"), false);
+      assertEquals(result.detail.includes("mode=test"), true);
+    });
+
+    it("scrubs quoted and colon-delimited credential assignments", () => {
+      const result = redactSensitive({
+        detail: 'password="two word secret" api_key: plain-secret',
+      });
+
+      assertEquals(result, {
+        detail: `password=${REDACTED} api_key: ${REDACTED}`,
+      });
     });
   });
 
@@ -220,6 +277,160 @@ describe("logger/redact", () => {
       assertEquals(
         out,
         `https://api.example.com/cb?code=${REDACTED}&access_token=${REDACTED}&page=2`,
+      );
+    });
+
+    it("masks percent-encoded sensitive query parameter names", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "https://api.example.com/cb?%61ccess%5Ftoken=secret&route%5Fstate=canvas",
+        ),
+        `https://api.example.com/cb?%61ccess%5Ftoken=${REDACTED}&route%5Fstate=canvas`,
+      );
+    });
+
+    it("masks repeatedly encoded names and fails closed on malformed escapes", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "https://api.example.com/cb?%2561ccess%255Ftoken=secret&route%5Fstate=canvas",
+        ),
+        `https://api.example.com/cb?%2561ccess%255Ftoken=${REDACTED}&route%5Fstate=canvas`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("https://api.example.com/cb?to%ZZken=secret"),
+        `https://api.example.com/cb?to%ZZken=${REDACTED}`,
+      );
+    });
+
+    it("masks bracket-notation credential parameter names", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "https://api.example.com/cb?access_token[]=secret&auth[token]=nested&page=2",
+        ),
+        `https://api.example.com/cb?access_token[]=${REDACTED}&auth[token]=${REDACTED}&page=2`,
+      );
+    });
+
+    it("masks URL-normalized whitespace variants of credential names", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "https://api.example.com/cb?api key=space&session\tid=tab&api\u00a0key=nbsp&page=2",
+        ),
+        `https://api.example.com/cb?api key=${REDACTED}&session\tid=${REDACTED}&api\u00a0key=${REDACTED}&page=2`,
+      );
+    });
+
+    it("masks complete userinfo when a password contains at-signs", () => {
+      assertEquals(
+        sanitizeUrlCredentials("https://user:p@ss@example.com/path"),
+        `https://user:${REDACTED}@example.com/path`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("postgres://u:p@a@db/app"),
+        `postgres://u:${REDACTED}@db/app`,
+      );
+    });
+
+    it("masks parseable whitespace, protocol-relative, and backslash userinfo forms", () => {
+      const cases = [
+        [
+          "https://user:secret word@example.test/path",
+          `https://user:${REDACTED}@example.test/path`,
+        ],
+        [
+          "https://user :secret@example.test/path",
+          `https://user :${REDACTED}@example.test/path`,
+        ],
+        [
+          "https://secret word@example.test/path",
+          `https://${REDACTED}@example.test/path`,
+        ],
+        [
+          "https://user:secret\tword@example.test/path",
+          `https://user:${REDACTED}@example.test/path`,
+        ],
+        [
+          "//user:secret@example.test/path",
+          `//user:${REDACTED}@example.test/path`,
+        ],
+        [
+          "https:\\\\user:secret@example.test/path",
+          `https:\\\\user:${REDACTED}@example.test/path`,
+        ],
+        [
+          "https:/\\user:secret@example.test/path",
+          `https:/\\user:${REDACTED}@example.test/path`,
+        ],
+        [
+          "https:\t//user:secret@example.test/path",
+          `https:\t//user:${REDACTED}@example.test/path`,
+        ],
+        [
+          "https:user:secret word@example.test/path",
+          `https:user:${REDACTED}@example.test/path`,
+        ],
+      ] as const;
+
+      for (const [input, expected] of cases) {
+        assertEquals(sanitizeUrlCredentials(input), expected);
+      }
+    });
+
+    it("masks slashless special-scheme credential URLs", () => {
+      assertEquals(
+        sanitizeUrlCredentials("https:user:secret@example.test/path"),
+        `https:user:${REDACTED}@example.test/path`,
+      );
+    });
+
+    it("does not merge unrelated prose and email addresses into URL userinfo", () => {
+      const cases = [
+        "Fetch https://example.test failed; contact ops@example.com",
+        "Fetch https://example.test failed\nContact: ops@example.com",
+        "source // ordinary text and owner@example.com",
+        "Fetch https://example.test,contact@example.com",
+        "Fetch https://example.test(contact@example.com",
+      ];
+      for (const value of cases) assertEquals(sanitizeUrlCredentials(value), value);
+    });
+
+    it("masks identity tokens and session identifiers in URLs", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "https://example.test/callback?id_token=identity&session_id=session&jwt=token",
+        ),
+        `https://example.test/callback?id_token=${REDACTED}&session_id=${REDACTED}&jwt=${REDACTED}`,
+      );
+    });
+
+    it("masks authorization header values across authentication schemes", () => {
+      assertEquals(
+        sanitizeUrlCredentials("Authorization: Basic dXNlcjpwYXNzd29yZA=="),
+        `Authorization: Basic ${REDACTED}`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials(
+          'authorization=Digest username="alice", realm="production", response="digest-secret"',
+        ),
+        `authorization=Digest ${REDACTED}`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("Proxy-Authorization: Negotiate opaque-proxy-token"),
+        `Proxy-Authorization: Negotiate ${REDACTED}`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials("Authorization: opaque-credential"),
+        `Authorization: ${REDACTED}`,
+      );
+    });
+
+    it("masks cookie header values without consuming adjacent lines", () => {
+      assertEquals(
+        sanitizeUrlCredentials(
+          "request failed\r\nCookie: session=cookie-secret; theme=dark\r\n" +
+            "Set-Cookie: session=response-secret; Path=/; HttpOnly\r\nstatus=401",
+        ),
+        `request failed\r\nCookie: ${REDACTED}\r\nSet-Cookie: ${REDACTED}\r\nstatus=401`,
       );
     });
 
@@ -258,6 +469,25 @@ describe("logger/redact", () => {
       assertEquals(sanitized.message.includes("p4ss"), false);
       assertEquals(sanitized.stack?.includes("SECRET"), false);
       assertEquals(sanitized.name, "Error");
+    });
+
+    it("scrubs authorization and cookie headers from message and stack", () => {
+      const sanitized = sanitizeSerializedError({
+        name: "Error",
+        message: "upstream rejected request\nAuthorization: Basic message-secret",
+        stack:
+          'Error: rejected\nProxy-Authorization: Digest username="alice", response="stack-secret"\n' +
+          "Set-Cookie: session=stack-cookie; HttpOnly\n  at request",
+      });
+
+      assertEquals(
+        sanitized.message,
+        `upstream rejected request\nAuthorization: Basic ${REDACTED}`,
+      );
+      assertEquals(
+        sanitized.stack,
+        `Error: rejected\nProxy-Authorization: Digest ${REDACTED}\nSet-Cookie: ${REDACTED}\n  at request`,
+      );
     });
 
     it("returns undefined unchanged", () => {

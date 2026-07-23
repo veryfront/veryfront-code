@@ -5,6 +5,10 @@ import { HTTP_FORBIDDEN } from "#veryfront/utils/constants/http.ts";
 const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export function csrfProtection(validate: (token: string) => boolean): Middleware {
+  if (typeof validate !== "function") {
+    throw new TypeError("CSRF validator must be a function");
+  }
+
   return (ctx, next) => {
     const req = getRequest(ctx);
     const method = req.method.toUpperCase();

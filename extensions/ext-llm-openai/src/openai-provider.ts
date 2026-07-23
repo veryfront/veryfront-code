@@ -14,6 +14,9 @@ import {
   buildProviderError,
   createOpenAIRequestInit,
   createWarningCollector,
+  extractOpenAIEmbeddings,
+  extractOpenAIUsage,
+  extractOpenAIUsageTokens,
   getOpenAIChatCompletionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
@@ -25,7 +28,6 @@ import {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
-  readGatewayBillingMode,
   readRecord,
   requestJson,
   requestStream,
@@ -33,6 +35,7 @@ import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
+import type { RuntimeUsage } from "veryfront/provider/shared";
 import {
   buildOpenAIChatRequest,
   type OpenAICompatibleLanguageOptions,
@@ -93,61 +96,6 @@ type OpenAICompatibleChoice = {
   finish_reason?: unknown;
 };
 
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-  reasoningTokens?: number;
-  billableInputTokens?: number;
-  billableOutputTokens?: number;
-  costUsd?: number;
-  providerInputCostUsd?: number;
-  providerOutputCostUsd?: number;
-  providerCostUsd?: number;
-  veryfrontInputChargeUsd?: number;
-  veryfrontOutputChargeUsd?: number;
-  veryfrontChargeUsd?: number;
-  veryfrontBilledUsd?: number;
-  costCredits?: number;
-  costSource?: "gateway" | "missing" | "partial";
-  billingMode?: "direct" | "deferred";
-  usageCaptureStatus?: "complete" | "partial" | "missing";
-};
-
-// ---------------------------------------------------------------------------
-// Embedding helpers
-// ---------------------------------------------------------------------------
-
-function extractOpenAIEmbeddings(payload: unknown): number[][] {
-  const record = readRecord(payload);
-  const data = record?.data;
-  if (!Array.isArray(data)) {
-    throw new Error("Invalid OpenAI embedding response: data array missing");
-  }
-
-  const embeddings: number[][] = [];
-
-  for (const item of data) {
-    const itemRecord = readRecord(item);
-    const embedding = itemRecord?.embedding;
-    if (!isNumberArray(embedding)) {
-      throw new Error("Invalid OpenAI embedding response: embedding vector missing");
-    }
-    embeddings.push(embedding);
-  }
-
-  return embeddings;
-}
-
-function extractOpenAIUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  const totalTokens = usage?.total_tokens;
-  return typeof totalTokens === "number" ? totalTokens : undefined;
-}
-
 // ---------------------------------------------------------------------------
 // Chat helpers
 // ---------------------------------------------------------------------------
@@ -168,72 +116,6 @@ function normalizeOpenAIFinishReason(
   }
 
   return raw;
-}
-
-function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
-  const promptTokensDetails = readRecord(usage.prompt_tokens_details);
-  const cachedTokens = promptTokensDetails?.cached_tokens;
-  const completionTokensDetails = readRecord(usage.completion_tokens_details);
-  const reasoningTokens = completionTokensDetails?.reasoning_tokens;
-  const veryfront = readRecord(usage.veryfront);
-  const costSource = veryfront?.cost_source;
-  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
-  const usageCaptureStatus = veryfront?.usage_capture_status;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-    ...(typeof veryfront?.billable_input_tokens === "number"
-      ? { billableInputTokens: veryfront.billable_input_tokens }
-      : {}),
-    ...(typeof veryfront?.billable_output_tokens === "number"
-      ? { billableOutputTokens: veryfront.billable_output_tokens }
-      : {}),
-    ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
-    ...(typeof veryfront?.provider_input_cost_usd === "number"
-      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_output_cost_usd === "number"
-      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_cost_usd === "number"
-      ? { providerCostUsd: veryfront.provider_cost_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
-      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
-      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_charge_usd === "number"
-      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_billed_usd === "number"
-      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
-      : {}),
-    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
-    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
-      ? { costSource }
-      : {}),
-    ...(billingMode !== undefined ? { billingMode } : {}),
-    ...(usageCaptureStatus === "complete" ||
-        usageCaptureStatus === "missing" ||
-        usageCaptureStatus === "partial"
-      ? { usageCaptureStatus }
-      : {}),
-  };
 }
 
 function extractOpenAIContentText(content: unknown): string {

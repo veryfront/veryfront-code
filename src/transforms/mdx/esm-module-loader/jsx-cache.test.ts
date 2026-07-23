@@ -15,6 +15,7 @@ import { FRAMEWORK_ROOT } from "./constants.ts";
 import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { transformJsxImports } from "./import-transformer.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
+import { getLocalFs } from "./cache/index.ts";
 
 function extractCachedJsxPath(code: string): string {
   const match = code.match(/file:\/\/([^"']+jsx-[^"']+\.mjs)/);
@@ -25,6 +26,12 @@ function extractCachedJsxPath(code: string): string {
 describe("ensureCachedJsxModulePatched", () => {
   it("rewrites relative _dnt imports inside cached JSX modules", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-cache-test-" });
+    const localFs = getLocalFs();
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    const originalRename = localFs.rename?.bind(localFs);
+    if (!originalRename) throw new Error("Test filesystem must support rename");
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
 
     try {
       const badCode = [
@@ -41,8 +48,20 @@ describe("ensureCachedJsxModulePatched", () => {
         "components",
         "Head.tsx",
       );
+      localFs.writeTextFile = async (path, data) => {
+        writes.push(path);
+        await originalWriteTextFile(path, data);
+      };
+      localFs.rename = async (from, to) => {
+        renames.push([from, to]);
+        await originalRename(from, to);
+      };
       const ok = await ensureCachedJsxModulePatched(cachedPath, sourceFilePath);
       assertEquals(ok, true);
+
+      const temporaryWrite = writes.find((path) => path.startsWith(`${cachedPath}.tmp-`));
+      assertEquals(typeof temporaryWrite, "string");
+      assertEquals(renames, [[temporaryWrite!, cachedPath]]);
 
       const rewritten = await readTextFile(cachedPath);
       assertEquals(rewritten.includes("../../_dnt.polyfills.js"), false);
@@ -52,6 +71,8 @@ describe("ensureCachedJsxModulePatched", () => {
         true,
       );
     } finally {
+      localFs.writeTextFile = originalWriteTextFile;
+      localFs.rename = originalRename;
       await remove(tempDir, { recursive: true });
     }
   });

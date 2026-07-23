@@ -1,9 +1,77 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mergeUsage } from "./provider-usage.ts";
+import {
+  extractAnthropicUsage,
+  extractGoogleUsage,
+  extractOpenAIUsage,
+  mergeUsage,
+  normalizeRuntimeUsage,
+} from "./provider-usage.ts";
 
 describe("provider/runtime-loader/provider-usage mergeUsage", () => {
+  it("normalizes provider and gateway usage at extraction boundaries", () => {
+    assertEquals(
+      extractAnthropicUsage({
+        usage: {
+          input_tokens: -1,
+          output_tokens: 4,
+          veryfront: {
+            cost_usd: 0.02,
+            provider_cost_usd: Number.NaN,
+            billing_mode: "deferred",
+          },
+        },
+      }),
+      {
+        outputTokens: 4,
+        totalTokens: 4,
+        costUsd: 0.02,
+        billingMode: "deferred",
+      },
+    );
+    assertEquals(
+      extractGoogleUsage({ usageMetadata: { promptTokenCount: Number.NaN } }),
+      undefined,
+    );
+    assertEquals(extractOpenAIUsage({ usage: { total_tokens: -3 } }), undefined);
+  });
+
+  it("drops negative and non-finite usage values", () => {
+    assertEquals(
+      mergeUsage(undefined, {
+        inputTokens: -1,
+        outputTokens: Number.NaN,
+        totalTokens: Number.POSITIVE_INFINITY,
+        costUsd: Number.NaN,
+        providerCostUsd: -2,
+      }),
+      undefined,
+    );
+  });
+
+  it("returns an isolated usage snapshot", () => {
+    const source = { inputTokens: 2, outputTokens: 3 };
+    const merged = mergeUsage(undefined, source);
+    source.inputTokens = 99;
+
+    assertEquals(merged, { inputTokens: 2, outputTokens: 3 });
+  });
+
+  it("does not invoke accessors while normalizing usage", () => {
+    let invoked = false;
+    const usage = Object.defineProperty({}, "inputTokens", {
+      enumerable: true,
+      get() {
+        invoked = true;
+        throw new Error("private usage metadata");
+      },
+    });
+
+    assertEquals(normalizeRuntimeUsage(usage), undefined);
+    assertEquals(invoked, false);
+  });
+
   it("preserves a provider-reported totalTokens that exceeds input + output (reasoning tokens)", () => {
     const merged = mergeUsage(undefined, {
       inputTokens: 100,
@@ -19,7 +87,7 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
 
   it("prefers the next provider-reported total over a recomputed sum when merging two usages", () => {
     // mergeUsage takes the latest non-undefined input/output (?? semantics),
-    // so input=80, output=40, recomputed sum=120 — but the provider total of
+    // so input=80, output=40, recomputed sum=120 - but the provider total of
     // 150 (carries reasoning tokens) must win.
     const merged = mergeUsage(
       { inputTokens: 100, outputTokens: 50, totalTokens: 200 },
@@ -74,6 +142,7 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
         outputTokens: 5,
         billableInputTokens: 10,
         billableOutputTokens: 5,
+        costUsd: 0.0025,
         providerInputCostUsd: 0.0004,
         providerOutputCostUsd: 0.0006,
         providerCostUsd: 0.001,
@@ -94,6 +163,7 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
       cacheReadInputTokens: 4,
       billableInputTokens: 10,
       billableOutputTokens: 5,
+      costUsd: 0.0025,
       providerInputCostUsd: 0.0004,
       providerOutputCostUsd: 0.0006,
       providerCostUsd: 0.001,

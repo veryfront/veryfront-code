@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  getWebSocketProjectSlugOverride,
   HTTP_GATEWAY_TIMEOUT,
   isInternalHost,
   isLightweightPath,
@@ -47,9 +48,21 @@ describe("request-utils", () => {
 
     it("returns true for loopback addresses", () => {
       assertEquals(isInternalHost("127.0.0.1"), true);
+      assertEquals(isInternalHost("127.0.0.2"), true);
       assertEquals(isInternalHost("127.0.0.1:8080"), true);
-      // Note: IPv6 ::1 is not supported by current implementation
-      // (split(":") breaks IPv6 addresses)
+      assertEquals(isInternalHost("::1"), true);
+      assertEquals(isInternalHost("[::1]:8080"), true);
+    });
+
+    it("returns true for link-local and private IPv6 addresses", () => {
+      assertEquals(isInternalHost("169.254.10.20"), true);
+      assertEquals(isInternalHost("[fe80::1]:8080"), true);
+      assertEquals(isInternalHost("fd00::1"), true);
+    });
+
+    it("normalizes case and a trailing DNS root label", () => {
+      assertEquals(isInternalHost("LOCALHOST"), true);
+      assertEquals(isInternalHost("localhost."), true);
     });
 
     it("returns true for private 10.x.x.x addresses", () => {
@@ -134,7 +147,70 @@ describe("request-utils", () => {
     });
   });
 
+  describe("getWebSocketProjectSlugOverride", () => {
+    it("retains the canonical project override for local development", () => {
+      assertEquals(
+        getWebSocketProjectSlugOverride(
+          new URL("http://localhost/_ws?x-project-slug=test-project"),
+          { effectiveHost: "localhost:3000", proxyTrusted: false },
+        ),
+        "test-project",
+      );
+    });
+
+    it("requires verified proxy trust for remote project overrides", () => {
+      assertEquals(
+        getWebSocketProjectSlugOverride(
+          new URL("https://example.com/_ws?x-project-slug=other-project"),
+          { effectiveHost: "example.com", proxyTrusted: false },
+        ),
+        undefined,
+      );
+      assertEquals(
+        getWebSocketProjectSlugOverride(
+          new URL("https://example.com/_ws?x-project-slug=other-project"),
+          { effectiveHost: "example.com", proxyTrusted: true },
+        ),
+        "other-project",
+      );
+    });
+
+    it("rejects malformed overrides even on a local host", () => {
+      assertEquals(
+        getWebSocketProjectSlugOverride(
+          new URL("http://localhost/_ws?x-project-slug=..%2Fother-project"),
+          { effectiveHost: "localhost", proxyTrusted: false },
+        ),
+        undefined,
+      );
+    });
+
+    it("ignores the override outside the WebSocket endpoint", () => {
+      assertEquals(
+        getWebSocketProjectSlugOverride(
+          new URL("http://localhost/page?x-project-slug=test-project"),
+          { effectiveHost: "localhost", proxyTrusted: false },
+        ),
+        undefined,
+      );
+    });
+
+    it("treats an empty WebSocket override as absent", () => {
+      assertEquals(
+        getWebSocketProjectSlugOverride(
+          new URL("http://localhost/_ws?x-project-slug="),
+          { effectiveHost: "localhost", proxyTrusted: false },
+        ),
+        undefined,
+      );
+    });
+  });
+
   describe("shouldSkipEnrichedContext", () => {
+    it("returns true for the HMR WebSocket endpoint", () => {
+      assertEquals(shouldSkipEnrichedContext("/_ws"), true);
+    });
+
     it("returns true for API routes", () => {
       assertEquals(shouldSkipEnrichedContext("/api/users"), true);
       assertEquals(shouldSkipEnrichedContext("/api/bench/status"), true);

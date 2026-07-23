@@ -24,7 +24,10 @@ function makeSkill(input: {
 }): Skill {
   return {
     id: input.id,
-    metadata: { name: input.id, description: `${input.id} skill` },
+    metadata: {
+      name: input.shortName ?? input.id,
+      description: `${input.id} skill`,
+    },
     rootPath: input.rootPath ?? `/nonexistent/${input.id}`,
     ...(input.ownerAgentId === undefined ? {} : { ownerAgentId: input.ownerAgentId }),
     ...(input.shortName === undefined ? {} : { shortName: input.shortName }),
@@ -120,7 +123,7 @@ Deno.test("load_skill rejects another agent's owned skill and enumerates only vi
       'Skill "researcher--cite" not found',
     );
 
-    // The miss message must list only skills visible to the caller — never
+    // The miss message must list only skills visible to the caller, never
     // another agent's owned skill ids.
     try {
       await loadSkill.execute({ skillId: "does-not-exist" }, { agentId: "writer" });

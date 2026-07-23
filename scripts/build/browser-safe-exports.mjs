@@ -13,6 +13,7 @@ export const BROWSER_SAFE_EXPORTS = [
   "./markdown",
   "./mdx",
   "./agent/identity",
+  "./workflow/claude-code/react",
 ];
 
 export const BROWSER_SAFE_DNT_TIMER_MODULES = [

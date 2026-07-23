@@ -1,23 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ComponentRegistry } from "./component-registry.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VirtualModuleSystem } from "../virtual-module-system.ts";
 
-// ComponentRegistry imports VirtualModuleSystem which spawns esbuild (child process),
-// causing resource leak detection failures. Instead, we test the pure logic helpers
-// by inlining them here.
+// Keep small pure helpers below for filename and directory-policy contract coverage.
 
 type SkipEntryResult = { skip: boolean; reason?: string };
-
-function createErrorFallbackComponent(
-  componentName: string,
-  error: string,
-): { displayName: string; componentName: string; error: string } {
-  return {
-    displayName: `ErrorFallback(${componentName})`,
-    componentName,
-    error,
-  };
-}
 
 function extractComponentName(fileName: string): string {
   return fileName.replace(/\.(tsx|jsx|ts|js)$/, "");
@@ -72,16 +62,17 @@ function getLoaderOptions(
   moduleServerUrl?: string,
   vendorBundleHash?: string,
   contentSourceId?: string,
+  dev = false,
 ): {
   projectId: string;
-  dev: true;
+  dev: boolean;
   moduleServerUrl?: string;
   vendorBundleHash?: string;
   contentSourceId?: string;
 } {
   return {
     projectId: projectId ?? projectRoot,
-    dev: true,
+    dev,
     moduleServerUrl,
     vendorBundleHash,
     contentSourceId,
@@ -89,17 +80,102 @@ function getLoaderOptions(
 }
 
 describe("ComponentRegistry logic", () => {
-  describe("createErrorFallbackComponent", () => {
-    it("should create a fallback with component name and error", () => {
-      const fallback = createErrorFallbackComponent("Button", "Module not found");
-      assertEquals(fallback.displayName, "ErrorFallback(Button)");
-      assertEquals(fallback.componentName, "Button");
-      assertEquals(fallback.error, "Module not found");
+  describe("filesystem boundaries", () => {
+    function createVirtualModules() {
+      const registered: string[] = [];
+      let clearCalls = 0;
+      return {
+        registered,
+        get clearCalls() {
+          return clearCalls;
+        },
+        system: {
+          registerModule(id: string) {
+            registered.push(id);
+            return Promise.resolve(`/modules/${id}`);
+          },
+          clear() {
+            clearCalls++;
+          },
+        } as unknown as VirtualModuleSystem,
+      };
+    }
+
+    function createAdapter(
+      readDir: RuntimeAdapter["fs"]["readDir"],
+      readFile: RuntimeAdapter["fs"]["readFile"] = () => Promise.resolve("export default null"),
+    ): RuntimeAdapter {
+      return {
+        fs: { readDir, readFile } as RuntimeAdapter["fs"],
+      } as RuntimeAdapter;
+    }
+
+    it("propagates operational directory failures", async () => {
+      const virtual = createVirtualModules();
+      const adapter = createAdapter(() => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      });
+      const registry = new ComponentRegistry(virtual.system, 3001, adapter);
+
+      await assertRejects(
+        () => registry.loadFromDirectory("/project/components", true),
+        Error,
+        "permission denied",
+      );
     });
 
-    it("should handle special characters in component names", () => {
-      const fallback = createErrorFallbackComponent("My.Component", "Error");
-      assertEquals(fallback.displayName, "ErrorFallback(My.Component)");
+    it("skips symbolic-link files and directories", async () => {
+      const virtual = createVirtualModules();
+      let reads = 0;
+      const adapter = createAdapter(
+        (path) =>
+          (async function* () {
+            if (path !== "/project/components") return;
+            yield { name: "linked", isFile: false, isDirectory: true, isSymlink: true };
+            yield { name: "Linked.tsx", isFile: true, isDirectory: false, isSymlink: true };
+          })(),
+        () => {
+          reads++;
+          return Promise.resolve("export default null");
+        },
+      );
+      const registry = new ComponentRegistry(virtual.system, 3001, adapter);
+
+      await registry.loadFromDirectory("/project/components", true);
+
+      assertEquals(reads, 0);
+      assertEquals(virtual.registered, []);
+    });
+
+    it("rejects duplicate component names instead of silently overwriting", async () => {
+      const virtual = createVirtualModules();
+      const adapter = createAdapter((path) =>
+        (async function* () {
+          if (path === "/project/components") {
+            yield { name: "one", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "two", isFile: false, isDirectory: true, isSymlink: false };
+          } else {
+            yield { name: "Button.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })()
+      );
+      const registry = new ComponentRegistry(virtual.system, 3001, adapter);
+
+      await assertRejects(
+        () => registry.loadFromDirectory("/project/components", true),
+        Error,
+        'Duplicate component name "Button"',
+      );
+    });
+
+    it("clears registered virtual modules with registry state", () => {
+      const virtual = createVirtualModules();
+      const adapter = createAdapter(() => (async function* (): AsyncGenerator<never> {})());
+      const registry = new ComponentRegistry(virtual.system, 3001, adapter);
+
+      registry.clear();
+
+      assertEquals(virtual.clearCalls, 1);
     });
   });
 
@@ -236,6 +312,18 @@ describe("ComponentRegistry logic", () => {
     it("should use projectId when provided", () => {
       const opts = getLoaderOptions("/project", "proj-uuid-123");
       assertEquals(opts.projectId, "proj-uuid-123");
+      assertEquals(opts.dev, false);
+    });
+
+    it("uses the explicit development mode", () => {
+      const opts = getLoaderOptions(
+        "/project",
+        "proj-uuid-123",
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
       assertEquals(opts.dev, true);
     });
 

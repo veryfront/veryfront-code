@@ -65,16 +65,18 @@ export function getHostEnv(key: string): string | undefined {
   if (deno) {
     try {
       return deno.env.get(key);
-    } catch {
+    } catch (error) {
       // Under a tightened env permission allowlist (project isolation workers),
       // reading a non-allowlisted variable throws NotCapable. Treat it as absent
-      // to match the prior `env: true` behavior where reads never threw, so
-      // optional-variable lookups degrade to undefined instead of crashing the
-      // request.
-      return undefined;
+      // so optional-variable lookups do not crash the request. Unexpected host
+      // environment failures must remain visible to the caller.
+      if (getErrorName(error) === "NotCapable") return undefined;
+      throw error;
     }
   }
-  if (runtimeProcess) return runtimeProcess.env[key];
+  if (runtimeProcess && Object.hasOwn(runtimeProcess.env, key)) {
+    return runtimeProcess.env[key];
+  }
   return undefined;
 }
 
@@ -159,9 +161,25 @@ export function getEnvNumber(key: string, fallback?: number): number | undefined
   const value = getEnvString(key);
   if (value === undefined) return fallback;
 
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) return fallback ?? Number.NaN;
+  const normalized = value.trim();
+  if (normalized.length === 0) return fallback;
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return fallback;
   return parsed;
+}
+
+function getErrorName(error: unknown): string | undefined {
+  if ((typeof error !== "object" && typeof error !== "function") || error === null) {
+    return undefined;
+  }
+
+  try {
+    const name = Reflect.get(error, "name");
+    return typeof name === "string" ? name : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function getEnvBoolean(
@@ -229,17 +247,60 @@ export function deleteEnv(key: string): void {
   throw new Error("deleteEnv() is not supported in this runtime");
 }
 
+const ENV_OVERLAY_STORAGE_KEYS = ["__vfTestDenoEnvOverlay", "__vfTestEnvOverlay"] as const;
+const MAX_ENV_OVERLAY_PROTOTYPE_DEPTH = 32;
+
+function readOwnDataValue(target: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function findEnvOverlayDataValue(target: object, key: PropertyKey): unknown {
+  const seen = new Set<object>();
+  let current: object | null = target;
+  while (
+    current && !seen.has(current) && seen.size < MAX_ENV_OVERLAY_PROTOTYPE_DEPTH
+  ) {
+    seen.add(current);
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Reflect.getOwnPropertyDescriptor(current, key);
+      current = Reflect.getPrototypeOf(current);
+    } catch {
+      return undefined;
+    }
+    if (descriptor) return "value" in descriptor ? descriptor.value : undefined;
+  }
+  return undefined;
+}
+
+function resolveEnvOverlayStorage(container: unknown): EnvOverlayStorage | null {
+  if (!container || (typeof container !== "object" && typeof container !== "function")) {
+    return null;
+  }
+  const storage = readOwnDataValue(container, "storage");
+  if (!storage || (typeof storage !== "object" && typeof storage !== "function")) return null;
+  if (typeof findEnvOverlayDataValue(storage, "getStore") !== "function") return null;
+  for (const optionalMethod of ["run", "enterWith"] as const) {
+    const method = findEnvOverlayDataValue(storage, optionalMethod);
+    if (method !== undefined && typeof method !== "function") return null;
+  }
+  return storage as EnvOverlayStorage;
+}
+
 /**
  * Get an AsyncLocalStorage-based env overlay storage if installed.
  * This enables per-async-context env isolation (e.g., in tests).
  */
 export function getEnvOverlayStorage(): EnvOverlayStorage | null {
-  const globalAny = globalThis as Record<string, unknown>;
-  const overlay =
-    (globalAny["__vfTestDenoEnvOverlay"] as { storage?: EnvOverlayStorage } | undefined) ??
-      (globalAny["__vfTestEnvOverlay"] as { storage?: EnvOverlayStorage } | undefined);
-
-  const storage = overlay?.storage;
-  if (!storage || typeof storage.getStore !== "function") return null;
-  return storage;
+  for (const key of ENV_OVERLAY_STORAGE_KEYS) {
+    const container = readOwnDataValue(globalThis, key);
+    const storage = resolveEnvOverlayStorage(container);
+    if (storage) return storage;
+  }
+  return null;
 }

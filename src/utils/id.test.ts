@@ -23,6 +23,17 @@ describe("id", () => {
       assertEquals(uuid, "00010203-0405-4607-8809-0a0b0c0d0e0f");
     });
 
+    it("falls back when randomUUID returns a malformed value", () => {
+      const uuid = generateUuid({
+        randomUUID: () => "not-a-uuid",
+        getRandomValues(bytes) {
+          bytes.fill(0);
+          return bytes;
+        },
+      });
+      assertEquals(uuid, "00000000-0000-4000-8000-000000000000");
+    });
+
     it("fails explicitly when secure randomness is unavailable", () => {
       assertThrows(
         () => generateUuid(null),
@@ -75,6 +86,16 @@ describe("id", () => {
     it("should generate without prefix", () => {
       const generate = createIdGenerator({});
       assertEquals(generate().length, 16);
+    });
+
+    it("rejects non-integer and unbounded sizes at construction time", () => {
+      for (const size of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 1_025]) {
+        assertThrows(
+          () => createIdGenerator({ size }),
+          RangeError,
+          "size must be an integer between 1 and 1024",
+        );
+      }
     });
   });
 });

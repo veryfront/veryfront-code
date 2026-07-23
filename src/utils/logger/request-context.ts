@@ -7,7 +7,7 @@
  * @module utils/logger/request-context
  **************************/
 
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-local-storage.ts";
 import { __registerRequestContextGetter, type Logger } from "./logger.ts";
 
 /** Context for request. */

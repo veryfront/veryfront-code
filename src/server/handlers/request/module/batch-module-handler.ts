@@ -15,10 +15,7 @@ export function handleBatchModuleEndpoint(
   return withSpan(
     "module.batch.handle",
     async () => {
-      logger.debug("Handling batch request", {
-        projectSlug: ctx.projectSlug,
-        url: req.url,
-      });
+      logger.debug("Handling batch module request", { method: req.method });
 
       const response = await handleModuleBatch(req, {
         projectDir: ctx.projectDir,
@@ -33,6 +30,6 @@ export function handleBatchModuleEndpoint(
 
       return respond(response);
     },
-    { "module.batch.projectSlug": ctx.projectSlug ?? "unknown" },
+    { "http.method": req.method },
   );
 }

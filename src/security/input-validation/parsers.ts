@@ -1,6 +1,11 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { createValidationError, VeryfrontError } from "./errors.ts";
-import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
+import {
+  readBodyBytesWithLimit,
+  readBodyWithLimit,
+  validateContentType,
+  validateRequestLimits,
+} from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
 import * as nodeBuffer from "node:buffer";
@@ -54,9 +59,25 @@ export async function parseFormData<T>(
 
   validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 
-  const formData = await request.formData();
+  const body = await readBodyBytesWithLimit(request, options?.limits?.maxBodySize);
+  const headers = new Headers(request.headers);
+  // The original value was validated before the streamed body was read, but it
+  // may not match the bytes that actually arrived. Let Request derive it.
+  headers.delete("content-length");
+  const boundedRequest = new Request(request.url, {
+    method: request.method,
+    headers,
+    body: body as BodyInit,
+    signal: request.signal,
+  });
+  const formData = await boundedRequest.formData();
   const data: Record<string, unknown> = {};
   const maxFileSize = options?.limits?.maxFileSize ?? DEFAULT_LIMITS.maxFileSize;
+  if (!Number.isSafeInteger(maxFileSize) || maxFileSize < 0) {
+    throw createValidationError(
+      "Invalid request limit: maxFileSize must be a non-negative safe integer",
+    );
+  }
 
   for (const [key, value] of formData.entries()) {
     if (value instanceof FileCtor && value.size > maxFileSize) {

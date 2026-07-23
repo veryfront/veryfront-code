@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { FileListIndex } from "./file-list-index.ts";
 
 describe("platform/adapters/fs/veryfront/file-list-index", () => {
@@ -20,6 +26,31 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       assertEquals(await index.lookup("pages/index.tsx"), "export default () => <div/>");
     });
 
+    it("does not write cached source content to debug logs", async () => {
+      const previousLevel = Deno.env.get("LOG_LEVEL");
+      const originalDebug = console.debug;
+      const entries: LogEntry[] = [];
+      const source = "PRIVATE_SOURCE_CANARY export default function Page() {}";
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      console.debug = () => {};
+      __resetLoggerConfigForTests();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      try {
+        const index = new FileListIndex(async () => [
+          { path: "pages/welcome.tsx", content: source },
+        ]);
+        assertEquals(await index.lookup("pages/welcome.tsx"), source);
+        assertEquals(JSON.stringify(entries).includes("PRIVATE_SOURCE_CANARY"), false);
+      } finally {
+        __resetLogRecordEmitterForTests();
+        console.debug = originalDebug;
+        if (previousLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLevel);
+        __resetLoggerConfigForTests();
+      }
+    });
+
     it("should return undefined for a path not in cache", async () => {
       const index = new FileListIndex(async () => [
         { path: "pages/index.tsx", content: "content" },
@@ -37,6 +68,17 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
     it("should return undefined when cache returns undefined", async () => {
       const index = new FileListIndex(async () => undefined);
       assertEquals(await index.lookup("anything"), undefined);
+    });
+
+    it("refreshes inline content when the file list shape is unchanged", async () => {
+      let content = "first version";
+      const index = new FileListIndex(async () => [
+        { path: "pages/index.tsx", content },
+      ]);
+
+      assertEquals(await index.lookup("pages/index.tsx"), "first version");
+      content = "second version";
+      assertEquals(await index.lookup("pages/index.tsx"), "second version");
     });
 
     it("should handle empty file list", async () => {

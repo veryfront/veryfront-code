@@ -9,11 +9,23 @@ function jsResponse(body: string): Response {
     headers: {
       "content-type": "application/javascript",
       "cache-control": "no-cache",
+      "x-content-type-options": "nosniff",
     },
   });
 }
 
-async function buildOrServeScript(
+function unavailableResponse(): Response {
+  return new Response("Required client script is unavailable.", {
+    status: 500,
+    headers: {
+      "cache-control": "no-store",
+      "content-type": "text/plain; charset=utf-8",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+export async function buildOrServeScript(
   adapter: RuntimeAdapter,
   path: string,
   fallbackBundle: string,
@@ -24,46 +36,26 @@ async function buildOrServeScript(
   // If a pre-built bundle was injected at compile time, serve it directly
   if (fallbackBundle) return jsResponse(fallbackBundle);
 
-  let esbuild: typeof import("veryfront/extensions/bundler") | null = null;
-
   try {
     const src = await adapter.fs.readFile(path);
-    esbuild = await import("veryfront/extensions/bundler");
+    const esbuild = await import("veryfront/extensions/bundler");
     const result = await esbuild.build({
       ...esbuildOptions,
+      logLevel: "silent",
       stdin: { ...esbuildOptions.stdin, contents: src },
     });
-    const out = result.outputFiles?.[0]?.text ?? src;
+    const out = result.outputFiles?.[0]?.text;
+    if (!out) {
+      logger.error("Client script build produced no output");
+      return unavailableResponse();
+    }
 
     return jsResponse(out);
   } catch (error) {
-    serverLogger.debug(
-      "[ScriptHandlers] Build failed, serving raw TypeScript",
-      error,
-    );
-
-    try {
-      const src = await adapter.fs.readFile(path);
-      return new Response(src, {
-        headers: {
-          "content-type": "application/typescript",
-          "cache-control": "no-cache",
-        },
-      });
-    } catch {
-      return new Response("// client-boot: source not available", {
-        headers: {
-          "content-type": "application/javascript",
-          "cache-control": "no-cache",
-        },
-      });
-    }
-  } finally {
-    try {
-      await esbuild?.stop?.();
-    } catch (stopError) {
-      logger.debug("esbuild stop failed", stopError);
-    }
+    logger.error("Client script build failed", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return unavailableResponse();
   }
 }
 

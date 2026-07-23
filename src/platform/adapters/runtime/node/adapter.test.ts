@@ -54,7 +54,7 @@ describe("NodeAdapter", () => {
       assertExists(capabilities);
       assertEquals(capabilities.typescript, false);
       assertEquals(capabilities.jsx, false);
-      assertEquals(capabilities.http2, true);
+      assertEquals(capabilities.http2, false);
       assertEquals(capabilities.websocket, true);
       assertEquals(capabilities.workers, true);
       assertEquals(capabilities.fileWatching, true);

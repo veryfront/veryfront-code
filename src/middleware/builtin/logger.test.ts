@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { devLogger, logger, prodLogger, sanitizeHeaderForLog } from "./logger.ts";
 
@@ -31,6 +31,24 @@ function getFirstLog(logs: string[]): string {
 
 describe("middleware/builtin/logger", () => {
   describe("logger", () => {
+    it("rejects malformed logger configuration", () => {
+      assertThrows(
+        () => logger({ format: "verbose" as never }),
+        TypeError,
+        "format",
+      );
+      assertThrows(
+        () => logger({ skip: "never" as never }),
+        TypeError,
+        "skip",
+      );
+      assertThrows(
+        () => logger({ log: "stdout" as never }),
+        TypeError,
+        "log",
+      );
+    });
+
     it("should pass through and return response unchanged", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "tiny", log: (msg) => logs.push(msg) });
@@ -39,6 +57,20 @@ describe("middleware/builtin/logger", () => {
 
       assertEquals(res?.status, 200);
       assertEquals(logs.length, 1);
+    });
+
+    it("does not let a custom log sink replace a successful response", async () => {
+      const mw = logger({
+        format: "tiny",
+        log: () => {
+          throw new Error("log sink unavailable");
+        },
+      });
+
+      const response = await mw(makeCtx(), nextOk);
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
     });
 
     it("should log in tiny format", async () => {
@@ -296,7 +328,7 @@ describe("middleware/builtin/logger", () => {
       assert(getFirstLog(logs).includes("\x1b["));
     });
 
-    // SEC-011 — long user-agent reaches the logger via a normal Request and
+    // SEC-011: long user-agent reaches the logger via a normal Request and
     // must be truncated to 256 chars in the log output. CRLF cases for the
     // sanitizer itself are covered in the `sanitizeHeaderForLog` suite below
     // (Deno's `Request` constructor rejects CR/LF in header values, so the
@@ -317,7 +349,7 @@ describe("middleware/builtin/logger", () => {
     });
   });
 
-  // SEC-011 — log injection via unsanitized request headers (CWE-117)
+  // SEC-011: log injection via unsanitized request headers (CWE-117)
   describe("sanitizeHeaderForLog", () => {
     it("strips CR and LF from header values", () => {
       assertEquals(

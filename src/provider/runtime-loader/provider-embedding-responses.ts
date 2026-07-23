@@ -3,19 +3,22 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Check whether a value is an array of numbers. */
 export function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "number");
+  return Array.isArray(value) && value.length > 0 &&
+    value.every((entry) => typeof entry === "number" && Number.isFinite(entry));
 }
 
+/** Extract validated embedding vectors from an OpenAI response payload. */
 export function extractOpenAIEmbeddings(payload: unknown): number[][] {
   const record = readRecord(payload);
   const data = record?.data;
-  if (!Array.isArray(data)) {
+  if (!Array.isArray(data) || data.length === 0) {
     throw INVALID_ARGUMENT.create({
       detail: "Invalid OpenAI embedding response: data array missing",
     });
   }
 
   const embeddings: number[][] = [];
+  let dimensions: number | undefined;
 
   for (const item of data) {
     const itemRecord = readRecord(item);
@@ -25,19 +28,29 @@ export function extractOpenAIEmbeddings(payload: unknown): number[][] {
         detail: "Invalid OpenAI embedding response: embedding vector missing",
       });
     }
-    embeddings.push(embedding);
+    dimensions ??= embedding.length;
+    if (embedding.length !== dimensions) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Invalid OpenAI embedding response: inconsistent vector dimensions",
+      });
+    }
+    embeddings.push([...embedding]);
   }
 
   return embeddings;
 }
 
+/** Extract a validated total-token count from an OpenAI embedding response. */
 export function extractOpenAIUsageTokens(payload: unknown): number | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usage);
   const totalTokens = usage?.total_tokens;
-  return typeof totalTokens === "number" ? totalTokens : undefined;
+  return typeof totalTokens === "number" && Number.isSafeInteger(totalTokens) && totalTokens >= 0
+    ? totalTokens
+    : undefined;
 }
 
+/** Extract one validated embedding vector from a Google response payload. */
 export function extractGoogleEmbedding(payload: unknown): number[] {
   const record = readRecord(payload);
   const embeddings = record?.embeddings;
@@ -61,9 +74,13 @@ export function extractGoogleEmbedding(payload: unknown): number[] {
   });
 }
 
+/** Extract a validated prompt-token count from a Google embedding response. */
 export function extractGoogleUsageTokens(payload: unknown): number | undefined {
   const record = readRecord(payload);
   const usageMetadata = readRecord(record?.usageMetadata);
   const promptTokenCount = usageMetadata?.promptTokenCount;
-  return typeof promptTokenCount === "number" ? promptTokenCount : undefined;
+  return typeof promptTokenCount === "number" && Number.isSafeInteger(promptTokenCount) &&
+      promptTokenCount >= 0
+    ? promptTokenCount
+    : undefined;
 }

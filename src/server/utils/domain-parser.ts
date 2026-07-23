@@ -11,7 +11,7 @@ export interface ParsedDomain {
 type Environment = ParsedDomain["environment"];
 
 // Local development domains (veryfront.me preferred, lvh.me alternative, veryfront.dev for HTTPS testing)
-// `localhost` included so that {slug}.localhost URLs work — *.localhost is a W3C Secure Context,
+// `localhost` is included so that {slug}.localhost URLs work. *.localhost is a W3C Secure Context,
 // enabling navigator.mediaDevices / getUserMedia in WKWebView (Tauri) and all browsers.
 const LOCAL_DEV_DOMAINS = "veryfront\\.me|lvh\\.me|veryfront\\.dev|localhost";
 // Production domains
@@ -172,7 +172,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
   }
 
   // Intentionally NOT supported: bare {slug}.veryfront.{com,org}. Projects must use the
-  // explicit {slug}.production.veryfront.com form. Do not re-add — this has been tried
+  // explicit {slug}.production.veryfront.com form. Do not re-add it. This has been tried
   // and reverted (PR #1055). It collides with infra subdomains (api/studio/docs/www)
   // and erases the environment from the URL, which the product decision requires.
   return createParsedDomain(null, null, null, false, false);
@@ -192,7 +192,7 @@ export function isVeryfrontDomain(host: string): boolean {
 /**
  * Check if a host is a local development host where HMR connections should be allowed.
  * Recognises localhost, 127.0.0.1, 0.0.0.0, *.localhost, and local dev domains
- * (veryfront.me, lvh.me, veryfront.dev) — but excludes explicit production/staging
+ * (veryfront.me, lvh.me, veryfront.dev), but excludes explicit production/staging
  * subdomains ({slug}.production.{local}, {slug}.staging.{local}) since those are
  * used for testing non-dev behaviour locally.
  */
@@ -204,7 +204,7 @@ export function isLocalDevHost(host: string): boolean {
   // W3C *.localhost secure context
   if (domain.endsWith(".localhost")) return true;
 
-  // Must be on a local dev TLD — production domains (veryfront.com/org) are not dev hosts
+  // Must be on a local dev TLD. Production domains (veryfront.com/org) are not dev hosts.
   const isLocalTLD = /\.(veryfront\.me|lvh\.me|veryfront\.dev)$/i.test(domain) ||
     /^(veryfront\.me|lvh\.me|veryfront\.dev)$/i.test(domain);
   if (!isLocalTLD) return false;
@@ -214,7 +214,7 @@ export function isLocalDevHost(host: string): boolean {
   // Must be a recognized veryfront domain (rejects unknown namespaces and prod simulations)
   if (!parsed.isVeryfrontDomain) return false;
 
-  // Explicit staging is for testing staging behaviour — not a dev host
+  // Explicit staging tests staging behavior and is not a dev host.
   if (parsed.environment === "staging") return false;
 
   // Explicit production ({slug}.production.{local}) is for testing production behaviour.

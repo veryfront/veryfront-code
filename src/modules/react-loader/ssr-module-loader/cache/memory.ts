@@ -16,39 +16,49 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
+  FAILED_COMPONENT_CACHE_MAX_ENTRIES,
   getMaxConcurrentTransforms,
   getTransformPerProjectLimit,
+  MAX_PROJECT_TRANSFORM_WAITERS,
   resetCachedTransformLimits,
+  SSR_MODULE_CACHE_MAX_ENTRIES,
+  SSR_MODULE_CACHE_TTL_MS,
   SSR_TMP_DIRS_MAX_ENTRIES,
 } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
-/** Maximum entries for temp path tracking (small, just pointers) */
-const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
+/** Maximum entries for immutable cross-project temp path pointers. */
+const CROSS_PROJECT_CACHE_MAX_ENTRIES = 500;
 
 export const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
-  maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
+  ttlMs: SSR_MODULE_CACHE_TTL_MS,
 });
 
 export const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
-  maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+  maxEntries: CROSS_PROJECT_CACHE_MAX_ENTRIES,
+  ttlMs: SSR_MODULE_CACHE_TTL_MS,
 });
 
 export const globalInProgress = new Map<string, Promise<void>>();
+export const globalCrossProjectInProgress = new Map<string, Promise<string>>();
 
 export const globalTmpDirs = new LRUCache<string, string>({
   maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
 });
 
-export const failedComponents = new Map<string, FailureRecord>();
+export const failedComponents = new LRUCache<string, FailureRecord>({
+  maxEntries: FAILED_COMPONENT_CACHE_MAX_ENTRIES,
+});
 
 let _transformSemaphore: Semaphore | undefined;
 export function getTransformSemaphore(): Semaphore {
@@ -192,6 +202,11 @@ export async function tryAcquireTransformSlot(
 
     const queue = projectTransformWaiters.get(projectId);
     if (queue) {
+      if (queue.length >= MAX_PROJECT_TRANSFORM_WAITERS) {
+        clearTimeout(waiter.timeoutId);
+        resolve(false);
+        return;
+      }
       queue.push(waiter);
       return;
     }
@@ -239,7 +254,7 @@ export function getTransformStats(): {
 registerCache("ssr-module-cache", () => ({
   name: "ssr-module-cache",
   entries: globalModuleCache.size,
-  maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
   mode: "redis-primary-lru-paths",
 }));
 
@@ -282,7 +297,11 @@ registerMapCache(
 );
 registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
 registerMapCache("ssr-in-progress", globalInProgress);
-registerMapCache("ssr-failed-components", failedComponents);
+registerMapCache("ssr-cross-project-in-progress", globalCrossProjectInProgress);
+registerMapCache(
+  "ssr-failed-components",
+  createCacheRegistryWrapper(failedComponents),
+);
 
 export function clearSSRModuleCache(): void {
   const moduleCount = globalModuleCache.size;
@@ -290,6 +309,10 @@ export function clearSSRModuleCache(): void {
   const transformSlotsCount = projectTransformCounts.size;
 
   globalModuleCache.clear();
+  globalCrossProjectCache.clear();
+  globalCrossProjectInProgress.clear();
+  globalInProgress.clear();
+  globalTmpDirs.clear();
   failedComponents.clear();
   projectTransformCounts.clear();
   rejectAllProjectTransformWaiters();
@@ -308,9 +331,11 @@ export function clearSSRModuleCache(): void {
   });
 }
 
+registerProcessStateReset("SSR module cache", clearSSRModuleCache);
+
 export function clearSSRModuleCacheForProject(projectId: string): void {
   let cleared = 0;
-  const encodedProjectId = hashCodeHex(projectId);
+  const encodedProjectId = hashString(projectId);
 
   for (const key of globalModuleCache.keys()) {
     if (!isKeyForProject(key, projectId)) continue;
@@ -319,8 +344,13 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!key.includes(projectId) && !isKeyForProject(key, projectId)) continue;
+    if (!isKeyForProject(key, projectId)) continue;
     globalCrossProjectCache.delete(key);
+  }
+
+  for (const key of globalCrossProjectInProgress.keys()) {
+    if (!isKeyForProject(key, projectId)) continue;
+    globalCrossProjectInProgress.delete(key);
   }
 
   for (const key of globalInProgress.keys()) {
@@ -334,27 +364,24 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   }
 
   for (const key of globalTmpDirs.keys()) {
-    const parts = key.split("|");
-    if (parts.length >= 3 && parts[1] === encodedProjectId) {
-      globalTmpDirs.delete(key);
-      continue;
-    }
-
-    // Legacy cache key format fallback (base:projectId)
-    if (key.includes(`:${projectId}`)) {
-      globalTmpDirs.delete(key);
+    try {
+      const parts: unknown = JSON.parse(key);
+      if (Array.isArray(parts) && parts.length === 4 && parts[2] === encodedProjectId) {
+        globalTmpDirs.delete(key);
+      }
+    } catch {
+      // Ignore unknown keys. Cache invalidation only acts on canonical identities.
     }
   }
 
   projectTransformCounts.delete(projectId);
   rejectProjectTransformWaiters(projectId);
 
-  // Clear verified HTTP bundle paths — keys are tempPath:contentHash (not project-scoped),
+  // Clear verified HTTP bundle paths. Keys are path/hash tuples without a project field,
   // so full clear is needed. This just forces re-verification on next access.
   verifiedHttpBundlePaths.clear();
 
   logger.debug("✓ Project cache cleared", {
-    projectId,
     entriesCleared: cleared,
     remainingModules: globalModuleCache.size,
   });

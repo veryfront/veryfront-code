@@ -8,28 +8,54 @@
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
+import { sanitizeErrorText } from "#veryfront/errors/sanitization.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import type { TaskArgs } from "./handler.ts";
 
 export interface TaskOptions extends TaskArgs {}
 
-function logRuntimeDiscoveryWarnings(
-  errors: Array<{ file: string; error: Error }>,
-  debug: boolean | undefined,
-): void {
-  if (errors.length === 0 || !debug) return;
-
-  for (const err of errors) {
-    cliLogger.warn(`  Warning: ${err.file}: ${err.error.message}`);
+export function taskSourceLabel(
+  proxyContext: { branchRef?: string | null } | null | undefined,
+): string {
+  if (proxyContext?.branchRef) {
+    const branchRef = sanitizeErrorText(proxyContext.branchRef, 256)
+      .replaceAll("\u061C", "")
+      .replace(/[\r\n\t]+/g, " ")
+      .trim();
+    return branchRef ? `branch ${branchRef}` : "selected branch";
   }
+  return proxyContext ? "main" : "local tasks";
+}
+
+export function parseTaskConfig(value: string | undefined): Record<string, unknown> {
+  if (value === undefined) return {};
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TypeError("Task config must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+export function formatRuntimeDiscoveryWarningLines(
+  formattedErrors: readonly string[],
+  debug: boolean | undefined,
+): string[] {
+  if (!debug) return [];
+
+  return formattedErrors.map((line) => `  Warning: ${line}`);
 }
 
 export async function taskCommand(options: TaskOptions): Promise<void> {
-  const { discoverProjectTaskRuntime, findProjectRuntimeTask, listProjectRuntimeTasks } =
-    await import(
-      "../../../src/task/project-runtime.ts"
-    );
+  const {
+    discoverProjectTaskRuntime,
+    findProjectRuntimeTask,
+    formatProjectRuntimeDiscoveryErrors,
+    listProjectRuntimeTasks,
+  } = await import(
+    "../../../src/task/project-runtime.ts"
+  );
+  const { normalizeTaskId } = await import("../../../src/task/id.ts");
   const { runWithProjectAgentRuntime } = await import(
     "../../../src/agent/project/agent-runtime.ts"
   );
@@ -43,16 +69,20 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
     exitProcess(1);
     return;
   }
+  let taskId: string;
+  try {
+    taskId = normalizeTaskId(taskName, "Task name");
+  } catch {
+    cliLogger.error("Task name must be a canonical lowercase identifier.");
+    exitProcess(1);
+    return;
+  }
 
   const projectDir = Deno.cwd();
   await withProjectSourceContext(
     projectDir,
     async ({ adapter, config, configCacheKey, projectId, proxyContext }) => {
-      const sourceLabel = proxyContext?.branchRef
-        ? `branch ${proxyContext.branchRef}`
-        : proxyContext
-        ? "main"
-        : `${projectDir}/tasks/...`;
+      const sourceLabel = taskSourceLabel(proxyContext);
 
       cliLogger.info(`Discovering tasks in ${sourceLabel}`);
 
@@ -64,11 +94,15 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
         cacheKey: configCacheKey,
         debug: options.debug,
       });
-      logRuntimeDiscoveryWarnings(discovery.errors, options.debug);
+      const warningLines = formatRuntimeDiscoveryWarningLines(
+        options.debug ? formatProjectRuntimeDiscoveryErrors(discovery.errors, projectDir) : [],
+        options.debug,
+      );
+      for (const line of warningLines) cliLogger.warn(line);
 
-      const task = findProjectRuntimeTask(discovery, taskName);
+      const task = findProjectRuntimeTask(discovery, taskId);
       if (!task) {
-        cliLogger.error(`Task "${taskName}" not found.`);
+        cliLogger.error(`Task "${taskId}" not found.`);
         if (discovery.errors.length > 0 && !options.debug) {
           cliLogger.warn(
             "Some project files could not be loaded. Re-run with --debug for details.",
@@ -88,15 +122,13 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
         return;
       }
 
-      let taskConfig: Record<string, unknown> = {};
-      if (options.config) {
-        try {
-          taskConfig = JSON.parse(options.config);
-        } catch {
-          cliLogger.error("Invalid --config JSON");
-          exitProcess(1);
-          return;
-        }
+      let taskConfig: Record<string, unknown>;
+      try {
+        taskConfig = parseTaskConfig(options.config);
+      } catch {
+        cliLogger.error("Invalid --config JSON object");
+        exitProcess(1);
+        return;
       }
 
       cliLogger.info(`Running task: ${task.name} (${task.id})`);

@@ -386,7 +386,7 @@ describe("Token Priority Cascade", () => {
           previewApiClientId: "test-preview-client",
           previewApiClientSecret: "test-preview-secret",
           apiToken: "should-not-use",
-          localProjects: { "local-proj": "/tmp/local-proj" },
+          localProjects: { "local-proj": "local-project-path" },
         },
       });
 
@@ -398,7 +398,7 @@ describe("Token Priority Cascade", () => {
 
       assertEquals(ctx.token, undefined);
       assertEquals(ctx.isLocalProject, true);
-      assertEquals(ctx.localPath, "/tmp/local-proj");
+      assertEquals(ctx.localPath, "local-project-path");
       assertEquals(ctx.error, undefined);
 
       await handler.close();

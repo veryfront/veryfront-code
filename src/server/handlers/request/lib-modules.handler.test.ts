@@ -7,7 +7,65 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { HandlerContext } from "../types.ts";
 import { LIB_MODULE_PATHS, LibModulesHandler } from "./lib-modules.handler.ts";
+
+const CHAT_MODULE_PATH = "/project/node_modules/veryfront/esm/src/chat/index.js";
+
+function createMockAdapter(
+  readFile: (path: string) => Promise<string>,
+): RuntimeAdapter {
+  return {
+    id: "memory",
+    name: "mock",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      fileWatcher: false,
+      shell: false,
+      kvStore: false,
+      workers: false,
+    },
+    fs: {
+      exists: () => Promise.resolve(true),
+      readFile,
+      writeFile: () => Promise.resolve(),
+      readDir: () => Promise.resolve([]),
+      mkdir: () => Promise.resolve(),
+      remove: () => Promise.resolve(),
+      stat: () =>
+        Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: 1,
+          mtime: null,
+        }),
+    },
+    env: {
+      get: () => undefined,
+      set: () => {},
+      delete: () => {},
+      toObject: () => ({}),
+    },
+    server: { createHandler: () => () => new Response() },
+    serve: () => Promise.resolve({ close: () => Promise.resolve() } as never),
+  } as unknown as RuntimeAdapter;
+}
+
+function createContext(readFile: (path: string) => Promise<string>): HandlerContext {
+  return {
+    projectDir: "/project",
+    adapter: createMockAdapter(readFile),
+    securityConfig: {},
+    cspUserHeader: null,
+    config: {
+      client: { moduleResolution: "self-hosted" },
+    } as HandlerContext["config"],
+    parsedDomain: { allowIframeEmbed: false } as HandlerContext["parsedDomain"],
+  } as HandlerContext;
+}
 
 function createHandler(): LibModulesHandler {
   return new LibModulesHandler();
@@ -115,6 +173,67 @@ describe("LibModulesHandler", () => {
       const handler = createHandler();
       assertExists(handler.metadata);
       assertExists(handler.handle);
+    });
+  });
+
+  describe("filesystem failures", () => {
+    it("returns a private 500 when an allowed module cannot be read", async () => {
+      const ctx = createContext((path) => {
+        assertEquals(path, CHAT_MODULE_PATH);
+        return Promise.reject(
+          new Deno.errors.PermissionDenied("private-canary /private/module/path"),
+        );
+      });
+
+      const result = await createHandler().handle(
+        new Request("http://localhost/_veryfront/lib/chat.js"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(result.response?.headers.get("cache-control")?.includes("no-store"), true);
+      assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff");
+      const body = await result.response!.text();
+      assertEquals(body.includes("private-canary"), false);
+      assertEquals(body.includes("/private/module/path"), false);
+    });
+
+    it("returns a secured 404 for a genuinely missing allowed module", async () => {
+      const ctx = createContext(() => Promise.reject(new Deno.errors.NotFound("missing")));
+
+      const result = await createHandler().handle(
+        new Request("http://localhost/_veryfront/lib/chat.js"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 404);
+      assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff");
+      assertEquals(await result.response!.text(), "Module not found");
+    });
+
+    it("rejects an oversized module before reading it into memory", async () => {
+      let readCalls = 0;
+      const ctx = createContext(() => {
+        readCalls += 1;
+        return Promise.resolve("export {};");
+      });
+      ctx.adapter.fs.stat = () =>
+        Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: 17 * 1024 * 1024,
+          mtime: null,
+        });
+
+      const result = await createHandler().handle(
+        new Request("http://localhost/_veryfront/lib/chat.js"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(readCalls, 0);
+      assertEquals(await result.response!.text(), "Module unavailable");
     });
   });
 });

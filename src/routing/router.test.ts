@@ -340,7 +340,8 @@ describe("PageRouteMatcher", () => {
       const match1 = router.match("/blog/test");
       const match2 = router.match("/blog/test");
 
-      assertEquals(match1 === match2, true);
+      assertEquals(match1 === match2, false);
+      assertEquals(match1, match2);
     });
 
     it("caches null results", () => {
@@ -377,7 +378,8 @@ describe("PageRouteMatcher", () => {
       assertExists(match2);
       assertExists(match3);
 
-      assertEquals(match1 === match3, true);
+      assertEquals(match1 === match3, false);
+      assertEquals(match1, match3);
       assertEquals(match1 === match2, false);
     });
   });

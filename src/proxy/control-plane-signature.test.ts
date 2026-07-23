@@ -53,8 +53,8 @@ async function mintJws(
     exp: overrides.exp ?? now + 60,
   };
   const claims = kind === "dispatch"
-    ? { ...base, platform: "slack", body_sha256: "n/a" }
-    : { ...base, surface: "channels", request_hash: "n/a" };
+    ? { ...base, platform: "slack", body_sha256: "a".repeat(43) }
+    : { ...base, surface: "channels", request_hash: "a".repeat(43) };
 
   const encodedHeader = base64url(JSON.stringify(header));
   const encodedPayload = base64url(JSON.stringify(claims));
@@ -104,6 +104,16 @@ describe("proxy/control-plane-signature", () => {
     assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
   });
 
+  it("returns false when x-token exceeds the proxy forwarding limit", async () => {
+    const { jws, publicKeyPem } = await mintJws("control-plane");
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const { req, url } = requestWith({
+      "x-token": "x".repeat(65_537),
+      "x-veryfront-control-plane-jws": jws,
+    });
+    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+  });
+
   it("returns false when the verification key is not configured", async () => {
     const { jws } = await mintJws("control-plane");
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
@@ -135,6 +145,33 @@ describe("proxy/control-plane-signature", () => {
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
     assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), true);
+  });
+
+  it("does not accept a valid signature from the wrong control-plane protocol", async () => {
+    const dispatch = await mintJws("dispatch");
+    Deno.env.set(PUBLIC_KEY_ENV, dispatch.publicKeyPem);
+    const controlPlaneRequest = requestWith({
+      "x-token": "t",
+      "x-veryfront-dispatch-jws": dispatch.jws,
+    });
+    assertEquals(
+      await isVerifiedInternalControlPlaneRequest(
+        controlPlaneRequest.req,
+        controlPlaneRequest.url,
+      ),
+      false,
+    );
+
+    const controlPlane = await mintJws("control-plane");
+    Deno.env.set(PUBLIC_KEY_ENV, controlPlane.publicKeyPem);
+    const channelRequest = requestWith(
+      { "x-token": "t", "x-veryfront-control-plane-jws": controlPlane.jws },
+      "http://protected.preview.veryfront.com/channels/invoke",
+    );
+    assertEquals(
+      await isVerifiedInternalControlPlaneRequest(channelRequest.req, channelRequest.url),
+      false,
+    );
   });
 
   it("returns false for a signature minted by a different key", async () => {

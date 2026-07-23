@@ -260,7 +260,6 @@ describe("anthropic-provider", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },

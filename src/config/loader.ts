@@ -1,15 +1,22 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
-import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schemas/index.ts";
-import { extname, join, resolve } from "#veryfront/compat/path/index.ts";
+import { validateVeryfrontConfig } from "./schemas/index.ts";
+import { extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isDeno, isDenoCompiled, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
-import { DEFAULT_PORT } from "./defaults.ts";
+import {
+  DEFAULT_DEV_HOST,
+  DEFAULT_PORT,
+  DEFAULT_PROJECT_DESCRIPTION,
+  DEFAULT_PROJECT_TITLE,
+  DEFAULT_RENDER_CACHE_MAX_ENTRIES,
+} from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
@@ -18,11 +25,17 @@ import {
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { ESBUILD_VERSION } from "#veryfront/platform/compat/esbuild-shared.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/defaults.ts";
+import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
+import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
+import { createImmutableConfigSnapshot } from "./immutable-config.ts";
 
 const logger = serverLogger.component("config");
 
@@ -34,12 +47,18 @@ const DEFAULT_FS_MAX_RETRIES = 3;
 const DEFAULT_FS_INITIAL_DELAY_MS = 500;
 /** Maximum backoff delay between retries */
 const DEFAULT_FS_MAX_DELAY_MS = 5_000;
-/** Maximum entries in the render cache */
-const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
 /** Maximum entries in the per-project config cache */
 const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 100;
+/** Maximum encoded size of config loaded from a multi-tenant virtual filesystem. */
+const MAX_VIRTUAL_CONFIG_SOURCE_BYTES = 4 * 1024 * 1024;
+/** Maximum accepted length for a host-owned API base URL. */
+const MAX_API_BASE_URL_LENGTH = 2_048;
+
+const configSourceEncoder = new TextEncoder();
+const configSourceDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export type { VeryfrontConfig } from "./schemas/index.ts";
+export type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 
 /**
  * Creates fresh default import map per-request.
@@ -58,18 +77,45 @@ function getDefaultImportMapForConfig(): { imports: ReturnType<typeof getReactIm
  * Otherwise uses local filesystem.
  */
 function getDefaultFsConfig(): VeryfrontConfig["fs"] {
-  const proxyModeEnv = getEnv("PROXY_MODE");
-  const isProxyMode = proxyModeEnv === "1";
-  const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+  const isProxyMode = isTruthyEnvValue(getHostEnv("PROXY_MODE"));
+  const apiBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
 
-  logger.debug("getDefaultFsConfig called", {
-    proxyModeEnv,
-    isProxyMode,
-    apiBaseUrl: apiBaseUrl ? apiBaseUrl.slice(0, 30) : "(not set)",
-  });
+  logger.debug("Resolving default filesystem configuration", { isProxyMode });
 
-  if (isProxyMode && apiBaseUrl) {
-    logger.info("Using veryfront-api filesystem (proxy mode)");
+  if (isProxyMode) {
+    if (!apiBaseUrl) {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: "Proxy mode requires VERYFRONT_API_BASE_URL",
+      });
+    }
+
+    let parsedApiBaseUrl: URL;
+    try {
+      parsedApiBaseUrl = new URL(apiBaseUrl);
+    } catch {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: "Proxy mode requires a safe HTTP or HTTPS API base URL",
+      });
+    }
+    if (
+      apiBaseUrl.length > MAX_API_BASE_URL_LENGTH ||
+      apiBaseUrl.trim() !== apiBaseUrl ||
+      Array.from(apiBaseUrl).some((character) => {
+        const code = character.charCodeAt(0);
+        return code <= 0x1f || code === 0x7f;
+      }) ||
+      (parsedApiBaseUrl.protocol !== "http:" && parsedApiBaseUrl.protocol !== "https:") ||
+      parsedApiBaseUrl.username !== "" ||
+      parsedApiBaseUrl.password !== "" ||
+      parsedApiBaseUrl.search !== "" ||
+      parsedApiBaseUrl.hash !== ""
+    ) {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: "Proxy mode requires a safe HTTP or HTTPS API base URL",
+      });
+    }
+
+    logger.debug("Using the Veryfront API filesystem");
     return {
       type: "veryfront-api",
       veryfront: {
@@ -85,7 +131,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
     };
   }
 
-  logger.info("Using local filesystem (no proxy mode)");
+  logger.debug("Using the local filesystem");
   return { type: "local" };
 }
 
@@ -100,8 +146,8 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
  */
 function createFreshDefaults(): Partial<VeryfrontConfig> {
   return {
-    title: "Veryfront App",
-    description: "Built with Veryfront",
+    title: DEFAULT_PROJECT_TITLE,
+    description: DEFAULT_PROJECT_DESCRIPTION,
     fs: getDefaultFsConfig(),
     experimental: {
       esmLayouts: true,
@@ -116,7 +162,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
       outDir: "dist",
       trailingSlash: false,
       esbuild: {
-        wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
+        wasmURL: `https://deno.land/x/esbuild@v${ESBUILD_VERSION}/esbuild.wasm`,
         worker: false,
       },
     },
@@ -133,7 +179,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
     },
     dev: {
       port: DEFAULT_PORT,
-      host: "localhost",
+      host: DEFAULT_DEV_HOST,
       open: false,
       hmr: true,
     },
@@ -158,63 +204,76 @@ const configCacheByProject = new LRUCache<string, { revision: number; config: Ve
 registerLRUCache("config-cache", configCacheByProject);
 
 let cacheRevision = 0;
-
-function validateCorsConfig(userConfig: unknown): void {
-  if (!userConfig || typeof userConfig !== "object") return;
-
-  const cfg = userConfig as Record<string, unknown>;
-  const security = cfg.security as Record<string, unknown> | undefined;
-  if (!security) return;
-
-  const cors = security.cors;
-  if (!cors || typeof cors !== "object" || Array.isArray(cors)) return;
-
-  const origin = (cors as Record<string, unknown>).origin;
-  if (origin === undefined || typeof origin === "string") return;
-
-  throw CONFIG_VALIDATION_FAILED.create({
-    detail: "security.cors.origin must be a string. Expected boolean or { origin?: string }",
-  });
-}
+const inFlightConfigLoads = new Map<
+  string,
+  { revision: number; promise: Promise<VeryfrontConfig> }
+>();
 
 function validateConfigShape(userConfig: unknown): VeryfrontConfig {
-  const validatedConfig = validateVeryfrontConfig(userConfig) as VeryfrontConfig;
-  if (!userConfig || typeof userConfig !== "object") return validatedConfig;
+  return validateVeryfrontConfig(userConfig) as VeryfrontConfig;
+}
 
-  const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
-  if (unknown.length > 0) {
-    throw CONFIG_VALIDATION_FAILED.create({
-      detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
+function mergeFilesystemConfig(
+  defaultFs: VeryfrontConfig["fs"],
+  userFs: VeryfrontConfig["fs"],
+): NonNullable<VeryfrontConfig["fs"]> {
+  if (defaultFs?.type === "veryfront-api" && defaultFs.veryfront?.proxyMode === true) {
+    const userKeys = userFs ? Object.keys(userFs) : [];
+    const hasUnsafeOverride = userKeys.some((key) => key !== "type") ||
+      (userFs?.type !== undefined && userFs.type !== "veryfront-api");
+    if (hasUnsafeOverride) {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: "Project config cannot override filesystem routing in proxy mode",
+      });
+    }
+
+    const cache = Object.freeze({ ...defaultFs.veryfront.cache });
+    const retry = Object.freeze({ ...defaultFs.veryfront.retry });
+    const veryfront = Object.freeze({
+      ...defaultFs.veryfront,
+      cache,
+      retry,
+    });
+    return Object.freeze({
+      ...defaultFs,
+      veryfront,
     });
   }
-  return userConfig as VeryfrontConfig;
+
+  const merged = {
+    ...defaultFs,
+    ...userFs,
+  } as NonNullable<VeryfrontConfig["fs"]>;
+  const defaultVeryfrontFs = defaultFs?.veryfront;
+  const userVeryfrontFs = userFs?.veryfront;
+  if (defaultVeryfrontFs || userVeryfrontFs) {
+    merged.veryfront = {
+      ...defaultVeryfrontFs,
+      ...userVeryfrontFs,
+      cache: {
+        ...defaultVeryfrontFs?.cache,
+        ...userVeryfrontFs?.cache,
+      },
+      retry: {
+        ...defaultVeryfrontFs?.retry,
+        ...userVeryfrontFs?.retry,
+      },
+    };
+  } else {
+    delete merged.veryfront;
+  }
+  return merged;
 }
 
 /** @internal Exported for tests: merges user config over fresh defaults (deep for nested objects). */
 export function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
   const defaults = createFreshDefaults();
+  const mergedFs = mergeFilesystemConfig(defaults.fs, userConfig.fs);
 
   const merged = {
     ...defaults,
     ...userConfig,
-    fs: {
-      ...defaults.fs,
-      ...userConfig.fs,
-      veryfront: {
-        ...defaults.fs?.veryfront,
-        ...userConfig.fs?.veryfront,
-        // Nested sub-objects would otherwise be replaced wholesale by a partial
-        // user override, dropping the default cache/retry fields.
-        cache: {
-          ...defaults.fs?.veryfront?.cache,
-          ...userConfig.fs?.veryfront?.cache,
-        },
-        retry: {
-          ...defaults.fs?.veryfront?.retry,
-          ...userConfig.fs?.veryfront?.retry,
-        },
-      },
-    },
+    fs: mergedFs,
     dev: {
       ...defaults.dev,
       ...userConfig.dev,
@@ -277,7 +336,7 @@ export function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontCon
     };
   }
 
-  return merged;
+  return Object.isFrozen(mergedFs) ? Object.freeze(merged) : merged;
 }
 
 function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
@@ -287,7 +346,6 @@ function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
     });
   }
 
-  validateCorsConfig(userConfig);
   const normalizedConfig = validateConfigShape(userConfig);
 
   const merged = mergeConfigs(normalizedConfig);
@@ -296,18 +354,39 @@ function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
     logger.debug("React version from config", { version: merged.react.version });
   }
 
-  return merged;
+  return createImmutableConfigSnapshot(merged);
+}
+
+function rejectInvalidVirtualConfigSource(detail: string): never {
+  throw CONFIG_PARSE_ERROR.create({ detail });
+}
+
+function decodeVirtualConfigSource(content: string | Uint8Array): string {
+  if (typeof content === "string") {
+    if (content.length > MAX_VIRTUAL_CONFIG_SOURCE_BYTES) {
+      rejectInvalidVirtualConfigSource("Virtual project config exceeds the 4 MiB source limit");
+    }
+    const encoded = configSourceEncoder.encode(content);
+    if (encoded.byteLength > MAX_VIRTUAL_CONFIG_SOURCE_BYTES) {
+      rejectInvalidVirtualConfigSource("Virtual project config exceeds the 4 MiB source limit");
+    }
+    return content;
+  }
+
+  if (content.byteLength > MAX_VIRTUAL_CONFIG_SOURCE_BYTES) {
+    rejectInvalidVirtualConfigSource("Virtual project config exceeds the 4 MiB source limit");
+  }
+
+  try {
+    return configSourceDecoder.decode(content);
+  } catch {
+    rejectInvalidVirtualConfigSource("Virtual project config must use valid UTF-8");
+  }
 }
 
 function isConfigError(error: unknown): boolean {
-  // Prefer the structured slug check. The message-prefix check is only a fallback
-  // for errors thrown before they were migrated to the VeryfrontError registry;
-  // it is intentionally narrow to avoid misclassifying third-party errors.
-  if (
-    error instanceof VeryfrontError &&
-    (error.slug === "config-validation-failed" || error.slug === "config-parse-error")
-  ) return true;
-  return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
+  return error instanceof VeryfrontError &&
+    (error.slug === "config-validation-failed" || error.slug === "config-parse-error");
 }
 
 async function loadConfigFromTempFile(
@@ -320,7 +399,8 @@ async function loadConfigFromTempFile(
 
   // In compiled Deno binaries, we can't import TypeScript directly.
   // Convert .ts/.tsx to .mjs after running it through the bundler transform.
-  const needsTranspile = isDenoCompiled && (originalExt === ".ts" || originalExt === ".tsx");
+  const needsTranspile = (isDenoCompiled || isNode) &&
+    (originalExt === ".ts" || originalExt === ".tsx");
   const extension = needsTranspile ? ".mjs" : originalExt;
   const processedSource = needsTranspile
     ? await transpileConfigSourceForImport(source, configPath)
@@ -330,53 +410,105 @@ async function loadConfigFromTempFile(
   const tempFile = join(tempDir, `config${extension}`);
 
   try {
-    await fs.writeTextFile(tempFile, rewriteBareVeryfrontConfigImports(processedSource));
+    await writeConfigHelperPackage(fs, tempDir);
+    const importableSource = isDeno
+      ? await resolveConfigHelperImports(processedSource)
+      : processedSource;
+    await fs.writeTextFile(tempFile, importableSource);
     const configModule = await import(loadUrl(tempFile));
-    return configModule.default || configModule;
+    return readConfigModuleExport(configModule);
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
 }
 
+function readConfigModuleExport(configModule: unknown): unknown {
+  if (
+    (typeof configModule === "object" && configModule !== null) ||
+    typeof configModule === "function"
+  ) {
+    if (Object.prototype.hasOwnProperty.call(configModule, "default")) {
+      return (configModule as { default: unknown }).default;
+    }
+  }
+  return configModule;
+}
+
 /**
- * Inline stand-in for the bare `veryfront` specifier in user config files.
+ * Minimal package used to resolve the bare `veryfront` specifier in temporary
+ * user config modules.
  *
  * Config modules loaded through {@link loadConfigFromTempFile} execute from a
- * temp file, where bare specifiers have no resolver: Node has no node_modules
- * relative to the temp dir, and compiled Deno binaries have no import map for
- * external dynamic imports. Every config helper the framework entrypoint
- * exposes is a thin pure function, so a data: URL module is a faithful
- * stand-in. Written with double quotes only — encodeURIComponent escapes
- * them, keeping the URL safe inside either quote style of the rewritten
- * import statement.
+ * temp directory, where the host project's import map and package installation
+ * are unavailable. Bun and Node resolve a local package through their native
+ * ESM rules. Deno import maps take precedence over that package, so exact
+ * helper specifiers are rewritten from module-lexer ranges. Only supported
+ * project-authoring helpers are exposed.
  */
-const VERYFRONT_CONFIG_SHIM = [
+/** @internal Self-contained helper surface allowed in isolated project config Workers. */
+export const VERYFRONT_CONFIG_SHIM = [
+  "const readEnv = (key) => {",
+  "  try {",
+  "    return globalThis.Deno?.env?.get?.(key) ?? globalThis.process?.env?.[key];",
+  "  } catch (error) {",
+  '    if (error?.name !== "NotCapable") throw error;',
+  "    return globalThis.process?.env?.[key];",
+  "  }",
+  "};",
   "export const defineConfig = (config) => config;",
   "export const defineConfigWithEnv = (factory, envConfig) =>",
-  '  factory(envConfig?.nodeEnv ?? globalThis.Deno?.env?.get?.("NODE_ENV") ??',
-  '    globalThis.process?.env?.NODE_ENV ?? "production");',
+  '  factory(envConfig?.nodeEnv ?? readEnv("NODE_ENV") ?? readEnv("DENO_ENV") ?? "development");',
   "export const mergeConfigs = (...configs) => Object.assign({}, ...configs);",
 ].join("\n");
 
-const VERYFRONT_CONFIG_SHIM_URL = `data:text/javascript,${
-  encodeURIComponent(VERYFRONT_CONFIG_SHIM)
-}`;
+const CONFIG_HELPER_MODULE_SPECIFIER = "./node_modules/veryfront/index.mjs";
+const moduleLexerInitializations = new WeakMap<object, Promise<void>>();
 
-/**
- * Rewrite bare `veryfront` import specifiers to the inline config shim so
- * temp-file config modules can load. Static imports only (`import ... from
- * "veryfront"` and side-effect `import "veryfront"`); subpaths like
- * `veryfront/head` are left untouched and will fail loudly, which is correct —
- * they have no meaning in a config file.
- *
- * @internal exported for tests
- */
-export function rewriteBareVeryfrontConfigImports(source: string): string {
-  return source.replace(
-    /(\bfrom\s*|\bimport\s+)(["'])veryfront\2/g,
-    (_match, prefix: string, quote: string) =>
-      `${prefix}${quote}${VERYFRONT_CONFIG_SHIM_URL}${quote}`,
-  );
+async function resolveConfigHelperImports(source: string): Promise<string> {
+  await ensureDefaultBundlerContracts();
+  const lexer = resolveExtensionContract<ModuleLexer>("ModuleLexer");
+  if (lexer.init) {
+    let initialization = moduleLexerInitializations.get(lexer);
+    if (!initialization) {
+      initialization = lexer.init();
+      moduleLexerInitializations.set(lexer, initialization);
+    }
+    await initialization;
+  }
+
+  const imports = [...lexer.parse(source)]
+    .filter((entry) => entry.d === -1 && entry.n === "veryfront")
+    .sort((left, right) => right.s - left.s);
+  let result = source;
+  for (const entry of imports) {
+    if (
+      !Number.isSafeInteger(entry.s) || !Number.isSafeInteger(entry.e) ||
+      entry.s < 0 || entry.e < entry.s || entry.e > result.length
+    ) {
+      throw new TypeError("Module lexer returned an invalid config import range");
+    }
+    result = result.slice(0, entry.s) + CONFIG_HELPER_MODULE_SPECIFIER + result.slice(entry.e);
+  }
+  return result;
+}
+
+async function writeConfigHelperPackage(
+  fs: ReturnType<typeof createFileSystem>,
+  tempDir: string,
+): Promise<void> {
+  const packageDir = join(tempDir, "node_modules", "veryfront");
+  await fs.mkdir(packageDir, { recursive: true });
+  await Promise.all([
+    fs.writeTextFile(
+      join(tempDir, "package.json"),
+      JSON.stringify({ private: true, type: "module" }),
+    ),
+    fs.writeTextFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "veryfront", private: true, type: "module", exports: "./index.mjs" }),
+    ),
+    fs.writeTextFile(join(packageDir, "index.mjs"), VERYFRONT_CONFIG_SHIM),
+  ]);
 }
 
 /** @internal */
@@ -384,6 +516,7 @@ export async function transpileConfigSourceForImport(
   source: string,
   configPath: string,
 ): Promise<string> {
+  await ensureDefaultBundlerContracts();
   const { transform } = await import("veryfront/extensions/bundler");
   const extension = extname(configPath);
   const loader = extension === ".tsx" ? "tsx" : "ts";
@@ -397,92 +530,71 @@ export async function transpileConfigSourceForImport(
 
 /**
  * Load config from virtual filesystem.
- * Uses esbuild to transpile TypeScript to JavaScript before importing.
+ * Imports through an isolated temporary module and transpiles TypeScript in
+ * compiled runtimes that cannot import it directly.
  */
 function loadConfigFromVirtualFS(
   configPath: string,
-  cacheKey: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
-      logger.debug("Loading config from virtual filesystem (API)", { configPath });
+      logger.debug("Loading config from the virtual filesystem");
       const content = await adapter.fs.readFile(configPath);
-      const source = typeof content === "string" ? content : new TextDecoder().decode(content);
-      logger.debug("Got config source from API", {
-        configPath,
-        sourceLength: source.length,
-        sourcePreview: source.slice(0, 200),
-      });
+      const source = decodeVirtualConfigSource(content);
 
       const userConfig = await loadConfigFromTempFile(
         source,
         configPath,
-        (tempFile) => `file://${tempFile}?v=${Date.now()}`,
+        (tempFile) => {
+          const url = toFileUrl(tempFile);
+          url.searchParams.set("v", crypto.randomUUID());
+          return url.href;
+        },
       );
 
-      logger.debug("Loaded config from virtual filesystem", {
-        configPath,
-        hasApp: !!(userConfig as Record<string, unknown>)?.app,
-        hasLayout: !!(userConfig as Record<string, unknown>)?.layout,
-        hasRouter: !!(userConfig as Record<string, unknown>)?.router,
-        configKeys: Object.keys(userConfig as Record<string, unknown>),
-      });
+      logger.debug("Loaded config from the virtual filesystem");
 
       return validateAndMergeConfig(userConfig);
     },
-    { "config.path": configPath, "config.project_dir": cacheKey, "config.source": "virtual_fs" },
+    { "config.source": "virtual_fs" },
   );
 }
 
 async function loadAndMergeConfig(
   configPath: string,
-  cacheKey: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
   const isVirtualFS = isVirtualFilesystem(adapter.fs);
-  logger.debug("loadAndMergeConfig called", {
-    configPath,
-    cacheKey,
-    isVirtualFS,
-    isBun,
-    isDenoCompiled,
-  });
+  logger.debug("Loading and merging config", { isVirtualFS, isBun, isDenoCompiled });
 
   if (isVirtualFS) {
-    logger.debug("Using virtual filesystem (API) for config", { configPath });
-    return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
+    logger.debug("Using the virtual filesystem for config");
+    return loadConfigFromVirtualFS(configPath, adapter);
   }
 
-  // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
+  // Node and compiled Deno binaries can't dynamically import TypeScript files directly.
   // We need to read the source, write to a temp file, and import from there.
-  if (isBun || isDenoCompiled) {
-    logger.debug("Using temp file import for Bun/compiled Deno", {
-      configPath,
-      isBun,
-      isDenoCompiled,
-    });
+  if (isBun || isDenoCompiled || isNode) {
+    logger.debug("Using a temporary config module", { isBun, isDenoCompiled, isNode });
     const fs = createFileSystem();
     const source = await fs.readTextFile(configPath);
 
     const userConfig = await loadConfigFromTempFile(
       source,
       configPath,
-      (tempFile) => `file://${tempFile}`,
+      (tempFile) => toFileUrl(tempFile).href,
     );
-    logger.debug("Successfully loaded config via temp file", {
-      configPath,
-      hasApp: !!(userConfig as Record<string, unknown>)?.app,
-      hasRouter: !!(userConfig as Record<string, unknown>)?.router,
-    });
+    logger.debug("Loaded config through a temporary module");
     return validateAndMergeConfig(userConfig);
   }
 
   const absolutePath = resolve(configPath);
-  const configUrl = `file://${absolutePath}?t=${Date.now()}-${crypto.randomUUID()}`;
-  const configModule = await import(configUrl);
-  return validateAndMergeConfig(configModule.default || configModule);
+  const configUrl = toFileUrl(absolutePath);
+  configUrl.searchParams.set("v", crypto.randomUUID());
+  const configModule = await import(configUrl.href);
+  return validateAndMergeConfig(readConfigModuleExport(configModule));
 }
 
 /**
@@ -514,14 +626,6 @@ function getVirtualConfigSourceContext(): VirtualConfigSourceContext | undefined
     branch: source.branch,
     environmentName: source.environmentName,
   };
-}
-
-function describeVirtualConfigSource(context: VirtualConfigSourceContext): string {
-  if (!context.productionMode) return `branch:${context.branch ?? "main"}`;
-  if (context.environmentName) {
-    return `environment:${context.environmentName}:${context.releaseId ?? "missing-release"}`;
-  }
-  return `release:${context.releaseId ?? "missing-release"}`;
 }
 
 type NormalizedVirtualConfigSource =
@@ -576,21 +680,17 @@ function assertMatchingVirtualConfigSource(
   if (virtualConfigSourcesMatch(expectedSource, actualSource)) return;
 
   throw CACHE_INVARIANT_VIOLATION.create({
-    detail: `Explicit virtual config source "${
-      describeVirtualConfigSource(expected)
-    }" does not match the current request context "${describeVirtualConfigSource(actual)}"`,
+    detail: "Explicit virtual config source does not match the current request context",
   });
 }
 
+/** Load, validate, merge, and cache the configuration for one project. */
 export function getConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
   options?: GetConfigOptions,
 ): Promise<VeryfrontConfig> {
-  const getConfigStartTime = performance.now();
-  const cacheKeyForLog = options?.cacheKey || "unknown";
-
-  logger.debug("getConfig START", { projectDir, cacheKey: cacheKeyForLog });
+  logger.debug("Starting config load");
 
   return withSpan(
     SpanNames.CONFIG_LOAD,
@@ -616,90 +716,100 @@ export function getConfig(
         sourceContext,
       );
 
-      logger.debug("Cache key built", {
-        effectiveCacheKey,
-        isVirtualFS,
-        cacheKey: cacheKeyForLog,
-        source: sourceContext ? describeVirtualConfigSource(sourceContext) : undefined,
-        usePersistentCache,
-      });
+      logger.debug("Resolved config cache policy", { isVirtualFS, usePersistentCache });
 
       const cached = usePersistentCache ? configCacheByProject.get(effectiveCacheKey) : undefined;
       if (cached?.revision === cacheRevision) {
-        logger.debug("Cache HIT - using cached config", {
-          cacheKey: effectiveCacheKey,
-          isVirtualFS,
-          hasApp: !!cached.config.app,
-          hasLayout: !!(cached.config as Record<string, unknown>).layout,
-          duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
-        });
+        logger.debug("Using cached config", { isVirtualFS });
         return cached.config;
       }
 
-      logger.debug("Cache MISS - loading config", {
-        cacheKey: effectiveCacheKey,
-        isVirtualFS,
-      });
+      const loadRevision = cacheRevision;
+      const loadConfig = async (): Promise<VeryfrontConfig> => {
+        logger.debug("Loading uncached config", { isVirtualFS });
 
-      // For virtual filesystem, config is at project root ("/"), not the local projectDir
-      const configBaseDir = isVirtualFS ? "/" : projectDir;
+        // Virtual filesystems expose project config at their root.
+        const configBaseDir = isVirtualFS ? "/" : projectDir;
 
-      for (const configFile of VERYFRONT_CONFIG_FILES) {
-        const configPath = join(configBaseDir, configFile);
-        const exists = await adapter.fs.exists(configPath);
-        logger.debug("Checking config file", { configPath, exists, isVirtualFS });
-        if (!exists) continue;
-
-        try {
-          const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          if (usePersistentCache) {
-            configCacheByProject.set(effectiveCacheKey, {
-              revision: cacheRevision,
-              config: merged,
+        for (const configFile of VERYFRONT_CONFIG_FILES) {
+          const configPath = join(configBaseDir, configFile);
+          let exists: boolean;
+          try {
+            exists = await adapter.fs.exists(configPath);
+          } catch {
+            logger.warn("Failed to inspect config file", { configFile });
+            throw CONFIG_PARSE_ERROR.create({
+              detail: `Failed to inspect ${configFile}`,
+              context: { configFile },
             });
           }
-          logger.debug("Successfully loaded config", {
-            configFile,
-            hasApp: !!merged.app,
-            hasLayout: !!(merged as Record<string, unknown>).layout,
-            configKeys: Object.keys(merged),
-          });
-          return merged;
-        } catch (error) {
-          if (isConfigError(error)) throw error;
-          logger.warn("Failed to load config file", { configFile });
-          throw CONFIG_PARSE_ERROR.create({
-            detail: `Failed to load ${configFile}`,
-            cause: error,
-            context: { configFile },
+          logger.debug("Checked config file", { configFile, exists, isVirtualFS });
+          if (!exists) continue;
+
+          try {
+            const merged = await loadAndMergeConfig(configPath, adapter);
+            if (usePersistentCache && cacheRevision === loadRevision) {
+              configCacheByProject.set(effectiveCacheKey, {
+                revision: loadRevision,
+                config: merged,
+              });
+            }
+            logger.debug("Loaded config file", { configFile });
+            return merged;
+          } catch (error) {
+            if (isConfigError(error)) throw error;
+            logger.warn("Failed to load config file", { configFile });
+            throw CONFIG_PARSE_ERROR.create({
+              detail: `Failed to load ${configFile}`,
+              context: { configFile },
+            });
+          }
+        }
+
+        logger.debug("No config file found, using defaults", { isVirtualFS });
+
+        const defaultConfig = createImmutableConfigSnapshot(
+          createFreshDefaults() as VeryfrontConfig,
+        );
+        if (usePersistentCache && cacheRevision === loadRevision) {
+          configCacheByProject.set(effectiveCacheKey, {
+            revision: loadRevision,
+            config: defaultConfig,
           });
         }
+        return defaultConfig;
+      };
+
+      if (!usePersistentCache) return loadConfig();
+
+      const existingLoad = inFlightConfigLoads.get(effectiveCacheKey);
+      if (existingLoad?.revision === loadRevision) {
+        logger.debug("Joining config load in progress", { isVirtualFS });
+        return existingLoad.promise;
       }
 
-      logger.debug("No config file found, using defaults", {
-        effectiveCacheKey,
-        projectDir,
-        isVirtualFS,
-        duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
-      });
-
-      const defaultConfig = createFreshDefaults() as VeryfrontConfig;
-      if (usePersistentCache) {
-        configCacheByProject.set(effectiveCacheKey, {
-          revision: cacheRevision,
-          config: defaultConfig,
-        });
+      const promise = loadConfig();
+      inFlightConfigLoads.set(effectiveCacheKey, { revision: loadRevision, promise });
+      try {
+        return await promise;
+      } finally {
+        if (inFlightConfigLoads.get(effectiveCacheKey)?.promise === promise) {
+          inFlightConfigLoads.delete(effectiveCacheKey);
+        }
       }
-      return defaultConfig;
     },
-    { "config.project_dir": projectDir, "config.cache_key": options?.cacheKey || "default" },
+    { "config.source": options?.cacheKey ? "virtual" : "local" },
   );
 }
 
+/** Invalidate all cached and in-flight project configuration loads. */
 export function clearConfigCache(): void {
-  configCacheByProject.clear();
   cacheRevision++;
+  configCacheByProject.clear();
+  inFlightConfigLoads.clear();
 }
+
+registerProcessStateReset("config loader", clearConfigCache);
 
 /**
  * Synchronous config cache lookup for hot paths.

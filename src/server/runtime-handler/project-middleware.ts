@@ -1,19 +1,28 @@
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter, RuntimeResponse } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { MiddlewareContext } from "#veryfront/middleware/core/context.ts";
-import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
+import { RuntimeMiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env";
 import {
   loadMiddlewareFile,
+  MAX_MIDDLEWARE_FUNCTIONS,
   type MiddlewareFunction,
+  PROJECT_MIDDLEWARE_FILES,
+  validateMiddlewareFunctionList,
 } from "#veryfront/server/dev-server/middleware.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
+import { join } from "#veryfront/compat/path/index.ts";
+import { createProjectCodeUnavailableResponse } from "../utils/project-code-isolation.ts";
+import { classifyTelemetryError } from "#veryfront/observability/telemetry-safety.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
+const MAX_CACHE_IDENTITY_BYTES = 512;
+const MAX_CACHE_PROJECT_DIR_BYTES = 4_096;
+const textEncoder = new TextEncoder();
 const logger = serverLogger.component("project-middleware");
 
 type MiddlewareLoader = (
@@ -31,11 +40,34 @@ export interface ProjectMiddlewareRuntimeContext {
   request: Request;
   handlerContext: HandlerContext;
   isSharedProxy: boolean;
-  next: () => Promise<Response | undefined>;
+  next: () => Promise<RuntimeResponse | undefined>;
 }
 
-function cacheSegment(value: string): string {
-  return encodeURIComponent(value);
+function cacheSegment(value: string, maxBytes = MAX_CACHE_IDENTITY_BYTES): string | null {
+  if (
+    value.length === 0 || textEncoder.encode(value).byteLength > maxBytes ||
+    containsControlCharacter(value)
+  ) {
+    return null;
+  }
+  try {
+    return encodeURIComponent(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint !== undefined &&
+      (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function resolvedEnvironment(ctx: HandlerContext): "production" | "preview" {
@@ -50,6 +82,8 @@ function resolvedBranch(ctx: HandlerContext): string | null {
 export class ProjectMiddlewareRuntime {
   readonly #cache: LRUCache<string, Promise<readonly MiddlewareFunction[]>>;
   readonly #loadMiddleware: MiddlewareLoader;
+  readonly #adapterIdentities = new WeakMap<RuntimeAdapter, number>();
+  #nextAdapterIdentity = 1;
 
   constructor(options: ProjectMiddlewareRuntimeOptions = {}) {
     this.#cache = new LRUCache({
@@ -69,6 +103,7 @@ export class ProjectMiddlewareRuntime {
 
   invalidateProject(projectIdentity: string): number {
     const expectedProject = cacheSegment(projectIdentity);
+    if (!expectedProject) return 0;
     let deleted = 0;
 
     for (const key of [...this.#cache.keys()]) {
@@ -83,7 +118,7 @@ export class ProjectMiddlewareRuntime {
     this.#cache.clear();
   }
 
-  async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
+  async execute(input: ProjectMiddlewareRuntimeContext): Promise<RuntimeResponse | undefined> {
     const { handlerContext: ctx, isSharedProxy, next, request } = input;
 
     if (
@@ -97,11 +132,18 @@ export class ProjectMiddlewareRuntime {
 
     const environment = resolvedEnvironment(ctx);
     const branch = resolvedBranch(ctx);
-    const executeMiddleware = async (): Promise<Response | undefined> => {
+    const executeMiddleware = async (): Promise<RuntimeResponse | undefined> => {
+      if (ctx.isLocalProject === false || (isSharedProxy && ctx.isLocalProject !== true)) {
+        if (await this.#hasRemoteProjectMiddleware(ctx)) {
+          return createProjectCodeUnavailableResponse(request);
+        }
+        return next();
+      }
+
       const middleware = await this.#getMiddleware(ctx, environment, branch);
       if (middleware.length === 0) return next();
 
-      const pipeline = new MiddlewarePipeline();
+      const pipeline = new RuntimeMiddlewarePipeline();
       for (const handler of middleware) pipeline.use(handler);
 
       const composed = pipeline.compose();
@@ -132,6 +174,25 @@ export class ProjectMiddlewareRuntime {
         environmentName: ctx.environmentName ?? null,
       },
     );
+  }
+
+  async #hasRemoteProjectMiddleware(ctx: HandlerContext): Promise<boolean> {
+    const customMiddleware = ctx.config?.middleware?.custom;
+    if (customMiddleware !== undefined) {
+      if (!Array.isArray(customMiddleware) || customMiddleware.length > 0) return true;
+    }
+
+    try {
+      for (const file of PROJECT_MIDDLEWARE_FILES) {
+        if (await ctx.adapter.fs.exists(join(ctx.projectDir, file))) return true;
+      }
+      return false;
+    } catch (error) {
+      logger.error("Unable to verify remote project middleware", {
+        errorCategory: classifyTelemetryError(error),
+      });
+      return true;
+    }
   }
 
   async #getMiddleware(
@@ -168,25 +229,47 @@ export class ProjectMiddlewareRuntime {
     if (!sourceIdentity) return null;
 
     const environmentIdentity = ctx.environmentId ?? ctx.environmentName ?? "default";
+    const projectSegment = cacheSegment(projectIdentity);
+    const sourceSegment = cacheSegment(sourceIdentity);
+    const environmentSegment = cacheSegment(environmentIdentity);
+    const projectDirSegment = cacheSegment(ctx.projectDir, MAX_CACHE_PROJECT_DIR_BYTES);
+    if (!projectSegment || !sourceSegment || !environmentSegment || !projectDirSegment) return null;
+
+    let adapterIdentity = this.#adapterIdentities.get(ctx.adapter);
+    if (adapterIdentity === undefined) {
+      adapterIdentity = this.#nextAdapterIdentity++;
+      this.#adapterIdentities.set(ctx.adapter, adapterIdentity);
+    }
     return [
-      cacheSegment(projectIdentity),
+      projectSegment,
+      `adapter-${adapterIdentity}`,
+      projectDirSegment,
       environment,
-      cacheSegment(sourceIdentity),
-      cacheSegment(environmentIdentity),
+      sourceSegment,
+      environmentSegment,
     ].join(":");
   }
 
   async #load(ctx: HandlerContext): Promise<readonly MiddlewareFunction[]> {
     try {
-      const fileMiddleware = await this.#loadMiddleware(ctx.projectDir, ctx.adapter);
-      return [...fileMiddleware, ...(ctx.config?.middleware?.custom ?? [])];
+      const customMiddleware = validateMiddlewareFunctionList(
+        ctx.config?.middleware?.custom ?? [],
+        "custom middleware configuration",
+        true,
+      );
+      const fileMiddleware = validateMiddlewareFunctionList(
+        await this.#loadMiddleware(ctx.projectDir, ctx.adapter),
+        "loaded middleware",
+        true,
+      );
+      if (fileMiddleware.length + customMiddleware.length > MAX_MIDDLEWARE_FUNCTIONS) {
+        throw new TypeError("Invalid middleware configuration: too many functions");
+      }
+      return Object.freeze([...fileMiddleware, ...customMiddleware]);
     } catch (error) {
       logger.error("Failed to load project middleware", {
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        releaseId: ctx.releaseId,
-        branch: resolvedBranch(ctx),
-        error: error instanceof Error ? error.message : String(error),
+        environment: resolvedEnvironment(ctx),
+        failureCategory: classifyTelemetryError(error),
       });
       throw error;
     }

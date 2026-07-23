@@ -84,6 +84,7 @@ export type {
   ToolExecutionContext,
   ToolExecutionDataEvent,
   ToolSet,
+  ToolType,
 } from "./types.ts";
 
 export { dynamicTool, tool } from "./factory.ts";
@@ -97,12 +98,13 @@ export type {
 } from "./sleep.ts";
 export { createRemoteMCPToolSource } from "./remote-mcp.ts";
 export { hasToolExecutionErrorMarker, isErroredToolExecutionResult } from "./result.ts";
-export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
+export type { RemoteMCPResolvableValue, RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
 export { createContext7ToolSource } from "./context7.ts";
 export type { Context7ToolSourceConfig } from "./context7.ts";
 export { createToolsFromHostDefinitions } from "./host-tools.ts";
 export type {
   HostToolDefinition,
+  HostToolExecute,
   HostToolMaterializationOptions,
   HostToolSet,
 } from "./host-tools.ts";
@@ -142,4 +144,20 @@ export { toolRegistry } from "./registry.ts";
 
 export { executeTool, isToolVisibleTo } from "./executor.ts";
 
-export type { JsonSchema } from "./schema/index.ts";
+export type { JsonSchema, JsonSchemaTypeName } from "./schema/index.ts";
+
+export type {
+  InferSchema,
+  InferShape,
+  RefinementCtx,
+  Schema,
+  ValidationFailure,
+  ValidationIssue,
+  ValidationResult,
+  ValidationSuccess,
+} from "#veryfront/extensions/schema/index.ts";
+
+// Re-export types referenced by the public tool contracts so generated API
+// documentation does not require consumers to import internal dependencies.
+export type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
+export type { BlobRef, BlobStorage, StoreBlobOptions } from "#veryfront/workflow/blob/types.ts";

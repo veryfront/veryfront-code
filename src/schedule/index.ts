@@ -30,3 +30,10 @@ export type {
 export { isScheduleDefinition } from "./types.ts";
 export { discoverSchedules } from "./discovery.ts";
 export type { ScheduleDiscoveryOptions, ScheduleDiscoveryResult } from "./discovery.ts";
+export type { TriggerTarget, TriggerTargetKind } from "#veryfront/trigger/target.ts";
+export type {
+  SourceTriggerDiscoveryError,
+  SourceTriggerDiscoveryErrorCode,
+  SourceTriggerDiscoveryResult,
+  SourceTriggerKind,
+} from "#veryfront/trigger/discovery.ts";

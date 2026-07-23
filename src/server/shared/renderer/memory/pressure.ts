@@ -32,7 +32,10 @@ function parseEnvThreshold(name: string, fallback: number): number {
     return parsed;
   }
 
-  memoryPressureLog.warn(`Invalid ${name}=${value}, using default ${fallback}`);
+  memoryPressureLog.warn("Invalid memory threshold, using default", {
+    setting: name,
+    defaultValue: fallback,
+  });
   return fallback;
 }
 

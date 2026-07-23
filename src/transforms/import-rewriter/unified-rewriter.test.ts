@@ -30,6 +30,23 @@ function createCtx(overrides?: Partial<RewriteContext>): RewriteContext {
 }
 
 describe("UnifiedImportRewriter", () => {
+  it("uses the configured vendor bundle for React imports", async () => {
+    const rewriter = new UnifiedImportRewriter();
+    const result = await rewriter.rewrite(
+      `import React from "react";\n`,
+      createCtx({
+        moduleServerUrl: "http://localhost:3000/_vf_modules",
+        vendorBundleHash: "vendor-hash",
+      }),
+    );
+
+    assertEquals(
+      result.includes("http://localhost:3000/_vf_modules/_vendor.js?v=vendor-hash"),
+      true,
+    );
+    assertEquals(result.includes("https://esm.sh/react"), false);
+  });
+
   it("applies matching strategy to imports", async () => {
     const strategy = mockStrategy(
       "test",

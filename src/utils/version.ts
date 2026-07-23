@@ -1,16 +1,18 @@
 import denoConfig from "#deno-config" with { type: "json" };
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { VERSION } from "./version-constant.ts";
 export { VERSION } from "./version-constant.ts";
 
 export function normalizeVeryfrontVersion(version: string | undefined): string | undefined {
   if (!version) return undefined;
-  return version.replace(/^v(?=\d)/, "");
+  const normalized = version.trim().replace(/^v(?=\d)/, "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}$/.test(normalized)) return undefined;
+  return normalized;
 }
 
 function getVersionEnv(name: string): string | undefined {
   try {
-    return getEnv(name);
+    return getHostEnv(name);
   } catch {
     return undefined;
   }
@@ -22,10 +24,19 @@ export function resolveRuntimeVersion(options: {
   denoVersion?: string;
   fallbackVersion?: string;
 } = {}): string {
-  return normalizeVeryfrontVersion(options.veryfrontVersion ?? options.releaseVersion) ??
-    normalizeVeryfrontVersion(options.denoVersion) ??
-    options.fallbackVersion ??
-    VERSION;
+  for (
+    const candidate of [
+      options.veryfrontVersion,
+      options.releaseVersion,
+      options.denoVersion,
+      options.fallbackVersion,
+      VERSION,
+    ]
+  ) {
+    const normalized = normalizeVeryfrontVersion(candidate);
+    if (normalized) return normalized;
+  }
+  return VERSION;
 }
 
 export const RUNTIME_VERSION = resolveRuntimeVersion({

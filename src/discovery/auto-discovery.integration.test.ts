@@ -156,6 +156,53 @@ describe(
       assertExists(result.errors);
     });
 
+    it("reports project-relative error locations", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-safe-error-" });
+      try {
+        await Deno.mkdir(`${tempDir}/tools`);
+        await Deno.writeTextFile(`${tempDir}/tools/broken.ts`, "export default {;");
+
+        const result = await discoverAll({ baseDir: tempDir });
+
+        assertEquals(result.errors.length, 1);
+        assertEquals(result.errors[0]?.file, "tools/broken.ts");
+        assertEquals(result.errors[0]?.error.message.includes(tempDir), false);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("reports malformed source-defined tasks", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-invalid-task-" });
+      try {
+        await Deno.mkdir(`${tempDir}/tasks`);
+        await Deno.writeTextFile(
+          `${tempDir}/tasks/broken.ts`,
+          'export default { run: "not-a-function" };',
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          agentDirs: [],
+          skillDirs: [],
+          toolDirs: [],
+          resourceDirs: [],
+          promptDirs: [],
+          workflowDirs: [],
+          taskDirs: ["tasks"],
+          scheduleDirs: [],
+          webhookDirs: [],
+          evalDirs: [],
+        });
+
+        assertEquals(result.tasks.size, 0);
+        assertEquals(result.errors.length, 1);
+        assertEquals(result.errors[0]?.file, "tasks/broken.ts");
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("discovers source-defined schedules and webhooks", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-triggers-" });
 
@@ -298,8 +345,10 @@ describe(
         await Deno.writeTextFile(
           `${tempDir}/tools/many.ts`,
           [
-            'export const alpha = { execute: async () => "alpha" };',
-            'export const beta = { execute: async () => "beta" };',
+            'import { tool } from "veryfront/tool";',
+            'const inputSchema = { type: "object", properties: {}, additionalProperties: false };',
+            'export const alpha = tool({ description: "Alpha", inputSchema, execute: async () => "alpha" });',
+            'export const beta = tool({ description: "Beta", inputSchema, execute: async () => "beta" });',
           ].join("\n"),
         );
 
@@ -310,6 +359,157 @@ describe(
 
         assertEquals(Array.from(result.tools.keys()).sort(), ["alpha", "beta"]);
         assertEquals(toolRegistry.getAllIds().sort(), ["alpha", "beta"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects modules with an excessive number of exported definitions", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-export-limit-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        const exports = Array.from(
+          { length: 1_001 },
+          (_, index) =>
+            `export const tool${index} = { id: "tool-${index}", execute: async () => ${index} };`,
+        );
+        await Deno.writeTextFile(`${tempDir}/tools/generated.ts`, exports.join("\n"));
+
+        const result = await discoverAll({ baseDir: tempDir, verbose: false });
+
+        assertEquals(result.tools.size, 0);
+        assertEquals(result.errors.length, 1);
+        assertStringIncludes(result.errors[0]?.error.message ?? "", "export limit");
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("discovers supported JavaScript module files end to end", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-javascript-" });
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/plain-js.js`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'export default tool({ description: "Plain JS", inputSchema: { type: "object", properties: {} }, execute: async () => "js" });',
+          ].join("\n"),
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/tools/plain-mjs.mjs`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'export default tool({ description: "Plain MJS", inputSchema: { type: "object", properties: {} }, execute: async () => "mjs" });',
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({ baseDir: tempDir });
+
+        assertEquals([...result.tools.keys()].sort(), ["plainJs", "plainMjs"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("discovers default and named definitions from the same module", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-default-named-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/mixed.ts`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'const inputSchema = { type: "object", properties: {}, additionalProperties: false };',
+            'const primary = tool({ id: "primary", description: "Primary", inputSchema, execute: async () => "primary" });',
+            'export const secondary = tool({ id: "secondary", description: "Secondary", inputSchema, execute: async () => "secondary" });',
+            "export default primary;",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({ baseDir: tempDir, verbose: false });
+
+        assertEquals(Array.from(result.tools.keys()).sort(), ["primary", "secondary"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("reports duplicate ids from concrete discovery modules", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-duplicate-tool-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        const source = [
+          'import { tool } from "veryfront/tool";',
+          'export default tool({ id: "duplicate", description: "Duplicate", inputSchema: { type: "object", properties: {} }, execute: async () => "value" });',
+        ].join("\n");
+        await Deno.writeTextFile(`${tempDir}/tools/first.ts`, source);
+        await Deno.writeTextFile(`${tempDir}/tools/second.ts`, source);
+
+        const result = await discoverAll({ baseDir: tempDir, verbose: false });
+
+        assertEquals(result.tools.size, 1);
+        assertEquals(result.errors.length, 1);
+        assertStringIncludes(result.errors[0]?.error.message ?? "", "Duplicate tool id");
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("keeps the first duplicate agent in both the result and registry", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-duplicate-agent-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/agents`, { recursive: true });
+        for (
+          const [file, system] of [["first.ts", "First definition"], [
+            "second.ts",
+            "Second definition",
+          ]] as const
+        ) {
+          await Deno.writeTextFile(
+            `${tempDir}/agents/${file}`,
+            [
+              'import { agent } from "veryfront/agent";',
+              `export default agent({ id: "duplicate-agent", system: "${system}" });`,
+            ].join("\n"),
+          );
+        }
+
+        const result = await discoverAll({ baseDir: tempDir, verbose: false });
+
+        assertEquals(result.errors.length, 1);
+        assertEquals(result.agents.get("duplicate-agent")?.config.system, "First definition");
+        assertEquals(agentRegistry.get("duplicate-agent")?.config.system, "First definition");
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("removes deleted definitions from project registries on rediscovery", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-stale-tool-" });
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        const toolFile = `${tempDir}/tools/temporary.ts`;
+        await Deno.writeTextFile(
+          toolFile,
+          [
+            'import { tool } from "veryfront/tool";',
+            'export default tool({ id: "temporary", description: "Temporary", inputSchema: { type: "object", properties: {} }, execute: async () => "value" });',
+          ].join("\n"),
+        );
+
+        await discoverAll({ baseDir: tempDir });
+        assertEquals(toolRegistry.has("temporary"), true);
+
+        await Deno.remove(toolFile);
+        const result = await discoverAll({ baseDir: tempDir });
+
+        assertEquals(result.tools.has("temporary"), false);
+        assertEquals(toolRegistry.has("temporary"), false);
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }
@@ -417,8 +617,8 @@ describe(
       }
     });
 
-    it("rejects project modules that claim the reserved namespace through registerShared", async () => {
-      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-reserved-shared-tool-id-" });
+    it("rejects project modules that mutate shared registries", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-shared-tool-id-" });
 
       try {
         await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
@@ -429,7 +629,7 @@ describe(
             'import { defineSchema } from "veryfront/schemas";',
             "",
             "const localShadow = tool({",
-            '  id: "gmail__list_emails",',
+            '  id: "project-shared-shadow",',
             '  description: "Local integration shadow",',
             "  inputSchema: defineSchema((v) => v.object({}))(),",
             "  execute: async () => [],",
@@ -444,13 +644,55 @@ describe(
           verbose: false,
         });
 
-        assertEquals(result.tools.has("gmail__list_emails"), false);
-        assertEquals(toolRegistry.has("gmail__list_emails"), false);
+        assertEquals(result.tools.has("project-shared-shadow"), false);
+        assertEquals(toolRegistry.has("project-shared-shadow"), false);
         assertEquals(result.errors.length, 1);
-        assertStringIncludes(
-          result.errors[0]?.error.message ?? "",
-          'Local tool "gmail__list_emails" cannot use the reserved integration tool namespace',
+        assertEquals(
+          result.errors[0]?.error.message,
+          "Discovery module initialization failed",
         );
+        assertEquals(
+          result.errors[0]?.error.message.includes("project-shared-shadow"),
+          false,
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rolls back project registry side effects from a module that fails to initialize", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-failed-module-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/agents`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/agents/broken.ts`,
+          [
+            'import { agent } from "veryfront/agent";',
+            'import { tool } from "veryfront/tool";',
+            "",
+            "const hidden = tool({",
+            '  id: "hidden-side-effect",',
+            '  description: "Must not survive failed discovery",',
+            '  inputSchema: { type: "object", properties: {} },',
+            "  execute: async () => null,",
+            "});",
+            "const broken = agent({",
+            '  id: "broken-side-effect",',
+            '  system: "Never published.",',
+            "  tools: { hidden },",
+            "});",
+            'throw new Error("module failed");',
+            "export default broken;",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({ baseDir: tempDir, verbose: false });
+
+        assertEquals(result.agents.size, 0);
+        assertEquals(result.errors.length, 1);
+        assertEquals(agentRegistry.get("broken-side-effect"), undefined);
+        assertEquals(toolRegistry.has("hidden-side-effect"), false);
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }
@@ -532,11 +774,17 @@ describe(
         await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
         await Deno.writeTextFile(
           `${tempDir}/tools/foo.ts`,
-          'export const foo = { execute: async () => "foo" };\n',
+          [
+            'import { tool } from "veryfront/tool";',
+            'export const foo = tool({ description: "Foo", inputSchema: { type: "object", properties: {} }, execute: async () => "foo" });',
+          ].join("\n"),
         );
         await Deno.writeTextFile(
           `${tempDir}/tools/bar.ts`,
-          'export const bar = { execute: async () => "bar" };\n',
+          [
+            'import { tool } from "veryfront/tool";',
+            'export const bar = tool({ description: "Bar", inputSchema: { type: "object", properties: {} }, execute: async () => "bar" });',
+          ].join("\n"),
         );
         await Deno.writeTextFile(
           `${tempDir}/tools/index.ts`,
@@ -586,6 +834,78 @@ describe(
         await Deno.remove(tempDir, { recursive: true });
       }
     });
+
+    it("discovers skill-enabled agents without granting project modules shared-registry access", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-skilled-agent-" });
+
+      try {
+        toolRegistry.clearAll();
+        await Deno.mkdir(`${tempDir}/agents`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/agents/support.ts`,
+          [
+            'import { agent } from "veryfront/agent";',
+            "",
+            "export default agent({",
+            '  id: "support",',
+            '  system: "Help users.",',
+            "  skills: true,",
+            "});",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({ baseDir: tempDir, verbose: false });
+
+        assertEquals(result.errors, []);
+        assertEquals(result.agents.has("support"), true);
+        assertEquals(toolRegistry.has("load_skill"), true);
+        assertEquals(toolRegistry.has("load_skill_reference"), true);
+        assertEquals(toolRegistry.has("execute_skill_script"), true);
+      } finally {
+        toolRegistry.clearAll();
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("restores agent-owned tools when an unchanged project is rediscovered", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-agent-tool-refresh-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/agents`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/agents/researcher.ts`,
+          [
+            'import { agent } from "veryfront/agent";',
+            'import { tool } from "veryfront/tool";',
+            "",
+            "const lookup = tool({",
+            '  id: "lookup",',
+            '  description: "Look up a record",',
+            '  inputSchema: { type: "object", properties: {} },',
+            "  execute: async () => ({ found: true }),",
+            "});",
+            "",
+            "export default agent({",
+            '  id: "researcher",',
+            '  system: "Research carefully.",',
+            "  tools: { lookup },",
+            "});",
+          ].join("\n"),
+        );
+
+        const first = await discoverAll({ baseDir: tempDir, verbose: false });
+        assertEquals(first.errors, []);
+        assertEquals(toolRegistry.has("lookup"), true);
+
+        const second = await discoverAll({ baseDir: tempDir, verbose: false });
+        assertEquals(second.errors, []);
+        assertEquals(second.agents.has("researcher"), true);
+        assertEquals(toolRegistry.has("lookup"), true);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("discovers markdown agents from agents directory", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-markdown-agent-" });
 

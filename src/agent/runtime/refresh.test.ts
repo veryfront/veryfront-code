@@ -2,7 +2,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
-import { type RemoteToolSource, tool } from "#veryfront/tool";
+import { type RemoteToolSource, type Tool, tool } from "#veryfront/tool";
+import { registerFrameworkSkillTool, toolRegistry } from "#veryfront/tool/registry.ts";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
 import type {
@@ -23,6 +25,53 @@ function createRuntimeStream(parts: unknown[]) {
       controller.close();
     },
   });
+}
+
+function getRuntimeToolNames(options: unknown): string[] {
+  const rawTools = (options as { tools?: unknown }).tools;
+  return Array.isArray(rawTools)
+    ? rawTools.map((entry) =>
+      (entry as { name?: string; id?: string }).name ??
+        (entry as { name?: string; id?: string }).id ?? ""
+    )
+    : Object.keys((rawTools as Record<string, unknown> | undefined) ?? {});
+}
+
+const PROVIDER_POLICY_SKILL_ID = "provider-policy-test";
+
+async function withProviderPolicySkill<T>(operation: () => Promise<T>): Promise<T> {
+  const rootPath = await Deno.makeTempDir({ prefix: "vf-provider-policy-skill-" });
+  try {
+    await Deno.writeTextFile(
+      `${rootPath}/SKILL.md`,
+      "---\nname: provider-policy-test\n" +
+        "description: Restrict provider tools\nallowed-tools: web_search\n---\nUse search only.\n",
+    );
+    registerSkill(PROVIDER_POLICY_SKILL_ID, {
+      id: PROVIDER_POLICY_SKILL_ID,
+      metadata: {
+        name: PROVIDER_POLICY_SKILL_ID,
+        description: "Restrict provider tools",
+      },
+      rootPath,
+    });
+    return await operation();
+  } finally {
+    skillRegistry.delete(PROVIDER_POLICY_SKILL_ID);
+    await Deno.remove(rootPath, { recursive: true });
+  }
+}
+
+async function withFrameworkSkillTool<T>(frameworkTool: Tool, operation: () => Promise<T>) {
+  const previous = toolRegistry.getShared(frameworkTool.id);
+  toolRegistry.deleteShared(frameworkTool.id);
+  registerFrameworkSkillTool(frameworkTool.id, frameworkTool);
+  try {
+    return await operation();
+  } finally {
+    toolRegistry.deleteShared(frameworkTool.id);
+    if (previous) registerFrameworkSkillTool(previous.id, previous);
+  }
 }
 
 function extractSystemPrompt(options: unknown): string {
@@ -84,6 +133,118 @@ function supplierInvoiceEvidenceMessages(): Message[] {
 }
 
 describe("agent runtime refresh hooks", () => {
+  it("applies an active skill policy to provider-native tools during generate()", async () => {
+    const observedToolNames: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        observedToolNames.push(getRuntimeToolNames(options));
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "load-provider-policy-generate",
+              toolName: "load_skill",
+              input: JSON.stringify({ skillId: PROVIDER_POLICY_SKILL_ID }),
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    await withProviderPolicySkill(async () => {
+      const assistant = agent({
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Use only tools allowed by the active skill.",
+        skills: [PROVIDER_POLICY_SKILL_ID],
+        providerTools: ["web_search", "web_fetch"],
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      await assistant.generate({ input: "Load the provider policy skill", memoryMode: "isolated" });
+    });
+
+    assertEquals(observedToolNames.length, 2);
+    assertEquals(observedToolNames[0]?.includes("web_search"), true);
+    assertEquals(observedToolNames[0]?.includes("web_fetch"), true);
+    assertEquals(observedToolNames[1]?.includes("web_search"), true);
+    assertEquals(observedToolNames[1]?.includes("web_fetch"), false);
+  });
+
+  it("applies an active skill policy to provider-native tools during stream()", async () => {
+    const observedToolNames: string[][] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options) {
+        observedToolNames.push(getRuntimeToolNames(options));
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "load-provider-policy-stream",
+                toolName: "load_skill",
+                input: { skillId: PROVIDER_POLICY_SKILL_ID },
+              },
+              { type: "finish", finishReason: "tool-calls" },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "done" },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+    await withProviderPolicySkill(async () => {
+      const assistant = agent({
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Use only tools allowed by the active skill.",
+        skills: [PROVIDER_POLICY_SKILL_ID],
+        providerTools: ["web_search", "web_fetch"],
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      const response = await assistant.stream({
+        input: "Load the provider policy skill",
+        memoryMode: "isolated",
+      });
+      await response.toDataStreamResponse().text();
+    });
+
+    assertEquals(observedToolNames.length, 2);
+    assertEquals(observedToolNames[0]?.includes("web_search"), true);
+    assertEquals(observedToolNames[0]?.includes("web_fetch"), true);
+    assertEquals(observedToolNames[1]?.includes("web_search"), true);
+    assertEquals(observedToolNames[1]?.includes("web_fetch"), false);
+  });
+
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
     let callCount = 0;
@@ -935,26 +1096,10 @@ describe("agent runtime refresh hooks", () => {
       },
     };
 
-    const loadSkill = tool({
-      id: "load_skill",
-      description: "Load a skill",
-      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ error: "Skill not found" }),
-    });
-    const loadSkillReference = tool({
-      id: "load_skill_reference",
-      description: "Load a skill reference",
-      inputSchema: defineSchema((v) => v.object({ skillId: v.string(), reference: v.string() }))(),
-      execute: () => ({ content: "reference" }),
-    });
-
     const assistant = agent({
       model: "anthropic/claude-sonnet-4-6",
       system: "Recover from a missing skill.",
-      tools: {
-        load_skill: loadSkill,
-        load_skill_reference: loadSkillReference,
-      },
+      skills: true,
       maxSteps: 3,
       resolveModelTransport: async () => ({ model }),
     });
@@ -1272,26 +1417,28 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
-      model: "hosted/skill-invoke-generate",
-      system: "Skill override generate test",
-      tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
-      maxSteps: 3,
-      resolveModelTransport: async () => ({ model }),
-      onToolResult: (request) => {
-        toolResults.push(request);
-      },
-    });
+    await withFrameworkSkillTool(loadSkill, async () => {
+      const assistant = agent({
+        model: "hosted/skill-invoke-generate",
+        system: "Skill override generate test",
+        tools: { load_skill: true, invoke_agent: invokeAgent },
+        maxSteps: 3,
+        resolveModelTransport: async () => ({ model }),
+        onToolResult: (request) => {
+          toolResults.push(request);
+        },
+      });
 
-    await assistant.generate({ input: "Build a report" });
+      await assistant.generate({ input: "Build a report" });
 
-    const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
-    assertEquals(invokeResult?.input, {
-      description: "Research reference system",
-      prompt: "Research reference docs",
-      max_steps: 160,
+      const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
+      assertEquals(invokeResult?.input, {
+        description: "Research reference system",
+        prompt: "Research reference docs",
+        max_steps: 160,
+      });
+      assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
     });
-    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
   it("applies loaded skill maxSteps overrides to stream() invoke_agent calls", async () => {
@@ -1373,30 +1520,33 @@ describe("agent runtime refresh hooks", () => {
       )(),
       execute: ({ max_steps }) => ({ ok: true, max_steps }),
     });
-    const assistant = agent({
-      model: "hosted/skill-invoke-stream",
-      system: "Skill override stream test",
-      tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
-      maxSteps: 3,
-      resolveModelTransport: async () => ({ model }),
-      onToolResult: (request) => {
-        toolResults.push(request);
-      },
-    });
+    await withFrameworkSkillTool(loadSkill, async () => {
+      const assistant = agent({
+        model: "hosted/skill-invoke-stream",
+        system: "Skill override stream test",
+        tools: { load_skill: true, invoke_agent: invokeAgent },
+        maxSteps: 3,
+        resolveModelTransport: async () => ({ model }),
+        onToolResult: (request) => {
+          toolResults.push(request);
+        },
+      });
 
-    const response = (await assistant.stream({ input: "Build a report" })).toDataStreamResponse();
-    await response.text();
+      const response = (await assistant.stream({ input: "Build a report" }))
+        .toDataStreamResponse();
+      await response.text();
 
-    const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
-    assertEquals(invokeResult?.input, {
-      description: "Research reference system",
-      prompt: "Research reference docs",
-      max_steps: 160,
+      const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
+      assertEquals(invokeResult?.input, {
+        description: "Research reference system",
+        prompt: "Research reference docs",
+        max_steps: 160,
+      });
+      assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
     });
-    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
-  it("hydrates loaded skill delegation overrides from persisted messages before stream tool execution", async () => {
+  it("does not trust persisted load_skill delegation overrides", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
     let callCount = 0;
     const model: ModelRuntime = {
@@ -1503,9 +1653,9 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(invokeResult?.input, {
       description: "Run invoice matching",
       prompt: "Match invoices",
-      max_steps: 160,
+      max_steps: 10,
     });
-    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
+    assertEquals(invokeResult?.result, { ok: true, max_steps: 10 });
   });
 
   it("does not locally block generate() invoke_agent calls that contradict prior tool output", async () => {

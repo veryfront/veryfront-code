@@ -2,11 +2,18 @@
  * App Route HTML Rendering for Build
  */
 
-import { dirname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path/index.ts";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+} from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
-import { COMPILATION_ERROR } from "#veryfront/errors";
+import { COMPILATION_ERROR, VeryfrontError } from "#veryfront/errors";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
@@ -52,13 +59,24 @@ async function loadComponent(
   reactVersion?: string,
 ): Promise<unknown> {
   const src = await adapter.fs.readFile(filePath);
-  return loadComponentFromSource(src, filePath, projectDir, adapter, {
-    projectId: projectDir,
-    dev: false,
-    moduleServerUrl: "",
-    contentSourceId,
-    reactVersion,
-  });
+  try {
+    return await loadComponentFromSource(src, filePath, projectDir, adapter, {
+      projectId: projectDir,
+      dev: false,
+      moduleServerUrl: "",
+      contentSourceId,
+      reactVersion,
+    });
+  } catch (error) {
+    if (error instanceof VeryfrontError && error.slug === "component-error") {
+      throw COMPILATION_ERROR.create({
+        detail: "Invalid layout component",
+        cause: error,
+        context: { file: basename(filePath) },
+      });
+    }
+    throw error;
+  }
 }
 
 function routePathToSlug(routePath: string): string {
@@ -183,7 +201,7 @@ export async function renderAppRouteToHTML(args: {
     if (typeof Layout !== "function") {
       throw COMPILATION_ERROR.create({
         detail: "Invalid layout component",
-        context: { layoutPath, type: typeof Layout },
+        context: { file: basename(layoutPath), type: typeof Layout },
       });
     }
 
@@ -216,12 +234,13 @@ export async function renderAppRouteToHTML(args: {
   const htmlInner = await renderToStringAdapter(element, { reactVersion });
   const title = "Veryfront App";
   const slug = routePathToSlug(routePath);
+  const effectiveConfig = {
+    ...config,
+    react: { ...config?.react, version: reactVersion },
+  } as VeryfrontConfig;
   const importMapJson = await buildImportMapJson({
     projectDir,
-    config: {
-      ...config,
-      react: { ...config?.react, version: reactVersion },
-    } as VeryfrontConfig,
+    config: effectiveConfig,
     releaseAssetManifest,
   });
   const hydrationData = clientPageIsland || hasUseClientDirective(pageSource)
@@ -232,7 +251,7 @@ export async function renderAppRouteToHTML(args: {
       {
         mode: "production",
         environment: "production",
-        config,
+        config: effectiveConfig,
         projectDir,
         pagePath: pageFile,
         pageType: "tsx",

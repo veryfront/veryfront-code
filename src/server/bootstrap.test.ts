@@ -13,9 +13,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetShimForTests } from "#veryfront/observability/tracing/api-shim.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
-import { __resetLogRecordEmitterForTests, logger } from "#veryfront/utils/logger/index.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  logger,
+} from "#veryfront/utils/logger/index.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
-import { orchestrateOrDisposeFS, wireTracingShim } from "./bootstrap.ts";
+import {
+  createBootstrapDisposer,
+  getFileLogAttachmentLogContext,
+  hasVirtualConfigFile,
+  orchestrateOrDisposeFS,
+  wireTracingShim,
+} from "./bootstrap.ts";
 import { ExtensionLoader } from "veryfront/extensions";
 
 const noopLogger = {
@@ -73,8 +83,6 @@ describe("orchestrateOrDisposeFS()", () => {
   });
 
   it("preserves the original error when fsDispose itself throws", async () => {
-    // If fsDispose throws, we still want the original orchestration error
-    // to reach the caller — a dispose failure must not mask the root cause.
     const originalError = new Error("orchestrate-boom");
 
     await assertRejects(
@@ -86,12 +94,127 @@ describe("orchestrateOrDisposeFS()", () => {
           },
         ),
       Error,
-      // The current implementation lets the dispose error propagate because
-      // it is thrown synchronously after the catch; adjust this test if that
-      // changes. Right now it will be "fsDispose-boom", which is acceptable
-      // for a resource-leak fix (both errors are visible).
-      "fsDispose-boom",
+      "orchestrate-boom",
     );
+  });
+
+  it("does not expose cleanup error messages through bootstrap logs", async () => {
+    const entries: unknown[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    try {
+      await assertRejects(
+        () =>
+          orchestrateOrDisposeFS(
+            () => Promise.reject(new Error("setup failed")),
+            () => {
+              throw new Error("private-cleanup-canary /private/host/path");
+            },
+          ),
+        Error,
+        "setup failed",
+      );
+    } finally {
+      __resetLogRecordEmitterForTests();
+    }
+
+    const serialized = JSON.stringify(entries);
+    assertEquals(serialized.includes("private-cleanup-canary"), false);
+    assertEquals(serialized.includes("/private/host/path"), false);
+    assertEquals(serialized.includes("errorName"), true);
+  });
+});
+
+describe("createBootstrapDisposer()", () => {
+  it("runs cleanup once when disposal is concurrent or repeated", async () => {
+    const events: string[] = [];
+    const dispose = createBootstrapDisposer({
+      teardownExtensions: async () => {
+        events.push("extensions");
+        await Promise.resolve();
+      },
+      teardownFileLog: () => {
+        events.push("file-log");
+      },
+      clearTracing: () => {
+        events.push("tracing");
+      },
+      disposeFileSystem: () => {
+        events.push("filesystem");
+      },
+    });
+
+    await Promise.all([dispose(), dispose()]);
+    await dispose();
+
+    assertEquals(events, ["extensions", "file-log", "tracing", "filesystem"]);
+  });
+
+  it("attempts every cleanup step and reports all failures", async () => {
+    const events: string[] = [];
+    const dispose = createBootstrapDisposer({
+      teardownExtensions: () => {
+        events.push("extensions");
+        throw new Error("extensions failed");
+      },
+      teardownFileLog: () => {
+        events.push("file-log");
+      },
+      clearTracing: () => {
+        events.push("tracing");
+        throw new Error("tracing failed");
+      },
+      disposeFileSystem: () => {
+        events.push("filesystem");
+      },
+    });
+
+    const error = await assertRejects(() => dispose(), AggregateError);
+    assertEquals(error.errors.length, 2);
+    assertEquals(events, ["extensions", "file-log", "tracing", "filesystem"]);
+  });
+});
+
+describe("getFileLogAttachmentLogContext()", () => {
+  it("reports file log configuration without exposing its destination", () => {
+    const context = getFileLogAttachmentLogContext(
+      {
+        path: "/private/customer/logs/PRIVATE_FILE_LOG_PATH.log",
+        level: "debug",
+        format: "json",
+      },
+      true,
+    );
+
+    assertEquals(context, {
+      customPath: true,
+      level: "debug",
+      format: "json",
+    });
+    assertEquals(JSON.stringify(context).includes("PRIVATE_FILE_LOG_PATH"), false);
+  });
+});
+
+describe("hasVirtualConfigFile()", () => {
+  it("detects config presence without inferring from config values", async () => {
+    const inspected: string[] = [];
+    const exists = await hasVirtualConfigFile({
+      exists: (path) => {
+        inspected.push(path);
+        return Promise.resolve(path === "/veryfront.config.ts");
+      },
+    });
+
+    assertEquals(exists, true);
+    assertEquals(inspected, ["/veryfront.config.js", "/veryfront.config.ts"]);
+  });
+
+  it("returns false only when every recognized config file is absent", async () => {
+    const exists = await hasVirtualConfigFile({
+      exists: () => Promise.resolve(false),
+    });
+
+    assertEquals(exists, false);
   });
 });
 

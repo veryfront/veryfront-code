@@ -56,6 +56,11 @@ export function createSkillTestAdapter(files: Record<string, string>): FileSyste
       if (content === undefined) throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}` });
       return content;
     },
+    async readFileBytes(path: string): Promise<Uint8Array> {
+      const content = files[path];
+      if (content === undefined) throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}` });
+      return new TextEncoder().encode(content);
+    },
     async exists(path: string): Promise<boolean> {
       if (path in files) return true;
       return allPaths.some((filePath) => filePath.startsWith(`${path}/`));
@@ -69,7 +74,7 @@ export function createSkillTestAdapter(files: Record<string, string>): FileSyste
       const isFile = path in files;
       const isDirectory = !isFile && allPaths.some((filePath) => filePath.startsWith(`${path}/`));
       return {
-        size: isFile ? (files[path] ?? "").length : 0,
+        size: isFile ? new TextEncoder().encode(files[path] ?? "").byteLength : 0,
         isFile,
         isDirectory,
         isSymlink: false,

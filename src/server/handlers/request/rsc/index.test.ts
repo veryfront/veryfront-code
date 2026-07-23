@@ -157,4 +157,29 @@ describe("server/handlers/request/rsc", () => {
       environmentName: "Preview",
     });
   });
+
+  for (const endpoint of ["module?rel=app%2Fpage.tsx", "render/private-page", "action"]) {
+    it(`rejects remote ${endpoint.split("?", 1)[0]} before project access`, async () => {
+      let filesystemCalls = 0;
+      const adapter = createMockAdapter({
+        exists: () => {
+          filesystemCalls++;
+          return Promise.resolve(true);
+        },
+        readFile: () => {
+          filesystemCalls++;
+          return Promise.resolve("private project source");
+        },
+      });
+      const result = await new RSCHandler().handle(
+        new Request(`https://runtime.example.com/_veryfront/rsc/${endpoint}`),
+        makeCtx({ adapter, isLocalProject: false }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff");
+      assertEquals(filesystemCalls, 0);
+    });
+  }
 });

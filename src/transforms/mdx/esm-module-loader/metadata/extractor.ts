@@ -1,5 +1,6 @@
 import { rendererLogger } from "#veryfront/utils";
-import type { FrontmatterMetadata, LogContext, MDXModule } from "../../module-loader/types.ts";
+import type { FrontmatterMetadata, MDXModule } from "../../module-loader/types.ts";
+import { errorLogName } from "../../../shared/log-context.ts";
 import { extractBalancedBlock, parseJsonish } from "./string-parser.ts";
 
 const logger = rendererLogger.component("mdx");
@@ -26,8 +27,8 @@ export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | un
 
   try {
     return JSON.parse(jsonish) as FrontmatterMetadata;
-  } catch (e) {
-    logger.debug("frontmatter JSON parse failed", e as LogContext);
+  } catch (error) {
+    logger.debug("frontmatter JSON parse failed", { errorName: errorLogName(error) });
     return undefined;
   }
 }
@@ -110,8 +111,8 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
 
     try {
       if (value !== undefined) exports[key] = parseJsonish(value) as never;
-    } catch (e) {
-      logger.warn(`Failed to parse ${String(key)}`, e);
+    } catch (error) {
+      logger.warn(`Failed to parse ${String(key)}`, { errorName: errorLogName(error) });
     }
   }
 
@@ -123,8 +124,8 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
 
     try {
       exports[key] = parseJsonish(value) as never;
-    } catch (e) {
-      logger.warn(`Failed to parse ${String(key)}`, e);
+    } catch (error) {
+      logger.warn(`Failed to parse ${String(key)}`, { errorName: errorLogName(error) });
     }
   }
 

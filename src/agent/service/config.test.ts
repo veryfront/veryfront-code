@@ -122,4 +122,45 @@ describe("agent/agent-service-config", () => {
   it("rejects invalid API URLs", () => {
     assertThrows(() => parseHostedAgentServiceConfig({ VERYFRONT_API_URL: "not-a-url" }));
   });
+
+  it("rejects ambiguous boolean flags and invalid ports", () => {
+    assertThrows(() => parseHostedAgentServiceConfig({ OTEL_ENABLED: "yes" }));
+    assertEquals(parseHostedAgentServiceConfig({ PORT: "0" }).PORT, 0);
+    for (const port of ["-1", "65536", "1.5"]) {
+      assertThrows(() => parseHostedAgentServiceConfig({ PORT: port }));
+    }
+  });
+
+  it("normalizes HTTP API URLs and rejects unsafe URL components", () => {
+    const config = parseHostedAgentServiceConfig({
+      VERYFRONT_API_URL: "https://api.example.com/v1/",
+    });
+    assertEquals(config.VERYFRONT_API_URL, "https://api.example.com/v1");
+    assertEquals(config.VERYFRONT_MCP_URL, "https://api.example.com/v1/mcp");
+
+    for (
+      const url of [
+        "file:///tmp/api",
+        "https://user:password@api.example.com",
+        "https://api.example.com?tenant=one",
+      ]
+    ) {
+      assertThrows(() => parseHostedAgentServiceConfig({ VERYFRONT_API_URL: url }));
+    }
+  });
+
+  it("normalizes and deduplicates allowed origins", () => {
+    const config = parseHostedAgentServiceConfig({
+      ALLOWED_ORIGINS:
+        "https://studio.example.com/, https://studio.example.com, http://localhost:3000/",
+    });
+
+    assertEquals(config.ALLOWED_ORIGINS, [
+      "https://studio.example.com",
+      "http://localhost:3000",
+    ]);
+    assertThrows(
+      () => parseHostedAgentServiceConfig({ ALLOWED_ORIGINS: "https://example.com/path" }),
+    );
+  });
 });

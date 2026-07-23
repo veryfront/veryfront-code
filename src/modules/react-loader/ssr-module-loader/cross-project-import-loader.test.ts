@@ -4,7 +4,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
-import { globalCrossProjectCache } from "./cache/index.ts";
+import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
+import { globalCrossProjectCache, globalCrossProjectInProgress } from "./cache/index.ts";
 import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
 
 function createMockCacheFs(overrides: Partial<FileSystem> = {}): FileSystem {
@@ -41,7 +42,16 @@ const crossProjectImport: CrossProjectImport = {
 describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", () => {
   it("returns cached temp path without fetching", async () => {
     globalCrossProjectCache.clear();
-    const cacheKey = `${crossProjectImport.specifier}:project-a:default`;
+    const cacheKey = buildSSRModuleCacheKey(
+      "cross-project-default-development",
+      "project-a",
+      JSON.stringify([
+        "https://registry.example.com",
+        crossProjectImport.projectSlug,
+        crossProjectImport.version,
+        crossProjectImport.path,
+      ]),
+    );
     globalCrossProjectCache.set(cacheKey, {
       tempPath: "/tmp/cached-cross-project.mjs",
       contentHash: "cafe1234",
@@ -56,6 +66,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         projectId: "project-a",
         projectDir: "/project",
         dev: true,
+        apiBaseUrl: "https://registry.example.com/api",
         adapter: denoAdapter,
       },
       cache: {
@@ -151,7 +162,16 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
 
     const expectedRegistryUrl =
       "https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx";
-    const expectedCacheKey = `${crossProjectImport.specifier}:project-a:19.1.1`;
+    const expectedCacheKey = buildSSRModuleCacheKey(
+      "cross-project-19.1.1-development",
+      "project-a",
+      JSON.stringify([
+        "https://registry.example.com",
+        crossProjectImport.projectSlug,
+        crossProjectImport.version,
+        crossProjectImport.path,
+      ]),
+    );
 
     assertEquals(result, "/tmp/cross-project-transformed.mjs");
     assertEquals(fetchedUrl, expectedRegistryUrl);
@@ -209,7 +229,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(transformed, false);
   });
 
-  it("throws with equivalent fetch error message and logs failure context", async () => {
+  it("returns a sanitized request error and logs only safe failure context", async () => {
     globalCrossProjectCache.clear();
 
     let errorLogMessage = "";
@@ -243,19 +263,193 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
           },
         }),
       Error,
-      "Failed to fetch https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx: 404 Not Found",
+      "Cross-project module request failed with status 404",
     );
 
-    assertEquals(errorLogMessage, "[SSR-MODULE-LOADER] Failed to fetch cross-project import");
+    assertEquals(errorLogMessage, "[SSR-MODULE-LOADER] Failed to load cross-project import");
     const context = errorLogContext as Record<string, unknown> | undefined;
-    assertEquals(context?.specifier, crossProjectImport.specifier);
+    assertEquals(context, { errorName: "VeryfrontError" });
+  });
+
+  it("coalesces concurrent transforms for the same project module", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+
+    let fetchCalls = 0;
+    let transformCalls = 0;
+    let releaseFetch: (() => void) | undefined;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const flow = () =>
+      transformCrossProjectImportFlow({
+        crossProjectImport,
+        options: {
+          projectId: "project-a",
+          projectDir: "/project",
+          dev: true,
+          apiBaseUrl: "https://registry.example.com/api",
+          adapter: denoAdapter,
+        },
+        cache: {
+          hashContentAsync: async () => "1234abcd",
+          getTempPath: async () => "/tmp/coalesced.mjs",
+          getFs: () => createMockCacheFs(),
+        },
+        withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+        fetchImpl: async () => {
+          fetchCalls++;
+          await fetchGate;
+          return new Response("export const value = 1;");
+        },
+        transformToESMImpl: async () => {
+          transformCalls++;
+          return "export const value = 1;";
+        },
+        loggerImpl: { debug: () => {}, error: () => {} },
+      });
+
+    const first = flow();
+    const second = flow();
+    await Promise.resolve();
+    releaseFetch?.();
+
+    assertEquals(await Promise.all([first, second]), [
+      "/tmp/coalesced.mjs",
+      "/tmp/coalesced.mjs",
+    ]);
+    assertEquals(fetchCalls, 1);
+    assertEquals(transformCalls, 1);
+    assertEquals(globalCrossProjectInProgress.size, 0);
+  });
+
+  it("does not persist cache entries for mutable version ranges", async () => {
+    globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
+    let fetchCalls = 0;
+
+    const flow = () =>
+      transformCrossProjectImportFlow({
+        crossProjectImport: {
+          ...crossProjectImport,
+          specifier: "@acme-ui@^1.2.0/@/components/Button.tsx",
+          version: "^1.2.0",
+        },
+        options: {
+          projectId: "project-a",
+          projectDir: "/project",
+          dev: false,
+          apiBaseUrl: "https://registry.example.com/api",
+          adapter: denoAdapter,
+        },
+        cache: {
+          hashContentAsync: async (content) => content.includes("second") ? "second" : "first",
+          getTempPath: async (_path, hash) => `/tmp/${hash}.mjs`,
+          getFs: () => createMockCacheFs(),
+        },
+        withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+        fetchImpl: async () => {
+          fetchCalls++;
+          return new Response(`export const value = ${
+            JSON.stringify(
+              fetchCalls === 1 ? "first" : "second",
+            )
+          };`);
+        },
+        transformToESMImpl: async (source) => source,
+        loggerImpl: { debug: () => {}, error: () => {} },
+      });
+
+    assertEquals(await flow(), "/tmp/first.mjs");
+    assertEquals(await flow(), "/tmp/second.mjs");
+    assertEquals(fetchCalls, 2);
+  });
+
+  it("encodes registry path segments and rejects traversal identities", async () => {
+    globalCrossProjectCache.clear();
+    let fetchedUrl = "";
+
+    await transformCrossProjectImportFlow({
+      crossProjectImport: {
+        ...crossProjectImport,
+        specifier: "@acme-ui@1.2.3/@/components/My Button.tsx",
+        path: "components/My Button.tsx",
+      },
+      options: {
+        projectId: "project-a",
+        projectDir: "/project",
+        dev: true,
+        apiBaseUrl: "https://registry.example.com/api",
+        adapter: denoAdapter,
+      },
+      cache: {
+        hashContentAsync: async () => "1234abcd",
+        getTempPath: async () => "/tmp/encoded.mjs",
+        getFs: () => createMockCacheFs(),
+      },
+      withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+      fetchImpl: async (input) => {
+        fetchedUrl = String(input);
+        return new Response("export const value = 1;");
+      },
+      transformToESMImpl: async () => "export const value = 1;",
+      loggerImpl: { debug: () => {}, error: () => {} },
+    });
+
     assertEquals(
-      context?.registryUrl,
-      "https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx",
+      fetchedUrl,
+      "https://registry.example.com/acme-ui@1.2.3/@/components/My%20Button.tsx",
     );
-    assertEquals(
-      context?.error,
-      "Failed to fetch https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx: 404 Not Found",
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow({
+          crossProjectImport: {
+            ...crossProjectImport,
+            specifier: "@acme-ui@1.2.3/@/../secret.ts",
+            path: "../secret.ts",
+          },
+          options: {
+            projectId: "project-a",
+            projectDir: "/project",
+            dev: true,
+            apiBaseUrl: "https://registry.example.com/api",
+            adapter: denoAdapter,
+          },
+          cache: {
+            hashContentAsync: async () => "unused",
+            getTempPath: async () => "/tmp/unused.mjs",
+            getFs: () => createMockCacheFs(),
+          },
+          withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+          fetchImpl: async () => new Response("unexpected"),
+        }),
+      Error,
+      "Cross-project import identity is invalid",
+    );
+  });
+
+  it("rejects registry URLs with request-controlled URL components", async () => {
+    await assertRejects(
+      () =>
+        transformCrossProjectImportFlow({
+          crossProjectImport,
+          options: {
+            projectId: "project-a",
+            projectDir: "/project",
+            dev: true,
+            apiBaseUrl: "https://user:secret@registry.example.com/api?tenant=other",
+            adapter: denoAdapter,
+          },
+          cache: {
+            hashContentAsync: async () => "unused",
+            getTempPath: async () => "/tmp/unused.mjs",
+            getFs: () => createMockCacheFs(),
+          },
+          withTransformCapacity: async (_syntheticFilePath, operation) => await operation(),
+          fetchImpl: async () => new Response("unexpected"),
+        }),
+      Error,
+      "Cross-project registry URL is invalid",
     );
   });
 });

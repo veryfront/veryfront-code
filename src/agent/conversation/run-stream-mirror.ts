@@ -13,10 +13,15 @@ import { type ConversationRunEventQueueController } from "./durable.ts";
 
 /** Public API contract for conversation run stream mirror. */
 export interface ConversationRunStreamMirror {
+  /** Executes stream event. */
   handleStreamEvent(event: ChatStreamEvent): void;
+  /** Appends events. */
   appendEvents(events: ConversationRunEvent[]): void;
+  /** Performs the flush operation. */
   flush(): Promise<ConversationRunMirrorSnapshot>;
+  /** Returns snapshot. */
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
+  /** Releases resources used by dispose. */
   dispose(): void;
 }
 

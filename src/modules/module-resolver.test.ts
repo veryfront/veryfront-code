@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ModuleResolver } from "./module-resolver.ts";
@@ -84,6 +84,79 @@ describe("modules/module-resolver", () => {
       assertEquals(result?.type, "file");
       assertEquals(result?.path, "/project/src/utils.ts");
     });
+
+    it("resolves project-contained file URL mappings", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        importMap: { "my-utils": "file:///project/src/utils.ts" },
+        files: { "/project/src/utils.ts": "export const x = 1;" },
+      });
+
+      const result = await resolver.resolve("my-utils");
+      assertEquals(result?.type, "file");
+      assertEquals(result?.path, "/project/src/utils.ts");
+    });
+
+    it("blocks file URL mappings outside the project", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        importMap: { secret: "file:///secret.ts" },
+        files: { "/secret.ts": "export const secret = true;" },
+      });
+
+      assertEquals(await resolver.resolve("secret"), null);
+    });
+
+    it("normalizes npm protocol mappings", async () => {
+      const resolver = createResolver({ importMap: { schema: "npm:zod@3" } });
+
+      assertEquals(await resolver.resolve("schema"), {
+        path: "https://esm.sh/zod@3",
+        type: "npm",
+      });
+    });
+
+    it("resolves relative import-map targets from the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        importMap: { "my-utils": "./src/utils.ts" },
+        files: {
+          "/project/src/utils.ts": "export const location = 'root';",
+          "/project/pages/src/utils.ts": "export const location = 'referrer';",
+        },
+      });
+
+      const result = await resolver.resolve("my-utils", "/project/pages/index.ts");
+      assertEquals(result?.path, "/project/src/utils.ts");
+    });
+
+    it("blocks relative import-map targets outside the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        importMap: { secret: "../secret.ts" },
+        files: {
+          "/secret.ts": "export const secret = true;",
+          "/project/secret.ts": "export const wrongSecret = true;",
+        },
+      });
+
+      assertEquals(await resolver.resolve("secret", "/project/nested/index.ts"), null);
+    });
+
+    it("copies and validates the configured import map", async () => {
+      const importMap = { react: "https://esm.sh/react@18" };
+      const resolver = createResolver({ importMap });
+      importMap.react = "https://example.invalid/mutated.js";
+
+      assertEquals((await resolver.resolve("react"))?.path, "https://esm.sh/react@18");
+
+      const inherited = Object.create({ react: "https://example.invalid/inherited.js" });
+      assertThrows(
+        () => createResolver({ importMap: inherited as Record<string, string> }),
+        Error,
+        "Import map is invalid",
+      );
+    });
   });
 
   describe("resolve - relative paths", () => {
@@ -131,11 +204,42 @@ describe("modules/module-resolver", () => {
       assertEquals(result?.path, "/project/utils.tsx");
     });
 
+    it("resolves directory index modules and verifies file types", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/project/widgets/index.mjs": "export default null;" },
+      });
+
+      const result = await resolver.resolve("./widgets");
+      assertEquals(result?.path, "/project/widgets/index.mjs");
+    });
+
     it("should return null for unresolvable relative paths", async () => {
       const resolver = createResolver({ projectDir: "/project" });
 
       const result = await resolver.resolve("./nonexistent");
       assertEquals(result, null);
+    });
+
+    it("blocks relative traversal outside the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/secrets.ts": "export const secret = true;" },
+      });
+
+      assertEquals(await resolver.resolve("../secrets.ts"), null);
+    });
+
+    it("blocks relative resolution from a referrer outside the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/outside/secret.ts": "export const secret = true;" },
+      });
+
+      assertEquals(
+        await resolver.resolve("./secret.ts", "/outside/index.ts"),
+        null,
+      );
     });
   });
 
@@ -164,9 +268,30 @@ describe("modules/module-resolver", () => {
       const result = await resolver.resolve("/missing.ts");
       assertEquals(result, null);
     });
+
+    it("does not confuse a sibling directory with the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/project-other/secret.ts": "export const secret = true;" },
+      });
+
+      assertEquals(
+        await resolver.resolve("./secret.ts", "/project-other/index.ts"),
+        null,
+      );
+    });
   });
 
   describe("resolve - bare specifiers (npm)", () => {
+    it("preserves direct HTTP module URLs", async () => {
+      const resolver = createResolver();
+      const result = await resolver.resolve("https://cdn.example/module.js");
+      assertEquals(result, {
+        path: "https://cdn.example/module.js",
+        type: "external",
+      });
+    });
+
     it("should resolve bare specifiers as npm packages", async () => {
       const resolver = createResolver();
 
@@ -195,6 +320,16 @@ describe("modules/module-resolver", () => {
       assertEquals(result1, result2);
     });
 
+    it("returns defensive copies of cached resolutions", async () => {
+      const resolver = createResolver({
+        virtualModules: new Map([["virtual:defensive", "original"]]),
+      });
+      const first = await resolver.resolve("virtual:defensive");
+      first!.content = "mutated";
+
+      assertEquals((await resolver.resolve("virtual:defensive"))?.content, "original");
+    });
+
     it("should clear entire cache", async () => {
       const resolver = createResolver({
         virtualModules: new Map([["virtual:a", "a"]]),
@@ -208,26 +343,38 @@ describe("modules/module-resolver", () => {
     });
 
     it("should clear cache by pattern", async () => {
-      const resolver = createResolver({
-        virtualModules: new Map([
-          ["virtual:theme", "theme"],
-          ["virtual:utils", "utils"],
-        ]),
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/theme.ts", "theme");
+      adapter.fs.files.set("/project/utils.ts", "utils");
+      const resolver = new ModuleResolver({
+        projectDir: "/project",
+        adapter,
       });
 
-      await resolver.resolve("virtual:theme");
-      await resolver.resolve("virtual:utils");
+      await resolver.resolve("./theme.ts");
+      await resolver.resolve("./utils.ts");
+      adapter.fs.files.delete("/project/theme.ts");
+      adapter.fs.files.delete("/project/utils.ts");
 
       resolver.clearCache("theme");
 
-      const theme = await resolver.resolve("virtual:theme");
-      const utils = await resolver.resolve("virtual:utils");
-      assertEquals(theme?.content, "theme");
-      assertEquals(utils?.content, "utils");
+      assertEquals(await resolver.resolve("./theme.ts"), null);
+      assertEquals((await resolver.resolve("./utils.ts"))?.path, "/project/utils.ts");
     });
   });
 
   describe("virtual module management", () => {
+    it("copies the configured virtual module map", async () => {
+      const virtualModules = new Map([["virtual:original", "original"]]);
+      const resolver = createResolver({ virtualModules });
+
+      virtualModules.set("virtual:original", "mutated");
+      virtualModules.set("virtual:injected", "injected");
+
+      assertEquals((await resolver.resolve("virtual:original"))?.content, "original");
+      assertEquals((await resolver.resolve("virtual:injected"))?.type, "npm");
+    });
+
     it("should add virtual modules at runtime", async () => {
       const resolver = createResolver();
 
@@ -259,6 +406,26 @@ describe("modules/module-resolver", () => {
 
       const result = await resolver.resolve("virtual:mutable");
       assertEquals(result?.content, "new");
+    });
+
+    it("invalidates only the exact delimiter-bearing virtual specifier", async () => {
+      const virtualModules = new Map([
+        ["virtual:mutable/part:one", "old"],
+        ["virtual:mutable/part:one-extra", "sibling-old"],
+      ]);
+      const resolver = createResolver({ virtualModules });
+
+      await resolver.resolve("virtual:mutable/part:one");
+      await resolver.resolve("virtual:mutable/part:one-extra");
+      virtualModules.set("virtual:mutable/part:one-extra", "sibling-new");
+
+      resolver.addVirtualModule("virtual:mutable/part:one", "new");
+
+      assertEquals((await resolver.resolve("virtual:mutable/part:one"))?.content, "new");
+      assertEquals(
+        (await resolver.resolve("virtual:mutable/part:one-extra"))?.content,
+        "sibling-old",
+      );
     });
   });
 });

@@ -6,18 +6,29 @@ import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, SECURITY_VIOLATION, toError, VeryfrontError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { classifyTelemetryError } from "#veryfront/observability/telemetry-safety.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
+  getCanonicalBaseDir,
+  getCanonicalPath,
+} from "#veryfront/security/path-validation/canonical.ts";
+import {
+  findModuleSpecifierSpans,
+  tokenizeJavaScriptSource,
+} from "#veryfront/modules/loader-shared/import-specifiers.ts";
+import {
+  decodeVeryfrontSubpath,
+  encodeVeryfrontSubpath,
   generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
   readProjectDependencies,
@@ -37,6 +48,9 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+const MAX_HANDLER_SOURCE_BYTES = 10 * 1024 * 1024;
+const MAX_DIRECT_IMPORT_FILES = 1_000;
+const MAX_DIRECT_IMPORT_DEPTH = 64;
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
@@ -53,8 +67,12 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
         const module = await loadModule({ modulePath, projectDir, adapter, fs, config });
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
+        if (error instanceof VeryfrontError) throw error;
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(`Failed to load API handler ${modulePath}:`, error);
+        logger.error("Failed to load API handler", {
+          errorCategory: classifyTelemetryError(error),
+          module: pathHelper.relative(projectDir, modulePath),
+        });
         throw toError(
           createError({
             type: "api",
@@ -63,7 +81,7 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
         );
       }
     },
-    { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir },
+    { "api.module": pathHelper.basename(options.modulePath) },
   );
 }
 
@@ -76,17 +94,28 @@ async function loadModule(args: {
 }): Promise<APIRoute> {
   const { modulePath, projectDir, adapter, fs, config } = args;
 
-  if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
-
   // Always transpile TypeScript in compiled binaries - they can't import raw .ts files
   if (!isDeno || isCompiledBinary()) {
     return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
   }
 
   const fileExistsLocally = await fs.exists(modulePath);
-  if (fileExistsLocally) return loadTSModuleDirect(modulePath);
+  if (fileExistsLocally) {
+    await assertCanonicalPathWithinProject(modulePath, projectDir, adapter);
+    const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+    const inspection = await inspectDirectImportGraph(
+      modulePath,
+      projectDir,
+      adapter,
+      allowedHosts,
+      config,
+    );
+    if (!inspection.requiresBundling) return loadModuleDirect(modulePath);
+  }
 
-  logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
+  logger.debug("Using adapter-based API module loading", {
+    module: pathHelper.relative(projectDir, modulePath),
+  });
   return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
 }
 
@@ -95,18 +124,201 @@ async function loadModule(args: {
  * This allows the module to share the same runtime context as the dev server,
  * enabling auto-discovery features like agentRegistry to work.
  */
-function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
-  const cacheBuster = `?v=${Date.now()}`;
-  const url = modulePath.startsWith("file://")
-    ? `${modulePath}${cacheBuster}`
-    : `file://${modulePath}${cacheBuster}`;
-
-  logger.debug(`Direct import (Deno): ${url}`);
-  return import(url);
+function loadModuleDirect(modulePath: string): Promise<APIRoute> {
+  const url = pathHelper.toFileUrl(modulePath);
+  url.searchParams.set("vf_reload", crypto.randomUUID());
+  logger.debug("Direct API module import", { module: pathHelper.basename(modulePath) });
+  return import(url.href);
 }
 
-function loadJSModule(modulePath: string): Promise<APIRoute> {
-  return import(`file://${modulePath}`);
+interface DirectImportInspection {
+  requiresBundling: boolean;
+}
+
+function resolveImportMapEntry(
+  imports: Record<string, string> | undefined,
+  specifier: string,
+): string | undefined {
+  if (!imports) return undefined;
+  if (Object.hasOwn(imports, specifier)) return imports[specifier];
+
+  const prefix = Object.keys(imports)
+    .filter((key) => key.endsWith("/") && specifier.startsWith(key))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!prefix) return undefined;
+
+  const target = imports[prefix];
+  if (typeof target !== "string") return undefined;
+  if (!target.endsWith("/")) {
+    throw toError(
+      createError({
+        type: "api",
+        message: `Import map prefix target must end with "/": ${prefix}`,
+      }),
+    );
+  }
+  return target + specifier.slice(prefix.length);
+}
+
+function resolveImportMapSpecifier(
+  config: VeryfrontConfig | undefined,
+  projectDir: string,
+  importer: string,
+  specifier: string,
+): string | undefined {
+  const importMap = config?.resolve?.importMap;
+  if (!importMap) return undefined;
+
+  const baseUrl = pathHelper.toFileUrl(`${pathHelper.resolve(projectDir)}/`);
+  const importerUrl = /^https?:\/\//i.test(importer)
+    ? importer
+    : pathHelper.toFileUrl(pathHelper.resolve(importer)).href;
+  const matchingScopes = Object.entries(importMap.scopes ?? {})
+    .map(([scope, imports]) => {
+      try {
+        return { scopeUrl: new URL(scope, baseUrl).href, imports };
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry): entry is { scopeUrl: string; imports: Record<string, string> } =>
+      entry !== null && importerUrl.startsWith(entry.scopeUrl)
+    )
+    .sort((a, b) => b.scopeUrl.length - a.scopeUrl.length);
+
+  for (const scope of matchingScopes) {
+    const resolved = resolveImportMapEntry(scope.imports, specifier);
+    if (resolved !== undefined) return resolved;
+  }
+  return resolveImportMapEntry(importMap.imports, specifier);
+}
+
+async function assertCanonicalPathWithinProject(
+  candidate: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<void> {
+  const resolvedProject = pathHelper.resolve(projectDir);
+  const resolvedCandidate = pathHelper.resolve(candidate);
+  if (!isWithinDirectory(resolvedProject, resolvedCandidate)) {
+    throw SECURITY_VIOLATION.create({
+      message: "[API] module path escapes project directory",
+    });
+  }
+
+  const [{ path: canonicalCandidate }, canonicalProject] = await Promise.all([
+    getCanonicalPath(resolvedCandidate, adapter, true),
+    getCanonicalBaseDir(resolvedProject, adapter),
+  ]);
+  if (
+    !isWithinDirectory(pathHelper.resolve(canonicalProject), pathHelper.resolve(canonicalCandidate))
+  ) {
+    throw SECURITY_VIOLATION.create({
+      message: "[API] module path escapes project directory through a symbolic link",
+    });
+  }
+}
+
+function validateHandlerSourceSize(source: string): void {
+  if (new TextEncoder().encode(source).byteLength <= MAX_HANDLER_SOURCE_BYTES) return;
+  throw toError(
+    createError({
+      type: "api",
+      message: `API route modules must not exceed ${MAX_HANDLER_SOURCE_BYTES} bytes`,
+    }),
+  );
+}
+
+function hasNonLiteralDynamicImport(source: string): boolean {
+  const tokens = tokenizeJavaScriptSource(source);
+  for (let index = 0; index < tokens.length - 2; index++) {
+    if (tokens[index]?.value !== "import" || tokens[index + 1]?.value !== "(") continue;
+    if (tokens[index + 2]?.type !== "string") return true;
+  }
+  return false;
+}
+
+async function inspectDirectImportGraph(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  allowedHosts: string[],
+  config?: VeryfrontConfig,
+): Promise<DirectImportInspection> {
+  const visited = new Set<string>();
+  let requiresBundling = false;
+
+  async function visit(basePath: string, depth: number, required: boolean): Promise<void> {
+    if (depth > MAX_DIRECT_IMPORT_DEPTH) {
+      throw toError(
+        createError({
+          type: "api",
+          message: `API route imports support at most ${MAX_DIRECT_IMPORT_DEPTH} local levels`,
+        }),
+      );
+    }
+
+    const loaded = await tryReadFileWithExtensions(
+      adapter,
+      basePath,
+      FILE_EXTENSIONS,
+      projectDir,
+    );
+    if (!loaded) {
+      if (!required) return;
+      throw toError(createError({ type: "file", message: `File not found: ${basePath}` }));
+    }
+    if (visited.has(loaded.filePath)) return;
+    visited.add(loaded.filePath);
+    if (visited.size > MAX_DIRECT_IMPORT_FILES) {
+      throw toError(
+        createError({
+          type: "api",
+          message: `API route imports support at most ${MAX_DIRECT_IMPORT_FILES} local modules`,
+        }),
+      );
+    }
+
+    validateHandlerSourceSize(loaded.contents);
+    validateHTTPImports(loaded.contents, allowedHosts);
+    if (hasNonLiteralDynamicImport(loaded.contents)) {
+      throw SECURITY_VIOLATION.create({
+        message: "API route dynamic imports must use a string literal",
+      });
+    }
+
+    for (const { specifier } of findModuleSpecifierSpans(loaded.contents)) {
+      if (/^https?:\/\//i.test(specifier)) {
+        requiresBundling = true;
+        continue;
+      }
+      if (resolveImportMapSpecifier(config, projectDir, loaded.filePath, specifier) !== undefined) {
+        requiresBundling = true;
+        continue;
+      }
+
+      let dependencyPath: string | undefined;
+      if (specifier.startsWith("file:")) {
+        try {
+          dependencyPath = pathHelper.fromFileUrl(specifier);
+        } catch {
+          throw SECURITY_VIOLATION.create({ message: "Invalid file URL in API route import" });
+        }
+      } else if (specifier.startsWith("./") || specifier.startsWith("../")) {
+        const pathWithoutQuery = specifier.split(/[?#]/, 1)[0] ?? specifier;
+        dependencyPath = pathHelper.resolve(pathHelper.dirname(loaded.filePath), pathWithoutQuery);
+      } else if (pathHelper.isAbsolute(specifier)) {
+        dependencyPath = specifier;
+      }
+
+      if (!dependencyPath) continue;
+      await assertCanonicalPathWithinProject(dependencyPath, projectDir, adapter);
+      await visit(dependencyPath, depth + 1, false);
+    }
+  }
+
+  await visit(modulePath, 0, true);
+  return { requiresBundling };
 }
 
 function createImportMapPlugin(
@@ -114,68 +326,53 @@ function createImportMapPlugin(
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
 ): Plugin {
-  const importMap = config?.resolve?.importMap?.imports ?? {};
-  const importMapEntries = Object.keys(importMap);
+  const importMap = config?.resolve?.importMap;
+  const importMapEntries = Object.keys(importMap?.imports ?? {}).length +
+    Object.values(importMap?.scopes ?? {}).reduce(
+      (count, entries) => count + Object.keys(entries).length,
+      0,
+    );
 
-  if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
+  if (importMapEntries === 0) return { name: "import-map", setup() {} };
 
-  logger.info(`Using import map with ${importMapEntries.length} entries`);
+  logger.info("Using API import map", { entries: importMapEntries });
 
   return {
     name: "import-map",
     setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
+      build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.path.startsWith("http://") || args.path.startsWith("https://")) return undefined;
         if (args.path.startsWith("node:")) return { path: args.path, external: true };
-
-        if (
-          args.path.includes("bundle-manifest-kv") || args.path.includes("bundle-manifest-redis")
-        ) {
-          return { path: args.path, external: true };
-        }
 
         if (args.namespace === "import-map" && args.path.startsWith(".")) {
           const importerDir = pathHelper.dirname(args.importer);
           const absolutePath = pathHelper.resolve(importerDir, args.path);
-
-          logger.debug(
-            `[API] Import map relative resolve: ${args.path} (from ${args.importer}) -> ${absolutePath}`,
-          );
+          await assertCanonicalPathWithinProject(absolutePath, projectDir, adapter);
 
           return { path: absolutePath, namespace: "import-map" };
         }
 
         if (pathHelper.isAbsolute(args.path) && args.namespace !== "import-map") return undefined;
 
-        let resolvedPath = importMap[args.path];
-        if (!resolvedPath) {
-          for (const [key, value] of Object.entries(importMap)) {
-            if (key.endsWith("/") && args.path.startsWith(key)) {
-              resolvedPath = value + args.path.slice(key.length);
-              break;
-            }
-          }
-        }
+        const importer = args.importer || pathHelper.join(projectDir, "__entry__.ts");
+        let resolvedPath = resolveImportMapSpecifier(config, projectDir, importer, args.path);
 
         if (!resolvedPath) return undefined;
 
         if (resolvedPath.startsWith("http://") || resolvedPath.startsWith("https://")) {
-          logger.debug(`Import map resolved to HTTP URL: ${args.path} -> ${resolvedPath}`);
-          return undefined;
+          return { path: resolvedPath, namespace: "http-url" };
         }
+
+        if (resolvedPath.startsWith("file:")) resolvedPath = pathHelper.fromFileUrl(resolvedPath);
 
         const absolutePath = pathHelper.isAbsolute(resolvedPath)
           ? resolvedPath
           : pathHelper.resolve(projectDir, resolvedPath);
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
-          logger.error(
-            `[API] Import map entry escapes project directory: ${args.path} -> ${absolutePath}`,
-          );
           return { errors: [{ text: `Import map path escapes project: ${args.path}` }] };
         }
-
-        logger.debug(`Import map resolved: ${args.path} -> ${absolutePath}`);
+        await assertCanonicalPathWithinProject(absolutePath, projectDir, adapter);
 
         return { path: absolutePath, namespace: "import-map" };
       });
@@ -215,7 +412,10 @@ function createNamespaceOnLoadHandler(options: {
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to load ${errorLabel}: ${args.path}`, error);
+      logger.error(`Failed to load ${errorLabel}`, {
+        errorCategory: classifyTelemetryError(error),
+        module: pathHelper.basename(args.path),
+      });
       return { errors: [{ text: `Failed to load: ${msg}` }] };
     }
   });
@@ -238,19 +438,18 @@ function createAdapterResolvePlugin(
         const absolutePath = pathHelper.resolve(baseDir, args.path);
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
-          logger.error(
-            `[API] Adapter resolve path escapes project: ${args.path} -> ${absolutePath}`,
-          );
+          logger.error("[API] Adapter resolve path escapes project", {
+            import: pathHelper.basename(args.path),
+          });
           return {
             errors: [{ text: `Relative import escapes project: ${args.path}` }],
           };
         }
 
-        logger.debug(
-          `[API] Adapter resolve: ${args.path} (from ${
-            args.importer || "stdin"
-          }) -> ${absolutePath}`,
-        );
+        logger.debug("[API] Adapter import resolved", {
+          import: pathHelper.basename(args.path),
+          importer: args.importer ? pathHelper.basename(args.importer) : "stdin",
+        });
         return { path: absolutePath, namespace: "vf-adapter" };
       });
 
@@ -278,8 +477,66 @@ function loadAndTranspileModule(
   fs: FileSystem,
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
+  return buildHandlerModule(
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+    (code, userDeps) => loadModuleFromCode(code, projectDir, fs, userDeps),
+  );
+}
+
+/**
+ * Bundle a route module without importing it in the current process. The
+ * resulting code is intended only for evaluation inside an isolation worker.
+ */
+export function bundleHandlerModuleForIsolation(options: LoadModuleOptions): Promise<string> {
   return withSpan(
-    "api.loadAndTranspileModule",
+    "api.bundleHandlerModuleForIsolation",
+    async () => {
+      const { projectDir, modulePath, adapter, config } = options;
+      const fs = createFileSystem();
+      validateModulePath(modulePath, projectDir);
+
+      try {
+        return await buildHandlerModule(
+          modulePath,
+          projectDir,
+          adapter,
+          fs,
+          config,
+          (code, userDeps) =>
+            rewriteExternalImports(code, projectDir, fs, userDeps, {
+              // A data/blob module executes inside the framework Worker, where
+              // public Veryfront imports resolve through the Worker's import map.
+              preserveVeryfrontImports: true,
+            }),
+        );
+      } catch (error) {
+        if (error instanceof VeryfrontError) throw error;
+        throw toError(
+          createError({
+            type: "api",
+            message: "Failed to prepare API handler for isolated execution",
+          }),
+        );
+      }
+    },
+    { "api.module": pathHelper.basename(options.modulePath) },
+  );
+}
+
+function buildHandlerModule<T>(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  fs: FileSystem,
+  config: VeryfrontConfig | undefined,
+  consume: (code: string, userDeps: Map<string, string>) => Promise<T>,
+): Promise<T> {
+  return withSpan(
+    "api.buildHandlerModule",
     async () => {
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
         adapter,
@@ -287,22 +544,21 @@ function loadAndTranspileModule(
         FILE_EXTENSIONS,
         projectDir,
       );
-
-      if (!source) {
-        throw toError(
-          createError({
-            type: "file",
-            message: `File not found: ${modulePath} (tried extensions: .ts, .tsx, .js, .jsx, .mjs)`,
-          }),
-        );
-      }
+      validateHandlerSourceSize(source);
 
       const loader = getEsbuildLoader(resolvedPath);
 
       const allowedHosts = await loadSecurityConfig(projectDir, adapter);
       validateHTTPImports(source, allowedHosts);
 
-      const allDeps = await readProjectDependencies(projectDir, fs);
+      // Project metadata can live exclusively behind a remote adapter. Read
+      // package.json through that adapter while retaining the host filesystem
+      // for dependency resolution and temporary module work.
+      const dependencyMetadataFs: FileSystem = {
+        ...fs,
+        readTextFile: (path) => adapter.fs.readFile(path),
+      };
+      const allDeps = await readProjectDependencies(projectDir, dependencyMetadataFs);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -344,6 +600,7 @@ function loadAndTranspileModule(
 
       const result: BuildResult = await build({
         bundle: true,
+        logLevel: "silent",
         write: false,
         format: "esm",
         platform: "neutral",
@@ -376,6 +633,9 @@ function loadAndTranspileModule(
 
       if (result.errors?.length) {
         const first = result.errors[0]?.text || "unknown error";
+        if (first.includes("Remote import blocked by allow-list")) {
+          throw SECURITY_VIOLATION.create({ message: first });
+        }
         throw toError(
           createError({
             type: "api",
@@ -384,22 +644,22 @@ function loadAndTranspileModule(
         );
       }
 
-      logger.info(`built handler ${resolvedPath}`);
+      logger.info("Built API route handler", { module: pathHelper.basename(resolvedPath) });
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs, userDeps);
+      return await consume(js, userDeps);
     },
-    { "api.modulePath": modulePath, "api.projectDir": projectDir },
+    { "api.module": pathHelper.basename(modulePath) },
   );
 }
 
-async function readFileWithExtensions(
+async function tryReadFileWithExtensions(
   adapter: RuntimeAdapter,
   basePath: string,
   extensions: string[],
   projectDir?: string,
-): Promise<{ filePath: string; contents: string }> {
+): Promise<{ filePath: string; contents: string } | null> {
   const resolvedProjectDir = projectDir ? pathHelper.resolve(projectDir) : undefined;
 
   for (const ext of extensions) {
@@ -415,15 +675,29 @@ async function readFileWithExtensions(
           }),
         );
       }
+      await assertCanonicalPathWithinProject(resolved, resolvedProjectDir, adapter);
     }
 
     try {
       const contents = await adapter.fs.readFile(filePath);
       return { filePath, contents };
-    } catch (_) {
-      /* expected: trying next file extension candidate */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      /* expected: try the next extension candidate */
     }
   }
+
+  return null;
+}
+
+async function readFileWithExtensions(
+  adapter: RuntimeAdapter,
+  basePath: string,
+  extensions: string[],
+  projectDir?: string,
+): Promise<{ filePath: string; contents: string }> {
+  const loaded = await tryReadFileWithExtensions(adapter, basePath, extensions, projectDir);
+  if (loaded) return loaded;
 
   throw toError(
     createError({
@@ -441,51 +715,69 @@ async function loadModuleFromCode(
 ): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
+  let loadedModule: APIRoute | undefined;
+  let loadFailed = false;
+  let loadError: unknown;
 
-  const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
+  try {
+    const transformedCode = await rewriteExternalImports(code, projectDir, fs, userDeps);
 
-  // In compiled Deno binaries, external modules loaded from temp files cannot
-  // resolve "veryfront" since the source is embedded in the binary's virtual FS.
-  // Write runtime shims: a root shim for `from "veryfront"` and per-subpath shims
-  // for `from "veryfront/xxx"` (e.g., middleware, workflow, tool).
-  if (isDeno && isCompiledBinary()) {
-    // Ensure agent factory globalThis bridge is registered before loading user code.
-    await import("#veryfront/agent/factory.ts");
+    // In compiled Deno binaries, external modules loaded from temp files cannot
+    // resolve "veryfront" since the source is embedded in the binary's virtual FS.
+    if (isDeno && isCompiledBinary()) {
+      await import("#veryfront/agent/factory.ts");
+      await fs.writeTextFile(
+        pathHelper.join(tempDir, "_vf_runtime.mjs"),
+        VERYFRONT_RUNTIME_SHIM,
+      );
 
-    // Write root shim for `from "veryfront"` → "./_vf_runtime.mjs"
-    await fs.writeTextFile(
-      pathHelper.join(tempDir, "_vf_runtime.mjs"),
-      VERYFRONT_RUNTIME_SHIM,
-    );
+      const subpaths = extractSubpathsFromCode(transformedCode);
+      if (subpaths.size > 0) {
+        await registerVfModules(subpaths);
 
-    // Discover which veryfront/* subpaths the user code imports, register the
-    // real modules on globalThis, and write per-subpath shim files.
-    const subpaths = extractSubpathsFromCode(transformedCode);
-    if (subpaths.size > 0) {
-      await registerVfModules(subpaths);
-
-      for (const subpath of subpaths) {
-        const shimName = `_vf_${subpath.replace(/\//g, "_")}.mjs`;
-        const shimCode = generateSubpathShim(subpath);
-        await fs.writeTextFile(pathHelper.join(tempDir, shimName), shimCode);
+        for (const subpath of subpaths) {
+          const shimName = `_vf_${encodeVeryfrontSubpath(subpath)}.mjs`;
+          const shimCode = generateSubpathShim(subpath);
+          await fs.writeTextFile(pathHelper.join(tempDir, shimName), shimCode);
+        }
       }
     }
 
-    // Note: user npm dependencies are externalized and loaded at runtime via
-    // a custom CJS loader (see generateCompiledBinaryRequireShim), no shims needed.
+    await fs.writeTextFile(tempFile, transformedCode);
+
+    const moduleUrl = pathHelper.toFileUrl(tempFile);
+    moduleUrl.searchParams.set("vf_reload", crypto.randomUUID());
+    loadedModule = await import(moduleUrl.href);
+  } catch (error: unknown) {
+    loadFailed = true;
+    loadError = error;
+    logger.error("Dynamic API module import failed", {
+      errorCategory: classifyTelemetryError(error),
+    });
   }
 
-  await fs.writeTextFile(tempFile, transformedCode);
-
+  let cleanupFailed = false;
+  let cleanupError: unknown;
   try {
-    return await import(`file://${tempFile}?v=${Date.now()}`);
-  } catch (e: unknown) {
-    const errorMessage = e instanceof Error && e.stack ? e.stack : String(e);
-    logger.error(`dynamic import failed ${tempFile}: ${errorMessage}`);
-    throw e;
-  } finally {
     await fs.remove(tempDir, { recursive: true });
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupError = error;
+    logger.error("Failed to remove temporary API module directory", {
+      errorCategory: classifyTelemetryError(error),
+    });
   }
+
+  if (loadFailed && cleanupFailed) {
+    throw new AggregateError(
+      [loadError, cleanupError],
+      "API module loading and temporary directory cleanup failed",
+    );
+  }
+  if (loadFailed) throw loadError;
+  if (cleanupFailed) throw cleanupError;
+  if (!loadedModule) throw new TypeError("API module import returned no module namespace");
+  return loadedModule;
 }
 
 function extractAPIRouteHandlers(module: unknown): APIRoute | null {
@@ -509,19 +801,16 @@ function extractAPIRouteHandlers(module: unknown): APIRoute | null {
 
 /**
  * Extract veryfront subpath references from transpiled code.
- * After rewriteExternalImports, subpath imports look like `./_vf_<name>.mjs`.
+ * After rewriteExternalImports, subpath imports use hex-encoded shim names.
  */
 function extractSubpathsFromCode(code: string): Set<string> {
   const subpaths = new Set<string>();
 
-  // Match _vf_<subpath>.mjs patterns (but not _vf_runtime.mjs which is the root)
-  const re = /_vf_([a-zA-Z0-9_]+)\.mjs/g;
+  const re = /_vf_([0-9a-f]+)\.mjs/g;
   let match;
   while ((match = re.exec(code)) !== null) {
-    const shimName = match[1] ?? "";
-    if (shimName && shimName !== "runtime") {
-      subpaths.add(shimName.replace(/_/g, "/"));
-    }
+    const encoded = match[1];
+    if (encoded) subpaths.add(decodeVeryfrontSubpath(encoded));
   }
 
   return subpaths;
@@ -532,10 +821,10 @@ function extractSubpathsFromCode(code: string): Set<string> {
  * Imports are from embedded source (works in compiled binaries).
  */
 async function registerVfModules(subpaths: Set<string>): Promise<void> {
-  const modules = ((globalThis as Record<string, unknown>).__vfModules ?? {}) as Record<
-    string,
-    Record<string, unknown>
-  >;
+  const existingModules = (globalThis as Record<string, unknown>).__vfModules;
+  const modules = existingModules && typeof existingModules === "object"
+    ? existingModules as Record<string, Record<string, unknown>>
+    : Object.create(null) as Record<string, Record<string, unknown>>;
 
   // __VERYFRONT_MODULES__ is populated by the discovery transpiler via hash
   // imports (#veryfront/...) which resolve correctly in compiled binaries.
@@ -545,23 +834,21 @@ async function registerVfModules(subpaths: Set<string>): Promise<void> {
     | undefined;
 
   for (const subpath of subpaths) {
-    if (modules[subpath]) continue;
+    if (Object.hasOwn(modules, subpath)) continue;
 
     const specifier = `veryfront/${subpath}`;
 
-    const fromDiscovery = discoveryModules?.[specifier];
+    const fromDiscovery = discoveryModules && Object.hasOwn(discoveryModules, specifier)
+      ? discoveryModules[specifier]
+      : undefined;
     if (fromDiscovery) {
       modules[subpath] = fromDiscovery;
       logger.debug(`[API] Registered module ${specifier} from discovery globals`);
       continue;
     }
 
-    try {
-      modules[subpath] = await import(specifier) as Record<string, unknown>;
-      logger.debug(`[API] Registered module ${specifier} on globalThis`);
-    } catch (e) {
-      logger.warn(`[API] Failed to register veryfront/${subpath}: ${e}`);
-    }
+    modules[subpath] = await import(specifier) as Record<string, unknown>;
+    logger.debug(`[API] Registered module ${specifier} on globalThis`);
   }
 
   (globalThis as Record<string, unknown>).__vfModules = modules;
@@ -584,12 +871,13 @@ function generateSubpathShim(subpath: string): string {
   const exportNames = Object.keys(mod).filter((k) => k !== "default" && k !== "__esModule");
   const lines: string[] = [
     `// Auto-generated shim for veryfront/${subpath}`,
-    `const _mod = globalThis.__vfModules["${subpath}"];`,
+    `const _mod = globalThis.__vfModules[${JSON.stringify(subpath)}];`,
   ];
 
-  for (const name of exportNames) {
-    // Use bracket notation to handle reserved words or special names
-    lines.push(`export const ${name} = _mod["${name}"];`);
+  for (const [index, name] of exportNames.entries()) {
+    const binding = `_vf_export_${index}`;
+    lines.push(`const ${binding} = _mod[${JSON.stringify(name)}];`);
+    lines.push(`export { ${binding} as ${JSON.stringify(name)} };`);
   }
 
   if ("default" in mod) {

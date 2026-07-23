@@ -1,68 +1,79 @@
 import type { Kv, KvEntry, KvListOptions } from "./types.ts";
+import {
+  assertKvListScanWithinLimit,
+  assertKvOpen,
+  decodeStoredKvKey,
+  decodeStoredKvValue,
+  encodeKvKey,
+  encodeKvValue,
+  normalizeKvListOptions,
+  selectKvEntries,
+  VersionstampGenerator,
+} from "./contract.ts";
 
+/** Bounded in-memory implementation of the portable Veryfront KV contract. */
 export class MemoryKv implements Kv {
-  private store = new Map<string, { value: unknown; versionstamp: string }>();
-
-  private keyToString(key: string[]): string {
-    return JSON.stringify(key);
-  }
-
-  private stringToKey(keyStr: string): string[] {
-    return JSON.parse(keyStr);
-  }
+  private readonly store = new Map<string, { value: string; versionstamp: string }>();
+  private readonly versionstamps = new VersionstampGenerator();
+  private closed = false;
 
   async get<T = unknown>(key: string[]): Promise<{ value: T | undefined; versionstamp?: string }> {
-    const entry = this.store.get(this.keyToString(key));
+    assertKvOpen(this.closed);
+    const entry = this.store.get(encodeKvKey(key));
     if (!entry) return { value: undefined };
 
-    return { value: entry.value as T, versionstamp: entry.versionstamp };
+    return {
+      value: decodeStoredKvValue<T>(entry.value),
+      versionstamp: entry.versionstamp,
+    };
   }
 
   async set<T = unknown>(key: string[], value: T): Promise<void> {
-    this.store.set(this.keyToString(key), { value, versionstamp: Date.now().toString() });
+    assertKvOpen(this.closed);
+    this.store.set(encodeKvKey(key), {
+      value: encodeKvValue(value),
+      versionstamp: this.versionstamps.next(),
+    });
   }
 
   async delete(key: string[]): Promise<void> {
-    this.store.delete(this.keyToString(key));
+    assertKvOpen(this.closed);
+    this.store.delete(encodeKvKey(key));
   }
 
   async *list<T = unknown>(options?: KvListOptions): AsyncIterableIterator<KvEntry<T>> {
-    let entries = Array.from(this.store.entries());
-
-    if (options?.prefix) {
-      const prefixStr = this.keyToString(options.prefix);
-      entries = entries.filter(([key]) => key.startsWith(prefixStr.slice(0, -1)));
+    assertKvOpen(this.closed);
+    const normalizedOptions = normalizeKvListOptions(options);
+    if (normalizedOptions.limit === 0) return;
+    const bufferedEntries = [];
+    let scannedEntries = 0;
+    for (const [encodedKey, entry] of this.store) {
+      assertKvListScanWithinLimit(++scannedEntries, normalizedOptions.maxScanEntries);
+      bufferedEntries.push({
+        encodedKey,
+        key: decodeStoredKvKey(encodedKey),
+        value: entry.value,
+        versionstamp: entry.versionstamp,
+      });
     }
+    const entries = selectKvEntries(
+      bufferedEntries,
+      normalizedOptions,
+    );
 
-    entries.sort((a, b) => {
-      const result = a[0].localeCompare(b[0]);
-      return options?.reverse ? -result : result;
-    });
-
-    if (options?.start) {
-      const startStr = this.keyToString(options.start);
-      entries = entries.filter(([key]) => key >= startStr);
-    }
-
-    if (options?.end) {
-      const endStr = this.keyToString(options.end);
-      entries = entries.filter(([key]) => key < endStr);
-    }
-
-    if (options?.limit != null) {
-      entries = entries.slice(0, options.limit);
-    }
-
-    for (const [keyStr, entry] of entries) {
+    for (const entry of entries) {
+      assertKvOpen(this.closed);
       yield {
-        key: this.stringToKey(keyStr),
-        value: entry.value as T,
+        key: [...entry.key],
+        value: decodeStoredKvValue<T>(entry.value),
         versionstamp: entry.versionstamp,
       };
     }
   }
 
   close(): void {
+    if (this.closed) return;
     this.store.clear();
+    this.closed = true;
   }
 }

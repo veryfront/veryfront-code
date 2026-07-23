@@ -6,31 +6,48 @@ import {
   parseToolInputObject,
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
-import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
+import type {
+  ForkPart,
+  ForkRuntimeStep,
+  ForkRuntimeStreamLogger,
+  ForkToolCallPart,
+  ForkToolErrorPart,
+  ForkToolResultPart,
+} from "./fork-runtime-types.ts";
 
-type ForkToolCallPart = Extract<ForkPart, { type: "tool-call" }>;
-type ForkToolResultPart = Extract<ForkPart, { type: "tool-result" }>;
-type ForkToolErrorPart = Extract<ForkPart, { type: "tool-error" }>;
-
+/** Observed lifecycle signals for a streamed tool call. */
 export interface RecoveredToolObservation {
+  /** Whether tool input streaming started. */
   sawInputStart: boolean;
+  /** Whether any tool input delta arrived. */
   sawInputDelta: boolean;
+  /** Whether complete tool input became available. */
   sawInputAvailable: boolean;
+  /** Whether a successful tool output became available. */
   sawOutputAvailable: boolean;
+  /** Whether a tool output error became available. */
   sawOutputError: boolean;
 }
 
 /** State for fork recovered parts. */
 export interface ForkRecoveredPartsState {
+  /** Tool calls value. */
   toolCalls: Map<string, RecoveredToolObservation>;
+  /** Emitted tool call IDs value. */
   emittedToolCallIds: Set<string>;
+  /** Emitted tool result IDs value. */
   emittedToolResultIds: Set<string>;
+  /** Logger value. */
   logger?: ForkRuntimeStreamLogger;
 }
 
-type ForkRuntimeToolCallState = RecoveredToolObservation & {
+/** Accumulated state for one streamed fork tool call. */
+export type ForkRuntimeToolCallState = RecoveredToolObservation & {
+  /** Tool name. */
   toolName: string;
+  /** Serialized tool input accumulated from deltas. */
   inputText: string;
+  /** Parsed tool input. */
   input: Record<string, unknown>;
 };
 

@@ -10,6 +10,7 @@ import {
   type DurableRunCanaryResult,
   type DurableRunCanaryRunnerConfig,
 } from "./runner.ts";
+import { formatUrlForPublicMessage } from "../http-safety.ts";
 
 type EnvRecord = Record<string, string | undefined>;
 
@@ -80,7 +81,8 @@ export async function runDurableRunCanaryCli(
     requestTimeoutMs,
   });
 
-  log(`Durable run canaries -> ${apiUrl}`);
+  const publicApiUrl = formatUrlForPublicMessage(apiUrl);
+  log(`Durable run canaries -> ${publicApiUrl}`);
   log(`Project scope -> ${projectId}`);
 
   const results: DurableRunCanaryResult[] = [];
@@ -102,7 +104,7 @@ export async function runDurableRunCanaryCli(
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
-        apiUrl,
+        apiUrl: publicApiUrl,
         projectId,
         results,
         summary,

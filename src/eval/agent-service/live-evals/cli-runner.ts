@@ -9,6 +9,7 @@ import {
   resolveLiveEvalRequestedCaseIds,
   selectLiveEvalCases,
 } from "./report.ts";
+import { formatUrlForPublicMessage } from "../http-safety.ts";
 import {
   containsSkillLoad,
   countStepStartedEvents,
@@ -142,8 +143,10 @@ export async function runLiveEvalCli(input: RunLiveEvalCliInput): Promise<number
     return 1;
   }
 
-  log(`AG-UI live evals -> ${endpoint}`);
-  log(`Veryfront API -> ${apiUrl}`);
+  const publicEndpoint = formatUrlForPublicMessage(endpoint);
+  const publicApiUrl = formatUrlForPublicMessage(apiUrl);
+  log(`AG-UI live evals -> ${publicEndpoint}`);
+  log(`Veryfront API -> ${publicApiUrl}`);
   log(`Project scope -> ${projectId ?? "none"}`);
   log(`Runtime -> ${requestedRuntimeSelection.join(", ")}`);
   log(`Write evals -> ${runWriteEvals ? "enabled" : "disabled"}`);
@@ -211,8 +214,8 @@ export async function runLiveEvalCli(input: RunLiveEvalCliInput): Promise<number
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
-        endpoint,
-        apiUrl,
+        endpoint: publicEndpoint,
+        apiUrl: publicApiUrl,
         projectId: projectId ?? null,
         runtimes: requestedRuntimeSelection,
         writeEvals: runWriteEvals,

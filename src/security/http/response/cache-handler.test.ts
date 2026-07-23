@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import { CACHE_DURATIONS } from "./constants.ts";
 
@@ -53,9 +53,12 @@ describe("security/http/response/cache-handler", () => {
         );
       });
 
-      it("should fallback for unknown string preset", () => {
-        // TypeScript wouldn't normally allow this but testing runtime behavior
-        assertEquals(buildCacheControl("unknown" as never), "public, max-age=0");
+      it("should reject an unknown string preset", () => {
+        assertThrows(
+          () => buildCacheControl("unknown" as never),
+          TypeError,
+          "Unknown cache strategy",
+        );
       });
     });
 
@@ -104,6 +107,22 @@ describe("security/http/response/cache-handler", () => {
         assert(result.includes("max-age=3600"));
         assert(result.includes("immutable"));
         assert(result.includes("must-revalidate"));
+      });
+
+      it("should reject invalid cache durations", () => {
+        for (const maxAge of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+          assertThrows(
+            () => buildCacheControl({ maxAge }),
+            TypeError,
+            "non-negative safe integer",
+          );
+        }
+
+        assertThrows(
+          () => buildCacheControl({ maxAge: 60, staleWhileRevalidate: -1 }),
+          TypeError,
+          "non-negative safe integer",
+        );
       });
     });
   });

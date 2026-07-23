@@ -23,6 +23,7 @@ import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
+import { fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 interface MdxRecoveryOptions {
   projectId: string;
@@ -42,7 +43,7 @@ async function hasIncompatibleFrameworkPathsInCode(
   },
 ): Promise<boolean> {
   const localFs = getLocalFs();
-  const sourceContext = options.sourcePath ? { vfModulePath: options.sourcePath } : {};
+  const sourceContext = options.sourcePath ? { moduleFile: fileLogLabel(options.sourcePath) } : {};
 
   if (INVALID_VFMOD_ESM_URL_PATTERN.test(code)) {
     log.debug(
@@ -58,8 +59,7 @@ async function hasIncompatibleFrameworkPathsInCode(
     if (path.includes("veryfront-http-bundle")) {
       if (!path.startsWith(options.localHttpCacheDir)) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
-          path,
-          expectedDir: options.localHttpCacheDir,
+          dependencyFile: fileLogLabel(path),
           ...sourceContext,
         });
         return true;
@@ -70,8 +70,7 @@ async function hasIncompatibleFrameworkPathsInCode(
     if (path.includes("veryfront-mdx-esm")) {
       if (!path.startsWith(options.localMdxCacheDir)) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
-          path,
-          expectedDir: options.localMdxCacheDir,
+          dependencyFile: fileLogLabel(path),
           ...sourceContext,
         });
         return true;
@@ -85,8 +84,7 @@ async function hasIncompatibleFrameworkPathsInCode(
     // are not evicted on every read.
     if (path.includes(".cache/") && !path.startsWith(options.localCacheBaseDir)) {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Legacy cache path is not portable`, {
-        path,
-        expectedBaseDir: options.localCacheBaseDir,
+        dependencyFile: fileLogLabel(path),
         ...sourceContext,
       });
       return true;
@@ -96,8 +94,7 @@ async function hasIncompatibleFrameworkPathsInCode(
 
     if (!path.startsWith(FRAMEWORK_ROOT)) {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
-        path,
-        expectedRoot: FRAMEWORK_ROOT,
+        dependencyFile: fileLogLabel(path),
         ...sourceContext,
       });
       return true;
@@ -107,7 +104,7 @@ async function hasIncompatibleFrameworkPathsInCode(
       const stat = await localFs.stat(path);
       if (!stat?.isFile) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, {
-          path,
+          dependencyFile: fileLogLabel(path),
           ...sourceContext,
         });
         return true;
@@ -115,7 +112,7 @@ async function hasIncompatibleFrameworkPathsInCode(
     } catch (_) {
       /* expected: framework file may not exist in this environment */
       log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, {
-        path,
+        dependencyFile: fileLogLabel(path),
         ...sourceContext,
       });
       return true;
@@ -180,12 +177,16 @@ export async function findMissingFileDependenciesInCode(
     try {
       const stat = await localFs.stat(cleanPath);
       if (!stat?.isFile) {
-        log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency does not exist`, { path: cleanPath });
+        log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency does not exist`, {
+          dependencyFile: fileLogLabel(cleanPath),
+        });
         missing.push(cleanPath);
       }
     } catch (_) {
       /* expected: file dependency may not exist on this pod */
-      log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency not accessible`, { path: cleanPath });
+      log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency not accessible`, {
+        dependencyFile: fileLogLabel(cleanPath),
+      });
       missing.push(cleanPath);
     }
   }
@@ -218,8 +219,8 @@ export async function validateCachedModule(
     log.warn(
       `${LOG_PREFIX_MDX_LOADER} Cached module has raw HTTP imports, invalidating legacy cache`,
       {
-        normalizedPath,
-        cachedPath,
+        moduleFile: fileLogLabel(normalizedPath),
+        cacheFile: fileLogLabel(cachedPath),
       },
     );
     pathCache.delete(versionedKey);
@@ -237,9 +238,9 @@ export async function validateCachedModule(
     const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
     if (failed.length > 0) {
       log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
-        normalizedPath,
-        cachedPath,
-        failed,
+        moduleFile: fileLogLabel(normalizedPath),
+        cacheFile: fileLogLabel(cachedPath),
+        failedCount: failed.length,
       });
       pathCache.delete(versionedKey);
       return false;
@@ -253,9 +254,9 @@ export async function validateCachedModule(
     });
     if (recovered.recovered.length > 0) {
       log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered cached module vfmod dependencies`, {
-        normalizedPath,
-        cachedPath,
-        recovered: recovered.recovered.slice(0, 5),
+        moduleFile: fileLogLabel(normalizedPath),
+        cacheFile: fileLogLabel(cachedPath),
+        recoveredCount: recovered.recovered.length,
       });
     }
   }
@@ -263,9 +264,9 @@ export async function validateCachedModule(
   const missingDeps = await findMissingFileDependenciesInCode(cachedCode, log);
   if (missingDeps.length > 0) {
     log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing vfmod dependencies`, {
-      normalizedPath,
-      cachedPath,
-      missingDeps: missingDeps.slice(0, 5),
+      moduleFile: fileLogLabel(normalizedPath),
+      cacheFile: fileLogLabel(cachedPath),
+      missingCount: missingDeps.length,
     });
     pathCache.delete(versionedKey);
     try {
@@ -279,9 +280,8 @@ export async function validateCachedModule(
   if (!(await hasIncompatibleFrameworkPaths(cachedCode, log))) return true;
 
   log.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
-    normalizedPath,
-    cachedPath,
-    frameworkRoot: FRAMEWORK_ROOT,
+    moduleFile: fileLogLabel(normalizedPath),
+    cacheFile: fileLogLabel(cachedPath),
   });
 
   pathCache.delete(versionedKey);

@@ -20,13 +20,21 @@ import {
 
 /** Input payload for hosted child requested tools. */
 export interface HostedChildRequestedToolsInput {
+  /** Prompt value. */
   prompt: string;
+  /** Requested tools value. */
   requestedTools?: readonly string[];
+  /** Excluded tools value. */
   excludedTools?: ReadonlySet<string>;
+  /** Companion tools value. */
   companionTools?: Readonly<Record<string, readonly string[]>>;
+  /** Sandbox tool names value. */
   sandboxToolNames?: readonly string[];
+  /** Artifact tool names value. */
   artifactToolNames?: readonly string[];
+  /** Sandbox required cue pattern value. */
   sandboxRequiredCuePattern?: RegExp;
+  /** Callback that handles is text artifact prompt. */
   isTextArtifactPrompt?: (prompt: string) => boolean;
 }
 

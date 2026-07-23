@@ -17,8 +17,14 @@ class FakeSpan {
   status: { code: number } | null = null;
   exceptions: unknown[] = [];
   ended = false;
+  endCalls = 0;
 
-  constructor(readonly name: string) {
+  constructor(
+    readonly name: string,
+    private readonly throwOnEnd = false,
+    private readonly throwOnAttributes = false,
+    private readonly throwOnSpanContext = false,
+  ) {
     this.context = {
       traceId: `${name}-trace`,
       spanId: `${name}-span`,
@@ -27,6 +33,7 @@ class FakeSpan {
 
   setAttribute(key: string, value: unknown): FakeSpan {
     this.attributes[key] = value;
+    if (this.throwOnAttributes) throw new Error("tracer-attribute-failure");
     return this;
   }
 
@@ -47,44 +54,76 @@ class FakeSpan {
   }
 
   end(): void {
+    this.endCalls++;
     this.ended = true;
+    if (this.throwOnEnd) throw new Error("tracer-end-failure");
   }
 
   spanContext(): { traceId: string; spanId: string } {
+    if (this.throwOnSpanContext) throw new Error("tracer-context-failure");
     return this.context;
   }
 }
 
-function createHarness() {
+function createHarness(
+  options: {
+    throwAfterActiveCallback?: boolean;
+    throwAfterContextCallback?: boolean;
+    throwOnAttributes?: boolean;
+    throwOnEnd?: boolean;
+    throwOnSpanContext?: boolean;
+  } = {},
+) {
   let activeContext: FakeContext = {};
   const startedSpans: FakeSpan[] = [];
+  const startedOptions: Array<FakeSpanOptions | undefined> = [];
   const contextApi = {
     active: () => activeContext,
     with: <T>(context: FakeContext, fn: () => T): T => {
       const previous = activeContext;
       activeContext = context;
+      let result: T;
       try {
-        return fn();
+        result = fn();
       } finally {
         activeContext = previous;
       }
+      if (options.throwAfterContextCallback) {
+        throw new Error("context-after-callback-failure");
+      }
+      return result;
     },
   };
   const traceApi = {
     getTracer: (_serviceName: string) => ({
       startSpan: (
         name: string,
-        _options: FakeSpanOptions | undefined,
+        spanOptions: FakeSpanOptions | undefined,
         _context: FakeContext,
       ): FakeSpan => {
-        const span = new FakeSpan(name);
+        startedOptions.push(spanOptions);
+        const span = new FakeSpan(
+          name,
+          options.throwOnEnd,
+          options.throwOnAttributes,
+          options.throwOnSpanContext,
+        );
         startedSpans.push(span);
         return span;
       },
       startActiveSpan: <T>(name: string, fn: (span: FakeSpan) => T): T => {
-        const span = new FakeSpan(name);
+        const span = new FakeSpan(
+          name,
+          options.throwOnEnd,
+          options.throwOnAttributes,
+          options.throwOnSpanContext,
+        );
         startedSpans.push(span);
-        return contextApi.with({ span }, () => fn(span));
+        const result = contextApi.with({ span }, () => fn(span));
+        if (options.throwAfterActiveCallback) {
+          throw new Error("tracer-after-callback-failure");
+        }
+        return result;
       },
     }),
     setSpan: (_context: FakeContext, span: FakeSpan): FakeContext => ({ span }),
@@ -95,6 +134,7 @@ function createHarness() {
     contextApi,
     traceApi,
     startedSpans,
+    startedOptions,
   };
 }
 
@@ -144,7 +184,12 @@ describe("observability/tracing/service-tracer", () => {
       "sync failed",
     );
     assertEquals(syncHarness.startedSpans[0]?.status, { code: 2 });
-    assertEquals(syncHarness.startedSpans[0]?.exceptions, [syncError]);
+    assertEquals(syncHarness.startedSpans[0]?.exceptions, []);
+    assertEquals(syncHarness.startedSpans[0]?.attributes, {
+      error: true,
+      "error.category": "error",
+      "error.type": "error",
+    });
     assertEquals(syncHarness.startedSpans[0]?.ended, true);
 
     const asyncHarness = createHarness();
@@ -165,7 +210,12 @@ describe("observability/tracing/service-tracer", () => {
       "async failed",
     );
     assertEquals(asyncHarness.startedSpans[0]?.status, { code: 2 });
-    assertEquals(asyncHarness.startedSpans[0]?.exceptions, [asyncError]);
+    assertEquals(asyncHarness.startedSpans[0]?.exceptions, []);
+    assertEquals(asyncHarness.startedSpans[0]?.attributes, {
+      error: true,
+      "error.category": "error",
+      "error.type": "error",
+    });
     assertEquals(asyncHarness.startedSpans[0]?.ended, true);
   });
 
@@ -194,5 +244,210 @@ describe("observability/tracing/service-tracer", () => {
       number: 1,
       undefinedValue: "",
     });
+  });
+
+  it("uses childOf only to establish context", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const parent = serviceTracer.tracer.startSpan("parent");
+
+    serviceTracer.tracer.startSpan("child", {
+      childOf: parent,
+      attributes: {
+        operation: "child",
+        credential: "token=private-value",
+      },
+    });
+
+    assertEquals(harness.startedOptions[1]?.childOf, undefined);
+    assertEquals(harness.startedOptions[1]?.attributes?.operation, "child");
+    assertEquals(
+      String(harness.startedOptions[1]?.attributes?.credential).includes("private-value"),
+      false,
+    );
+  });
+
+  it("bounds and redacts service tracer attributes", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const span = serviceTracer.tracer.startSpan("manual-operation");
+    span.setTag("credential", "token=secret-value");
+    span.setTag("object", { apiKey: "secret-value", safe: "value" });
+    span.setAttributes(Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`dimension.${index}`, "x".repeat(500)]),
+    ));
+
+    assertEquals(
+      String(harness.startedSpans[0]?.attributes.credential).includes("secret-value"),
+      false,
+    );
+    assertEquals(
+      String(harness.startedSpans[0]?.attributes.object).includes("secret-value"),
+      false,
+    );
+    assertEquals(Object.keys(harness.startedSpans[0]?.attributes ?? {}).length, 34);
+    assertEquals(
+      String(harness.startedSpans[0]?.attributes["dimension.0"]).length,
+      256,
+    );
+  });
+
+  it("makes manual span finish idempotent and isolates hostile attribute snapshots", () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const span = serviceTracer.tracer.startSpan("manual-operation");
+    const hostile = new Proxy<Record<string, string>>({}, {
+      ownKeys() {
+        throw new Error("attribute snapshot failed");
+      },
+    });
+
+    span.setAttributes(hostile);
+    span.finish();
+    span.finish();
+
+    assertEquals(harness.startedSpans[0]?.endCalls, 1);
+  });
+
+  it("keeps wrapped spans open until async failures settle", async () => {
+    const harness = createHarness();
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const applicationError = new Error("private customer detail");
+    const wrapped = serviceTracer.tracer.wrap("wrapped-operation", async () => {
+      await Promise.resolve();
+      throw applicationError;
+    });
+
+    const result = wrapped();
+    assertEquals(harness.startedSpans[0]?.ended, false);
+    await assertRejects(() => result, Error, "private customer detail");
+
+    assertEquals(harness.startedSpans[0]?.status, { code: 2 });
+    assertEquals(harness.startedSpans[0]?.exceptions, []);
+    assertEquals(harness.startedSpans[0]?.attributes, {
+      error: true,
+      "error.category": "error",
+      "error.type": "error",
+    });
+    assertEquals(harness.startedSpans[0]?.ended, true);
+  });
+
+  it("preserves one wrapped async invocation when context hooks fail", async () => {
+    const harness = createHarness({
+      throwAfterContextCallback: true,
+      throwOnEnd: true,
+    });
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    let calls = 0;
+    const wrapped = serviceTracer.tracer.wrap("wrapped-operation", async () => {
+      calls++;
+      return "application-result";
+    });
+
+    assertEquals(await wrapped(), "application-result");
+    assertEquals(calls, 1);
+    assertEquals(harness.startedSpans[0]?.ended, true);
+  });
+
+  it("isolates active attribute and span-context hook failures", () => {
+    const attributeHarness = createHarness({ throwOnAttributes: true });
+    const attributeTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: attributeHarness.contextApi,
+      trace: attributeHarness.traceApi,
+      errorStatusCode: 2,
+    });
+
+    const attributeResult = attributeTracer.tracer.trace("operation", () => {
+      attributeTracer.setActiveSpanAttributes({ "bounded.value": "ok" });
+      return "application-result";
+    });
+    assertEquals(attributeResult, "application-result");
+
+    const contextHarness = createHarness({ throwOnSpanContext: true });
+    const contextTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: contextHarness.contextApi,
+      trace: contextHarness.traceApi,
+      errorStatusCode: 2,
+    });
+    const manualSpan = contextTracer.tracer.startSpan("manual-operation");
+
+    assertEquals(manualSpan.context(), undefined);
+    assertEquals(
+      contextTracer.tracer.trace("operation", () => contextTracer.getTraceContext()),
+      {},
+    );
+  });
+
+  it("preserves one manual span context callback when hooks fail", () => {
+    const harness = createHarness({
+      throwAfterContextCallback: true,
+      throwOnEnd: true,
+    });
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    const span = serviceTracer.tracer.startSpan("manual-operation");
+    let calls = 0;
+
+    const result = span.withContext(() => {
+      calls++;
+      return "application-result";
+    });
+    span.finish();
+
+    assertEquals(result, "application-result");
+    assertEquals(calls, 1);
+  });
+
+  it("preserves one application invocation when active tracer hooks fail", () => {
+    const harness = createHarness({
+      throwAfterActiveCallback: true,
+      throwOnEnd: true,
+    });
+    const serviceTracer = createOpenTelemetryServiceTracer({
+      serviceName: "test-service",
+      context: harness.contextApi,
+      trace: harness.traceApi,
+      errorStatusCode: 2,
+    });
+    let calls = 0;
+
+    const result = serviceTracer.tracer.trace("operation", () => {
+      calls++;
+      return "application-result";
+    });
+
+    assertEquals(result, "application-result");
+    assertEquals(calls, 1);
   });
 });

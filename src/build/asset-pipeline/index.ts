@@ -29,8 +29,8 @@ import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
 } from "./tailwind-processor/index.ts";
-import { getErrorMessage } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
+import { loadSharp } from "./image-optimizer/sharp-loader.ts";
 
 export interface TailwindBatchOptions {
   enabled?: boolean;
@@ -81,95 +81,80 @@ export async function runAssetPipeline(
     duration: 0,
   };
 
-  if (options.images?.enabled !== false) {
-    try {
-      const imageOptimizer = new ImageOptimizer(options.images);
-      await imageOptimizer.optimize();
-      const imageStats = imageOptimizer.getStats();
+  if (options.images && options.images.enabled !== false) {
+    const imageOptimizer = new ImageOptimizer(options.images);
+    await imageOptimizer.optimize();
+    const imageStats = imageOptimizer.getStats();
 
-      result.images = {
-        optimized: imageStats.totalImages,
-        variants: imageStats.totalVariants,
-        totalSize: imageStats.totalSize,
-        enabled: true,
-      };
+    result.images = {
+      optimized: imageStats.totalImages,
+      variants: imageStats.totalVariants,
+      totalSize: imageStats.totalSize,
+      enabled: true,
+    };
 
-      logger.info("Image optimization complete", {
-        images: imageStats.totalImages,
-        variants: imageStats.totalVariants,
-        size: `${(imageStats.totalSize / 1024 / 1024).toFixed(2)}MB`,
-      });
-    } catch (error) {
-      logger.error("Image optimization failed", { error: getErrorMessage(error) });
-    }
+    logger.info("Image optimization complete", {
+      images: imageStats.totalImages,
+      variants: imageStats.totalVariants,
+      size: `${(imageStats.totalSize / 1024 / 1024).toFixed(2)}MB`,
+    });
   }
 
   const tailwindOptions = options.tailwind;
   if (tailwindOptions && tailwindOptions.enabled !== false) {
     const { projectDir, sourceDir = "styles", outputDir = ".veryfront/css" } = tailwindOptions;
 
-    if (!projectDir) {
-      logger.warn("Tailwind CSS processing skipped: projectDir not provided");
-    } else {
-      try {
-        const tailwindResults: TailwindProcessResult[] = await processTailwindCSSInDirectory(
-          projectDir,
-          sourceDir,
-          outputDir,
-        );
-
-        result.tailwind.enabled = true;
-
-        if (tailwindResults.length === 0) {
-          logger.info("Tailwind CSS processing skipped - no Tailwind files detected", {
-            directory: sourceDir,
-          });
-        } else {
-          const totalUtilities = tailwindResults.reduce(
-            (sum, r) => sum + (r.detectedUtilities ?? 0),
-            0,
-          );
-
-          result.tailwind = {
-            processed: tailwindResults.length,
-            utilities: totalUtilities,
-            enabled: true,
-          };
-
-          logger.info("Tailwind CSS processing complete", {
-            files: tailwindResults.length,
-            utilities: totalUtilities,
-          });
-        }
-      } catch (error) {
-        logger.error("Tailwind CSS processing failed", { error: getErrorMessage(error) });
-      }
+    if (!projectDir?.trim()) {
+      throw new TypeError("tailwind.projectDir must not be blank");
     }
-  }
+    const tailwindResults: TailwindProcessResult[] = await processTailwindCSSInDirectory(
+      projectDir,
+      sourceDir,
+      outputDir,
+    );
 
-  if (options.css?.enabled !== false) {
-    try {
-      const cssOptimizer = new CSSOptimizer(options.css);
-      await cssOptimizer.optimize();
-      const cssStats = await cssOptimizer.getStats();
+    result.tailwind.enabled = true;
 
-      result.css = {
-        optimized: cssStats.totalFiles,
-        originalSize: cssStats.originalSize,
-        minifiedSize: cssStats.minifiedSize,
-        savings: cssStats.averageSavings,
+    if (tailwindResults.length === 0) {
+      logger.info("Tailwind CSS processing skipped because no Tailwind files were detected");
+    } else {
+      const totalUtilities = tailwindResults.reduce(
+        (sum, tailwindResult) => sum + tailwindResult.detectedUtilities,
+        0,
+      );
+
+      result.tailwind = {
+        processed: tailwindResults.length,
+        utilities: totalUtilities,
         enabled: true,
       };
 
-      logger.info("CSS optimization complete", {
-        files: cssStats.totalFiles,
-        original: `${(cssStats.originalSize / 1024).toFixed(1)}KB`,
-        minified: `${(cssStats.minifiedSize / 1024).toFixed(1)}KB`,
-        savings: `${cssStats.averageSavings.toFixed(1)}%`,
+      logger.info("Tailwind CSS processing complete", {
+        files: tailwindResults.length,
+        utilities: totalUtilities,
       });
-    } catch (error) {
-      logger.error("CSS optimization failed", { error: getErrorMessage(error) });
     }
+  }
+
+  if (options.css && options.css.enabled !== false) {
+    const cssOptimizer = new CSSOptimizer(options.css);
+    await cssOptimizer.optimize();
+    const cssStats = await cssOptimizer.getStats();
+
+    result.css = {
+      optimized: cssStats.totalFiles,
+      originalSize: cssStats.originalSize,
+      minifiedSize: cssStats.minifiedSize,
+      savings: cssStats.averageSavings,
+      enabled: true,
+    };
+
+    logger.info("CSS optimization complete", {
+      files: cssStats.totalFiles,
+      original: `${(cssStats.originalSize / 1024).toFixed(1)}KB`,
+      minified: `${(cssStats.minifiedSize / 1024).toFixed(1)}KB`,
+      savings: `${cssStats.averageSavings.toFixed(1)}%`,
+    });
   }
 
   result.duration = Date.now() - startTime;
@@ -191,17 +176,17 @@ export async function checkAssetPipelineDependencies(): Promise<{
   const dependencies = { sharp: false, lightningCSS: false };
 
   try {
-    await import("https://esm.sh/sharp@0.33.0");
+    await loadSharp();
     dependencies.sharp = true;
-  } catch (error) {
-    logger.debug("Sharp image processing library not available:", error);
+  } catch {
+    logger.debug("Sharp image processing library is not available");
   }
 
   try {
-    await import("https://esm.sh/lightningcss@1.29.2");
+    await import("npm:lightningcss@1.29.2");
     dependencies.lightningCSS = true;
-  } catch (error) {
-    logger.debug("Lightning CSS not available:", error);
+  } catch {
+    logger.debug("Lightning CSS is not available");
   }
 
   return dependencies;
@@ -222,7 +207,7 @@ export async function getAssetPipelineStatus(): Promise<{
     available.push("Sharp image optimizer");
   } else {
     missing.push("Sharp");
-    recommendations.push("Install Sharp for automatic image optimization: npm install sharp");
+    recommendations.push("Install a Sharp binary compatible with the current runtime");
   }
 
   if (deps.lightningCSS) {
@@ -230,7 +215,7 @@ export async function getAssetPipelineStatus(): Promise<{
   } else {
     missing.push("Lightning CSS");
     recommendations.push(
-      "Install Lightning CSS for advanced CSS optimization: npm install lightningcss",
+      "Install Lightning CSS 1.29.2 in the current runtime",
     );
   }
 

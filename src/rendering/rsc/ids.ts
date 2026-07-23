@@ -1,5 +1,7 @@
-import { join } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, relative } from "#veryfront/compat/path/index.ts";
 import { HASH_SEED_DJB2 } from "#veryfront/utils";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { CLIENT_BOUNDARY_VIOLATION } from "#veryfront/errors/error-registry/boundary.ts";
 
 export function computeStableId(relPath: string): string {
   let hash = HASH_SEED_DJB2;
@@ -20,10 +22,28 @@ export function withStableIds(
   graph: Graph,
 ): { client: Entry[]; server: Entry[] } {
   const appRoot = join(projectDir, "app");
+  const ids = new Map<string, string>();
 
   const mapEntry = (path: string): Entry => {
-    const rel = path.startsWith(appRoot) ? path.slice(appRoot.length) || "/" : path;
-    return { id: computeStableId(rel), path, rel };
+    const relativePath = relative(appRoot, path).replaceAll("\\", "/");
+    if (
+      relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)
+    ) {
+      throw SECURITY_VIOLATION.create({
+        detail: "RSC component path is outside the app directory",
+      });
+    }
+
+    const rel = relativePath === "" ? "/" : `/${relativePath}`;
+    const id = computeStableId(rel);
+    const existingPath = ids.get(id);
+    if (existingPath !== undefined && existingPath !== rel) {
+      throw CLIENT_BOUNDARY_VIOLATION.create({
+        detail: "Stable RSC component ID collision",
+      });
+    }
+    ids.set(id, rel);
+    return { id, path, rel };
   };
 
   const byRel = (a: Entry, b: Entry): number => a.rel.localeCompare(b.rel);

@@ -11,6 +11,8 @@
  * Return the incoming request ID if present, otherwise generate a new UUID.
  */
 export function generateRequestId(incomingId?: string | null): string {
-  if (incomingId) return incomingId;
+  if (incomingId && incomingId.length <= 128 && /^[A-Za-z0-9._:/-]+$/.test(incomingId)) {
+    return incomingId;
+  }
   return crypto.randomUUID();
 }

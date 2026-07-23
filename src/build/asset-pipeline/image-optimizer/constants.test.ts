@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   DEFAULT_OPTIONS,
   MANIFEST_FILENAME,
-  SHARP_CDN_URL,
+  SHARP_MODULE_SPECIFIER,
   SUPPORTED_EXTENSIONS,
 } from "./constants.ts";
 
@@ -33,6 +33,7 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
     it("should have default input and output directories", () => {
       assertEquals(DEFAULT_OPTIONS.inputDir, "./public");
       assertEquals(DEFAULT_OPTIONS.outputDir, "./.veryfront/optimized-images");
+      assertEquals(DEFAULT_OPTIONS.publicPath, "/.veryfront/optimized-images");
     });
 
     it("should not preserve originals by default", () => {
@@ -52,9 +53,9 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
     });
   });
 
-  describe("SHARP_CDN_URL", () => {
-    it("should be a valid esm.sh URL", () => {
-      assertEquals(SHARP_CDN_URL.startsWith("https://esm.sh/sharp@"), true);
+  describe("SHARP_MODULE_SPECIFIER", () => {
+    it("pins the supported Sharp package version", () => {
+      assertEquals(SHARP_MODULE_SPECIFIER, "npm:sharp@0.34.5");
     });
   });
 

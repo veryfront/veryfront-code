@@ -21,14 +21,14 @@ import type { VeryfrontConfig } from "#veryfront/config";
 
 describe("Bundle Manifest Integration", () => {
   describe("initializeBundleManifest", () => {
-    it("defaults to in-memory", async () => {
+    it("defaults to disabled in development", async () => {
       const config: VeryfrontConfig = {};
 
       await initializeBundleManifest(config, "development");
 
       const store = getBundleManifestStore();
       assertExists(store);
-      assertEquals(store instanceof InMemoryBundleManifestStore, true);
+      assertEquals(await store.isAvailable(), false);
     });
 
     it("respects config enabled flag", async () => {
@@ -43,7 +43,7 @@ describe("Bundle Manifest Integration", () => {
       await initializeBundleManifest(config, "production");
 
       const store = getBundleManifestStore();
-      assertEquals(store instanceof InMemoryBundleManifestStore, true);
+      assertEquals(await store.isAvailable(), false);
     });
 
     it("initializes memory store", async () => {

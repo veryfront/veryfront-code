@@ -1,4 +1,5 @@
-import { join } from "#veryfront/compat/path";
+import { isAbsolute, join, normalize, relative } from "#veryfront/compat/path";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
@@ -8,18 +9,21 @@ import {
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
-import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+import {
+  findActiveDocumentOpeningTag,
+  insertAtDocumentHeadEnd,
+} from "#veryfront/html/html-injection.ts";
+import { buildNonceAttribute, escapeHTML } from "#veryfront/html/html-escape.ts";
 import type { MDXFrontmatter } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
-import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
-import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
+import { streamToString } from "../utils/stream-utils.ts";
 import { profilePhase, profileSyncPhase } from "#veryfront/observability";
 import {
   extractProjectClassesForRoute,
@@ -30,6 +34,7 @@ import {
 import {
   buildHeadElements as buildCollectedHeadElements,
   mergeFrontmatter as mergeCollectedFrontmatter,
+  resolveDocumentMetadata,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
@@ -72,39 +77,183 @@ async function resolveReleaseAssetManifestForHTML(
   );
 }
 
-/**
- * Locate the opening `<html>` tag in `html`, respecting quoted attribute values
- * so that a `>` inside an attribute value (e.g. `data-foo="a>b"`) does not
- * truncate the tag prematurely.
- *
- * Returns the start index, the exclusive end index (points past the `>`), and
- * the raw attribute string between `<html` and `>`. Returns null if no tag is
- * found or the tag is not properly closed.
- */
-function findHtmlOpeningTag(
-  html: string,
-): { tagStart: number; tagEnd: number; attrs: string } | null {
-  const lower = html.toLowerCase();
-  const tagStart = lower.indexOf("<html");
-  if (tagStart === -1) return null;
+interface OpeningTagAttribute {
+  end: number;
+  name: string;
+  quote: '"' | "'" | null;
+  start: number;
+  value: string | null;
+}
 
-  const afterHtml = tagStart + 5;
-  // Must be followed by whitespace, >, or / to be a genuine <html> element
-  const boundary = lower[afterHtml];
-  if (boundary && !/[\s>\/]/.test(boundary)) return null;
+interface ThemeAttributeScan {
+  attributes: OpeningTagAttribute[];
+  closingSlashIndex: number | null;
+}
 
-  let activeQuote: string | null = null;
-  for (let i = afterHtml; i < html.length; i++) {
-    const ch = html[i];
-    if (activeQuote) {
-      if (ch === activeQuote) activeQuote = null;
-    } else if (ch === '"' || ch === "'") {
-      activeQuote = ch;
-    } else if (ch === ">") {
-      return { tagStart, tagEnd: i + 1, attrs: html.slice(afterHtml, i) };
+const MAX_THEME_ATTRIBUTE_OCCURRENCES = 1024;
+const TRAILING_CHARACTER_REFERENCE_PREFIX = /&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*)$/;
+
+function isHTMLSpace(value: string | undefined): boolean {
+  return value === " " || value === "\t" || value === "\n" || value === "\f" ||
+    value === "\r";
+}
+
+function isAttributeName(
+  openingTag: string,
+  start: number,
+  end: number,
+  expected: string,
+): boolean {
+  if (end - start !== expected.length) return false;
+  for (let index = 0; index < expected.length; index++) {
+    if (openingTag[start + index]?.toLowerCase() !== expected[index]) return false;
+  }
+  return true;
+}
+
+function readThemeAttributes(openingTag: string): ThemeAttributeScan {
+  const attributes: OpeningTagAttribute[] = [];
+  const tagEnd = openingTag.length - 1;
+  let index = "<html".length;
+  let closingSlashIndex: number | null = null;
+
+  while (index < tagEnd) {
+    while (index < tagEnd && isHTMLSpace(openingTag[index])) index++;
+    if (index >= tagEnd) break;
+    if (openingTag[index] === "/") {
+      let afterSlash = index + 1;
+      while (afterSlash < tagEnd && isHTMLSpace(openingTag[afterSlash])) afterSlash++;
+      if (afterSlash === tagEnd) {
+        closingSlashIndex = index;
+        break;
+      }
+      index++;
+      continue;
+    }
+
+    const start = index;
+    while (
+      index < tagEnd && !isHTMLSpace(openingTag[index]) &&
+      openingTag[index] !== "/" && openingTag[index] !== ">" &&
+      openingTag[index] !== "="
+    ) {
+      index++;
+    }
+    if (index === start) {
+      index++;
+      continue;
+    }
+
+    const nameEnd = index;
+    const name = isAttributeName(openingTag, start, nameEnd, "data-theme")
+      ? "data-theme"
+      : isAttributeName(openingTag, start, nameEnd, "style")
+      ? "style"
+      : null;
+    let valueStart: number | null = null;
+    let valueEnd: number | null = null;
+    let quote: '"' | "'" | null = null;
+    let valueCursor = index;
+    while (valueCursor < tagEnd && isHTMLSpace(openingTag[valueCursor])) valueCursor++;
+
+    if (openingTag[valueCursor] === "=") {
+      valueCursor++;
+      while (valueCursor < tagEnd && isHTMLSpace(openingTag[valueCursor])) valueCursor++;
+
+      const valueQuote = openingTag[valueCursor];
+      if (valueQuote === '"' || valueQuote === "'") {
+        quote = valueQuote;
+        valueStart = ++valueCursor;
+        while (valueCursor < tagEnd && openingTag[valueCursor] !== valueQuote) valueCursor++;
+        valueEnd = valueCursor;
+        if (openingTag[valueCursor] === valueQuote) valueCursor++;
+      } else {
+        valueStart = valueCursor;
+        while (
+          valueCursor < tagEnd && !isHTMLSpace(openingTag[valueCursor]) &&
+          openingTag[valueCursor] !== ">"
+        ) {
+          valueCursor++;
+        }
+        valueEnd = valueCursor;
+      }
+      index = valueCursor;
+    } else {
+      index = nameEnd;
+    }
+
+    if (name) {
+      if (attributes.length >= MAX_THEME_ATTRIBUTE_OCCURRENCES) {
+        throw new RangeError("HTML opening tag contains too many theme attributes");
+      }
+      attributes.push({
+        end: index,
+        name,
+        quote,
+        start,
+        value: valueStart === null || valueEnd === null
+          ? null
+          : openingTag.slice(valueStart, valueEnd),
+      });
     }
   }
-  return null; // unclosed tag
+
+  return { attributes, closingSlashIndex };
+}
+
+function appendColorScheme(
+  styleValue: string | null | undefined,
+  colorScheme: "light" | "dark",
+): string {
+  const existing = styleValue ?? "";
+  const trimmedEnd = existing.trimEnd();
+  const declaration = `color-scheme: ${colorScheme} !important;`;
+  if (!trimmedEnd) return `${existing}${declaration}`;
+  const separator = trimmedEnd.endsWith(";")
+    ? existing.length === trimmedEnd.length ? " " : ""
+    : TRAILING_CHARACTER_REFERENCE_PREFIX.test(trimmedEnd)
+    ? " ; "
+    : "; ";
+  return `${existing}${separator}${declaration}`;
+}
+
+function serializeStyleAttribute(
+  attribute: OpeningTagAttribute | undefined,
+  colorScheme: "light" | "dark",
+): string {
+  const value = appendColorScheme(attribute?.value, colorScheme);
+  if (attribute?.quote) return `${attribute.quote}${value}${attribute.quote}`;
+
+  const quote = value.includes('"') && !value.includes("'") ? "'" : '"';
+  const escapedValue = quote === '"'
+    ? value.replaceAll('"', "&quot;")
+    : value.replaceAll("'", "&#39;");
+  return `${quote}${escapedValue}${quote}`;
+}
+
+function rewriteThemeAttributes(
+  openingTag: string,
+  colorScheme: "light" | "dark",
+): string {
+  const { attributes, closingSlashIndex } = readThemeAttributes(openingTag);
+  const styleAttribute = attributes.find((attribute) => attribute.name === "style");
+  let cursor = 0;
+  const preservedParts: string[] = [];
+
+  for (const attribute of attributes) {
+    preservedParts.push(openingTag.slice(cursor, attribute.start));
+    cursor = attribute.end;
+    while (cursor < openingTag.length - 1 && isHTMLSpace(openingTag[cursor])) cursor++;
+  }
+  preservedParts.push(openingTag.slice(cursor, -1));
+
+  let prefix = preservedParts.join("").trimEnd();
+  if (closingSlashIndex !== null && prefix.endsWith("/")) {
+    prefix = prefix.slice(0, -1).trimEnd();
+  }
+  const serializedStyle = serializeStyleAttribute(styleAttribute, colorScheme);
+  const closing = closingSlashIndex === null ? ">" : " />";
+  return `${prefix} data-theme="${escapeHTML(colorScheme)}" style=${serializedStyle}${closing}`;
 }
 
 function applyExplicitThemeToDocument(
@@ -114,37 +263,12 @@ function applyExplicitThemeToDocument(
 ): string {
   if (!enabled || !colorScheme) return html;
 
-  const tag = findHtmlOpeningTag(html);
+  const tag = findActiveDocumentOpeningTag(html, "html");
   if (!tag) return html;
 
-  let nextAttrs = tag.attrs;
-
-  if (/\sdata-theme\s*=/i.test(nextAttrs)) {
-    nextAttrs = nextAttrs.replace(/\sdata-theme\s*=\s*(["']).*?\1/i, "");
-  }
-  nextAttrs += ` data-theme="${colorScheme}"`;
-
-  const styleMatch = nextAttrs.match(/\sstyle\s*=\s*(["'])(.*?)\1/i);
-  if (styleMatch) {
-    let styleValue = (styleMatch[2] ?? "").trim();
-
-    if (/color-scheme\s*:/i.test(styleValue)) {
-      styleValue = styleValue.replace(
-        /color-scheme\s*:\s*[^;]+/i,
-        `color-scheme: ${colorScheme}`,
-      );
-    } else {
-      styleValue = styleValue
-        ? `${styleValue.replace(/;?\s*$/, ";")} color-scheme: ${colorScheme};`
-        : `color-scheme: ${colorScheme};`;
-    }
-
-    nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${styleValue}"`);
-  } else {
-    nextAttrs += ` style="color-scheme: ${colorScheme};"`;
-  }
-
-  return html.slice(0, tag.tagStart) + `<html${nextAttrs}>` + html.slice(tag.tagEnd);
+  const openingTag = html.slice(tag.start, tag.end);
+  return html.slice(0, tag.start) + rewriteThemeAttributes(openingTag, colorScheme) +
+    html.slice(tag.end);
 }
 
 function injectThemePersistenceScript(
@@ -153,15 +277,14 @@ function injectThemePersistenceScript(
   enabled: boolean | undefined,
   nonce?: string,
 ): string {
-  if (!enabled || !colorScheme || !/<\/head>/i.test(html)) return html;
-  if (html.includes(`localStorage.setItem('theme','${colorScheme}')`)) return html;
+  if (!enabled || !colorScheme) return html;
 
   const nonceAttr = buildNonceAttribute(nonce);
   const script = `<script${nonceAttr}>
 (function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
 </script>`;
 
-  return html.replace(/<\/head>/i, `${script}\n</head>`);
+  return insertAtDocumentHeadEnd(html, `${script}\n`);
 }
 
 export class HTMLGenerator {
@@ -172,19 +295,10 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    let html: string;
-    if (isFullHTMLDocument(context.html)) {
-      html = await this.handleFullHTMLDocument(context);
-    } else {
-      html = await this.wrapHTMLFragment(context);
-    }
-    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
-
-    if (context.options?.studioEmbed) {
-      logger.debug("Injected element selectors for Studio");
-    }
-
-    return addNonceToHtmlTags(finalHtml, context.options?.nonce);
+    const html = isFullHTMLDocument(context.html)
+      ? await this.handleFullHTMLDocument(context)
+      : await this.wrapHTMLFragment(context);
+    return addNonceToHtmlTags(html, context.options?.nonce);
   }
 
   async generateHTMLStream(
@@ -192,25 +306,16 @@ export class HTMLGenerator {
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
     const fullContext = context as HTMLGenerationContext;
-    let reactContent: string;
-    try {
-      reactContent = (await streamToString(reactStream)).trim();
-    } catch (error) {
-      if (!(error instanceof StreamTimeoutError)) throw error;
-
-      logger.warn("Stream timed out, using partial content", {
-        partialLength: error.partialContent.length,
-      });
-      reactContent = error.partialContent.trim();
-    }
+    const reactContent = (await streamToString(reactStream)).trim();
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
+      const generatedHtml = await this.handleFullHTMLDocument({
+        ...fullContext,
+        html: reactContent,
+      });
       const fullHtml = addNonceToHtmlTags(
-        await this.handleFullHTMLDocument({
-          ...fullContext,
-          html: reactContent,
-        }),
+        generatedHtml,
         context.options?.nonce,
       );
 
@@ -243,8 +348,9 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
+    const generatedHtml = `${start}${reactContent}${end}`;
     const fullHtml = addNonceToHtmlTags(
-      `${start}${reactContent}${end}`,
+      generatedHtml,
       context.options?.nonce,
     );
 
@@ -292,10 +398,7 @@ export class HTMLGenerator {
       context.options?.nonce,
     );
 
-    const projectStylesheetHref = await this.resolveProjectStylesheetHref(
-      context,
-      projectCSSPromise,
-    );
+    const projectStylesheetHref = await this.resolveProjectStylesheetHref(projectCSSPromise);
 
     const injectedHtml = injectHTMLContent(themedHtml, "", metadata, {
       mode: this.config.mode,
@@ -307,6 +410,10 @@ export class HTMLGenerator {
       params: context.options?.params,
       environment: context.options?.environment,
       isLocalProject: this.config.isLocalProject === true,
+      studioEmbed: context.options?.studioEmbed,
+      projectId: htmlOptions.projectId,
+      pageId: htmlOptions.pageId,
+      sourceHash: htmlOptions.sourceHash,
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
@@ -318,7 +425,6 @@ export class HTMLGenerator {
   }
 
   private async resolveProjectStylesheetHref(
-    context: HTMLGenerationContext,
     projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<string | undefined> {
     if (!projectCSSPromise) return undefined;
@@ -327,10 +433,7 @@ export class HTMLGenerator {
     const cssHash = projectCSS?.hash ?? "";
     if (cssHash) return `/_vf/css/${cssHash}.css`;
 
-    logger.error("Project CSS hash is empty for full-document HTML", {
-      slug: context.slug,
-      environment: context.options?.environment,
-    });
+    logger.error("Project CSS hash is empty for full-document HTML");
     return undefined;
   }
 
@@ -340,15 +443,13 @@ export class HTMLGenerator {
       const isClientPage = hasUseClientDirective(pageContent, pagePath);
 
       if (isClientPage) {
-        logger.debug(`Detected 'use client' page: ${pagePath}`);
+        logger.debug("Detected a use-client page");
       }
 
       return isClientPage;
-    } catch (_) {
-      /* expected: file may not exist for directive detection */
-      logger.debug(
-        `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
-      );
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      logger.debug("Page file was not found during directive detection");
       return false;
     }
   }
@@ -386,20 +487,14 @@ export class HTMLGenerator {
     projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
-    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
-    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
-    const enrichedFrontmatter = {
-      ...mergedFrontmatter,
-      ...(head?.title && { title: head.title }),
-      ...(head?.description && { description: head.description }),
-    };
+    const documentMetadata = resolveDocumentMetadata(mergedFrontmatter, head);
 
     const { start, end } = await generateHTMLShellParts(
       {
-        title: effectiveTitle,
-        description: effectiveDescription,
+        title: documentMetadata.title,
+        description: documentMetadata.description,
         slug: context.slug,
-        frontmatter: enrichedFrontmatter,
+        frontmatter: documentMetadata.frontmatter,
         layoutFrontmatter: context.layoutBundle?.frontmatter,
         ssrHash: context.ssrHash,
       },
@@ -410,8 +505,8 @@ export class HTMLGenerator {
       projectCSSPromise,
     );
 
-    const { scripts, other } = buildCollectedHeadElements(head);
-    if (!scripts && !other) return { start, end };
+    const { scripts, moduleScripts, other } = buildCollectedHeadElements(head);
+    if (!scripts && !moduleScripts && !other) return { start, end };
 
     let modifiedStart = start;
 
@@ -420,15 +515,14 @@ export class HTMLGenerator {
       modifiedStart = modifiedStart.replace("<head>", `<head>\n  ${scripts}`);
     }
 
-    // Inject other head elements at BOTTOM of <head> (before closing tag)
-    // Use lastIndexOf to avoid matching </head> inside inline script content
-    if (other) {
-      const headCloseIdx = modifiedStart.lastIndexOf("</head>");
-      if (headCloseIdx !== -1) {
-        modifiedStart = modifiedStart.slice(0, headCloseIdx) +
-          `  ${other}\n` +
-          modifiedStart.slice(headCloseIdx);
-      }
+    // Module scripts must follow the import map. Other collected head elements
+    // also stay at the bottom of the generated head.
+    const trailingHeadElements = [moduleScripts, other].filter(Boolean).join("\n  ");
+    if (trailingHeadElements) {
+      modifiedStart = insertAtDocumentHeadEnd(
+        modifiedStart,
+        `  ${trailingHeadElements}\n`,
+      );
     }
 
     return { start: modifiedStart, end };
@@ -443,19 +537,44 @@ export class HTMLGenerator {
   }
 
   private async loadProjectFile(filename: string): Promise<string | undefined> {
+    if (!filename || filename.includes("\0") || filename.includes("\\") || isAbsolute(filename)) {
+      throw new TypeError("Configured project file path must be project-relative");
+    }
+    const filePath = normalize(join(this.config.projectDir, filename));
+    if (!isPathWithinRoot(filePath, this.config.projectDir)) {
+      throw new TypeError("Configured project file path must stay inside the project");
+    }
+
     try {
-      const filePath = join(this.config.projectDir, filename);
       const fs = this.config.adapter.fs as typeof this.config.adapter.fs & {
         readOptionalTextFile?: (path: string) => Promise<string>;
       };
+      if (fs.lstat) {
+        const info = await fs.lstat(filePath);
+        if (!info.isFile || info.isSymlink) {
+          throw new TypeError("Configured project file must be a regular file");
+        }
+      }
+      if (fs.realPath) {
+        const [canonicalPath, canonicalRoot] = await Promise.all([
+          fs.realPath(filePath),
+          fs.realPath(this.config.projectDir),
+        ]);
+        if (!isPathWithinRoot(canonicalPath, canonicalRoot)) {
+          throw new TypeError("Configured project file path must stay inside the project");
+        }
+      }
       const content = fs.readOptionalTextFile
         ? await fs.readOptionalTextFile(filePath)
         : await fs.readFile(filePath);
-      logger.debug(`Loaded ${filename}`, { length: content.length });
+      if (new TextEncoder().encode(content).byteLength > 10 * 1024 * 1024) {
+        throw new RangeError("Configured project file exceeds the size limit");
+      }
+      logger.debug("Loaded optional project file", { length: content.length });
       return content;
-    } catch (_) {
-      /* expected: project file may not exist */
-      logger.debug(`No ${filename} found, using default`);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      logger.debug("Optional project file was not found");
       return undefined;
     }
   }
@@ -506,10 +625,8 @@ export class HTMLGenerator {
     );
 
     logger.debug("App component resolution", {
-      appComponentPath,
-      projectDir: this.config.projectDir,
+      found: appComponentPath !== undefined,
       hasConfig: !!this.config.config,
-      configApp: this.config.config?.app,
     });
 
     const pagePath = extractRelativePath(
@@ -527,7 +644,8 @@ export class HTMLGenerator {
       | "js"
       | undefined;
 
-    const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
+    const sourceHash = context.options?.studioEmbed &&
+        context.pageInfo.entity.content !== undefined
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
 
@@ -588,4 +706,10 @@ export class HTMLGenerator {
       stylesheetPath,
     });
   }
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  const relativePath = relative(normalize(root), normalize(path));
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
 }

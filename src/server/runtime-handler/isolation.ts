@@ -122,6 +122,8 @@ export function createIsolationErrorResponse(
     } seconds.`
     : check.reason === "max_concurrent"
     ? "Too many concurrent requests for this project. Please retry."
+    : check.reason === "capacity"
+    ? "Service temporarily unavailable. Please retry."
     : "Request rejected due to isolation policy.";
 
   return new Response(
@@ -133,7 +135,9 @@ export function createIsolationErrorResponse(
     {
       status: 503,
       headers: {
+        "Cache-Control": "no-store",
         "Content-Type": "application/json",
+        "X-Content-Type-Options": "nosniff",
         ...(check.waitTimeMs ? { "Retry-After": String(Math.ceil(check.waitTimeMs / 1000)) } : {}),
       },
     },

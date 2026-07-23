@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import * as fsModule from "./index.ts";
 import * as publicFsModule from "veryfront/fs";
+import type { FileInfo } from "veryfront/fs";
 import * as compatFsModule from "#veryfront/platform/compat/fs.ts";
 import * as pathModule from "#veryfront/platform/compat/path/index.ts";
 import * as processModule from "#veryfront/platform/compat/process.ts";
@@ -64,5 +66,40 @@ describe("fs/index.ts exports", () => {
     assertEquals(publicFsModule.readTextFile, fsModule.readTextFile);
     assertEquals(publicFsModule.resolve, fsModule.resolve);
     assertEquals(publicFsModule.cwd, fsModule.cwd);
+  });
+
+  it("performs the documented text-file workflow through the public entrypoint", async () => {
+    await withTempDir(async (tempDir) => {
+      const outputDir = publicFsModule.join(tempDir, "output");
+      const outputPath = publicFsModule.join(outputDir, "result.txt");
+
+      await publicFsModule.mkdir(outputDir, { recursive: true });
+      await publicFsModule.writeTextFile(outputPath, "result");
+
+      assertEquals(await publicFsModule.readTextFile(outputPath), "result");
+      assertEquals(await publicFsModule.exists(outputPath), true);
+
+      const info: FileInfo = await publicFsModule.lstat(outputPath);
+      assertEquals(info.isFile, true);
+      assertEquals(info.isDirectory, false);
+      assertEquals(info.size, 6);
+      assertEquals(publicFsModule.basename(outputPath), "result.txt");
+      assertEquals(publicFsModule.dirname(outputPath), outputDir);
+      assertEquals(publicFsModule.extname(outputPath), ".txt");
+      assertEquals(
+        publicFsModule.basename(await publicFsModule.realPath(outputPath)),
+        "result.txt",
+      );
+
+      const entries = [];
+      for await (const entry of publicFsModule.readDir(outputDir)) entries.push(entry.name);
+      assertEquals(entries, ["result.txt"]);
+
+      await publicFsModule.remove(outputDir, { recursive: true });
+      assertEquals(await publicFsModule.exists(outputPath), false);
+
+      const error = await assertRejects(() => publicFsModule.readTextFile(outputPath));
+      assertEquals(publicFsModule.isNotFoundError(error), true);
+    });
   });
 });

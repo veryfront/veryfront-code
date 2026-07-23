@@ -143,4 +143,32 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
 
     assertEquals(result, code);
   });
+
+  it("does not invoke dependency accessors from an injected manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const code = 'import pkg from "https://example.test/pkg.js";';
+    const accessorManifest = manifest({});
+    let getterInvoked = false;
+    Object.defineProperty(accessorManifest.dependencies, "https://example.test/pkg.js", {
+      enumerable: true,
+      get() {
+        getterInvoked = true;
+        return {
+          contentHash: HASH_A,
+          size: 100,
+          contentType: "text/javascript",
+        };
+      },
+    });
+
+    const result = await rewriteReleaseDependencyImportsForModule(code, {
+      releaseId: "release-id",
+      manifest: accessorManifest,
+      readDependencySource: () => Promise.reject(new Error("unused")),
+    });
+
+    assertEquals(result, code);
+    assertEquals(getterInvoked, false);
+  });
 });

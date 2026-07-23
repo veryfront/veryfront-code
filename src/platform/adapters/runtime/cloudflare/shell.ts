@@ -1,4 +1,4 @@
-import { NOT_SUPPORTED } from "#veryfront/errors";
+import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import type { ShellAdapter } from "../../base.ts";
 
 export class CloudflareShellAdapter implements ShellAdapter {

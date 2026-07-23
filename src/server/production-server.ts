@@ -6,10 +6,7 @@ import { bootstrapProd, type BootstrapResult } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import {
-  startConfiguredMemoryMonitoring,
-  stopMemoryMonitoring,
-} from "#veryfront/utils/memory/index.ts";
+import { acquireConfiguredMemoryMonitoring } from "#veryfront/utils/memory/index.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { getConfig } from "#veryfront/config";
@@ -20,23 +17,101 @@ import {
   readLocalProjectStylesheet,
 } from "#veryfront/html/styles-builder/css-pregeneration.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
-import { setServerInitialized } from "./handlers/monitoring/health.handler.ts";
 import {
   gracefullyShutdownProductionServer,
   parseShutdownDrainTimeoutMs,
 } from "./graceful-shutdown.ts";
 import {
-  enableSSRClientOnlyFetching,
-  enableSSRFetchInterception,
-  setSSRServerPort,
+  acquireSSRFetchInterception,
+  runWithSSRRequestGlobals,
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { assertPrimitiveDiscoverySucceeded } from "./primitive-discovery.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
 
+type ProductionGlobalErrorType = "uncaughtException" | "unhandledRejection";
+type ProductionGlobalErrorLogger = Pick<typeof globalLog, "error">;
+
+function getErrorName(error: unknown): string {
+  try {
+    if (error instanceof Error && /^[A-Za-z][A-Za-z0-9.]{0,127}$/.test(error.name)) {
+      return error.name;
+    }
+  } catch {
+    // Hostile errors are reported using the generic name below.
+  }
+  return "Error";
+}
+
+function getErrorLogContext(error: unknown): { errorName: string } {
+  return { errorName: getErrorName(error) };
+}
+
+function assertProductionStartNotAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new DOMException("Production server start was aborted", "AbortError");
+  }
+}
+
+export interface ProductionInfrastructureInitializers {
+  initializeTracing?: () => Promise<unknown>;
+  initializeCaches?: () => Promise<unknown>;
+}
+
+/** Initialize optional tracing and required configured cache infrastructure. */
+export async function initializeProductionInfrastructure(
+  initializers: ProductionInfrastructureInitializers = {},
+): Promise<void> {
+  const initializeTracing = initializers.initializeTracing ?? initializeOTLPWithApis;
+  const initializeCaches = initializers.initializeCaches ??
+    (() => initializeDistributedCaches(defaultDistributedCacheInitializers));
+
+  const tracingTask = Promise.resolve()
+    .then(initializeTracing)
+    .catch((error) => {
+      logger.warn("OTLP initialization failed, continuing without tracing", {
+        ...getErrorLogContext(error),
+      });
+    });
+  const cacheTask = Promise.resolve().then(initializeCaches);
+
+  await Promise.all([tracingTask, cacheTask]);
+}
+
+/** Log an unhandled process error without exposing its message or stack. */
+export function handleProductionGlobalError(
+  error: Error,
+  type: ProductionGlobalErrorType,
+  log: ProductionGlobalErrorLogger = globalLog,
+): false {
+  log.error("Unhandled process error", {
+    type,
+    errorName: getErrorName(error),
+    fatal: true,
+  });
+
+  // An error that escapes every request and task boundary can leave shared
+  // process state inconsistent. Preserve the runtime's fatal behavior so the
+  // process supervisor can replace the instance cleanly.
+  return false;
+}
+
 /** Default port when PORT / VERYFRONT_PORT env vars are not set */
 const DEFAULT_SERVER_PORT = 3_000;
+
+export function parseProductionServerPort(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_SERVER_PORT;
+  if (!/^\d+$/.test(raw)) {
+    throw new TypeError("Production server port must be an integer between 1 and 65535");
+  }
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new TypeError("Production server port must be an integer between 1 and 65535");
+  }
+  return port;
+}
 
 async function prewarmLocalProductionCSSArtifacts(
   adapter: RuntimeAdapter,
@@ -68,41 +143,31 @@ async function prewarmLocalProductionCSSArtifacts(
   if (projectsToWarm.size === 0) return;
 
   await Promise.all([...projectsToWarm.entries()].map(async ([projectSlug, projectDir]) => {
-    try {
-      const config = await getConfig(projectDir, adapter, { cacheKey: projectSlug });
-      const styleProfile = createStyleScopeProfile(config);
-      const files = await collectLocalProjectSourceFiles({
-        projectDir,
-        styleProfile,
-      });
-      const stylesheet = await readLocalProjectStylesheet(projectDir, config?.tailwind?.stylesheet);
+    const config = await getConfig(projectDir, adapter, { cacheKey: projectSlug });
+    const styleProfile = createStyleScopeProfile(config);
+    const files = await collectLocalProjectSourceFiles({
+      projectDir,
+      styleProfile,
+    });
+    const stylesheet = await readLocalProjectStylesheet(projectDir, config?.tailwind?.stylesheet);
 
-      const result = await buildPreparedCSSArtifactFromFiles({
-        projectSlug,
-        projectVersion: resolveStyleContentVersion(null),
-        projectDir,
-        files,
-        styleProfile,
-        stylesheet,
-        stylesheetPath: config?.tailwind?.stylesheet,
-        minify: true,
-        environment: "preview",
-        buildMode: "production",
-      });
+    const result = await buildPreparedCSSArtifactFromFiles({
+      projectSlug,
+      projectVersion: resolveStyleContentVersion(null),
+      projectDir,
+      files,
+      styleProfile,
+      stylesheet,
+      stylesheetPath: config?.tailwind?.stylesheet,
+      minify: true,
+      environment: "preview",
+      buildMode: "production",
+    });
 
-      serverLog.debug("Prewarmed local production CSS artifact", {
-        projectSlug,
-        projectDir,
-        fileCount: files.length,
-        fromCache: result.fromCache,
-      });
-    } catch (error) {
-      serverLog.debug("Skipping local production CSS prewarm", {
-        projectSlug,
-        projectDir,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    serverLog.debug("Prewarmed local production CSS artifact", {
+      fileCount: files.length,
+      fromCache: result.fromCache,
+    });
   }));
 }
 
@@ -129,7 +194,7 @@ interface ServerOptions {
   defaultProjectId?: string;
   /** Default release ID when not provided via proxy headers (for standalone production mode) */
   defaultReleaseId?: string;
-  /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
+  /** Override the host-derived environment in standalone mode. */
   defaultEnvironment?: "preview" | "production";
   /**
    * Optional request interceptor for combined mode.
@@ -153,14 +218,36 @@ export interface ServerHandle {
 export interface StartProductionServerOptions extends ServerOptions {
   debug?: boolean;
   adapter?: RuntimeAdapter;
-  /** Pre-computed bootstrap result to skip internal bootstrap (avoids double initialization) */
+  /** Pre-computed bootstrap result to skip internal bootstrap. */
   bootstrapResult?: BootstrapResult;
+  /**
+   * Controls who releases an injected bootstrap. The default is `borrowed`,
+   * which preserves the caller's existing ownership. Internally created
+   * bootstraps are always owned by the server.
+   */
+  bootstrapOwnership?: "borrowed" | "transferred";
 }
 
 /** Starts production server. */
 export function startProductionServer(
   options: StartProductionServerOptions,
 ): Promise<ServerHandle> {
+  if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65_535) {
+    return Promise.reject(
+      new TypeError("Production server port must be an integer between 0 and 65535"),
+    );
+  }
+  if (
+    options.bootstrapResult && options.adapter &&
+    options.bootstrapResult.adapter !== options.adapter
+  ) {
+    return Promise.reject(
+      new TypeError("Production server adapter must match the injected bootstrap adapter"),
+    );
+  }
+  if (options.signal?.aborted) {
+    return Promise.reject(new DOMException("Production server start was aborted", "AbortError"));
+  }
   return withSpan(
     "server.startProductionServer",
     async () => {
@@ -176,17 +263,75 @@ export function startProductionServer(
         defaultEnvironment,
         requestInterceptor,
         bootstrapResult,
+        bootstrapOwnership = "borrowed",
         discoveryConfig,
         localProjects,
       } = options;
 
-      const baseAdapter = options.adapter ?? (await runtime.get());
-      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
-      const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
+      if (!bootstrapResult && bootstrapOwnership === "transferred") {
+        throw new TypeError("bootstrapOwnership requires bootstrapResult");
+      }
+      const baseAdapter = bootstrapResult?.adapter ?? options.adapter ?? (await runtime.get());
+      assertProductionStartNotAborted(signal);
+      const memoryMonitoringLease = acquireConfiguredMemoryMonitoring(baseAdapter.env);
+      const ownsBootstrap = bootstrapResult === undefined || bootstrapOwnership === "transferred";
+      let bootstrap: BootstrapResult | undefined;
+      let server: Awaited<ReturnType<RuntimeAdapter["serve"]>> | undefined;
+      let releaseSSRFetchInterception: (() => void) | undefined;
+      let stopPromise: Promise<void> | undefined;
+      let serverReady = false;
+      let activeServerPort = port;
+      let resolveStopRequested: () => void = () => {};
+      const stopRequested = new Promise<void>((resolve) => {
+        resolveStopRequested = resolve;
+      });
+
+      const stop = (): Promise<void> => {
+        if (stopPromise) return stopPromise;
+
+        serverReady = false;
+        resolveStopRequested();
+        stopPromise = (async () => {
+          const failures: unknown[] = [];
+
+          try {
+            await server?.stop();
+          } catch (error) {
+            failures.push(error);
+          }
+
+          if (ownsBootstrap && bootstrap?.dispose) {
+            try {
+              await bootstrap.dispose();
+            } catch (error) {
+              failures.push(error);
+            }
+          }
+
+          try {
+            releaseSSRFetchInterception?.();
+          } catch (error) {
+            failures.push(error);
+          }
+
+          try {
+            memoryMonitoringLease.release();
+          } catch (error) {
+            failures.push(error);
+          }
+
+          if (failures.length > 0) {
+            throw new AggregateError(failures, "Production server cleanup failed");
+          }
+        })();
+
+        return stopPromise;
+      };
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        assertProductionStartNotAborted(signal);
         const adapter = bootstrap.adapter;
 
         if (bootstrap.usingFSAdapter) {
@@ -200,16 +345,10 @@ export function startProductionServer(
           defaultEnvironment,
           localProjects,
         });
+        assertProductionStartNotAborted(signal);
 
         // Enable SSR fetch interception to handle relative URLs during SSR
-        setSSRServerPort(port);
-        enableSSRFetchInterception();
-
-        // Enable client-only fetching for /api/* routes in production.
-        // This returns empty mock responses during SSR (instead of failing with
-        // "Invalid URL" or "Connection refused"). React Query will refetch
-        // the actual data client-side after hydration.
-        enableSSRClientOnlyFetching();
+        releaseSSRFetchInterception = acquireSSRFetchInterception();
 
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
@@ -219,13 +358,13 @@ export function startProductionServer(
               "#veryfront/platform/adapters/fs/wrapper.ts"
             );
 
-            if (
-              discoveryConfig.projectSlug && discoveryConfig.apiToken &&
-              discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
-              discoveryConfig.fsAdapter.isMultiProjectMode()
-            ) {
+            const result = (
+                discoveryConfig.projectSlug && discoveryConfig.apiToken &&
+                discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
+                discoveryConfig.fsAdapter.isMultiProjectMode()
+              )
               // Multi-project proxy: scope discovery to specific project
-              await discoveryConfig.fsAdapter.runWithContext(
+              ? await discoveryConfig.fsAdapter.runWithContext(
                 discoveryConfig.projectSlug,
                 discoveryConfig.apiToken,
                 () =>
@@ -234,22 +373,21 @@ export function startProductionServer(
                     fsAdapter: discoveryConfig.fsAdapter,
                     verbose: discoveryConfig.verbose ?? false,
                   }),
-              );
-            } else {
-              await discoverAll({
+              )
+              : await discoverAll({
                 baseDir: discoveryConfig.baseDir,
                 fsAdapter: discoveryConfig.fsAdapter,
                 verbose: discoveryConfig.verbose ?? false,
               });
-            }
+            assertPrimitiveDiscoverySucceeded(result);
           } catch (error) {
-            serverLog.error("Primitive discovery failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
+            serverLog.error("Primitive discovery failed", getErrorLogContext(error));
+            throw error;
           }
         }
+        assertProductionStartNotAborted(signal);
 
-        logger.info("Starting production server", { projectDir, port, bindAddress });
+        logger.info("Starting production server", { port });
 
         const baseHandler = createVeryfrontHandler(projectDir, adapter, {
           projectDir,
@@ -260,6 +398,7 @@ export function startProductionServer(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
+          isServerReady: () => serverReady,
         });
 
         const coreHandler = baseHandler;
@@ -267,7 +406,7 @@ export function startProductionServer(
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
         // creates a new Request object, which breaks Deno.upgradeWebSocket()
-        const handler = requestInterceptor
+        const interceptedHandler = requestInterceptor
           ? Object.assign(
             async (req: Request) => {
               const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
@@ -277,111 +416,98 @@ export function startProductionServer(
             { ready: coreHandler.ready },
           )
           : coreHandler;
+        const handler = Object.assign(
+          (req: Request) =>
+            runWithSSRRequestGlobals(
+              // Production SSR must observe real API responses, not synthetic empty success data.
+              { clientOnlyFetching: false, serverPort: activeServerPort },
+              () => interceptedHandler(req),
+            ),
+          { ready: interceptedHandler.ready },
+        );
 
         let resolveListenReady: (() => void) | undefined;
         const listenReady = new Promise<void>((resolve) => {
           resolveListenReady = resolve;
         });
 
-        const ready = (async () => {
-          await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
-          // Mark server as initialized when ready resolves
-          setServerInitialized(true);
-        })();
-
-        const server = await adapter.serve(handler, {
+        server = await adapter.serve(handler, {
           port,
           hostname: bindAddress, // Deno uses "hostname" for bind address
           signal,
           onListen: (params) => {
+            activeServerPort = params.port;
             resolveListenReady?.();
-            logger.info("Production server listening", params);
+            logger.info("Production server listening");
           },
         });
 
-        const stop = async (): Promise<void> => {
-          setServerInitialized(false);
-          if (ownsMemoryMonitoring) stopMemoryMonitoring();
-
-          try {
-            await server.stop();
-          } catch (error) {
-            logger.debug("Server stop failed", { error });
-          }
-        };
+        const initialization = Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
+        const stoppedBeforeReady = stopRequested.then(() => {
+          throw new Error("Production server stopped before becoming ready");
+        });
+        const ready = Promise.race([initialization, stoppedBeforeReady])
+          .then(() => {
+            if (stopPromise) {
+              throw new Error("Production server stopped before becoming ready");
+            }
+            serverReady = true;
+          })
+          .catch(async (error) => {
+            serverReady = false;
+            try {
+              await stop();
+            } catch (cleanupError) {
+              logger.warn("Production server cleanup failed after readiness failure", {
+                ...getErrorLogContext(cleanupError),
+              });
+            }
+            throw error;
+          });
 
         return { ready, stop };
       } catch (error) {
-        if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        serverReady = false;
+        try {
+          await stop();
+        } catch (cleanupError) {
+          logger.warn("Production server cleanup failed after startup failure", {
+            ...getErrorLogContext(cleanupError),
+          });
+        }
         throw error;
       }
     },
-    { "server.port": options.port, "server.bindAddress": options.bindAddress ?? "0.0.0.0" },
+    { "server.port": options.port },
   );
 }
 
 if (import.meta.main) {
-  // Register global error handlers FIRST to prevent process crashes from application errors
-  // This ensures the renderer stays up even if user code throws unhandled exceptions
-  onGlobalError((error, type) => {
-    // Fatal errors that indicate corrupted process state — let the process crash
-    // so the orchestrator (k8s) can restart it cleanly
-    // Stack overflow can be detected reliably via error.name + message.
-    const isStackOverflow = error.name === "RangeError" &&
-      error.message.includes("Maximum call stack");
-
-    // OOM detection relies on V8/Deno message strings which are engine implementation
-    // details (not standardized) and may change between versions. Treat as a best-effort
-    // heuristic: if these strings change, OOM errors will be absorbed as non-fatal until
-    // updated here. The OS / k8s OOMKiller will eventually terminate the process anyway.
-    const isOOM = error.message.includes("out of memory") ||
-      error.message.includes("allocation failed");
-
-    const isFatal = isStackOverflow || isOOM;
-
-    globalLog.error(`${type}: Application error caught`, {
-      message: error.message,
-      stack: error.stack,
-      type,
-      fatal: isFatal,
-    });
-
-    if (isFatal) {
-      globalLog.error("Fatal error detected, allowing process exit for clean restart");
-      return false;
+  const removeGlobalErrorHandlers = onGlobalError(handleProductionGlobalError);
+  const removeSignalHandlers: Array<() => void> = [];
+  let processHandlersActive = true;
+  const removeProcessHandlers = (): void => {
+    if (!processHandlersActive) return;
+    processHandlersActive = false;
+    const removers = [...removeSignalHandlers.splice(0), removeGlobalErrorHandlers];
+    for (const remove of removers) {
+      try {
+        remove();
+      } catch (error) {
+        logger.warn("Failed to remove a production process handler", getErrorLogContext(error));
+      }
     }
-
-    // Non-fatal: prevent process exit — individual requests may fail but service stays up
-    return true;
-  });
+  };
 
   try {
-    // Initialize OpenTelemetry tracing and distributed caches in parallel
-    // Both can fail independently without blocking the other
-    // Backend: API (production) > Redis (local dev) > Memory (fallback)
-    const [otlpResult, cacheResult] = await Promise.allSettled([
-      initializeOTLPWithApis(),
-      initializeDistributedCaches(defaultDistributedCacheInitializers),
-    ]);
-
-    if (otlpResult.status === "rejected") {
-      logger.warn("OTLP initialization failed, continuing without tracing", {
-        error: otlpResult.reason,
-      });
-    }
-
-    if (cacheResult.status === "rejected") {
-      logger.warn("Distributed cache initialization failed, using memory fallback", {
-        error: cacheResult.reason,
-      });
-    }
+    await initializeProductionInfrastructure();
 
     const adapter = await runtime.get();
 
     const shutdownController = new AbortController();
     const projectDir = cwd();
-    const port = Number(
-      adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? DEFAULT_SERVER_PORT,
+    const port = parseProductionServerPort(
+      adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT"),
     );
     // BIND_ADDRESS: 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
     // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
@@ -396,6 +522,7 @@ if (import.meta.main) {
       debug: isDebugEnabled(adapter.env),
       adapter, // Pass adapter to avoid re-detection
       bootstrapResult: bootstrap,
+      bootstrapOwnership: "transferred",
       signal: shutdownController.signal,
     });
 
@@ -415,27 +542,33 @@ if (import.meta.main) {
     const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
       if (shuttingDown) return;
       shuttingDown = true;
-
-      await gracefullyShutdownProductionServer({
-        signal,
-        drainTimeoutMs,
-        abort: () => shutdownController.abort(),
-        dispose: bootstrap.dispose,
-        stop: server.stop,
-        logger,
-      });
+      try {
+        await gracefullyShutdownProductionServer({
+          signal,
+          drainTimeoutMs,
+          abort: () => shutdownController.abort(),
+          stop: server.stop,
+          logger,
+        });
+      } finally {
+        removeProcessHandlers();
+      }
     };
 
     const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
       void shutdown(signal).catch((error) => {
-        logger.warn("Unhandled error while shutting down production server", { signal, error });
+        logger.warn("Unhandled error while shutting down production server", {
+          signal,
+          ...getErrorLogContext(error),
+        });
       });
     };
 
-    onSignal("SIGINT", () => handleSignal("SIGINT"));
-    onSignal("SIGTERM", () => handleSignal("SIGTERM"));
+    removeSignalHandlers.push(onSignal("SIGINT", () => handleSignal("SIGINT")));
+    removeSignalHandlers.push(onSignal("SIGTERM", () => handleSignal("SIGTERM")));
   } catch (e) {
-    logger.error("Failed to start production server:", e);
+    removeProcessHandlers();
+    logger.error("Failed to start production server", getErrorLogContext(e));
     // Re-throw so the process exits with a non-zero code. A running process with no HTTP
     // listener causes K8s readiness probes to fail eventually, but crashing immediately
     // signals the orchestrator to restart the pod faster.

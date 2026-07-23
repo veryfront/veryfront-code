@@ -30,13 +30,20 @@ export {
 export type {
   Context,
   ExecutionContext,
+  MiddlewareExecutionAdapter,
   MiddlewareFactory,
   MiddlewareHandler,
   Next,
 } from "./core/types.ts";
 
-export type { CorsOptions } from "./builtin/types.ts";
-export { cors } from "#veryfront/security";
+export type { CORSOptions as CorsOptions, OriginValidator } from "#veryfront/security";
+import { cors as createCors, type CORSOptions } from "#veryfront/security";
+import type { MiddlewareHandler } from "./core/types.ts";
+
+/** Create CORS middleware. */
+export function cors(config?: boolean | CORSOptions): MiddlewareHandler {
+  return createCors(config);
+}
 
 export {
   authRateLimit,
@@ -49,7 +56,7 @@ export {
   type RedisRateLimitOptions,
   RedisRateLimitStore,
 } from "./builtin/security/redis-rate-limit.ts";
-export type { RateLimitStore } from "./builtin/security/types.ts";
+export type { RateLimitEntry, RateLimitStore } from "./builtin/security/types.ts";
 
 export {
   devLogger,
@@ -62,6 +69,7 @@ export {
 export {
   getTimeoutFromEnv,
   timeout,
+  type TimeoutEnvironmentConfig,
   timeoutFromEnv,
   type TimeoutOptions,
 } from "./builtin/timeout.ts";

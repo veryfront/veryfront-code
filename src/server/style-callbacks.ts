@@ -20,6 +20,7 @@ import {
 } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { invalidateProjectCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { getSafeErrorName } from "./utils/error-name.ts";
 
 const styleCallbackLog = logger.component("server-style-callbacks");
 
@@ -30,9 +31,7 @@ async function pregenerateProjectStyles(
   const { projectDir, projectSlug, contentContext } = context;
 
   if (!projectDir) {
-    styleCallbackLog.debug("Skipping CSS pre-generation without projectDir", {
-      projectSlug,
-    });
+    styleCallbackLog.debug("Skipping CSS pre-generation without a project directory");
     return undefined;
   }
 
@@ -47,8 +46,7 @@ async function pregenerateProjectStyles(
     styleProfile = createStyleScopeProfile(config);
   } catch (error) {
     styleCallbackLog.debug("Failed to load config for CSS pre-generation", {
-      projectSlug,
-      error: error instanceof Error ? error.message : String(error),
+      errorName: getSafeErrorName(error),
     });
   }
 
@@ -73,9 +71,7 @@ async function pregenerateProjectStyles(
   });
 
   styleCallbackLog.debug("CSS pre-generation complete", {
-    projectSlug,
-    projectVersion,
-    cssHash: result.hash,
+    sourceFileCount: files.length,
     candidateCount: result.candidateCount,
     fromCache: result.fromCache,
   });

@@ -24,6 +24,15 @@ function createListWithNodes(...keys: string[]): {
   return { list, nodes };
 }
 
+function getNode(
+  nodes: Record<string, LRUNode<unknown>>,
+  key: string,
+): LRUNode<unknown> {
+  const node = nodes[key];
+  if (!node) throw new Error(`Missing test node: ${key}`);
+  return node;
+}
+
 describe("LRUListManager", () => {
   describe("addToFront", () => {
     it("should set single node as both head and tail", () => {
@@ -56,7 +65,7 @@ describe("LRUListManager", () => {
     it("should be no-op for head node", () => {
       const { list, nodes } = createListWithNodes("a", "b");
 
-      list.moveToFront(nodes.b);
+      list.moveToFront(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getTail()?.key, "a");
@@ -65,7 +74,7 @@ describe("LRUListManager", () => {
     it("should move tail to front", () => {
       const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.moveToFront(nodes.a);
+      list.moveToFront(getNode(nodes, "a"));
 
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "b");
@@ -74,7 +83,7 @@ describe("LRUListManager", () => {
     it("should move middle node to front", () => {
       const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.moveToFront(nodes.b);
+      list.moveToFront(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getHead()?.next?.key, "c");
@@ -86,7 +95,7 @@ describe("LRUListManager", () => {
     it("should remove head node", () => {
       const { list, nodes } = createListWithNodes("a", "b");
 
-      list.removeNode(nodes.b);
+      list.removeNode(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "a");
       assertEquals(list.getTail()?.key, "a");
@@ -95,7 +104,7 @@ describe("LRUListManager", () => {
     it("should remove tail node", () => {
       const { list, nodes } = createListWithNodes("a", "b");
 
-      list.removeNode(nodes.a);
+      list.removeNode(getNode(nodes, "a"));
 
       assertEquals(list.getHead()?.key, "b");
       assertEquals(list.getTail()?.key, "b");
@@ -104,7 +113,7 @@ describe("LRUListManager", () => {
     it("should remove middle node", () => {
       const { list, nodes } = createListWithNodes("a", "b", "c");
 
-      list.removeNode(nodes.b);
+      list.removeNode(getNode(nodes, "b"));
 
       assertEquals(list.getHead()?.key, "c");
       assertEquals(list.getHead()?.next?.key, "a");

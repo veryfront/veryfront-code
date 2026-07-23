@@ -25,8 +25,10 @@ export const RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST: readonly ReleaseAssetContentT
   RELEASE_ASSET_CONTENT_TYPES.css,
 ];
 
-/** Maximum size (bytes) for a single uploaded asset (10 MB). */
-export const RELEASE_ASSET_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+import { RELEASE_ASSET_MAX_SIZE_BYTES } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
+
+/** Maximum size (bytes) for a single uploaded asset (10 MiB). */
+export { RELEASE_ASSET_MAX_SIZE_BYTES };
 
 /** Immutable cache max-age in seconds (1 year). */
 export const RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS = 31_536_000;
@@ -39,6 +41,21 @@ export const RELEASE_MODULE_RUNTIME_VERSION_PARAM = "vf_runtime" as const;
 
 /** Bounded upload concurrency when posting assets during a build. */
 export const RELEASE_ASSET_UPLOAD_CONCURRENCY = 8;
+
+/** Maximum cached HTTP dependency sources materialized by one release build. */
+export const RELEASE_ASSET_CACHED_HTTP_MAX_FILES = 1_000;
+
+/**
+ * Maximum aggregate bytes read from the HTTP dependency cache.
+ *
+ * This matches one full upload-concurrency window of maximum-size assets, so
+ * cache discovery cannot retain a larger source working set than publication.
+ */
+export const RELEASE_ASSET_CACHED_HTTP_MAX_TOTAL_BYTES = RELEASE_ASSET_MAX_SIZE_BYTES *
+  RELEASE_ASSET_UPLOAD_CONCURRENCY;
+
+/** Maximum UTF-8 bytes for manifest logical paths and dependency specifiers. */
+export const RELEASE_ASSET_MANIFEST_KEY_MAX_BYTES = 4_096;
 
 /** Env flag that enables HTML manifest consumption in production (default OFF). */
 export const RELEASE_ASSET_MANIFEST_ENV_FLAG = "VERYFRONT_RELEASE_ASSET_MANIFEST";

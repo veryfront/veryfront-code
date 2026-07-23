@@ -12,4 +12,5 @@
  */
 
 export { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
+export type { ContentPlugin } from "#veryfront/extensions/content/index.ts";
 export { injectNodePositions } from "./babel-node-positions.ts";

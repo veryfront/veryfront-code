@@ -13,12 +13,14 @@ import {
   resolveManifestModuleUrl,
   resolveManifestRoutePreloadUrls,
 } from "./html-consumption.ts";
+import { buildReleaseAssetModules } from "./client-module-map.ts";
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
   getReadyManifestForRenderAsync,
+  registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
@@ -90,6 +92,39 @@ describe("html consumption helpers", () => {
 
   it("returns no preloads for an uncovered route", () => {
     assertEquals(resolveManifestRoutePreloadUrls(manifest(), "/other"), []);
+  });
+
+  it("does not invoke accessors while resolving modules or route closures", () => {
+    const accessorManifest = manifest();
+    let moduleGetterInvoked = false;
+    let routeGetterInvoked = false;
+    Object.defineProperty(accessorManifest.modules, "pages/index.tsx", {
+      enumerable: true,
+      get() {
+        moduleGetterInvoked = true;
+        return { contentHash: MOD_HASH, size: 1, contentType: "text/javascript" };
+      },
+    });
+    Object.defineProperty(accessorManifest.routes, "/", {
+      enumerable: true,
+      get() {
+        routeGetterInvoked = true;
+        return { modules: ["pages/index.tsx"], css: [] };
+      },
+    });
+
+    assertEquals(resolveManifestModuleUrl(accessorManifest, "pages/index.tsx"), null);
+    assertEquals(resolveManifestRoutePreloadUrls(accessorManifest, "/"), []);
+    assertEquals(moduleGetterInvoked, false);
+    assertEquals(routeGetterInvoked, false);
+  });
+
+  it("builds an immutable prototype-free client module map", () => {
+    const modules = buildReleaseAssetModules(manifest());
+
+    assertEquals(modules?.["pages/index.tsx"], `/_vf/assets/${MOD_HASH}.js`);
+    assertEquals(Object.getPrototypeOf(modules), null);
+    assertEquals(Object.isFrozen(modules), true);
   });
 });
 
@@ -240,6 +275,104 @@ describe("manifest cache gating", () => {
     assertEquals(firstReady?.manifestVersion, 3);
     assertEquals(secondReady?.manifestVersion, 3);
     assertEquals(fetchCount, 1);
+  });
+
+  it("does not cache a manifest under a different release identity", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({ state: "ready", manifest: manifest() })
+    );
+
+    assertEquals(await getReadyManifestForRenderAsync("different-release"), null);
+    assertEquals(getReadyManifestForRender("different-release"), null);
+  });
+
+  it("prevents a replaced fetcher from publishing an older in-flight manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    let releaseOldFetch: () => void = () => {};
+    const oldGate = new Promise<void>((resolve) => (releaseOldFetch = resolve));
+
+    registerManifestFetcherForRelease("r", async () => {
+      await oldGate;
+      return { state: "ready", manifest: manifest("a".repeat(64), 3) };
+    });
+
+    const oldRead = getReadyManifestForRenderAsync("r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    registerManifestFetcherForRelease(
+      "r",
+      () => Promise.resolve({ state: "ready", manifest: manifest("b".repeat(64), 4) }),
+    );
+    const currentRead = getReadyManifestForRenderAsync("r");
+    releaseOldFetch();
+
+    assertEquals(await oldRead, null);
+    assertEquals(
+      (await currentRead)?.modules["pages/index.tsx"]?.contentHash,
+      "b".repeat(64),
+    );
+    assertEquals(
+      getReadyManifestForRender("r")?.modules["pages/index.tsx"]?.contentHash,
+      "b".repeat(64),
+    );
+  });
+
+  it("does not cache an obsolete fetch failure after replacing its fetcher", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    let rejectOldFetch: (error: Error) => void = () => {};
+
+    registerManifestFetcherForRelease(
+      "r",
+      () => new Promise<never>((_resolve, reject) => (rejectOldFetch = reject)),
+    );
+    const oldRead = getReadyManifestForRenderAsync("r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    let currentFetches = 0;
+    registerManifestFetcherForRelease("r", () => {
+      currentFetches++;
+      return Promise.resolve({ state: "ready", manifest: manifest("b".repeat(64), 4) });
+    });
+    rejectOldFetch(new Error("obsolete fetch failed"));
+
+    assertEquals(await oldRead, null);
+    assertEquals((await getReadyManifestForRenderAsync("r"))?.manifestVersion, 4);
+    assertEquals(currentFetches, 1);
+  });
+
+  it("guards against ABA fetcher replacement when a function is reused", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    let releaseFirstFetch: () => void = () => {};
+    const firstGate = new Promise<void>((resolve) => (releaseFirstFetch = resolve));
+    let calls = 0;
+    const reusedFetcher = async () => {
+      calls++;
+      if (calls === 1) {
+        await firstGate;
+        return { state: "ready", manifest: manifest("a".repeat(64), 6) };
+      }
+      return { state: "ready", manifest: manifest("c".repeat(64), 5) };
+    };
+
+    registerManifestFetcherForRelease("r", reusedFetcher);
+    const staleRead = getReadyManifestForRenderAsync("r");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    registerManifestFetcherForRelease("r", () => Promise.resolve(null));
+    registerManifestFetcherForRelease("r", reusedFetcher);
+    const currentRead = getReadyManifestForRenderAsync("r");
+    assertEquals(
+      (await currentRead)?.modules["pages/index.tsx"]?.contentHash,
+      "c".repeat(64),
+    );
+
+    releaseFirstFetch();
+    assertEquals(await staleRead, null);
+    assertEquals(
+      getReadyManifestForRender("r")?.modules["pages/index.tsx"]?.contentHash,
+      "c".repeat(64),
+    );
   });
 
   it("revalidates cached non-ready entries on awaited refresh reads", async () => {

@@ -19,6 +19,7 @@ const getHotReloadInput = defineSchema((v) =>
   v.object({
     file: v
       .string()
+      .max(4096)
       .optional()
       .describe(
         "Specific file to trigger reload for. Example: 'app/page.tsx'. Omit to reload all.",
@@ -46,21 +47,21 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   description:
     "Use this when you need to reload connected development browsers after a change. Pass file for file-level HMR, or omit it to request a full reload. Returns failure when no browser is connected.",
   inputSchema: hotReloadInput,
-  execute: (input) => {
+  execute: async (input) => {
     if (ReloadNotifier.getMetrics().activeReloadListeners <= 0) {
-      return Promise.resolve({
+      return {
         success: false,
         message: "No HMR listeners registered. Is the server running with HMR enabled?",
-      });
+      };
     }
 
-    ReloadNotifier.triggerReload(input.file ? [input.file] : undefined);
-    return Promise.resolve({
+    await ReloadNotifier.triggerReload(input.file ? [input.file] : undefined);
+    return {
       success: true,
       message: input.file
-        ? `HMR triggered for ${input.file}. Browser will refresh after debounce (300ms).`
+        ? "HMR triggered for the requested file. The browser will refresh after debounce (300ms)."
         : "Full reload triggered. Browser will refresh after debounce (300ms).",
-    });
+    };
   },
 };
 
@@ -145,7 +146,7 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
 
 const getTriggerHmrInput = defineSchema((v) =>
   v.object({
-    path: v.string().describe("File path that changed. Example: 'app/page.tsx'."),
+    path: v.string().max(4096).describe("File path that changed. Example: 'app/page.tsx'."),
     port: v.number().int().min(1).max(65535).optional().default(8080).describe(
       "Dev server port (defaults to 8080)",
     ),
@@ -172,21 +173,22 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   description:
     "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers. Returns success status and active listener count. Do not use if no browser is connected — check vf_get_flywheel_status first.",
   inputSchema: triggerHmrInput,
-  execute: (input) => {
+  execute: async (input) => {
     const metrics = ReloadNotifier.getMetrics();
     if (metrics.activeReloadListeners <= 0) {
-      return Promise.resolve({
+      return {
         success: false,
         message: "No HMR listeners registered. Is the server running with HMR enabled?",
-      });
+      };
     }
 
-    ReloadNotifier.triggerReload([input.path]);
+    await ReloadNotifier.triggerReload([input.path]);
 
-    return Promise.resolve({
+    return {
       success: true,
-      message: `HMR triggered for ${input.path}. Browser will refresh after debounce (300ms).`,
-    });
+      message:
+        "HMR triggered for the requested path. The browser will refresh after debounce (300ms).",
+    };
   },
 };
 

@@ -9,8 +9,9 @@ describe("compat/index.ts exports", () => {
   });
 
   it("should export kv functions", async () => {
-    const { createKVStore, MemoryKv } = await import("./index.ts");
+    const { createKVStore, KV_PORTABLE_LIMITS, MemoryKv } = await import("./index.ts");
     assertExists(createKVStore);
+    assertExists(KV_PORTABLE_LIMITS);
     assertExists(MemoryKv);
   });
 
@@ -36,5 +37,16 @@ describe("compat/index.ts exports", () => {
     const { importTransformers, importClaudeAgentSDK } = await import("./index.ts");
     assertExists(importTransformers);
     assertExists(importClaudeAgentSDK);
+  });
+
+  it("exports the leaf compatibility surfaces", async () => {
+    const { contentType, createCrypto, lookupMimeType, resolveHostAddresses } = await import(
+      "./index.ts"
+    );
+
+    assertExists(contentType);
+    assertExists(createCrypto);
+    assertExists(lookupMimeType);
+    assertExists(resolveHostAddresses);
   });
 });

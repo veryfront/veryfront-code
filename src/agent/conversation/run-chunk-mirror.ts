@@ -24,52 +24,77 @@ const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 
 /** Public API contract for conversation run chunk mirror. */
 export interface ConversationRunChunkMirror {
+  /** Executes chunk. */
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
+  /** Appends events. */
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
+  /** Performs the flush operation. */
   flush(): Promise<ConversationRunMirrorSnapshot>;
+  /** Returns snapshot. */
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
+  /** Releases resources used by dispose. */
   dispose(): void;
 }
 
 /** Public API contract for conversation run chunk mirror prepared chunk. */
 export interface ConversationRunChunkMirrorPreparedChunk {
+  /** Chunk value. */
   chunk: ChatUiMessageChunk<ChatMessageMetadata>;
+  /** Events value. */
   events: ConversationRunEvent[];
 }
 
 /** Public API contract for conversation run chunk mirror prepared events. */
 export interface ConversationRunChunkMirrorPreparedEvents {
+  /** Events value. */
   events: ConversationRunEvent[];
 }
 
 /** Input payload for conversation run chunk mirror prepare chunk events. */
 export interface ConversationRunChunkMirrorPrepareChunkEventsInput {
+  /** Chunk value. */
   chunk: ChatUiMessageChunk<ChatMessageMetadata>;
+  /** Callback that handles default prepare. */
   defaultPrepare: () => ConversationRunEvent[];
 }
 
 /** Input payload for conversation run chunk mirror prepare external events. */
 export interface ConversationRunChunkMirrorPrepareExternalEventsInput {
+  /** Events value. */
   events: ConversationRunEvent[];
+  /** Callback that handles default prepare. */
   defaultPrepare: () => ConversationRunEvent[];
 }
 
-interface ConversationRunChunkMirrorSharedOptions {
+/** Shared batching and lifecycle options for conversation run chunk mirrors. */
+export interface ConversationRunChunkMirrorSharedOptions {
+  /** Event count that triggers an immediate flush. */
   immediateFlushEventCount?: number;
+  /** Event encoder used to enforce payload limits. */
   encoder?: ConversationRunEventEncoder;
+  /** Maximum delay before queued events are flushed. */
   flushDelayMs?: number;
+  /** Resolves retry delay from the current consecutive failure count. */
   getRetryDelayMs?: (consecutiveFailures: number) => number;
+  /** Queue depth that triggers the high-backlog callback. */
   highBacklogEventCount?: number;
+  /** Called when the mirror reaches the configured backlog threshold. */
   onHighBacklog?: (state: ConversationRunMirrorHighBacklogState) => Promise<void> | void;
+  /** Called when a failed flush schedules a retry. */
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
+  /** Called when the mirror stops accepting events. */
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
+  /** Prepares durable events for one UI chunk. */
   prepareChunkEvents?: (
     input: ConversationRunChunkMirrorPrepareChunkEventsInput,
   ) => Promise<ConversationRunEvent[]> | ConversationRunEvent[];
+  /** Prepares externally supplied durable events. */
   prepareExternalEvents?: (
     input: ConversationRunChunkMirrorPrepareExternalEventsInput,
   ) => Promise<ConversationRunEvent[]> | ConversationRunEvent[];
+  /** Called after a UI chunk is converted to durable events. */
   onChunkPrepared?: (input: ConversationRunChunkMirrorPreparedChunk) => Promise<void> | void;
+  /** Called after external events are prepared. */
   onExternalEventsPrepared?: (
     input: ConversationRunChunkMirrorPreparedEvents,
   ) => Promise<void> | void;
@@ -78,19 +103,28 @@ interface ConversationRunChunkMirrorSharedOptions {
 /** Options accepted by conversation run chunk mirror queue. */
 export interface ConversationRunChunkMirrorQueueOptions
   extends ConversationRunChunkMirrorSharedOptions {
+  /** Queue controller value. */
   queueController: ConversationRunEventQueueController;
 }
 
 /** Options accepted by conversation run chunk mirror API. */
 export interface ConversationRunChunkMirrorApiOptions
   extends ConversationRunChunkMirrorSharedOptions {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Conversation ID value. */
   conversationId: string;
+  /** Run ID value. */
   runId: string;
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence?: number;
+  /** Max events per batch value. */
   maxEventsPerBatch?: number;
+  /** Max cursor resyncs per flush value. */
   maxCursorResyncsPerFlush?: number;
 }
 
@@ -107,23 +141,37 @@ export type HostedConversationRunChunkMirrorTraceAttributes = Record<
 
 /** Public API contract for hosted conversation run chunk mirror instrumentation. */
 export interface HostedConversationRunChunkMirrorInstrumentation {
+  /** Callback that handles trace. */
   trace?: <T>(operationName: string, operation: () => Promise<T>) => Promise<T>;
+  /** Callback that handles set trace attributes. */
   setTraceAttributes?: (attributes: HostedConversationRunChunkMirrorTraceAttributes) => void;
+  /** Callback that handles debug. */
   debug?: (message: string, metadata: Record<string, unknown>) => void;
+  /** Writes a warning log entry. */
   warn?: (message: string, metadata: Record<string, unknown>) => void;
+  /** Writes an error log entry. */
   error?: (message: string, metadata: Record<string, unknown>) => void;
 }
 
 /** Options accepted by hosted conversation run chunk mirror. */
 export interface HostedConversationRunChunkMirrorOptions {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Conversation ID value. */
   conversationId: string;
+  /** Run ID value. */
   runId: string;
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence?: number;
+  /** Batch size value. */
   batchSize?: number;
+  /** High backlog event count value. */
   highBacklogEventCount?: number;
+  /** Instrumentation value. */
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
 }
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { PageTransition } from "./page-transition.ts";
@@ -351,19 +351,35 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should not perform transition when html is empty string",
-      withMocks((mocks) => {
+      "should render an intentionally empty page",
+      withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
-        const originalHtml = mocks.mockRoot.innerHTML;
+        mocks.mockRoot.innerHTML = "old content";
         const data: RouteData = { html: "", frontmatter: {} };
 
         pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
-        assertEquals(
-          mocks.mockRoot.innerHTML,
-          originalHtml,
-          "Root element should not change when html is empty",
+        assertEquals(mocks.mockRoot.innerHTML, "");
+      }),
+    );
+
+    it(
+      "should validate HTML before hiding the current page",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+
+        assertThrows(
+          () =>
+            pageTransition.updatePage(
+              { html: '<a href="javascript:alert(1)">unsafe</a>' },
+              false,
+              0,
+            ),
+          Error,
+          "Potentially unsafe HTML",
         );
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
       }),
     );
   });
@@ -464,17 +480,14 @@ describe("PageTransition", () => {
         pageTransition.showError(error);
 
         assertEquals(
-          mocks.mockRoot.innerHTML?.includes("Oops! Something went wrong"),
+          mocks.mockRoot.innerHTML?.includes("Something went wrong"),
           true,
           "Error heading should be displayed",
         );
+        assertEquals(mocks.mockRoot.innerHTML?.includes("Reload the page and try again."), true);
+        assertEquals(mocks.mockRoot.innerHTML?.includes("Network request failed"), false);
         assertEquals(
-          mocks.mockRoot.innerHTML?.includes("Network request failed"),
-          true,
-          "Error message should be displayed",
-        );
-        assertEquals(
-          mocks.mockRoot.innerHTML?.includes("Reload Page"),
+          mocks.mockRoot.innerHTML?.includes("Reload page"),
           true,
           "Reload button should be displayed",
         );
@@ -492,18 +505,45 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should include error message in displayed content",
+      "should not expose internal error details",
       withMocks((mocks) => {
         const pageTransition = new PageTransition(() => {});
         const errorMessage = 'Custom error message with special characters <>&"';
 
         pageTransition.showError(new Error(errorMessage));
 
-        assertEquals(
-          mocks.mockRoot.innerHTML?.includes(errorMessage),
-          true,
-          "Custom error message should be included in error display",
-        );
+        assertEquals(mocks.mockRoot.innerHTML?.includes(errorMessage), false);
+      }),
+    );
+
+    it(
+      "should cancel a pending transition before showing an error",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage({ html: "stale page" }, false, 0);
+        pageTransition.showError(new Error("private detail"));
+
+        await delay(200);
+
+        assertEquals(mocks.mockRoot.innerHTML?.includes("stale page"), false);
+        assertEquals(mocks.mockRoot.innerHTML?.includes("Reload page"), true);
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
+      }),
+    );
+  });
+
+  describe("destroy", () => {
+    it(
+      "should cancel pending work and restore page visibility",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage({ html: "late page" }, false, 0);
+        pageTransition.destroy();
+
+        await delay(200);
+
+        assertEquals(mocks.mockRoot.innerHTML, "");
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
       }),
     );
   });

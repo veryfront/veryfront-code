@@ -17,7 +17,7 @@
  *   execute: async ({ query }) => ({ results: [] }),
  * });
  *
- * // Start MCP server — registered tools are exposed automatically.
+ * // Start the MCP server. Registered tools are exposed automatically.
  * // `auth` is required: use bearer for production, or the explicit
  * // `{ type: "none", allowUnauthenticated: true }` opt-in for local dev only.
  * const server = createMCPServer({
@@ -28,6 +28,9 @@
  */
 
 export type {
+  MCPAuthConfig,
+  MCPInputSchema,
+  MCPRequestContext,
   MCPServerConfig,
   MCPStats,
   MCPTool,
@@ -45,6 +48,8 @@ export {
 } from "./registry.ts";
 
 export { createMCPServer, MCPServer } from "./server.ts";
+export type { JSONRPCRequest, JSONRPCResponse } from "./server.ts";
+export type { JSONRPCParams } from "./types.ts";
 
 export {
   buildFormElicitation,

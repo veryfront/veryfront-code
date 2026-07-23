@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   _resetCache,
@@ -20,7 +20,7 @@ describe("npm-import-rewrites", () => {
     for (const pkg of REWRITABLE_PACKAGES) {
       it(`"${pkg}" has a pinned npm: entry in deno.json`, () => {
         const value = importMap[pkg];
-        assertEquals(typeof value, "string", `Missing import map entry for "${pkg}"`);
+        assert(typeof value === "string", `Missing import map entry for "${pkg}"`);
         assertEquals(
           value.startsWith("npm:"),
           true,

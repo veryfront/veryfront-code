@@ -2,11 +2,23 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  extractUserToken,
   isMissingCustomDomainProjectError,
   resolveProxyRequestToken,
 } from "./proxy-token-resolution.ts";
+import { MissingCustomDomainProjectError } from "./token-manager.ts";
 
 describe("proxy/proxy-token-resolution", () => {
+  it("ignores malformed and oversized auth cookies instead of throwing", () => {
+    assertEquals(extractUserToken("other=1; authToken=%E0%A4%A"), undefined);
+    assertEquals(extractUserToken(`authToken=${"a".repeat(20_000)}`), undefined);
+    assertEquals(
+      extractUserToken(`other=${"a".repeat(70_000)}; authToken=valid-token`),
+      undefined,
+    );
+    assertEquals(extractUserToken("authToken=valid%2Dtoken"), "valid-token");
+  });
+
   it("prefers signed internal control-plane tokens over preview user cookies", async () => {
     const tokenManagerCalls: unknown[] = [];
     const result = await resolveProxyRequestToken({
@@ -42,6 +54,30 @@ describe("proxy/proxy-token-resolution", () => {
     assertEquals(tokenManagerCalls, []);
   });
 
+  it("does not forward oversized signed or static tokens", async () => {
+    const result = await resolveProxyRequestToken({
+      req: new Request("https://example.com/channels/invoke", {
+        headers: { "x-token": "x".repeat(70_000) },
+      }),
+      url: new URL("https://example.com/channels/invoke"),
+      scope: "production",
+      host: "example.com",
+      projectSlug: undefined,
+      config: {
+        apiClientId: "",
+        apiClientSecret: "",
+        apiToken: "s".repeat(70_000),
+      },
+      tokenManager: { getToken: () => Promise.resolve("unused") },
+      signedInternalControlPlaneRequest: true,
+      allowSignedInternalControlPlaneToken: true,
+      tokenFetchErrorMessage: "Token fetch failed",
+    });
+
+    assertEquals(result.token, undefined);
+    assertEquals(result.tokenSource, undefined);
+  });
+
   it("can require service tokens for preview metadata while preserving the user token", async () => {
     const result = await resolveProxyRequestToken({
       req: new Request("https://my-project.preview.veryfront.com/page", {
@@ -72,9 +108,7 @@ describe("proxy/proxy-token-resolution", () => {
 
   it("returns custom-domain token fetch errors without logging expected misses as errors", async () => {
     const loggedErrors: string[] = [];
-    const notFoundError = new Error(
-      "OAuth token request failed: 400 - Project not found for domain",
-    );
+    const notFoundError = new MissingCustomDomainProjectError(400);
 
     const result = await resolveProxyRequestToken({
       req: new Request("https://custom.example/page"),

@@ -4,6 +4,12 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
 import { refreshLoggerConfig } from "#veryfront/utils";
+import { metrics } from "#veryfront/observability";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
 import {
@@ -11,6 +17,8 @@ import {
   handleRSCEndpoint,
   resetBrowserModuleEndpointStateForTesting,
 } from "./endpoint-router.ts";
+import { __injectCacheForTests, __resetRSCHandlerForTests } from "./handler-registry.ts";
+import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import {
   createMockAdapter,
   makeParams,
@@ -19,9 +27,24 @@ import {
   rscEnabledConfig,
 } from "./endpoint-router.test-helpers.ts";
 
+function injectRSCHandler(handler: Pick<RSCDevServerHandler, "handleStream">): void {
+  const cachedHandler = handler as unknown as RSCDevServerHandler;
+  __injectCacheForTests({
+    get: () => cachedHandler,
+    set: () => {},
+    delete: () => false,
+    clear: () => {},
+    keys: () => [][Symbol.iterator](),
+    size: 1,
+  });
+}
+
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
     resetBrowserModuleEndpointStateForTesting();
+    __injectCacheForTests(null);
+    __resetRSCHandlerForTests();
+    __resetLogRecordEmitterForTests();
     const esbuild = await import("veryfront/extensions/bundler");
     await esbuild.stop();
   });
@@ -160,11 +183,11 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
               size: 1,
               mtime: null,
             })
-            : Promise.reject(new Error("not found")),
+            : Promise.reject(new Deno.errors.NotFound("not found")),
         readFile: (path) =>
           path === pagePath
             ? Promise.resolve("export default function Page() { return null; }")
-            : Promise.reject(new Error("not found")),
+            : Promise.reject(new Deno.errors.NotFound("not found")),
       });
 
       const result = await handleRSCEndpoint(
@@ -246,6 +269,39 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(body, { ok: false, error: "action failed" });
       assertEquals(JSON.stringify(body).includes(sensitiveMessage), false);
       assertEquals(errorLog.includes(sensitiveMessage), false);
+    });
+
+    it("does not expose metrics failures while handling an endpoint error", async () => {
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const originalRecordRSC = metrics.recordRSC;
+      metrics.recordRSC = (() => {
+        throw new Error("PRIVATE_METRICS_FAILURE /private/telemetry/state");
+      }) as typeof metrics.recordRSC;
+
+      try {
+        const result = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/action",
+            config: rscEnabledConfig,
+            req: new Request("http://localhost/_veryfront/rsc/action", { method: "POST" }),
+          }),
+        );
+
+        assertEquals(result?.status, 500);
+        const serialized = JSON.stringify(entries);
+        assertEquals(serialized.includes("PRIVATE_METRICS_FAILURE"), false);
+        assertEquals(serialized.includes("/private/telemetry/state"), false);
+      } finally {
+        metrics.recordRSC = originalRecordRSC;
+        __resetLogRecordEmitterForTests();
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        refreshLoggerConfig();
+      }
     });
   });
 
@@ -1093,7 +1149,68 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("stream endpoint (root)", () => {
-    it("returns NDJSON with name parameter", async () => {
+    it("streams rendered root-page content as valid NDJSON", async () => {
+      let requestedPath: string | undefined;
+      let requestedSearchParams: URLSearchParams | undefined;
+      injectRSCHandler({
+        handleStream: (path, searchParams) => {
+          requestedPath = path;
+          requestedSearchParams = searchParams;
+          const line = JSON.stringify({
+            type: "slot",
+            id: "root",
+            html: "<div>Rendered Alice</div>",
+          });
+          return Promise.resolve(
+            new Response(`${line}\n`, {
+              headers: {
+                "content-type": "application/x-ndjson; charset=utf-8",
+                "cache-control": "no-cache",
+              },
+            }),
+          );
+        },
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/stream",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/stream?name=Alice&bad=1"),
+        }),
+      );
+
+      assertEquals(result instanceof Response, true);
+      assertEquals(result!.status, 200);
+      assertEquals(result!.headers.get("content-type"), "application/x-ndjson; charset=utf-8");
+
+      const body = await result!.text();
+      const lines = body.trim().split("\n");
+      assertEquals(lines.length, 1);
+      const event = JSON.parse(lines[0] ?? "") as { type: string; id: string; html: string };
+      assertEquals(event.type, "slot");
+      assertEquals(event.id, "root");
+      assertStringIncludes(event.html, "Rendered");
+      assertStringIncludes(event.html, "Alice");
+      assertEquals(requestedPath, "/");
+      assertEquals(requestedSearchParams?.get("name"), "Alice");
+      assertEquals(requestedSearchParams?.get("bad"), "1");
+      assertEquals(body.includes("sidebar"), false);
+      assertEquals(body.includes("malformed"), false);
+      assertEquals(body.includes("Loading"), false);
+    });
+
+    it("propagates a missing root page instead of returning demo content", async () => {
+      injectRSCHandler({
+        handleStream: () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ status: 404, detail: "Component not found" }), {
+              status: 404,
+              headers: { "content-type": "application/problem+json" },
+            }),
+          ),
+      });
+
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/stream",
@@ -1101,78 +1218,12 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           req: new Request("http://localhost/_veryfront/rsc/stream?name=Alice"),
         }),
       );
+
       assertEquals(result instanceof Response, true);
-      assertEquals(result!.status, 200);
-      assertEquals(result!.headers.get("content-type"), "application/x-ndjson");
-
+      assertEquals(result!.status, 404);
       const body = await result!.text();
-      assertStringIncludes(body, "Alice");
-      // Verify it's NDJSON (lines of JSON)
-      const lines = body.trim().split("\n");
-      assertEquals(lines.length >= 4, true);
-      // Each non-malformed line should be valid JSON
-      for (const line of lines) {
-        const parsed = JSON.parse(line);
-        assertEquals(typeof parsed.type, "string");
-      }
-    });
-
-    it("defaults name to World when no name param", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream"),
-        }),
-      );
-      const body = await result!.text();
-      assertStringIncludes(body, "World");
-    });
-
-    it("escapes HTML in name (XSS prevention)", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request(
-            "http://localhost/_veryfront/rsc/stream?name=<script>alert(1)</script>",
-          ),
-        }),
-      );
-      const body = await result!.text();
-      // The raw <script> tag should NOT appear in the output
-      assertEquals(body.includes("<script>"), false);
-      // Escaped version should appear
-      assertStringIncludes(body, "&lt;script&gt;");
-    });
-
-    it("includes malformed JSON when ?bad param present", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream?bad"),
-        }),
-      );
-      const body = await result!.text();
-      assertStringIncludes(body, "{malformed json}");
-      // Should have 5 lines (4 normal + 1 malformed)
-      const lines = body.trim().split("\n");
-      assertEquals(lines.length, 5);
-    });
-
-    it("does not include malformed JSON without ?bad param", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/stream",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/stream"),
-        }),
-      );
-      const body = await result!.text();
-      assertEquals(body.includes("{malformed json}"), false);
-      const lines = body.trim().split("\n");
-      assertEquals(lines.length, 4);
+      assertEquals(body.includes("Hello Alice"), false);
+      assertEquals(body.includes("Loading"), false);
     });
   });
 

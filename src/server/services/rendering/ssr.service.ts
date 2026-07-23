@@ -111,13 +111,16 @@ function extractRedirectLocation(
 export class SSRService implements SSRServiceLike {
   private readonly cacheRepo?: CacheRepository<string>;
   private readonly rendererProvider: RendererProvider;
+  private readonly renderSessionIdFactory: () => string;
 
   constructor(options?: {
     cacheRepo?: CacheRepository<string>;
     rendererProvider?: RendererProvider;
+    renderSessionIdFactory?: () => string;
   }) {
     this.cacheRepo = options?.cacheRepo;
     this.rendererProvider = options?.rendererProvider ?? defaultRendererProvider;
+    this.renderSessionIdFactory = options?.renderSessionIdFactory ?? (() => crypto.randomUUID());
   }
 
   checkMemoryPressure(): MemoryStatus {
@@ -139,13 +142,14 @@ export class SSRService implements SSRServiceLike {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
 
-    const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
+    const renderSessionId = this.renderSessionIdFactory();
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(renderSessionId)) {
+      throw new TypeError("Render session ID is invalid");
+    }
     const preRenderHeap = getHeapStats();
 
     if (preRenderHeap.heapUsedPercent > 30) {
       logger.debug("Pre-render memory", {
-        projectSlug: ctx.projectSlug,
-        slug,
         heapUsedMB: preRenderHeap.usedHeapSizeMB,
         heapLimitMB: preRenderHeap.heapSizeLimitMB,
         heapUsedPercent: preRenderHeap.heapUsedPercent,
@@ -166,9 +170,7 @@ export class SSRService implements SSRServiceLike {
       );
 
       logger.debug("renderPage START", {
-        projectSlug: ctx.projectSlug,
-        projectId,
-        slug,
+        delivery: useNoCache ? "stream" : "string",
       });
 
       const renderStartTime = performance.now();
@@ -201,24 +203,16 @@ export class SSRService implements SSRServiceLike {
         ));
 
       logger.debug("renderPage DONE", {
-        projectSlug: ctx.projectSlug,
-        slug,
         duration: `${(performance.now() - renderStartTime).toFixed(2)}ms`,
         hasHtml: !!result.html,
         hasStream: !!result.stream,
       });
-
-      if (hasRenderSession(renderSessionId)) {
-        endRenderSession(renderSessionId);
-      }
 
       const postRenderHeap = getHeapStats();
       const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
 
       if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
         logger.debug("Post-render memory", {
-          projectSlug: ctx.projectSlug,
-          slug,
           heapUsedMB: postRenderHeap.usedHeapSizeMB,
           heapLimitMB: postRenderHeap.heapSizeLimitMB,
           heapUsedPercent: postRenderHeap.heapUsedPercent,
@@ -228,7 +222,7 @@ export class SSRService implements SSRServiceLike {
 
       const isStreaming = !!result.stream && !result.html;
       const cacheStrategy = useNoCache ? "no-cache" : "short";
-      const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
+      const etag = isStreaming ? undefined : await computeSSRETag(result.ssrHash, result.html);
 
       return {
         status: HTTP_OK,
@@ -240,10 +234,9 @@ export class SSRService implements SSRServiceLike {
         slug,
       };
     } catch (error) {
-      if (hasRenderSession(renderSessionId)) {
-        endRenderSession(renderSessionId);
-      }
       return this.handleRenderError(error, ctx, slug, request, nonce);
+    } finally {
+      if (hasRenderSession(renderSessionId)) endRenderSession(renderSessionId);
     }
   }
 
@@ -256,12 +249,12 @@ export class SSRService implements SSRServiceLike {
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     // Dev-only overlay (full stack, absolute paths, line numbers) must never
-    // be exposed outside a local project — including remote preview, which is
+    // be exposed outside a local project, including remote preview, which is
     // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
     const isDev = Boolean(ctx.isLocalProject);
 
     if (error instanceof VeryfrontError && error.slug === "file-not-found") {
-      logger.debug("Page not found", { slug, error: errorObj.message });
+      logger.debug("Page not found");
       return {
         status: HTTP_NOT_FOUND,
         html: ErrorPages.notFound(slug || "/"),
@@ -284,10 +277,7 @@ export class SSRService implements SSRServiceLike {
         (apiUrl.includes("/environments/") || apiUrl.includes("/branches/"));
 
       if (isFileListRequest) {
-        logger.debug("Project not deployed", {
-          projectSlug: ctx.projectSlug,
-          apiUrl,
-        });
+        logger.debug("Project not deployed");
         return {
           status: HTTP_NOT_FOUND,
           html: ErrorPages.undeployed(),
@@ -303,10 +293,7 @@ export class SSRService implements SSRServiceLike {
       const redirect = extractRedirectLocation(error);
       if (redirect) {
         logger.debug("SSR redirect", {
-          slug,
-          destination: redirect.destination,
           permanent: redirect.permanent,
-          projectSlug: ctx.projectSlug,
         });
         return {
           status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
@@ -321,10 +308,8 @@ export class SSRService implements SSRServiceLike {
     }
 
     logger.error("Render failed", {
-      slug,
-      error: errorObj.message,
-      stack: errorObj.stack,
-      projectSlug: ctx.projectSlug,
+      errorType: errorObj.name,
+      localDiagnosticsAvailable: isDev,
     });
 
     if (isDev) {

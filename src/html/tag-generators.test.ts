@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateLinkTags,
@@ -60,6 +60,68 @@ describe("tag-generators", () => {
       const result = generateMetaTags({ themeColor: "#ffffff" });
       assertStringIncludes(result, 'name="theme-color"');
       assertStringIncludes(result, 'content="#ffffff"');
+    });
+
+    it("rejects excessive tag entries at direct runtime boundaries", () => {
+      assertThrows(
+        () =>
+          generateMetaTags({
+            meta: Array.from(
+              { length: 101 },
+              (_, index) => ({ name: `entry-${index}`, content: "value" }),
+            ),
+          }),
+        Error,
+        "entry limit",
+      );
+    });
+
+    it("rejects excessive attributes instead of silently truncating them", () => {
+      const attributes = Object.fromEntries(
+        Array.from({ length: 33 }, (_, index) => [`data-value-${index}`, "value"]),
+      );
+
+      assertThrows(
+        () =>
+          generateMetaTags({
+            meta: [{ name: "custom", content: "value", ...attributes }],
+          } as never),
+        Error,
+        "attribute limit",
+      );
+    });
+
+    it("converts inaccessible tag attributes into validation failures", () => {
+      const attributes = new Proxy({}, {
+        ownKeys() {
+          throw new Error("private implementation detail");
+        },
+      });
+
+      assertThrows(
+        () => generateMetaTags({ meta: [attributes] } as never),
+        Error,
+        "tag attributes cannot be inspected",
+      );
+    });
+
+    it("does not execute tag attribute accessors", () => {
+      let accessorCalls = 0;
+      const attributes: Record<string, unknown> = { name: "description" };
+      Object.defineProperty(attributes, "content", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return "Private content";
+        },
+      });
+
+      assertThrows(
+        () => generateMetaTags({ meta: [attributes] } as never),
+        Error,
+        "tag attributes cannot be inspected",
+      );
+      assertEquals(accessorCalls, 0);
     });
   });
 
@@ -124,6 +186,16 @@ describe("tag-generators", () => {
       assertStringIncludes(result, 'rel="apple-touch-icon"');
       assertStringIncludes(result, 'sizes="180x180"');
     });
+
+    it("drops executable event-handler attributes", () => {
+      const result = generateLinkTags({
+        links: [{ rel: "stylesheet", href: "/safe.css", onload: "globalThis.pwned=1" }],
+        icons: [{ href: "/favicon.ico", onerror: "globalThis.pwned=1" }],
+      } as never);
+
+      assertEquals(result.includes("onload"), false);
+      assertEquals(result.includes("onerror"), false);
+    });
   });
 
   describe("generateScriptTags", () => {
@@ -164,6 +236,13 @@ describe("tag-generators", () => {
       );
     });
 
+    it("adds the nonce to external scripts", () => {
+      assertStringIncludes(
+        generateScriptTags({ scripts: [{ src: "/app.js" }] }, "abc123"),
+        'nonce="abc123"',
+      );
+    });
+
     it("should prioritize src over content", () => {
       const result = generateScriptTags({
         scripts: [{ content: "alert(1);", src: "/script.js" }],
@@ -179,6 +258,14 @@ describe("tag-generators", () => {
         }),
         'type="module"',
       );
+    });
+
+    it("drops executable event-handler attributes", () => {
+      const result = generateScriptTags({
+        scripts: [{ src: "/app.js", onerror: "globalThis.pwned=1" }],
+      } as never);
+
+      assertEquals(result.includes("onerror"), false);
     });
   });
 
@@ -220,6 +307,38 @@ describe("tag-generators", () => {
           "xyz789",
         ),
         'nonce="xyz789"',
+      );
+    });
+
+    it("adds the nonce to external stylesheets", () => {
+      assertStringIncludes(
+        generateStyleTags({ styles: [{ href: "/styles.css" }] }, "xyz789"),
+        'nonce="xyz789"',
+      );
+    });
+
+    it("enforces stylesheet semantics and drops event handlers", () => {
+      const result = generateStyleTags({
+        styles: [{
+          href: "/styles.css",
+          rel: "alternate",
+          onload: "globalThis.pwned=1",
+        }],
+      } as never);
+
+      assertEquals(result.match(/\brel=/g)?.length, 1);
+      assertStringIncludes(result, 'rel="stylesheet"');
+      assertEquals(result.includes("alternate"), false);
+      assertEquals(result.includes("onload"), false);
+    });
+
+    it("ignores malformed tag entries at runtime", () => {
+      assertEquals(generateStyleTags({ styles: [null] } as never), "");
+      assertEquals(generateScriptTags({ scripts: [null] } as never), "");
+      assertEquals(generateLinkTags({ links: [null], icons: [null] } as never), "");
+      assertEquals(
+        generateMetaTags({ meta: { invalid: true } } as never).includes("invalid"),
+        false,
       );
     });
 

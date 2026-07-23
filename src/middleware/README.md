@@ -1,341 +1,115 @@
-# Middleware Module
+# Middleware module
 
-The Middleware module provides a Hono-inspired composable middleware pipeline for request/response handling with built-in middleware for common use cases.
+The public `veryfront/middleware` entry point provides composable Fetch API
+middleware for CORS, rate limits, request logging, timeouts, and route
+pipelines.
 
-## Import Map Alias
-
-```typescript
-// Using import map alias (recommended)
-import { cors, logger, MiddlewarePipeline, securityHeaders } from "#middleware";
-
-// Using barrel file
-import { cors, logger, MiddlewarePipeline, securityHeaders } from "./middleware/index.ts";
-```
-
-## Public API Overview
-
-The Middleware module exports:
-
-- **`MiddlewarePipeline`** - Core middleware execution engine
-- **`MiddlewareContext`** - Request/response context with helpers
-- **Built-in Middleware** - CORS, logger, security headers, rate limiting, etc.
-- **Type Definitions** - `MiddlewareHandler`, `Context`, `Next`, etc.
-
-## File Structure
-
-```
-middleware/
-├── index.ts                    # Public API (barrel file) ← USE THIS
-├── README.md                   # This file
-├── core/                       # Core middleware system
-│   ├── index.ts
-│   ├── pipeline/               # Pipeline implementation
-│   │   ├── index.ts
-│   │   ├── pipeline.ts
-│   │   └── context.ts
-│   └── types.ts                # Core type definitions
-└── builtin/                    # Built-in middleware
-    ├── index.ts
-    ├── cors.ts                 # CORS middleware
-    ├── logger.ts               # Request logger
-    ├── security-headers.ts     # Security headers
-    ├── rate-limiter.ts         # Rate limiting
-    ├── compression.ts          # Response compression
-    └── error-handler.ts        # Error handling
-```
-
-## Quick Start
-
-### Basic Pipeline
+## Public entry point
 
 ```ts
-import { MiddlewarePipeline } from "#middleware";
-
-const pipeline = new MiddlewarePipeline();
-
-// Add middleware
-pipeline.use(async (context, next) => {
-  console.log("Before:", context.req.url);
-  const response = await next();
-  console.log("After:", response.status);
-  return response;
-});
-
-// Execute pipeline
-const response = await pipeline.execute(request);
+import {
+  cors,
+  logger,
+  type MiddlewareHandler,
+  MiddlewarePipeline,
+  rateLimit,
+  timeout,
+} from "veryfront/middleware";
 ```
 
-### Using Built-in Middleware
+| Export                                        | Purpose                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------- |
+| `MiddlewarePipeline`                          | Registers and runs middleware in order.                              |
+| `cors`                                        | Applies CORS response headers and handles CORS preflight requests.   |
+| `rateLimit`, `authRateLimit`                  | Limits requests with a configurable or authentication preset policy. |
+| `MemoryRateLimitStore`, `RedisRateLimitStore` | Store rate-limit counters in memory or Redis.                        |
+| `logger`, `devLogger`, `prodLogger`           | Logs request and response metadata.                                  |
+| `timeout`, `timeoutFromEnv`                   | Returns a 504 response when downstream work exceeds its deadline.    |
+| `MiddlewareHandler`, `Context`, `Next`        | Defines the public middleware contract.                              |
+
+See the [generated API reference](../../docs/api-reference/veryfront/middleware.md)
+for every export and option.
+
+## Route pipeline
+
+`handle()` runs middleware around a route handler. Middleware can reject the
+request before the handler runs or modify the handler response after
+`next()` resolves.
 
 ```ts
-import { cors, logger, MiddlewarePipeline, securityHeaders } from "#middleware";
+import { cors, logger, MiddlewarePipeline, rateLimit, timeout } from "veryfront/middleware";
 
-const pipeline = new MiddlewarePipeline();
+const pipeline = new MiddlewarePipeline()
+  .use(logger({ format: "short" }))
+  .use(cors({ origin: "https://app.example.com" }))
+  .use(rateLimit({ maxRequests: 100, windowMs: 60_000 }))
+  .use(timeout({ timeoutMs: 30_000 }));
 
-// Add built-in middleware
-pipeline.use(logger({ format: "dev" }));
-pipeline.use(cors({
-  origin: ["https://example.com"],
-  methods: ["GET", "POST"],
-  credentials: true,
-}));
-pipeline.use(securityHeaders({
-  contentSecurityPolicy: true,
-  xFrameOptions: "DENY",
-}));
-
-// Add custom handler
-pipeline.use(async (ctx) => {
-  return new Response("Hello World");
-});
-
-// Execute
-const response = await pipeline.execute(request);
-```
-
-## Built-in Middleware
-
-### CORS
-
-Cross-Origin Resource Sharing configuration:
-
-```ts
-import { cors } from "#middleware";
-
-pipeline.use(cors({
-  origin: ["https://example.com", "https://app.example.com"],
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
-  maxAge: 86400,
-}));
-```
-
-### Logger
-
-Request/response logging:
-
-```ts
-import { logger } from "#middleware";
-
-// Development format (colorized, detailed)
-pipeline.use(logger({ format: "dev" }));
-
-// Production format (JSON structured logging)
-pipeline.use(logger({ format: "json" }));
-
-// Custom format
-pipeline.use(logger({
-  format: "custom",
-  customFormat: (ctx, start, end) => {
-    return `${ctx.req.method} ${ctx.req.url} ${end - start}ms`;
-  },
-}));
-```
-
-### Security Headers
-
-Common security headers:
-
-```ts
-import { securityHeaders } from "#middleware";
-
-pipeline.use(securityHeaders({
-  contentSecurityPolicy: {
-    "default-src": ["'self'"],
-    "script-src": ["'self'", "'unsafe-inline'"],
-    "style-src": ["'self'", "'unsafe-inline'"],
-  },
-  xFrameOptions: "DENY",
-  xContentTypeOptions: "nosniff",
-  referrerPolicy: "strict-origin-when-cross-origin",
-  permissionsPolicy: {
-    "camera": [],
-    "microphone": [],
-    "geolocation": ["self"],
-  },
-}));
-```
-
-### Rate Limiter
-
-Request rate limiting:
-
-```ts
-import { rateLimiter } from "#middleware";
-
-pipeline.use(rateLimiter({
-  windowMs: 60 * 1000, // 1 minute
-  maxRequests: 100, // 100 requests per window
-  keyGenerator: (req) => {
-    // Use IP address as key
-    return req.headers.get("x-forwarded-for") || "unknown";
-  },
-  handler: async (ctx) => {
-    return new Response("Too Many Requests", { status: 429 });
-  },
-}));
-```
-
-### Compression
-
-Response compression (gzip/brotli):
-
-```ts
-import { compression } from "#middleware";
-
-pipeline.use(compression({
-  threshold: 1024, // Compress responses > 1KB
-  level: 6, // Compression level (1-9)
-  encodings: ["br", "gzip"], // Prefer brotli, fallback to gzip
-}));
-```
-
-### Error Handler
-
-Global error handling:
-
-```ts
-import { errorHandler } from "#middleware";
-
-// Add first in pipeline to catch all errors
-pipeline.use(errorHandler({
-  // Development: show stack traces
-  showStackTrace: process.env.NODE_ENV === "development",
-
-  // Custom error response
-  onError: (error, ctx) => {
-    console.error("Middleware error:", error);
-    return new Response(
-      JSON.stringify({
-        error: error.message,
-        stack: error.stack,
-      }),
-      {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      },
-    );
-  },
-}));
-```
-
-## Creating Custom Middleware
-
-### Simple Middleware
-
-```ts
-import type { MiddlewareHandler } from "#middleware";
-
-const customMiddleware: MiddlewareHandler = async (ctx, next) => {
-  // Before request
-  ctx.set("startTime", Date.now());
-
-  // Call next middleware
-  const response = await next();
-
-  // After request
-  const duration = Date.now() - ctx.get("startTime");
-  response.headers.set("X-Response-Time", `${duration}ms`);
-
-  return response;
-};
-
-pipeline.use(customMiddleware);
-```
-
-### Middleware Factory
-
-```ts
-import type { MiddlewareFactory } from "#middleware";
-
-interface AuthOptions {
-  secret: string;
-  algorithm?: string;
+export function GET(request: Request): Promise<Response> {
+  return pipeline.handle(
+    request,
+    () => Response.json({ status: "ok" }),
+  );
 }
-
-const auth: MiddlewareFactory<AuthOptions> = (options) => {
-  return async (ctx, next) => {
-    const token = ctx.req.headers.get("Authorization");
-
-    if (!token) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-
-    // Verify token with options.secret
-    const user = await verifyToken(token, options.secret);
-    ctx.set("user", user);
-
-    return next();
-  };
-};
-
-// Use with options
-pipeline.use(auth({ secret: process.env.JWT_SECRET }));
 ```
 
-## Context API
+`execute()` runs the pipeline without a route handler. If every middleware
+calls `next()`, its terminal response is 404. Use `handle()` when middleware
+must wrap a separate route handler.
 
-The middleware context provides helpers for common operations:
+`rateLimit()` ignores forwarded client-address headers by default and uses a
+shared anonymous key. For per-client limits, provide a `keyGenerator` based on
+a trusted application identity. Set `trustProxy` only when a trusted reverse
+proxy controls the forwarding headers.
+
+For distributed counters, pass a `RedisRateLimitStore` with a Redis URL or set
+`REDIS_URL`. Production environments require one of these values. Connection,
+command, and disconnect deadlines are bounded and configurable. Call
+`destroy()` during application shutdown.
+
+## Middleware contract
+
+A middleware handler receives a request context and a `next` callback. Return
+a response to stop the chain, or return `next()` to continue it. Call `next()`
+at most once.
 
 ```ts
-// Request helpers
-ctx.req.url; // Request URL
-ctx.req.method; // HTTP method
-ctx.req.headers; // Headers object
-await ctx.req.json(); // Parse JSON body
-await ctx.req.text(); // Get text body
-await ctx.req.formData(); // Parse form data
+import { type MiddlewareHandler, MiddlewarePipeline } from "veryfront/middleware";
 
-// Response helpers
-ctx.json(data, status); // JSON response
-ctx.text(text, status); // Text response
-ctx.html(html, status); // HTML response
-ctx.redirect(url, status); // Redirect response
+const requireRequestId: MiddlewareHandler = (context, next) => {
+  if (!context.request.headers.has("x-request-id")) {
+    return Response.json(
+      { error: "Missing x-request-id header" },
+      { status: 400 },
+    );
+  }
 
-// State management
-ctx.set("key", value); // Set context value
-ctx.get("key"); // Get context value
+  return next();
+};
 
-// Environment
-ctx.env; // Environment variables
-ctx.executionCtx; // Execution context (for edge runtimes)
+export const pipeline = new MiddlewarePipeline().use(requireRequestId);
 ```
 
-## Best Practices
+`use()` registers middleware for every request. `useFor()` registers one or
+more handlers for requests whose URL pathname matches a regular expression.
+Global middleware runs first, followed by matching scoped middleware in
+registration order.
 
-1. **Order matters** - Add middleware in the correct order:
-   - Error handler (first)
-   - Logger
-   - CORS
-   - Security headers
-   - Compression
-   - Rate limiter
-   - Auth
-   - Your routes (last)
+## Lifecycle
 
-2. **Always call next()** unless you're intentionally stopping the pipeline
+`onTeardown()` registers cleanup for that pipeline instance. Call
+`teardown()` when code that created the pipeline shuts down. Each registered
+callback runs once, even when an earlier callback fails.
 
-3. **Use middleware factories** for configurable middleware
+```ts
+import { MiddlewarePipeline } from "veryfront/middleware";
 
-4. **Handle errors** - Use try/catch or error handler middleware
+const pipeline = new MiddlewarePipeline();
+const backgroundWork = new AbortController();
 
-5. **Keep middleware focused** - Each middleware should do one thing well
+pipeline.onTeardown(() => backgroundWork.abort());
 
-## Performance Tips
-
-- Add compression middleware for large responses
-- Use rate limiting to prevent abuse
-- Cache middleware results when possible
-- Avoid heavy synchronous operations
-- Use streaming for large file responses
-
-## Related Modules
-
-- **#server** - Server implementation using middleware
-- **#api** - API routes with middleware support
-- **#security** - Additional security utilities
-
-## References
-
-- [Hono Documentation](https://hono.dev/) - Inspiration for middleware design
+export async function stopPipeline(): Promise<void> {
+  await pipeline.teardown();
+}
+```

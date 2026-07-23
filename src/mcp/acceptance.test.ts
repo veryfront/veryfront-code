@@ -42,7 +42,7 @@ async function initSession(
   return sid;
 }
 
-describe("Acceptance Criteria — Streamable HTTP Transport (#839)", () => {
+describe("Acceptance criteria: Streamable HTTP transport (#839)", () => {
   it("POST with request returns application/json", async () => {
     const handler = createMCPServer({
       enabled: true,

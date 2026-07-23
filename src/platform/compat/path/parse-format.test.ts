@@ -22,6 +22,26 @@ describe("platform/compat/path/parse-format", () => {
       assertEquals(name, "utils");
     });
 
+    it("should parse Windows drive roots", () => {
+      assertEquals(parse("D:\\project\\src\\file.ts"), {
+        root: "D:/",
+        dir: "D:/project/src",
+        base: "file.ts",
+        ext: ".ts",
+        name: "file",
+      });
+    });
+
+    it("should parse Windows drive-relative paths", () => {
+      assertEquals(parse("D:project\\file.ts"), {
+        root: "D:",
+        dir: "D:project",
+        base: "file.ts",
+        ext: ".ts",
+        name: "file",
+      });
+    });
+
     it("should parse file without extension", () => {
       const { ext, name } = parse("/usr/bin/deno");
       assertEquals(ext, "");
@@ -61,6 +81,11 @@ describe("platform/compat/path/parse-format", () => {
         name: "file",
       });
       assertEquals(result, "file.ts");
+    });
+
+    it("should use root when dir is absent", () => {
+      assertEquals(format({ root: "/", base: "file.ts" }), "/file.ts");
+      assertEquals(format({ root: "D:/", base: "file.ts" }), "D:/file.ts");
     });
 
     it("should format from name and ext when base is missing", () => {

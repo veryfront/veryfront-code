@@ -3,23 +3,37 @@ import { agentLogger } from "#veryfront/utils";
 
 /** Public API contract for conversation run mirror snapshot. */
 export interface ConversationRunMirrorSnapshot {
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
+  /** Pending event count value. */
   pendingEventCount: number;
+  /** Consecutive failures value. */
   consecutiveFailures: number;
+  /** Whether disabled. */
   disabled: boolean;
+  /** Whether flush timer. */
   hasFlushTimer: boolean;
+  /** Whether retry timer. */
   hasRetryTimer: boolean;
+  /** Whether in flight. */
   inFlight: boolean;
 }
 
 /** State for conversation run mirror stopped. */
 export interface ConversationRunMirrorStoppedState {
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
+  /** Pending event count value. */
   pendingEventCount: 0;
+  /** Consecutive failures value. */
   consecutiveFailures: number;
+  /** Disabled value. */
   disabled: true;
+  /** Disable reason value. */
   disableReason?:
     | "cursor_resyncs_exhausted"
     | "non_appendable"
@@ -30,29 +44,47 @@ export interface ConversationRunMirrorStoppedState {
 
 /** State for conversation run mirror retry scheduled. */
 export interface ConversationRunMirrorRetryScheduledState {
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
+  /** Pending event count value. */
   pendingEventCount: number;
+  /** Consecutive failures value. */
   consecutiveFailures: number;
+  /** Disabled value. */
   disabled: false;
+  /** Error message value. */
   errorMessage: string;
+  /** Retry delay ms value. */
   retryDelayMs: number;
 }
 
+/** Snapshot reported when a conversation run mirror reaches high backlog. */
 export interface ConversationRunMirrorHighBacklogState {
+  /** Latest durably appended internal event identifier. */
   latestEventId: number;
+  /** Latest durably appended external event sequence. */
   latestExternalEventSequence: number;
+  /** Events still waiting to flush. */
   pendingEventCount: number;
+  /** Consecutive flush failures. */
   consecutiveFailures: number;
+  /** Indicates that mirroring remains enabled. */
   disabled: false;
+  /** Configured high-backlog event threshold. */
   threshold: number;
 }
 
 /** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
+  /** Performs the enqueue operation. */
   enqueue(events: unknown[]): void;
+  /** Performs the flush operation. */
   flush(): Promise<ConversationRunMirrorSnapshot>;
+  /** Returns snapshot. */
   getSnapshot(): ConversationRunMirrorSnapshot;
+  /** Releases resources used by dispose. */
   dispose(): void;
 }
 

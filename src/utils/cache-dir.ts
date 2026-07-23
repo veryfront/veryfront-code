@@ -1,10 +1,33 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { join } from "#veryfront/compat/path/index.ts";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-local-storage.ts";
+import { join, resolve } from "#veryfront/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 
 const cacheStorage = new AsyncLocalStorage<string>();
-let nodeModulesLinked = false;
+
+/** Coordinates one link attempt per cache root while concurrent calls are active. */
+export class CacheNodeModulesLinkCoordinator {
+  private readonly inFlight = new Map<string, Promise<void>>();
+
+  ensure(cacheRoot: string, operation: () => Promise<void>): Promise<void> {
+    const existing = this.inFlight.get(cacheRoot);
+    if (existing) return existing;
+
+    const pending = Promise.resolve().then(operation);
+    this.inFlight.set(cacheRoot, pending);
+    void pending.then(
+      () => {
+        if (this.inFlight.get(cacheRoot) === pending) this.inFlight.delete(cacheRoot);
+      },
+      () => {
+        if (this.inFlight.get(cacheRoot) === pending) this.inFlight.delete(cacheRoot);
+      },
+    );
+    return pending;
+  }
+}
+
+const nodeModulesLinkCoordinator = new CacheNodeModulesLinkCoordinator();
 
 export function runWithCacheDir<T>(cacheDir: string, fn: () => T): T {
   return cacheStorage.run(cacheDir, fn);
@@ -58,34 +81,42 @@ export function getHttpBundleCacheDir(): string {
  * guaranteeing a single React instance (no "Invalid hook call" errors).
  */
 export async function ensureCacheNodeModules(): Promise<void> {
-  if (!isNode || nodeModulesLinked) return;
-  nodeModulesLinked = true;
+  if (!isNode) return;
+
+  const cacheBase = resolve(getCacheBaseDir());
 
   try {
-    const { createRequire } = await import("node:module");
-    const { lstatSync, symlinkSync, mkdirSync } = await import("node:fs");
+    await nodeModulesLinkCoordinator.ensure(cacheBase, async () => {
+      const { createRequire } = await import("node:module");
+      const { lstatSync, symlinkSync, mkdirSync } = await import("node:fs");
 
-    const cacheBase = getCacheBaseDir();
-    const targetLink = join(cacheBase, "node_modules");
+      const targetLink = join(cacheBase, "node_modules");
 
-    try {
-      lstatSync(targetLink);
-      return;
-    } catch (_) {
-      /* expected: symlink doesn't exist yet */
-    }
+      try {
+        const existing = lstatSync(targetLink);
+        if (existing.isDirectory() || existing.isSymbolicLink()) return;
+        throw new Error("Cache node_modules path is not a directory");
+      } catch (error) {
+        if (
+          typeof error !== "object" || error === null ||
+          !("code" in error) || error.code !== "ENOENT"
+        ) {
+          throw error;
+        }
+      }
 
-    const require = createRequire(import.meta.url);
-    const reactEntry = require.resolve("react");
+      const require = createRequire(import.meta.url);
+      const reactEntry = require.resolve("react");
 
-    const marker = "/node_modules/react";
-    const idx = reactEntry.lastIndexOf(marker);
-    if (idx === -1) return;
+      const marker = "/node_modules/react";
+      const idx = reactEntry.replaceAll("\\", "/").lastIndexOf(marker);
+      if (idx === -1) throw new Error("React is not installed under node_modules");
 
-    const nodeModulesDir = reactEntry.substring(0, idx + "/node_modules".length);
+      const nodeModulesDir = reactEntry.substring(0, idx + "/node_modules".length);
 
-    mkdirSync(cacheBase, { recursive: true });
-    symlinkSync(nodeModulesDir, targetLink, "dir");
+      mkdirSync(cacheBase, { recursive: true });
+      symlinkSync(nodeModulesDir, targetLink, "dir");
+    });
   } catch (_) {
     /* expected: best-effort symlink may fail due to permissions or platform */
   }

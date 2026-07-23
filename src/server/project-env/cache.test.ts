@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { EnvironmentVariableCache } from "./cache.ts";
 
@@ -69,7 +69,55 @@ describe("project-env/cache", () => {
     assertEquals(fetchCount, 1);
   });
 
-  it("returns stale data on fetch error", async () => {
+  it("isolates cached values by project and credential", async () => {
+    const calls: Array<{ environmentId: string; projectSlug: string; token: string }> = [];
+    const cache = new EnvironmentVariableCache(
+      async (environmentId, token, projectSlug) => {
+        calls.push({ environmentId, projectSlug, token });
+        return { VALUE: `${projectSlug}:${token}` };
+      },
+    );
+
+    assertEquals(
+      await cache.get("shared-env", "<TOKEN_A>", "project-a"),
+      { VALUE: "project-a:<TOKEN_A>" },
+    );
+    assertEquals(
+      await cache.get("shared-env", "<TOKEN_A>", "project-b"),
+      { VALUE: "project-b:<TOKEN_A>" },
+    );
+    assertEquals(
+      await cache.get("shared-env", "<TOKEN_B>", "project-a"),
+      { VALUE: "project-a:<TOKEN_B>" },
+    );
+    await cache.get("shared-env", "<TOKEN_A>", "project-a");
+
+    assertEquals(calls.length, 3);
+  });
+
+  it("isolates values by explicit release scope", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => ({
+      VALUE: `release-${++fetchCount}`,
+    }));
+
+    const first = await cache.get("env-1", "<TOKEN>", "project", {
+      scope: "release-1",
+    });
+    const second = await cache.get("env-1", "<TOKEN>", "project", {
+      scope: "release-2",
+    });
+    const firstAgain = await cache.get("env-1", "<TOKEN>", "project", {
+      scope: "release-1",
+    });
+
+    assertEquals(first, { VALUE: "release-1" });
+    assertEquals(second, { VALUE: "release-2" });
+    assertEquals(firstAgain, { VALUE: "release-1" });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("fails closed instead of returning stale data on fetch error", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(async () => {
       fetchCount++;
@@ -84,18 +132,39 @@ describe("project-env/cache", () => {
     // Wait for TTL to expire
     await delay(60);
 
-    // Second call fails but returns stale
-    const second = await cache.get("env-1", "token", "my-project");
-    assertEquals(second, { API_KEY: "stale" });
+    await assertRejects(
+      () => cache.get("env-1", "token", "my-project"),
+      Error,
+      "Network error",
+    );
   });
 
-  it("returns empty object on fetch error with no stale data", async () => {
+  it("fails closed on fetch error with no cached data", async () => {
     const cache = new EnvironmentVariableCache(async () => {
       throw new Error("Network error");
     });
 
-    const result = await cache.get("env-1", "token", "my-project");
-    assertEquals(result, {});
+    await assertRejects(
+      () => cache.get("env-1", "token", "my-project"),
+      Error,
+      "Network error",
+    );
+  });
+
+  it("does not allow callers to mutate cached secret values", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount++;
+      return { API_KEY: "original" };
+    });
+
+    const first = await cache.get("env-1", "token", "my-project");
+    first.API_KEY = "mutated";
+
+    assertEquals(await cache.get("env-1", "token", "my-project"), {
+      API_KEY: "original",
+    });
+    assertEquals(fetchCount, 1);
   });
 
   it("invalidate clears specific entry", async () => {
@@ -128,6 +197,35 @@ describe("project-env/cache", () => {
     await cache.get("env-1", "token", "my-project");
     await cache.get("env-2", "token", "my-project");
     assertEquals(fetchCount, 4);
+  });
+
+  it("does not let an invalidated in-flight fetch repopulate the cache", async () => {
+    let fetchCount = 0;
+    let resolveFirst: ((vars: Record<string, string>) => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        markFirstStarted?.();
+        return await new Promise<Record<string, string>>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return { API_KEY: "fresh" };
+    });
+
+    const firstRequest = cache.get("env-1", "token", "project");
+    await firstStarted;
+    cache.invalidate("env-1", { projectSlug: "project" });
+
+    assertEquals(await cache.get("env-1", "token", "project"), { API_KEY: "fresh" });
+    resolveFirst?.({ API_KEY: "invalidated" });
+    assertEquals(await firstRequest, { API_KEY: "invalidated" });
+    assertEquals(await cache.get("env-1", "token", "project"), { API_KEY: "fresh" });
+    assertEquals(fetchCount, 2);
   });
 
   it("evicts oldest entries when maxEntries exceeded", async () => {
@@ -192,5 +290,26 @@ describe("project-env/cache", () => {
     // env-2 should have been evicted
     await cache.get("env-2", "token", "p");
     assertEquals(fetchCount, 6);
+  });
+
+  it("fresh cache hits update the LRU eviction order", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async (_environmentId, _token, projectSlug) => {
+        fetchCount++;
+        return { PROJECT: projectSlug };
+      },
+      60_000,
+      2,
+    );
+
+    await cache.get("env", "token", "project-a");
+    await cache.get("env", "token", "project-b");
+    await cache.get("env", "token", "project-a");
+    await cache.get("env", "token", "project-c");
+    await cache.get("env", "token", "project-a");
+    await cache.get("env", "token", "project-b");
+
+    assertEquals(fetchCount, 4);
   });
 });

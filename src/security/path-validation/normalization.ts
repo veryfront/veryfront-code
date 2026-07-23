@@ -55,8 +55,15 @@ export function joinPaths(base: string, relative: string): string {
  * Compares normalized paths (string comparison)
  */
 export function isWithinDirectory(baseDir: string, targetPath: string): boolean {
-  const normalizedBase = normalizeSeparators(baseDir).replace(/\/$/, "");
-  const normalizedTarget = normalizeSeparators(targetPath).replace(/\/$/, "");
+  const normalizedBase = stripTrailingSeparators(normalizeSeparators(baseDir));
+  const normalizedTarget = stripTrailingSeparators(normalizeSeparators(targetPath));
+
+  if (!normalizedBase) return normalizedTarget === "";
+  if (normalizedBase === "/") return normalizedTarget.startsWith("/");
 
   return normalizedTarget === normalizedBase || normalizedTarget.startsWith(`${normalizedBase}/`);
+}
+
+function stripTrailingSeparators(path: string): string {
+  return path === "/" ? path : path.replace(/\/+$/, "");
 }

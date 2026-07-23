@@ -8,20 +8,59 @@
  * @see https://datatracker.ietf.org/doc/html/rfc9457
  */
 
-import type { Handler, HandlerContext, HandlerResult } from "#veryfront/types/server.ts";
 import { trace } from "#veryfront/observability/tracing/api-shim.ts";
-import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
+import { PROBLEM_RESPONSE_HEADERS } from "../http-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
 import { wrapUnknownError } from "./wrap-unknown.ts";
+import { safeErrorStack, snapshotVeryfrontError } from "../error-snapshot.ts";
+
+function safelyRecordError(error: ReturnType<typeof snapshotVeryfrontError>): void {
+  try {
+    recordErrorCount({
+      slug: error.slug,
+      category: error.category,
+      status: String(error.status),
+    });
+  } catch {
+    // Observability must not replace the application failure.
+  }
+}
+
+/** Minimal request context required by the HTTP error boundary. */
+export interface ErrorBoundaryContext {
+  /** Whether diagnostic response fields may be emitted for local development. */
+  readonly isLocalProject?: boolean;
+}
+
+/** Result shape returned by a response-producing HTTP handler. */
+export interface ErrorBoundaryResult {
+  /** Response produced by the handler, when request processing is complete. */
+  readonly response?: Response;
+  /** Whether the containing handler chain should continue. */
+  readonly continue?: boolean;
+  /** Optional low-level handler metadata. */
+  readonly metadata?: Record<string, unknown>;
+}
+
+/** Handler shape accepted by {@link wrapHandlerWithErrorBoundary}. */
+export interface ErrorBoundaryHandler<
+  TMetadata = unknown,
+  TContext extends ErrorBoundaryContext = ErrorBoundaryContext,
+> {
+  /** Metadata preserved by the wrapper. */
+  readonly metadata: TMetadata;
+  /** Process one request. */
+  handle(req: Request, ctx: TContext): Promise<ErrorBoundaryResult>;
+}
 
 /**
  * Wrap a handler with error boundary that catches all errors and converts them
  * to RFC 9457 Problem Details responses.
  *
  * Behavior:
- * - VeryfrontError → toRFC9457() with application/problem+json
- * - Plain Error → wrap as unknown-error slug, then serialize
+ * - VeryfrontError: snapshot validated fields into application/problem+json
+ * - Plain Error: wrap as unknown-error, then snapshot and serialize
  * - Dev mode (isLocalProject): include stack field in response
  * - Production: omit stack, omit detail for 5xx errors
  *
@@ -36,22 +75,20 @@ import { wrapUnknownError } from "./wrap-unknown.ts";
  * };
  * ```
  */
-export function httpErrorBoundary(
-  handlerFn: (req: Request, ctx: HandlerContext) => Promise<HandlerResult>,
-): (req: Request, ctx: HandlerContext) => Promise<HandlerResult> {
-  return async (req: Request, ctx: HandlerContext): Promise<HandlerResult> => {
+export function httpErrorBoundary<TContext extends ErrorBoundaryContext>(
+  handlerFn: (req: Request, ctx: TContext) => Promise<ErrorBoundaryResult>,
+): (req: Request, ctx: TContext) => Promise<ErrorBoundaryResult> {
+  if (typeof handlerFn !== "function") throw new TypeError("handlerFn must be a function");
+  return async (req: Request, ctx: TContext): Promise<ErrorBoundaryResult> => {
     try {
       return await handlerFn(req, ctx);
     } catch (error) {
       // Convert error and record observability
       const vfError = wrapUnknownError(error);
+      const snapshot = snapshotVeryfrontError(vfError);
 
       // Record error metrics with slug, category, and status
-      recordErrorCount({
-        slug: vfError.slug,
-        category: vfError.category,
-        status: String(vfError.status),
-      });
+      safelyRecordError(snapshot);
 
       // Attach error to active OpenTelemetry span
       attachErrorToActiveSpan(vfError, trace);
@@ -75,11 +112,31 @@ export function httpErrorBoundary(
  * });
  * ```
  */
-export function wrapHandlerWithErrorBoundary(handler: Handler): Handler {
-  return {
-    ...handler,
-    handle: httpErrorBoundary(handler.handle.bind(handler)),
-  };
+export function wrapHandlerWithErrorBoundary<
+  TMetadata,
+  TContext extends ErrorBoundaryContext,
+>(
+  handler: ErrorBoundaryHandler<TMetadata, TContext>,
+): ErrorBoundaryHandler<TMetadata, TContext> {
+  try {
+    if (!handler || typeof handler !== "object" || typeof handler.handle !== "function") {
+      throw new TypeError();
+    }
+    return {
+      ...handler,
+      handle: httpErrorBoundary(handler.handle.bind(handler)),
+    };
+  } catch {
+    throw new TypeError("handler must provide a handle method");
+  }
+}
+
+function isDevelopmentContext(ctx: ErrorBoundaryContext): boolean {
+  try {
+    return ctx?.isLocalProject === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -90,22 +147,43 @@ export function wrapHandlerWithErrorBoundary(handler: Handler): Handler {
  */
 export function errorToRFC9457Response(
   error: unknown,
-  ctx: HandlerContext,
+  ctx: ErrorBoundaryContext,
   req: Request,
 ): Response {
-  const isDev = !!ctx.isLocalProject;
-  const instance = new URL(req.url).pathname;
+  const isDev = isDevelopmentContext(ctx);
+  let instance: string | undefined;
+  try {
+    instance = new URL(req.url).pathname;
+  } catch {
+    // A malformed request-like object must not replace the application failure.
+  }
 
   // Convert to VeryfrontError (or wrap as unknown-error)
   const vfError = wrapUnknownError(error);
-
-  // Set instance if not already set
-  if (!vfError.instance) {
-    vfError.instance = instance;
-  }
+  const snapshot = snapshotVeryfrontError(vfError);
 
   // Serialize to RFC 9457
-  const body = vfError.toRFC9457();
+  const body = {
+    type: `https://veryfront.com/docs/errors/${snapshot.slug}`,
+    title: snapshot.title,
+    status: snapshot.status,
+    detail: snapshot.detail,
+    instance: snapshot.instance,
+    category: snapshot.category,
+    suggestion: snapshot.suggestion,
+  } as {
+    type: string;
+    title: string;
+    status: number;
+    detail?: string;
+    instance?: string;
+    category: string;
+    suggestion?: string;
+    stack?: string;
+  };
+  if (!body.instance && instance !== undefined) {
+    body.instance = instance;
+  }
 
   // Apply environment-specific filtering
   if (!isDev) {
@@ -113,21 +191,19 @@ export function errorToRFC9457Response(
     delete (body as { stack?: string }).stack;
 
     // Production: omit detail for 5xx errors (may contain sensitive info)
-    if (vfError.status >= 500) {
+    if (snapshot.status >= 500) {
       delete body.detail;
     }
   } else {
     // Dev mode: include stack trace if available
-    const stack = error instanceof Error ? error.stack : undefined;
+    const stack = error instanceof Error ? safeErrorStack(error) : undefined;
     if (stack) {
-      (body as { stack?: string }).stack = stack;
+      body.stack = stack;
     }
   }
 
   return new Response(JSON.stringify(body, null, isDev ? 2 : undefined), {
-    status: vfError.status,
-    headers: {
-      "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
-    },
+    status: snapshot.status,
+    headers: PROBLEM_RESPONSE_HEADERS,
   });
 }

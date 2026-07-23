@@ -33,6 +33,19 @@ describe("observability/tracing/otlp-setup", () => {
     assertEquals(result, "ok");
   });
 
+  it("tracks initialize and shutdown lifecycle state", async () => {
+    const { initializeOTLP, isOTLPEnabled, shutdownOTLP } = await import("./otlp-setup.ts");
+
+    await shutdownOTLP();
+    assertEquals(isOTLPEnabled(), false);
+
+    await initializeOTLP();
+    assertEquals(isOTLPEnabled(), true);
+
+    await shutdownOTLP();
+    assertEquals(isOTLPEnabled(), false);
+  });
+
   it("withSpan forwards explicit span kind options", async () => {
     const { withSpan } = await import("./otlp-setup.ts");
     let capturedKind: number | undefined;
@@ -373,5 +386,144 @@ describe("observability/tracing/otlp-setup", () => {
     assertEquals(parentStart.parentSpan, undefined);
     assertEquals(childStart.name, "child");
     assertEquals(childStart.parentSpan, spansByName.get("parent"));
+  });
+
+  it("keeps server and failure telemetry free of request and error canaries", async () => {
+    const attributes: Record<string, AttributeValue> = {};
+    const statuses: Array<{ code: number; message?: string }> = [];
+    const exceptions: unknown[] = [];
+    let startedName = "";
+    const span: Span = {
+      setAttribute(key, value) {
+        attributes[key] = value;
+        return span;
+      },
+      setAttributes(values) {
+        Object.assign(attributes, values);
+        return span;
+      },
+      setStatus(status) {
+        statuses.push(status);
+        return span;
+      },
+      recordException(error) {
+        exceptions.push(error);
+      },
+      addEvent() {
+        return span;
+      },
+      end() {},
+      spanContext() {
+        return {
+          traceId: "00000000000000000000000000000001",
+          spanId: "0000000000000001",
+          traceFlags: 1,
+        };
+      },
+      updateName() {},
+    };
+    setGlobalTracerProvider({
+      getTracer() {
+        return {
+          startSpan(name, options) {
+            startedName = name;
+            Object.assign(attributes, options?.attributes);
+            return span;
+          },
+          startActiveSpan: (() => {
+            throw new Error("not used");
+          }) as Tracer["startActiveSpan"],
+        };
+      },
+    });
+    const { endServerSpan, startServerSpan } = await import("./otlp-setup.ts");
+    const serverSpan = startServerSpan(
+      "GET",
+      "/projects/private-project-canary/files/private-file-canary",
+      undefined,
+      { routeTemplate: "/projects/{project}/files/{file}" },
+    );
+    class PrivateErrorCanary extends Error {}
+    const error = new PrivateErrorCanary("private-error-message-canary");
+    error.stack = "private-error-stack-canary";
+    error.cause = "private-error-cause-canary";
+    endServerSpan(serverSpan?.span, 500, error);
+
+    assertEquals(startedName, "http.server.request");
+    assertEquals(attributes, {
+      "http.method": "GET",
+      "http.route": "/projects/{project}/files/{file}",
+      "http.status_code": 500,
+      error: true,
+      "error.category": "error",
+      "error.type": "error",
+    });
+    assertEquals(statuses.at(-1), { code: SpanStatusCode.ERROR });
+    assertEquals(exceptions, []);
+    const serialized = JSON.stringify({ startedName, attributes, statuses });
+    for (
+      const canary of [
+        "private-project-canary",
+        "private-file-canary",
+        "private-error-message-canary",
+        "private-error-stack-canary",
+        "private-error-cause-canary",
+      ]
+    ) {
+      assertEquals(serialized.includes(canary), false, `telemetry exposed ${canary}`);
+    }
+  });
+
+  it("preserves one callback result when span hooks throw", async () => {
+    const span: Span = {
+      setAttribute() {
+        throw new Error("tracer-set-attribute-failure");
+      },
+      setAttributes() {
+        throw new Error("tracer-set-attributes-failure");
+      },
+      setStatus() {
+        throw new Error("tracer-set-status-failure");
+      },
+      recordException() {
+        throw new Error("tracer-record-exception-failure");
+      },
+      addEvent() {
+        throw new Error("tracer-event-failure");
+      },
+      end() {
+        throw new Error("tracer-end-failure");
+      },
+      spanContext() {
+        return {
+          traceId: "00000000000000000000000000000001",
+          spanId: "0000000000000001",
+          traceFlags: 1,
+        };
+      },
+      updateName() {},
+    };
+    setGlobalTracerProvider({
+      getTracer() {
+        return {
+          startSpan() {
+            return span;
+          },
+          startActiveSpan: (() => {
+            throw new Error("not used");
+          }) as Tracer["startActiveSpan"],
+        };
+      },
+    });
+    const { withSpan } = await import("./otlp-setup.ts");
+    let calls = 0;
+
+    const result = await withSpan("operation", async () => {
+      calls++;
+      return "application-result";
+    });
+
+    assertEquals(result, "application-result");
+    assertEquals(calls, 1);
   });
 });

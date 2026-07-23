@@ -71,6 +71,17 @@ describe("modules/server/ssr-import-rewriter", () => {
         `import A from "/_vf_modules/_cross/demo@0.0/@/shared.js?ssr=true&v=6000";`,
       );
     });
+
+    it("does not rewrite traversal aliases or invalid cross-project references", () => {
+      const traversal = `import value from "@/../secret";`;
+      assertEquals(applySSRImportRewrites(traversal), traversal);
+
+      const invalidRef = `import value from "@/shared";`;
+      assertEquals(
+        applySSRImportRewrites(invalidRef, { crossProjectRef: "project/other" }),
+        invalidRef,
+      );
+    });
   });
 
   describe("applySSRImportRewrites - relative imports", () => {
@@ -195,6 +206,38 @@ describe("modules/server/ssr-import-rewriter", () => {
       const code = `const x = 42;\nconsole.log(x);`;
       const result = applySSRImportRewrites(code, { cacheBuster: 1000 });
       assertEquals(result, code);
+    });
+
+    it("does not rewrite import-like text in comments, strings, or regular expressions", () => {
+      const code = [
+        `// import X from "./comment.js";`,
+        `const text = 'from "./string.js"';`,
+        `const pattern = /from\\s+["']\\.\\/regex\\.js["']/;`,
+        `import X from "./real.js";`,
+      ].join("\n");
+
+      assertEquals(
+        applySSRImportRewrites(code, { cacheBuster: "version" }),
+        [
+          `// import X from "./comment.js";`,
+          `const text = 'from "./string.js"';`,
+          `const pattern = /from\\s+["']\\.\\/regex\\.js["']/;`,
+          `import X from "./real.js?ssr=true&v=version";`,
+        ].join("\n"),
+      );
+    });
+
+    it("URL-encodes routing and cache-buster query values", () => {
+      const result = applySSRImportRewrites(`import X from "@/page";`, {
+        projectSlug: `site&branch=forged`,
+        branch: `feature/name`,
+        cacheBuster: `hash&extra=true`,
+      });
+
+      assertEquals(
+        result,
+        `import X from "/_vf_modules/page.js?ssr=true&project=site%26branch%3Dforged&branch=feature%2Fname&v=hash%26extra%3Dtrue";`,
+      );
     });
   });
 });

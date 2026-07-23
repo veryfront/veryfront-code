@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { relativeStrategy } from "./relative-strategy.ts";
@@ -112,6 +112,39 @@ describe("RelativeStrategy", () => {
       );
 
       assertEquals(result.specifier, "./component.js");
+    });
+
+    it("should resolve imports from a project-root file without corrupting its directory", () => {
+      const result = relativeStrategy.rewrite(
+        makeInfo("./dep.js"),
+        makeCtx({ filePath: "audit.js" }),
+      );
+
+      assertEquals(result.specifier, "http://localhost:3000/_vf_modules/dep.js");
+    });
+
+    it("should reject absolute file paths outside the project directory", () => {
+      assertThrows(
+        () =>
+          relativeStrategy.rewrite(
+            makeInfo("./dep.js"),
+            makeCtx({ filePath: "/project-sibling/audit.js" }),
+          ),
+        TypeError,
+        "filePath must be inside projectDir",
+      );
+    });
+
+    it("should reject relative imports that escape the project root", () => {
+      assertThrows(
+        () =>
+          relativeStrategy.rewrite(
+            makeInfo("../private.js"),
+            makeCtx({ filePath: "audit.js" }),
+          ),
+        TypeError,
+        "Relative import must stay inside the project root",
+      );
     });
   });
 });

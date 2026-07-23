@@ -18,7 +18,7 @@ export async function generateHash(str: string): Promise<string> {
   const bytes = new Uint8Array(hashBuffer);
 
   let hex = "";
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < bytes.length; i++) {
     const byte = bytes[i] ?? 0;
     hex += (HEX_CHARS[byte >> 4] ?? "0") + (HEX_CHARS[byte & 0xf] ?? "0");
   }

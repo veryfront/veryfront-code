@@ -1,5 +1,10 @@
-import { defineSchema, getJsonValueSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import {
+  defineSchema,
+  getJsonValueSchema,
+  type JsonValue,
+  lazySchema,
+} from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
 import type { ChildRunResultMode } from "../child-run/result-summary.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
@@ -11,43 +16,64 @@ const HOSTED_CHILD_FORK_RESULT_MODES = ["summary", "full", "structured"] as cons
 /** Hosted child fork result return mode. */
 export type HostedChildForkResultMode = ChildRunResultMode;
 
-export const getHostedChildForkToolInputSchema = defineSchema((v) =>
-  v.object({
-    description: v.string().describe("3-5 word task summary"),
-    prompt: v.string().describe("Detailed instructions for the task"),
-    context: v.record(v.string(), getJsonValueSchema()).default({}).describe(
-      "Structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Defaults to {} when the delegation has no record or evidence payload.",
-    ),
-    project_id: v.string().optional().describe(
-      "Override project context. Use after studio_open_project.",
-    ),
-    tools: v.array(v.string()).optional().describe(
-      "Tool subset for this fork. Omit = inherit all parent tools.",
-    ),
-    model: v.string().optional().describe('Model override (e.g. "sonnet" for cheaper work).'),
-    thinking: v
-      .number()
-      .nonnegative()
-      .optional()
-      .describe("Thinking override in budget tokens. Use 0 to disable thinking."),
-    max_steps: v.number().optional().describe(
-      "Max steps override. Omit for the hosted child default. Values below the default are raised to the default.",
-    ),
-    result_mode: v.enum(HOSTED_CHILD_FORK_RESULT_MODES).optional().describe(
-      'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required. Use "structured" when critical contract ids must survive a bounded summary.',
-    ),
-  })
-);
+/** Input accepted by the hosted child-fork tool. */
+export interface HostedChildForkToolInput {
+  /** Short task summary. */
+  description: string;
+  /** Detailed task instructions. */
+  prompt: string;
+  /** Structured data forwarded to the child run. */
+  context: Record<string, JsonValue>;
+  /** Optional project context override. */
+  project_id?: string;
+  /** Optional subset of parent tools exposed to the child. */
+  tools?: string[];
+  /** Optional model override. */
+  model?: string;
+  /** Optional reasoning budget in tokens. */
+  thinking?: number;
+  /** Optional maximum step override. */
+  max_steps?: number;
+  /** Child result representation returned to the parent. */
+  result_mode?: HostedChildForkResultMode;
+}
+
+/** Returns the hosted child-fork tool input schema. */
+export const getHostedChildForkToolInputSchema: () => Schema<HostedChildForkToolInput> =
+  defineSchema((v) =>
+    v.object({
+      description: v.string().describe("3-5 word task summary"),
+      prompt: v.string().describe("Detailed instructions for the task"),
+      context: v.record(v.string(), getJsonValueSchema()).default({}).describe(
+        "Structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Defaults to {} when the delegation has no record or evidence payload.",
+      ),
+      project_id: v.string().optional().describe(
+        "Override project context. Use after studio_open_project.",
+      ),
+      tools: v.array(v.string()).optional().describe(
+        "Tool subset for this fork. Omit = inherit all parent tools.",
+      ),
+      model: v.string().optional().describe('Model override (e.g. "sonnet" for cheaper work).'),
+      thinking: v
+        .number()
+        .nonnegative()
+        .optional()
+        .describe("Thinking override in budget tokens. Use 0 to disable thinking."),
+      max_steps: v.number().optional().describe(
+        "Max steps override. Omit for the hosted child default. Values below the default are raised to the default.",
+      ),
+      result_mode: v.enum(HOSTED_CHILD_FORK_RESULT_MODES).optional().describe(
+        'Result return mode. Omit or use "summary" for the bounded default. Use "full" only when exact delegated output is required. Use "structured" when critical contract ids must survive a bounded summary.',
+      ),
+    })
+  );
 
 /** Schema for hosted child fork tool input.
  * @deprecated Use getHostedChildForkToolInputSchema()
  */
-export const hostedChildForkToolInputSchema = lazySchema(getHostedChildForkToolInputSchema);
-
-/** Input payload for hosted child fork tool. */
-export type HostedChildForkToolInput = InferSchema<
-  ReturnType<typeof getHostedChildForkToolInputSchema>
->;
+export const hostedChildForkToolInputSchema: Schema<HostedChildForkToolInput> = lazySchema(
+  getHostedChildForkToolInputSchema,
+);
 
 /** Configuration used by hosted child fork runtime. */
 export type HostedChildForkRuntimeConfig = {

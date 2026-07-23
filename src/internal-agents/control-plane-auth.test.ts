@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 import {
   createControlPlaneSignature,
   createCtx as createVerificationCtx,
@@ -225,5 +226,53 @@ describe("internal-agents/control-plane-auth", () => {
     ) as ControlPlaneRequestError;
 
     assertEquals(error.status, 401);
+  });
+
+  it("does not write request identifiers or verification errors to logs", async () => {
+    const originalLogFormat = Deno.env.get("LOG_FORMAT");
+    const originalLogLevel = Deno.env.get("LOG_LEVEL");
+    const originalWarn = console.warn;
+    const captured: string[] = [];
+    Deno.env.set("LOG_FORMAT", "json");
+    Deno.env.set("LOG_LEVEL", "WARN");
+    __resetLoggerConfigForTests();
+    console.warn = (message: string) => captured.push(message);
+
+    try {
+      await assertRejects(
+        () =>
+          verifyControlPlaneRequest(
+            new Request("https://veryfront.test/api/control-plane/runs/private-run/stream", {
+              headers: { "x-veryfront-control-plane-jws": "private-invalid-signature" },
+            }),
+            {
+              ...createVerificationCtx("private-invalid-key"),
+              projectSlug: "private-project",
+            } as HandlerContext,
+            "{}",
+            { expectedSubject: "private-run", expectedSurface: "studio" },
+          ),
+        ControlPlaneRequestError,
+      );
+
+      const output = captured.join("\n");
+      for (
+        const secret of [
+          "private-run",
+          "private-project",
+          "private-invalid-signature",
+          "private-invalid-key",
+        ]
+      ) {
+        assertEquals(output.includes(secret), false);
+      }
+    } finally {
+      console.warn = originalWarn;
+      if (originalLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
+      else Deno.env.set("LOG_FORMAT", originalLogFormat);
+      if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", originalLogLevel);
+      __resetLoggerConfigForTests();
+    }
   });
 });

@@ -67,7 +67,7 @@ export interface RouterOptions {
   /**
    * Decides whether a navigation refetches page data. Called for same-route
    * navigations (query/hash-only changes); a route change always refetches.
-   * Return `false` to take the soft fast path — update the URL and notify
+   * Return `false` to take the soft fast path: update the URL and notify
    * subscribers without a network round-trip, for query used as client state.
    *
    * Defaults to always revalidating (React Router's default), because Veryfront
@@ -82,7 +82,7 @@ export interface RouterOptions {
 
 /** Normalize the deprecated boolean `pushState` arg or an options object. */
 function toHistoryMode(options?: boolean | NavigateOptions): HistoryMode {
-  // Deprecated boolean form: `navigate(url, pushState)` — true pushes, false
+  // Deprecated boolean form: `navigate(url, pushState)`. True pushes, false
   // leaves history untouched (used by the popstate handler).
   if (typeof options === "boolean") return options ? "push" : "none";
   return options?.history ?? "push";
@@ -152,8 +152,14 @@ export class VeryfrontRouter {
     this.spaMode = true;
   }
 
+  /** Remove a SPA handler only when it is still the active registration. */
+  unregisterNavigationHandler(handler: SpaNavigationHandler): void {
+    if (this.spaNavigationHandler !== handler) return;
+    this.spaNavigationHandler = null;
+  }
+
   /**
-   * Notify React (and any other) subscribers that a navigation completed —
+   * Notify React (and any other) subscribers that a navigation completed,
    * after full page loads, soft same-route changes, and popstate. Delegates to
    * the shared navigation store, the single subscription surface both bundles
    * share.
@@ -213,7 +219,7 @@ export class VeryfrontRouter {
    * Navigate to a URL. `options` selects the history behaviour: `{ history:
    * "push" }` (default), `"replace"`, or `"none"` (the URL already reflects the
    * target, as after popstate). A boolean is accepted for backward
-   * compatibility — `true` pushes, `false` maps to `"none"`.
+   * compatibility. `true` pushes, `false` maps to `"none"`.
    */
   async navigate(url: string, options?: boolean | NavigateOptions): Promise<void> {
     logger.debug(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
@@ -360,6 +366,7 @@ export class VeryfrontRouter {
 
   destroy(): void {
     this.navigationSequence++;
+    this.spaNavigationHandler = null;
     this.pageTransition.setLoadingState(false);
     document.removeEventListener("click", this.handleClick);
     globalThis.removeEventListener("popstate", this.handlePopState);

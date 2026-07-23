@@ -3,7 +3,7 @@ import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -83,6 +83,10 @@ describe(
   () => {
     afterAll(async () => {
       await stopEsbuild();
+    });
+
+    afterEach(() => {
+      __resetLogRecordEmitterForTests();
     });
 
     it("re-runs preview discovery after source changes", async () => {
@@ -250,9 +254,13 @@ describe(
         return originalExists(path);
       };
 
-      await assertRejects(
+      const discoveryError = await assertRejects(
         () => runWithRequestContext(requestContext, () => ensureProjectDiscovery(ctx)),
         Error,
+        "Runtime discovery failed",
+      );
+      assertEquals(
+        (discoveryError as Error & { cause?: Error }).cause?.message,
         "skill source unavailable",
       );
 
@@ -543,12 +551,11 @@ describe(
       );
       assertExists(partialWarning);
       assertEquals(partialWarning.level, "warn");
-      assertEquals(partialWarning.context?.failures, [{
-        file: "tools/broken-tool.ts",
-        sourceKind: "tool",
-        message: "broken discovery fixture",
-      }]);
+      assertEquals(partialWarning.context?.failures, [{ sourceKind: "tool" }]);
+      assertEquals(JSON.stringify(partialWarning).includes("broken discovery fixture"), false);
       assertEquals(JSON.stringify(partialWarning).includes(ctx.projectDir), false);
+      assertEquals(JSON.stringify(partialWarning).includes("broken-tool.ts"), false);
+      assertEquals(JSON.stringify(partialWarning).includes(ctx.projectSlug!), false);
     });
 
     it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {
@@ -564,17 +571,25 @@ describe(
       const exists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
       ctx.adapter.fs.exists = (path: string) => {
         if (path === `${ctx.projectDir}/skills`) {
-          throw new Error("VFS unavailable");
+          throw new Error("PRIVATE_DISCOVERY_FAILURE_MARKER");
         }
         return exists(path);
       };
 
+      const logEntries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => logEntries.push(entry));
+
       const error = await assertRejects(
         () => ensureProjectDiscovery(ctx),
         Error,
-        "Runtime discovery failed: VFS unavailable",
+        "Runtime discovery failed",
       );
       assertExists(error);
+      assertEquals(String(error).includes("PRIVATE_DISCOVERY_FAILURE_MARKER"), false);
+      const serializedLogs = JSON.stringify(logEntries);
+      assertEquals(serializedLogs.includes("PRIVATE_DISCOVERY_FAILURE_MARKER"), false);
+      assertEquals(serializedLogs.includes(ctx.projectSlug!), false);
+      assertEquals(serializedLogs.includes(ctx.projectDir), false);
     });
 
     it("does not warn about zero agents and tools when AI primitive discovery is disabled", async () => {

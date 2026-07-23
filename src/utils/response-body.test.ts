@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readResponseTextPrefix } from "./response-body.ts";
 
@@ -63,6 +63,66 @@ describe("utils/response-body", () => {
     })();
 
     assertEquals(result, { text: "exact", truncated: true });
+    assertEquals(cancelled, true);
+  });
+
+  it("does not wait indefinitely for an underlying cancel hook", async () => {
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("exact"));
+        },
+        cancel() {
+          cancelled = true;
+          return new Promise<void>(() => {});
+        },
+      }),
+    );
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error("cancel hook blocked the reader")), 50);
+    });
+    try {
+      assertEquals(
+        await Promise.race([readResponseTextPrefix(response, 5), timeout]),
+        { text: "exact", truncated: true },
+      );
+      assertEquals(cancelled, true);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+  });
+
+  it("rejects limits that cannot provide a finite memory bound", async () => {
+    for (const limit of [-1, Number.NaN, Number.POSITIVE_INFINITY, 1.5, 16 * 1_024 * 1_024 + 1]) {
+      await assertRejects(
+        () => readResponseTextPrefix(new Response("body"), limit),
+        RangeError,
+        "maxBytes must be an integer between 0 and 16777216",
+      );
+    }
+  });
+
+  it("cancels a stream that repeatedly produces empty chunks", async () => {
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array());
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+
+    await assertRejects(
+      () => readResponseTextPrefix(response, 10),
+      TypeError,
+      "Response body made no progress",
+    );
     assertEquals(cancelled, true);
   });
 });

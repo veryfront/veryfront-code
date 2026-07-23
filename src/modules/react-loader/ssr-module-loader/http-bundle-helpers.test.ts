@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -9,7 +9,9 @@ import {
   extractAllHttpBundlePathsRecursive,
   extractHttpBundlePaths,
   verifiedHttpBundlePaths,
+  visitImportedVfModules,
 } from "./http-bundle-helpers.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 describe("extractHttpBundlePaths", () => {
   it("extracts single HTTP bundle path", () => {
@@ -61,6 +63,15 @@ describe("extractHttpBundlePaths", () => {
     const [r2] = extractHttpBundlePaths(code);
 
     assertEquals(r1?.hash, r2?.hash);
+  });
+
+  it("ignores bundle-looking text in comments and ordinary strings", () => {
+    const code = [
+      `// import value from "file:///cache/veryfront-http-bundle/http-11111111.mjs";`,
+      `const data = "file:///cache/veryfront-http-bundle/http-22222222.mjs";`,
+    ].join("\n");
+
+    assertEquals(extractHttpBundlePaths(code), []);
   });
 
   it("extracts relative path imports (portable format)", () => {
@@ -184,7 +195,7 @@ describe("verifiedHttpBundlePaths", () => {
 
 describe("recursive cache path extraction", () => {
   it("extracts HTTP bundles from nested vf modules", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-http-bundle-helper-" });
+    const tempDir = join(getMdxEsmCacheDir(), `vf-http-bundle-helper-${crypto.randomUUID()}`);
     const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
     const childPath = join(vfmodDir, "vfmod-child.mjs");
     const grandChildPath = join(vfmodDir, "vfmod-grandchild.mjs");
@@ -212,7 +223,7 @@ describe("recursive cache path extraction", () => {
   });
 
   it("extracts nested legacy file dependencies through vf modules", async () => {
-    const tempDir = await makeTempDir({ prefix: "vf-file-path-helper-" });
+    const tempDir = join(getMdxEsmCacheDir(), `vf-file-path-helper-${crypto.randomUUID()}`);
     const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
     const childPath = join(vfmodDir, "vfmod-child.mjs");
 
@@ -229,6 +240,49 @@ describe("recursive cache path extraction", () => {
 
       assertEquals(paths.includes(childPath), true);
       assertEquals(paths.includes("/app/.cache/markdown.tsx"), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not read vf-looking modules outside the managed cache root", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-untrusted-module-helper-" });
+    const outsideDir = join(tempDir, "veryfront-mdx-esm", "tenant");
+    const outsidePath = join(outsideDir, "vfmod-outside.mjs");
+
+    try {
+      await mkdir(outsideDir, { recursive: true });
+      await writeTextFile(outsidePath, `export * from "./http-deadbeef.mjs";`);
+
+      const bundles = await extractAllHttpBundlePathsRecursive(
+        `import outside from "file://${outsidePath}"; export default outside;`,
+      );
+
+      assertEquals(bundles, []);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("propagates visitor failures", async () => {
+    const tempDir = join(getMdxEsmCacheDir(), `vf-visitor-helper-${crypto.randomUUID()}`);
+    const modulePath = join(tempDir, "vfmod-child.mjs");
+
+    try {
+      await mkdir(tempDir, { recursive: true });
+      await writeTextFile(modulePath, "export default 1;");
+
+      await assertRejects(
+        () =>
+          visitImportedVfModules(
+            `import child from "file://${modulePath}";`,
+            () => {
+              throw new Error("visitor failed");
+            },
+          ),
+        Error,
+        "visitor failed",
+      );
     } finally {
       await remove(tempDir, { recursive: true });
     }

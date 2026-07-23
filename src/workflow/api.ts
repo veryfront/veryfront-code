@@ -137,7 +137,12 @@ export const api = {
     /**
      * List all files in the project (handles pagination automatically)
      */
-    listAll: (options?: { limit?: number; pattern?: string }) => {
+    listAll: (options?: {
+      limit?: number;
+      pattern?: string;
+      maxPages?: number;
+      maxFiles?: number;
+    }) => {
       getTenant(); // validates context
       return getClient().listAllFiles(options);
     },

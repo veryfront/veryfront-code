@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DISCOVERY_GLOBAL_VERYFRONT_MODULES } from "./import-rewriter.ts";
 import "./runtime-modules-bootstrap.ts";
-import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
+import {
+  getDiscoveryRuntimeModules,
+  installDiscoveryRuntimeModulesGlobal,
+} from "./runtime-modules.ts";
 
 describe("compiled discovery runtime modules", () => {
   it("registers every module rewritten to a compiled-binary global", () => {
@@ -23,5 +26,27 @@ describe("compiled discovery runtime modules", () => {
         .createUploadHandler,
       "function",
     );
+  });
+
+  it("exposes an immutable compiled module registry", () => {
+    const modules = getDiscoveryRuntimeModules();
+
+    assertThrows(
+      () => {
+        (modules as Record<string, unknown>)["veryfront/tool"] = null;
+      },
+      TypeError,
+    );
+  });
+
+  it("installs the compiled module registry as an immutable hidden global", () => {
+    const modules = getDiscoveryRuntimeModules();
+    installDiscoveryRuntimeModulesGlobal();
+
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "__VERYFRONT_MODULES__");
+    assertEquals(descriptor?.value, modules);
+    assertEquals(descriptor?.writable, false);
+    assertEquals(descriptor?.configurable, false);
+    assertEquals(descriptor?.enumerable, false);
   });
 });

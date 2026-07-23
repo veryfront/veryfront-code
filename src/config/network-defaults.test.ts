@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import {
   buildIpv4Url,
   buildLocalhostUrl,
@@ -32,6 +32,20 @@ describe("network-defaults", () => {
     it("should build HTTPS URL with port", () => {
       assertEquals(buildLocalhostUrl(8443, "https"), "https://localhost:8443");
     });
+
+    it("rejects invalid ports", () => {
+      for (const port of [0, -1, 1.5, 65_536, Number.NaN]) {
+        assertThrows(() => buildLocalhostUrl(port), TypeError, "port");
+      }
+    });
+
+    it("rejects unsupported protocols at runtime", () => {
+      assertThrows(
+        () => buildLocalhostUrl(3000, "ftp" as "http"),
+        TypeError,
+        "protocol",
+      );
+    });
   });
 
   describe("buildIpv4Url", () => {
@@ -42,5 +56,14 @@ describe("network-defaults", () => {
     it("should build HTTPS URL with IPv4", () => {
       assertEquals(buildIpv4Url(8443, "https"), "https://127.0.0.1:8443");
     });
+
+    it("rejects invalid ports", () => {
+      assertThrows(() => buildIpv4Url(65_536), TypeError, "port");
+    });
+  });
+
+  it("exports immutable shared network defaults", () => {
+    assertEquals(Object.isFrozen(HTTP_DEFAULTS), true);
+    assertEquals(Object.isFrozen(REDIS_DEFAULTS), true);
   });
 });

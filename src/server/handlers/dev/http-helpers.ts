@@ -8,8 +8,9 @@
  */
 
 export const JSON_HEADERS = {
-  "Content-Type": "application/json",
-  "Cache-Control": "no-cache",
+  "Content-Type": "application/json; charset=utf-8",
+  "Cache-Control": "no-store",
+  "X-Content-Type-Options": "nosniff",
 };
 
 /** Build a pretty-printed JSON `Response` with no-cache headers. */

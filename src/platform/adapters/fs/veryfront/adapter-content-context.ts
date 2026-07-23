@@ -1,6 +1,8 @@
-import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { ContentSource, ResolvedContentContext } from "./types.ts";
+import { toFilesystemPublicError } from "./telemetry.ts";
 
 type ContextResolverClient = Pick<
   VeryfrontApiClient,
@@ -90,65 +92,73 @@ export async function resolveContentContext(
   contentSource: ContentSource,
   projectSlug: string,
 ): Promise<ResolvedContentContext> {
-  switch (contentSource.type) {
-    case "branch":
-      return {
-        sourceType: "branch",
-        projectSlug,
-        branch: contentSource.branch ?? "main",
-      };
+  try {
+    switch (contentSource.type) {
+      case "branch":
+        return {
+          sourceType: "branch",
+          projectSlug,
+          branch: contentSource.branch ?? "main",
+        };
 
-    case "environment": {
-      const envResult = await client.listEnvironmentFiles(contentSource.name);
-      return {
-        sourceType: "environment",
-        projectSlug,
-        environmentName: contentSource.name,
-        releaseId: envResult.release_id,
-      };
-    }
-
-    case "domain": {
-      const lookup = await client.lookupProjectByDomain(contentSource.domain);
-      if (!lookup) {
-        throw API_CLIENT_ERROR.create({
-          detail: `Domain lookup failed for: ${contentSource.domain}`,
-        });
+      case "environment": {
+        const envResult = await client.listEnvironmentFiles(contentSource.name);
+        return {
+          sourceType: "environment",
+          projectSlug,
+          environmentName: contentSource.name,
+          releaseId: envResult.release_id,
+        };
       }
-      return {
-        sourceType: "environment",
-        projectSlug: lookup.project_slug,
-        environmentName: lookup.environment?.name ?? "production",
-        releaseId: lookup.release_id ?? undefined,
-      };
-    }
 
-    case "release":
-      if (!contentSource.releaseId) {
-        throw INVALID_ARGUMENT.create({
-          detail: `Missing releaseId for release sourceType (project: ${projectSlug})`,
-        });
+      case "domain": {
+        const lookup = await client.lookupProjectByDomain(contentSource.domain);
+        if (!lookup) {
+          throw API_CLIENT_ERROR.create({
+            detail: "Domain lookup failed",
+          });
+        }
+        return {
+          sourceType: "environment",
+          projectSlug: lookup.project_slug,
+          environmentName: lookup.environment?.name ?? "production",
+          releaseId: lookup.release_id ?? undefined,
+        };
       }
-      return {
-        sourceType: "release",
-        projectSlug,
-        releaseId: contentSource.releaseId,
-      };
+
+      case "release":
+        if (!contentSource.releaseId) {
+          throw INVALID_ARGUMENT.create({
+            detail: "Missing releaseId for release sourceType",
+          });
+        }
+        return {
+          sourceType: "release",
+          projectSlug,
+          releaseId: contentSource.releaseId,
+        };
+    }
+  } catch (error) {
+    throw toFilesystemPublicError(error);
   }
 }
 
-export function fetchFileListForContext(
+export async function fetchFileListForContext(
   client: FileListClient,
   context: ResolvedContentContext,
 ): Promise<Array<{ path: string; content?: string }>> {
-  switch (context.sourceType) {
-    case "branch":
-      return client.listAllFiles();
-    case "environment":
-      return context.releaseId
-        ? client.listPublishedFiles(undefined, context.releaseId)
-        : client.listAllEnvironmentFiles(context.environmentName!);
-    case "release":
-      return client.listPublishedFiles(undefined, context.releaseId);
+  try {
+    switch (context.sourceType) {
+      case "branch":
+        return await client.listAllFiles();
+      case "environment":
+        return context.releaseId
+          ? await client.listPublishedFiles(undefined, context.releaseId)
+          : await client.listAllEnvironmentFiles(context.environmentName!);
+      case "release":
+        return await client.listPublishedFiles(undefined, context.releaseId);
+    }
+  } catch (error) {
+    throw toFilesystemPublicError(error);
   }
 }

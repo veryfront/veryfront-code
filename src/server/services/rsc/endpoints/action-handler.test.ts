@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import {
   type ActionGuardLoader,
@@ -9,6 +9,11 @@ import {
 } from "./action-handler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 function createMockAdapter(
   overrides: {
@@ -57,15 +62,112 @@ function createActionRequest(id = "my-action"): Request {
   });
 }
 
+async function assertRejectedBeforeActionResolution(
+  req: Request,
+  expectedStatus: number,
+): Promise<void> {
+  let guardLoads = 0;
+  let actionStatCalls = 0;
+  const response = await handleActionRequestWithGuardLoader(
+    {
+      req,
+      projectDir: "/tmp/test",
+      adapter: createMockAdapter({
+        stat: () => {
+          actionStatCalls++;
+          return Promise.reject(new Deno.errors.NotFound("not found"));
+        },
+      }),
+    },
+    () => {
+      guardLoads++;
+      return Promise.resolve({});
+    },
+  );
+
+  assertEquals(response.status, expectedStatus);
+  assertEquals(guardLoads, 0);
+  assertEquals(actionStatCalls, 0);
+}
+
 describe(
   "server/services/rsc/endpoints/action-handler",
   () => {
+    afterEach(() => {
+      __resetLogRecordEmitterForTests();
+    });
+
     afterAll(async () => {
       const { stop } = await import("veryfront/extensions/bundler");
       await stop();
       await delay(50);
     });
     describe("handleActionRequest", () => {
+      it("rejects non-JSON requests before loading the guard or action", async () => {
+        await assertRejectedBeforeActionResolution(
+          new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "text/plain" },
+            body: JSON.stringify({ id: "my-action", args: [] }),
+          }),
+          400,
+        );
+      });
+
+      it("rejects a foreign Origin before loading the guard or action", async () => {
+        await assertRejectedBeforeActionResolution(
+          new Request("https://project.example/_veryfront/rsc/action", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: "https://attacker.example",
+            },
+            body: JSON.stringify({ id: "my-action", args: [] }),
+          }),
+          403,
+        );
+      });
+
+      it("rejects cross-site Fetch Metadata before loading the guard or action", async () => {
+        await assertRejectedBeforeActionResolution(
+          new Request("https://project.example/_veryfront/rsc/action", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "sec-fetch-site": "cross-site",
+            },
+            body: JSON.stringify({ id: "my-action", args: [] }),
+          }),
+          403,
+        );
+      });
+
+      it("allows a same-origin JSON request to reach the optional guard", async () => {
+        let guardLoads = 0;
+        const response = await handleActionRequestWithGuardLoader(
+          {
+            req: new Request("https://project.example/_veryfront/rsc/action", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+                origin: "https://project.example",
+                "sec-fetch-site": "same-origin",
+              },
+              body: JSON.stringify({ id: "my-action", args: [] }),
+            }),
+            projectDir: "/tmp/test",
+            adapter: createMockAdapter(),
+          },
+          () => {
+            guardLoads++;
+            return Promise.resolve({});
+          },
+        );
+
+        assertEquals(response.status, 404);
+        assertEquals(guardLoads, 1);
+      });
+
       it("allows a missing optional action guard module", async () => {
         const missingGuardError = Object.assign(
           new TypeError('Module not found "file:///project/server-action-guard.ts".'),
@@ -173,6 +275,8 @@ describe(
       });
 
       it("returns 500 without resolving the action when the guard throws", async () => {
+        const entries: LogEntry[] = [];
+        __registerLogRecordEmitter((entry) => entries.push(entry));
         let actionStatCalls = 0;
         const response = await handleActionRequestWithGuardLoader(
           {
@@ -188,7 +292,7 @@ describe(
           () =>
             Promise.resolve({
               rscActionGuard: () => {
-                throw new Error("guard runtime failed");
+                throw new Error("private guard failure marker");
               },
             }),
         );
@@ -196,6 +300,7 @@ describe(
         assertEquals(response.status, 500);
         assertEquals(await response.json(), { ok: false, error: "action guard failed" });
         assertEquals(actionStatCalls, 0);
+        assertEquals(JSON.stringify(entries).includes("private guard failure marker"), false);
       });
 
       it("returns 400 when body has no id", async () => {
@@ -216,11 +321,13 @@ describe(
         assertStringIncludes(JSON.stringify(body), "missing id");
       });
 
-      it("returns 400 when body is invalid JSON (falls back to empty object)", async () => {
+      it("returns 400 when body is invalid JSON", async () => {
+        const entries: LogEntry[] = [];
+        __registerLogRecordEmitter((entry) => entries.push(entry));
         const req = new Request("http://localhost/_veryfront/rsc/action", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: "not valid json",
+          body: "BODYMARK",
         });
 
         const response = await handleActionRequest({
@@ -229,8 +336,8 @@ describe(
           adapter: createMockAdapter(),
         });
 
-        // Invalid JSON -> req.json() fails -> body = {} -> missing id
         assertEquals(response.status, 400);
+        assertEquals(JSON.stringify(entries).includes("BODYMARK"), false);
       });
 
       it("returns 413 when the request body exceeds the limit", async () => {

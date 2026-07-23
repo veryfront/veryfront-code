@@ -1,8 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
-import { ClientLogHandler, sanitizeClientLogPreview } from "./client-log.handler.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
+import { ClientLogHandler } from "./client-log.handler.ts";
 
 function createHandler(): ClientLogHandler {
   return new ClientLogHandler();
@@ -23,17 +27,8 @@ async function assertOkResponse(result: { response?: Response }): Promise<void> 
 }
 
 describe("server/handlers/monitoring/client-log", () => {
-  describe("sanitizeClientLogPreview", () => {
-    it("escapes control characters before logging body previews", () => {
-      assertEquals(
-        sanitizeClientLogPreview("line\nnext\r\t\u001b[31m\u0000tail", 30),
-        "line\\nnext\\r\\t\\u001b[31m\\u0000tail",
-      );
-    });
-
-    it("truncates before escaping the preview", () => {
-      assertEquals(sanitizeClientLogPreview("abcdef\n", 3), "abc");
-    });
+  afterEach(() => {
+    __resetLogRecordEmitterForTests();
   });
 
   describe("ClientLogHandler metadata", () => {
@@ -105,67 +100,74 @@ describe("server/handlers/monitoring/client-log", () => {
       assertEquals(body.ok, true);
     });
 
-    it("should return ok:true even for invalid JSON body", async () => {
+    it("rejects invalid JSON without logging its contents", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
       const handler = createHandler();
       const req = new Request("http://localhost/_veryfront/log", {
         method: "POST",
-        body: "not valid json {{{",
+        body: "PRIVATE_INVALID_BODY_CANARY {{{",
       });
       const result = await handler.handle(req, localCtx);
 
-      await assertOkResponse(result);
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
       const body = await (result.response as Response).json();
-      assertEquals(body.ok, true);
+      assertEquals(body, { error: "Invalid client log payload" });
+      assertEquals(JSON.stringify(entries).includes("PRIVATE_INVALID_BODY_CANARY"), false);
     });
 
-    it("logs sanitized invalid-JSON previews in emitted context", async () => {
-      const originalError = console.error;
-      const originalLogFormat = Deno.env.get("LOG_FORMAT");
-      const originalLogLevel = Deno.env.get("LOG_LEVEL");
-      const originalNoColor = Deno.env.get("NO_COLOR");
-      const output: string[] = [];
+    it("rejects cross-origin browser requests", async () => {
+      const handler = createHandler();
+      const req = new Request("http://localhost/_veryfront/log", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://attacker.example",
+        },
+        body: JSON.stringify({ level: "info", message: "test" }),
+      });
 
-      console.error = (message: unknown) => {
-        output.push(String(message));
-      };
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "ERROR");
-      Deno.env.set("NO_COLOR", "1");
-      __resetLoggerConfigForTests();
+      const result = await handler.handle(req, localCtx);
 
-      try {
-        const handler = createHandler();
-        const req = new Request("http://localhost/_veryfront/log", {
-          method: "POST",
-          body: '{"message":"line\n\u001b[31m"}',
-        });
-
-        await handler.handle(req, localCtx);
-      } finally {
-        console.error = originalError;
-        if (originalLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
-        else Deno.env.set("LOG_FORMAT", originalLogFormat);
-        if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
-        else Deno.env.set("LOG_LEVEL", originalLogLevel);
-        if (originalNoColor === undefined) Deno.env.delete("NO_COLOR");
-        else Deno.env.set("NO_COLOR", originalNoColor);
-        __resetLoggerConfigForTests();
-      }
-
-      const combinedOutput = output.join("\n");
-      assertEquals(combinedOutput.includes("body_preview="), true);
-      assertEquals(combinedOutput.includes("line\\n\\u001b[31m"), true);
+      assertExists(result.response);
+      assertEquals(result.response.status, 401);
+      assertEquals(result.response.headers.get("cache-control"), "no-store");
+      assertEquals(result.response.headers.get("x-content-type-options"), "nosniff");
     });
 
-    it("should return ok:true for log data with details", async () => {
+    it("rejects requests sent to a non-loopback destination", async () => {
+      const handler = createHandler();
+      const req = new Request("http://devbox.example/_veryfront/log", {
+        method: "POST",
+        body: JSON.stringify({ level: "info", message: "test" }),
+      });
+
+      const result = await handler.handle(req, localCtx);
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 401);
+    });
+
+    it("sanitizes high-risk client log details", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
       const handler = createHandler();
       const req = createPostRequest({
         level: "error",
         message: "something failed",
-        details: { component: "App", stack: "Error at line 5" },
+        details: {
+          component: "App",
+          stack: "PRIVATE_STACK_CANARY",
+          prompt: "PRIVATE_PROMPT_CANARY",
+        },
       });
       const result = await handler.handle(req, localCtx);
       await assertOkResponse(result);
+      const serialized = JSON.stringify(entries);
+      assertEquals(serialized.includes("PRIVATE_STACK_CANARY"), false);
+      assertEquals(serialized.includes("PRIVATE_PROMPT_CANARY"), false);
+      assertEquals(serialized.includes("App"), true);
     });
 
     it("should handle missing level gracefully", async () => {
@@ -194,6 +196,8 @@ describe("server/handlers/monitoring/client-log", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 413);
+      assertEquals(result.response.headers.get("cache-control"), "no-store");
+      assertEquals(result.response.headers.get("x-content-type-options"), "nosniff");
       const body = await result.response.json();
       assertEquals(body.error, "Payload too large");
     });

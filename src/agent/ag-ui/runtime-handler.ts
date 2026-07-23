@@ -32,8 +32,11 @@ type AgUiRuntimePart = Record<string, unknown> & { type: string };
 
 /** Context for AG-UI runtime lifecycle. */
 export interface AgUiRuntimeLifecycleContext {
+  /** Request value. */
   request: AgUiRuntimeRequest;
+  /** Tool call ID value. */
   toolCallId?: string;
+  /** Error associated with the operation. */
   error?: unknown;
   /**
    * The finalized messages this run produced (assistant + tool turns). Present
@@ -346,9 +349,13 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
 
 /** Input payload for AG-UI runtime handler execute. */
 export interface AgUiRuntimeHandlerExecuteInput {
+  /** Request value. */
   request: Request;
+  /** AG-UI input value. */
   agUiInput: AgUiRuntimeRequest;
+  /** Context supplied to the operation. */
   context: Record<string, unknown>;
+  /** Callback that handles create default response. */
   createDefaultResponse?: () => Promise<Response>;
 }
 
@@ -357,39 +364,55 @@ export type AgUiRuntimeHandlerExecute = (
   input: AgUiRuntimeHandlerExecuteInput,
 ) => Promise<Response> | Response;
 
+/** Input passed to an AG-UI request gate. */
 export interface AgUiRuntimeRequestGateInput {
+  /** Incoming AG-UI request. */
   request: Request;
 }
 
+/** Gate invoked before an AG-UI request body is parsed. */
 export type AgUiRuntimeRequestGate = (
   input: AgUiRuntimeRequestGateInput,
 ) => Promise<Response | undefined | void> | Response | undefined | void;
 
+/** Input passed to an AG-UI validation error responder. */
 export interface AgUiRuntimeValidationErrorInput {
+  /** Incoming AG-UI request. */
   request: Request;
+  /** Default validation error response. */
   response: Response;
 }
 
+/** Rewrites an AG-UI validation error response. */
 export type AgUiRuntimeValidationErrorResponse = (
   input: AgUiRuntimeValidationErrorInput,
 ) => Promise<Response> | Response;
 
 /** Options accepted by AG-UI runtime handler. */
 export interface AgUiRuntimeHandlerOptions {
+  /** Context supplied to the operation. */
   context?:
     | Record<string, unknown>
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
+  /** Before parse value. */
   beforeParse?: AgUiRuntimeRequestGate;
+  /** Validation error response value. */
   validationErrorResponse?: AgUiRuntimeValidationErrorResponse;
+  /** Session manager value. */
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
+  /** Execute value. */
   execute?: AgUiRuntimeHandlerExecute;
+  /** Callback invoked when tool call seen. */
   onToolCallSeen?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
+  /** Callback invoked when finish. */
   onFinish?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
+  /** Callback invoked when error. */
   onError?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
 }
 
 /** Public API contract for AG-UI runtime handler config with agent. */
 export interface AgUiRuntimeHandlerConfigWithAgent extends AgUiRuntimeHandlerOptions {
+  /** Agent used to execute requests. */
   agent: Agent;
 }
 

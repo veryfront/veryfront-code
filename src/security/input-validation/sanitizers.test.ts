@@ -6,7 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { sanitizeData } from "./sanitizers.ts";
 
 describe("sanitizeData", () => {
@@ -286,6 +286,17 @@ describe("sanitizeData", () => {
       assertEquals(sanitizeData(input), {
         items: [{ name: "&lt;a&gt;" }, { name: "&lt;b&gt;" }],
       });
+    });
+
+    it("should fail closed for cyclic input instead of overflowing the stack", () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+
+      assertThrows(
+        () => sanitizeData(cyclic),
+        TypeError,
+        "cyclic",
+      );
     });
   });
 });

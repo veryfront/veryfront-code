@@ -4,6 +4,19 @@ import type { EvalRunProvenance } from "./types.ts";
 
 type Env = Record<string, string | undefined>;
 
+const MAX_UNTRACKED_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_UNTRACKED_PATH_LENGTH = 4_096;
+
+function isSafeUntrackedPath(path: string): boolean {
+  if (
+    path.length === 0 || path.length > MAX_UNTRACKED_PATH_LENGTH || path.includes("\0") ||
+    path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)
+  ) {
+    return false;
+  }
+  return !path.replaceAll("\\", "/").split("/").some((segment) => segment === "..");
+}
+
 export type EvalGitProvenance = NonNullable<EvalRunProvenance["git"]>;
 
 export type EvalCommandResult = {
@@ -210,9 +223,17 @@ async function hashUntrackedFiles(
 ): Promise<string> {
   const entries: string[] = [];
   for (const relativePath of paths) {
+    if (!isSafeUntrackedPath(relativePath)) {
+      entries.push(`${relativePath}\0unsafe-path`);
+      continue;
+    }
     try {
       const content = await readFile(join(projectDir, relativePath));
-      entries.push(`${relativePath}\0${await sha256Bytes(content)}`);
+      entries.push(
+        content.byteLength > MAX_UNTRACKED_FILE_BYTES
+          ? `${relativePath}\0oversized:${content.byteLength}`
+          : `${relativePath}\0${await sha256Bytes(content)}`,
+      );
     } catch {
       entries.push(`${relativePath}\0unreadable`);
     }

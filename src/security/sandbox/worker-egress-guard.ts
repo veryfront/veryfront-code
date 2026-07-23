@@ -65,16 +65,7 @@ function isObject(value: unknown): value is Record<PropertyKey, unknown> {
 }
 
 export function isInternalEgressOverrideEnabled(value: string | undefined): boolean {
-  if (value === undefined) return false;
-  switch (value.trim().toLowerCase()) {
-    case "1":
-    case "true":
-    case "yes":
-    case "on":
-      return true;
-    default:
-      return false;
-  }
+  return value === "1";
 }
 
 function stripIpv6Brackets(value: string): string {
@@ -1373,7 +1364,9 @@ export async function guardedWorkerConnect(
 }
 
 export async function guardedWorkerConnectTls(
-  connectOptions: Deno.ConnectTlsOptions | (Deno.ConnectTlsOptions & Deno.TlsCertifiedKeyPem),
+  connectOptions:
+    & (Deno.ConnectTlsOptions | (Deno.ConnectTlsOptions & Deno.TlsCertifiedKeyPem))
+    & { signal?: AbortSignal },
   options: WorkerEgressGuardOptions = {},
   runtimeOverride?: Partial<PinnedEgressRuntime>,
 ): Promise<Deno.TlsConn> {
@@ -1385,6 +1378,7 @@ export async function guardedWorkerConnectTls(
 
   const runtime = getPinnedEgressRuntime(runtimeOverride);
   const hostname = connectOptions.hostname ?? "127.0.0.1";
+  const signal = connectOptions.signal ?? new AbortController().signal;
   let connection: Deno.TcpConn;
   if (options.socksProxy) {
     connection = await connectThroughWorkerEgressProxy(
@@ -1392,24 +1386,28 @@ export async function guardedWorkerConnectTls(
       connectOptions.port,
       options.socksProxy,
       runtime.connect,
+      signal,
     );
   } else {
-    const addresses = await resolveWorkerHostEgressAddresses(hostname, options);
+    const addresses = await resolveWorkerHostEgressAddresses(hostname, options, signal);
     connection = await connectFirstAddress(
       addresses,
       connectOptions.port,
       runtime.connect,
-      new AbortController().signal,
+      signal,
     );
   }
 
   try {
-    return await runtime.startTls(connection, {
-      hostname,
-      caCerts: connectOptions.caCerts,
-      alpnProtocols: connectOptions.alpnProtocols,
-      unsafelyDisableHostnameVerification: connectOptions.unsafelyDisableHostnameVerification,
-    });
+    return await waitForOperation(
+      runtime.startTls(connection, {
+        hostname,
+        caCerts: connectOptions.caCerts,
+        alpnProtocols: connectOptions.alpnProtocols,
+        unsafelyDisableHostnameVerification: connectOptions.unsafelyDisableHostnameVerification,
+      }),
+      signal,
+    );
   } catch (error) {
     safeClose(connection);
     throw error;

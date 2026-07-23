@@ -20,24 +20,34 @@ import { agentLogger } from "#veryfront/utils";
 
 /** Input payload for conversation hosted lifecycle finalize. */
 export interface ConversationHostedLifecycleFinalizeInput {
+  /** Model value. */
   model: string;
+  /** Provider value. */
   provider: string;
+  /** Usage value. */
   usage?: ConversationAgentRunUsage;
+  /** Terminal error code value. */
   terminalErrorCode?: string | null;
+  /** Terminal error message value. */
   terminalErrorMessage?: string | null;
 }
 
 /** Options accepted by create conversation hosted lifecycle adapter. */
 export interface CreateConversationHostedLifecycleAdapterOptions<TChunk> {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Start run value. */
   startRun: (
     input: { abortSignal: AbortSignal },
   ) => Promise<ConversationRunProjection> | ConversationRunProjection;
+  /** Map chunk to events value. */
   mapChunkToEvents?: (
     chunk: TChunk,
     run: ConversationRunProjection,
   ) => Promise<readonly unknown[] | unknown[]> | readonly unknown[] | unknown[];
+  /** Resolve finalize input value. */
   resolveFinalizeInput: (input: {
     run: ConversationRunProjection;
     terminalState: HostedLifecycleTerminalState;
@@ -147,14 +157,23 @@ export function createConversationHostedStreamLifecycleAdapter(
 
 /** Context for conversation child lifecycle. */
 export interface ConversationChildLifecycleContext {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Parent conversation ID value. */
   parentConversationId: string;
+  /** Parent run ID value. */
   parentRunId: string;
+  /** Project ID value. */
   projectId?: string | null;
+  /** Callback that handles publish parent run events. */
   publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
+  /** Progress value. */
   progress: Omit<InvokeAgentChildRunProgressInput, "status">;
+  /** Model value. */
   model: string;
+  /** Provider value. */
   provider: string;
 }
 

@@ -1,5 +1,9 @@
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
+
 /** Shared tool input pending threshold ms value. */
 export const TOOL_INPUT_PENDING_THRESHOLD_MS = 5_000;
+const MAX_TRACKED_TOOL_CALLS = 128;
+const MAX_TOOL_CALL_ID_CHARACTERS = 1_024;
 
 type ToolInputActivityStatus = "pending_input" | "streaming_input";
 
@@ -18,13 +22,24 @@ export function getToolCallIdFromStreamPart(part: unknown): string | null {
     return null;
   }
 
-  const record = part as Record<string, unknown>;
-  if (typeof record.toolCallId === "string" && record.toolCallId.length > 0) {
-    return record.toolCallId;
+  let toolCallId: unknown;
+  let id: unknown;
+  try {
+    const record = part as Record<string, unknown>;
+    toolCallId = record.toolCallId;
+    id = record.id;
+  } catch {
+    return null;
   }
 
-  if (typeof record.id === "string" && record.id.length > 0) {
-    return record.id;
+  for (const candidate of [toolCallId, id]) {
+    if (
+      typeof candidate === "string" && candidate.length > 0 &&
+      candidate.length <= MAX_TOOL_CALL_ID_CHARACTERS &&
+      !hasUnsafeControlCharacters(candidate)
+    ) {
+      return candidate;
+    }
   }
 
   return null;
@@ -40,6 +55,7 @@ export function collectDueToolStatuses(
   > = [];
 
   for (const [toolCallId, state] of toolStates.entries()) {
+    if (events.length >= MAX_TRACKED_TOOL_CALLS) break;
     if (state.dueAt === null || state.dueAt > now) {
       continue;
     }
@@ -63,10 +79,14 @@ export async function* withToolInputStatusTransitions(
   stream: AsyncIterable<unknown>,
   thresholdMs = TOOL_INPUT_PENDING_THRESHOLD_MS,
 ): AsyncIterable<unknown> {
+  if (!Number.isSafeInteger(thresholdMs) || thresholdMs < 1 || thresholdMs > 60_000) {
+    throw new RangeError("Tool input status threshold must be an integer from 1 to 60000 ms");
+  }
   const iterator = stream[Symbol.asyncIterator]();
   const toolStates = new Map<string, ToolInputStatusState>();
   const buffered: unknown[] = [];
   let nextPartPromise: Promise<IteratorResult<unknown>> | null = null;
+  let iteratorDone = false;
 
   const readPartIfReady = async (): Promise<IteratorResult<unknown> | null> => {
     if (!nextPartPromise) {
@@ -99,10 +119,11 @@ export async function* withToolInputStatusTransitions(
       return;
     }
 
-    const state = toolStates.get(toolCallId) ?? {
-      dueAt: null,
-      lastStatus: null,
-    };
+    let state = toolStates.get(toolCallId);
+    if (!state) {
+      if (toolStates.size >= MAX_TRACKED_TOOL_CALLS) return;
+      state = { dueAt: null, lastStatus: null };
+    }
     state.dueAt = Date.now() + thresholdMs;
     toolStates.set(toolCallId, state);
   };
@@ -112,10 +133,11 @@ export async function* withToolInputStatusTransitions(
       return;
     }
 
-    const state = toolStates.get(toolCallId) ?? {
-      dueAt: null,
-      lastStatus: null,
-    };
+    let state = toolStates.get(toolCallId);
+    if (!state) {
+      if (toolStates.size >= MAX_TRACKED_TOOL_CALLS) return;
+      state = { dueAt: null, lastStatus: null };
+    }
 
     if (state.lastStatus !== "streaming_input") {
       buffered.push(
@@ -140,8 +162,14 @@ export async function* withToolInputStatusTransitions(
       return;
     }
 
-    const record = part as Record<string, unknown>;
-    const partType = typeof record.type === "string" ? record.type : null;
+    let partType: string | null = null;
+    try {
+      const type = (part as Record<string, unknown>).type;
+      partType = typeof type === "string" ? type : null;
+    } catch {
+      buffered.push(part);
+      return;
+    }
     const toolCallId = getToolCallIdFromStreamPart(part);
 
     switch (partType) {
@@ -170,83 +198,96 @@ export async function* withToolInputStatusTransitions(
     }
   };
 
-  while (true) {
-    if (buffered.length > 0) {
-      yield buffered.shift();
-      continue;
-    }
-
-    if (!nextPartPromise) {
-      nextPartPromise = iterator.next();
-    }
-
-    const nextDueAt = [...toolStates.values()]
-      .map((state) => state.dueAt)
-      .filter((value): value is number => value !== null)
-      .sort((left, right) => left - right)[0] ?? null;
-
-    if (nextDueAt !== null) {
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      // Clear the timer in finally so it is released even when the race
-      // rejects (iterator error) or the generator is abandoned mid-await
-      // (consumer break/return), not just on the happy path.
-      let timeoutResult:
-        | { kind: "part"; result: IteratorResult<unknown> }
-        | { kind: "timeout" };
-      try {
-        timeoutResult = await Promise.race([
-          nextPartPromise.then((result) => ({ kind: "part" as const, result })),
-          new Promise<{ kind: "timeout" }>((resolve) => {
-            timeoutId = setTimeout(
-              () => resolve({ kind: "timeout" }),
-              Math.max(0, nextDueAt - Date.now()),
-            );
-          }),
-        ]);
-      } finally {
-        if (timeoutId !== null) {
-          clearTimeout(timeoutId);
-        }
-      }
-
-      if (timeoutResult.kind === "timeout") {
-        const readyResult = await readPartIfReady();
-        if (readyResult) {
-          if (readyResult.done) {
-            buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
-            while (buffered.length > 0) {
-              yield buffered.shift();
-            }
-            return;
-          }
-
-          processPart(readyResult.value);
-          continue;
-        }
-
-        buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+  try {
+    while (true) {
+      if (buffered.length > 0) {
+        yield buffered.shift();
         continue;
       }
 
-      nextPartPromise = null;
-      if (timeoutResult.result.done) {
-        buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
-        while (buffered.length > 0) {
-          yield buffered.shift();
+      if (!nextPartPromise) {
+        nextPartPromise = iterator.next();
+      }
+
+      const nextDueAt = [...toolStates.values()]
+        .map((state) => state.dueAt)
+        .filter((value): value is number => value !== null)
+        .sort((left, right) => left - right)[0] ?? null;
+
+      if (nextDueAt !== null) {
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        // Clear the timer in finally so it is released even when the race
+        // rejects (iterator error) or the generator is abandoned mid-await
+        // (consumer break/return), not just on the happy path.
+        let timeoutResult:
+          | { kind: "part"; result: IteratorResult<unknown> }
+          | { kind: "timeout" };
+        try {
+          timeoutResult = await Promise.race([
+            nextPartPromise.then((result) => ({ kind: "part" as const, result })),
+            new Promise<{ kind: "timeout" }>((resolve) => {
+              timeoutId = setTimeout(
+                () => resolve({ kind: "timeout" }),
+                Math.max(0, nextDueAt - Date.now()),
+              );
+            }),
+          ]);
+        } finally {
+          if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+          }
         }
+
+        if (timeoutResult.kind === "timeout") {
+          const readyResult = await readPartIfReady();
+          if (readyResult) {
+            if (readyResult.done) {
+              iteratorDone = true;
+              buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+              while (buffered.length > 0) {
+                yield buffered.shift();
+              }
+              return;
+            }
+
+            processPart(readyResult.value);
+            continue;
+          }
+
+          buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+          continue;
+        }
+
+        nextPartPromise = null;
+        if (timeoutResult.result.done) {
+          iteratorDone = true;
+          buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+          while (buffered.length > 0) {
+            yield buffered.shift();
+          }
+          return;
+        }
+
+        processPart(timeoutResult.result.value);
+        continue;
+      }
+
+      const result = await nextPartPromise;
+      nextPartPromise = null;
+      if (result.done) {
+        iteratorDone = true;
         return;
       }
 
-      processPart(timeoutResult.result.value);
-      continue;
+      processPart(result.value);
     }
-
-    const result = await nextPartPromise;
-    nextPartPromise = null;
-    if (result.done) {
-      return;
+  } finally {
+    if (!iteratorDone && typeof iterator.return === "function") {
+      try {
+        void Promise.resolve(iterator.return()).catch(() => {});
+      } catch {
+        // Cleanup failures must not replace the stream error or cancellation reason.
+      }
     }
-
-    processPart(result.value);
   }
 }

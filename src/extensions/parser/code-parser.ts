@@ -22,8 +22,10 @@ export interface ASTNode {
 export interface NodePath<T extends ASTNode = ASTNode> {
   /** The AST node at this path. */
   node: T;
-  /** The parent path, if any. */
-  parent: NodePath | undefined;
+  /** The parent AST node, or `null` at the root. */
+  parent: ASTNode | null | undefined;
+  /** The parent traversal path, or `null` at the root. */
+  parentPath?: NodePath | null;
   /** Replace this node with one or more new nodes. */
   replaceWith(node: ASTNode): void;
   /** Remove this node from the tree. */
@@ -32,6 +34,7 @@ export interface NodePath<T extends ASTNode = ASTNode> {
 
 /** Visitor callbacks keyed by node type. */
 export interface TraverseVisitor {
+  /** Visitor callback or enter/exit callbacks for an AST node type. */
   [nodeType: string]:
     | ((path: NodePath) => void)
     | {
@@ -82,7 +85,7 @@ export interface GenerateResult {
  */
 /** Options for {@link CodeParser.injectJsxNodePositions}. */
 export interface InjectJsxNodePositionsOptions {
-  /** Source file path — emitted into `data-node-file` attributes. */
+  /** Source file path emitted into `data-node-file` attributes. */
   filePath: string;
 }
 

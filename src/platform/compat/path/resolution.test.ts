@@ -38,6 +38,10 @@ describe("platform/compat/path/resolution", () => {
     it("should preserve drive letter when resolving to root", () => {
       assertEquals(resolve("D:/a", ".."), "D:/");
     });
+
+    it("should resolve relative paths from the runtime working directory", () => {
+      assertEquals(resolve("src", "index.ts"), normalize(`${Deno.cwd()}/src/index.ts`));
+    });
   });
 
   describe("isAbsolute", () => {
@@ -70,6 +74,10 @@ describe("platform/compat/path/resolution", () => {
 
     it("should return . for same path", () => {
       assertEquals(relative("/home/user", "/home/user"), ".");
+    });
+
+    it("should return the absolute target for different Windows drives", () => {
+      assertEquals(relative("C:/project/src", "D:/cache/file.ts"), "D:/cache/file.ts");
     });
   });
 
@@ -104,6 +112,11 @@ describe("platform/compat/path/resolution", () => {
 
     it("should preserve Windows drive letter", () => {
       assertEquals(normalize("D:/"), "D:/");
+    });
+
+    it("should preserve Windows UNC roots", () => {
+      assertEquals(normalize("\\\\server\\share\\dir\\..\\file.ts"), "//server/share/file.ts");
+      assertEquals(isAbsolute("\\\\server\\share\\file.ts"), true);
     });
   });
 });

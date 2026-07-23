@@ -16,6 +16,7 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability";
+import { extractSafeHttpScheme } from "#veryfront/observability/telemetry-safety.ts";
 
 interface SpanInfo {
   /** The server span (unknown type from OTLP setup) */
@@ -41,36 +42,27 @@ export function startRequestTracing(req: Request, pathname: string): SpanInfo {
 /**
  * Set initial HTTP attributes on the span.
  */
-export function setRequestAttributes(span: unknown, req: Request, url: URL): void {
+export function setRequestAttributes(span: unknown, _req: Request, url: URL): void {
   if (!span) return;
 
-  setSpanAttributes(span, {
-    "http.url": req.url,
-    "http.host": req.headers.get("host") || url.host,
-    "http.scheme": url.protocol.replace(":", ""),
-  });
+  const scheme = extractSafeHttpScheme(url.href);
+  if (scheme) setSpanAttributes(span, { "http.scheme": scheme });
 }
 
-/**
- * Set project-specific attributes on the span.
- */
+/** Compatibility hook. Generic tracing intentionally omits project identity. */
 export function setProjectAttributes(
-  span: unknown,
-  projectSlug: string | undefined,
-  environment: string | undefined,
+  _span: unknown,
+  _projectSlug: string | undefined,
+  _environment: string | undefined,
 ): void {
-  if (!span || !projectSlug) return;
-
-  setSpanAttributes(span, {
-    "veryfront.project_slug": projectSlug,
-    "veryfront.environment": environment || "unknown",
-  });
+  // Generic request tracing cannot safely distinguish stable labels from
+  // customer identifiers, so project context is intentionally omitted.
 }
 
 /**
  * End the server span with status and optional error.
  */
-export function endRequestTracing(span: unknown, status: number, error?: Error): void {
+export function endRequestTracing(span: unknown, status: number, error?: unknown): void {
   endServerSpan(span, status, error);
 }
 

@@ -1,17 +1,32 @@
 /** Default timeout for acquiring a semaphore permit (ms) */
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
+const DEFAULT_MAX_QUEUE_SIZE = 256;
+
+function assertNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${label} must be a non-negative safe integer`);
+  }
+}
 
 export class Semaphore {
   private permits: number;
+  private readonly capacity: number;
   private readonly maxQueueSize: number;
-  private waitQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+  private waitQueue: Array<{ resolve: () => void }> = [];
 
   constructor(permits: number, options?: { maxQueueSize?: number }) {
+    assertNonNegativeSafeInteger(permits, "permits");
+    const maxQueueSize = options?.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
+    assertNonNegativeSafeInteger(maxQueueSize, "maxQueueSize");
+
     this.permits = permits;
-    this.maxQueueSize = options?.maxQueueSize ?? Infinity;
+    this.capacity = permits;
+    this.maxQueueSize = maxQueueSize;
   }
 
   tryAcquire(timeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS): Promise<boolean> {
+    assertNonNegativeSafeInteger(timeoutMs, "timeoutMs");
+
     if (this.permits > 0) {
       this.permits--;
       return Promise.resolve(true);
@@ -41,7 +56,7 @@ export class Semaphore {
         resolve(false);
       }, timeoutMs);
 
-      this.waitQueue.push({ resolve: onAcquire, reject: onAcquire });
+      this.waitQueue.push({ resolve: onAcquire });
     });
   }
 
@@ -52,7 +67,7 @@ export class Semaphore {
       return;
     }
 
-    this.permits++;
+    if (this.permits < this.capacity) this.permits++;
   }
 
   get available(): number {

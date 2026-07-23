@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   type ModuleTransformCacheDeps,
   transformModuleCodeWithCache,
@@ -115,7 +115,7 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(transformCalls, 1);
     assertEquals(setCalls.length, 1);
     assertEquals(setCalls[0]!.code, "export const page = 1;");
-    assertEquals(setCalls[0]!.hash, hashCodeHex("export const page = 1;"));
+    assertEquals(setCalls[0]!.hash, await computeHash("export const page = 1;"));
     assertEquals(setCalls[0]!.ttl, 123);
   });
 
@@ -166,7 +166,31 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(pipelineCalls, 1);
     assertEquals(setCalls, [{
       code: retryCode,
-      hash: hashCodeHex(retryCode).slice(0, 16),
+      hash: await computeHash(retryCode),
     }]);
+  });
+
+  it("rejects code that still has unresolved framework imports after retry", async () => {
+    const unresolved = 'import React from "/_vf_modules/_veryfront/react.js";';
+
+    await assertRejects(
+      () =>
+        transformModuleCodeWithCache({
+          fileContent: "export const page = 3;",
+          filePath: "/project/app/page.tsx",
+          projectDir: "/project",
+          effectiveProjectId: "project-3",
+          mode: "production",
+          adapter: {} as RuntimeAdapter,
+          deps: createDeps({
+            getOrComputeTransform: () => Promise.resolve({ code: unresolved, cacheHit: true }),
+            validateCachedBundlesByManifestOrCode: () =>
+              Promise.resolve({ valid: true, failedHashes: [], source: "code" }),
+            runPipeline: () => Promise.resolve({ code: unresolved }),
+          }),
+        }),
+      TypeError,
+      "retained an unresolved framework module import",
+    );
   });
 });

@@ -1,10 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, readTextFile, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { join } from "#veryfront/compat/path";
+import { join, relative } from "#veryfront/compat/path";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { ragStore } from "./rag-store.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
@@ -65,6 +71,39 @@ describe("ragStore", () => {
 
       const documents = await store.listDocuments();
       assertEquals(documents, []);
+    });
+  });
+
+  it("does not expose local storage paths when persisted data cannot be read", async () => {
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath: tempDir,
+      });
+
+      const error = await assertRejects(() => store.listDocuments());
+      assertInstanceOf(error, Error);
+      assertEquals(error.message, "Local RAG store data could not be read");
+      assertEquals(error.message.includes(tempDir), false);
+      assertEquals(error.cause, undefined);
+    });
+  });
+
+  it("does not expose local content paths when directory traversal fails", async () => {
+    await withTempDir(async (tempDir) => {
+      const contentPath = join(tempDir, "knowledge.md");
+      await Deno.writeTextFile(contentPath, "# Not a directory");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath: join(tempDir, "data", "index.json"),
+        contentDir: contentPath,
+      });
+
+      const error = await assertRejects(() => store.indexContentDir());
+      assertInstanceOf(error, Error);
+      assertEquals(error.message, "RAG content files could not be read");
+      assertEquals(error.message.includes(tempDir), false);
+      assertEquals(error.cause, undefined);
     });
   });
 
@@ -164,6 +203,397 @@ describe("ragStore", () => {
     });
   });
 
+  it("uses the same non-negative default score threshold as the cloud backend", async () => {
+    registerEmbeddingProvider("test", () =>
+      ({
+        specificationVersion: "v2",
+        provider: "test",
+        modelId: "test/demo",
+        maxEmbeddingsPerCall: undefined,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          return {
+            embeddings: values.map((value) => value === "negative" ? [-1, 0] : [1, 0]),
+            usage: { tokens: 0 },
+            rawResponse: undefined,
+            warnings: [],
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "test/demo",
+        storagePath: join(tempDir, "index.json"),
+      });
+      await store.ingest("Positive", "positive");
+      await store.ingest("Negative", "negative");
+
+      const results = await store.search("query", { topK: 2 });
+
+      assertEquals(results.map((result) => result.title), ["Positive"]);
+    });
+  });
+
+  it("stops local search before embedding when cancellation is requested", async () => {
+    let providerCalls = 0;
+    registerEmbeddingProvider("cancel", () =>
+      ({
+        async doEmbed({ values }: { values: string[] }) {
+          providerCalls++;
+          return { embeddings: values.map(() => [1, 0]) };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "cancel/test",
+        storagePath: join(tempDir, "data", "index.json"),
+      });
+      await store.ingest("Doc", "Hello world");
+      const controller = new AbortController();
+      controller.abort();
+
+      await assertRejects(
+        () => store.search("hello", { signal: controller.signal }),
+        DOMException,
+        "aborted",
+      );
+      assertEquals(providerCalls, 0);
+    });
+  });
+
+  it("uses one request-scoped embedder for each local search", async () => {
+    let factoryCalls = 0;
+    registerEmbeddingProvider("test", () => {
+      factoryCalls++;
+      return {
+        specificationVersion: "v2",
+        provider: "test",
+        modelId: "test/demo",
+        maxEmbeddingsPerCall: undefined,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          return {
+            embeddings: values.map(() => [1, 0]),
+            usage: { tokens: 0 },
+            rawResponse: undefined,
+            warnings: [],
+          };
+        },
+      } as never;
+    });
+
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "test/demo",
+        storagePath: join(tempDir, "index.json"),
+      });
+      await store.ingest("Doc", "Document text");
+
+      await store.search("query");
+
+      assertEquals(factoryCalls, 1);
+    });
+  });
+
+  it("batches lazy embeddings across accumulated local documents", async () => {
+    const providerBatchSizes: number[] = [];
+    registerEmbeddingProvider("test", () =>
+      ({
+        specificationVersion: "v2",
+        provider: "test",
+        modelId: "test/demo",
+        maxEmbeddingsPerCall: undefined,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          providerBatchSizes.push(values.length);
+          return {
+            embeddings: values.map(() => [1, 0]),
+            usage: { tokens: 0 },
+            rawResponse: undefined,
+            warnings: [],
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "test/demo",
+        storagePath: join(tempDir, "index.json"),
+        chunkOptions: { maxChars: 1, overlap: 0, separators: [""] },
+        batchSize: 10_000,
+      });
+      await store.ingest("First", "a".repeat(6_000));
+      await store.ingest("Second", "b".repeat(6_000));
+
+      const results = await store.search("query", { topK: 1 });
+
+      assertEquals(results.length, 1);
+      assertEquals(providerBatchSizes, [10_000, 2_000, 1]);
+    });
+  });
+
+  it("rejects empty documents and invalid search options before embedding", async () => {
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({ model: "test/demo", storagePath });
+
+      await assertRejects(
+        () => store.ingest("Empty", "   "),
+        Error,
+        "RAG document text must not be empty",
+      );
+      await store.ingest("Doc", "Hello world");
+      await assertRejects(
+        () => store.search("hello", { topK: 0 }),
+        Error,
+        "topK must be a positive integer",
+      );
+      await assertRejects(
+        () => store.search("hello", { threshold: Number.NaN }),
+        Error,
+        "threshold must be a finite number",
+      );
+      await assertRejects(
+        () => store.search("hello", null as never),
+        Error,
+        "RAG search options must be an object",
+      );
+    });
+  });
+
+  it("rejects invalid backends when the store is created", () => {
+    assertThrows(
+      () => ragStore({ backend: "memory" as never }),
+      Error,
+      "Invalid RAG backend",
+    );
+  });
+
+  it("rejects content extensions that cannot match one file extension", () => {
+    for (const extension of [".md ", "../md", ".tar.gz"]) {
+      assertThrows(
+        () =>
+          ragStore({
+            model: "local/test-model",
+            contentExtensions: [extension],
+          }),
+        Error,
+        "content extensions must be single file extensions",
+      );
+    }
+  });
+
+  it("snapshots mutable configuration at construction", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "original", "index.json");
+      const changedPath = join(tempDir, "changed", "index.json");
+      const config = {
+        model: "local/test-model",
+        storagePath,
+        contentExtensions: [".md"],
+        chunkOptions: { maxChars: 100, overlap: 10 },
+      };
+      const store = ragStore(config);
+
+      config.storagePath = changedPath;
+      config.contentExtensions.push(".txt");
+      config.chunkOptions.maxChars = 1;
+      await store.ingest("Doc", "Hello world");
+
+      assertEquals(await exists(storagePath), true);
+      assertEquals(await exists(changedPath), false);
+      const persisted = JSON.parse(await readTextFile(storagePath)) as { chunks: unknown[] };
+      assertEquals(persisted.chunks.length, 1);
+    });
+  });
+
+  it("re-embeds local chunks when the configured model changes", async () => {
+    const calls: string[][] = [];
+    registerEmbeddingProvider("first", () =>
+      ({
+        async doEmbed({ values }: { values: string[] }) {
+          return { embeddings: values.map(() => [1, 0]) };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const first = ragStore({ model: "first/model", storagePath });
+      await first.ingest("Doc", "Hello world");
+      await first.search("hello");
+
+      registerEmbeddingProvider("second", () =>
+        ({
+          async doEmbed({ values }: { values: string[] }) {
+            calls.push([...values]);
+            return { embeddings: values.map(() => [0, 1, 0]) };
+          },
+        }) as never);
+      const second = ragStore({ model: "second/model", storagePath });
+
+      const results = await second.search("hello");
+      assertEquals(results.length, 1);
+      assertEquals(calls.some((values) => values.includes("Hello world")), true);
+      const persisted = JSON.parse(await readTextFile(storagePath)) as {
+        embeddingModel?: string;
+      };
+      assertEquals(persisted.embeddingModel, "second/model");
+    });
+  });
+
+  it("re-embeds local chunks when the document prefix changes", async () => {
+    const calls: string[][] = [];
+    registerEmbeddingProvider("prefix", () =>
+      ({
+        async doEmbed({ values }: { values: string[] }) {
+          calls.push([...values]);
+          return { embeddings: values.map(() => [1, 0]) };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const first = ragStore({
+        model: "prefix/model",
+        documentPrefix: "old: ",
+        storagePath,
+      });
+      await first.ingest("Doc", "Hello world");
+      await first.search("hello");
+
+      calls.length = 0;
+      const second = ragStore({
+        model: "prefix/model",
+        documentPrefix: "new: ",
+        storagePath,
+      });
+      await second.search("hello");
+
+      assertEquals(calls.some((values) => values.includes("new: Hello world")), true);
+    });
+  });
+
+  it("serializes local stores that share one storage path", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const first = ragStore({ model: "local/test-model", storagePath });
+      const second = ragStore({ model: "local/test-model", storagePath });
+
+      await Promise.all([
+        first.ingest("First", "First content"),
+        second.ingest("Second", "Second content"),
+      ]);
+
+      const documents = await ragStore({ model: "local/test-model", storagePath })
+        .listDocuments();
+      assertEquals(documents.map((document) => document.title).sort(), ["First", "Second"]);
+    });
+  });
+
+  it("persists content sources without local absolute paths", async () => {
+    await withTempDir(async (tempDir) => {
+      const contentDir = join(tempDir, "knowledge");
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(contentDir, { recursive: true });
+      await Deno.writeTextFile(join(contentDir, "login.md"), "Login help");
+
+      const store = ragStore({
+        model: "local/test-model",
+        contentDir,
+        storagePath,
+      });
+      await store.indexContentDir();
+
+      const documents = await store.listDocuments();
+      assertEquals(documents[0]?.source, "knowledge/login.md");
+      assertEquals(documents[0]?.source.includes(tempDir), false);
+    });
+  });
+
+  it("normalizes sources when contentDir is a multi-segment relative path", async () => {
+    await withTempDir(async (tempDir) => {
+      const contentDir = join(tempDir, "projects", "acme", "knowledge");
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(contentDir, { recursive: true });
+      await Deno.writeTextFile(join(contentDir, "login.md"), "Login help");
+
+      const store = ragStore({
+        model: "local/test-model",
+        contentDir: relative(Deno.cwd(), contentDir),
+        storagePath,
+      });
+      await store.indexContentDir();
+
+      const documents = await store.listDocuments();
+      assertEquals(documents[0]?.source, "knowledge/login.md");
+    });
+  });
+
+  it("does not send local absolute content paths to the cloud RAG backend", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+
+    await withTempDir(async (tempDir) => {
+      const contentDir = join(tempDir, "knowledge");
+      await Deno.mkdir(contentDir, { recursive: true });
+      await Deno.writeTextFile(join(contentDir, "login.md"), "Login help");
+      let persistedSource = "";
+
+      await withMockFetch(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname.endsWith("/rag/documents")) {
+            return Response.json({ documents: [] });
+          }
+          if (
+            request.method === "POST" && url.pathname.includes("/files/") &&
+            url.pathname.endsWith("/chunks")
+          ) {
+            const body = await request.json() as {
+              chunks: Array<{ chunk_index: number }>;
+            };
+            return Response.json({
+              chunks: body.chunks.map(({ chunk_index }) => ({
+                id: `chunk-${chunk_index}`,
+                index: chunk_index,
+              })),
+            });
+          }
+          if (request.method === "POST" && url.pathname.endsWith("/embeddings")) {
+            return Response.json({ created: 1 });
+          }
+          if (request.method === "POST" && url.pathname.endsWith("/rag/documents")) {
+            const body = await request.json() as { source: string };
+            persistedSource = body.source;
+            return Response.json({ created: 1 });
+          }
+          throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+        },
+        async () => {
+          const store = ragStore({ model: "test/demo", contentDir });
+          await runWithRequestContext(
+            {
+              projectSlug: "cloud-project",
+              token: "request-scoped-token",
+              productionMode: false,
+              branch: "main",
+            },
+            () => store.indexContentDir(),
+          );
+        },
+      );
+
+      assertEquals(persistedSource, "knowledge/login.md");
+      assertEquals(persistedSource.includes(tempDir), false);
+    });
+  });
+
   it("reuses parsed local store data across searches until storage changes", async () => {
     registerTestEmbeddingProvider();
 
@@ -260,7 +690,7 @@ describe("ragStore", () => {
     });
   });
 
-  it("resets local store when document entries fail validation", async () => {
+  it("fails closed when local document entries are invalid", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
@@ -283,11 +713,16 @@ describe("ragStore", () => {
         storagePath,
       });
 
-      assertEquals(await store.listDocuments(), []);
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "RAG store data is invalid",
+      );
+      assertEquals((await readTextFile(storagePath)).includes("Invalid Doc"), true);
     });
   });
 
-  it("resets local store when chunk entries fail validation", async () => {
+  it("fails closed when local chunk entries are invalid", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
@@ -316,7 +751,12 @@ describe("ragStore", () => {
         storagePath,
       });
 
-      assertEquals(await store.listDocuments(), []);
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "RAG store data is invalid",
+      );
+      assertEquals((await readTextFile(storagePath)).includes("not-a-number"), true);
     });
   });
 
@@ -340,6 +780,7 @@ describe("ragStore", () => {
       source: string;
       type: string;
       created_at: string;
+      updated_at: string;
       metadata?: Record<string, unknown>;
     }>();
     const embeddingVectors = new Map<string, number[]>();
@@ -381,6 +822,7 @@ describe("ragStore", () => {
             ragDocuments.set(body.id, {
               ...body,
               created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             });
             return Response.json({ id: body.id });
           }
@@ -452,6 +894,7 @@ describe("ragStore", () => {
         }
 
         if (request.method === "POST" && path.endsWith("/search")) {
+          const body = await request.json() as { limit: number };
           const manifestChunks = fileChunks.get(".veryfront/rag/manifest.json") ?? [];
           const documentFilePath = [...fileChunks.keys()].find((key) =>
             key.startsWith(".veryfront/rag/documents/")
@@ -460,6 +903,14 @@ describe("ragStore", () => {
 
           return Response.json({
             data: [
+              ...Array.from({ length: 30 }, (_, index) => ({
+                chunk: {
+                  file_path: `src/private-${index}.ts`,
+                  content: "Non-RAG project content",
+                  metadata: { kind: "source-file" },
+                },
+                score: 1,
+              })),
               ...manifestChunks.map((chunk) => ({
                 chunk: {
                   file_path: ".veryfront/rag/manifest.json",
@@ -476,7 +927,7 @@ describe("ragStore", () => {
                 },
                 score: 0.91,
               })),
-            ],
+            ].slice(0, body.limit),
           });
         }
 
@@ -510,6 +961,177 @@ describe("ragStore", () => {
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);
+      },
+    );
+  });
+
+  it("validates cloud document responses before exposing them", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    await withMockFetch(
+      async () => Response.json({ documents: [{ id: 123 }] }),
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(
+          () => store.listDocuments(),
+          Error,
+          "Veryfront Cloud returned an invalid RAG document response",
+        );
+      },
+    );
+
+    const duplicate = {
+      id: "duplicate",
+      title: "Duplicate",
+      source: "upload:duplicate.txt",
+      type: "txt",
+      metadata: {},
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    await withMockFetch(
+      async () => Response.json({ documents: [duplicate, duplicate] }),
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(
+          () => store.listDocuments(),
+          Error,
+          "Veryfront Cloud returned duplicate RAG document IDs",
+        );
+      },
+    );
+  });
+
+  it("cleans cloud chunks when document persistence fails without exposing the response body", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+    const deletedPaths: string[] = [];
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const path = new URL(request.url).pathname;
+        const fileMatch = path.match(
+          /^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/,
+        );
+        const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
+
+        if (request.method === "POST" && filePath) {
+          const body = await request.json() as {
+            chunks: Array<{ chunk_index: number }>;
+          };
+          return Response.json({
+            chunks: body.chunks.map((entry) => ({
+              id: `${filePath}:${entry.chunk_index}`,
+              index: entry.chunk_index,
+            })),
+          });
+        }
+        if (request.method === "DELETE" && filePath) {
+          deletedPaths.push(filePath);
+          return Response.json({ deleted: 1 });
+        }
+        if (request.method === "POST" && path.endsWith("/embeddings")) {
+          return Response.json({ created: 1 });
+        }
+        if (request.method === "POST" && path.endsWith("/rag/documents")) {
+          return new Response("private upstream detail <TOKEN>", { status: 500 });
+        }
+        throw new Error(`Unhandled ${request.method} ${path}`);
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        const error = await assertRejects(
+          () => store.ingest("Cloud Doc", "Hello cloud world"),
+          Error,
+          "Veryfront Cloud RAG request failed with status 500",
+        );
+
+        assertEquals(error.message.includes("<TOKEN>"), false);
+        assertEquals(deletedPaths.length, 1);
+      },
+    );
+  });
+
+  it("stops cloud content pagination when a cursor repeats", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    let fileListCalls = 0;
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname.endsWith("/rag/documents")) {
+          return Response.json({ documents: [] });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/files")) {
+          fileListCalls++;
+          if (fileListCalls > 2) {
+            return new Response("pagination did not stop", { status: 500 });
+          }
+          return Response.json({ data: [], page_info: { next: "same-cursor" } });
+        }
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo", contentDir: "knowledge" });
+        await assertRejects(
+          () =>
+            runWithRequestContext(
+              { projectSlug: "cloud-project", token: "vf_request_token" },
+              () => store.indexContentDir(),
+            ),
+          Error,
+          "Veryfront Cloud pagination cursor repeated",
+        );
+        assertEquals(fileListCalls, 2);
+      },
+    );
+  });
+
+  it("rejects published file details that do not match the requested path", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname.endsWith("/rag/documents")) {
+          return Response.json({ documents: [] });
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/files")) {
+          return Response.json({
+            data: [{ path: "knowledge/requested.md" }],
+            page_info: { next: null },
+          });
+        }
+        if (request.method === "GET" && url.pathname.includes("/files/knowledge%2Frequested.md")) {
+          return Response.json({
+            path: "knowledge/different.md",
+            content: "Content from the wrong file",
+          });
+        }
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo", contentDir: "knowledge" });
+        const error = await assertRejects(() =>
+          runWithRequestContext(
+            {
+              projectSlug: "cloud-project",
+              token: "vf_request_token",
+              productionMode: true,
+              releaseId: "rel-abc",
+            },
+            () => store.indexContentDir(),
+          )
+        );
+        assertInstanceOf(error, Error);
+        assertEquals(error.message, "Veryfront Cloud returned an invalid file response");
       },
     );
   });
@@ -703,7 +1325,9 @@ describe("ragStore", () => {
         });
         assertEquals(embeddingVectors.size, 1);
 
-        const listedDocuments = await store.listDocuments() as Array<Record<string, unknown>>;
+        const listedDocuments = await store.listDocuments() as unknown as Array<
+          Record<string, unknown>
+        >;
         assertEquals("filePath" in listedDocuments[0]!, false);
       },
     );
@@ -814,7 +1438,7 @@ describe("ragStore", () => {
         await assertRejects(
           () => refresh("doc-pptx", "# Better Deck\n\nBody text"),
           Error,
-          "embedding write failed",
+          "Veryfront Cloud RAG request failed with status 500",
         );
 
         assertEquals(deletedFilePaths.includes(".veryfront/rag/documents/doc-pptx.pptx"), false);

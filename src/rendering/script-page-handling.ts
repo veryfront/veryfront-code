@@ -7,8 +7,14 @@
 
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import { createError, RENDER_ERROR, toError } from "#veryfront/errors";
 import { flattenRouteParams } from "#veryfront/routing";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
@@ -25,8 +31,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { computeHash } from "./utils/index.ts";
 import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { sanitizeErrorText } from "#veryfront/errors/sanitization.ts";
 
 const logger = rendererLogger.component("script");
 
@@ -37,7 +44,7 @@ type ScriptModuleOutput =
   | null;
 
 interface ScriptPageOptions {
-  mode: string;
+  mode: "development" | "production";
   config: VeryfrontConfig;
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -56,6 +63,7 @@ const ESBUILD_EXTERNALS = [
 ];
 
 const APP_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+const MAX_SCRIPT_SOURCE_BYTES = 5 * 1024 * 1024;
 
 async function executeModuleRender(
   mod: ScriptPageModule,
@@ -81,22 +89,8 @@ async function collectModuleMetadata(
 ): Promise<Record<string, unknown>> {
   if (typeof mod?.generateMetadata !== "function") return {};
 
-  try {
-    const generated = await mod.generateMetadata(ctx);
-    return generated && typeof generated === "object" ? (generated as Record<string, unknown>) : {};
-  } catch (e) {
-    const error = e instanceof Error ? e : new Error(String(e));
-    logger.warn("generateMetadata threw for TS/JS page", error);
-
-    if (error instanceof ReferenceError || error instanceof SyntaxError) {
-      throw error;
-    }
-    // Fallback for cross-realm errors where instanceof checks fail
-    if (error.name === "ReferenceError" || error.name === "SyntaxError") {
-      throw error;
-    }
-    return {};
-  }
+  const generated = await mod.generateMetadata(ctx);
+  return generated && typeof generated === "object" ? (generated as Record<string, unknown>) : {};
 }
 
 function extractHtmlAndMetadata(output: ScriptModuleOutput): {
@@ -152,7 +146,23 @@ async function resolveAppComponentPath(
 ): Promise<string | undefined> {
   for (const ext of APP_COMPONENT_EXTENSIONS) {
     const candidate = join(projectDir, `components/app${ext}`);
-    if (await adapter.fs.exists(candidate)) return candidate;
+    if (!await adapter.fs.exists(candidate)) continue;
+    if (adapter.fs.lstat) {
+      const info = await adapter.fs.lstat(candidate);
+      if (!info.isFile || info.isSymlink) {
+        throw new TypeError("Application component must be a regular file and not a symbolic link");
+      }
+    }
+    if (adapter.fs.realPath) {
+      const [canonicalPath, canonicalRoot] = await Promise.all([
+        adapter.fs.realPath(candidate),
+        adapter.fs.realPath(projectDir),
+      ]);
+      if (!isPathWithin(canonicalRoot, canonicalPath)) {
+        throw new TypeError("Application component path is outside the project");
+      }
+    }
+    return candidate;
   }
   return undefined;
 }
@@ -168,7 +178,7 @@ export async function handleScriptPage(
   options: ScriptPageOptions,
 ): Promise<RenderResult> {
   try {
-    logger.debug(`Loading TS/JS page module: ${pageInfo.entity.path}`);
+    logger.debug("Loading script page module");
 
     const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
     const ctx = buildPageContext(pageInfo, slug, options.params, options.url);
@@ -176,9 +186,30 @@ export async function handleScriptPage(
     let output = await executeModuleRender(mod, ctx);
     const generatedMetadata = await collectModuleMetadata(mod, ctx);
 
-    if (output instanceof Response) output = await output.text();
+    if (output instanceof Response) {
+      if (output.status < 200 || output.status >= 300) {
+        throw new TypeError(
+          `Script page returned status ${output.status}, which cannot be represented by RenderResult`,
+        );
+      }
+      const contentType = output.headers.get("content-type");
+      if (
+        contentType && !contentType.startsWith("text/html") &&
+        !contentType.startsWith("text/plain")
+      ) {
+        throw new TypeError("Script page Response must contain HTML or plain text");
+      }
+      const declaredLength = Number(output.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_SCRIPT_SOURCE_BYTES) {
+        throw new RangeError("Script page Response exceeds the supported size");
+      }
+      output = await output.text();
+    }
 
     const { htmlBody, outputMetadata } = extractHtmlAndMetadata(output);
+    if (new TextEncoder().encode(htmlBody).byteLength > MAX_SCRIPT_SOURCE_BYTES) {
+      throw new RangeError("Script page HTML exceeds the supported size");
+    }
 
     const mergedFrontmatter = {
       ...pageInfo.entity.frontmatter,
@@ -208,11 +239,16 @@ export async function handleScriptPage(
       ssrHash,
     };
   } catch (error) {
+    const detail = sanitizeErrorText(
+      error instanceof Error ? error.message : String(error),
+      2_048,
+    );
     throw RENDER_ERROR.create({
-      detail: `Failed to render TS/JS page: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      context: { slug, error },
+      detail: `Failed to render TS/JS page: ${detail}`,
+      context: {
+        slug,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      },
     });
   }
 }
@@ -241,7 +277,7 @@ async function generateFullHtml(
   }
 
   const htmlOptions: HTMLGenerationOptions = {
-    mode: options.mode as "development" | "production",
+    mode: options.mode,
     config: options.config,
     nestedLayouts: [],
     appPath: appComponentPath,
@@ -269,44 +305,41 @@ async function generateFullHtml(
 }
 
 function normalizeModulePath(modulePath: string, projectDir: string): string {
-  let normalized = modulePath;
-
-  if (!normalized.startsWith("/") && projectDir) {
-    normalized = join(projectDir, normalized);
+  if (!projectDir.trim()) throw new TypeError("Script project directory must not be empty");
+  if (!modulePath.trim() || modulePath.startsWith("file:")) {
+    throw new TypeError("Script module path is invalid");
   }
 
-  if (!normalized.startsWith("/")) {
-    normalized = join(cwd(), normalized);
+  const projectRoot = resolve(projectDir);
+  const normalized = isAbsolute(modulePath)
+    ? resolve(modulePath)
+    : resolve(projectRoot, modulePath);
+  if (!isPathWithin(projectRoot, normalized)) {
+    throw new TypeError("Script module path is outside the project");
   }
-
   return normalized;
 }
 
-function createFileUrl(path: string): string {
-  const cacheBuster = `?v=${Date.now()}`;
-  return path.startsWith("file://") ? `${path}${cacheBuster}` : `file://${path}${cacheBuster}`;
+function createFileUrl(path: string, version: string): string {
+  const url = path.startsWith("file:") ? new URL(path) : toFileUrl(path);
+  url.searchParams.set("v", version);
+  return url.href;
 }
 
-async function readFileWithFallback(
+async function readAdapterFile(
   adapter: RuntimeAdapter,
-  modulePath: string,
   normalizedPath: string,
 ): Promise<string> {
   try {
-    return await adapter.fs.readFile(modulePath);
-  } catch (_) {
-    /* expected: original path may not exist, try normalized path */
-    try {
-      return await adapter.fs.readFile(normalizedPath);
-    } catch (_) {
-      throw toError(
-        createError({
-          type: "file",
-          message: `Script file not found: ${modulePath} (tried: ${normalizedPath})`,
-          context: { path: modulePath },
-        }),
-      );
-    }
+    return await adapter.fs.readFile(normalizedPath);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    throw toError(
+      createError({
+        type: "file",
+        message: "Script file was not found",
+      }),
+    );
   }
 }
 
@@ -315,6 +348,9 @@ async function transpileWithEsbuild(
   modulePath: string,
   resolveDir: string,
 ): Promise<string> {
+  if (new TextEncoder().encode(source).byteLength > MAX_SCRIPT_SOURCE_BYTES) {
+    throw new RangeError("Script module source exceeds the supported size");
+  }
   const { build } = await import("veryfront/extensions/bundler");
   const loader = getEsbuildLoader(modulePath);
 
@@ -359,7 +395,7 @@ async function importFromTempFile(
   await fs.writeTextFile(tempFile, code);
 
   try {
-    return (await import(createFileUrl(tempFile))) as ScriptPageModule;
+    return (await import(createFileUrl(tempFile, await computeHash(code)))) as ScriptPageModule;
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
@@ -373,21 +409,70 @@ async function loadScriptModule(
   const fs = createFileSystem();
   const normalizedPath = normalizeModulePath(modulePath, projectDir);
 
-  logger.debug(`Checking if file exists locally: ${normalizedPath}`);
-
   if (await fs.exists(normalizedPath)) {
-    logger.debug(`File exists locally, using direct import: ${normalizedPath}`);
-    return (await import(createFileUrl(normalizedPath))) as ScriptPageModule;
+    const info = fs.lstat ? await fs.lstat(normalizedPath) : await fs.stat(normalizedPath);
+    if (!info.isFile || info.isSymlink) {
+      throw new TypeError("Script module must be a regular file and cannot be a symbolic link");
+    }
+    if (info.size < 0 || info.size > MAX_SCRIPT_SOURCE_BYTES) {
+      throw new RangeError("Script module source exceeds the supported size");
+    }
+    if (fs.realPath) {
+      const [canonicalPath, canonicalRoot] = await Promise.all([
+        fs.realPath(normalizedPath),
+        fs.realPath(resolve(projectDir)),
+      ]);
+      if (!isPathWithin(canonicalRoot, canonicalPath)) {
+        throw new TypeError("Script module path is outside the project");
+      }
+    }
+    const version = `${info.mtime?.getTime() ?? 0}-${info.size}`;
+    return (await import(createFileUrl(normalizedPath, version))) as ScriptPageModule;
   }
 
-  logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
-
-  const source = await readFileWithFallback(adapter, modulePath, normalizedPath);
-  logger.debug(`Read ${source.length} bytes from adapter`);
+  await validateAdapterPath(adapter, normalizedPath, resolve(projectDir));
+  const source = await readAdapterFile(adapter, normalizedPath);
+  logger.debug("Read script source from runtime adapter", { sourceLength: source.length });
 
   const resolveDir = dirname(normalizedPath) || projectDir;
   const transpiled = await transpileWithEsbuild(source, modulePath, resolveDir);
-  logger.debug(`Transpiled ${modulePath}`);
+  logger.debug("Transpiled script page module");
 
   return importFromTempFile(fs, rewriteNpmImports(transpiled));
+}
+
+async function validateAdapterPath(
+  adapter: RuntimeAdapter,
+  path: string,
+  projectRoot: string,
+): Promise<void> {
+  if (adapter.fs.lstat) {
+    try {
+      const info = await adapter.fs.lstat(path);
+      if (!info.isFile || info.isSymlink) {
+        throw new TypeError("Script module must be a regular file and cannot be a symbolic link");
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+
+  if (!adapter.fs.realPath) return;
+  try {
+    const [canonicalPath, canonicalRoot] = await Promise.all([
+      adapter.fs.realPath(path),
+      adapter.fs.realPath(projectRoot),
+    ]);
+    if (!isPathWithin(canonicalRoot, canonicalPath)) {
+      throw new TypeError("Script module path is outside the project");
+    }
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
 }

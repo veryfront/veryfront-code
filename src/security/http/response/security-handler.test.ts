@@ -514,7 +514,7 @@ describe("security/http/response/security-handler", () => {
 
     it("should set X-XSS-Protection", () => {
       const headers = applyHeaders();
-      assertEquals(headers.get("X-XSS-Protection"), "1; mode=block");
+      assertEquals(headers.get("X-XSS-Protection"), "0");
     });
 
     it("should set X-Frame-Options to DENY in production", () => {

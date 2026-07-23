@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStyleScopeProfile,
@@ -32,6 +32,32 @@ describe("styles-builder/style-scope-profile", () => {
     );
   });
 
+  it("rejects paths outside the exact project directory boundary", () => {
+    const profile = createStyleScopeProfile();
+
+    assertEquals(
+      shouldIncludeStylePath(profile, "/project-secret/pages/admin.tsx", "/project"),
+      false,
+    );
+    assertEquals(
+      shouldTraverseStyleDirectory(profile, "/project-secret/pages", "/project"),
+      false,
+    );
+  });
+
+  it("rejects normalized traversal outside the project directory", () => {
+    const profile = createStyleScopeProfile();
+
+    assertEquals(
+      shouldIncludeStylePath(profile, "/project/pages/../../private/admin.tsx", "/project"),
+      false,
+    );
+    assertEquals(
+      shouldIncludeStylePath(profile, "pages/../../../private/admin.tsx", "/project"),
+      false,
+    );
+  });
+
   it("protects configured runtime directories even under conventionally ignored roots", () => {
     const profile = createStyleScopeProfile({
       directories: {
@@ -58,6 +84,21 @@ describe("styles-builder/style-scope-profile", () => {
     assertEquals(
       shouldIncludeStylePath(profile, "/project/knowledge/theme/globals.css", "/project"),
       true,
+    );
+  });
+
+  it("keeps the hashed scope profile immutable", () => {
+    const profile = createStyleScopeProfile();
+
+    assertThrows(
+      () => (profile.ignoredRoots as string[]).push("runtime"),
+      TypeError,
+    );
+    assertThrows(
+      () => {
+        (profile as { hash: string }).hash = "stale";
+      },
+      TypeError,
     );
   });
 });

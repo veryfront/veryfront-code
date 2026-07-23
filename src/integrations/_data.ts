@@ -1,4 +1,4 @@
-// Auto-generated — do not edit
+// Auto-generated, do not edit
 import type { IntegrationConfig } from "./schema.ts";
 
 export const connectors: IntegrationConfig[] = [

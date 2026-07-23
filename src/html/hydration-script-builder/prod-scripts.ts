@@ -1,10 +1,10 @@
 import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
-import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
+import { simpleHash as hash64 } from "#veryfront/utils/memoize.ts";
 
 export const PROD_HYDRATION_MODULE_PATH = "/_veryfront/hydration-runtime.js";
 export const PROD_HYDRATION_MODULE_VERSIONED_PATH_PATTERN =
-  /^\/_veryfront\/hydration-runtime\.[0-9a-f]{8}\.js$/;
+  /^\/_veryfront\/hydration-runtime\.[0-9a-z]{13}\.js$/;
 
 let cachedProdHydrationModulePath: string | null = null;
 
@@ -23,7 +23,7 @@ export function generateProdHydrationModule(): string {
 export function getProdHydrationModulePath(): string {
   if (cachedProdHydrationModulePath) return cachedProdHydrationModulePath;
 
-  const hash = fnv1aHash(generateProdHydrationModule()).padStart(8, "0");
+  const hash = hash64(generateProdHydrationModule()).padStart(13, "0");
   cachedProdHydrationModulePath = `/_veryfront/hydration-runtime.${hash}.js`;
   return cachedProdHydrationModulePath;
 }

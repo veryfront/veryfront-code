@@ -24,6 +24,7 @@ import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("bare-ext");
 
@@ -67,6 +68,16 @@ export async function inspectBrowserModulePath(
   const projectRoot = normalizePath(projectDir);
   const normalizedFilePath = normalizePath(filePath);
   if (!isWithinDirectory(projectRoot, normalizedFilePath)) return "unavailable";
+
+  if (adapter.fs.realPath) {
+    try {
+      const canonicalProjectRoot = normalizePath(await adapter.fs.realPath(projectRoot));
+      const canonicalFilePath = normalizePath(await adapter.fs.realPath(normalizedFilePath));
+      if (!isWithinDirectory(canonicalProjectRoot, canonicalFilePath)) return "symlink";
+    } catch {
+      return "unavailable";
+    }
+  }
 
   const pathSegments = normalizedFilePath.slice(projectRoot.length).split("/").filter(Boolean);
   if (pathSegments.length === 0) return "unavailable";
@@ -137,7 +148,7 @@ export function createRelativeFsPlugin(
           // VULN-FS-6: NUL bytes are never legitimate in module paths.
           if (args.path.includes("\0")) {
             return {
-              errors: [{ text: `Import path contains NUL byte: ${args.path}`, location: null }],
+              errors: [{ text: "Import path contains a NUL byte", location: null }],
             };
           }
 
@@ -158,7 +169,7 @@ export function createRelativeFsPlugin(
           if (!isWithinDirectory(projectDir, candidate)) {
             return {
               errors: [{
-                text: `Import escapes project directory: ${args.path}`,
+                text: "Import leaves the project directory",
                 location: null,
               }],
             };
@@ -191,8 +202,16 @@ export function createRelativeFsPlugin(
                 }
                 return { path: f };
               }
-            } catch (_) {
-              // expected: candidate path doesn't exist, try next
+            } catch (error) {
+              if (isNotFoundError(error)) continue;
+              return {
+                errors: [{
+                  text: options.enforceBrowserBoundaries
+                    ? "Browser dependency path metadata is unavailable"
+                    : "Module dependency path metadata is unavailable",
+                  location: null,
+                }],
+              };
             }
           }
 
@@ -204,7 +223,7 @@ export function createRelativeFsPlugin(
         filePath: string,
         enforceBrowserBoundaries: boolean,
       ) {
-        // VULN-FS-6: belt-and-braces — reject any onLoad call whose path
+        // VULN-FS-6: belt-and-braces validation rejects any onLoad call whose path
         // escapes the project root or carries a NUL byte. onResolve already
         // gates this, but esbuild can call onLoad with paths produced by
         // other plugins or namespaces.
@@ -213,7 +232,7 @@ export function createRelativeFsPlugin(
             errors: [{
               text: enforceBrowserBoundaries
                 ? "Browser dependency path contains a NUL byte"
-                : `Load path contains NUL byte: ${filePath}`,
+                : "Module load path contains a NUL byte",
               location: null,
             }],
           };
@@ -223,7 +242,7 @@ export function createRelativeFsPlugin(
             errors: [{
               text: enforceBrowserBoundaries
                 ? "Browser dependency escapes the project directory"
-                : `Load path escapes project directory: ${filePath}`,
+                : "Module load path leaves the project directory",
               location: null,
             }],
           };
@@ -259,13 +278,13 @@ export function createRelativeFsPlugin(
               ? { resolveDir: getDirectory(filePath), watchFiles: [filePath] }
               : {}),
           };
-        } catch (error) {
+        } catch {
           return {
             errors: [
               {
                 text: enforceBrowserBoundaries
                   ? "Failed to read browser dependency"
-                  : `Failed to read ${filePath}: ${String(error)}`,
+                  : "Failed to read module dependency",
                 location: null,
               },
             ],
@@ -338,7 +357,7 @@ async function loadFromLockfile(
   const cached = await lockfile.get(url);
   if (!cached) return null;
 
-  logger.debug(`lockfile hit: ${url}`);
+  logger.debug("Dependency lockfile cache hit");
 
   try {
     const response = await fetch(cached.resolved);
@@ -353,17 +372,17 @@ async function loadFromLockfile(
       return {
         errors: [
           {
-            text: `Integrity mismatch for ${url}: expected ${cached.integrity}, got ${integrity}`,
+            text: "Dependency integrity check failed",
             location: null,
           },
         ],
       };
     }
 
-    logger.warn(`integrity mismatch, refetching: ${url}`);
+    logger.warn("Dependency integrity mismatch, refetching");
     return null;
   } catch (_) {
-    logger.warn(`cached URL failed, refetching: ${url}`);
+    logger.warn("Cached dependency fetch failed, refetching");
     return null;
   }
 }
@@ -387,7 +406,7 @@ export function createBareExternalPlugin(
         if (!isBareImport(args.path)) return undefined;
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
 
-        // Keep import-map-resolved specifiers as bare externals — the browser's
+        // Keep import-map-resolved specifiers as bare externals because the browser's
         // <script type="importmap"> resolves them to the correct CDN URL.
         if (importMapOwnsSpecifier(args.path, importMapImports)) {
           return { path: args.path, external: true };
@@ -423,15 +442,15 @@ export function createBareExternalPlugin(
               fetchedAt: new Date().toISOString(),
             });
             await lockfile.flush();
-            logger.debug(`lockfile updated: ${args.path} -> ${resolvedUrl}`);
+            logger.debug("Dependency lockfile updated");
           }
 
           return { contents, loader: "js" };
-        } catch (error) {
+        } catch {
           return {
             errors: [
               {
-                text: `Failed to fetch ${args.path}: ${String(error)}`,
+                text: "Failed to fetch browser dependency",
                 location: null,
               },
             ],

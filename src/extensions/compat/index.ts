@@ -1,5 +1,5 @@
 /**
- * Compat category barrel — optional native runtime services.
+ * Compat category barrel for optional native runtime services.
  *
  * @module extensions/compat
  */

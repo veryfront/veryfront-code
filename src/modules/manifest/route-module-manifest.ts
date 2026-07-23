@@ -13,6 +13,8 @@
 import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { metrics } from "#veryfront/observability";
+import { CACHE_INVARIANT_VIOLATION, SERVICE_OVERLOADED } from "#veryfront/errors";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const logger = serverLogger.component("route-module-manifest");
 
@@ -20,6 +22,12 @@ const logger = serverLogger.component("route-module-manifest");
 const MAX_TRACKED_ROUTES = 2_000;
 /** Bound on in-flight collections; abandoned ones (render errors) get evicted. */
 const MAX_PENDING_COLLECTIONS = 2_000;
+const PENDING_COLLECTION_TTL_MS = 5 * 60 * 1_000;
+const MAX_MODULES_PER_ROUTE = 5_000;
+const MAX_REQUEST_ID_LENGTH = 512;
+const MAX_ROUTE_IDENTITY_LENGTH = 2_048;
+const MAX_PROJECT_IDENTITY_LENGTH = 512;
+const MAX_MODULE_PATH_LENGTH = 4_096;
 
 interface ModuleEntry {
   path: string;
@@ -38,12 +46,54 @@ interface RouteManifest {
 }
 
 const manifestStore = new LRUCache<string, RouteManifest>({ maxEntries: MAX_TRACKED_ROUTES });
-const pendingCollections = new LRUCache<string, Set<string>>({
+const pendingCollections = new LRUCache<string, Map<string, boolean>>({
   maxEntries: MAX_PENDING_COLLECTIONS,
+  ttlMs: PENDING_COLLECTION_TTL_MS,
 });
 
+function validateRequestId(requestId: string): void {
+  if (
+    requestId.length === 0 || requestId.length > MAX_REQUEST_ID_LENGTH ||
+    hasUnsafeControlCharacters(requestId)
+  ) {
+    throw new RangeError("Invalid module collection request ID");
+  }
+}
+
 function buildKey(projectSlug: string | undefined, route: string): string {
-  return `${projectSlug ?? "default"}:${route || "index"}`;
+  const projectIdentity = projectSlug ?? null;
+  const routeIdentity = route || "index";
+  if (
+    (projectIdentity !== null &&
+      (projectIdentity.length === 0 || projectIdentity.length > MAX_PROJECT_IDENTITY_LENGTH ||
+        hasUnsafeControlCharacters(projectIdentity))) ||
+    routeIdentity.length > MAX_ROUTE_IDENTITY_LENGTH ||
+    hasUnsafeControlCharacters(routeIdentity)
+  ) {
+    throw new RangeError("Invalid route manifest identity");
+  }
+  return JSON.stringify([projectIdentity, routeIdentity]);
+}
+
+function normalizeModulePath(path: string): string | null {
+  const normalized = path.replace(/^\/?_vf_modules\//, "");
+  if (
+    normalized.length === 0 || normalized.length > MAX_MODULE_PATH_LENGTH ||
+    normalized.startsWith("/") || normalized.includes("\\") ||
+    hasUnsafeControlCharacters(normalized) ||
+    /[\u2028\u2029"'<>?#]/.test(normalized) ||
+    normalized.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+function cloneManifest(manifest: RouteManifest): RouteManifest {
+  return {
+    ...manifest,
+    modules: manifest.modules.map((module) => ({ ...module })),
+  };
 }
 
 function buildManifest(
@@ -52,7 +102,7 @@ function buildManifest(
   existingRenderCount: number | undefined,
 ): RouteManifest {
   return {
-    route,
+    route: route || "index",
     modules,
     moduleCount: modules.length,
     updatedAt: Date.now(),
@@ -61,15 +111,33 @@ function buildManifest(
 }
 
 export function startModuleCollection(requestId: string): void {
-  pendingCollections.set(requestId, new Set());
+  validateRequestId(requestId);
+  pendingCollections.cleanup();
+  if (pendingCollections.has(requestId)) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Module collection request is already active",
+    });
+  }
+  if (pendingCollections.size >= MAX_PENDING_COLLECTIONS) {
+    throw SERVICE_OVERLOADED.create({
+      detail: "Module collection capacity exceeded",
+    });
+  }
+  pendingCollections.set(requestId, new Map());
 }
 
 export function recordModuleLoad(
   requestId: string,
   modulePath: string,
-  _critical = false,
+  critical = false,
 ): void {
-  pendingCollections.get(requestId)?.add(modulePath);
+  validateRequestId(requestId);
+  const normalized = normalizeModulePath(modulePath);
+  if (!normalized) return;
+  const collection = pendingCollections.get(requestId);
+  if (!collection) return;
+  if (!collection.has(normalized) && collection.size >= MAX_MODULES_PER_ROUTE) return;
+  collection.set(normalized, critical || collection.get(normalized) === true);
 }
 
 export function finishModuleCollection(
@@ -78,6 +146,7 @@ export function finishModuleCollection(
   route: string,
   criticalModules: string[] = [],
 ): void {
+  validateRequestId(requestId);
   const collection = pendingCollections.get(requestId);
   if (!collection) return;
 
@@ -86,34 +155,46 @@ export function finishModuleCollection(
   const key = buildKey(projectSlug, route);
   const existing = manifestStore.get(key);
 
-  const criticalSet = new Set(criticalModules);
-  const newModules: ModuleEntry[] = [];
-  let loadOrder = 0;
+  const criticalPaths = criticalModules
+    .slice(0, MAX_MODULES_PER_ROUTE)
+    .map(normalizeModulePath)
+    .filter((path): path is string => path !== null);
+  const criticalSet = new Set(criticalPaths);
+  const orderedPaths: string[] = [];
+  const seenPaths = new Set<string>();
 
-  for (const path of criticalModules) {
+  for (const path of criticalPaths) {
     if (!collection.has(path)) continue;
-    newModules.push({ path, critical: true, loadOrder: loadOrder++ });
+    orderedPaths.push(path);
+    seenPaths.add(path);
   }
 
-  for (const path of collection) {
-    if (criticalSet.has(path)) continue;
-    newModules.push({ path, critical: false, loadOrder: loadOrder++ });
+  for (const [path, critical] of collection) {
+    if (critical) criticalSet.add(path);
+    if (seenPaths.has(path)) continue;
+    orderedPaths.push(path);
+    seenPaths.add(path);
   }
 
-  const mergedModules = existing?.modules ?? [];
-  const existingPaths = new Set(mergedModules.map((m) => m.path));
-
-  for (const mod of newModules) {
-    if (existingPaths.has(mod.path)) continue;
-    mergedModules.push(mod);
-    existingPaths.add(mod.path);
+  for (const module of existing?.modules ?? []) {
+    if (seenPaths.has(module.path) || orderedPaths.length >= MAX_MODULES_PER_ROUTE) continue;
+    orderedPaths.push(module.path);
+    seenPaths.add(module.path);
   }
+
+  const previousCritical = new Set(
+    existing?.modules.filter((module) => module.critical).map((module) => module.path) ?? [],
+  );
+  const mergedModules = orderedPaths.slice(0, MAX_MODULES_PER_ROUTE).map((path, loadOrder) => ({
+    path,
+    critical: criticalSet.has(path) || previousCritical.has(path),
+    loadOrder,
+  }));
 
   const manifest = buildManifest(route, mergedModules, existing?.renderCount);
   manifestStore.set(key, manifest);
 
   logger.debug("Updated manifest", {
-    key,
     moduleCount: manifest.moduleCount,
     renderCount: manifest.renderCount,
   });
@@ -127,14 +208,9 @@ export function getRouteManifest(
   const manifest = manifestStore.get(key);
   metrics.recordRouteManifestLookup(!!manifest);
 
-  logger.debug("Get manifest", {
-    key,
-    found: !!manifest,
-    moduleCount: manifest?.moduleCount ?? 0,
-    renderCount: manifest?.renderCount ?? 0,
-  });
+  logger.debug("Get manifest", { found: !!manifest, moduleCount: manifest?.moduleCount ?? 0 });
 
-  return manifest ?? null;
+  return manifest ? cloneManifest(manifest) : null;
 }
 
 export function getRouteModulePaths(
@@ -145,6 +221,7 @@ export function getRouteModulePaths(
   if (!manifest) return [];
 
   return manifest.modules
+    .slice()
     .sort((a, b) => a.loadOrder - b.loadOrder)
     .map((m) => m.path);
 }
@@ -173,7 +250,9 @@ export function recordSSRModules(
   const newModules: ModuleEntry[] = [];
 
   for (const path of modules) {
-    const normalizedPath = path.replace(/^_vf_modules\//, "");
+    if (newModules.length >= MAX_MODULES_PER_ROUTE) break;
+    const normalizedPath = normalizeModulePath(path);
+    if (!normalizedPath) continue;
     if (seenPaths.has(normalizedPath)) continue;
 
     newModules.push({
@@ -188,7 +267,6 @@ export function recordSSRModules(
   manifestStore.set(key, manifest);
 
   logger.debug("Recorded SSR modules", {
-    key,
     inputModules: modules.length,
     moduleCount: manifest.moduleCount,
     renderCount: manifest.renderCount,
@@ -200,11 +278,15 @@ export function generateModulePreloadHintsFromManifest(
   route: string,
   maxHints = 50,
 ): string[] {
+  if (!Number.isSafeInteger(maxHints) || maxHints < 0 || maxHints > MAX_MODULES_PER_ROUTE) {
+    throw new RangeError("maxHints must be a non-negative safe integer within the route limit");
+  }
   const modules = getRouteModulePaths(projectSlug, route);
   if (modules.length === 0) return [];
 
   return modules.slice(0, maxHints).map((path) => {
-    const url = `/_vf_modules/${path}`;
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const url = `/_vf_modules/${encodedPath}`;
     return `<link rel="modulepreload" href="${url}">`;
   });
 }
@@ -217,9 +299,9 @@ export function getManifestStats(): {
   const routes: Array<{ route: string; moduleCount: number; renderCount: number }> = [];
   let totalModules = 0;
 
-  for (const [key, manifest] of manifestStore.entries()) {
+  for (const [, manifest] of manifestStore.entries()) {
     routes.push({
-      route: key,
+      route: manifest.route,
       moduleCount: manifest.moduleCount,
       renderCount: manifest.renderCount,
     });
@@ -230,15 +312,20 @@ export function getManifestStats(): {
 }
 
 export function clearProjectManifests(projectSlug: string): void {
-  const prefix = `${projectSlug}:`;
+  buildKey(projectSlug, "index");
 
-  // Snapshot keys before deleting to avoid mutating during iteration.
   for (const key of [...manifestStore.keys()]) {
-    if (!key.startsWith(prefix)) continue;
+    let storedProject: unknown;
+    try {
+      [storedProject] = JSON.parse(key);
+    } catch {
+      continue;
+    }
+    if (storedProject !== projectSlug) continue;
     manifestStore.delete(key);
   }
 
-  logger.debug("Cleared manifests for project", { projectSlug });
+  logger.debug("Cleared manifests for project");
 }
 
 export function clearAllManifests(): void {

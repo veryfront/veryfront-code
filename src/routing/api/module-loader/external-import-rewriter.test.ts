@@ -86,12 +86,37 @@ describe("external-import-rewriter", () => {
       const out = rewriteCompiledBinaryVeryfrontImports(
         `import { Head } from "veryfront/react/head";`,
       );
-      assertStringIncludes(out, `from "./_vf_react_head.mjs"`);
+      assertStringIncludes(out, `from "./_vf_72656163742f68656164.mjs"`);
     });
 
     it("rewrites veryfront subpath dynamic imports", () => {
       const out = rewriteCompiledBinaryVeryfrontImports(`import("veryfront/agent");`);
-      assertStringIncludes(out, `import("./_vf_agent.mjs")`);
+      assertStringIncludes(out, `import("./_vf_6167656e74.mjs")`);
+    });
+
+    it("rewrites side-effect and export-from specifiers without changing comments or data", () => {
+      const code = [
+        `// import "veryfront/agent";`,
+        `const text = "from \\"veryfront/tool\\"";`,
+        `import "veryfront/agent";`,
+        `export { tool } from "veryfront/tool";`,
+      ].join("\n");
+      const out = rewriteCompiledBinaryVeryfrontImports(code);
+
+      assertStringIncludes(out, `// import "veryfront/agent";`);
+      assertStringIncludes(out, `const text = "from \\"veryfront/tool\\"";`);
+      assertStringIncludes(out, `import "./_vf_6167656e74.mjs";`);
+      assertStringIncludes(out, `from "./_vf_746f6f6c.mjs"`);
+    });
+
+    it("uses distinct shim names for slash and underscore subpaths", () => {
+      const out = rewriteCompiledBinaryVeryfrontImports([
+        `import "veryfront/foo/bar";`,
+        `import "veryfront/foo_bar";`,
+      ].join("\n"));
+
+      assertStringIncludes(out, `./_vf_666f6f2f626172.mjs`);
+      assertStringIncludes(out, `./_vf_666f6f5f626172.mjs`);
     });
 
     it("leaves non-veryfront imports untouched", () => {

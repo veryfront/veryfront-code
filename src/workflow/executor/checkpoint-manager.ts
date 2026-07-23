@@ -2,6 +2,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import { getOwnRecordValue } from "./dag/context-patch.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
 
@@ -122,14 +123,14 @@ export class CheckpointManager {
       const node = nodes[i];
       if (!node) continue;
 
-      const state = nodeStates[node.id];
+      const state = getOwnRecordValue(nodeStates, node.id);
       if (!state || state.status === "pending") return node.id;
     }
 
     for (const node of nodes) {
       if (!node.dependsOn?.includes(completedNodeId)) continue;
 
-      const state = nodeStates[node.id];
+      const state = getOwnRecordValue(nodeStates, node.id);
       if (!state || state.status === "pending") return node.id;
     }
 

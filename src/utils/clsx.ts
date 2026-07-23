@@ -18,16 +18,31 @@ export type ClassValue =
   | ClassValue[];
 
 type Value = ClassValue;
+type PendingFrame = { value: Value } | { exit: ClassValue[] };
 
 export function clsx(...args: Value[]): string {
   const out: string[] = [];
-  for (const arg of args) {
+  const pending: PendingFrame[] = args.map((value) => ({ value })).reverse();
+  const activeArrays = new WeakSet<ClassValue[]>();
+
+  while (pending.length > 0) {
+    const frame = pending.pop()!;
+    if ("exit" in frame) {
+      activeArrays.delete(frame.exit);
+      continue;
+    }
+
+    const arg = frame.value;
     if (!arg) continue;
     if (typeof arg === "string" || typeof arg === "number") {
       out.push(String(arg));
     } else if (Array.isArray(arg)) {
-      const inner = clsx(...arg);
-      if (inner) out.push(inner);
+      if (activeArrays.has(arg)) continue;
+      activeArrays.add(arg);
+      pending.push({ exit: arg });
+      for (let index = arg.length - 1; index >= 0; index--) {
+        pending.push({ value: arg[index] });
+      }
     } else if (typeof arg === "object") {
       for (const [key, value] of Object.entries(arg)) {
         if (value) out.push(key);

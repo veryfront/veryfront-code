@@ -14,7 +14,14 @@ const CACHE_PRESETS: Record<string, string> = {
 
 export function buildCacheControl(strategy: CacheStrategy): string {
   if (typeof strategy === "string") {
-    return CACHE_PRESETS[strategy] ?? "public, max-age=0";
+    const preset = CACHE_PRESETS[strategy];
+    if (!preset) throw new TypeError(`Unknown cache strategy: ${strategy}`);
+    return preset;
+  }
+
+  assertCacheDuration("maxAge", strategy.maxAge);
+  if (strategy.staleWhileRevalidate !== undefined) {
+    assertCacheDuration("staleWhileRevalidate", strategy.staleWhileRevalidate);
   }
 
   const parts: string[] = [
@@ -35,4 +42,9 @@ export function buildCacheControl(strategy: CacheStrategy): string {
   }
 
   return parts.join(", ");
+}
+
+function assertCacheDuration(name: string, value: number): void {
+  if (Number.isSafeInteger(value) && value >= 0) return;
+  throw new TypeError(`${name} must be a non-negative safe integer`);
 }

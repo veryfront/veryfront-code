@@ -10,7 +10,7 @@ import { convertNodeRequestToWebRequest } from "./request-adapter.ts";
  */
 function createMockReq(
   method: string,
-  headers: Record<string, string>,
+  headers: Record<string, string | string[]>,
   bodyChunks: string[] = [],
 ) {
   const stream = Readable.from(
@@ -108,5 +108,14 @@ describe("convertNodeRequestToWebRequest", () => {
 
     assertEquals(result.headers.get("x-custom-header"), "custom-value");
     assertEquals(result.headers.get("authorization"), "Bearer token");
+  });
+
+  it("should preserve every value from array-valued headers", () => {
+    const result = convertNodeRequestToWebRequest(
+      createMockReq("GET", { "x-multi": ["one", "two"] }) as never,
+      "http://localhost/test",
+    );
+
+    assertEquals(result.headers.get("x-multi"), "one, two");
   });
 });

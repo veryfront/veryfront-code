@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv, withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createContext7ToolSource } from "./context7.ts";
 
@@ -114,9 +115,9 @@ describe("tool/context7", () => {
   });
 
   it("falls back to CONTEXT7_API_KEY env var when apiKey config is omitted", async () => {
-    const originalEnv = Deno.env.get("CONTEXT7_API_KEY");
+    const originalEnv = getEnv("CONTEXT7_API_KEY");
     try {
-      Deno.env.set("CONTEXT7_API_KEY", "env-fallback-key");
+      setEnv("CONTEXT7_API_KEY", "env-fallback-key");
       let capturedHeaders: Headers | undefined;
 
       const source = createContext7ToolSource({ endpoint: "https://mcp.test/mcp" });
@@ -137,9 +138,9 @@ describe("tool/context7", () => {
       assertEquals(capturedHeaders?.get("CONTEXT7_API_KEY"), "env-fallback-key");
     } finally {
       if (originalEnv !== undefined) {
-        Deno.env.set("CONTEXT7_API_KEY", originalEnv);
+        setEnv("CONTEXT7_API_KEY", originalEnv);
       } else {
-        Deno.env.delete("CONTEXT7_API_KEY");
+        deleteEnv("CONTEXT7_API_KEY");
       }
     }
   });
@@ -166,9 +167,9 @@ describe("tool/context7", () => {
   });
 
   it("throws when no API key is provided and CONTEXT7_API_KEY env is unset", async () => {
-    const originalEnv = Deno.env.get("CONTEXT7_API_KEY");
+    const originalEnv = getEnv("CONTEXT7_API_KEY");
     try {
-      Deno.env.delete("CONTEXT7_API_KEY");
+      deleteEnv("CONTEXT7_API_KEY");
       const source = createContext7ToolSource();
       await assertRejects(
         () =>
@@ -181,8 +182,32 @@ describe("tool/context7", () => {
       );
     } finally {
       if (originalEnv !== undefined) {
-        Deno.env.set("CONTEXT7_API_KEY", originalEnv);
+        setEnv("CONTEXT7_API_KEY", originalEnv);
       }
     }
+  });
+
+  it("rejects blank configured and environment API keys", async () => {
+    const assertBlankKeyRejected = async (source: ReturnType<typeof createContext7ToolSource>) => {
+      await assertRejects(
+        () =>
+          withMockFetch(
+            async () =>
+              Response.json({
+                jsonrpc: "2.0",
+                id: "context7:tools:list",
+                result: { tools: [] },
+              }),
+            async () => await source.listTools(),
+          ),
+        Error,
+        "Context7 API key is required",
+      );
+    };
+
+    await assertBlankKeyRejected(createContext7ToolSource({ apiKey: "   " }));
+    await withEnv({ CONTEXT7_API_KEY: "   " }, async () => {
+      await assertBlankKeyRejected(createContext7ToolSource());
+    });
   });
 });

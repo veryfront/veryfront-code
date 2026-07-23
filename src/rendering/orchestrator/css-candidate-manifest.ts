@@ -6,6 +6,7 @@ import {
 import { getRouteModulePaths } from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { isAbsolute, relative } from "#veryfront/compat/path/index.ts";
 
 interface SourceFileLike {
   path: string;
@@ -41,6 +42,7 @@ interface ProjectCandidateOptions {
 const logger = rendererLogger.component("css-candidate-manifest");
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 const DEV_MANIFEST_TTL_MS = 2_000;
+const MANIFEST_CACHE_MAX_ENTRIES = 200;
 const ROUTE_CANDIDATE_CACHE_MAX_ENTRIES = 200;
 
 const manifestCache = new Map<string, CandidateManifest>();
@@ -76,13 +78,30 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 }
 
-function toRelativeProjectPath(path: string, projectDir: string): string {
+function toRelativeProjectPath(path: string, projectDir: string): string | undefined {
   const normalized = normalizePath(path);
-  const normalizedProjectDir = normalizePath(projectDir).replace(/\/+$/, "");
-  if (normalized.startsWith(normalizedProjectDir)) {
-    return normalized.slice(normalizedProjectDir.length).replace(/^\/+/, "");
+  if (!isAbsolute(normalized)) {
+    const projectRelative = normalized.replace(/^\.\//, "").replace(/^\/+/, "");
+    if (
+      !projectRelative || projectRelative === ".." || projectRelative.startsWith("../") ||
+      projectRelative.split("/").some((segment) => segment === "..")
+    ) {
+      return undefined;
+    }
+    return projectRelative;
   }
-  return normalized.replace(/^\/+/, "");
+
+  const relativePath = normalizePath(relative(projectDir, normalized));
+  if (
+    relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)
+  ) {
+    return undefined;
+  }
+  return relativePath.replace(/^\.\//, "");
+}
+
+function frameCacheKeyPart(value: string): string {
+  return `${value.length}:${value}`;
 }
 
 function buildManifestCacheKey(
@@ -90,7 +109,9 @@ function buildManifestCacheKey(
   projectVersion: string,
   styleProfileHash?: string,
 ): string {
-  return `${projectScope}:${projectVersion}:${styleProfileHash ?? "default"}`;
+  return [projectScope, projectVersion, styleProfileHash ?? "default"]
+    .map(frameCacheKeyPart)
+    .join("");
 }
 
 function shouldRebuildManifest(
@@ -123,8 +144,9 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
     if (!file.content) continue;
     if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
 
-    const candidates = new Set(extractCandidates(file.content));
     const relativePath = toRelativeProjectPath(file.path, projectDir);
+    if (relativePath === undefined) continue;
+    const candidates = new Set(extractCandidates(file.content));
     const absolutePath = normalizePath(file.path);
 
     fileCandidates.set(relativePath, candidates);
@@ -156,6 +178,14 @@ function getOrBuildManifest(
     : existingManifest!;
 
   if (manifest !== existingManifest) {
+    while (manifestCache.size >= MANIFEST_CACHE_MAX_ENTRIES && !manifestCache.has(manifestKey)) {
+      const oldestKey = manifestCache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      manifestCache.delete(oldestKey);
+      for (const key of routeCandidateCache.keys()) {
+        if (key.startsWith(oldestKey)) routeCandidateCache.delete(key);
+      }
+    }
     manifestCache.set(manifestKey, manifest);
 
     for (const key of routeCandidateCache.keys()) {
@@ -174,6 +204,7 @@ function addCandidatesForPath(
 ): void {
   const absolutePath = normalizePath(path);
   const relativePath = toRelativeProjectPath(path, projectDir);
+  if (relativePath === undefined) return;
   const candidates = manifest.fileCandidates.get(absolutePath) ??
     manifest.fileCandidates.get(relativePath);
   if (!candidates) return;
@@ -190,7 +221,7 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
     options.styleProfile?.hash,
   );
   const manifest = getOrBuildManifest(options);
-  const routeCacheKey = `${manifestKey}:${options.routeKey}`;
+  const routeCacheKey = `${manifestKey}${frameCacheKeyPart(options.routeKey)}`;
   const cachedRoute = routeCandidateCache.get(routeCacheKey);
   if (cachedRoute) return new Set(cachedRoute);
 
@@ -249,17 +280,18 @@ export function getProjectCandidates(options: ProjectCandidateOptions): Set<stri
  * Invalidate cached candidate manifests for one project scope (or all scopes).
  */
 export function invalidateProjectCandidateManifests(projectScope?: string): void {
-  if (!projectScope) {
+  if (projectScope === undefined) {
     manifestCache.clear();
     routeCandidateCache.clear();
     return;
   }
 
+  const scopePrefix = frameCacheKeyPart(projectScope);
   for (const key of manifestCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) manifestCache.delete(key);
+    if (key.startsWith(scopePrefix)) manifestCache.delete(key);
   }
 
   for (const key of routeCandidateCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) routeCandidateCache.delete(key);
+    if (key.startsWith(scopePrefix)) routeCandidateCache.delete(key);
   }
 }

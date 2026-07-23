@@ -2,15 +2,18 @@ import type * as React from "react";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
-import { join as joinPath } from "#veryfront/compat/path/index.ts";
-import { serverLogger } from "#veryfront/utils";
+import { isAbsolute, join as joinPath, normalize, relative } from "#veryfront/compat/path/index.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { classifyTelemetryError } from "#veryfront/observability/telemetry-safety.ts";
+import { isFallbackDefinitionError } from "./fallback-error-classification.ts";
 
-const logger = serverLogger.component("error-page-fallback");
+const logger = getBaseLogger("SERVER").component("error-page-fallback");
 
 type ErrorPageType = "404" | "500" | "_error";
 
@@ -39,82 +42,68 @@ export async function tryErrorPageFallback(
   builder: ResponseBuilder,
   options: ErrorPageOptions,
 ): Promise<Response | null> {
-  const { statusCode, error, pathname } = options;
+  const { statusCode } = options;
+  const pagesDir = joinPath(
+    ctx.projectDir,
+    ctx.config?.directories?.pages ?? "pages",
+  );
 
   try {
-    const pagesDir = joinPath(
-      ctx.projectDir,
-      ctx.config?.directories?.pages ?? "pages",
-    );
-
-    try {
-      const st = await ctx.adapter.fs.stat(pagesDir);
-      if (!st.isDirectory) return null;
-    } catch (_) {
-      // expected: pages directory doesn't exist
-      return null;
-    }
-
-    const reactVersion = await resolveProjectReactVersion({
-      projectDir: ctx.projectDir,
-      config: ctx.config,
-    });
-
-    const specificPage: ErrorPageType | null = statusCode === 404
-      ? "404"
-      : statusCode === 500
-      ? "500"
-      : null;
-
-    if (specificPage) {
-      const ErrorComponent = await tryLoadErrorPage(
-        pagesDir,
-        specificPage,
-        ctx,
-        reactVersion,
-      );
-      if (ErrorComponent) {
-        logger.debug(`Found pages/${specificPage}.tsx`);
-        return renderErrorPage(
-          req,
-          ctx,
-          builder,
-          ErrorComponent,
-          statusCode,
-          error,
-          pathname,
-          reactVersion,
-        );
-      }
-    }
-
-    const GenericErrorComponent = await tryLoadErrorPage(
-      pagesDir,
-      "_error",
-      ctx,
-      reactVersion,
-    );
-    if (!GenericErrorComponent) return null;
-
-    logger.debug("Found pages/_error.tsx");
-    return renderErrorPage(
-      req,
-      ctx,
-      builder,
-      GenericErrorComponent,
-      statusCode,
-      error,
-      pathname,
-      reactVersion,
-    );
-  } catch (e) {
-    // The user's custom error page failed to compile/load. Surface at warn so
-    // they learn it's broken, before falling back to the default error output.
-    logger.warn("Failed to load custom error page; falling back to default", {
-      errorName: e instanceof Error ? e.name : typeof e,
-    });
+    const st = await ctx.adapter.fs.stat(pagesDir);
+    if (!st.isDirectory) return null;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     return null;
   }
+
+  const reactVersion = await resolveProjectReactVersion({
+    projectDir: ctx.projectDir,
+    config: ctx.config,
+  });
+
+  const specificPage: ErrorPageType | null = statusCode === 404
+    ? "404"
+    : statusCode === 500
+    ? "500"
+    : null;
+
+  if (specificPage) {
+    const ErrorComponent = await tryLoadErrorPage(
+      pagesDir,
+      specificPage,
+      ctx,
+      reactVersion,
+    );
+    if (ErrorComponent) {
+      logger.debug("Using status-specific custom error page");
+      return renderErrorPage(
+        req,
+        ctx,
+        builder,
+        ErrorComponent,
+        statusCode,
+        reactVersion,
+      );
+    }
+  }
+
+  const GenericErrorComponent = await tryLoadErrorPage(
+    pagesDir,
+    "_error",
+    ctx,
+    reactVersion,
+  );
+  if (!GenericErrorComponent) return null;
+
+  logger.debug("Using generic custom error page");
+  return renderErrorPage(
+    req,
+    ctx,
+    builder,
+    GenericErrorComponent,
+    statusCode,
+    reactVersion,
+  );
 }
 
 const ERROR_PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
@@ -149,6 +138,55 @@ async function deleteCachedPath(cacheKey: string): Promise<void> {
   errorPagePathCache.delete(cacheKey);
 }
 
+function resolveErrorPagePath(
+  resolvedPath: string,
+  projectDir: string,
+  pagesDir: string,
+): string {
+  const candidate = normalize(
+    isAbsolute(resolvedPath) ? resolvedPath : joinPath(projectDir, resolvedPath),
+  );
+  const relativePath = relative(normalize(pagesDir), candidate).replaceAll("\\", "/");
+  if (
+    relativePath === ".." || relativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new TypeError("Resolved error page is outside the configured pages directory");
+  }
+  return candidate;
+}
+
+type ErrorPageCandidate =
+  | { kind: "found"; component: React.ComponentType<unknown> }
+  | { kind: "missing" }
+  | { kind: "invalid" };
+
+async function loadErrorPageCandidate(
+  filePath: string,
+  ctx: HandlerContext,
+  reactVersion: string,
+): Promise<ErrorPageCandidate> {
+  let source: string;
+  try {
+    source = await ctx.adapter.fs.readFile(filePath);
+  } catch (error) {
+    if (isNotFoundError(error)) return { kind: "missing" };
+    throw error;
+  }
+
+  try {
+    const component = await loadErrorComponent(source, filePath, ctx, reactVersion);
+    return { kind: "found", component };
+  } catch (error) {
+    if (!isFallbackDefinitionError(error)) throw error;
+
+    logger.warn("Custom error page could not be loaded", {
+      errorCategory: classifyTelemetryError(error),
+    });
+    return { kind: "invalid" };
+  }
+}
+
 async function tryLoadErrorPage(
   pagesDir: string,
   pageType: ErrorPageType,
@@ -161,52 +199,65 @@ async function tryLoadErrorPage(
   if (cachedPath !== undefined) {
     if (!cachedPath) return null;
 
-    try {
-      return await loadErrorComponent(cachedPath, ctx, reactVersion);
-    } catch (_) {
-      // expected: cached path no longer valid, clear and re-resolve
-      await deleteCachedPath(cacheKey);
-    }
+    const resolvedCachedPath = resolveErrorPagePath(
+      cachedPath,
+      ctx.projectDir,
+      pagesDir,
+    );
+    const cachedCandidate = await loadErrorPageCandidate(
+      resolvedCachedPath,
+      ctx,
+      reactVersion,
+    );
+    if (cachedCandidate.kind === "found") return cachedCandidate.component;
+
+    await deleteCachedPath(cacheKey);
+    if (cachedCandidate.kind === "invalid") return null;
   }
 
   const basePath = joinPath(pagesDir, pageType);
 
   if (ctx.adapter.fs.resolveFile) {
+    let resolvedPath: string | null;
     try {
-      const resolvedPath = await ctx.adapter.fs.resolveFile(basePath);
-      if (!resolvedPath) {
-        await setCachedPath(cacheKey, null);
-        return null;
-      }
-
-      const fullPath = joinPath(ctx.projectDir, resolvedPath);
-      const component = await loadErrorComponent(fullPath, ctx, reactVersion);
-      if (component) {
-        await setCachedPath(cacheKey, fullPath);
-        return component;
-      }
-    } catch (_) {
-      // expected: resolveFile may fail, fall through to extension probing
+      resolvedPath = await ctx.adapter.fs.resolveFile(basePath);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      resolvedPath = null;
     }
 
-    await setCachedPath(cacheKey, null);
+    if (!resolvedPath) {
+      await setCachedPath(cacheKey, null);
+      return null;
+    }
+
+    const fullPath = resolveErrorPagePath(resolvedPath, ctx.projectDir, pagesDir);
+    const candidate = await loadErrorPageCandidate(fullPath, ctx, reactVersion);
+    if (candidate.kind === "found") {
+      await setCachedPath(cacheKey, fullPath);
+      return candidate.component;
+    }
+    if (candidate.kind === "missing") await setCachedPath(cacheKey, null);
     return null;
   }
 
   for (const ext of ERROR_PAGE_EXTENSIONS) {
     const filePath = joinPath(pagesDir, `${pageType}${ext}`);
+    let isFile: boolean;
     try {
-      const stat = await ctx.adapter.fs.stat(filePath);
-      if (!stat.isFile) continue;
-
-      const component = await loadErrorComponent(filePath, ctx, reactVersion);
-      if (component) {
-        await setCachedPath(cacheKey, filePath);
-        return component;
-      }
-    } catch (_) {
-      // expected: file with this extension doesn't exist
+      isFile = (await ctx.adapter.fs.stat(filePath)).isFile;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      continue;
     }
+    if (!isFile) continue;
+
+    const candidate = await loadErrorPageCandidate(filePath, ctx, reactVersion);
+    if (candidate.kind === "found") {
+      await setCachedPath(cacheKey, filePath);
+      return candidate.component;
+    }
+    if (candidate.kind === "invalid") return null;
   }
 
   await setCachedPath(cacheKey, null);
@@ -214,11 +265,11 @@ async function tryLoadErrorPage(
 }
 
 async function loadErrorComponent(
+  source: string,
   filePath: string,
   ctx: HandlerContext,
   reactVersion: string,
-): Promise<React.ComponentType<unknown> | null> {
-  const src = await ctx.adapter.fs.readFile(filePath);
+): Promise<React.ComponentType<unknown>> {
   const { loadComponentFromSource } = await import(
     "#veryfront/modules/react-loader/component-loader.ts"
   );
@@ -233,19 +284,19 @@ async function loadErrorComponent(
     );
 
   const Component = await loadComponentFromSource(
-    src,
+    source,
     filePath,
     ctx.projectDir,
     ctx.adapter,
     {
       projectId: ctx.projectId ?? ctx.projectDir,
-      dev: isLocal,
+      dev: false,
       contentSourceId,
       reactVersion,
     },
   );
 
-  return typeof Component === "function" ? (Component as React.ComponentType<unknown>) : null;
+  return Component as React.ComponentType<unknown>;
 }
 
 async function renderErrorPage(
@@ -254,16 +305,17 @@ async function renderErrorPage(
   builder: ResponseBuilder,
   ErrorComponent: React.ComponentType<unknown>,
   statusCode: number,
-  error?: Error,
-  pathname?: string,
   reactVersion?: string,
 ): Promise<Response> {
-  const { getProjectReact, renderToStringAdapter } = await import(
+  const { getProjectReact, getReactDOMServer, renderToStringAdapter } = await import(
     "#veryfront/react/compat/ssr-adapter/index.ts"
   );
-  const React = await getProjectReact(reactVersion);
+  const [React] = await Promise.all([
+    getProjectReact(reactVersion),
+    getReactDOMServer(reactVersion),
+  ]);
 
-  const errorProps = { statusCode, err: error, pathname };
+  const errorProps = { statusCode, err: undefined, pathname: undefined };
 
   const element = React.createElement(
     ErrorComponent as React.ComponentType<typeof errorProps>,
@@ -290,16 +342,13 @@ async function renderErrorPage(
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-cache")
       .html(html, statusCode);
-  } catch (renderError) {
-    logger.debug("Failed to render error component", {
-      error: renderError,
+  } catch (error) {
+    logger.warn("Custom error page render failed", {
+      errorCategory: classifyTelemetryError(error),
     });
 
     const title = statusCode === 404 ? "Not Found" : "Server Error";
-    let message = "An unexpected error occurred.";
-    if (statusCode === 404) {
-      message = pathname ? `The page "${pathname}" could not be found.` : "Page not found.";
-    }
+    const message = statusCode === 404 ? "Page not found." : "An unexpected error occurred.";
 
     const fallbackHtml = generateErrorHtml({
       statusCode,

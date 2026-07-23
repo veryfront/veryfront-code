@@ -58,9 +58,23 @@ describe("rendering/cache/stores/filesystem-store", () => {
       await store.clear();
     });
 
-    it("should destroy (same as clear)", async () => {
-      const store = new FilesystemCacheStore({ baseDir });
-      await store.destroy();
+    it("preserves durable entries when a store instance is destroyed", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-fs-cache-destroy-" });
+      const payload = {
+        result: { html: "<p>persistent</p>", frontmatter: {}, headings: [], stream: null },
+        storedAt: Date.now(),
+      };
+
+      try {
+        const first = new FilesystemCacheStore({ baseDir: dir });
+        await first.set("persistent", payload as any);
+        await first.destroy();
+
+        const second = new FilesystemCacheStore({ baseDir: dir });
+        assertEquals((await second.get("persistent"))?.result.html, "<p>persistent</p>");
+      } finally {
+        await Deno.remove(dir, { recursive: true }).catch(() => undefined);
+      }
     });
 
     it("should deleteByPrefix", async () => {
@@ -78,7 +92,7 @@ describe("rendering/cache/stores/filesystem-store", () => {
       assertEquals(deleted >= 0, true);
 
       // Cleanup
-      await store.destroy();
+      await store.clear();
     });
   });
 });

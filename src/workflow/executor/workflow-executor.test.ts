@@ -62,6 +62,23 @@ class CompletionRaceBackend extends MemoryBackend {
   }
 }
 
+class CompleteBeforeCancellationBackend extends MemoryBackend {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "cancelled") {
+      await super.updateRun(runId, {
+        status: "completed",
+        output: { won: "completion" },
+        completedAt: new Date(),
+      });
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class LosingLockBackend extends MemoryBackend {
   readonly extensionAttempted = Promise.withResolvers<void>();
   releaseCalls = 0;
@@ -168,6 +185,91 @@ class CleanupTrackingBackend extends MemoryBackend {
 }
 
 describe("workflow/executor/workflow-executor", () => {
+  it("marks a run failed when its completed output violates the output schema", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "invalid-output",
+        outputSchema: defineSchema((v) => v.object({ expected: v.string() }))(),
+        steps: [step("actual", { tool: createTool("actual", () => ({ value: 1 })) })],
+      }).definition,
+    );
+
+    const handle = await executor.start("invalid-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertExists(run);
+    assertEquals(run.status, "failed");
+    assertEquals(run.output, undefined);
+    assertEquals(run.context.actual, { value: 1 });
+    assertEquals(run.nodeStates.actual?.status, "completed");
+    assertEquals(run.nodeStates.actual?.output, { value: 1 });
+  });
+
+  it("persists the output schema's transformed value", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let completedOutput: unknown;
+    executor.register(
+      workflow({
+        id: "transformed-output",
+        outputSchema: defineSchema((v) =>
+          v.object({ actual: v.object({ value: v.number() }) }).transform(({ actual }) => ({
+            normalized: actual.value,
+          }))
+        )(),
+        steps: [step("actual", { tool: createTool("actual", () => ({ value: 7 })) })],
+        onComplete: (output) => {
+          completedOutput = output;
+        },
+      }).definition,
+    );
+
+    const handle = await executor.start("transformed-output", {});
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertExists(run);
+    assertEquals(run.status, "completed");
+    assertEquals(run.output, { normalized: 7 });
+    assertEquals(completedOutput, { normalized: 7 });
+  });
+
+  it("persists and executes the input schema's parsed value", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const observedInputs: unknown[] = [];
+    executor.register(
+      workflow({
+        id: "transformed-input",
+        inputSchema: defineSchema((v) =>
+          v.object({ value: v.number() }).transform(({ value }) => ({ normalized: value + 1 }))
+        )(),
+        steps: ({ input }) => [
+          step("observed", {
+            tool: createTool("observe-input", (toolInput) => {
+              observedInputs.push(toolInput);
+              return toolInput;
+            }),
+            input,
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("transformed-input", { value: 6, ignored: true } as never);
+    await handle.settled();
+
+    const run = await backend.getRun(handle.runId);
+    assertExists(run);
+    assertEquals(run.status, "completed");
+    assertEquals(run.input, { normalized: 7 });
+    assertEquals(run.context.input, { normalized: 7 });
+    assertEquals(observedInputs, [{ normalized: 7 }]);
+  });
+
   it("persists the exact source integration policy when a run starts", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });
@@ -1031,6 +1133,40 @@ describe("workflow/executor/workflow-executor", () => {
     const cancelledRun = await backend.getRun(handle.runId);
     assertExists(cancelledRun);
     assertEquals(cancelledRun.status, "cancelled");
+  });
+
+  it("does not overwrite completion when cancellation loses the terminal transition race", async () => {
+    const backend = new CompleteBeforeCancellationBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const run = createRun("cancel-loses-race");
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.cancel(run.id),
+      Error,
+      "run has already completed",
+    );
+
+    const completedRun = await backend.getRun(run.id);
+    assertExists(completedRun);
+    assertEquals(completedRun.status, "completed");
+    assertEquals(completedRun.output, { won: "completion" });
+  });
+
+  it("fails cancellation closed when a legacy backend cannot update status atomically", async () => {
+    const backend = new MemoryBackend();
+    Object.defineProperty(backend, "updateRunIfStatus", { value: undefined });
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const run = createRun("legacy-cancel");
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.cancel(run.id),
+      Error,
+      "atomic conditional updates",
+    );
+
+    assertEquals((await backend.getRun(run.id))?.status, "pending");
   });
 
   it("does not schedule more nodes after a workflow timeout", async () => {

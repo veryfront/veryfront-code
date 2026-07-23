@@ -13,6 +13,8 @@ describe("createProxyErrorResponse", () => {
 
     assertEquals(response.status, 404);
     assertEquals(response.headers.get("Content-Type"), "text/html; charset=utf-8");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
 
     const body = await response.text();
     assertStringIncludes(body, "<title>404 Not Found");
@@ -29,6 +31,30 @@ describe("createProxyErrorResponse", () => {
 
     assertEquals(response.status, 302);
     assertEquals(response.headers.get("Location"), "https://veryfront.com/sign-in?from=%2F");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+  });
+
+  it("fails closed for redirect targets outside the Veryfront sign-in route", async () => {
+    const response = createProxyErrorResponse({
+      status: 302,
+      message: "Authentication required",
+      redirectUrl: "https://attacker.example/steal",
+    });
+
+    assertEquals(response.status, 500);
+    assertEquals(response.headers.get("Location"), null);
+    assertEquals(await response.json(), { error: "Internal Proxy Error", status: 500 });
+  });
+
+  it("fails closed when the sign-in return target is not an approved proxy path", async () => {
+    const response = createProxyErrorResponse({
+      status: 302,
+      message: "Authentication required",
+      redirectUrl: "https://veryfront.com/sign-in?from=https%3A%2F%2Fattacker.example%2Fsteal",
+    });
+
+    assertEquals(response.status, 500);
+    assertEquals(response.headers.get("Location"), null);
   });
 
   it("keeps generic errors as JSON", async () => {
@@ -39,6 +65,8 @@ describe("createProxyErrorResponse", () => {
 
     assertEquals(response.status, 502);
     assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
     assertEquals(
       await response.text(),
       JSON.stringify({

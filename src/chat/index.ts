@@ -203,7 +203,7 @@ export {
   type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
-// Conversation persistence adapters — swappable async stores behind the
+// Conversation persistence adapters, swappable async stores behind the
 // (upcoming) `useConversations` hook. localStorage default; idb/api are follow-ups.
 export {
   type Conversation,
@@ -253,7 +253,7 @@ export {
 } from "#veryfront/react/components/chat/chat.tsx";
 export { Markdown, type MarkdownProps } from "#veryfront/react/components/chat/markdown.tsx";
 
-// Layout primitives — chat-independent, re-exported from the `veryfront/ui`
+// Layout primitives, chat-independent and re-exported from the `veryfront/ui`
 // package (their home) so consuming apps can compose their own shell (sidebar
 // in the layout, pages in the content slot) straight from `veryfront/chat`.
 export {
@@ -307,7 +307,7 @@ export {
   type ChatActionsTriggerProps,
   useChatActions,
 } from "#veryfront/react/components/chat/chat-actions.tsx";
-// `SkillTool` retired as a standalone export — a skill tool is now a presentation
+// `SkillTool` retired as a standalone export. A skill tool is now a presentation
 // variant of `ToolCall` (`<ToolCall variant="compact" />`, auto-default for skill
 // parts). The row impl stays internal to `tool-ui.tsx`.
 // Shared syntax-highlight primitive (`CodeBlockProps` name is already taken by

@@ -9,12 +9,12 @@
  * credential before serialization, so an accidental
  * `logger.info("...", { authorization: token })` cannot leak the secret.
  *
- * Scope is intentionally key-based: we do not attempt to find secrets embedded
- * in free-form message strings (too lossy). The deny-list errs toward
- * over-redaction — masking a benign `tokenCount` is acceptable; leaking a real
- * token is not. The traversal fails *closed*: on a cycle, depth overflow, or a
- * throwing getter it returns {@link REDACTED} rather than risk emitting an
- * unredacted object.
+ * The traversal combines key-based masking with conservative scrubbing of
+ * credential-shaped URLs, bearer tokens, and assignments in string values.
+ * The deny-list errs toward over-redaction: masking a benign `tokenCount` is
+ * acceptable; leaking a real token is not. The traversal fails *closed*: on a
+ * cycle, depth overflow, or a throwing getter it returns {@link REDACTED}
+ * rather than risk emitting an unredacted object.
  */
 
 import { isRecord } from "./core.ts";
@@ -65,6 +65,9 @@ const sensitiveKeyCache = new Map<string, boolean>();
 
 /** Stop traversing past this depth to keep the pass cheap and stack-safe. */
 const MAX_DEPTH = 16;
+const MAX_COLLECTION_ITEMS = 100;
+const MAX_REDACTION_NODES = 2_048;
+const MAX_STRING_LENGTH = 16_384;
 
 /**
  * Whether a context key names a credential and should have its value masked.
@@ -99,16 +102,45 @@ function isTraversableRecord(value: unknown): value is Record<string, unknown> {
   return isRecord(value);
 }
 
-function hasToJson(value: object): value is { toJSON: () => unknown } {
-  return typeof (value as { toJSON?: unknown }).toJSON === "function";
+const TO_JSON_ACCESS_FAILED = Symbol("to-json-access-failed");
+
+function getToJson(
+  value: object,
+): ((this: object) => unknown) | null | typeof TO_JSON_ACCESS_FAILED {
+  try {
+    const candidate = Reflect.get(value, "toJSON") as unknown;
+    return typeof candidate === "function" ? candidate as (this: object) => unknown : null;
+  } catch {
+    return TO_JSON_ACCESS_FAILED;
+  }
 }
 
-function redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
+function redactValue(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  budget: { remaining: number },
+): unknown {
+  if (budget.remaining-- <= 0) return REDACTED;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "string") {
+    const sanitized = sanitizeUrlCredentials(value);
+    return sanitized.length > MAX_STRING_LENGTH
+      ? `${sanitized.slice(0, MAX_STRING_LENGTH)}[TRUNCATED]`
+      : sanitized;
+  }
+
   if (Array.isArray(value)) {
     if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
     seen.add(value);
     try {
-      return value.map((item) => redactValue(item, depth + 1, seen));
+      const output = value.slice(0, MAX_COLLECTION_ITEMS).map((item) =>
+        redactValue(item, depth + 1, seen, budget)
+      );
+      if (value.length > MAX_COLLECTION_ITEMS) output.push(REDACTED);
+      return output;
+    } catch {
+      return REDACTED;
     } finally {
       seen.delete(value);
     }
@@ -119,26 +151,28 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
   // enumerable keys. A key-based pass over the object's own properties would
   // therefore miss credentials smuggled through `toJSON`, e.g.
   // `{ toJSON: () => ({ apiKey: "sk-..." }) }` (CODEX P2). When `toJSON`
-  // returns a non-scalar (an object/array that could carry credential keys),
-  // redact *that* — the thing actually emitted. When it returns a scalar
-  // (Date/URL → ISO string), the original object is left intact, preserving
-  // prior behavior and identity.
-  if (isRecord(value) && hasToJson(value)) {
-    if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
-    seen.add(value);
-    try {
-      const serialized = value.toJSON();
-      if (isRecord(serialized) || Array.isArray(serialized)) {
-        return redactValue(serialized, depth + 1, seen);
+  // returns a value, redact a snapshot of that value. This both covers objects
+  // and prevents JSON.stringify from invoking a mutable scalar serializer a
+  // second time after the redaction pass.
+  if (isRecord(value)) {
+    const toJSON = getToJson(value);
+    if (toJSON === TO_JSON_ACCESS_FAILED) return REDACTED;
+    if (toJSON) {
+      if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
+      seen.add(value);
+      try {
+        const serialized = toJSON.call(value);
+        if (isRecord(serialized) || Array.isArray(serialized)) {
+          return redactValue(serialized, depth + 1, seen, budget);
+        }
+        return redactValue(serialized, depth + 1, seen, budget);
+      } catch {
+        // A throwing toJSON must never let the raw object (whose own keys we
+        // skipped) through: fail closed.
+        return REDACTED;
+      } finally {
+        seen.delete(value);
       }
-      // Scalar result (string/number/…): the object serializes safely as-is.
-      return value;
-    } catch {
-      // A throwing toJSON must never let the raw object (whose own keys we
-      // skipped) through: fail closed.
-      return REDACTED;
-    } finally {
-      seen.delete(value);
     }
   }
 
@@ -147,8 +181,20 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
     seen.add(value);
     try {
       const out: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(value)) {
-        out[key] = isSensitiveKey(key) ? REDACTED : redactValue(child, depth + 1, seen);
+      let count = 0;
+      for (const key in value) {
+        if (!Object.hasOwn(value, key)) continue;
+        if (count++ >= MAX_COLLECTION_ITEMS) {
+          out.__truncated__ = REDACTED;
+          break;
+        }
+        const child = value[key];
+        Object.defineProperty(out, key, {
+          configurable: true,
+          enumerable: true,
+          value: isSensitiveKey(key) ? REDACTED : redactValue(child, depth + 1, seen, budget),
+          writable: true,
+        });
       }
       return out;
     } catch {
@@ -160,8 +206,7 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
     }
   }
 
-  // Primitives and scalar-serializing objects (Date, URL, …) are returned
-  // untouched: they are not key/value bags we can safely rewrite.
+  // Remaining primitives are safe to return unchanged.
   return value;
 }
 
@@ -173,7 +218,7 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
  * depth overflow, or a throwing getter.
  */
 export function redactSensitive<T>(context: T): T {
-  return redactValue(context, 0, new Set<object>()) as T;
+  return redactValue(context, 0, new Set<object>(), { remaining: MAX_REDACTION_NODES }) as T;
 }
 
 /**
@@ -184,6 +229,9 @@ const SENSITIVE_URL_PARAMS = [
   "access_token",
   "accesstoken",
   "refresh_token",
+  "id_token",
+  "session_id",
+  "jwt",
   "api_key",
   "apikey",
   "code",
@@ -199,7 +247,146 @@ const SENSITIVE_URL_PARAMS = [
   "auth",
 ] as const;
 
-const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/?#@\s]+)@/gi;
+const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(
+  SENSITIVE_URL_PARAMS.map((parameter) => parameter.replace(/[^a-z0-9]/g, "")),
+);
+
+const EMBEDDED_URL_USERINFO_RE =
+  /((?:\b(?:https?|ftp|ws|wss):[\\/]*|\b[a-z][a-z0-9+.-]*:[\\/]{2,}|[\\/]{2}))([^/\\?#\s]+)@/gi;
+const WHOLE_URL_USERINFO_RE =
+  /((?:\b(?:https?|ftp|ws|wss):[\t\r\n\f]*[\\/]*|\b[a-z][a-z0-9+.-]*:[\t\r\n\f]*[\\/]{2,}|[\\/]{2}))([^/\\?#]*)@/i;
+const AMBIGUOUS_BARE_USERINFO_PUNCTUATION = /[,;()[\]{}]/;
+
+// Header values can appear in log messages and error stacks without being
+// represented as structured `headers` objects. Keep these expressions line
+// bounded so a header on one stack/message line cannot consume useful text on
+// subsequent lines. The negated character classes are linear-time scans and
+// avoid backtracking over attacker-controlled credential values.
+const AUTHORIZATION_HEADER_RE = /\b((?:proxy-)?authorization)([ \t]*[:=][ \t]*)([^\r\n]*)/gi;
+const COOKIE_HEADER_RE = /\b(set-cookie|cookie)([ \t]*[:=][ \t]*)([^\r\n]*)/gi;
+const AUTH_SCHEME_RE = /^([!#$%&'*+.^_`|~0-9a-z-]+)[ \t]+/i;
+const SINGLE_TOKEN_AUTH_SCHEMES = new Set(["basic", "bearer", "dpop", "negotiate", "ntlm"]);
+const AUTH_TOKEN_DELIMITER_RE = /[ \t,;]/;
+const MAX_URL_PARAMETER_NAME_LENGTH = 256;
+const MAX_URL_PARAMETER_NAME_DECODE_ROUNDS = 8;
+
+function normalizeUrlParameterNames(encodedName: string): readonly string[] | null {
+  if (encodedName.length === 0 || encodedName.length > MAX_URL_PARAMETER_NAME_LENGTH) return null;
+
+  let decoded = encodedName;
+  for (let round = 0; round < MAX_URL_PARAMETER_NAME_DECODE_ROUNDS; round++) {
+    let next: string;
+    try {
+      // URLSearchParams decodes percent escapes and treats `+` as a space. Apply
+      // those semantics on every layer so nested spellings cannot bypass
+      // credential-name detection. The caller preserves the original spelling.
+      next = decodeURIComponent(decoded.replace(/\+/g, " "));
+    } catch {
+      return null;
+    }
+    if (next === decoded) {
+      const normalized = decoded.normalize("NFKC").toLowerCase();
+      const compact = normalized.replace(/[^a-z0-9]/g, "");
+      const bracketStart = normalized.indexOf("[");
+      const bracketComponents = Array.from(
+        normalized.matchAll(/\[([^\]]*)\]/g),
+        (match) => (match[1] ?? "").replace(/[^a-z0-9]/g, ""),
+      ).filter(Boolean);
+      const base = bracketStart === -1
+        ? ""
+        : normalized.slice(0, bracketStart).replace(/[^a-z0-9]/g, "");
+      return [compact, base, ...bracketComponents].filter(Boolean);
+    }
+    decoded = next;
+  }
+
+  // Names that do not stabilize inside the explicit work budget fail closed.
+  return null;
+}
+
+function redactUrlUserinfo(
+  _match: string,
+  prefix: string,
+  userinfo: string,
+): string {
+  const colon = userinfo.indexOf(":");
+  if (colon === -1) return `${prefix}${REDACTED}@`;
+  return `${prefix}${userinfo.slice(0, colon)}:${REDACTED}@`;
+}
+
+function redactEmbeddedUrlUserinfo(
+  match: string,
+  prefix: string,
+  userinfo: string,
+): string {
+  if (
+    !userinfo.includes(":") && AMBIGUOUS_BARE_USERINFO_PUNCTUATION.test(userinfo)
+  ) return match;
+  return redactUrlUserinfo(match, prefix, userinfo);
+}
+
+function sanitizeWholeUrlUserinfo(input: string): string {
+  const leadingWhitespace = input.match(/^\s*/)?.[0] ?? "";
+  const trailingWhitespace = input.match(/\s*$/)?.[0] ?? "";
+  const start = leadingWhitespace.length;
+  const end = input.length - trailingWhitespace.length;
+  if (start >= end) return input;
+  const candidate = input.slice(start, end);
+
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    if (/^[\\/]{2}/.test(candidate)) {
+      try {
+        parsed = new URL(candidate, "https://veryfront.invalid");
+      } catch {
+        return input;
+      }
+    }
+  }
+  if (!parsed) return input;
+  if (!parsed.username && !parsed.password) return input;
+
+  const match = WHOLE_URL_USERINFO_RE.exec(candidate);
+  if (!match || match.index !== 0) return input;
+
+  const sanitized = candidate.replace(WHOLE_URL_USERINFO_RE, redactUrlUserinfo);
+  return `${leadingWhitespace}${sanitized}${trailingWhitespace}`;
+}
+
+function redactAuthorizationHeader(
+  _match: string,
+  header: string,
+  separator: string,
+  value: string,
+): string {
+  const trimmedValue = value.trimStart();
+  const schemeMatch = AUTH_SCHEME_RE.exec(trimmedValue);
+  if (!schemeMatch) return `${header}${separator}${REDACTED}`;
+
+  const scheme = schemeMatch[1];
+  if (!scheme) return `${header}${separator}${REDACTED}`;
+  if (!SINGLE_TOKEN_AUTH_SCHEMES.has(scheme.toLowerCase())) {
+    // Digest, Signature, OAuth 1.0, AWS4-HMAC-SHA256, and unknown schemes may
+    // carry multiple comma- or whitespace-delimited credential fields. Mask
+    // the full remainder instead of guessing which field is safe.
+    return `${header}${separator}${scheme} ${REDACTED}`;
+  }
+
+  const credentialAndTail = trimmedValue.slice(schemeMatch[0].length);
+  const credentialEnd = credentialAndTail.search(AUTH_TOKEN_DELIMITER_RE);
+  const tail = credentialEnd === -1 ? "" : credentialAndTail.slice(credentialEnd);
+  return `${header}${separator}${scheme} ${REDACTED}${tail}`;
+}
+
+function redactCookieHeader(
+  _match: string,
+  header: string,
+  separator: string,
+): string {
+  return `${header}${separator}${REDACTED}`;
+}
 
 /**
  * Strip credentials from URL-shaped strings so they can be safely emitted in
@@ -209,6 +396,9 @@ const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/?#@\s]+)@/gi;
  *
  * - URL userinfo: `http://user:pass@host` → `http://user:[REDACTED]@host`
  * - sensitive query params: `?access_token=abc` → `?access_token=[REDACTED]`
+ * - authentication headers: `Authorization: Basic abc` →
+ *   `Authorization: Basic [REDACTED]`
+ * - cookie headers: `Cookie: session=abc` → `Cookie: [REDACTED]`
  *
  * It is intentionally tolerant: it operates on any string (a DSN, a Mongo URI,
  * an axios error message containing a URL) via regex rather than requiring a
@@ -219,27 +409,32 @@ export function sanitizeUrlCredentials(input: string): string {
   if (typeof input !== "string" || input.length === 0) return input;
 
   // 1) userinfo: scheme://user:pass@  → mask the password (and any bare creds).
-  let out = input.replace(URL_USERINFO_RE, (_match, scheme: string, userinfo: string) => {
-    const colon = userinfo.indexOf(":");
-    if (colon === -1) {
-      // `scheme://token@host` — the whole userinfo is credential-like.
-      return `${scheme}${REDACTED}@`;
-    }
-    const user = userinfo.slice(0, colon);
-    return `${scheme}${user}:${REDACTED}@`;
-  });
+  let out = sanitizeWholeUrlUserinfo(input);
+  out = out.replace(EMBEDDED_URL_USERINFO_RE, redactEmbeddedUrlUserinfo);
 
   // 2) sensitive query/fragment params: `key=value` → `key=[REDACTED]`.
-  // Match `?key=`, `&key=`, `;key=` separators and stop at the next delimiter.
+  // Match query and fragment parameter separators and stop at the next delimiter.
   out = out.replace(
-    /([?&;])([a-z0-9_.\-]+)=([^&#;\s]*)/gi,
+    /([?&#;])([^=?&#;]+)=([^&#;\s]*)/gi,
     (match, sep: string, key: string, _val: string) => {
-      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const sensitive = SENSITIVE_URL_PARAMS.some((p) =>
-        normalized === p.replace(/[^a-z0-9]/g, "")
-      );
+      const normalizedNames = normalizeUrlParameterNames(key);
+      const sensitive = normalizedNames === null ||
+        normalizedNames.some((name) => NORMALIZED_SENSITIVE_URL_PARAMS.has(name));
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
+  );
+
+  // 3) Free-form HTTP credential headers. Preserve an authentication scheme
+  // when one is present, but replace the entire credential payload. Digest
+  // credentials and cookie values may contain spaces, quotes, commas, and
+  // semicolons, so masking only the next token would still leak fields.
+  out = out.replace(AUTHORIZATION_HEADER_RE, redactAuthorizationHeader);
+  out = out.replace(COOKIE_HEADER_RE, redactCookieHeader);
+
+  out = out.replace(/\b(Bearer)(\s+)([^\s,;]+)/gi, `$1$2${REDACTED}`);
+  out = out.replace(
+    /\b(password|passwd|pwd|secret|client_secret|access_token|refresh_token|id_token|session_id|jwt|api_key|apikey|token)(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)/gi,
+    (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`,
   );
 
   return out;

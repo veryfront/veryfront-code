@@ -82,6 +82,36 @@ describe("html-detection", () => {
         html: `<p>Learn about <html></html> tags</p>`,
         expected: false,
       },
+      {
+        name: "should reject lookalike doctype and html element names",
+        html: `<!doctypestuff><htmlish></htmlish><html></html>`,
+        expected: false,
+      },
+      {
+        name: "should require an HTML doctype",
+        html: `<!DOCTYPE svg><html><body></body></html>`,
+        expected: false,
+      },
+      {
+        name: "should reject lookalike html elements",
+        html: `<!DOCTYPE html><html-preview></html-preview>`,
+        expected: false,
+      },
+      {
+        name: "should not treat a script literal as the closing html element",
+        html: `<!DOCTYPE html><html><script>const closing = "</html>";</script>`,
+        expected: false,
+      },
+      {
+        name: "should not treat commented html tags as the document element",
+        html: `<!DOCTYPE html><!-- <html></html> -->`,
+        expected: false,
+      },
+      {
+        name: "should require the html element to follow the doctype",
+        html: `<!DOCTYPE html><main><html></html></main>`,
+        expected: false,
+      },
     ];
 
     for (const testCase of cases) {

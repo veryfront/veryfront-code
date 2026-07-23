@@ -6,8 +6,11 @@ export type HostedChildPendingToolCallPhase = "input_streaming" | "awaiting_resu
 
 /** State for hosted child pending tool call. */
 export interface HostedChildPendingToolCallState {
+  /** Phase value. */
   phase: HostedChildPendingToolCallPhase;
+  /** Tool name value. */
   toolName?: string;
+  /** Input supplied to the operation. */
   input?: unknown;
 }
 
@@ -19,34 +22,47 @@ export type HostedChildPendingToolLifecycleCloseReason =
 
 /** Public API contract for hosted child pending tool lifecycle close log. */
 export interface HostedChildPendingToolLifecycleCloseLog {
+  /** Reason value. */
   reason: HostedChildPendingToolLifecycleCloseReason["kind"];
+  /** Tool call IDs value. */
   toolCallIds: string[];
+  /** Error message value. */
   errorMessage: string | null;
 }
 
 /** Public API contract for hosted child pending tool lifecycle unknown tool log. */
 export interface HostedChildPendingToolLifecycleUnknownToolLog {
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Phase value. */
   phase: HostedChildPendingToolCallPhase;
+  /** Reason value. */
   reason: HostedChildPendingToolLifecycleCloseReason["kind"];
+  /** Whether input snapshot. */
   hasInputSnapshot: boolean;
 }
 
 /** Public API contract for hosted child pending tool lifecycle logger. */
 export interface HostedChildPendingToolLifecycleLogger {
+  /** Callback that handles warn incomplete tool lifecycles. */
   warnIncompleteToolLifecycles?: (input: HostedChildPendingToolLifecycleCloseLog) => void;
+  /** Callback that handles warn unknown tool identity. */
   warnUnknownToolIdentity?: (input: HostedChildPendingToolLifecycleUnknownToolLog) => void;
 }
 
 /** Context for hosted child pending tool lifecycle log. */
 export interface HostedChildPendingToolLifecycleLogContext {
+  /** Conversation ID value. */
   conversationId?: string;
+  /** Parent run ID value. */
   parentRunId?: string;
+  /** Description value. */
   description: string;
 }
 
 /** Public API contract for hosted child pending tool lifecycle log writer. */
 export interface HostedChildPendingToolLifecycleLogWriter {
+  /** Writes a warning log entry. */
   warn: (message: string, context: Record<string, unknown>) => void;
 }
 
@@ -82,12 +98,28 @@ export function createHostedChildPendingToolLifecycleLogger(
 
 /** Input payload for hosted child pending tool lifecycle. */
 export interface HostedChildPendingToolLifecycleInput {
+  /** Callback that handles append mirror chunk. */
   appendMirrorChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void> | void;
+  /** Logger value. */
   logger?: HostedChildPendingToolLifecycleLogger;
 }
 
+/** Tracks incomplete tool calls while a child stream is active. */
+export interface HostedChildPendingToolLifecycle {
+  /** Adds or updates one pending tool call. */
+  upsertPendingToolCall(toolCallId: string, state: HostedChildPendingToolCallState): void;
+  /** Emits the tool-input start event once for a tool call. */
+  emitToolInputStartIfNeeded(toolCallId: string, toolName: string): Promise<void>;
+  /** Removes a tool call after its lifecycle completes. */
+  deletePendingToolCall(toolCallId: string): void;
+  /** Closes every pending tool call with a terminal error event. */
+  closePendingToolCalls(reason: HostedChildPendingToolLifecycleCloseReason): Promise<void>;
+}
+
 /** Create hosted child pending tool lifecycle. */
-export function createHostedChildPendingToolLifecycle(input: HostedChildPendingToolLifecycleInput) {
+export function createHostedChildPendingToolLifecycle(
+  input: HostedChildPendingToolLifecycleInput,
+): HostedChildPendingToolLifecycle {
   const startedToolCallIds = new Set<string>();
   const pendingToolCalls = new Map<string, HostedChildPendingToolCallState>();
 

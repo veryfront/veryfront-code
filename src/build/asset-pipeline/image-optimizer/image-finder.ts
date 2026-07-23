@@ -1,12 +1,15 @@
 import { walk } from "#std/fs.ts";
 import { extname } from "#veryfront/compat/path/index.ts";
-import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SUPPORTED_EXTENSIONS } from "./constants.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const supportedExtensionsSet = new Set(SUPPORTED_EXTENSIONS);
 
 export function findImages(dir: string): Promise<string[]> {
+  if (typeof dir !== "string" || dir.trim() === "") {
+    throw new TypeError("Image input directory must not be blank");
+  }
   return withSpan(
     "build.asset.findImages",
     async (): Promise<string[]> => {
@@ -23,13 +26,11 @@ export function findImages(dir: string): Promise<string[]> {
           if (supportedExtensionsSet.has(ext)) images.push(entry.path);
         }
       } catch (error) {
-        logger.warn(`Failed to read directory ${dir}`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        if (!isNotFoundError(error)) throw error;
       }
 
-      return images;
+      return images.sort();
     },
-    { "image.directory": dir },
+    {},
   );
 }

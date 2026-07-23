@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { csrfProtection } from "./csrf.ts";
 
@@ -17,6 +17,14 @@ function nextOk(): Promise<Response> {
 
 describe("middleware/builtin/security/csrf", () => {
   describe("csrfProtection", () => {
+    it("rejects a non-function validator during configuration", () => {
+      assertThrows(
+        () => csrfProtection(null as unknown as (token: string) => boolean),
+        TypeError,
+        "validator must be a function",
+      );
+    });
+
     it("should allow GET requests without token", async () => {
       const mw = csrfProtection(() => true);
       const res = await mw(makeCtx("GET"), nextOk);

@@ -4,7 +4,9 @@ const logger = serverLogger.component("hosted-lifecycle");
 
 /** State for hosted lifecycle terminal. */
 export interface HostedLifecycleTerminalState {
+  /** Status. */
   status: "completed" | "failed" | "cancelled";
+  /** Additional structured metadata. */
   metadata?: {
     modelId?: string;
     usage?: {
@@ -16,39 +18,55 @@ export interface HostedLifecycleTerminalState {
       reasoningTokens?: number;
     };
   };
+  /** Terminal error code value. */
   terminalErrorCode?: string | null;
+  /** Terminal error message value. */
   terminalErrorMessage?: string | null;
 }
 
 /** Public API contract for hosted lifecycle execution. */
 export interface HostedLifecycleExecution<TChunk> {
+  /** Stream value. */
   stream: AsyncIterable<TChunk>;
+  /** Resolves after execution finishes. */
   waitForFinish: () => Promise<void>;
 }
 
 /** Public API contract for hosted lifecycle adapter. */
 export interface HostedLifecycleAdapter<TRun, TChunk> {
+  /** Callback that handles start run. */
   startRun: (input: { abortSignal: AbortSignal }) => Promise<TRun> | TRun;
+  /** Callback that handles append events. */
   appendEvents?: (run: TRun, chunk: TChunk) => Promise<void> | void;
+  /** Callback that handles persist transcript chunk. */
   persistTranscriptChunk?: (run: TRun, chunk: TChunk) => Promise<void> | void;
+  /** Persist transcript terminal state value. */
   persistTranscriptTerminalState?: (
     run: TRun,
     terminalState: HostedLifecycleTerminalState,
   ) => Promise<void> | void;
+  /** On terminal state value. */
   onTerminalState?: (
     run: TRun,
     terminalState: HostedLifecycleTerminalState,
   ) => Promise<void> | void;
+  /** Callback that handles finalize run. */
   finalizeRun?: (run: TRun, terminalState: HostedLifecycleTerminalState) => Promise<void> | void;
+  /** Callback that handles cancel run. */
   cancelRun?: (run: TRun, terminalState: HostedLifecycleTerminalState) => Promise<void> | void;
 }
 
 /** Options accepted by hosted lifecycle runner. */
 export interface HostedLifecycleRunnerOptions<TRun, TChunk> {
+  /** Abort signal value. */
   abortSignal: AbortSignal;
+  /** Execution value. */
   execution: HostedLifecycleExecution<TChunk>;
+  /** Adapter value. */
   adapter: HostedLifecycleAdapter<TRun, TChunk>;
+  /** Callback that handles resolve terminal state. */
   resolveTerminalState: () => Promise<HostedLifecycleTerminalState> | HostedLifecycleTerminalState;
+  /** Resolve error terminal state value. */
   resolveErrorTerminalState?: (
     error: unknown,
   ) => Promise<HostedLifecycleTerminalState> | HostedLifecycleTerminalState;
@@ -56,7 +74,9 @@ export interface HostedLifecycleRunnerOptions<TRun, TChunk> {
 
 /** Result returned from hosted lifecycle run. */
 export interface HostedLifecycleRunResult<TRun> {
+  /** Run value. */
   run: TRun;
+  /** Terminal state value. */
   terminalState: HostedLifecycleTerminalState;
 }
 

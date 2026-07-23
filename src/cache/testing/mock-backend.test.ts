@@ -130,6 +130,14 @@ describe("cache/testing/mock-backend", () => {
       await mock.set("k2", "v2");
       assertEquals(mock.size, 2);
     });
+
+    it("does not count expired entries in size or snapshots", async () => {
+      const mock = new MockCacheBackend();
+      await mock.set("expired", "value", 0);
+
+      assertEquals(mock.size, 0);
+      assertEquals(mock.getStoreSnapshot().size, 0);
+    });
   });
 
   describe("createPopulatedMock", () => {
@@ -148,10 +156,30 @@ describe("cache/testing/mock-backend", () => {
     it("fails all operations when failAll is true", async () => {
       const mock = createFailingMock({ failAll: true });
 
+      await assertRejects(() => mock.get("any-key"), Error);
+      await assertRejects(() => mock.getBatch(["any-key"]), Error);
+      await assertRejects(() => mock.set("any-key", "value"), Error);
       await assertRejects(
-        () => mock.get("any-key"),
+        () => mock.setBatch([{ key: "any-key", value: "value" }]),
         Error,
       );
+      await assertRejects(() => mock.del("any-key"), Error);
+      await assertRejects(() => mock.delByPattern("*"), Error);
+    });
+
+    it("rejects a whole batch when one configured key fails", async () => {
+      const getMock = createFailingMock({ failOnGet: ["bad"] });
+      await getMock.set("good", "value");
+      await assertRejects(() => getMock.getBatch(["good", "bad"]));
+
+      const setMock = createFailingMock({ failOnSet: ["bad"] });
+      await assertRejects(() =>
+        setMock.setBatch([
+          { key: "good", value: "value" },
+          { key: "bad", value: "value" },
+        ])
+      );
+      assertEquals(await setMock.get("good"), null);
     });
 
     it("fails only specific keys on get", async () => {

@@ -24,6 +24,8 @@ import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { errorLogName, fileLogLabel } from "../../shared/log-context.ts";
 
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
@@ -134,7 +136,8 @@ export async function transformJsxImports(
           jsxCode = await adapter.fs.readFile(filePath);
         } else {
           logger.warn(
-            `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
+            `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file`,
+            { sourceFile: fileLogLabel(filePath) },
           );
           return null;
         }
@@ -187,7 +190,13 @@ export async function transformJsxImports(
         // incorrectly when cached to a different directory.
         transformed = await rewriteDntImports(transformed, filePath);
 
-        await getLocalFs().writeTextFile(transformedPath, transformed);
+        const written = await writeCacheFile(
+          getLocalFs(),
+          transformedPath,
+          transformed,
+          "MDX-JSX-CACHE",
+        );
+        if (!written) return null;
 
         return {
           specifier,
@@ -195,7 +204,10 @@ export async function transformJsxImports(
           cached: false,
         };
       } catch (error) {
-        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import`, {
+          sourceFile: fileLogLabel(filePath),
+          errorName: errorLogName(error),
+        });
         return null;
       }
     }),

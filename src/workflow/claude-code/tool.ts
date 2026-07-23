@@ -1,50 +1,108 @@
-/**
- * Claude Agent SDK Tools
- *
- * Pre-configured tools for using the Claude Agent SDK in workflow steps.
- */
+/** Claude Code workflow tools. */
 
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool } from "#veryfront/tool";
-import { executeAgent } from "./agent.ts";
-import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
+import { type Tool, tool, type ToolExecutionContext } from "#veryfront/tool";
+import {
+  type AgentConfig,
+  CLAUDE_CODE_DEFAULT_MAX_TURNS,
+  CLAUDE_CODE_MAX_MAX_TURNS,
+  CLAUDE_CODE_MIN_MAX_TURNS,
+  executeAgent,
+} from "./agent.ts";
+import type { ClaudeCodeMode, ClaudeCodeResult, ClaudeCodeToolInput } from "./types.ts";
 
-const getClaudeCodeInputSchema = defineSchema((v) =>
-  v.object({
-    task: v.string().describe("The task for the Claude Code agent to perform"),
-    mode: v
-      .enum(["code", "analysis", "custom"])
-      .optional()
-      .default("code")
-      .describe("Tool mode: code (read-write), analysis (read-only), custom (user-specified)"),
-    maxTurns: v
-      .number()
-      .max(100)
-      .optional()
-      .default(20)
-      .describe("Maximum agentic loop turns"),
-    files: v
-      .array(v.string())
-      .optional()
-      .describe("Specific files to focus on"),
-    context: v
-      .record(v.string(), v.unknown())
-      .optional()
-      .describe("Additional context to include in the prompt"),
-  })
-);
+const DEFAULT_TOOL_ID = "claude-code";
+const DEFAULT_TOOL_DESCRIPTION = "Run a trusted local Claude Code agent for iterative coding tasks";
+const DEFAULT_MODE: ClaudeCodeMode = "code";
+const DEFAULT_MAX_TURNS = CLAUDE_CODE_DEFAULT_MAX_TURNS;
+const MIN_MAX_TURNS = CLAUDE_CODE_MIN_MAX_TURNS;
+const MAX_MAX_TURNS = CLAUDE_CODE_MAX_MAX_TURNS;
+const CLAUDE_CODE_MODES = [
+  "code",
+  "analysis",
+  "custom",
+] as const satisfies readonly ClaudeCodeMode[];
 
-type ClaudeCodeInput = InferSchema<ReturnType<typeof getClaudeCodeInputSchema>>;
+interface ClaudeCodeToolOptions {
+  id?: string;
+  description?: string;
+  defaultMode?: ClaudeCodeMode;
+  defaultMaxTurns?: number;
+  system?: string;
+  /** SDK tools available to the agent. */
+  tools?: string[];
+  /** Available SDK tools that may run without an interactive approval prompt. */
+  allowedTools?: string[];
+  /** Enable metadata-only agent debug logging. */
+  debug?: boolean;
+}
 
-/**
- * Build the full prompt from input
- */
-function buildPrompt(input: ClaudeCodeInput): string {
+type ClaudeCodeExecutor = (
+  task: string,
+  config: AgentConfig,
+) => Promise<ClaudeCodeResult>;
+
+function assertSupportedMode(mode: unknown, label: string): asserts mode is ClaudeCodeMode {
+  if (!CLAUDE_CODE_MODES.includes(mode as ClaudeCodeMode)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be one of: ${CLAUDE_CODE_MODES.join(", ")}`,
+    });
+  }
+}
+
+function assertDefaultMaxTurns(value: number): void {
+  if (
+    !Number.isInteger(value) || value < MIN_MAX_TURNS || value > MAX_MAX_TURNS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: `defaultMaxTurns must be an integer from ${MIN_MAX_TURNS} through ${MAX_MAX_TURNS}`,
+    });
+  }
+}
+
+function createClaudeCodeInputSchema(
+  defaultMode: ClaudeCodeMode,
+  defaultMaxTurns: number,
+  enforcedMode?: ClaudeCodeMode,
+) {
+  return defineSchema((v) =>
+    v.object({
+      task: v.string().min(1).describe("Task for the Claude Code agent to perform"),
+      mode: enforcedMode === undefined
+        ? v.enum(CLAUDE_CODE_MODES)
+          .optional()
+          .default(defaultMode)
+          .describe("Permission mode for the task")
+        : v.literal(enforcedMode)
+          .optional()
+          .default(enforcedMode)
+          .describe("Permission mode enforced for this tool"),
+      maxTurns: v.number()
+        .int()
+        .min(MIN_MAX_TURNS)
+        .max(MAX_MAX_TURNS)
+        .optional()
+        .default(defaultMaxTurns)
+        .describe("Maximum number of agent turns"),
+      files: v.array(v.string())
+        .optional()
+        .describe("File paths to highlight in the task prompt"),
+      context: v.record(v.string(), getJsonValueSchema())
+        .optional()
+        .describe("Structured context to append to the task prompt"),
+      system: v.string()
+        .optional()
+        .describe("System prompt override for this execution"),
+    }).strict()
+  )();
+}
+
+function buildPrompt(input: ClaudeCodeToolInput): string {
   let prompt = input.task;
 
   if (input.files && input.files.length > 0) {
-    prompt += `\n\nFocus on these files:\n${input.files.map((f) => `- ${f}`).join("\n")}`;
+    prompt += `\n\nFocus on these files:\n${input.files.map((file) => `- ${file}`).join("\n")}`;
   }
 
   if (input.context) {
@@ -54,104 +112,138 @@ function buildPrompt(input: ClaudeCodeInput): string {
   return prompt;
 }
 
-/**
- * Claude Code tool for workflow steps
- *
- * @example
- * ```typescript
- * import { workflow, step } from "veryfront/workflow";
- *
- * export const migration = workflow({
- *   id: "migration",
- *   steps: [
- *     step("migrate", {
- *       tool: "claude-code",
- *       input: {
- *         task: "Migrate from React 17 to React 19",
- *         mode: "code",
- *         maxTurns: 15,
- *       },
- *     }),
- *   ],
- * });
- * ```
- */
-export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
-  id: "claude-code",
-  type: "function",
-  description: "Run a Claude Code agent for complex coding tasks. " +
-    "Supports file editing, bash commands, and iterative problem-solving.",
-  inputSchema: getClaudeCodeInputSchema() as unknown as Schema<ClaudeCodeInput>,
-  inputSchemaJson: {
-    type: "object",
-    properties: {
-      task: { type: "string", description: "The task for the agent" },
-      mode: {
-        type: "string",
-        enum: ["code", "analysis", "custom"],
-        default: "code",
-      },
-      maxTurns: { type: "number", default: 20 },
-      files: { type: "array", items: { type: "string" } },
-      context: { type: "object" },
-    },
-    required: ["task"],
-  },
+function createTool(
+  options: ClaudeCodeToolOptions,
+  executor: ClaudeCodeExecutor,
+  enforcedMode?: ClaudeCodeMode,
+): Tool<ClaudeCodeToolInput, ClaudeCodeResult> {
+  const defaultMode = options.defaultMode ?? DEFAULT_MODE;
+  const defaultMaxTurns = options.defaultMaxTurns ?? DEFAULT_MAX_TURNS;
+  assertSupportedMode(defaultMode, "defaultMode");
+  assertDefaultMaxTurns(defaultMaxTurns);
+  if (enforcedMode !== undefined) assertSupportedMode(enforcedMode, "enforcedMode");
 
-  execute: async (input, _context) => {
-    return executeAgent(buildPrompt(input), {
-      mode: input.mode as ClaudeCodeMode,
-      maxTurns: input.maxTurns,
-      debug: true,
-    });
-  },
-};
+  const inputSchema = createClaudeCodeInputSchema(
+    defaultMode,
+    defaultMaxTurns,
+    enforcedMode,
+  );
 
-/**
- * Create a customized Claude Code tool
- */
-export function createClaudeCodeTool(
-  options: {
-    id?: string;
-    description?: string;
-    defaultMode?: ClaudeCodeMode;
-    defaultMaxTurns?: number;
-    system?: string;
-  } = {},
-): Tool<ClaudeCodeInput, ClaudeCodeResult> {
-  return {
-    ...claudeCodeTool,
-    id: options.id || claudeCodeTool.id,
-    description: options.description || claudeCodeTool.description,
-
-    execute: (input, _context) => {
-      const mergedInput: ClaudeCodeInput = {
-        ...input,
-        mode: input.mode || options.defaultMode || "code",
-        maxTurns: input.maxTurns || options.defaultMaxTurns || 20,
-      };
-
-      return executeAgent(buildPrompt(mergedInput), {
-        mode: mergedInput.mode as ClaudeCodeMode,
-        maxTurns: mergedInput.maxTurns,
-        systemPrompt: options.system,
-        debug: true,
+  return tool<ClaudeCodeToolInput, ClaudeCodeResult>({
+    id: options.id ?? DEFAULT_TOOL_ID,
+    description: options.description ?? DEFAULT_TOOL_DESCRIPTION,
+    inputSchema,
+    execute: (
+      input: ClaudeCodeToolInput,
+      context?: ToolExecutionContext,
+    ): Promise<ClaudeCodeResult> => {
+      const mode = enforcedMode ?? input.mode ?? defaultMode;
+      const maxTurns = input.maxTurns ?? defaultMaxTurns;
+      return executor(buildPrompt(input), {
+        mode,
+        maxTurns,
+        systemPrompt: input.system ?? options.system,
+        tools: options.tools,
+        allowedTools: options.allowedTools,
+        abortSignal: context?.abortSignal,
+        debug: options.debug,
       });
     },
+  });
+}
+
+function createLazyTool<TInput, TOutput>(
+  factory: () => Tool<TInput, TOutput>,
+): Tool<TInput, TOutput> {
+  const target = {} as Tool<TInput, TOutput>;
+  let materialized = false;
+  const materialize = () => {
+    if (materialized) return;
+    const created = factory();
+    Object.defineProperties(target, Object.getOwnPropertyDescriptors(created));
+    materialized = true;
   };
+
+  return new Proxy(target, {
+    get(target, property, receiver) {
+      materialize();
+      return Reflect.get(target, property, receiver);
+    },
+    set(target, property, value, receiver) {
+      materialize();
+      return Reflect.set(target, property, value, receiver);
+    },
+    has(target, property) {
+      materialize();
+      return Reflect.has(target, property);
+    },
+    ownKeys(target) {
+      materialize();
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, property) {
+      materialize();
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+    defineProperty(target, property, descriptor) {
+      materialize();
+      return Reflect.defineProperty(target, property, descriptor);
+    },
+    deleteProperty(target, property) {
+      materialize();
+      return Reflect.deleteProperty(target, property);
+    },
+    getPrototypeOf(target) {
+      materialize();
+      return Reflect.getPrototypeOf(target);
+    },
+    setPrototypeOf(target, prototype) {
+      materialize();
+      return Reflect.setPrototypeOf(target, prototype);
+    },
+    isExtensible(target) {
+      materialize();
+      return Reflect.isExtensible(target);
+    },
+    preventExtensions(target) {
+      materialize();
+      return Reflect.preventExtensions(target);
+    },
+  });
+}
+
+/** Claude Code tool for trusted local workflow steps. */
+export const claudeCodeTool = createLazyTool(() => createTool({}, executeAgent));
+
+/** Create a configured Claude Code workflow tool. */
+export function createClaudeCodeTool(
+  options: ClaudeCodeToolOptions = {},
+): Tool<ClaudeCodeToolInput, ClaudeCodeResult> {
+  return createTool(options, executeAgent);
 }
 
 /**
- * Pre-configured tools for common use cases
+ * Create a tool with an injected executor without changing production-global
+ * state. This seam is intentionally excluded from the package entrypoint.
+ *
+ * @internal
  */
+export function __createClaudeCodeToolForTests(
+  options: ClaudeCodeToolOptions,
+  executor: ClaudeCodeExecutor,
+): Tool<ClaudeCodeToolInput, ClaudeCodeResult> {
+  return createTool(options, executor);
+}
 
-/** Code review tool (analysis mode, read-only) */
-export const codeReviewTool = createClaudeCodeTool({
-  id: "claude-code-review",
-  description: "Analyze code for issues, improvements, and best practices",
-  defaultMode: "analysis",
-  defaultMaxTurns: 10,
-  system: `You are an expert code reviewer. Analyze the code for:
+/** Code review tool with analysis-only permissions. */
+export const codeReviewTool = createLazyTool(() =>
+  createTool(
+    {
+      id: "claude-code-review",
+      description: "Analyze code for defects, risks, and maintainability issues",
+      defaultMode: "analysis",
+      defaultMaxTurns: 10,
+      system: `You are an expert code reviewer. Analyze the code for:
 - Security vulnerabilities
 - Performance issues
 - Code style and best practices
@@ -159,15 +251,20 @@ export const codeReviewTool = createClaudeCodeTool({
 - Improvement suggestions
 
 Provide specific, actionable feedback with file paths and line numbers.`,
-});
+    },
+    executeAgent,
+    "analysis",
+  )
+);
 
-/** Bug fix tool (code mode) */
-export const bugFixTool = createClaudeCodeTool({
-  id: "claude-bug-fix",
-  description: "Investigate and fix bugs in the codebase",
-  defaultMode: "code",
-  defaultMaxTurns: 15,
-  system: `You are an expert debugger. Your goal is to:
+/** Bug fix tool with code permissions. */
+export const bugFixTool = createLazyTool(() =>
+  createClaudeCodeTool({
+    id: "claude-bug-fix",
+    description: "Investigate and fix bugs in the codebase",
+    defaultMode: "code",
+    defaultMaxTurns: 15,
+    system: `You are an expert debugger. Your goal is to:
 1. Understand the bug from the description
 2. Locate the relevant code
 3. Identify the root cause
@@ -175,15 +272,17 @@ export const bugFixTool = createClaudeCodeTool({
 5. Verify the fix works
 
 Be methodical and make minimal changes to fix the issue.`,
-});
+  })
+);
 
-/** Refactoring tool (code mode) */
-export const refactorTool = createClaudeCodeTool({
-  id: "claude-refactor",
-  description: "Refactor code for better structure and maintainability",
-  defaultMode: "code",
-  defaultMaxTurns: 20,
-  system: `You are an expert at code refactoring. Your goals are:
+/** Refactoring tool with code permissions. */
+export const refactorTool = createLazyTool(() =>
+  createClaudeCodeTool({
+    id: "claude-refactor",
+    description: "Refactor code for better structure and maintainability",
+    defaultMode: "code",
+    defaultMaxTurns: 20,
+    system: `You are an expert at code refactoring. Your goals are:
 - Improve code structure and organization
 - Reduce duplication
 - Improve naming and readability
@@ -191,19 +290,22 @@ export const refactorTool = createClaudeCodeTool({
 - Keep changes focused and reviewable
 
 Read the existing code thoroughly before making changes.`,
-});
+  })
+);
 
-/** Documentation tool (code mode) */
-export const docsTool = createClaudeCodeTool({
-  id: "claude-docs",
-  description: "Generate or improve code documentation",
-  defaultMode: "code",
-  defaultMaxTurns: 10,
-  system: `You are a technical writer. Generate clear, accurate documentation:
+/** Documentation tool with code permissions. */
+export const docsTool = createLazyTool(() =>
+  createClaudeCodeTool({
+    id: "claude-docs",
+    description: "Generate or improve code documentation",
+    defaultMode: "code",
+    defaultMaxTurns: 10,
+    system: `You are a technical writer. Generate clear, accurate documentation:
 - JSDoc/TSDoc comments for functions and classes
 - README files for modules
 - Inline comments for complex logic
 - Usage examples
 
 Match the existing documentation style in the codebase.`,
-});
+  })
+);

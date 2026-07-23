@@ -27,10 +27,15 @@ export type StartHostedChildForkRuntimeWithHostToolsInput<
 
 /** Public API contract for started hosted child fork runtime. */
 export interface StartedHostedChildForkRuntime {
+  /** Fork stream abort controller value. */
   forkStreamAbortController: AbortController;
+  /** Child run monitor abort controller value. */
   childRunMonitorAbortController: AbortController | null;
+  /** Child run monitor promise value. */
   childRunMonitorPromise: Promise<void>;
+  /** Stream result value. */
   streamResult: ForkRuntimeStreamResult;
+  /** Fork tool names value. */
   forkToolNames: string[];
 }
 

@@ -1,6 +1,7 @@
 import { createEvalCheckContext } from "./expect.ts";
+import { isEvalDefinition } from "./factory.ts";
 import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
-import { createEvalRunId } from "./run-id.ts";
+import { assertValidEvalDate, assertValidEvalRunId, createEvalRunId } from "./run-id.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 import {
   createEvalReportExporterRegistry,
@@ -15,6 +16,7 @@ import { tryResolve } from "../extensions/contracts.ts";
 import type {
   EvalAgentAdapterResult,
   EvalDefinition,
+  EvalMetric,
   EvalMetricResult,
   EvalRecord,
   EvalReportExportConfig,
@@ -24,8 +26,288 @@ import type {
   EvalUsage,
   RunEvalOptions,
 } from "./types.ts";
+import {
+  createEvalValidationError,
+  formatEvalPublicError,
+  normalizeEvalExamples,
+} from "./validation.ts";
+import { canonicalJsonStringify } from "./canonical-json.ts";
 
 const UNMAPPED_TOOL_INPUT = Symbol("unmapped-tool-input");
+const MAX_EVAL_RECORDS = 100_000;
+const MAX_EVAL_ADAPTER_RESULT_BYTES = 16 * 1024 * 1024;
+const MAX_EVAL_METRIC_RESULT_BYTES = 1024 * 1024;
+const MAX_EVAL_TRACE_ITEMS = 100_000;
+const MAX_EVAL_CONTEXT_ITEMS = 10_000;
+const MAX_EVAL_EXPORTERS = 256;
+const MAX_EVAL_TEXT_LENGTH = 16_384;
+const MAX_EVAL_BASE_DIR_LENGTH = 4_096;
+const EXPORTER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const EVAL_METRIC_FAMILIES = new Set(["answer", "agent", "ops", "judge", "knowledge", "check"]);
+const EVAL_SEVERITIES = new Set(["gate", "soft", "budget"]);
+const USAGE_TOKEN_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+] as const satisfies ReadonlyArray<keyof EvalUsage>;
+const USAGE_COST_KEYS = [
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+] as const satisfies ReadonlyArray<keyof EvalUsage>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertValidRunOptions(value: unknown): asserts value is RunEvalOptions {
+  if (!isRecord(value) || !isRecord(value.adapters)) {
+    throw createEvalValidationError("Eval run options and adapters must be objects");
+  }
+  for (const key of ["agent", "tool"] as const) {
+    const adapter = value.adapters[key];
+    if (adapter !== undefined && typeof adapter !== "function") {
+      throw createEvalValidationError(`Eval ${key} adapter must be a function when provided`);
+    }
+  }
+  if (
+    value.baseDir !== undefined &&
+    (typeof value.baseDir !== "string" || value.baseDir.trim().length === 0 ||
+      value.baseDir.length > MAX_EVAL_BASE_DIR_LENGTH || value.baseDir.includes("\0"))
+  ) {
+    throw createEvalValidationError(
+      `Eval baseDir must be a non-empty string of at most ${MAX_EVAL_BASE_DIR_LENGTH} characters`,
+    );
+  }
+  if (value.now !== undefined && typeof value.now !== "function") {
+    throw createEvalValidationError("Eval now option must be a function when provided");
+  }
+  if (value.runId !== undefined) assertValidEvalRunId(value.runId);
+  if (value.metadata !== undefined && !isRecord(value.metadata)) {
+    throw createEvalValidationError("Eval report metadata must be an object when provided");
+  }
+  if (value.export !== undefined && !isRecord(value.export)) {
+    throw createEvalValidationError("Eval report export configuration must be an object");
+  }
+}
+
+function assertBoundedOptionalText(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "string" || value.length > MAX_EVAL_TEXT_LENGTH) {
+    throw createEvalValidationError(
+      `${label} must be a string of at most ${MAX_EVAL_TEXT_LENGTH} characters`,
+    );
+  }
+}
+
+function normalizeMetricResult(result: unknown, metric: EvalMetric): EvalMetricResult {
+  if (!isRecord(result)) {
+    throw createEvalValidationError(`Eval metric "${metric.name}" must return an object`);
+  }
+  if (
+    result.name !== metric.name || result.family !== metric.family ||
+    result.severity !== metric.severity
+  ) {
+    throw createEvalValidationError(
+      `Eval metric "${metric.name}" result identity must match its definition`,
+    );
+  }
+  if (!EVAL_METRIC_FAMILIES.has(result.family as string)) {
+    throw createEvalValidationError(`Eval metric "${metric.name}" result family is invalid`);
+  }
+  if (!EVAL_SEVERITIES.has(result.severity as string)) {
+    throw createEvalValidationError(`Eval metric "${metric.name}" result severity is invalid`);
+  }
+  const score = result.score;
+  const pass = result.pass;
+  const skipped = result.skipped;
+  const label = result.label;
+  const explanation = result.explanation;
+  const evidence = result.evidence;
+  if (score !== undefined && (typeof score !== "number" || !Number.isFinite(score))) {
+    throw createEvalValidationError(`Eval metric "${metric.name}" score must be finite`);
+  }
+  for (const [key, value] of [["pass", pass], ["skipped", skipped]] as const) {
+    if (value !== undefined && typeof value !== "boolean") {
+      throw createEvalValidationError(`Eval metric "${metric.name}" ${key} must be a boolean`);
+    }
+  }
+  assertBoundedOptionalText(label, `Eval metric "${metric.name}" label`);
+  assertBoundedOptionalText(explanation, `Eval metric "${metric.name}" explanation`);
+  if (evidence !== undefined && !isRecord(evidence)) {
+    throw createEvalValidationError(`Eval metric "${metric.name}" evidence must be an object`);
+  }
+
+  let serialized: string | undefined;
+  try {
+    serialized = canonicalJsonStringify(result);
+  } catch {
+    throw createEvalValidationError(
+      `Eval metric "${metric.name}" result must be JSON-serializable`,
+    );
+  }
+  if (
+    serialized === undefined ||
+    new TextEncoder().encode(serialized).byteLength > MAX_EVAL_METRIC_RESULT_BYTES
+  ) {
+    throw createEvalValidationError(
+      `Eval metric "${metric.name}" result exceeds the ${MAX_EVAL_METRIC_RESULT_BYTES}-byte limit`,
+    );
+  }
+  return {
+    name: metric.name,
+    family: metric.family,
+    severity: metric.severity,
+    ...(typeof score === "number" ? { score } : {}),
+    ...(typeof pass === "boolean" ? { pass } : {}),
+    ...(typeof skipped === "boolean" ? { skipped } : {}),
+    ...(typeof label === "string" ? { label } : {}),
+    ...(typeof explanation === "string" ? { explanation } : {}),
+    ...(isRecord(evidence) ? { evidence } : {}),
+  };
+}
+
+function assertValidUsage(usage: EvalUsage | undefined): void {
+  if (usage === undefined) return;
+  if (!isRecord(usage)) {
+    throw createEvalValidationError("Eval adapter usage must be an object");
+  }
+  for (const key of USAGE_TOKEN_KEYS) {
+    const value = usage[key];
+    if (
+      value !== undefined &&
+      (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    ) {
+      throw createEvalValidationError(`Eval adapter usage.${key} must be a non-negative integer`);
+    }
+  }
+  for (const key of USAGE_COST_KEYS) {
+    const value = usage[key];
+    if (
+      value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+    ) {
+      throw createEvalValidationError(
+        `Eval adapter usage.${key} must be a finite non-negative number`,
+      );
+    }
+  }
+}
+
+function assertValidAdapterResult(
+  result: unknown,
+  targetKind: EvalDefinition["targetKind"],
+): asserts result is EvalAgentAdapterResult | EvalToolAdapterResult {
+  if (!isRecord(result)) {
+    throw createEvalValidationError(`Eval ${targetKind} adapter must return an object`);
+  }
+  if (targetKind === "tool" && !Object.hasOwn(result, "output")) {
+    throw createEvalValidationError("Eval tool adapter result output is required");
+  }
+  if (
+    result.durationMs !== undefined &&
+    (typeof result.durationMs !== "number" || !Number.isFinite(result.durationMs) ||
+      result.durationMs < 0)
+  ) {
+    throw createEvalValidationError(
+      "Eval adapter durationMs must be a finite non-negative number",
+    );
+  }
+  if (result.completed !== undefined && typeof result.completed !== "boolean") {
+    throw createEvalValidationError("Eval adapter completed must be a boolean");
+  }
+  if (result.error !== undefined && typeof result.error !== "string") {
+    throw createEvalValidationError("Eval adapter error must be a string");
+  }
+  if (result.trace !== undefined) {
+    if (!isRecord(result.trace)) {
+      throw createEvalValidationError("Eval adapter trace must be an object");
+    }
+    for (const key of ["events", "toolCalls"] as const) {
+      const entries = result.trace[key];
+      if (entries !== undefined && !Array.isArray(entries)) {
+        throw createEvalValidationError(`Eval adapter trace.${key} must be an array`);
+      }
+      if (Array.isArray(entries) && entries.length > MAX_EVAL_TRACE_ITEMS) {
+        throw createEvalValidationError(
+          `Eval adapter trace.${key} must not exceed ${MAX_EVAL_TRACE_ITEMS} entries`,
+        );
+      }
+    }
+  }
+  for (const key of ["retrievedContext", "citations"] as const) {
+    const entries = result[key];
+    if (entries !== undefined && !Array.isArray(entries)) {
+      throw createEvalValidationError(`Eval adapter ${key} must be an array`);
+    }
+    if (Array.isArray(entries) && entries.length > MAX_EVAL_CONTEXT_ITEMS) {
+      throw createEvalValidationError(
+        `Eval adapter ${key} must not exceed ${MAX_EVAL_CONTEXT_ITEMS} entries`,
+      );
+    }
+  }
+  assertValidUsage(result.usage as EvalUsage | undefined);
+  let serialized: string | undefined;
+  try {
+    serialized = canonicalJsonStringify(result);
+  } catch {
+    throw createEvalValidationError("Eval adapter result must be JSON-serializable");
+  }
+  if (
+    serialized === undefined ||
+    new TextEncoder().encode(serialized).byteLength > MAX_EVAL_ADAPTER_RESULT_BYTES
+  ) {
+    throw createEvalValidationError(
+      `Eval adapter result exceeds the ${MAX_EVAL_ADAPTER_RESULT_BYTES}-byte limit`,
+    );
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return formatEvalPublicError(error);
+}
+
+function normalizeExporterIds(exporterIds: string[] | undefined): string[] {
+  if (exporterIds === undefined) return [];
+  if (!Array.isArray(exporterIds) || exporterIds.length > MAX_EVAL_EXPORTERS) {
+    throw createEvalValidationError(
+      `Eval report export must select at most ${MAX_EVAL_EXPORTERS} exporter ids`,
+    );
+  }
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const id of exporterIds) {
+    if (typeof id !== "string" || !EXPORTER_ID_PATTERN.test(id)) {
+      throw createEvalValidationError("Eval report exporter id is invalid");
+    }
+    if (seen.has(id)) {
+      throw createEvalValidationError(`Duplicate eval report exporter id "${id}"`);
+    }
+    seen.add(id);
+    normalized.push(id);
+  }
+  return normalized;
+}
+
+function sanitizeExportResults(results: EvalReportExportResult[]): EvalReportExportResult[] {
+  return results.map((result) =>
+    result.ok ? result : {
+      ...result,
+      error: formatEvalPublicError(result.error ?? "Eval report export failed."),
+    }
+  );
+}
 
 function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
   return {
@@ -64,7 +346,7 @@ function createDirectToolTraceCall(
     status: result.error || result.completed === false ? "error" : "ok",
     input,
     output: result.output,
-    ...(result.error ? { error: result.error } : {}),
+    ...(result.error ? { error: errorMessage(result.error) } : {}),
     ...(result.durationMs !== undefined ? { metadata: { durationMs: result.durationMs } } : {}),
   };
 }
@@ -92,7 +374,9 @@ async function runAgentTarget(
   if (!adapter) {
     throw new Error(`No agent adapter configured for eval target "${definition.target}".`);
   }
-  return normalizeAdapterResult(await adapter({ definition, example, repetition }));
+  const result = normalizeAdapterResult(await adapter({ definition, example, repetition }));
+  assertValidAdapterResult(result, "agent");
+  return result as EvalAgentAdapterResult;
 }
 
 async function runToolTarget(
@@ -110,6 +394,7 @@ async function runToolTarget(
   const input = definition.input ? await definition.input(example) : example.input;
   markInvoked?.();
   const result = await adapter({ definition, example, repetition, runId, input });
+  assertValidAdapterResult(result, "tool");
   return { input, result };
 }
 
@@ -189,7 +474,8 @@ function emitEvalRuntimeMetrics(report: ReturnType<typeof createEvalReport>): vo
 }
 
 function createMissingRegistryResults(exporterIds: string[]): EvalReportExportResult[] {
-  return exporterIds.map((exporterId) => ({
+  const ids = exporterIds.length > 0 ? exporterIds : [EvalReportExporterRegistryName];
+  return ids.map((exporterId) => ({
     exporterId,
     ok: false,
     error: "No EvalReportExporter registry resolved.",
@@ -204,10 +490,6 @@ function createMissingExporterResult(exporterId: string): EvalReportExportResult
   };
 }
 
-function exportErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function createExporterFailureResult(
   exporterId: string,
   error: unknown,
@@ -215,7 +497,7 @@ function createExporterFailureResult(
   return {
     exporterId,
     ok: false,
-    error: exportErrorMessage(error),
+    error: formatEvalPublicError(error),
   };
 }
 
@@ -285,7 +567,7 @@ async function exportWithSelectedExporter(
     const selectedRegistry = createEvalReportExporterRegistry();
     selectedRegistry.register(exporter);
     const [result] = await selectedRegistry.export(report, withActiveTraceContext(config.context));
-    return result ?? {
+    return result ? sanitizeExportResults([result])[0]! : {
       exporterId,
       ok: false,
       error: `EvalReportExporter "${exporterId}" did not return an export result.`,
@@ -302,7 +584,7 @@ export async function exportEvalReport(
 ): Promise<EvalReportExportResult[] | undefined> {
   if (!config) return undefined;
 
-  const exporterIds = config.exporterIds?.filter((id) => id.length > 0) ?? [];
+  const exporterIds = normalizeExporterIds(config.exporterIds);
   let registry: EvalReportExporterRegistry | undefined;
   try {
     registry = resolveExporterRegistry(config);
@@ -313,7 +595,9 @@ export async function exportEvalReport(
 
   if (exporterIds.length === 0) {
     try {
-      return await registry.export(report, withActiveTraceContext(config.context));
+      return sanitizeExportResults(
+        await registry.export(report, withActiveTraceContext(config.context)),
+      );
     } catch (error) {
       return createExporterFailureResults(listRegisteredExporterIds(registry), error);
     }
@@ -352,7 +636,7 @@ async function runRecord(
     result = {
       ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     };
   }
 
@@ -386,26 +670,41 @@ async function runRecord(
         : normalizeTrace((result as EvalToolAdapterResult).trace))
       : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
-    durationMs: result.durationMs ?? Date.now() - started,
+    durationMs: result.durationMs ?? Math.max(0, Date.now() - started),
     completed: result.completed ?? !result.error,
-    ...(result.error ? { error: result.error } : {}),
+    ...(result.error ? { error: errorMessage(result.error) } : {}),
   };
 
-  const metricResults = [];
+  const metricResults: EvalMetricResult[] = [];
   for (const metric of definition.metrics) {
-    metricResults.push(await metric.evaluate(record));
+    try {
+      metricResults.push(normalizeMetricResult(await metric.evaluate(record), metric));
+    } catch (error) {
+      metricResults.push({
+        name: metric.name,
+        family: metric.family,
+        severity: metric.severity,
+        pass: false,
+        explanation: `Metric evaluation failed: ${errorMessage(error)}`,
+      });
+    }
   }
   record.metrics = metricResults;
 
   const checks: EvalMetricResult[] = [];
   if (definition.check) {
-    await definition.check(createEvalCheckContext({
-      definition,
-      example,
-      repetition,
-      record,
-      checks,
-    }));
+    try {
+      await definition.check(createEvalCheckContext({
+        definition,
+        example,
+        repetition,
+        record,
+        checks,
+      }));
+    } catch (error) {
+      record.completed = false;
+      record.error = `Eval check failed: ${errorMessage(error)}`;
+    }
   }
   record.checks = checks;
 
@@ -421,20 +720,35 @@ export async function runEval(
   definition: EvalDefinition,
   options: RunEvalOptions,
 ) {
+  if (!isEvalDefinition(definition)) {
+    throw createEvalValidationError("Eval definition is invalid");
+  }
+  assertValidRunOptions(options);
   const startedAt = options.now?.() ?? new Date();
+  assertValidEvalDate(startedAt);
   const runId = options.runId ?? createEvalRunId(startedAt);
+  assertValidEvalRunId(runId);
   const baseDir = options.baseDir ?? Deno.cwd();
-  const examples = await definition.dataset.load({ baseDir });
+  const loadedExamples = await definition.dataset.load({ baseDir });
+  const examples = normalizeEvalExamples(loadedExamples, "eval dataset loader result");
+  const repetitions = definition.repetitions;
+  const recordCount = examples.length * repetitions;
+  if (!Number.isSafeInteger(recordCount) || recordCount > MAX_EVAL_RECORDS) {
+    throw createEvalValidationError(
+      `Eval execution must not exceed the ${MAX_EVAL_RECORDS}-record limit`,
+    );
+  }
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
   const records: EvalRecord[] = [];
 
   for (const example of examples) {
-    for (let repetition = 1; repetition <= definition.repetitions; repetition += 1) {
+    for (let repetition = 1; repetition <= repetitions; repetition += 1) {
       records.push(await runRecord(definition, options, example, repetition, runId));
     }
   }
 
   const endedAt = options.now?.() ?? new Date();
+  assertValidEvalDate(endedAt);
   const report = createEvalReport({
     definition,
     records,

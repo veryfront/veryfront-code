@@ -17,12 +17,22 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { rememberBundleManifestHashes } from "./bundle-manifest-ttl.ts";
 import type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
+import { errorLogName } from "../shared/log-context.ts";
 export type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
 export { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 
 const LOG_PREFIX = "[BundleManifest]";
+const MAX_MANIFEST_BUNDLES = 10_000;
+const MAX_MANIFEST_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_MANIFEST_IDENTIFIER_LENGTH = 256;
+const MAX_MANIFEST_URL_LENGTH = 16_384;
+const MAX_MANIFEST_TTL_SECONDS = 365 * 24 * 60 * 60;
+const manifestEncoder = new TextEncoder();
 
-export type ManifestValidationReason = "manifest_missing" | "bundle_missing";
+export type ManifestValidationReason =
+  | "manifest_missing"
+  | "manifest_invalid"
+  | "bundle_missing";
 
 /** Result of manifest validation. */
 export interface ManifestValidationResult {
@@ -36,6 +46,69 @@ export type BundleRecoveryFn = (
   cacheDir: string,
 ) => Promise<string[]>;
 
+function isSafeManifestIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    value.length <= MAX_MANIFEST_IDENTIFIER_LENGTH && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function normalizeBundleEntry(value: unknown): BundleEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entry = value as Record<string, unknown>;
+  if (
+    !isSafeManifestIdentifier(entry.hash) ||
+    typeof entry.url !== "string" || entry.url.length === 0 ||
+    entry.url.length > MAX_MANIFEST_URL_LENGTH ||
+    typeof entry.sizeBytes !== "number" || !Number.isSafeInteger(entry.sizeBytes) ||
+    entry.sizeBytes < 0
+  ) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(entry.url);
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+
+  return { hash: entry.hash, url: entry.url, sizeBytes: entry.sizeBytes };
+}
+
+function normalizeBundleManifest(
+  value: unknown,
+  expectedManifestId?: string,
+): BundleManifest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    !isSafeManifestIdentifier(record.manifestId) ||
+    (expectedManifestId !== undefined && record.manifestId !== expectedManifestId) ||
+    !Array.isArray(record.bundles) || record.bundles.length > MAX_MANIFEST_BUNDLES ||
+    typeof record.createdAt !== "number" || !Number.isSafeInteger(record.createdAt) ||
+    record.createdAt < 0 ||
+    typeof record.ttlSeconds !== "number" || !Number.isFinite(record.ttlSeconds) ||
+    record.ttlSeconds <= 0 || record.ttlSeconds > MAX_MANIFEST_TTL_SECONDS
+  ) {
+    return null;
+  }
+
+  const bundles: BundleEntry[] = [];
+  const hashes = new Set<string>();
+  for (const candidate of record.bundles) {
+    const entry = normalizeBundleEntry(candidate);
+    if (!entry || hashes.has(entry.hash)) return null;
+    hashes.add(entry.hash);
+    bundles.push(entry);
+  }
+
+  return {
+    manifestId: record.manifestId,
+    bundles,
+    createdAt: record.createdAt,
+    ttlSeconds: record.ttlSeconds,
+  };
+}
+
 /** Lazy accessor for the distributed cache backend. */
 const getCache = createDistributedCacheAccessor(
   () => CacheBackends.httpModule(),
@@ -47,6 +120,12 @@ const getCache = createDistributedCacheAccessor(
  * Sorts hashes to ensure the same set of bundles always produces the same ID.
  */
 export async function computeManifestId(hashes: string[]): Promise<string> {
+  if (
+    !Array.isArray(hashes) || hashes.length > MAX_MANIFEST_BUNDLES ||
+    hashes.some((hash) => !isSafeManifestIdentifier(hash))
+  ) {
+    throw new TypeError("Bundle manifest hashes are invalid");
+  }
   return computeHash([...hashes].sort().join(":"));
 }
 
@@ -56,39 +135,47 @@ export async function computeManifestId(hashes: string[]): Promise<string> {
 export async function createBundleManifest(bundles: BundleEntry[]): Promise<BundleManifest> {
   const hashes = bundles.map((b) => b.hash);
   const manifestId = await computeManifestId(hashes);
-
-  rememberBundleManifestHashes(hashes, manifestId);
-
-  return {
+  const manifest = normalizeBundleManifest({
     manifestId,
     bundles,
     createdAt: Date.now(),
     ttlSeconds: BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC,
-  };
+  });
+  if (!manifest) throw new TypeError("Bundle manifest input is invalid");
+
+  rememberBundleManifestHashes(hashes, manifestId);
+  return manifest;
 }
 
 /**
  * Store a bundle manifest in the distributed cache.
  */
 export async function storeBundleManifest(manifest: BundleManifest): Promise<void> {
+  const normalizedManifest = normalizeBundleManifest(manifest);
+  if (!normalizedManifest) throw new TypeError("Bundle manifest input is invalid");
+
   const cache = await getCache();
   if (!cache) {
     logger.debug(`${LOG_PREFIX} No distributed cache available, skipping manifest store`);
     return;
   }
 
-  const key = buildBundleManifestCacheKey(manifest.manifestId);
+  const key = buildBundleManifestCacheKey(normalizedManifest.manifestId);
 
   try {
-    await cache.set(key, JSON.stringify(manifest), manifest.ttlSeconds);
+    await cache.set(
+      key,
+      JSON.stringify(normalizedManifest),
+      normalizedManifest.ttlSeconds,
+    );
     logger.debug(`${LOG_PREFIX} Stored manifest`, {
-      manifestId: manifest.manifestId.slice(0, 12),
-      bundleCount: manifest.bundles.length,
+      manifestId: normalizedManifest.manifestId.slice(0, 12),
+      bundleCount: normalizedManifest.bundles.length,
     });
   } catch (error) {
     logger.warn(`${LOG_PREFIX} Failed to store manifest`, {
-      manifestId: manifest.manifestId.slice(0, 12),
-      error,
+      manifestId: normalizedManifest.manifestId.slice(0, 12),
+      errorName: errorLogName(error),
     });
   }
 }
@@ -96,21 +183,31 @@ export async function storeBundleManifest(manifest: BundleManifest): Promise<voi
 /**
  * Load a bundle manifest from the distributed cache.
  */
-async function loadBundleManifest(manifestId: string): Promise<BundleManifest | null> {
+async function loadBundleManifest(
+  manifestId: string,
+): Promise<{ manifest: BundleManifest | null; invalid: boolean }> {
   const cache = await getCache();
-  if (!cache) return null;
+  if (!cache) return { manifest: null, invalid: false };
 
   const key = buildBundleManifestCacheKey(manifestId);
 
   try {
     const raw = await cache.get(key);
-    return raw ? (JSON.parse(raw) as BundleManifest) : null;
+    if (!raw) return { manifest: null, invalid: false };
+    if (
+      raw.length > MAX_MANIFEST_JSON_BYTES ||
+      manifestEncoder.encode(raw).byteLength > MAX_MANIFEST_JSON_BYTES
+    ) {
+      return { manifest: null, invalid: true };
+    }
+    const manifest = normalizeBundleManifest(JSON.parse(raw) as unknown, manifestId);
+    return { manifest, invalid: manifest === null };
   } catch (error) {
     logger.debug(`${LOG_PREFIX} Failed to load manifest`, {
       manifestId: manifestId.slice(0, 12),
-      error,
+      errorName: errorLogName(error),
     });
-    return null;
+    return { manifest: null, invalid: true };
   }
 }
 
@@ -126,12 +223,16 @@ export async function validateBundleGroup(
   cacheDir: string,
   recoverMissingBundles?: BundleRecoveryFn,
 ): Promise<ManifestValidationResult> {
-  const manifest = await loadBundleManifest(manifestId);
+  const { manifest, invalid } = await loadBundleManifest(manifestId);
   if (!manifest) {
     logger.debug(`${LOG_PREFIX} Manifest not found in distributed cache`, {
       manifestId: manifestId.slice(0, 12),
     });
-    return { valid: false, failedHashes: [], reason: "manifest_missing" };
+    return {
+      valid: false,
+      failedHashes: [],
+      reason: invalid ? "manifest_invalid" : "manifest_missing",
+    };
   }
 
   return validateBundleManifest(manifest, cacheDir, recoverMissingBundles);
@@ -143,10 +244,14 @@ export async function validateBundleManifest(
   recoverMissingBundles: BundleRecoveryFn = (missing) =>
     Promise.resolve(missing.map(({ hash }) => hash)),
 ): Promise<ManifestValidationResult> {
+  const normalizedManifest = normalizeBundleManifest(manifest);
+  if (!normalizedManifest) {
+    return { valid: false, failedHashes: [], reason: "manifest_invalid" };
+  }
   const missingBundles: Array<{ path: string; hash: string }> = [];
 
   await Promise.all(
-    manifest.bundles.map(async ({ hash }) => {
+    normalizedManifest.bundles.map(async ({ hash }) => {
       try {
         const path = join(cacheDir, `http-${hash}.mjs`);
         if (!(await exists(path))) missingBundles.push({ path, hash });
@@ -159,22 +264,22 @@ export async function validateBundleManifest(
   if (missingBundles.length === 0) return { valid: true, failedHashes: [] };
 
   logger.info(`${LOG_PREFIX} Attempting to recover missing bundles`, {
-    manifestId: manifest.manifestId.slice(0, 12),
+    manifestId: normalizedManifest.manifestId.slice(0, 12),
     missing: missingBundles.length,
-    total: manifest.bundles.length,
+    total: normalizedManifest.bundles.length,
   });
 
   const unrecoverableHashes = await recoverMissingBundles(missingBundles, cacheDir);
   if (unrecoverableHashes.length > 0) {
     logger.warn(`${LOG_PREFIX} Some bundles could not be recovered`, {
-      manifestId: manifest.manifestId.slice(0, 12),
+      manifestId: normalizedManifest.manifestId.slice(0, 12),
       unrecoverable: unrecoverableHashes,
     });
     return { valid: false, failedHashes: unrecoverableHashes, reason: "bundle_missing" };
   }
 
   logger.info(`${LOG_PREFIX} All missing bundles recovered successfully`, {
-    manifestId: manifest.manifestId.slice(0, 12),
+    manifestId: normalizedManifest.manifestId.slice(0, 12),
     recovered: missingBundles.length,
   });
 

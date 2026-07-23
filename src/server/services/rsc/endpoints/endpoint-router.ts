@@ -8,7 +8,6 @@ import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { buildImportMapJson } from "#veryfront/html";
-import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
@@ -28,6 +27,7 @@ import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
 import { analyzeComponent } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { getSafeErrorName } from "#veryfront/server/utils/error-name.ts";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
@@ -196,7 +196,7 @@ export async function handleRSCEndpoint(
 
     if (sub === "stream") {
       metrics.recordRSC("stream");
-      return handleStreamEndpoint(url.searchParams);
+      return handler.handleStream("/", url.searchParams);
     }
 
     return null;
@@ -204,7 +204,7 @@ export async function handleRSCEndpoint(
     if (e instanceof Error && e.message === "Component not found") {
       serverLogger.debug(
         "[RSCEndpointRouter] component not found, deferring to legacy handler",
-        { error: e.message },
+        { reason: "component-not-found" },
       );
       return null;
     }
@@ -212,7 +212,9 @@ export async function handleRSCEndpoint(
     try {
       metrics.recordRSC("error");
     } catch (metricsError) {
-      rscEndpointRouterLog.debug("Failed to record metrics", metricsError);
+      rscEndpointRouterLog.debug("Failed to record metrics", {
+        errorName: getSafeErrorName(metricsError),
+      });
     }
 
     rscLog.debug("[dev] endpoint failed", {
@@ -488,11 +490,6 @@ async function isTrustedBrowserModuleEntry(
   }
 }
 
-/** Extract name parameter with fallback to "World" */
-function getNameParam(searchParams: URLSearchParams): string {
-  return searchParams.get("name")?.trim() || "World";
-}
-
 async function handlePayloadEndpoint({
   handler,
   searchParams,
@@ -501,33 +498,4 @@ async function handlePayloadEndpoint({
   searchParams: URLSearchParams;
 }): Promise<Response> {
   return handler.handleRender("/", searchParams);
-}
-
-function handleStreamEndpoint(searchParams: URLSearchParams): Response {
-  const escapedName = escapeHtml(getNameParam(searchParams));
-  const includeBadLine = searchParams.has("bad");
-
-  const lines = [
-    JSON.stringify({ type: "slot", id: "root", html: `<div>Loading ${escapedName}…</div>` }),
-    JSON.stringify({
-      type: "slot",
-      id: "sidebar",
-      html: `<aside data-state="loading">Sidebar loading…</aside>`,
-    }),
-    ...(includeBadLine ? ["{malformed json}"] : []),
-    JSON.stringify({ type: "slot", id: "root", html: `<div>Hello ${escapedName}</div>` }),
-    JSON.stringify({
-      type: "slot",
-      id: "sidebar",
-      html: `<aside><ul><li>${escapedName} ready</li></ul></aside>`,
-    }),
-  ];
-
-  return new Response(`${lines.join("\n")}\n`, {
-    status: 200,
-    headers: {
-      "content-type": "application/x-ndjson",
-      "cache-control": "no-cache",
-    },
-  });
 }

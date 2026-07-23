@@ -1,56 +1,29 @@
-import { logger } from "#veryfront/utils";
 import type { LightningCSSOptions } from "./types.ts";
-import { minifyCSS } from "./css-utils.ts";
-
-const BROWSER_VERSION_CHROME_90 = 90 << 16;
-const BROWSER_VERSION_FIREFOX_88 = 88 << 16;
-const BROWSER_VERSION_SAFARI_14 = 14 << 16;
-const BROWSER_VERSION_EDGE_90 = 90 << 16;
+import { parseBrowserTargets } from "../css-optimizer/utils.ts";
+import { hasTailwindV4Import } from "./detector.ts";
 
 export async function processWithLightningCSS(
   css: string,
   options: LightningCSSOptions,
 ): Promise<string> {
-  try {
-    const lightningCSS = await import("lightningcss");
-
-    if (typeof lightningCSS.default === "function") {
-      await lightningCSS.default();
-    }
-
-    const processedCSS = css.replace(
-      /@import\s+["']tailwindcss["'];?/g,
-      "/* Tailwind CSS v4 base - processed by Lightning CSS */",
-    );
-
-    const result = lightningCSS.transform({
-      filename: options.filename,
-      code: new TextEncoder().encode(processedCSS),
-      minify: options.minify ?? true,
-      sourceMap: options.sourceMap ?? false,
-      targets: {
-        chrome: BROWSER_VERSION_CHROME_90,
-        firefox: BROWSER_VERSION_FIREFOX_88,
-        safari: BROWSER_VERSION_SAFARI_14,
-        edge: BROWSER_VERSION_EDGE_90,
-      },
-    });
-
-    return new TextDecoder().decode(result.code);
-  } catch (error) {
-    logger.warn("Lightning CSS not available, using fallback processor", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    return processCSSFallback(css, options);
+  if (options.sourceMap) {
+    throw new TypeError("processWithLightningCSS cannot return source maps");
   }
-}
+  if (hasTailwindV4Import(css)) {
+    throw new TypeError("Compile Tailwind imports before processing CSS with Lightning CSS");
+  }
+  if (css.length === 0) return "";
 
-function processCSSFallback(css: string, options: LightningCSSOptions): string {
-  const processed = css.replace(
-    /@import\s+["']tailwindcss["'];?/g,
-    "/* Tailwind CSS v4 - fallback processing */",
-  );
+  const lightningCSS = await import("npm:lightningcss@1.29.2");
+  const result = lightningCSS.transform({
+    filename: options.filename,
+    code: new TextEncoder().encode(css),
+    minify: options.minify ?? true,
+    sourceMap: false,
+    targets: parseBrowserTargets(options.browserslist),
+    analyzeDependencies: false,
+    errorRecovery: false,
+  });
 
-  return options.minify ? minifyCSS(processed) : processed;
+  return new TextDecoder().decode(result.code);
 }

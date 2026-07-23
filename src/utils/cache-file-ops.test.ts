@@ -64,6 +64,61 @@ describe("cache-file-ops", () => {
       assertEquals(calls[2], "stat:/cache/dir/file.js");
     });
 
+    it("atomically replaces cache files when rename is available", async () => {
+      const writes: string[] = [];
+      const renames: Array<[string, string]> = [];
+      const fs = createMockFs({
+        writeTextFile: (path) => {
+          writes.push(path);
+          return Promise.resolve();
+        },
+        rename: (from, to) => {
+          renames.push([from, to]);
+          return Promise.resolve();
+        },
+      });
+
+      assertEquals(await writeCacheFile(fs, "/cache/dir/file.mjs", "content"), true);
+      assertEquals(writes.length, 1);
+      assertEquals(writes[0]!.startsWith("/cache/dir/file.mjs.tmp-"), true);
+      assertEquals(renames, [[writes[0]!, "/cache/dir/file.mjs"]]);
+    });
+
+    it("uses the current directory for a bare cache filename", async () => {
+      let parent = "";
+      const fs = createMockFs({
+        mkdir: (path) => {
+          parent = path;
+          return Promise.resolve();
+        },
+      });
+
+      assertEquals(await writeCacheFile(fs, "file.mjs", "content"), true);
+      assertEquals(parent, ".");
+    });
+
+    it("can preserve a cleared cache directory instead of recreating it", async () => {
+      let mkdirCalls = 0;
+      const fs = createMockFs({
+        mkdir: () => {
+          mkdirCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      assertEquals(
+        await writeCacheFile(
+          fs,
+          "/cache/dir/index.json",
+          "{}",
+          "TEST",
+          { createParent: false },
+        ),
+        true,
+      );
+      assertEquals(mkdirCalls, 0);
+    });
+
     it("throws when mkdir fails", async () => {
       const fs = createMockFs({
         mkdir: () => Promise.reject(new Error("permission denied")),

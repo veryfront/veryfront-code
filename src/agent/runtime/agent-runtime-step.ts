@@ -47,6 +47,7 @@ export interface PrepareAgentRuntimeStepInput {
   isLocalModel: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
+  providerTools?: readonly string[];
   remoteToolSources: RemoteToolSource[] | undefined;
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   resolveRuntimeState: RuntimeStepStateResolver;
@@ -57,6 +58,7 @@ export interface PrepareAgentRuntimeStepInput {
 }
 
 export interface PreparedAgentRuntimeStep {
+  providerTools: string[];
   runtimeContext: Record<string, unknown> | undefined;
   systemPrompt: string;
   toolContext: ToolExecutionContext;
@@ -75,8 +77,14 @@ export async function prepareAgentRuntimeStep(
     input.systemPrompt,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  toolContext.agentId = input.agentId;
+  delete toolContext.abortSignal;
   if (input.toolContextBase?.abortSignal !== undefined) {
     toolContext.abortSignal = input.toolContextBase.abortSignal;
+  }
+  delete toolContext.authToken;
+  if (typeof input.toolContextBase?.authToken === "string") {
+    toolContext.authToken = input.toolContextBase.authToken;
   }
   delete toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY];
   if (input.sourceIntegrationPolicy !== undefined) {
@@ -99,16 +107,25 @@ export async function prepareAgentRuntimeStep(
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
   });
 
-  if (input.activeSkillPolicy || input.activeSkillToolAvailability) {
+  let providerTools = [...(input.providerTools ?? [])];
+  if (
+    input.activeSkillPolicy !== undefined || input.activeSkillToolAvailability !== undefined
+  ) {
     tools = filterToolsForSkill(
       tools,
       input.activeSkillPolicy,
       input.activeSkillToolAvailability,
     );
+    providerTools = filterToolsForSkill(
+      providerTools.map((name) => ({ name })),
+      input.activeSkillPolicy,
+      input.activeSkillToolAvailability,
+    ).map((tool) => tool.name);
   }
   tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
 
   return {
+    providerTools,
     runtimeContext: runtimeState.context,
     systemPrompt: runtimeState.systemPrompt,
     toolContext,

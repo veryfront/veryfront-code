@@ -6,10 +6,41 @@ import {
   createAdapterFallback,
   createAdapterFallbackSync,
   FALLBACK_EXHAUSTED,
+  type FallbackOptions,
   withFallback,
   withFallbackSync,
 } from "./fallback-wrapper.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+
+async function captureDebugAndErrorLogs<T>(operation: () => Promise<T>): Promise<{
+  result: T;
+  output: string;
+}> {
+  const previousLogLevel = Deno.env.get("LOG_LEVEL");
+  const previousLogFormat = Deno.env.get("LOG_FORMAT");
+  const previousDebug = console.debug;
+  const previousError = console.error;
+  const lines: string[] = [];
+
+  console.debug = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  Deno.env.set("LOG_FORMAT", "json");
+  __resetLoggerConfigForTests();
+
+  try {
+    return { result: await operation(), output: lines.join("\n") };
+  } finally {
+    console.debug = previousDebug;
+    console.error = previousError;
+    if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", previousLogLevel);
+    if (previousLogFormat === undefined) Deno.env.delete("LOG_FORMAT");
+    else Deno.env.set("LOG_FORMAT", previousLogFormat);
+    __resetLoggerConfigForTests();
+  }
+}
 
 describe("fallback-wrapper", () => {
   describe("withFallback", () => {
@@ -73,9 +104,10 @@ describe("fallback-wrapper", () => {
       );
     });
 
-    it("should preserve error context in fallback-exhausted error", async () => {
-      const primaryError = new Error("primary-error");
-      const fallbackError = new Error("fallback-error");
+    it("stores only bounded failure classifications in fallback-exhausted errors", async () => {
+      const secret = "secret-value-that-must-not-be-retained";
+      const primaryError = new Error(`primary-error ${secret}`);
+      const fallbackError = new Error(`fallback-error ${secret}`);
 
       const primary = () => Promise.reject(primaryError);
       const fallback = () => Promise.reject(fallbackError);
@@ -88,11 +120,102 @@ describe("fallback-wrapper", () => {
         throw new Error("Should have thrown");
       } catch (error) {
         if (!(error instanceof VeryfrontError && error.slug === "fallback-exhausted")) throw error;
-        const ctx = error.context as { primaryError: unknown; fallbackError: unknown };
-        assertEquals(ctx.primaryError, primaryError);
-        assertEquals(ctx.fallbackError, fallbackError);
-        assertEquals(error.cause, primaryError);
+        assertEquals(error.context, {
+          operationName: "test-operation",
+          primaryError: { kind: "error" },
+          fallbackError: { kind: "error" },
+        });
+        assertEquals(error.cause, { kind: "error" });
+        assertEquals(error.cause === primaryError, false);
+        assertEquals(
+          JSON.stringify({ cause: error.cause, context: error.context }).includes(secret),
+          false,
+        );
       }
+    });
+
+    it("does not emit error messages when fallback logging is enabled", async () => {
+      const secret = "raw-fallback-secret-123";
+
+      const { result: error, output } = await captureDebugAndErrorLogs(async () => {
+        try {
+          await withFallback(
+            () => Promise.reject(new Error(`primary ${secret}`)),
+            () => Promise.reject(new Error(`fallback ${secret}`)),
+            { operationName: "test-operation" },
+          );
+          throw new Error("Should have thrown");
+        } catch (error) {
+          return error;
+        }
+      });
+
+      if (!(error instanceof VeryfrontError && error.slug === "fallback-exhausted")) throw error;
+      assertEquals(output.includes(secret), false);
+    });
+
+    it("rejects unsafe or unreadable operation metadata before either operation runs", async () => {
+      const secret = "PRIVATE_FALLBACK_OPERATION/project-123";
+      let calls = 0;
+      const operation = () => {
+        calls++;
+        return Promise.resolve("unexpected");
+      };
+      const hostileOptions = Object.create(null);
+      Object.defineProperty(hostileOptions, "operationName", {
+        get() {
+          throw new Error(secret);
+        },
+      });
+
+      const { result: errors, output } = await captureDebugAndErrorLogs(async () => {
+        const unsafeError = await (async () => {
+          try {
+            await withFallback(operation, operation, { operationName: secret });
+          } catch (error) {
+            return error;
+          }
+        })();
+        const unreadableError = await (async () => {
+          try {
+            await withFallback(operation, operation, hostileOptions as FallbackOptions);
+          } catch (error) {
+            return error;
+          }
+        })();
+        return [unsafeError, unreadableError];
+      });
+
+      assertEquals(calls, 0);
+      assertEquals(errors.every((error) => error instanceof VeryfrontError), true);
+      assertEquals(JSON.stringify(errors).includes(secret), false);
+      assertEquals(output.includes(secret), false);
+    });
+
+    it("falls back safely when a rejected value has hostile property traps", async () => {
+      const secret = "hostile-getter-secret-456";
+      const hostileFailure = new Proxy(Object.create(null) as object, {
+        get() {
+          throw new Error(secret);
+        },
+        getPrototypeOf() {
+          throw new Error(secret);
+        },
+        ownKeys() {
+          throw new Error(secret);
+        },
+      });
+
+      const { result, output } = await captureDebugAndErrorLogs(() =>
+        withFallback(
+          () => Promise.reject(hostileFailure),
+          () => Promise.resolve("fallback-success"),
+          { operationName: "test-operation" },
+        )
+      );
+
+      assertEquals(result, "fallback-success");
+      assertEquals(output.includes(secret), false);
     });
 
     it("should handle async operations correctly", async () => {
@@ -266,6 +389,53 @@ describe("fallback-wrapper", () => {
       );
 
       await assertRejects(() => wrapper.execute(), Error, "direct-error");
+    });
+
+    it("snapshots factory options before the wrapper can execute", async () => {
+      const options = { logError: false, rethrowOnFallbackFailure: false };
+      const directError = new Error("direct-error");
+      const wrapper = createAdapterFallback(
+        () => Promise.reject(new Error("adapter-error")),
+        () => Promise.reject(directError),
+        "test-operation",
+        options,
+      );
+
+      options.rethrowOnFallbackFailure = true;
+
+      const error = await (async () => {
+        try {
+          await wrapper.execute();
+        } catch (error) {
+          return error;
+        }
+      })();
+      assertEquals(error, directError);
+    });
+
+    it("rejects unreadable factory options during construction", () => {
+      const secret = "PRIVATE_FACTORY_OPTION/project-456";
+      const options = Object.create(null);
+      Object.defineProperty(options, "logError", {
+        get() {
+          throw new Error(secret);
+        },
+      });
+
+      let error: unknown;
+      try {
+        createAdapterFallback(
+          () => Promise.resolve("adapter"),
+          () => Promise.resolve("direct"),
+          "test-operation",
+          options,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals(JSON.stringify(error).includes(secret), false);
     });
   });
 

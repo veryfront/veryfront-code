@@ -33,6 +33,13 @@ describe("LRUCacheAdapter", () => {
       expect(cache.has("nonexistent")).toBe(false);
     });
 
+    it("should report stored undefined values as present", () => {
+      cache.set("present", undefined);
+
+      expect(cache.has("present")).toBe(true);
+      expect(cache.get("present")).toBeUndefined();
+    });
+
     it("should clear all entries", () => {
       cache.set("key1", "value1");
       cache.set("key2", "value2");
@@ -139,6 +146,63 @@ describe("LRUCacheAdapter", () => {
     it("should return 0 when invalidating non-existent tag", () => {
       expect(cache.invalidateTag("nonexistent")).toBe(0);
     });
+
+    it("should snapshot and deduplicate tags before storing and indexing them", () => {
+      const tags = ["tag-a", "tag-a", "tag-b"];
+
+      cache.set("key", "value", undefined, tags);
+
+      const storedTags = (
+        cache as unknown as {
+          store: Map<string, { entry: { tags?: string[] } }>;
+        }
+      ).store.get("key")?.entry.tags;
+      expect(storedTags).toEqual(["tag-a", "tag-b"]);
+      expect(storedTags).not.toBe(tags);
+
+      tags.splice(0, tags.length, "mutated");
+
+      expect(cache.getStats().tags).toBe(2);
+      expect(cache.invalidateTag("mutated")).toBe(0);
+      expect(cache.invalidateTag("tag-a")).toBe(1);
+      expect(cache.invalidateTag("tag-b")).toBe(0);
+      expect(cache.getStats().tags).toBe(0);
+    });
+
+    it("should reject non-string tag values without changing an existing entry", () => {
+      cache.set("key", "original", undefined, ["original-tag"]);
+
+      expect(() =>
+        cache.set(
+          "key",
+          "replacement",
+          undefined,
+          ["valid", 42] as unknown as string[],
+        )
+      ).toThrow(TypeError);
+
+      expect(cache.get("key")).toBe("original");
+      expect(cache.invalidateTag("original-tag")).toBe(1);
+      expect(cache.getStats().tags).toBe(0);
+    });
+
+    it("should reject tag accessors without invoking them", () => {
+      const tags = ["placeholder"];
+      let accessorCalls = 0;
+      Object.defineProperty(tags, "0", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return "accessor-tag";
+        },
+      });
+
+      expect(() => cache.set("key", "value", undefined, tags)).toThrow(TypeError);
+      expect(accessorCalls).toBe(0);
+      expect(cache.getStats().entries).toBe(0);
+      expect(cache.getStats().tags).toBe(0);
+    });
   });
 
   describe("size management", () => {
@@ -227,6 +291,64 @@ describe("LRUCacheAdapter", () => {
 
       expect(evicted).toContain("a");
       expect(evicted).toContain("b");
+    });
+
+    it("should clear every entry when onEvict throws", () => {
+      const evicted: string[] = [];
+      const callbackCache = new LRUCacheAdapter({
+        maxEntries: 10,
+        onEvict: (key) => {
+          evicted.push(key);
+          throw new Error("private callback failure");
+        },
+      });
+
+      callbackCache.set("a", "1");
+      callbackCache.set("b", "2");
+      callbackCache.clear();
+
+      expect(evicted).toEqual(["a", "b"]);
+      expect(callbackCache.getStats().entries).toBe(0);
+      expect(callbackCache.getStats().sizeBytes).toBe(0);
+    });
+  });
+
+  describe("option validation", () => {
+    it("should reject invalid resource and TTL options", () => {
+      const invalidOptions = [
+        { maxEntries: 0 },
+        { maxEntries: -1 },
+        { maxEntries: 1.5 },
+        { maxEntries: 1_000_001 },
+        { maxSizeBytes: 0 },
+        { maxSizeBytes: Number.POSITIVE_INFINITY },
+        { ttlMs: 0 },
+        { ttlMs: Number.MAX_SAFE_INTEGER },
+      ];
+
+      for (const options of invalidOptions) {
+        expect(() => new LRUCacheAdapter(options)).toThrow(TypeError);
+      }
+    });
+
+    it("should reject invalid per-entry TTLs without storing the entry", () => {
+      const cache = new LRUCacheAdapter({ maxEntries: 10 });
+
+      for (const ttlMs of [0, -1, 1.5, Number.MAX_SAFE_INTEGER]) {
+        expect(() => cache.set("key", "value", ttlMs)).toThrow(TypeError);
+        expect(cache.getStats().entries).toBe(0);
+      }
+    });
+
+    it("should reject invalid custom size estimates without corrupting state", () => {
+      const cache = new LRUCacheAdapter({
+        maxEntries: 10,
+        estimateSizeOf: () => Number.NaN,
+      });
+
+      expect(() => cache.set("key", "value")).toThrow(TypeError);
+      expect(cache.getStats().entries).toBe(0);
+      expect(cache.getStats().sizeBytes).toBe(0);
     });
   });
 

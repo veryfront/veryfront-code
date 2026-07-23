@@ -6,6 +6,18 @@ const BINARY_TAILWIND_PLUGIN_PACKAGES = [
   "daisyui@5.5.14",
 ] as const;
 
+const NPM_PACKAGE_SPECIFIER_PATTERN =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[a-z0-9][a-z0-9._+-]*)?$/i;
+
+function assertPackageSpecifier(packageName: string): void {
+  if (
+    typeof packageName !== "string" || packageName.trim() !== packageName ||
+    !NPM_PACKAGE_SPECIFIER_PATTERN.test(packageName)
+  ) {
+    throw new TypeError("Tailwind plugin package must be a valid npm package specifier");
+  }
+}
+
 function barePackageName(spec: string): string {
   if (spec.startsWith("@")) {
     const versionIndex = spec.indexOf("@", 1);
@@ -21,6 +33,7 @@ const BINARY_TAILWIND_PLUGIN_PACKAGE_BY_NAME = new Map(
 );
 
 export function resolveTailwindPluginBundlePackage(packageName: string): string {
+  assertPackageSpecifier(packageName);
   if (packageName.includes("@", packageName.startsWith("@") ? 1 : 0)) {
     return packageName;
   }

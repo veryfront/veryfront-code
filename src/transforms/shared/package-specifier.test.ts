@@ -35,4 +35,24 @@ describe("parseBarePackageSpecifier", () => {
       subpath: "/runtime",
     });
   });
+
+  for (
+    const specifier of [
+      "jsr:@scope/package",
+      "lodash/../secret",
+      "lodash/%2e%2e/secret",
+      "lodash/path?token=secret",
+      "lodash/path#private",
+      "lodash/path\\secret",
+      "lodash/with space",
+      "-invalid-package",
+      "@scope/-invalid",
+      "pkg@1.0.0?token=secret",
+      "pkg@",
+    ]
+  ) {
+    it(`rejects unsafe package specifier: ${specifier}`, () => {
+      assertEquals(parseBarePackageSpecifier(specifier), null);
+    });
+  }
 });

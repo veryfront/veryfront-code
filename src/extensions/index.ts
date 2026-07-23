@@ -27,10 +27,11 @@ export type {
   ExtensionFactory,
   ExtensionLogger,
   ExtensionSource,
+  ExtensionTeardownContext,
   ResolvedExtension,
 } from "./types.ts";
 
-// Contract registry — resolve/tryResolve are the consumer-facing API.
+// Contract registry: resolve/tryResolve are the consumer-facing API.
 // register()/reset() are internal primitives (used by ExtensionLoader and
 // tests) and are intentionally not exported here.
 export { resolve, tryResolve } from "./contracts.ts";
@@ -46,6 +47,7 @@ export {
 } from "./discovery.ts";
 
 // Loader
+export type { SetupAllOptions, TeardownAllOptions } from "./loader.ts";
 export { ExtensionLoader } from "./loader.ts";
 
 // Factory loader (dynamic-import of an extension factory)
@@ -69,17 +71,33 @@ export { getRecommendation } from "./recommendations.ts";
 export {
   CIRCULAR_DEPENDENCY_ERROR,
   EXTENSION_CONFLICT_ERROR,
+  EXTENSION_SETUP_TIMEOUT_ERROR,
   EXTENSION_VALIDATION_ERROR,
   MISSING_EXTENSION_ERROR,
+} from "./errors.ts";
+export type {
+  ErrorCategory,
+  ErrorCreateOptions,
+  ErrorDefinition,
+  RegisteredError,
+  RFC9457Response,
+  VeryfrontError,
+  VeryfrontErrorOptions,
 } from "./errors.ts";
 
 // Sandbox
 export type {
   CreateSandboxShellToolsInput,
   SandboxShellClient,
+  SandboxShellToolAnnotations,
   SandboxShellToolDefinition,
   SandboxShellToolExecute,
+  SandboxShellToolExecutionContext,
+  SandboxShellToolJsonSchema,
+  SandboxShellToolJsonSchemaTypeName,
+  SandboxShellToolMcpConfig,
   SandboxShellToolSet,
   SandboxShellToolsProvider,
+  SandboxShellToolType,
 } from "./sandbox/index.ts";
 export { SandboxShellToolsProviderName } from "./sandbox/index.ts";

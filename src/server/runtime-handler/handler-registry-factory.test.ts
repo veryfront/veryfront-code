@@ -10,7 +10,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module server/runtime-handler/handler-registry-factory.test
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Handler, HandlerResult } from "#veryfront/types";
@@ -84,6 +84,12 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     assertEquals(names.includes("ApiHandlerWrapper"), true);
     assertEquals(names.includes("HMRHandler"), true);
     assertEquals(names.includes("InternalAgentsListHandler"), true);
+  });
+
+  it("keeps the pre-resolution project picker out of the post-resolution registry", () => {
+    const { registry } = createHandlerRegistry(projectDir, adapter);
+
+    assertEquals(registry.getStats().handlerNames.includes("ProjectsHandler"), false);
   });
 
   it("returns handlers sorted by priority (lowest number = highest priority)", () => {
@@ -195,6 +201,7 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const response = await registry.execute(req, ctx as Parameters<typeof registry.execute>[1]);
 
     assertExists(response);
+    assert(response instanceof Response);
     assertEquals(response!.status, 200);
     assertEquals(await response!.text(), "HealthHandler handled");
     assertEquals(mockHealth.callCount, 1);

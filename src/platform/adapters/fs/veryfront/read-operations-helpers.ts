@@ -1,5 +1,6 @@
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
-import { INVALID_IMPORT } from "#veryfront/errors";
+import { INVALID_IMPORT } from "#veryfront/errors/error-registry/module.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { READ_OPERATION_EXTENSION_PRIORITY } from "./extension-priority.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -39,8 +40,8 @@ export function assertProjectSourcePath(normalizedPath: string): void {
   if (!isFrameworkSourcePath(normalizedPath)) return;
 
   throw INVALID_IMPORT.create({
-    detail: `[ReadOperations] Framework path "${normalizedPath}" cannot be fetched from API. ` +
-      `Framework modules must be served from local filesystem.`,
+    detail: "Framework path cannot be fetched from API. " +
+      "Framework modules must be served from the local filesystem",
   });
 }
 
@@ -80,10 +81,6 @@ export function getResolvedCacheKey(
   return `${cacheKeyPrefix}:${normalizedResolvedPath}`;
 }
 
-export function buildContentPreview(content: string, max = 80): string {
-  return content.length > max ? `${content.slice(0, max)}...` : content;
-}
-
 export function buildExtensionCandidatePaths(basePath: string): string[] {
   return READ_OPERATION_EXTENSION_PRIORITY.map((ext) => `${basePath}${ext}`);
 }
@@ -102,10 +99,11 @@ export function splitKnownFileExtension(
 }
 
 export function isNotFoundLikeError(error: unknown): boolean {
+  if (error instanceof VeryfrontError && error.status === 404) return true;
   const errorMessage = error instanceof Error ? error.message : String(error);
-  return errorMessage.includes("404") || errorMessage.includes("Not Found");
+  return /\b404\b|\bnot found\b/i.test(errorMessage);
 }
 
-export function createNotFoundLikeError(path: string): NotFoundLikeError {
-  return Object.assign(new Error(`404 Not Found: ${path}`), { code: "ENOENT" });
+export function createNotFoundLikeError(_path: string): NotFoundLikeError {
+  return Object.assign(new Error("404 Not Found"), { code: "ENOENT" });
 }

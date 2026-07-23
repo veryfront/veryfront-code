@@ -24,6 +24,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-environment-id": req.headers.get("x-environment-id"),
     "x-content-source-id": req.headers.get("x-content-source-id"),
     "x-forwarded-host": req.headers.get("x-forwarded-host"),
+    "x-forwarded-proto": req.headers.get("x-forwarded-proto"),
     "x-project-path": req.headers.get("x-project-path"),
     "x-project-id": req.headers.get("x-project-id"),
     "x-release-id": req.headers.get("x-release-id"),
@@ -64,6 +65,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-environment"], "preview");
       assertEquals(headers["x-content-source-id"], "preview-main");
       assertEquals(headers["x-forwarded-host"], "my-project.preview.veryfront.com");
+      assertEquals(headers["x-forwarded-proto"], "http");
       assertEquals(headers["x-project-path"], null);
       assertEquals(headers["x-project-id"], "proj-uuid-456");
       assertEquals(headers["x-release-id"], null);
@@ -107,7 +109,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         projectSlug: "local-project",
         environment: "preview",
         contentSourceId: "local-main",
-        localPath: "/Users/dev/projects/local-project",
+        localPath: "local-project-path",
         host: "local-project.lvh.me:8080",
         parsedDomain: {
           slug: "local-project",
@@ -125,7 +127,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         ctx,
       );
 
-      assertEquals(injected.headers.get("x-project-path"), "/Users/dev/projects/local-project");
+      assertEquals(injected.headers.get("x-project-path"), "local-project-path");
       assertEquals(injected.headers.get("x-token"), null);
     });
 
@@ -203,9 +205,13 @@ describe("Proxy-Renderer Mode Parity", () => {
 
       const originalReq = new Request("http://proj.preview.veryfront.com/page", {
         headers: {
-          "x-project-path": "/tmp/attacker",
+          "x-project-path": "attacker-project-path",
           "x-token": "attacker-token",
           "x-environment": "production",
+          forwarded: "for=attacker.example;proto=https",
+          "x-forwarded-for": "203.0.113.10",
+          "x-forwarded-port": "8443",
+          "x-real-ip": "203.0.113.10",
         },
       });
 
@@ -214,6 +220,10 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(injected.headers.get("x-project-path"), null);
       assertEquals(injected.headers.get("x-token"), null);
       assertEquals(injected.headers.get("x-environment"), "preview");
+      assertEquals(injected.headers.get("forwarded"), null);
+      assertEquals(injected.headers.get("x-forwarded-for"), null);
+      assertEquals(injected.headers.get("x-forwarded-port"), null);
+      assertEquals(injected.headers.get("x-real-ip"), null);
     });
 
     it("replaces every internal proxy header with proxy-derived values", () => {
@@ -259,6 +269,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-environment-id"], "env-id");
       assertEquals(headers["x-content-source-id"], "release-rel-id");
       assertEquals(headers["x-forwarded-host"], "proj.production.veryfront.com");
+      assertEquals(headers["x-forwarded-proto"], "http");
       assertEquals(headers["x-project-path"], null);
       assertEquals(headers["x-project-id"], "proj-id");
       assertEquals(headers["x-release-id"], "rel-id");

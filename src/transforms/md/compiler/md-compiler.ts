@@ -6,10 +6,15 @@ import type {
   ContentProcessingResult,
   ContentProcessor,
 } from "#veryfront/extensions/content/index.ts";
-import { createError, toError } from "#veryfront/errors";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { errorLogName, fileLogLabel } from "../../shared/log-context.ts";
 
 const logger = rendererLogger.component("md-compiler");
+
+function safeSourcePath(filePath?: string): string {
+  return filePath ? fileLogLabel(filePath) : "memory";
+}
 
 export function compileMarkdownRuntime(
   mode: CompilationMode,
@@ -21,6 +26,7 @@ export function compileMarkdownRuntime(
   baseUrl?: string,
   studioEmbed?: boolean,
 ): Promise<ContentProcessingResult> {
+  const sourcePath = safeSourcePath(filePath);
   return withSpan(
     "transforms.compileMarkdownRuntime",
     async (): Promise<ContentProcessingResult> => {
@@ -37,24 +43,18 @@ export function compileMarkdownRuntime(
           studioEmbed,
         });
       } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error));
-
-        logger.error("Compilation failed:", {
-          filePath,
-          error: err.message,
-          stack: err.stack,
+        logger.error("Compilation failed", {
+          sourcePath,
+          errorName: errorLogName(error),
         });
 
-        throw toError(
-          createError({
-            type: "build",
-            message: `Markdown compilation error: ${err.message} | file: ${filePath ?? "<memory>"}`,
-          }),
-        );
+        throw COMPILATION_ERROR.create({
+          detail: `Markdown compilation failed for ${sourcePath}.`,
+        });
       }
     },
     {
-      "md.filePath": filePath ?? "memory",
+      "md.sourcePath": sourcePath,
       "md.contentLength": content.length,
     },
   );

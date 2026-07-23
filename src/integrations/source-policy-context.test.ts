@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getActiveSourceIntegrationPolicy,
+  requireActiveSourceIntegrationPolicy,
   resolveEffectiveSourceIntegrationPolicy,
   runWithEffectiveSourceIntegrationPolicy,
   runWithExactSourceIntegrationPolicy,
@@ -10,6 +11,20 @@ import {
 import { normalizeSourceIntegrationPolicy } from "./source-policy.ts";
 
 describe("source integration policy context", () => {
+  it("requires an exact source policy at isolated execution boundaries", () => {
+    assertThrows(
+      requireActiveSourceIntegrationPolicy,
+      Error,
+      "Isolated project execution requires an exact source integration policy",
+    );
+
+    const policy = normalizeSourceIntegrationPolicy({ allow: { github: {} } });
+    assertEquals(
+      runWithExactSourceIntegrationPolicy(policy, requireActiveSourceIntegrationPolicy),
+      policy,
+    );
+  });
+
   it("isolates concurrent exact-source policies", async () => {
     const gmail = normalizeSourceIntegrationPolicy({ allow: { gmail: {} } });
     const github = normalizeSourceIntegrationPolicy({ allow: { github: {} } });
@@ -80,5 +95,27 @@ describe("source integration policy context", () => {
     );
 
     assertEquals(observed, ambient);
+  });
+
+  it("snapshots the active policy so caller mutation cannot widen an async run", async () => {
+    const mutable = {
+      schemaVersion: 1 as const,
+      mode: "allowlist" as const,
+      integrations: {
+        github: { allowedToolIds: ["list_repos"] as string[] },
+      },
+    };
+
+    const observed = await runWithExactSourceIntegrationPolicy(mutable, async () => {
+      mutable.integrations.github.allowedToolIds.push("delete_repo");
+      await Promise.resolve();
+      return getActiveSourceIntegrationPolicy();
+    });
+
+    assertEquals(observed, {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: { github: { allowedToolIds: ["list_repos"] } },
+    });
   });
 });

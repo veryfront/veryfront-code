@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/bundle-manifest.test */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -39,6 +39,10 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
 
       assertEquals(id1, id2);
     });
+
+    it("rejects unsafe hash identifiers", async () => {
+      await assertRejects(() => computeManifestId(["../outside"]), TypeError);
+    });
   });
 
   describe("createBundleManifest", () => {
@@ -66,6 +70,17 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
 
       assertEquals(getManifestIdForHash("corefresh1"), manifest.manifestId);
       assertEquals(getManifestIdForHash("corefresh2"), manifest.manifestId);
+    });
+
+    it("returns a detached snapshot of bundle metadata", async () => {
+      const bundles: BundleEntry[] = [
+        { hash: "snapshot1", url: "https://esm.sh/snapshot@1", sizeBytes: 100 },
+      ];
+
+      const manifest = await createBundleManifest(bundles);
+      bundles[0]!.hash = "mutated";
+
+      assertEquals(manifest.bundles[0]?.hash, "snapshot1");
     });
   });
 
@@ -122,6 +137,29 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
       } finally {
         await remove(tmpDir, { recursive: true });
       }
+    });
+
+    it("rejects malformed manifest records without invoking recovery", async () => {
+      let recoveryCalled = false;
+      const result = await validateBundleManifest(
+        {
+          manifestId: "malformed",
+          bundles: [
+            { hash: "../outside", url: "https://esm.sh/unsafe@1", sizeBytes: 1 },
+          ],
+          createdAt: Date.now(),
+          ttlSeconds: 60,
+        },
+        "/tmp/cache",
+        () => {
+          recoveryCalled = true;
+          return Promise.resolve([]);
+        },
+      );
+
+      assertEquals(result.valid, false);
+      assertEquals(result.reason, "manifest_invalid");
+      assertEquals(recoveryCalled, false);
     });
   });
 });

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearModuleCacheForProject,
@@ -11,6 +11,8 @@ import {
   getModuleCache,
   getModuleCacheStats,
 } from "./module-cache.ts";
+import { buildPodModuleCacheKey } from "./keys/builders/module.ts";
+import { cacheRegistry } from "./registry.ts";
 
 describe("cache/module-cache", () => {
   afterEach(() => {
@@ -112,6 +114,23 @@ describe("cache/module-cache", () => {
       map.set("k2", "v2");
 
       assertEquals([...map.values()].sort(), ["v1", "v2"]);
+    });
+
+    it("does not rewrite LRU recency while iterating values", () => {
+      const map = createModuleCache();
+      const capacity = getModuleCacheStats().moduleCache.maxEntries;
+      for (let index = 0; index < capacity; index++) {
+        map.set(`k${index}`, `v${index}`);
+      }
+      assertEquals(map.get("k0"), "v0");
+
+      for (const _value of map.values()) {
+        // Consume the iterator completely.
+      }
+      map.set("overflow", "value");
+
+      assertEquals(map.has("k0"), true);
+      assertEquals(map.has("k1"), false);
     });
 
     it("should support iteration via entries()", () => {
@@ -231,25 +250,44 @@ describe("cache/module-cache", () => {
   });
 
   describe("clearModuleCacheForProject", () => {
+    it("rejects an invalid project identity", () => {
+      assertThrows(() => clearModuleCacheForProject(""), Error);
+    });
+
     it("should return 0 when module cache is not initialized", () => {
       assertEquals(clearModuleCacheForProject("proj1"), 0);
     });
 
     it("should clear only entries for the specified project", () => {
       const cache = getModuleCache();
-      cache.set("proj1:file-a.ts", "/tmp/a.js");
-      cache.set("proj1:file-b.ts", "/tmp/b.js");
-      cache.set("proj2:file-c.ts", "/tmp/c.js");
+      const projectOneA = buildPodModuleCacheKey("file-a.ts", "proj1");
+      const projectOneB = buildPodModuleCacheKey("file-b.ts", "proj1");
+      const projectTwo = buildPodModuleCacheKey("file-c.ts", "proj2");
+      cache.set(projectOneA, "/tmp/a.js");
+      cache.set(projectOneB, "/tmp/b.js");
+      cache.set(projectTwo, "/tmp/c.js");
 
       assertEquals(clearModuleCacheForProject("proj1"), 2);
-      assertEquals(cache.has("proj1:file-a.ts"), false);
-      assertEquals(cache.has("proj1:file-b.ts"), false);
-      assertEquals(cache.has("proj2:file-c.ts"), true);
+      assertEquals(cache.has(projectOneA), false);
+      assertEquals(cache.has(projectOneB), false);
+      assertEquals(cache.has(projectTwo), true);
     });
 
     it("should return 0 when no entries match the project", () => {
-      getModuleCache().set("proj2:file.ts", "/tmp/file.js");
+      getModuleCache().set(buildPodModuleCacheKey("file.ts", "proj2"), "/tmp/file.js");
       assertEquals(clearModuleCacheForProject("proj1"), 0);
+    });
+
+    it("matches delimiter-bearing project identities exactly", () => {
+      const cache = getModuleCache();
+      const parent = buildPodModuleCacheKey("parent.ts", "tenant");
+      const child = buildPodModuleCacheKey("child.ts", "tenant:child");
+      cache.set(parent, "/tmp/parent.js");
+      cache.set(child, "/tmp/child.js");
+
+      assertEquals(clearModuleCacheForProject("tenant"), 1);
+      assertEquals(cache.has(parent), false);
+      assertEquals(cache.has(child), true);
     });
   });
 
@@ -266,6 +304,18 @@ describe("cache/module-cache", () => {
     it("should be safe to call multiple times", () => {
       destroyModuleCaches();
       destroyModuleCaches();
+    });
+
+    it("unregisters destroyed caches from diagnostics", () => {
+      getModuleCache();
+      getEsmCache();
+      assertEquals(cacheRegistry.getStoreNames().includes("pod-module-cache"), true);
+      assertEquals(cacheRegistry.getStoreNames().includes("pod-esm-cache"), true);
+
+      destroyModuleCaches();
+
+      assertEquals(cacheRegistry.getStoreNames().includes("pod-module-cache"), false);
+      assertEquals(cacheRegistry.getStoreNames().includes("pod-esm-cache"), false);
     });
   });
 });

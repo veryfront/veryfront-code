@@ -11,7 +11,13 @@ import type { NodeExecutionResult } from "./types.ts";
 import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
-import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
+import {
+  applyRecordPatch,
+  createRecordPatch,
+  createSetContextPatch,
+  getOwnRecordValue,
+} from "./context-patch.ts";
+import { validateConcurrency } from "../../types.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -22,11 +28,11 @@ interface ExecuteMapNodeStrategyInput {
   abortSignal?: AbortSignal;
 }
 
-function isWorkflowDefinition(processor: unknown): processor is WorkflowDefinition {
+export function isWorkflowDefinition(processor: unknown): processor is WorkflowDefinition {
   return typeof processor === "object" && processor !== null && "steps" in processor;
 }
 
-function createMapChildNodes(
+export function createMapChildNodes(
   node: WorkflowNode,
   config: MapNodeConfig,
   items: unknown[],
@@ -37,6 +43,7 @@ function createMapChildNodes(
     if (isWorkflowDefinition(config.processor)) {
       return {
         id: childId,
+        dependsOn: [],
         config: {
           type: "subWorkflow",
           workflow: config.processor,
@@ -53,7 +60,7 @@ function createMapChildNodes(
       processorConfig.input = item as Record<string, unknown>;
     }
 
-    return { id: childId, config: processorConfig };
+    return { id: childId, dependsOn: [], config: processorConfig };
   });
 }
 
@@ -69,6 +76,9 @@ export async function executeMapNodeStrategy(
 
   if (!Array.isArray(items)) {
     throw INVALID_ARGUMENT.create({ detail: `Map node "${node.id}" items must be an array` });
+  }
+  if (config.concurrency !== undefined) {
+    validateConcurrency(config.concurrency, `Map node "${node.id}" concurrency`);
   }
 
   if (items.length === 0) {
@@ -102,13 +112,13 @@ export async function executeMapNodeStrategy(
       createdAt: new Date(),
       sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     },
-    config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
+    config.concurrency !== undefined ? { maxConcurrency: config.concurrency } : undefined,
   );
   runtime.abortSignal?.throwIfAborted();
 
   applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
-  const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
+  const outputs = childNodes.map((child) => getOwnRecordValue(result.nodeStates, child.id)?.output);
 
   const state: NodeState = {
     nodeId: node.id,

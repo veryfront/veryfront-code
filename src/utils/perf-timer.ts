@@ -1,4 +1,5 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-local-storage.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "./logger/logger.ts";
 
 const logger = serverLogger.component("perf");
@@ -11,6 +12,16 @@ interface TimingEntry {
   parent?: string;
 }
 
+interface RequestTiming {
+  active: boolean;
+  entries: TimingEntry[];
+  parent?: RequestTiming;
+  requestId: string;
+}
+
+const MAX_ACTIVE_REQUESTS = 1_024;
+const MAX_TIMINGS_PER_REQUEST = 1_000;
+
 let cachedEnabled: boolean | undefined;
 
 function getEnabled(): boolean {
@@ -18,17 +29,18 @@ function getEnabled(): boolean {
   // Read env directly to avoid triggering getEnvironmentConfig() at module-load time.
   // This module is imported before .env is loaded, so going through the config
   // pipeline produces a noisy early-access warning.
-  cachedEnabled = getEnv("VERYFRONT_PERF") === "1";
+  cachedEnabled = getHostEnv("VERYFRONT_PERF") === "1";
   return cachedEnabled;
 }
-const timings = new Map<string, TimingEntry[]>();
-let currentRequestId: string | null = null;
+const requestTimingContext = new AsyncLocalStorage<RequestTiming | undefined>();
+const activeRequests = new Set<RequestTiming>();
 
 function formatMs(value: number | undefined): number {
   return Number(value?.toFixed(1));
 }
 
 function formatPct(duration: number, total: number): string {
+  if (total <= 0) return "0.0";
   return ((duration / total) * 100).toFixed(1);
 }
 
@@ -36,18 +48,38 @@ function formatPct(duration: number, total: number): string {
 export function startRequest(requestId: string): void {
   if (!getEnabled()) return;
 
-  currentRequestId = requestId;
-  timings.set(requestId, []);
+  if (activeRequests.size >= MAX_ACTIVE_REQUESTS) {
+    const oldest = activeRequests.values().next().value;
+    if (oldest) {
+      oldest.active = false;
+      activeRequests.delete(oldest);
+    }
+  }
+
+  const parent = requestTimingContext.getStore();
+  const request: RequestTiming = {
+    active: true,
+    entries: [],
+    ...(parent?.active ? { parent } : {}),
+    requestId,
+  };
+  activeRequests.add(request);
+  requestTimingContext.enterWith(request);
 }
 
 /** Starts timer. */
 export function startTimer(label: string, parent?: string): () => void {
-  if (!getEnabled() || !currentRequestId) return () => {};
+  if (!getEnabled()) return () => {};
+  const request = requestTimingContext.getStore();
+  if (!request?.active || request.entries.length >= MAX_TIMINGS_PER_REQUEST) return () => {};
 
   const entry: TimingEntry = { label, startMs: performance.now(), parent };
-  timings.get(currentRequestId)?.push(entry);
+  request.entries.push(entry);
+  let stopped = false;
 
   return () => {
+    if (stopped) return;
+    stopped = true;
     entry.endMs = performance.now();
     entry.durationMs = entry.endMs - entry.startMs;
   };
@@ -73,9 +105,21 @@ export async function timeAsync<T>(
 export function endRequest(requestId: string): void {
   if (!getEnabled()) return;
 
-  const entries = timings.get(requestId);
+  const current = requestTimingContext.getStore();
+  const request = current?.active && current.requestId === requestId
+    ? current
+    : [...activeRequests].reverse().find((candidate) => candidate.requestId === requestId);
+  if (!request) return;
+
+  request.active = false;
+  activeRequests.delete(request);
+  if (current === request) {
+    const activeParent = request.parent?.active ? request.parent : undefined;
+    requestTimingContext.enterWith(activeParent);
+  }
+
+  const entries = request.entries;
   if (!entries?.length) {
-    currentRequestId = null;
     return;
   }
 
@@ -134,12 +178,22 @@ export function endRequest(requestId: string): void {
     totalMs: formatMs(total),
     breakdown,
   });
-
-  timings.delete(requestId);
-  currentRequestId = null;
 }
 
 /** Check whether request performance timing is enabled. */
 export function isEnabled(): boolean {
   return getEnabled();
+}
+
+/** @internal Test-only state reset. */
+export function __resetPerfTimerForTests(): void {
+  for (const request of activeRequests) request.active = false;
+  activeRequests.clear();
+  cachedEnabled = undefined;
+  requestTimingContext.enterWith(undefined);
+}
+
+/** @internal Test-only active-request count. */
+export function __getActivePerfRequestCountForTests(): number {
+  return activeRequests.size;
 }

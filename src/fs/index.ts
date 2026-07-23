@@ -5,11 +5,12 @@
  *
  * @example File operations
  * ```ts
- * import { exists, mkdir, readTextFile, writeTextFile } from "veryfront/fs";
+ * import { mkdir, readTextFile, writeTextFile } from "veryfront/fs";
  *
- * const content = await readTextFile("./data/config.json");
- * await writeTextFile("./output/result.json", JSON.stringify(data));
  * await mkdir("./output", { recursive: true });
+ * await writeTextFile("./output/result.json", '{"ok":true}\n');
+ * const content = await readTextFile("./output/result.json");
+ * console.log(content);
  * ```
  *
  * @example Path utilities
@@ -41,6 +42,7 @@ export {
   remove,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
+export type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 export {
   basename,
   dirname,

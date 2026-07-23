@@ -1,26 +1,36 @@
-import type { ParsedDomain } from "#veryfront/server/utils/domain-parser.ts";
-import type { TokenScope } from "./token-manager.ts";
-import type { ProxyContext } from "./handler.ts";
+import type { ProxyContext, ProxyParsedDomain } from "./handler.ts";
 
+/** Stable proxy error slugs with dedicated public handling. */
 export type ProxyErrorSlug =
   | "authentication-failed"
   | "project-not-found"
   | "release-not-found";
 
+/** Routing fields preserved when constructing an error context. */
 export interface ProxyErrorContextBase {
-  scope: TokenScope;
+  /** Runtime token scope. */
+  scope: "preview" | "production";
+  /** Normalized request host. */
   host: string;
-  parsedDomain: ParsedDomain;
+  /** Parsed request-domain classification. */
+  parsedDomain: ProxyParsedDomain;
 }
 
+/** Error-specific fields used to construct a proxy context. */
 export interface ProxyErrorContextOptions {
+  /** HTTP response status. */
   status: number;
+  /** Public error message. */
   message: string;
+  /** Token retained for downstream diagnostics that never run on an error response. */
   token?: string;
+  /** Approved sign-in redirect URL. */
   redirectUrl?: string;
+  /** Stable error-page discriminator. */
   slug?: ProxyErrorSlug;
 }
 
+/** Construct a fully shaped proxy context that carries a public error. */
 export function createProxyErrorContext(
   base: ProxyErrorContextBase,
   options: ProxyErrorContextOptions,
@@ -44,6 +54,7 @@ export function createProxyErrorContext(
   };
 }
 
+/** Construct the standardized project-not-found proxy context. */
 export function createProjectNotFoundProxyContext(
   base: ProxyErrorContextBase,
   message: "Preview project not found" | "Project not found",
@@ -57,6 +68,7 @@ export function createProjectNotFoundProxyContext(
   });
 }
 
+/** Construct the standardized active-release-not-found proxy context. */
 export function createReleaseNotFoundProxyContext(
   base: ProxyErrorContextBase,
   token?: string,

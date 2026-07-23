@@ -2,6 +2,7 @@ import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
 } from "#veryfront/sandbox";
+import type { Tool } from "#veryfront/tool";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
   createRemoteMCPToolSource,
@@ -13,7 +14,7 @@ import {
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { buildExecuteToolTraceAttributes } from "./trace-attributes.ts";
 import type {
   ChildRunExecutionResult,
@@ -168,25 +169,31 @@ export const getDefaultHostedInvokeAgentSelectionSchema = defineSchema((v) =>
 /** Schema for default hosted invoke agent selection.
  * @deprecated Use getDefaultHostedInvokeAgentSelectionSchema()
  */
-export const defaultHostedInvokeAgentSelectionSchema = lazySchema(
+export const defaultHostedInvokeAgentSelectionSchema: Schema<
+  Pick<DefaultHostedInvokeAgentInput, "agent_id">
+> = lazySchema(
   getDefaultHostedInvokeAgentSelectionSchema,
 );
 
-export const getDefaultHostedInvokeAgentInputSchema = defineSchema((v) =>
-  getHostedChildForkToolInputSchema().extend(defaultHostedInvokeAgentSelectionFields(v))
-);
+/** Input accepted by the default hosted invoke-agent tool. */
+export type DefaultHostedInvokeAgentInput = HostedChildForkToolInput & {
+  /** Built-in child type or user-defined agent identifier. */
+  agent_id: string;
+};
+
+/** Returns the default hosted invoke-agent input schema. */
+export const getDefaultHostedInvokeAgentInputSchema: () => Schema<DefaultHostedInvokeAgentInput> =
+  defineSchema((v) =>
+    getHostedChildForkToolInputSchema().extend(defaultHostedInvokeAgentSelectionFields(v))
+  );
 
 /** Schema for default hosted invoke agent input.
  * @deprecated Use getDefaultHostedInvokeAgentInputSchema()
  */
-export const defaultHostedInvokeAgentInputSchema = lazySchema(
-  getDefaultHostedInvokeAgentInputSchema,
-);
-
-/** Input payload for default hosted invoke agent. */
-export type DefaultHostedInvokeAgentInput = InferSchema<
-  ReturnType<typeof getDefaultHostedInvokeAgentInputSchema>
->;
+export const defaultHostedInvokeAgentInputSchema: Schema<DefaultHostedInvokeAgentInput> =
+  lazySchema(
+    getDefaultHostedInvokeAgentInputSchema,
+  );
 
 const DEFAULT_USER_AGENT_MODEL = "opus";
 const DEFAULT_USER_AGENT_MAX_STEPS = 80;
@@ -600,7 +607,7 @@ export function createDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
 >(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
-) {
+): Tool<DefaultHostedInvokeAgentInput, DefaultHostedInvokeAgentToolResult> {
   return createHostedChildInvokeTool<
     DefaultHostedInvokeAgentInput,
     DefaultHostedInvokeAgentToolResult

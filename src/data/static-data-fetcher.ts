@@ -12,6 +12,9 @@ import {
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
+import { resolveDataProjectScope } from "./project-scope.ts";
+import { parseDataResult, snapshotStaticDataResult } from "./result-validation.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
@@ -30,78 +33,132 @@ const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALI
 const projectRevalidationCounts = new Map<string, number>();
 
 /** Acquire a revalidation slot for a project (returns false if at per-project limit) */
-function acquireRevalidationSlot(projectId: string): boolean {
+function acquireRevalidationSlot(projectScope: string): boolean {
   if (REVALIDATION_PER_PROJECT_LIMIT <= 0) return true;
 
-  const current = projectRevalidationCounts.get(projectId) ?? 0;
+  const current = projectRevalidationCounts.get(projectScope) ?? 0;
   if (current >= REVALIDATION_PER_PROJECT_LIMIT) return false;
 
-  projectRevalidationCounts.set(projectId, current + 1);
+  projectRevalidationCounts.set(projectScope, current + 1);
   return true;
 }
 
 /** Release a revalidation slot for a project */
-function releaseRevalidationSlot(projectId: string): void {
-  const current = projectRevalidationCounts.get(projectId) ?? 0;
+function releaseRevalidationSlot(projectScope: string): void {
+  const current = projectRevalidationCounts.get(projectScope) ?? 0;
 
   if (current <= 1) {
-    projectRevalidationCounts.delete(projectId);
+    projectRevalidationCounts.delete(projectScope);
     return;
   }
 
-  projectRevalidationCounts.set(projectId, current - 1);
-}
-
-function resolveProjectId(context: DataContext, fallback: string): string {
-  return context.request?.headers?.get("x-project-id") ?? context.url?.hostname ?? fallback;
+  projectRevalidationCounts.set(projectScope, current - 1);
 }
 
 type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
+type StaticDataContext = Omit<DataContext, "request" | "query">;
+
+interface CacheWriteGuard {
+  generation: number;
+  keyGeneration: number;
+}
 
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
+  private pendingFetches = new Map<string, Promise<DataResult>>();
+  private activeCacheWrites = new Map<string, number>();
+  private keyGenerations = new Map<string, number>();
+  private generation = 0;
+  private destroyed = false;
 
   constructor(private cacheManager: CacheManager) {}
 
-  async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
+  async fetch(
+    pageModule: PageWithData,
+    context: DataContext,
+    dataSource = "default",
+  ): Promise<DataResult> {
     const getStaticData = pageModule.getStaticData;
     if (typeof getStaticData !== "function") return { props: {} };
 
     const pathname = context.url?.pathname ?? "unknown";
-    const cacheKey = this.cacheManager.createCacheKey(context);
+    const pathnameHash = hashString(pathname);
+    const cacheKey = this.cacheManager.createCacheKey(context, dataSource);
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
-      return withSpan("data.fetch_static", () => this.fetchFreshNoCache(getStaticData, context), {
-        "data.fetch_method": "getStaticData",
-        "data.pathname": pathname,
-        "data.cache": "disabled",
-      });
+      return snapshotStaticDataResult(
+        await withSpan(
+          "data.fetch_static",
+          () =>
+            this.fetchFreshNoCache(
+              getStaticData,
+              context,
+              this.createStaticDataContext(context),
+            ),
+          {
+            "data.fetch_method": "getStaticData",
+            "data.pathname_hash": pathnameHash,
+            "data.cache": "disabled",
+          },
+        ),
+      );
     }
+    const cacheKeyHash = hashString(cacheKey);
 
     const cached = await withSpan(
       SpanNames.DATA_CACHE_GET,
       () => Promise.resolve(this.cacheManager.get(cacheKey)),
-      { "data.cache_key": cacheKey, "data.pathname": pathname },
+      { "data.cache_key_hash": cacheKeyHash, "data.pathname_hash": pathnameHash },
     );
 
     if (!cached) {
-      return withSpan(
+      const existingFetch = this.pendingFetches.get(cacheKey);
+      if (existingFetch) return snapshotStaticDataResult(await existingFetch);
+
+      const guard = this.beginCacheWrite(cacheKey);
+      const pendingFetch = withSpan(
         "data.fetch_static",
-        () => this.fetchFresh(getStaticData, context, cacheKey),
+        () =>
+          this.fetchFresh(
+            getStaticData,
+            context,
+            this.createStaticDataContext(context),
+            cacheKey,
+            guard,
+          ),
         {
           "data.fetch_method": "getStaticData",
-          "data.pathname": pathname,
+          "data.pathname_hash": pathnameHash,
           "data.cache": "miss",
         },
-      );
+      ).finally(() => this.finishCacheWrite(cacheKey));
+      this.pendingFetches.set(cacheKey, pendingFetch);
+      const clearPendingFetch = () => {
+        if (this.pendingFetches.get(cacheKey) === pendingFetch) {
+          this.pendingFetches.delete(cacheKey);
+        }
+      };
+      void pendingFetch.then(clearPendingFetch, clearPendingFetch);
+      return snapshotStaticDataResult(await pendingFetch);
     }
 
     if (this.cacheManager.shouldRevalidate(cached) && !this.pendingRevalidations.has(cacheKey)) {
-      this.pendingRevalidations.set(
+      const guard = this.beginCacheWrite(cacheKey);
+      const pendingRevalidation = this.revalidateInBackground(
+        getStaticData,
+        context,
+        this.createStaticDataContext(context),
         cacheKey,
-        this.revalidateInBackground(getStaticData, context, cacheKey),
-      );
+        guard,
+      ).finally(() => this.finishCacheWrite(cacheKey));
+      this.pendingRevalidations.set(cacheKey, pendingRevalidation);
+      const clearPendingRevalidation = () => {
+        if (this.pendingRevalidations.get(cacheKey) === pendingRevalidation) {
+          this.pendingRevalidations.delete(cacheKey);
+        }
+      };
+      void pendingRevalidation.then(clearPendingRevalidation, clearPendingRevalidation);
     }
 
     return cached.data;
@@ -109,24 +166,38 @@ export class StaticDataFetcher {
 
   private createStaticDataContext(
     context: DataContext,
-  ): Omit<DataContext, "request" | "query"> {
-    return { params: context.params, url: context.url };
+  ): StaticDataContext {
+    const params = Object.fromEntries(
+      Object.entries(context.params).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? [...value] : value,
+      ]),
+    );
+    const url = new URL(context.url);
+    url.search = "";
+    url.hash = "";
+    return { params, url };
   }
 
   private executeStaticData(
     getStaticData: StaticDataHandler,
-    context: DataContext,
+    context: StaticDataContext,
     timeoutMs: number,
     label: string,
   ): Promise<DataResult> {
     return withTimeoutThrow(
-      Promise.resolve(getStaticData(this.createStaticDataContext(context))),
+      Promise.resolve(getStaticData(context)),
       timeoutMs,
       label,
-    );
+    ).then((value) => parseDataResult(value, "getStaticData"));
   }
 
-  private storeCacheEntry(cacheKey: string, result: DataResult): void {
+  private storeCacheEntry(
+    cacheKey: string,
+    result: DataResult,
+    guard: CacheWriteGuard,
+  ): void {
+    if (!this.canWriteCache(cacheKey, guard)) return;
     this.cacheManager.set(cacheKey, {
       data: result,
       timestamp: Date.now(),
@@ -134,33 +205,98 @@ export class StaticDataFetcher {
     });
   }
 
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.generation++;
+    this.pendingFetches.clear();
+    this.pendingRevalidations.clear();
+  }
+
+  /** Prevent matching in-flight work from restoring invalidated cache entries. */
+  invalidate(pattern?: string): void {
+    if (!pattern) {
+      this.generation++;
+      this.keyGenerations.clear();
+      this.pendingFetches.clear();
+      this.pendingRevalidations.clear();
+      return;
+    }
+
+    const activeKeys = new Set([
+      ...this.pendingFetches.keys(),
+      ...this.pendingRevalidations.keys(),
+    ]);
+    for (const cacheKey of activeKeys) {
+      if (!cacheKey.includes(pattern)) continue;
+      this.keyGenerations.set(
+        cacheKey,
+        (this.keyGenerations.get(cacheKey) ?? 0) + 1,
+      );
+      this.pendingFetches.delete(cacheKey);
+      this.pendingRevalidations.delete(cacheKey);
+    }
+  }
+
+  private beginCacheWrite(cacheKey: string): CacheWriteGuard {
+    this.activeCacheWrites.set(
+      cacheKey,
+      (this.activeCacheWrites.get(cacheKey) ?? 0) + 1,
+    );
+    return {
+      generation: this.generation,
+      keyGeneration: this.keyGenerations.get(cacheKey) ?? 0,
+    };
+  }
+
+  private finishCacheWrite(cacheKey: string): void {
+    const activeWrites = this.activeCacheWrites.get(cacheKey) ?? 0;
+    if (activeWrites > 1) {
+      this.activeCacheWrites.set(cacheKey, activeWrites - 1);
+      return;
+    }
+    this.activeCacheWrites.delete(cacheKey);
+    this.keyGenerations.delete(cacheKey);
+  }
+
+  private canWriteCache(cacheKey: string, guard: CacheWriteGuard): boolean {
+    return !this.destroyed &&
+      guard.generation === this.generation &&
+      guard.keyGeneration === (this.keyGenerations.get(cacheKey) ?? 0);
+  }
+
   private async fetchFreshNoCache(
     getStaticData: StaticDataHandler,
     context: DataContext,
+    staticContext: StaticDataContext,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
+    const pathnameHash = hashString(pathname);
     const start = performance.now();
 
     try {
       return await this.executeStaticData(
         getStaticData,
-        context,
+        staticContext,
         DATA_FETCH_TIMEOUT_MS,
-        `getStaticData for ${pathname}`,
+        "getStaticData",
       );
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
 
       if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
-          pathname,
+          pathnameHash,
           durationMs,
           timeoutMs: DATA_FETCH_TIMEOUT_MS,
         });
         throw error;
       }
 
-      this.logError("DATA_FETCH_ERROR getStaticData failed", error, { pathname, durationMs });
+      this.logError("DATA_FETCH_ERROR getStaticData failed", error, {
+        pathnameHash,
+        durationMs,
+      });
       throw error;
     }
   }
@@ -168,15 +304,19 @@ export class StaticDataFetcher {
   private async fetchFresh(
     getStaticData: StaticDataHandler,
     context: DataContext,
+    staticContext: StaticDataContext,
     cacheKey: string,
+    guard: CacheWriteGuard,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
-    // Extract projectId from request headers (set by proxy) for proper circuit breaker isolation
-    const projectId = resolveProjectId(context, "default");
+    const pathnameHash = hashString(pathname);
+    // Use trusted ambient tenancy when available and a hashed host scope otherwise.
+    const projectScope = resolveDataProjectScope(context);
+    const cacheKeyHash = hashString(cacheKey);
     const start = performance.now();
 
     // Circuit breaker per project to prevent cascade failures
-    const circuitBreaker = getCircuitBreaker(`static-data-fetch:${projectId}`, {
+    const circuitBreaker = getCircuitBreaker(`static-data-fetch:${projectScope}`, {
       failureThreshold: 5,
       resetTimeoutMs: 30_000,
       successThreshold: 2,
@@ -186,19 +326,22 @@ export class StaticDataFetcher {
       const result = await circuitBreaker.execute(() =>
         this.executeStaticData(
           getStaticData,
-          context,
+          staticContext,
           DATA_FETCH_TIMEOUT_MS,
-          `getStaticData for ${pathname}`,
+          "getStaticData",
         )
       );
 
       await withSpan(
         SpanNames.DATA_CACHE_SET,
         () => {
-          this.storeCacheEntry(cacheKey, result);
+          this.storeCacheEntry(cacheKey, result, guard);
           return Promise.resolve();
         },
-        { "data.cache_key": cacheKey, "data.revalidate": result.revalidate ?? 0 },
+        {
+          "data.cache_key_hash": cacheKeyHash,
+          "data.revalidate": result.revalidate ?? 0,
+        },
       );
 
       return result;
@@ -207,28 +350,28 @@ export class StaticDataFetcher {
 
       if (error instanceof CircuitBreakerOpen) {
         serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
-          pathname,
-          projectId,
+          pathnameHash,
+          projectScope,
           retryAfterMs: error.nextAttemptMs,
-          cacheKey,
+          cacheKeyHash,
         });
         throw error;
       }
 
       if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
-          pathname,
+          pathnameHash,
           durationMs,
           timeoutMs: DATA_FETCH_TIMEOUT_MS,
-          cacheKey,
+          cacheKeyHash,
         });
         throw error;
       }
 
       this.logError("DATA_FETCH_ERROR getStaticData failed", error, {
-        pathname,
+        pathnameHash,
         durationMs,
-        cacheKey,
+        cacheKeyHash,
       });
       throw error;
     }
@@ -237,21 +380,24 @@ export class StaticDataFetcher {
   private async revalidateInBackground(
     getStaticData: StaticDataHandler,
     context: DataContext,
+    staticContext: StaticDataContext,
     cacheKey: string,
+    guard: CacheWriteGuard,
   ): Promise<void> {
     const pathname = context.url?.pathname ?? "unknown";
-    // Use projectId from request headers for proper per-project fairness
-    const projectId = resolveProjectId(context, "unknown");
+    const pathnameHash = hashString(pathname);
+    // Keep fairness keyed to trusted, non-identifying project scope.
+    const projectScope = resolveDataProjectScope(context);
+    const cacheKeyHash = hashString(cacheKey);
 
     // Check per-project limit before acquiring global semaphore
-    if (!acquireRevalidationSlot(projectId)) {
+    if (!acquireRevalidationSlot(projectScope)) {
       serverLogger.debug("DATA_REVALIDATION_SKIPPED per-project limit reached", {
-        pathname,
-        projectId,
-        cacheKey,
+        pathnameHash,
+        projectScope,
+        cacheKeyHash,
         limit: REVALIDATION_PER_PROJECT_LIMIT,
       });
-      this.pendingRevalidations.delete(cacheKey);
       return;
     }
 
@@ -262,43 +408,42 @@ export class StaticDataFetcher {
         try {
           const result = await this.executeStaticData(
             getStaticData,
-            context,
+            staticContext,
             REVALIDATION_TIMEOUT_MS,
-            `getStaticData revalidation for ${pathname}`,
+            "getStaticData revalidation",
           );
 
-          this.storeCacheEntry(cacheKey, result);
+          this.storeCacheEntry(cacheKey, result, guard);
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
 
           if (error instanceof TimeoutError) {
             serverLogger.error("DATA_REVALIDATION_TIMEOUT background revalidation timed out", {
-              pathname,
+              pathnameHash,
               durationMs,
               timeoutMs: REVALIDATION_TIMEOUT_MS,
-              cacheKey,
+              cacheKeyHash,
             });
             return;
           }
 
           this.logError("DATA_REVALIDATION_ERROR background revalidation failed", error, {
-            pathname,
+            pathnameHash,
             durationMs,
-            cacheKey,
+            cacheKeyHash,
           });
         }
       });
     } catch (_) {
       // expected: semaphore timeout when too many concurrent revalidations
       serverLogger.warn("DATA_REVALIDATION_SKIPPED semaphore timeout", {
-        pathname,
-        cacheKey,
+        pathnameHash,
+        cacheKeyHash,
         activeRevalidations: revalidationSemaphore.active,
         waitingRevalidations: revalidationSemaphore.waitingCount,
       });
     } finally {
-      releaseRevalidationSlot(projectId);
-      this.pendingRevalidations.delete(cacheKey);
+      releaseRevalidationSlot(projectScope);
     }
   }
 
@@ -309,7 +454,9 @@ export class StaticDataFetcher {
    * @see plans/architecture-audit/010-error-handling.md
    */
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
-    // Always log errors - silent failures hide production bugs
-    serverLogger.error(message, context ?? {}, error);
+    serverLogger.error(message, {
+      ...context,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
   }
 }

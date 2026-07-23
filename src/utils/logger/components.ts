@@ -12,7 +12,7 @@
  * @module
  */
 
-export const LogComponents = {
+const LOG_COMPONENTS = {
   // Server & infrastructure
   server: "server",
   config: "config",
@@ -89,5 +89,7 @@ export const LogComponents = {
   error: "error",
   env: "env",
 } as const;
+
+export const LogComponents = Object.freeze(LOG_COMPONENTS);
 
 export type LogComponent = (typeof LogComponents)[keyof typeof LogComponents];

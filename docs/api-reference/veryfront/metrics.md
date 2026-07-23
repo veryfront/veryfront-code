@@ -1,6 +1,6 @@
 ---
 title: "veryfront/metrics"
-description: "Runtime/application metric hooks for project code."
+description: "Runtime and application metric hooks for project code."
 order: 17
 ---
 
@@ -31,20 +31,20 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L445) |
-| `gauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L473) |
-| `histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L459) |
+| `counter` | Add a non-negative value to a monotonic counter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L163) |
+| `gauge` | Set the latest finite value for a gauge series. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L214) |
+| `histogram` | Record a finite observation in a histogram. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L189) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MetricAttributes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L28) |
-| `MetricAttributeValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L27) |
-| `MetricInstrumentOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L30) |
+| `MetricAttributes` | Low-cardinality attributes attached to a metric measurement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L26) |
+| `MetricAttributeValue` | A scalar value accepted as a metric attribute. Nullish values are omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L23) |
+| `MetricInstrumentOptions` | Descriptive metadata for a metric instrument. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L29) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `metrics` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L493) |
+| `metrics` | Runtime and application metric operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L232) |

@@ -10,8 +10,10 @@ import {
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   _resetOTLPForTests,
+  endSpan,
   initializeOTLPWithApis,
   resolveOtlpGate,
+  sanitizeProxySpanUrl,
   shutdownOTLP,
   startServerSpan,
 } from "./tracing.ts";
@@ -78,6 +80,37 @@ function createFakeExporter(overrides: Partial<TracingExporter> = {}): {
 }
 
 describe("proxy otlp gate", () => {
+  it("removes credentials, query values, and fragments from span URLs", () => {
+    assertEquals(
+      sanitizeProxySpanUrl(
+        "https://user:password@api.example.test/path?access_token=secret&page=2#private",
+      ),
+      "https://api.example.test/path",
+    );
+    assertEquals(sanitizeProxySpanUrl("not a URL"), "[invalid-url]");
+    assertEquals(sanitizeProxySpanUrl("file://example.test/runtime/config.json"), "[invalid-url]");
+  });
+
+  it("does not record raw upstream errors in span status or exceptions", () => {
+    const recorded: unknown[] = [];
+    const span = {
+      ...createFakeSpan(),
+      setStatus(status: unknown) {
+        recorded.push(status);
+        return this;
+      },
+      recordException(error: unknown) {
+        recorded.push(
+          error instanceof Error ? { name: error.name, message: error.message } : error,
+        );
+      },
+    } as unknown as Span;
+
+    endSpan(span, 502, new Error("token=span-secret at internal-host.example"));
+    assertEquals(JSON.stringify(recorded).includes("span-secret"), false);
+    assertEquals(JSON.stringify(recorded).includes("internal-host.example"), false);
+  });
+
   it('disables tracing when OTEL_TRACES_ENABLED is not "true"', () => {
     const gate = resolveOtlpGate({ enabled: false, endpoint: "http://collector" });
     assertEquals(gate.ok, false);
@@ -198,6 +231,63 @@ describe("proxy otlp initialization", () => {
     await initializeOTLPWithApis(loader);
 
     assertEquals(calls.start, 1);
+  });
+
+  it("makes concurrent callers await the same initialization", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const { exporter } = createFakeExporter();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let loaderCalls = 0;
+    const loader = async () => {
+      loaderCalls++;
+      await blocked;
+      return exporter;
+    };
+
+    let secondSettled = false;
+    const first = initializeOTLPWithApis(loader);
+    const second = initializeOTLPWithApis(loader).finally(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    assertEquals(loaderCalls, 1);
+    assertEquals(secondSettled, false);
+
+    release();
+    await Promise.all([first, second]);
+    assertEquals(secondSettled, true);
+  });
+
+  it("releases a partially started exporter and permits a retry", async () => {
+    setOtelEnv({
+      OTEL_TRACES_ENABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    const failed = createFakeExporter({
+      start: () => Promise.reject(new Error("collector unavailable")),
+    });
+    const succeeding = createFakeExporter();
+    let attempts = 0;
+
+    await initializeOTLPWithApis(async () => {
+      attempts++;
+      return attempts === 1 ? failed.exporter : succeeding.exporter;
+    });
+    await initializeOTLPWithApis(async () => {
+      attempts++;
+      return succeeding.exporter;
+    });
+
+    assertEquals(attempts, 2);
+    assertEquals(failed.calls.shutdown, 1);
+    assertEquals(succeeding.calls.start, 1);
+    assertNotEquals(startServerSpan("GET", "/"), null);
   });
 
   it("flushes the exporter on shutdown and deactivates spans", async () => {

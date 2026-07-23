@@ -1,6 +1,7 @@
-import { defineError } from "../types.ts";
+import { defineError, type ErrorRegistryFragment, type RegisteredError } from "../types.ts";
 
-export const AGENT_ERROR = defineError({
+/** Registered error definition for the agent-error slug. */
+export const AGENT_ERROR: RegisteredError = defineError({
   slug: "agent-error",
   category: "AGENT",
   status: 500,
@@ -8,7 +9,8 @@ export const AGENT_ERROR = defineError({
   suggestion: "Check agent configuration and logs",
 });
 
-export const AGENT_NOT_FOUND = defineError({
+/** Registered error definition for the agent-not-found slug. */
+export const AGENT_NOT_FOUND: RegisteredError = defineError({
   slug: "agent-not-found",
   category: "AGENT",
   status: 404,
@@ -16,7 +18,8 @@ export const AGENT_NOT_FOUND = defineError({
   suggestion: "Verify the agent ID exists",
 });
 
-export const AGENT_TIMEOUT = defineError({
+/** Registered error definition for the agent-timeout slug. */
+export const AGENT_TIMEOUT: RegisteredError = defineError({
   slug: "agent-timeout",
   category: "AGENT",
   status: 408,
@@ -24,7 +27,8 @@ export const AGENT_TIMEOUT = defineError({
   suggestion: "Increase timeout or simplify the request",
 });
 
-export const AGENT_INTENT_ERROR = defineError({
+/** Registered error definition for the agent-intent-error slug. */
+export const AGENT_INTENT_ERROR: RegisteredError = defineError({
   slug: "agent-intent-error",
   category: "AGENT",
   status: 400,
@@ -32,7 +36,8 @@ export const AGENT_INTENT_ERROR = defineError({
   suggestion: "Rephrase the request more clearly",
 });
 
-export const ORCHESTRATION_ERROR = defineError({
+/** Registered error definition for the orchestration-error slug. */
+export const ORCHESTRATION_ERROR: RegisteredError = defineError({
   slug: "orchestration-error",
   category: "AGENT",
   status: 500,
@@ -40,7 +45,8 @@ export const ORCHESTRATION_ERROR = defineError({
   suggestion: "Check agent coordination logic",
 });
 
-export const COST_LIMIT_EXCEEDED = defineError({
+/** Registered error definition for the cost-limit-exceeded slug. */
+export const COST_LIMIT_EXCEEDED: RegisteredError = defineError({
   slug: "cost-limit-exceeded",
   category: "AGENT",
   status: 429,
@@ -48,7 +54,8 @@ export const COST_LIMIT_EXCEEDED = defineError({
   suggestion: "Wait for the budget period to reset or increase the limit",
 });
 
-export const TOOL_ID_CONFLICT = defineError({
+/** Registered error definition for the tool-id-conflict slug. */
+export const TOOL_ID_CONFLICT: RegisteredError = defineError({
   slug: "tool-id-conflict",
   category: "AGENT",
   status: 409,
@@ -57,12 +64,22 @@ export const TOOL_ID_CONFLICT = defineError({
 });
 
 /** Registry fragment for AGENT errors (slug → definition). */
-export const AGENT_REGISTRY = {
-  "agent-error": AGENT_ERROR,
-  "agent-not-found": AGENT_NOT_FOUND,
-  "agent-timeout": AGENT_TIMEOUT,
-  "agent-intent-error": AGENT_INTENT_ERROR,
-  "orchestration-error": ORCHESTRATION_ERROR,
-  "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
-  "tool-id-conflict": TOOL_ID_CONFLICT,
-} as const;
+export const AGENT_REGISTRY: ErrorRegistryFragment<
+  | "agent-error"
+  | "agent-not-found"
+  | "agent-timeout"
+  | "agent-intent-error"
+  | "orchestration-error"
+  | "cost-limit-exceeded"
+  | "tool-id-conflict"
+> = Object.freeze(
+  {
+    "agent-error": AGENT_ERROR,
+    "agent-not-found": AGENT_NOT_FOUND,
+    "agent-timeout": AGENT_TIMEOUT,
+    "agent-intent-error": AGENT_INTENT_ERROR,
+    "orchestration-error": ORCHESTRATION_ERROR,
+    "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
+    "tool-id-conflict": TOOL_ID_CONFLICT,
+  } as const,
+);

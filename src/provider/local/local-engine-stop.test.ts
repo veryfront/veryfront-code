@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  assertValidChatMessages,
   buildConditionalChatTemplateOptions,
   buildConditionalGenerateOptions,
   buildPipeOptions,
+  createStopSequenceController,
 } from "./local-engine.ts";
 
 const LOCAL_AI_THINKING_ENV = "VERYFRONT_LOCAL_AI_THINKING";
@@ -88,12 +90,66 @@ describe("provider/local/local-engine buildPipeOptions", () => {
     assertEquals(opts.streamer, "streamer-sentinel");
   });
 
-  it("does NOT silently drop stopSequences — it attaches a stopping_criteria", () => {
+  it("rejects unsafe generation option values", () => {
+    for (
+      const options of [
+        { maxNewTokens: 0 },
+        { maxNewTokens: Number.POSITIVE_INFINITY },
+        { temperature: Number.NaN },
+        { topP: 2 },
+        { topK: 1.5 },
+      ]
+    ) {
+      let threw = false;
+      try {
+        buildPipeOptions(options, fakeTransformers, fakeTokenizer, "streamer-sentinel");
+      } catch (error) {
+        threw = error instanceof RangeError;
+      }
+      assertEquals(threw, true);
+    }
+  });
+
+  it("rejects malformed and oversized direct engine messages", () => {
+    assertThrows(
+      () => assertValidChatMessages([]),
+      RangeError,
+      "at least one message",
+    );
+    assertThrows(
+      () => assertValidChatMessages([{ role: "tool", content: "invalid" }] as never),
+      TypeError,
+      "invalid role",
+    );
+    assertThrows(
+      () => assertValidChatMessages([{ role: "user", content: "x".repeat(4 * 1_024 * 1_024 + 1) }]),
+      RangeError,
+      "supported size",
+    );
+  });
+
+  it("stops generation after cancellation", () => {
+    const controller = new AbortController();
+    const opts = buildPipeOptions(
+      { abortSignal: controller.signal },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+    const list = opts.stopping_criteria as FakeStoppingCriteriaList;
+
+    controller.abort();
+    assertEquals(list._call([[1]], undefined), [true]);
+  });
+
+  it("does NOT silently drop stopSequences - it attaches a stopping_criteria", () => {
+    const stopController = createStopSequenceController(["STOP"]);
     const opts = buildPipeOptions(
       { maxNewTokens: 64, temperature: 0.7, stopSequences: ["STOP"] },
       fakeTransformers,
       fakeTokenizer,
       "streamer-sentinel",
+      stopController,
     );
 
     assertExists(
@@ -104,73 +160,36 @@ describe("provider/local/local-engine buildPipeOptions", () => {
   });
 
   it("builds a stopping criterion that triggers when a stop sequence is produced", () => {
-    // tokens [18,19,14,15] decode to "stop" with the fake tokenizer
-    // (s=18, t=19, o=14, p=15). Use uppercase-insensitive match by checking
-    // the literal decoded string.
+    const stopController = createStopSequenceController(["stop"]);
     const opts = buildPipeOptions(
       { maxNewTokens: 64, temperature: 0.7, stopSequences: ["stop"] },
       fakeTransformers,
       fakeTokenizer,
       "streamer-sentinel",
+      stopController,
     );
 
-    // deno-lint-ignore no-explicit-any
-    const list = opts.stopping_criteria as any;
-    // First invocation establishes the prompt boundary (empty prompt here).
-    assertEquals(list._call([[]], null), [false]);
-    // Subsequent step: generated suffix decodes to "stop" → must stop.
-    const stopIds = [[18, 19, 14, 15]];
-    assertEquals(list._call(stopIds, null), [true]);
+    const list = opts.stopping_criteria as FakeStoppingCriteriaList;
+    stopController.push("sto");
+    assertEquals(list._call([[1]], null), [false]);
+    stopController.push("p");
+    assertEquals(list._call([[1, 2]], null), [true]);
   });
 
-  it("does NOT trigger when the stop sequence is only in the prompt, not the generated suffix", () => {
-    // Stop string "stop" lives entirely inside the prompt. The criterion must
-    // not trip until the model actually generates the stop string.
-    const opts = buildPipeOptions(
-      { maxNewTokens: 64, temperature: 0.7, stopSequences: ["stop"] },
-      fakeTransformers,
-      fakeTokenizer,
-      "streamer-sentinel",
-    );
+  it("filters a stop sequence split across streamed chunks", () => {
+    const stopController = createStopSequenceController(["STOP"]);
+    const output = stopController.push("hello ST") + stopController.push("OP ignored");
 
-    // deno-lint-ignore no-explicit-any
-    const list = opts.stopping_criteria as any;
-
-    // Prompt tokens [18,19,14,15] decode to "stop" — a user/system message that
-    // happens to mention the stop word. First _call records this as the prompt
-    // boundary and must NOT stop.
-    const prompt = [18, 19, 14, 15]; // "stop"
-    assertEquals(list._call([[...prompt]], null), [false]);
-
-    // Model generates "go" (tokens [6,14]) — suffix has no stop string → continue.
-    assertEquals(list._call([[...prompt, 6, 14]], null), [false]);
-
-    // Model now generates "stop" in the suffix → must stop, even though the
-    // prompt also contained "stop".
-    assertEquals(list._call([[...prompt, 6, 14, 18, 19, 14, 15]], null), [true]);
+    assertEquals(output, "hello ");
+    assertEquals(stopController.stopped, true);
+    assertEquals(stopController.finish(), "");
   });
 
-  it("tracks prompt length per batch item independently", () => {
-    const opts = buildPipeOptions(
-      { maxNewTokens: 64, temperature: 0.7, stopSequences: ["stop"] },
-      fakeTransformers,
-      fakeTokenizer,
-      "streamer-sentinel",
-    );
+  it("flushes a trailing partial match when generation finishes", () => {
+    const stopController = createStopSequenceController(["STOP"]);
 
-    // deno-lint-ignore no-explicit-any
-    const list = opts.stopping_criteria as any;
-
-    // Two batch items with different prompt lengths, both mentioning "stop".
-    const promptA = [18, 19, 14, 15]; // "stop"
-    const promptB = [6, 14, 18, 19, 14, 15]; // "gostop"
-    assertEquals(list._call([[...promptA], [...promptB]], null), [false, false]);
-
-    // Item 0 generates "stop" → stop; item 1 generates "go" → continue.
-    assertEquals(
-      list._call([[...promptA, 18, 19, 14, 15], [...promptB, 6, 14]], null),
-      [true, false],
-    );
+    assertEquals(stopController.push("hello ST"), "hello");
+    assertEquals(stopController.finish(), " ST");
   });
 
   it("omits stopping_criteria entirely when no stopSequences are given", () => {
@@ -185,11 +204,13 @@ describe("provider/local/local-engine buildPipeOptions", () => {
   });
 
   it("forwards stopSequences for conditional-generation models", () => {
+    const stopController = createStopSequenceController(["STOP"]);
     const opts = buildConditionalGenerateOptions(
       { maxNewTokens: 64, temperature: 0.7, stopSequences: ["STOP"] },
       fakeTransformers,
       fakeTokenizer,
       "streamer-sentinel",
+      stopController,
     );
 
     assertExists(

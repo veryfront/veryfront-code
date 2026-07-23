@@ -182,9 +182,11 @@ describe("worker-egress-guard", () => {
   it("parses the explicit internal egress override env value", () => {
     assertEquals(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS");
     assertEquals(isInternalEgressOverrideEnabled("1"), true);
-    assertEquals(isInternalEgressOverrideEnabled("true"), true);
-    assertEquals(isInternalEgressOverrideEnabled("yes"), true);
-    assertEquals(isInternalEgressOverrideEnabled("on"), true);
+    assertEquals(isInternalEgressOverrideEnabled("true"), false);
+    assertEquals(isInternalEgressOverrideEnabled("yes"), false);
+    assertEquals(isInternalEgressOverrideEnabled("on"), false);
+    assertEquals(isInternalEgressOverrideEnabled(" 1"), false);
+    assertEquals(isInternalEgressOverrideEnabled("1 "), false);
     assertEquals(isInternalEgressOverrideEnabled("0"), false);
     assertEquals(isInternalEgressOverrideEnabled(undefined), false);
   });
@@ -266,6 +268,47 @@ describe("worker-egress-guard", () => {
     // A late resolver rejection is consumed by the abort race.
     rejectResolution?.(new Error("late DNS failure"));
     await Promise.resolve();
+  });
+
+  it("preserves abort signals for raw TLS resolution and handshakes", async () => {
+    const controller = new AbortController();
+    let connectionClosed = false;
+    let connectSignal: AbortSignal | undefined;
+    let markHandshakeStarted: (() => void) | undefined;
+    const handshakeStarted = new Promise<void>((resolve) => {
+      markHandshakeStarted = resolve;
+    });
+    const connection = {
+      close: () => {
+        connectionClosed = true;
+      },
+    } as Deno.TcpConn;
+
+    const pending = guardedWorkerConnectTls(
+      {
+        hostname: "api.example.com",
+        port: 443,
+        signal: controller.signal,
+      },
+      { resolveHost: () => Promise.resolve(["93.184.216.34"]) },
+      {
+        connect: (options) => {
+          connectSignal = options.signal;
+          return Promise.resolve(connection);
+        },
+        startTls: () => {
+          markHandshakeStarted?.();
+          return new Promise<Deno.TlsConn>(() => {});
+        },
+      },
+    );
+
+    await handshakeStarted;
+    controller.abort(new Error("TLS cancelled"));
+
+    await assertRejects(() => pending, Error, "TLS cancelled");
+    assertEquals(connectSignal?.aborted, true);
+    assertEquals(connectionClosed, true);
   });
 });
 

@@ -18,6 +18,14 @@ export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 	"redis",
 ] as const;
 
+// Runtime packages imported by the root package itself. A package can also be
+// used by an independently published extension, so extension ownership alone
+// is not sufficient reason to strip it from the root package metadata.
+export const ROOT_RUNTIME_DEPENDENCIES = [
+	"react-markdown",
+	"remark-gfm",
+] as const;
+
 // Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
 // their packages never appear in the generated dependencies. Without this
 // fallback the optional-peer move silently skips them and the published
@@ -70,7 +78,6 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"rehype-starry-night",
 	"rehype-stringify",
 	"remark-frontmatter",
-	"remark-gfm",
 	"remark-parse",
 	"remark-rehype",
 	"tailwindcss",

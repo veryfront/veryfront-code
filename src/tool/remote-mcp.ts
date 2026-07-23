@@ -1,18 +1,37 @@
-import { logger } from "#veryfront/utils";
-import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
-import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
+import {
+  getErrorMessage,
+  INPUT_VALIDATION_FAILED,
+  INVALID_ARGUMENT,
+  NETWORK_ERROR,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
+import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { snapshotJsonValue } from "./json-value.ts";
 
 /** Default timeout for a single outbound remote MCP request. */
-const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REMOTE_MCP_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_REMOTE_MCP_MAX_REQUEST_BYTES = 1024 * 1024;
+// Keep one byte available when reading a bounded prefix so an exactly-at-limit
+// response can be distinguished from an oversized response.
+const MAX_REMOTE_MCP_BODY_BYTES = 16 * 1024 * 1024 - 1;
+const MAX_REMOTE_MCP_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 /** Upper bound on characters inspected when classifying a remote HTTP failure. */
 const MAX_ERROR_BODY_LENGTH = 2_000;
 const MAX_ERROR_BODY_BYTES = MAX_ERROR_BODY_LENGTH * 4;
 /** Defensive cap on tools/list pagination to avoid unbounded cursor loops. */
-const MAX_TOOL_LIST_PAGES = 50;
+const DEFAULT_MAX_TOOL_LIST_PAGES = 50;
+const MAX_CONFIGURED_TOOL_LIST_PAGES = 1_000;
+const DEFAULT_MAX_REMOTE_TOOLS = 10_000;
+const MAX_CONFIGURED_REMOTE_TOOLS = 100_000;
+const MAX_REMOTE_TOOL_NAME_LENGTH = 128;
+const MAX_REMOTE_TOOL_DESCRIPTION_LENGTH = 16_384;
+const MAX_REMOTE_CURSOR_LENGTH = 4_096;
+const MAX_REMOTE_METHOD_LENGTH = 256;
 
 class RemoteMCPHttpError extends Error {
   constructor(status: number) {
@@ -28,16 +47,49 @@ class RemoteMCPOAuthExpiredHttpError extends RemoteMCPHttpError {
   }
 }
 
-type ResolvableValue<T> = T | ((context?: ToolExecutionContext) => T | Promise<T>);
+/** Static value or request-scoped resolver accepted by remote MCP configuration. */
+export type RemoteMCPResolvableValue<T> =
+  | T
+  | ((context?: ToolExecutionContext) => T | Promise<T>);
 
 /** Configuration used by remote MCP tool source. */
 export interface RemoteMCPToolSourceConfig {
+  /** Stable source identifier used in JSON-RPC request IDs. */
   id?: string;
-  endpoint: ResolvableValue<string>;
-  headers?: ResolvableValue<HeadersInit | undefined>;
+  /** Absolute HTTP or HTTPS MCP endpoint, or a request-scoped resolver. */
+  endpoint: RemoteMCPResolvableValue<string>;
+  /** Optional request headers or request-scoped header resolver. */
+  headers?: RemoteMCPResolvableValue<HeadersInit | undefined>;
+  /** Optional fetch implementation. Defaults to the active global fetch at request time. */
   fetch?: typeof fetch;
+  /** JSON-RPC method used to list tools. */
   listMethod?: string;
+  /** JSON-RPC method used to execute a tool. */
   callMethod?: string;
+  /** Timeout applied to each outbound JSON-RPC request. */
+  requestTimeoutMs?: number;
+  /** Maximum bytes accepted in a successful JSON-RPC response. */
+  maxResponseBytes?: number;
+  /** Maximum bytes sent in one JSON-RPC request body. */
+  maxRequestBytes?: number;
+  /** Maximum pages accepted from one tools/list operation. */
+  maxToolListPages?: number;
+  /** Maximum tool definitions accepted from one tools/list operation. */
+  maxTools?: number;
+}
+
+interface NormalizedRemoteMCPToolSourceConfig {
+  readonly id: string;
+  readonly endpoint: RemoteMCPResolvableValue<string>;
+  readonly headers?: RemoteMCPResolvableValue<HeadersInit | undefined>;
+  readonly fetch?: typeof fetch;
+  readonly listMethod: string;
+  readonly callMethod: string;
+  readonly requestTimeoutMs: number;
+  readonly maxResponseBytes: number;
+  readonly maxRequestBytes: number;
+  readonly maxToolListPages: number;
+  readonly maxTools: number;
 }
 
 interface JsonRpcErrorObject {
@@ -54,67 +106,315 @@ interface SseEvent {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalidConfig(detail: string): never {
+  throw INVALID_ARGUMENT.create({ detail: `Remote MCP ${detail}` });
+}
+
+function normalizePositiveInteger(
+  value: unknown,
+  defaultValue: number,
+  maximum: number,
+  name: string,
+): number {
+  if (value === undefined) return defaultValue;
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > maximum) {
+    invalidConfig(`${name} must be a positive safe integer no greater than ${maximum}`);
+  }
+  return value as number;
+}
+
+function hasUnsafeControlCharacters(value: string, allowFormattingWhitespace = false): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code === 0x7f ||
+      (code < 0x20 &&
+        !(allowFormattingWhitespace && (code === 0x09 || code === 0x0a || code === 0x0d)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeNonEmptyString(
+  value: unknown,
+  fallback: string,
+  name: string,
+  maximumLength: number,
+): string {
+  const resolved = value ?? fallback;
+  if (
+    typeof resolved !== "string" || resolved.trim().length === 0 ||
+    resolved !== resolved.trim() || resolved.length > maximumLength ||
+    hasUnsafeControlCharacters(resolved)
+  ) {
+    invalidConfig(`${name} must be a non-empty string within the supported length`);
+  }
+  return resolved;
+}
+
+function normalizeEndpoint(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    invalidConfig("endpoint must be a non-empty absolute URL");
+  }
+
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    invalidConfig("endpoint must be a non-empty absolute URL");
+  }
+  if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+    invalidConfig("endpoint must use http or https");
+  }
+  if (endpoint.username || endpoint.password) {
+    invalidConfig("endpoint must not contain URL credentials");
+  }
+  return endpoint.toString();
+}
+
+function normalizeRemoteMCPConfig(
+  config: RemoteMCPToolSourceConfig,
+): NormalizedRemoteMCPToolSourceConfig {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    invalidConfig("configuration must be an object");
+  }
+
+  let prototype: object | null;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    prototype = Object.getPrototypeOf(config);
+    descriptors = Object.getOwnPropertyDescriptors(config);
+  } catch {
+    invalidConfig("configuration could not be inspected");
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    invalidConfig("configuration must be a plain object");
+  }
+  if (Object.values(descriptors).some((descriptor) => !("value" in descriptor))) {
+    invalidConfig("configuration must use data properties");
+  }
+  const read = (property: keyof RemoteMCPToolSourceConfig): unknown => descriptors[property]?.value;
+
+  const rawEndpoint = read("endpoint");
+  const endpoint = typeof rawEndpoint === "function"
+    ? rawEndpoint as RemoteMCPResolvableValue<string>
+    : normalizeEndpoint(rawEndpoint);
+  const fetchImpl = read("fetch");
+  if (fetchImpl !== undefined && typeof fetchImpl !== "function") {
+    invalidConfig("fetch must be a function");
+  }
+  let headers = read("headers") as RemoteMCPResolvableValue<HeadersInit | undefined> | undefined;
+  if (headers !== undefined && typeof headers !== "function") {
+    try {
+      headers = new Headers(headers);
+    } catch {
+      invalidConfig("headers must be valid HTTP headers");
+    }
+  }
+
+  return Object.freeze({
+    id: normalizeNonEmptyString(read("id"), "remote-mcp", "id", MAX_REMOTE_TOOL_NAME_LENGTH),
+    endpoint,
+    ...(headers === undefined ? {} : { headers }),
+    ...(fetchImpl === undefined ? {} : { fetch: fetchImpl as typeof fetch }),
+    listMethod: normalizeNonEmptyString(
+      read("listMethod"),
+      "tools/list",
+      "listMethod",
+      MAX_REMOTE_METHOD_LENGTH,
+    ),
+    callMethod: normalizeNonEmptyString(
+      read("callMethod"),
+      "tools/call",
+      "callMethod",
+      MAX_REMOTE_METHOD_LENGTH,
+    ),
+    requestTimeoutMs: normalizePositiveInteger(
+      read("requestTimeoutMs"),
+      DEFAULT_REMOTE_MCP_REQUEST_TIMEOUT_MS,
+      MAX_REMOTE_MCP_REQUEST_TIMEOUT_MS,
+      "requestTimeoutMs",
+    ),
+    maxResponseBytes: normalizePositiveInteger(
+      read("maxResponseBytes"),
+      DEFAULT_REMOTE_MCP_MAX_RESPONSE_BYTES,
+      MAX_REMOTE_MCP_BODY_BYTES,
+      "maxResponseBytes",
+    ),
+    maxRequestBytes: normalizePositiveInteger(
+      read("maxRequestBytes"),
+      DEFAULT_REMOTE_MCP_MAX_REQUEST_BYTES,
+      MAX_REMOTE_MCP_BODY_BYTES,
+      "maxRequestBytes",
+    ),
+    maxToolListPages: normalizePositiveInteger(
+      read("maxToolListPages"),
+      DEFAULT_MAX_TOOL_LIST_PAGES,
+      MAX_CONFIGURED_TOOL_LIST_PAGES,
+      "maxToolListPages",
+    ),
+    maxTools: normalizePositiveInteger(
+      read("maxTools"),
+      DEFAULT_MAX_REMOTE_TOOLS,
+      MAX_CONFIGURED_REMOTE_TOOLS,
+      "maxTools",
+    ),
+  });
+}
+
+function resolveFetch(fetchImpl: typeof fetch | undefined): typeof fetch {
+  const resolvedFetch = fetchImpl ?? globalThis.fetch;
+  if (typeof resolvedFetch !== "function") {
+    invalidConfig("fetch must be a function");
+  }
+  return resolvedFetch;
 }
 
 function isResolver<T>(
-  value: ResolvableValue<T>,
+  value: RemoteMCPResolvableValue<T>,
 ): value is (context?: ToolExecutionContext) => T | Promise<T> {
   return typeof value === "function";
 }
 
-function isToolAnnotations(value: unknown): value is ToolAnnotations {
-  if (!isRecord(value)) return false;
+const TOOL_ANNOTATION_BOOLEAN_KEYS = [
+  "readOnlyHint",
+  "destructiveHint",
+  "idempotentHint",
+  "openWorldHint",
+] as const satisfies readonly (keyof ToolAnnotations)[];
 
-  for (const key of Object.keys(value)) {
-    if (
-      key !== "readOnlyHint" &&
-      key !== "destructiveHint" &&
-      key !== "idempotentHint" &&
-      key !== "openWorldHint"
-    ) {
-      return false;
-    }
-
-    const entry = value[key];
-    if (entry !== undefined && typeof entry !== "boolean") {
-      return false;
-    }
-  }
-
-  return true;
+interface NormalizedRemoteToolAnnotations {
+  readonly title?: string;
+  readonly annotations?: ToolAnnotations;
 }
 
-function normalizeParameters(inputSchema: unknown): JsonSchema {
-  if (!isRecord(inputSchema) || Object.keys(inputSchema).length === 0) {
+function remoteProtocolError(detail: string): never {
+  throw NETWORK_ERROR.create({ detail: `Remote MCP ${detail}` });
+}
+
+function normalizeToolTitle(
+  value: unknown,
+  toolName: string,
+  location: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" || value.trim().length === 0 || value !== value.trim() ||
+    value.length > MAX_REMOTE_TOOL_DESCRIPTION_LENGTH ||
+    hasUnsafeControlCharacters(value, true)
+  ) {
+    remoteProtocolError(`tool ${toolName} had an invalid ${location}`);
+  }
+  return value;
+}
+
+function normalizeToolAnnotations(
+  value: unknown,
+  toolName: string,
+): NormalizedRemoteToolAnnotations {
+  if (!isRecord(value)) {
+    remoteProtocolError(`tool ${toolName} had invalid annotations`);
+  }
+
+  const annotations: Record<string, boolean> = {};
+  for (const key of TOOL_ANNOTATION_BOOLEAN_KEYS) {
+    const entry = value[key];
+    if (entry === undefined) continue;
+    if (typeof entry !== "boolean") {
+      remoteProtocolError(`tool ${toolName} had invalid annotations`);
+    }
+    annotations[key] = entry;
+  }
+
+  const title = normalizeToolTitle(value.title, toolName, "annotation title");
+  return {
+    ...(title === undefined ? {} : { title }),
+    ...(Object.keys(annotations).length === 0
+      ? {}
+      : { annotations: annotations as ToolAnnotations }),
+  };
+}
+
+function normalizeParameters(inputSchema: unknown, toolName: string): JsonSchema {
+  if (inputSchema === undefined || inputSchema === null) {
     return { type: "object", properties: {} };
   }
+  if (!isRecord(inputSchema)) {
+    remoteProtocolError(`tool ${toolName} inputSchema must describe an object`);
+  }
+  if (Object.keys(inputSchema).length === 0) {
+    return { type: "object", properties: {} };
+  }
+  if (inputSchema.type !== undefined && inputSchema.type !== "object") {
+    remoteProtocolError(`tool ${toolName} inputSchema must describe an object`);
+  }
 
-  return inputSchema as JsonSchema;
+  try {
+    const snapshot = snapshotJsonValue(inputSchema, {
+      label: `Remote MCP tool ${toolName} inputSchema`,
+    });
+    return {
+      ...snapshot,
+      type: "object",
+    } as JsonSchema;
+  } catch {
+    remoteProtocolError(`tool ${toolName} inputSchema was not valid JSON data`);
+  }
 }
 
-function normalizeToolDefinitions(result: unknown): ToolDefinition[] {
-  if (!isRecord(result)) return [];
+function normalizeToolDefinitions(result: Record<string, unknown>): ToolDefinition[] {
   const rawTools = result.tools;
-  if (!Array.isArray(rawTools)) return [];
+  if (!Array.isArray(rawTools)) {
+    remoteProtocolError("tools/list result did not include a tools array");
+  }
 
   const definitions: ToolDefinition[] = [];
-  for (const entry of rawTools) {
-    if (!isRecord(entry)) continue;
-    if (typeof entry.name !== "string" || entry.name.length === 0) continue;
-    if (typeof entry.description !== "string") continue;
+  for (let index = 0; index < rawTools.length; index += 1) {
+    const entry = rawTools[index];
+    if (!isRecord(entry)) {
+      remoteProtocolError(`tools/list entry ${index} was not a JSON object`);
+    }
+    if (
+      typeof entry.name !== "string" || entry.name.trim().length === 0 ||
+      entry.name !== entry.name.trim() || entry.name.length > MAX_REMOTE_TOOL_NAME_LENGTH ||
+      hasUnsafeControlCharacters(entry.name)
+    ) {
+      remoteProtocolError(`tools/list entry ${index} had an invalid name`);
+    }
+    const normalizedAnnotations = entry.annotations === undefined
+      ? {}
+      : normalizeToolAnnotations(entry.annotations, entry.name);
+    const title = normalizeToolTitle(entry.title, entry.name, "title") ??
+      normalizedAnnotations.title;
+
+    let description = title ?? entry.name;
+    if (entry.description !== undefined) {
+      if (
+        typeof entry.description !== "string" ||
+        entry.description.length > MAX_REMOTE_TOOL_DESCRIPTION_LENGTH ||
+        hasUnsafeControlCharacters(entry.description, true)
+      ) {
+        remoteProtocolError(`tool ${entry.name} had an invalid description`);
+      }
+      if (entry.description.trim().length > 0) {
+        description = entry.description;
+      }
+    }
 
     const definition: ToolDefinition = {
       name: entry.name,
-      description: entry.description,
-      parameters: normalizeParameters(entry.inputSchema),
+      description,
+      parameters: normalizeParameters(entry.inputSchema, entry.name),
+      ...(title === undefined ? {} : { title }),
     };
 
-    if (typeof entry.title === "string" && entry.title.length > 0) {
-      definition.title = entry.title;
-    }
-    if (isToolAnnotations(entry.annotations)) {
-      definition.annotations = entry.annotations;
+    if (normalizedAnnotations.annotations !== undefined) {
+      definition.annotations = normalizedAnnotations.annotations;
     }
 
     definitions.push(definition);
@@ -151,7 +451,12 @@ function isOauthExpiredMessage(value: unknown): boolean {
     }
   }
   // Fall back to substring scan for providers that embed the code in message text.
-  const text = typeof value === "string" ? value : JSON.stringify(value);
+  let text: string;
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value) ?? "";
+  } catch {
+    return false;
+  }
   const normalized = text.toLowerCase();
   return (
     normalized.includes("invalid_grant") ||
@@ -236,17 +541,51 @@ function isReconnectRequiredToolOutput(value: unknown): value is Record<string, 
   return isRecord(value) && value.error === "reconnect_required";
 }
 
+function getDataPropertyString(value: unknown, property: PropertyKey): string | undefined {
+  if ((typeof value !== "object" || value === null) && typeof value !== "function") {
+    return undefined;
+  }
+
+  let current: object | null = value as object;
+  for (let depth = 0; current !== null && depth < 32; depth += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(current, property);
+    } catch {
+      return undefined;
+    }
+    if (descriptor) {
+      return "value" in descriptor && typeof descriptor.value === "string"
+        ? descriptor.value
+        : undefined;
+    }
+    try {
+      current = Object.getPrototypeOf(current);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 function normalizeKnownToolException(
   error: unknown,
   toolName: string,
   endpoint: string,
   context?: ToolExecutionContext,
 ): Record<string, unknown> | null {
-  const message = error instanceof RemoteMCPOAuthExpiredHttpError
+  let isOauthExpiredHttpError = false;
+  try {
+    isOauthExpiredHttpError = error instanceof RemoteMCPOAuthExpiredHttpError;
+  } catch {
+    // Hostile thrown values must pass through without being inspected further.
+  }
+  const message = isOauthExpiredHttpError
     ? "invalid_grant"
-    : error instanceof Error
-    ? error.message
-    : String(error);
+    : typeof error === "string"
+    ? error
+    : getDataPropertyString(error, "message");
+  if (message === undefined) return null;
   const normalized = normalizeKnownToolError(message, toolName, endpoint, context);
   return isReconnectRequiredToolOutput(normalized) ? normalized : null;
 }
@@ -322,32 +661,55 @@ function parseJsonRpcSsePayload(text: string): unknown {
   });
 }
 
-async function parseJsonRpcResponse(response: Response): Promise<unknown> {
+async function parseJsonRpcResponse(
+  response: Response,
+  maxResponseBytes: number,
+): Promise<unknown> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-
-  if (contentType.includes("text/event-stream")) {
-    return parseJsonRpcSsePayload(await response.text());
+  const { text, truncated } = await readResponseTextPrefix(response, maxResponseBytes + 1);
+  if (truncated) {
+    throw NETWORK_ERROR.create({
+      detail: `Remote MCP response exceeded ${maxResponseBytes} bytes`,
+    });
   }
 
-  return await response.json();
+  if (contentType.includes("text/event-stream")) {
+    return parseJsonRpcSsePayload(text);
+  }
+
+  const payload = parseJsonText(text);
+  if (payload === undefined) {
+    throw NETWORK_ERROR.create({
+      detail: "Remote MCP response did not contain valid JSON",
+    });
+  }
+  return payload;
 }
 
 async function resolveValue<T>(
-  value: ResolvableValue<T>,
+  value: RemoteMCPResolvableValue<T>,
   context?: ToolExecutionContext,
 ): Promise<T> {
+  const signal = context?.abortSignal;
+  signal?.throwIfAborted();
   if (isResolver(value)) {
-    return await value(context);
+    const operation = Promise.resolve().then(() => value(context));
+    return signal ? await raceWithAbort(operation, signal) : await operation;
   }
   return value;
 }
 
 async function resolveHeaders(
-  headers: ResolvableValue<HeadersInit | undefined> | undefined,
+  headers: RemoteMCPResolvableValue<HeadersInit | undefined> | undefined,
   context?: ToolExecutionContext,
 ): Promise<Headers> {
   const resolvedHeaders = headers ? await resolveValue(headers, context) : undefined;
-  const finalHeaders = new Headers(resolvedHeaders);
+  let finalHeaders: Headers;
+  try {
+    finalHeaders = new Headers(resolvedHeaders);
+  } catch {
+    invalidConfig("headers resolver returned invalid HTTP headers");
+  }
   finalHeaders.set("Content-Type", "application/json");
   finalHeaders.set("Accept", mergeAcceptHeader(finalHeaders.get("Accept")));
   return finalHeaders;
@@ -372,17 +734,64 @@ function mergeAcceptHeader(existingAccept: string | null): string {
   return existingTypes.join(", ");
 }
 
-/**
- * Build the AbortSignal for a single outbound request: a fresh timeout, combined
- * with the caller's abort signal when one is available (and the runtime supports
- * `AbortSignal.any`). A hung remote server otherwise blocks the whole agent loop.
- */
-function buildRequestSignal(abortSignal: AbortSignal | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(REMOTE_MCP_REQUEST_TIMEOUT_MS);
-  if (abortSignal && typeof AbortSignal.any === "function") {
-    return AbortSignal.any([abortSignal, timeout]);
+interface RequestAbortScope {
+  readonly signal: AbortSignal;
+  readonly timedOut: () => boolean;
+  readonly dispose: () => void;
+}
+
+function toAbortReason(signal: AbortSignal): unknown {
+  return signal.reason === undefined
+    ? new DOMException("The operation was aborted", "AbortError")
+    : signal.reason;
+}
+
+function createRequestAbortScope(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): RequestAbortScope {
+  const controller = new AbortController();
+  let didTimeOut = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const abortFromCaller = () => controller.abort(toAbortReason(callerSignal!));
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+    timeoutId = setTimeout(() => {
+      didTimeOut = true;
+      controller.abort(new DOMException("Remote MCP request timed out", "TimeoutError"));
+    }, timeoutMs);
   }
-  return timeout;
+
+  return {
+    signal: controller.signal,
+    timedOut: () => didTimeOut,
+    dispose: () => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
+function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(toAbortReason(signal));
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(toAbortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 async function postJsonRpc(
@@ -390,40 +799,91 @@ async function postJsonRpc(
   headers: Headers,
   body: Record<string, unknown>,
   fetchImpl: typeof fetch,
-  signal: AbortSignal,
+  callerSignal: AbortSignal | undefined,
+  requestTimeoutMs: number,
+  maxRequestBytes: number,
+  maxResponseBytes: number,
 ): Promise<unknown> {
-  let response: Response;
+  let serializedBody: string;
   try {
-    response = await fetchImpl(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal,
+    const bodySnapshot = snapshotJsonValue(body, {
+      label: "Remote MCP request body",
+      maxBytes: MAX_REMOTE_MCP_BODY_BYTES,
+      maxStringLength: MAX_REMOTE_MCP_BODY_BYTES,
     });
+    serializedBody = JSON.stringify(bodySnapshot);
   } catch (error) {
-    if (error instanceof DOMException && error.name === "TimeoutError") {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: `Remote MCP request body was not JSON serializable: ${getErrorMessage(error)}`,
+    });
+  }
+  if (new TextEncoder().encode(serializedBody).byteLength > maxRequestBytes) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: `Remote MCP request exceeded ${maxRequestBytes} bytes`,
+    });
+  }
+
+  const abortScope = createRequestAbortScope(callerSignal, requestTimeoutMs);
+  try {
+    if (abortScope.signal.aborted) {
+      throw toAbortReason(abortScope.signal);
+    }
+    const response = await raceWithAbort(
+      fetchImpl(endpoint, {
+        method: "POST",
+        headers,
+        body: serializedBody,
+        redirect: "error",
+        signal: abortScope.signal,
+      }),
+      abortScope.signal,
+    );
+
+    if (!response.ok) {
+      const { text } = await raceWithAbort(
+        readResponseTextPrefix(response, MAX_ERROR_BODY_BYTES),
+        abortScope.signal,
+      );
+      const detail = text.slice(0, MAX_ERROR_BODY_LENGTH);
+      if (isOauthExpiredMessage(detail)) {
+        throw new RemoteMCPOAuthExpiredHttpError(response.status);
+      }
+      throw new RemoteMCPHttpError(response.status);
+    }
+
+    return await raceWithAbort(
+      parseJsonRpcResponse(response, maxResponseBytes),
+      abortScope.signal,
+    );
+  } catch (error) {
+    if (abortScope.timedOut()) {
       throw TIMEOUT_ERROR.create({
-        detail: `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
+        detail: `Remote MCP request timed out after ${requestTimeoutMs}ms`,
       });
     }
+    if (callerSignal?.aborted) throw toAbortReason(callerSignal);
     throw error;
+  } finally {
+    abortScope.dispose();
   }
-
-  if (!response.ok) {
-    const { text } = await readResponseTextPrefix(response, MAX_ERROR_BODY_BYTES);
-    const detail = text.slice(0, MAX_ERROR_BODY_LENGTH);
-    if (isOauthExpiredMessage(detail)) {
-      throw new RemoteMCPOAuthExpiredHttpError(response.status);
-    }
-    throw new RemoteMCPHttpError(response.status);
-  }
-
-  return await parseJsonRpcResponse(response);
 }
 
-function getJsonRpcResult(payload: unknown): unknown {
+function getJsonRpcResult(payload: unknown, expectedId: string): unknown {
   if (!isRecord(payload)) {
     throw NETWORK_ERROR.create({ detail: "Remote MCP response was not a JSON object" });
+  }
+  if (payload.jsonrpc !== "2.0") {
+    throw NETWORK_ERROR.create({ detail: "Remote MCP response used an invalid JSON-RPC version" });
+  }
+  if (payload.id !== expectedId) {
+    throw NETWORK_ERROR.create({
+      detail: "Remote MCP response id did not match the request",
+    });
+  }
+  if ("error" in payload && "result" in payload) {
+    throw NETWORK_ERROR.create({
+      detail: "Remote MCP response included both result and error",
+    });
   }
 
   if ("error" in payload) {
@@ -454,6 +914,9 @@ function normalizeCallToolResult(input: {
   const rawContent = result.content;
 
   if (Array.isArray(rawContent)) {
+    const hasNonTextContent = rawContent.some((item) =>
+      !isRecord(item) || typeof item.text !== "string"
+    );
     const text = joinCallToolText(
       rawContent.filter((item): item is JsonRpcCallToolContentItem => isRecord(item)),
     );
@@ -461,6 +924,12 @@ function normalizeCallToolResult(input: {
     if (isError) {
       const errorBody = "structuredContent" in result
         ? result.structuredContent
+        : hasNonTextContent
+        ? {
+          error: "tool_error",
+          ...(text.length === 0 ? {} : { message: text }),
+          content: rawContent,
+        }
         : parseJsonText(text) ?? { error: "tool_error", message: text };
       return preserveToolExecutionErrorMarker(
         normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context),
@@ -470,6 +939,8 @@ function normalizeCallToolResult(input: {
     if ("structuredContent" in result) {
       return result.structuredContent;
     }
+
+    if (hasNonTextContent) return rawContent;
 
     return parseJsonText(text) ?? text;
   }
@@ -505,59 +976,103 @@ function buildRunContextMeta(
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {
-  const id = config.id ?? "remote-mcp";
-  const listMethod = config.listMethod ?? "tools/list";
-  const callMethod = config.callMethod ?? "tools/call";
+  const normalizedConfig = normalizeRemoteMCPConfig(config);
+  const { id, listMethod, callMethod } = normalizedConfig;
 
   return {
     id,
     async listTools(context) {
-      const endpoint = await resolveValue(config.endpoint, context);
-      const headers = await resolveHeaders(config.headers, context);
-      const fetchImpl = config.fetch ?? globalThis.fetch;
+      const endpoint = normalizeEndpoint(
+        await resolveValue(normalizedConfig.endpoint, context),
+      );
+      const headers = await resolveHeaders(normalizedConfig.headers, context);
 
       const definitions: ToolDefinition[] = [];
+      const seenToolNames = new Set<string>();
+      const seenCursors = new Set<string>();
       let cursor: string | undefined;
-      for (let page = 0; page < MAX_TOOL_LIST_PAGES; page += 1) {
+      for (let page = 0; page < normalizedConfig.maxToolListPages; page += 1) {
+        const requestId = `${id}:tools:list`;
         const payload = await postJsonRpc(
           endpoint,
           headers,
           {
             jsonrpc: "2.0",
-            id: `${id}:tools:list`,
+            id: requestId,
             method: listMethod,
             ...(cursor !== undefined ? { params: { cursor } } : {}),
           },
-          fetchImpl,
-          buildRequestSignal(context?.abortSignal),
+          resolveFetch(normalizedConfig.fetch),
+          context?.abortSignal,
+          normalizedConfig.requestTimeoutMs,
+          normalizedConfig.maxRequestBytes,
+          normalizedConfig.maxResponseBytes,
         );
 
-        const result = getJsonRpcResult(payload);
-        definitions.push(...normalizeToolDefinitions(result));
+        const result = getJsonRpcResult(payload, requestId);
+        if (!isRecord(result)) {
+          remoteProtocolError("tools/list result was not a JSON object");
+        }
+        const pageDefinitions = normalizeToolDefinitions(result);
+        if (definitions.length + pageDefinitions.length > normalizedConfig.maxTools) {
+          remoteProtocolError(`tools/list exceeded ${normalizedConfig.maxTools} tools`);
+        }
+        for (const definition of pageDefinitions) {
+          if (seenToolNames.has(definition.name)) {
+            remoteProtocolError(`tools/list repeated tool name ${definition.name}`);
+          }
+          seenToolNames.add(definition.name);
+          definitions.push(definition);
+        }
 
-        const nextCursor = isRecord(result) && typeof result.nextCursor === "string" &&
-            result.nextCursor.length > 0
-          ? result.nextCursor
-          : undefined;
-        if (nextCursor === undefined) {
+        const rawNextCursor = result.nextCursor;
+        if (rawNextCursor === undefined || rawNextCursor === "") {
           return definitions;
         }
-        cursor = nextCursor;
-
-        if (page === MAX_TOOL_LIST_PAGES - 1) {
-          logger.warn("Remote MCP tools/list pagination capped", {
-            pages: MAX_TOOL_LIST_PAGES,
-          });
+        if (
+          typeof rawNextCursor !== "string" ||
+          rawNextCursor.length > MAX_REMOTE_CURSOR_LENGTH ||
+          hasUnsafeControlCharacters(rawNextCursor)
+        ) {
+          remoteProtocolError("tools/list returned an invalid pagination cursor");
         }
+        if (seenCursors.has(rawNextCursor)) {
+          remoteProtocolError("tools/list returned a repeated pagination cursor");
+        }
+        seenCursors.add(rawNextCursor);
+        if (page === normalizedConfig.maxToolListPages - 1) {
+          remoteProtocolError(
+            `tools/list exceeded ${normalizedConfig.maxToolListPages} pages`,
+          );
+        }
+        cursor = rawNextCursor;
       }
 
-      return definitions;
+      throw new Error("Unreachable remote MCP pagination state");
     },
 
     async executeTool(toolName, args, context) {
-      const endpoint = await resolveValue(config.endpoint, context);
-      const headers = await resolveHeaders(config.headers, context);
+      if (
+        typeof toolName !== "string" || toolName.trim().length === 0 ||
+        toolName !== toolName.trim() || toolName.length > MAX_REMOTE_TOOL_NAME_LENGTH ||
+        hasUnsafeControlCharacters(toolName)
+      ) {
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Remote MCP tool name was invalid",
+        });
+      }
+      if (!isRecord(args)) {
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: "Remote MCP tool arguments must be an object",
+        });
+      }
+
+      const endpoint = normalizeEndpoint(
+        await resolveValue(normalizedConfig.endpoint, context),
+      );
+      const headers = await resolveHeaders(normalizedConfig.headers, context);
       const meta = buildRunContextMeta(context);
+      const requestId = `${id}:tools:call:${toolName}`;
 
       try {
         const payload = await postJsonRpc(
@@ -565,7 +1080,7 @@ export function createRemoteMCPToolSource(
           headers,
           {
             jsonrpc: "2.0",
-            id: `${id}:tools:call:${toolName}`,
+            id: requestId,
             method: callMethod,
             params: {
               name: toolName,
@@ -573,17 +1088,21 @@ export function createRemoteMCPToolSource(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          config.fetch ?? globalThis.fetch,
-          buildRequestSignal(context?.abortSignal),
+          resolveFetch(normalizedConfig.fetch),
+          context?.abortSignal,
+          normalizedConfig.requestTimeoutMs,
+          normalizedConfig.maxRequestBytes,
+          normalizedConfig.maxResponseBytes,
         );
 
         return normalizeCallToolResult({
-          result: getJsonRpcResult(payload),
+          result: getJsonRpcResult(payload, requestId),
           toolName,
           endpoint,
           context,
         });
       } catch (error) {
+        context?.abortSignal?.throwIfAborted();
         const normalizedError = normalizeKnownToolException(error, toolName, endpoint, context);
         if (normalizedError) {
           return normalizedError;

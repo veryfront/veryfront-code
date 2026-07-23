@@ -45,6 +45,36 @@ describe("upload-loader", () => {
       const result = await loadUpload(toBuffer(md), "text/markdown");
       assertEquals(result, md);
     });
+
+    it("normalizes MIME parameters and rejects invalid UTF-8", async () => {
+      const content = "hello with charset";
+      assertEquals(
+        await loadUpload(toBuffer(content), "Text/Plain; charset=utf-8"),
+        content,
+      );
+
+      await assertRejects(
+        () => loadUpload(new Uint8Array([0xff, 0xfe]).buffer, "text/plain"),
+        Error,
+        "valid UTF-8",
+      );
+    });
+
+    it("rejects uploads larger than the extraction boundary", async () => {
+      await assertRejects(
+        () => loadUpload(new ArrayBuffer(10 * 1024 * 1024 + 1), "text/plain"),
+        Error,
+        "exceeds the 10 MB extraction limit",
+      );
+    });
+
+    it("rejects malformed loader options", async () => {
+      await assertRejects(
+        () => loadUpload(new ArrayBuffer(0), "text/plain", null as never),
+        Error,
+        "Upload load options must be an object",
+      );
+    });
   });
 
   describe("CSV extraction", () => {
@@ -103,6 +133,49 @@ describe("upload-loader", () => {
       const result = await loadUpload(toBuffer(csv), "text/csv");
       assertEquals(result, "Item: apple\nItem: banana");
     });
+
+    it("handles quoted fields containing newlines", async () => {
+      const csv = 'name,notes\nAlice,"line one\nline two"\nBob,plain';
+      const result = await loadUpload(toBuffer(csv), "text/csv; charset=utf-8");
+
+      assertEquals(
+        result,
+        "name: Alice, notes: line one\nline two\nname: Bob, notes: plain",
+      );
+    });
+
+    it("rejects malformed quoted CSV", async () => {
+      const csv = 'name,notes\nAlice,"unterminated';
+      await assertRejects(
+        () => loadUpload(toBuffer(csv), "text/csv"),
+        Error,
+        "unterminated quoted field",
+      );
+      await assertRejects(
+        () => loadUpload(toBuffer('name\n"quoted"trailing'), "text/csv"),
+        Error,
+        "unexpected character after a closing quote",
+      );
+    });
+
+    it("preserves whitespace inside quoted fields", async () => {
+      const result = await loadUpload(
+        toBuffer('name,note\nAlice,"  keep me  "'),
+        "text/csv",
+      );
+
+      assertEquals(result, "name: Alice, note:   keep me  ");
+    });
+
+    it("rejects CSV inputs with excessive field counts", async () => {
+      const input = new TextEncoder().encode("x,".repeat(100_001)).buffer;
+
+      await assertRejects(
+        () => loadUpload(input, "text/csv"),
+        Error,
+        "CSV contains too many fields",
+      );
+    });
   });
 
   describe("worker extraction (requires DocumentExtractor extension)", () => {
@@ -110,7 +183,7 @@ describe("upload-loader", () => {
     // extensions/ext-document-kreuzberg/src/kreuzberg.integration.test.ts where the
     // extension is registered and @kreuzberg/wasm is available. Core-side,
     // we only assert that `loadUpload` surfaces a clear error when the
-    // extension isn't installed — this is the documented fallback behavior.
+    // extension is not installed. This is the documented fallback behavior.
 
     it("throws an actionable error when DocumentExtractor extension is not registered", {
       sanitizeResources: false,

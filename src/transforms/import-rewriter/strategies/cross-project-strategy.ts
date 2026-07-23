@@ -42,10 +42,7 @@ export class CrossProjectStrategy implements ImportRewriteStrategy {
       parsed.path,
     );
 
-    logger.debug("Rewriting", {
-      from: info.specifier,
-      to: url,
-    });
+    logger.debug("Rewriting cross-project import");
 
     return { specifier: url };
   }

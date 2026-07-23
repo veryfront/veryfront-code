@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import * as esbuild from "veryfront/extensions/bundler";
 import { bundleMdx, bundleMDXWithOptions } from "./mdx-bundler.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
@@ -24,6 +25,9 @@ function createOptions(overrides?: Partial<BundlerOptions>): BundlerOptions {
 }
 
 describe("build/renderer/services/mdx-bundler", () => {
+  afterAll(async () => {
+    await esbuild.stop();
+  });
   describe("bundleMdx", () => {
     it("should compile simple MDX content", async () => {
       const source = { path: "/tmp/test-project/pages/test.mdx", content: "# Hello World" };
@@ -89,6 +93,19 @@ describe("build/renderer/services/mdx-bundler", () => {
       );
     });
 
+    it("generates a JavaScript output path for Markdown sources", async () => {
+      const source = {
+        path: "/tmp/test-project/pages/about.md",
+        content: "# About",
+      };
+      const result = createBundleResult();
+
+      await bundleMdx(source, createOptions(), result, (src) => Promise.resolve(src));
+
+      assertEquals(result.outputs.has("/tmp/test-project/pages/about.js"), true);
+      assertEquals(result.outputs.has(source.path), false);
+    });
+
     it("should track dependencies", async () => {
       const source = {
         path: "/tmp/test-project/pages/dep.mdx",
@@ -105,6 +122,82 @@ describe("build/renderer/services/mdx-bundler", () => {
         true,
         "should track source file dependencies",
       );
+    });
+
+    it("compiles nested MDX imports and rewrites them to generated modules", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.mkdir(`${projectDir}/pages`);
+        await Deno.writeTextFile(`${projectDir}/pages/child.mdx`, "# Child");
+        const source = {
+          path: `${projectDir}/pages/parent.mdx`,
+          content: 'import Child from "./child.mdx";\n\n# Parent',
+        };
+        const result = createBundleResult();
+        let nestedCompileCalled = false;
+
+        await bundleMdx(
+          source,
+          createOptions({ projectDir }),
+          result,
+          (nestedSource) => {
+            nestedCompileCalled = true;
+            return Promise.resolve(`export default ${JSON.stringify(nestedSource)};`);
+          },
+        );
+
+        assertEquals(nestedCompileCalled, true);
+        assertEquals(result.errors, []);
+        assertEquals(result.outputs.has(`${projectDir}/pages/child.js`), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("fails the parent bundle when a nested MDX import cannot compile", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.mkdir(`${projectDir}/pages`);
+        await Deno.writeTextFile(`${projectDir}/pages/child.mdx`, "# Child");
+        const result = createBundleResult();
+
+        await bundleMdx(
+          {
+            path: `${projectDir}/pages/parent.mdx`,
+            content: 'import Child from "./child.mdx";\n\n# Parent',
+          },
+          createOptions({ projectDir }),
+          result,
+          () => Promise.reject(new Error("nested compile failed")),
+        );
+
+        assertEquals(result.outputs.size, 0);
+        assertEquals(result.errors.length, 1);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("validates existing local non-MDX imports without false missing-module errors", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.mkdir(`${projectDir}/pages`);
+        await Deno.writeTextFile(`${projectDir}/pages/helper.ts`, "export const value = 1;");
+        const result = createBundleResult();
+        await bundleMdx(
+          {
+            path: `${projectDir}/pages/parent.mdx`,
+            content: 'import { value } from "./helper";\n\n# Parent',
+          },
+          createOptions({ projectDir }),
+          result,
+          () => Promise.resolve(""),
+        );
+
+        assertEquals(result.errors, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("should capture errors without throwing", async () => {
@@ -187,6 +280,33 @@ describe("build/renderer/services/mdx-bundler", () => {
       });
 
       assertEquals(result.code.includes("myGlobal"), true, "should reference global in code");
+      assertEquals(
+        result.code.includes('const myGlobal = globalThis["MyGlobal"]'),
+        true,
+        "should map the local binding to the configured global property",
+      );
+    });
+
+    it("emits syntactically valid JavaScript", async () => {
+      const result = await bundleMDXWithOptions({
+        content: "# Test",
+        filePath: "/tmp/test.mdx",
+        projectDir: "/tmp",
+      });
+
+      await esbuild.transform(result.code, { loader: "js", format: "esm" });
+    });
+
+    it("rejects global names that cannot be JavaScript bindings", async () => {
+      const result = await bundleMDXWithOptions({
+        content: "# Test",
+        filePath: "/tmp/test.mdx",
+        projectDir: "/tmp",
+        globals: { "bad-name": true } as never,
+      });
+
+      assertEquals(result.code, "");
+      assertEquals((result.errors?.length ?? 0) > 0, true);
     });
 
     it("should return errors array for invalid MDX", async () => {

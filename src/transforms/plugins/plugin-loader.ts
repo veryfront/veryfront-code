@@ -17,11 +17,13 @@
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentPlugin, ContentProcessor } from "#veryfront/extensions/content/index.ts";
 
+/** Return remark plugins from the registered content processor. */
 export function getRemarkPlugins(): ContentPlugin[] {
   const processor = resolveContract<ContentProcessor>("ContentProcessor");
   return processor.getRemarkPlugins();
 }
 
+/** Return rehype plugins from the registered content processor. */
 export function getRehypePlugins(): ContentPlugin[] {
   const processor = resolveContract<ContentProcessor>("ContentProcessor");
   return processor.getRehypePlugins();

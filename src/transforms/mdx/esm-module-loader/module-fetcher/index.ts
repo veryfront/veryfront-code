@@ -28,6 +28,7 @@ import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
+import { errorLogName, fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
@@ -93,6 +94,10 @@ export async function fetchAndCacheModule(
   const log = getLog(context);
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
+  const moduleFile = fileLogLabel(normalizedPath);
+  const parentModuleFile = parentModulePath === undefined
+    ? undefined
+    : fileLogLabel(parentModulePath);
 
   const now = Date.now();
   context.transformDeadline ??= now + TRANSFORM_TREE_TIMEOUT_MS;
@@ -100,9 +105,8 @@ export async function fetchAndCacheModule(
   if (now > context.transformDeadline) {
     const elapsedMs = TRANSFORM_TREE_TIMEOUT_MS + (now - context.transformDeadline);
     log.error(`${LOG_PREFIX_MDX_LOADER} Transform tree timeout exceeded`, {
-      projectSlug,
-      normalizedPath,
-      parentModulePath,
+      moduleFile,
+      ...(parentModuleFile === undefined ? {} : { parentModuleFile }),
       elapsedMs,
       timeoutMs: TRANSFORM_TREE_TIMEOUT_MS,
     });
@@ -118,36 +122,31 @@ export async function fetchAndCacheModule(
 
       if (context.strictMissingModules ?? true) {
         log.error(`${LOG_PREFIX_MDX_LOADER} Circular module dependency`, {
-          projectSlug,
-          normalizedPath,
-          parentModulePath,
-          cycleChain,
+          moduleFile,
+          ...(parentModuleFile === undefined ? {} : { parentModuleFile }),
+          cycleLength: lineage.size + 1,
         });
         throw cycleError;
       }
 
       log.warn(`${LOG_PREFIX_MDX_LOADER} Circular module dependency (using stub fallback)`, {
-        projectSlug,
-        normalizedPath,
-        parentModulePath,
-        cycleChain,
+        moduleFile,
+        ...(parentModuleFile === undefined ? {} : { parentModuleFile }),
+        cycleLength: lineage.size + 1,
       });
       return null;
     }
 
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] Waiting for in-flight module`, {
-      projectSlug,
-      normalizedPath,
-      parentModulePath,
+      moduleFile,
+      ...(parentModuleFile === undefined ? {} : { parentModuleFile }),
     });
     return existingPromise;
   }
 
   log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
-    projectSlug,
-    modulePath,
-    normalizedPath,
-    parentModulePath,
+    moduleFile,
+    ...(parentModuleFile === undefined ? {} : { parentModuleFile }),
   });
 
   const nextLineage = new Set(lineage);
@@ -169,8 +168,7 @@ export async function fetchAndCacheModule(
   try {
     const result = await fetchPromise;
     log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
-      projectSlug,
-      normalizedPath,
+      moduleFile,
       hasResult: result !== null,
     });
     return result;
@@ -311,7 +309,10 @@ async function doFetchAndCacheModule(
           : undefined,
     });
   } catch (error) {
-    log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process module`, {
+      moduleFile: fileLogLabel(normalizedPath),
+      errorName: errorLogName(error),
+    });
     if ((context.strictMissingModules ?? true) || isFatalModuleFetchError(error)) {
       throw (error instanceof Error) ? error : new Error(String(error));
     }

@@ -6,6 +6,7 @@ import {
   formatToolErrorText,
   isCommentOnlySseFrame,
   isRecord,
+  isSafeHttpUrl,
   mapFinishReason,
   normalizeNewlines,
   parseSerializedToolResult,
@@ -14,9 +15,8 @@ import {
 } from "./ag-ui-helpers.ts";
 import type { ChatStreamEvent } from "./protocol.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 type JsonPatchOperation = {
   op: "add" | "remove" | "replace" | "move" | "copy" | "test";
@@ -25,11 +25,16 @@ type JsonPatchOperation = {
   value?: unknown;
 };
 
-/** State for tool call. */
-type ToolCallState = {
+/** Accumulated state for one AG-UI tool call. */
+export type ToolCallState = {
   toolName: string;
   argsText: string;
 };
+
+const DEFAULT_MAX_BUFFERED_CHARS = 1_048_576;
+const DEFAULT_MAX_FRAME_CHARS = 524_288;
+const DEFAULT_MAX_TOOL_INPUT_CHARS = 262_144;
+const DEFAULT_MAX_TRACKED_TOOL_CALLS = 1_024;
 
 /** Public API contract for AG-UI runtime tool call. */
 export type AgUiRuntimeToolCall = {
@@ -99,6 +104,10 @@ export type AgUiChatEventDecoderState = {
   activeFallbackReasoningPartId: string | null;
   validationMode: AgUiDecoderValidationMode;
   onInvalidJson: ((details: { eventName: string | null; dataLength: number }) => void) | null;
+  maxBufferedChars: number;
+  maxFrameChars: number;
+  maxToolInputChars: number;
+  maxTrackedToolCalls: number;
 };
 
 const AG_UI_WIRE_EVENT_NAMES = [
@@ -131,13 +140,14 @@ export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
   v.object({
     provider: v.string().optional(),
     model: v.string().optional(),
-    inputTokens: v.number().int().nonnegative().optional(),
-    outputTokens: v.number().int().nonnegative().optional(),
-    totalTokens: v.number().int().nonnegative().optional(),
-    cachedInputTokens: v.number().int().nonnegative().optional(),
-    cacheCreationInputTokens: v.number().int().nonnegative().optional(),
-    cacheReadInputTokens: v.number().int().nonnegative().optional(),
-    reasoningTokens: v.number().int().nonnegative().optional(),
+    inputTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    outputTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    totalTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    cachedInputTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    cacheCreationInputTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    cacheReadInputTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    reasoningTokens: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     finishReason: v.string().optional(),
     providerRequestId: v.string().optional(),
   })
@@ -177,7 +187,7 @@ const getAgUiUserInputContentSchema = defineSchema((v) =>
 export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
   v.discriminatedUnion("role", [
     v.object({
-      id: v.string(),
+      id: v.string().min(1),
       role: v.literal("assistant"),
       content: v.string().optional(),
       name: v.string().optional(),
@@ -185,22 +195,22 @@ export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
       toolCalls: v.array(getAgUiSnapshotToolCallSchema()).optional(),
     }),
     v.object({
-      id: v.string(),
+      id: v.string().min(1),
       role: v.literal("user"),
       content: v.union([v.string(), v.array(getAgUiUserInputContentSchema())]),
       name: v.string().optional(),
       encryptedValue: v.string().optional(),
     }),
     v.object({
-      id: v.string(),
+      id: v.string().min(1),
       role: v.literal("tool"),
-      toolCallId: v.string(),
+      toolCallId: v.string().min(1),
       content: v.string(),
       error: v.string().optional(),
       encryptedValue: v.string().optional(),
     }),
     v.object({
-      id: v.string(),
+      id: v.string().min(1),
       role: v.literal("reasoning"),
       content: v.string(),
       name: v.string().optional(),
@@ -318,9 +328,13 @@ function applyRuntimeToolResultMessage(
 ): void {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const currentMessage = messages[messageIndex];
-    if (!currentMessage || currentMessage.role !== "assistant") {
+    if (!currentMessage) {
       continue;
     }
+    if (currentMessage.role === "user" || currentMessage.role === "system") {
+      return;
+    }
+    if (currentMessage.role !== "assistant") continue;
 
     const partIndex = currentMessage.parts.findIndex(
       (part) =>
@@ -353,20 +367,6 @@ function applyRuntimeToolResultMessage(
     );
     return;
   }
-
-  messages.push({
-    id: message.id,
-    role: "assistant",
-    parts: [
-      buildResolvedRuntimeToolPart({
-        toolName: "unknown",
-        toolCallId: message.toolCallId,
-        toolInput: {},
-        error: message.error,
-        content: message.content,
-      }),
-    ],
-  });
 }
 
 /** Map AG-UI runtime messages to chat UI messages. */
@@ -412,12 +412,15 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
         threadId: v.string().optional(),
         agentId: v.string().optional(),
         agentName: v.string().optional(),
-        agent_avatar_url: v.string().url().optional(),
+        agent_avatar_url: v.string().url().refine(
+          isSafeHttpUrl,
+          "Must be an HTTP or HTTPS URL without credentials",
+        ).optional(),
       }),
     }),
     v.object({
       eventName: v.literal("Custom"),
-      payload: v.object({ name: v.string(), value: v.unknown() }),
+      payload: v.object({ name: v.string().min(1), value: v.unknown() }),
     }),
     v.object({
       eventName: v.literal("TextMessageStart"),
@@ -541,12 +544,16 @@ function getReasoningPartId(
   payload: { id?: string; messageId?: string },
   phase: "start" | "content" | "end",
 ): string {
+  let resolvedId: string | null = null;
   if (typeof payload.id === "string" && payload.id.length > 0) {
-    return payload.id;
+    resolvedId = payload.id;
+  } else if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
+    resolvedId = `agui-reasoning:${payload.messageId}`;
   }
 
-  if (typeof payload.messageId === "string" && payload.messageId.length > 0) {
-    return `agui-reasoning:${payload.messageId}`;
+  if (resolvedId) {
+    state.activeFallbackReasoningPartId = phase === "end" ? null : resolvedId;
+    return resolvedId;
   }
 
   if (state.activeFallbackReasoningPartId) {
@@ -577,6 +584,104 @@ function hasOptionalStringField(payload: Record<string, unknown>, key: string): 
   return payload[key] === undefined || typeof payload[key] === "string";
 }
 
+function hasOptionalSnapshotStringField(payload: Record<string, unknown>, key: string): boolean {
+  return payload[key] === undefined || typeof payload[key] === "string";
+}
+
+function isValidSnapshotToolCall(value: unknown): boolean {
+  if (!isRecord(value) || value.type !== "function" || !hasStringField(value, "id")) {
+    return false;
+  }
+  if (!isRecord(value.function) || !hasStringField(value.function, "name")) {
+    return false;
+  }
+  return typeof value.function.arguments === "string" &&
+    hasOptionalSnapshotStringField(value, "encryptedValue");
+}
+
+function isValidUserSnapshotContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    return true;
+  }
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  return value.every((part) => {
+    if (!isRecord(part)) return false;
+    if (part.type === "text") return typeof part.text === "string";
+    return part.type === "binary" && typeof part.mimeType === "string" &&
+      hasOptionalSnapshotStringField(part, "id") &&
+      hasOptionalSnapshotStringField(part, "url") &&
+      hasOptionalSnapshotStringField(part, "data") &&
+      hasOptionalSnapshotStringField(part, "filename");
+  });
+}
+
+function isValidSnapshotMessage(value: unknown): boolean {
+  if (!isRecord(value) || !hasStringField(value, "id")) {
+    return false;
+  }
+
+  const optionalCommonFieldsAreValid = hasOptionalSnapshotStringField(value, "name") &&
+    hasOptionalSnapshotStringField(value, "encryptedValue");
+  if (!optionalCommonFieldsAreValid) return false;
+
+  switch (value.role) {
+    case "assistant":
+      return hasOptionalSnapshotStringField(value, "content") &&
+        (value.toolCalls === undefined ||
+          (Array.isArray(value.toolCalls) && value.toolCalls.every(isValidSnapshotToolCall)));
+    case "user":
+      return isValidUserSnapshotContent(value.content);
+    case "tool":
+      return hasStringField(value, "toolCallId") && typeof value.content === "string" &&
+        hasOptionalSnapshotStringField(value, "error");
+    case "reasoning":
+      return typeof value.content === "string";
+    default:
+      return false;
+  }
+}
+
+function isValidStateDelta(value: unknown): boolean {
+  if (isRecord(value)) return true;
+  if (!Array.isArray(value)) return false;
+  return value.every((operation) =>
+    isRecord(operation) &&
+    (operation.op === "add" || operation.op === "remove" || operation.op === "replace" ||
+      operation.op === "move" || operation.op === "copy" || operation.op === "test") &&
+    hasStringField(operation, "path") &&
+    (operation.from === undefined || hasStringField(operation, "from"))
+  );
+}
+
+function isValidRunFinishedMetadata(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  for (const key of ["provider", "model", "finishReason", "providerRequestId"] as const) {
+    if (!hasOptionalStringField(value, key)) return false;
+  }
+  for (
+    const key of [
+      "inputTokens",
+      "outputTokens",
+      "totalTokens",
+      "cachedInputTokens",
+      "cacheCreationInputTokens",
+      "cacheReadInputTokens",
+      "reasoningTokens",
+    ] as const
+  ) {
+    const field = value[key];
+    if (
+      field !== undefined &&
+      (typeof field !== "number" || !Number.isSafeInteger(field) || field < 0)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isValidAgUiPayload(
   eventName: AgUiWireEventNameLiteral,
   payload: Record<string, unknown>,
@@ -587,7 +692,9 @@ function isValidAgUiPayload(
         hasOptionalStringField(payload, "threadId") &&
         hasOptionalStringField(payload, "agentId") &&
         hasOptionalStringField(payload, "agentName") &&
-        hasOptionalStringField(payload, "agent_avatar_url");
+        (payload.agent_avatar_url === undefined ||
+          (typeof payload.agent_avatar_url === "string" &&
+            isSafeHttpUrl(payload.agent_avatar_url)));
 
     case "Custom":
       return hasStringField(payload, "name") && "value" in payload;
@@ -623,7 +730,7 @@ function isValidAgUiPayload(
       return isRecord(payload.snapshot);
 
     case "MessagesSnapshot":
-      return Array.isArray(payload.messages);
+      return Array.isArray(payload.messages) && payload.messages.every(isValidSnapshotMessage);
 
     case "ReasoningMessageStart":
     case "ReasoningMessageEnd":
@@ -637,10 +744,10 @@ function isValidAgUiPayload(
         hasOptionalStringField(payload, "id");
 
     case "StateDelta":
-      return "delta" in payload;
+      return isValidStateDelta(payload.delta);
 
     case "RunFinished":
-      return payload.metadata === undefined || isRecord(payload.metadata);
+      return payload.metadata === undefined || isValidRunFinishedMetadata(payload.metadata);
 
     case "RunError":
       return hasOptionalStringField(payload, "message") &&
@@ -691,20 +798,10 @@ function parseAgUiWireEvent(
   }
 
   if (!isRecord(payload)) {
-    return null;
-  }
-
-  if (tryResolve<SchemaValidator>("SchemaValidator")) {
-    const parsed = getAgUiWireEventSchema().safeParse({
-      eventName: frame.event,
-      payload,
-    });
-
-    if (!parsed.success && input.validationMode === "strict") {
+    if (input.validationMode === "strict") {
       throw new Error(`Malformed AG-UI event payload for ${frame.event}`);
     }
-
-    return parsed.success ? parsed.data : null;
+    return null;
   }
 
   return parseAgUiWireEventWithoutSchema(frame.event, payload, input.validationMode);
@@ -729,14 +826,16 @@ function mapWireEventToChatEvents(
     case "TextMessageStart":
       return [{
         type: "text-start",
-        id: wireEvent.payload.messageId,
+        id: wireEvent.payload.contentId,
+        messageId: wireEvent.payload.messageId,
         ...(textContentId ? { contentId: textContentId } : {}),
       }];
 
     case "TextMessageContent":
       return [{
         type: "text-delta",
-        id: wireEvent.payload.messageId,
+        id: wireEvent.payload.contentId,
+        messageId: wireEvent.payload.messageId,
         ...(textContentId ? { contentId: textContentId } : {}),
         delta: wireEvent.payload.delta,
       }];
@@ -744,7 +843,8 @@ function mapWireEventToChatEvents(
     case "TextMessageEnd":
       return [{
         type: "text-end",
-        id: wireEvent.payload.messageId,
+        id: wireEvent.payload.contentId,
+        messageId: wireEvent.payload.messageId,
         ...(textContentId ? { contentId: textContentId } : {}),
       }];
 
@@ -768,6 +868,14 @@ function mapWireEventToChatEvents(
       }];
 
     case "ToolCallStart":
+      if (
+        !state.toolCalls.has(wireEvent.payload.toolCallId) &&
+        state.toolCalls.size >= state.maxTrackedToolCalls
+      ) {
+        throw new RangeError(
+          `AG-UI tracked tool calls exceed ${state.maxTrackedToolCalls}`,
+        );
+      }
       state.toolCalls.set(wireEvent.payload.toolCallId, {
         toolName: wireEvent.payload.toolCallName,
         argsText: "",
@@ -786,7 +894,14 @@ function mapWireEventToChatEvents(
         return [];
       }
 
-      toolCall.argsText = mergeToolInputDelta(toolCall.argsText, wireEvent.payload.delta);
+      const argsText = mergeToolInputDelta(toolCall.argsText, wireEvent.payload.delta);
+      if (argsText.length > state.maxToolInputChars) {
+        state.toolCalls.delete(wireEvent.payload.toolCallId);
+        throw new RangeError(
+          `AG-UI tool input exceeds ${state.maxToolInputChars} characters`,
+        );
+      }
+      toolCall.argsText = argsText;
       return [{
         type: "tool-input-delta",
         toolCallId: wireEvent.payload.toolCallId,
@@ -800,17 +915,19 @@ function mapWireEventToChatEvents(
         return [];
       }
 
+      state.toolCalls.delete(wireEvent.payload.toolCallId);
+
       return [{
         type: "tool-input-available",
         toolCallId: wireEvent.payload.toolCallId,
         toolName: toolCall.toolName,
-        input: parseToolInputObject(toolCall.argsText),
+        input: toolCall.argsText.trim().length > 0 ? parseToolInputObject(toolCall.argsText) : {},
         providerExecuted: true,
       }];
     }
 
     case "ToolCallResult": {
-      const toolCall = state.toolCalls.get(wireEvent.payload.toolCallId);
+      state.toolCalls.delete(wireEvent.payload.toolCallId);
       const parsedResult = parseSerializedToolResult(
         wireEvent.payload.content ?? wireEvent.payload.result,
       );
@@ -824,25 +941,12 @@ function mapWireEventToChatEvents(
         }];
       }
 
-      const events: ChatStreamEvent[] = [];
-      if (!toolCall) {
-        events.push({
-          type: "tool-input-available",
-          toolCallId: wireEvent.payload.toolCallId,
-          toolName: "tool",
-          input: wireEvent.payload.input ?? {},
-          dynamic: true,
-          providerExecuted: true,
-        });
-      }
-
-      events.push({
+      return [{
         type: "tool-output-available",
         toolCallId: wireEvent.payload.toolCallId,
         output: parsedResult,
         providerExecuted: true,
-      });
-      return events;
+      }];
     }
 
     case "StateSnapshot":
@@ -870,6 +974,7 @@ function mapWireEventToChatEvents(
     }
 
     case "RunFinished":
+      state.toolCalls.clear();
       return [{
         type: "finish",
         ...(mapFinishReason(wireEvent.payload.metadata?.finishReason)
@@ -878,15 +983,14 @@ function mapWireEventToChatEvents(
       }];
 
     case "RunError":
+      state.toolCalls.clear();
       if (wireEvent.payload.code === "CANCELLED") {
         return [{ type: "abort" }];
       }
 
       return [{
         type: "error",
-        errorText: wireEvent.payload.message?.length
-          ? wireEvent.payload.message
-          : "Conversation agent run failed",
+        errorText: "Conversation agent run failed",
       }];
   }
 }
@@ -903,9 +1007,12 @@ export function parseSseEvent(raw: string): ParsedSseEvent {
     }
 
     if (line.startsWith("id:")) {
-      const parsed = Number(line.slice(3).trim());
-      if (Number.isFinite(parsed)) {
-        id = parsed;
+      const value = line.slice(3).trim();
+      if (/^(?:0|[1-9]\d*)$/.test(value)) {
+        const parsed = Number(value);
+        if (Number.isSafeInteger(parsed)) {
+          id = parsed;
+        }
       }
       continue;
     }
@@ -925,34 +1032,85 @@ export function parseSseEvent(raw: string): ParsedSseEvent {
   return { id, event, data: dataLines.join("\n") };
 }
 
+function resolvePositiveSafeInteger(
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  return resolved;
+}
+
 /** State for create AG-UI chat event decoder. */
 export function createAgUiChatEventDecoderState(
   input: {
     lastEventId?: number;
     validationMode?: AgUiDecoderValidationMode;
     onInvalidJson?: (details: { eventName: string | null; dataLength: number }) => void;
+    maxBufferedChars?: number;
+    maxFrameChars?: number;
+    maxToolInputChars?: number;
+    maxTrackedToolCalls?: number;
   } = {},
 ): AgUiChatEventDecoderState {
+  const lastEventId = input.lastEventId ?? -1;
+  if (!Number.isSafeInteger(lastEventId) || lastEventId < -1) {
+    throw new RangeError("lastEventId must be a safe integer greater than or equal to -1");
+  }
+  if (
+    input.validationMode !== undefined && input.validationMode !== "permissive" &&
+    input.validationMode !== "strict"
+  ) {
+    throw new TypeError("validationMode must be permissive or strict");
+  }
+  if (input.onInvalidJson !== undefined && typeof input.onInvalidJson !== "function") {
+    throw new TypeError("onInvalidJson must be a function");
+  }
+
+  const maxBufferedChars = resolvePositiveSafeInteger(
+    input.maxBufferedChars,
+    DEFAULT_MAX_BUFFERED_CHARS,
+    "maxBufferedChars",
+  );
+  const maxFrameChars = resolvePositiveSafeInteger(
+    input.maxFrameChars,
+    Math.min(DEFAULT_MAX_FRAME_CHARS, maxBufferedChars),
+    "maxFrameChars",
+  );
+  if (maxFrameChars > maxBufferedChars) {
+    throw new RangeError("maxFrameChars must not exceed maxBufferedChars");
+  }
+
   return {
     remainder: "",
-    lastEventId: input.lastEventId ?? -1,
+    lastEventId,
     toolCalls: new Map<string, ToolCallState>(),
     reasoningFallbackIndex: 0,
     activeFallbackReasoningPartId: null,
     validationMode: input.validationMode ?? "permissive",
     onInvalidJson: input.onInvalidJson ?? null,
+    maxBufferedChars,
+    maxFrameChars,
+    maxToolInputChars: resolvePositiveSafeInteger(
+      input.maxToolInputChars,
+      DEFAULT_MAX_TOOL_INPUT_CHARS,
+      "maxToolInputChars",
+    ),
+    maxTrackedToolCalls: resolvePositiveSafeInteger(
+      input.maxTrackedToolCalls,
+      DEFAULT_MAX_TRACKED_TOOL_CALLS,
+      "maxTrackedToolCalls",
+    ),
   };
 }
 
-/** Decode AG-UI SSE chunk. */
-export function decodeAgUiSseChunk(
+function decodeAgUiFrames(
   state: AgUiChatEventDecoderState,
-  chunk: string,
-): AgUiDecodedChunk {
-  const normalized = `${state.remainder}${normalizeNewlines(chunk)}`;
-  const { frames, remainder } = splitSseFrames(normalized);
-  state.remainder = remainder;
-
+  frames: readonly string[],
+): AgUiDecodedEvent[] {
   const events: AgUiDecodedEvent[] = [];
 
   for (const rawFrame of frames) {
@@ -983,8 +1141,38 @@ export function decodeAgUiSseChunk(
     });
   }
 
+  return events;
+}
+
+/** Decode AG-UI SSE chunk. */
+export function decodeAgUiSseChunk(
+  state: AgUiChatEventDecoderState,
+  chunk: string,
+): AgUiDecodedChunk {
+  const normalizedChunk = normalizeNewlines(chunk);
+  if (state.remainder.length + normalizedChunk.length > state.maxBufferedChars) {
+    throw new RangeError(
+      `AG-UI SSE buffer exceeds ${state.maxBufferedChars} characters`,
+    );
+  }
+  const normalized = `${state.remainder}${normalizedChunk}`;
+  const { frames, remainder } = splitSseFrames(normalized);
+  if (remainder.length > state.maxFrameChars) {
+    throw new RangeError(
+      `AG-UI SSE frame exceeds ${state.maxFrameChars} characters`,
+    );
+  }
+  for (const frame of frames) {
+    if (frame.length > state.maxFrameChars) {
+      throw new RangeError(
+        `AG-UI SSE frame exceeds ${state.maxFrameChars} characters`,
+      );
+    }
+  }
+  state.remainder = remainder;
+
   return {
-    events,
+    events: decodeAgUiFrames(state, frames),
     remainder: state.remainder,
   };
 }
@@ -995,10 +1183,15 @@ export function flushAgUiSseChunk(state: AgUiChatEventDecoderState): AgUiDecoded
     return { events: [], remainder: "" };
   }
 
-  const flushed = decodeAgUiSseChunk(state, "\n\n");
+  const frame = state.remainder;
+  if (frame.length > state.maxFrameChars) {
+    throw new RangeError(
+      `AG-UI SSE frame exceeds ${state.maxFrameChars} characters`,
+    );
+  }
   state.remainder = "";
   return {
-    events: flushed.events,
+    events: decodeAgUiFrames(state, [frame]),
     remainder: "",
   };
 }

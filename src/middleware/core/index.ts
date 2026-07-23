@@ -10,6 +10,7 @@ export { MiddlewareContext } from "./context.ts";
 export type {
   Context,
   ExecutionContext,
+  MiddlewareExecutionAdapter,
   MiddlewareFactory,
   MiddlewareHandler,
   Next,

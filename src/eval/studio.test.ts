@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createEvalSourceDocument,
@@ -241,5 +241,27 @@ describe("eval/studio", () => {
     };
 
     assertEquals(getEvalRunSchema().parse(run), run);
+  });
+
+  it("rejects invalid run pass rates", () => {
+    assertThrows(
+      () =>
+        getEvalRunSchema().parse({
+          kind: "eval-run",
+          runId: "run",
+          evalId: "eval:test",
+          status: "completed",
+          targetKind: "agent",
+          target: "agent:test",
+          summary: { records: 1, passed: 1, failed: 0, passRate: 2 },
+          reportPath: null,
+          error: null,
+          metadata: {},
+          createdAt: "2026-06-20T08:00:00.000Z",
+          startedAt: null,
+          completedAt: null,
+        }),
+      Error,
+    );
   });
 });

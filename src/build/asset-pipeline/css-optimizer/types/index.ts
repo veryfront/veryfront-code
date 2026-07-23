@@ -11,6 +11,7 @@ export interface LightningCSSTransformOptions {
   sourceMap?: boolean;
   targets?: BrowserTargets;
   analyzeDependencies?: boolean;
+  errorRecovery?: boolean;
 }
 
 export interface LightningCSSTransformResult {
@@ -39,7 +40,8 @@ export interface CSSOptimizationOptions {
   inputFiles?: string[];
   inputDir?: string;
   outputDir?: string;
-  browsers?: string[];
+  /** Explicit browser versions, for example `{ chrome: 120, safari: 17.4 }`. */
+  browsers?: string[] | BrowserTargets;
   purgeContent?: string[];
   sourceMap?: boolean;
 }

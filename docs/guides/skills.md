@@ -4,7 +4,7 @@ description: "Define project-level agent capabilities as SKILL.md files with pro
 order: 29
 ---
 
-A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
+A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed-tools` policy, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
 Use [veryfront/skill](../api-reference/veryfront/skill.md) for parser,
 registry, tool, and policy helpers in framework code.
 
@@ -37,7 +37,7 @@ The `SKILL.md` file uses YAML frontmatter for metadata and Markdown for instruct
 ---
 name: code-review
 description: Review code changes for style, correctness, and security issues.
-allowed_tools: load_skill load_skill_reference execute_skill_script
+allowed-tools: load_skill load_skill_reference execute_skill_script
 ---
 
 # Code Review
@@ -70,14 +70,17 @@ skills/<skill-id>/
 
 ## Frontmatter fields
 
-| Field           | Required | Description                                                                  |
-| --------------- | -------- | ---------------------------------------------------------------------------- |
-| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)              |
-| `description`   | Yes      | Human-readable description (max 1024 chars)                                  |
-| `allowed_tools` | No       | Space-delimited tool IDs or prefix patterns (e.g. `api:*`) the agent may use |
-| `license`       | No       | SPDX license identifier                                                      |
-| `compatibility` | No       | Compatibility constraints                                                    |
-| `metadata`      | No       | Arbitrary key-value pairs                                                    |
+| Field           | Required | Description                                                                          |
+| --------------- | -------- | ------------------------------------------------------------------------------------ |
+| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)                      |
+| `description`   | Yes      | Human-readable description (max 1024 chars)                                          |
+| `allowed-tools` | No       | Space-delimited tool IDs or prefix patterns (for example, `api:*`) the agent may use |
+| `license`       | No       | SPDX license identifier                                                              |
+| `compatibility` | No       | Compatibility constraints                                                            |
+| `metadata`      | No       | Arbitrary key-value pairs                                                            |
+
+Veryfront accepts `allowed_tools` as a compatibility alias. New skills must use
+`allowed-tools`. Do not define both fields in the same skill.
 
 ## Discovery
 
@@ -93,11 +96,11 @@ skills/
 
 When skills are available, agents get three built-in tools:
 
-| Tool                   | Description                                                |
-| ---------------------- | ---------------------------------------------------------- |
-| `load_skill`           | Load a skill's full instructions by ID                     |
-| `load_skill_reference` | Read a file from `references/`, `resources/`, or `assets/` |
-| `execute_skill_script` | Execute a script from a skill (5-minute timeout)           |
+| Tool                   | Description                                                           |
+| ---------------------- | --------------------------------------------------------------------- |
+| `load_skill`           | Load a skill's full instructions by ID                                |
+| `load_skill_reference` | Read a UTF-8 text file from `references/`, `resources/`, or `assets/` |
+| `execute_skill_script` | Execute a script from a skill (5-minute timeout)                      |
 
 Enable skills on an agent:
 
@@ -121,17 +124,18 @@ curl -N http://localhost:3000/api/ag-ui \
 ```
 
 The agent should call `load_skill` before applying the skill instructions.
+`load_skill_reference` rejects binary files and text files that contain NUL bytes.
 
 ## Tool restrictions
 
-The `allowed_tools` field restricts which tools an agent can use while a skill is active. Use exact IDs or prefix wildcards:
+The `allowed-tools` field restricts which tools an agent can use while a skill is active. Use exact IDs or prefix wildcards:
 
 ```yaml
 # Exact tool IDs
-allowed_tools: load_skill load_skill_reference execute_skill_script
+allowed-tools: load_skill load_skill_reference execute_skill_script
 
 # Prefix wildcards
-allowed_tools: api:* database:read
+allowed-tools: api:* database:read
 
 # No restriction (agent can use all tools)
 # omit the field entirely
@@ -156,4 +160,4 @@ veryfront skills validate skills/my-skill
 3. Send a message that should trigger the skill (for example, a code-review
    skill should engage when the message asks to "review this diff"). The
    AG-UI response should reference the skill's instructions or call only
-   the tools listed in `allowed_tools`.
+   the tools listed in `allowed-tools`.

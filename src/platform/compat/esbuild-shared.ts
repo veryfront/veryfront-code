@@ -1,21 +1,29 @@
 export const ESBUILD_VERSION = "0.28.1";
 
-export function getEsbuildBinaryName(): string {
+export interface EsbuildBuildTarget {
+  arch: string;
+  os: string;
+}
+
+export function getEsbuildBinaryName(build: EsbuildBuildTarget = Deno.build): string {
   const archMap: Record<string, string> = {
     x86_64: "x64",
     aarch64: "arm64",
   };
-  const esbuildArch = archMap[Deno.build.arch] ?? Deno.build.arch;
-  return `@esbuild/${Deno.build.os}-${esbuildArch}`;
+  const esbuildArch = archMap[build.arch] ?? build.arch;
+  return `@esbuild/${build.os}-${esbuildArch}`;
 }
 
 export function getVFSBasePath(filePath: string, tempDir: string): string {
-  const denoCompileMatch = filePath.match(/^(.*\/deno-compile-[^/]+)\//);
+  const normalizedFilePath = filePath.replaceAll("\\", "/");
+  const normalizedTempDir = tempDir.replaceAll("\\", "/").replace(/\/+$/, "");
+  const denoCompileMatch = normalizedFilePath.match(/^(.*\/deno-compile-[^/]+)\//);
   if (denoCompileMatch?.[1]) return denoCompileMatch[1];
 
-  const parts = filePath.split("/");
+  const parts = normalizedFilePath.split("/");
   const srcIndex = parts.lastIndexOf("src");
   if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
 
-  return `${tempDir}/deno-compile-veryfront`;
+  const tempRoot = normalizedTempDir || "/";
+  return tempRoot === "/" ? "/deno-compile-veryfront" : `${tempRoot}/deno-compile-veryfront`;
 }

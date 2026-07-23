@@ -2,6 +2,7 @@ import {
   type AgentServiceConfigInput,
   parseAgentServiceConfig,
 } from "../../../agent/service/config.ts";
+import { formatUrlForPublicMessage } from "../http-safety.ts";
 
 /** Result returned from runtime confidence preflight. */
 export interface RuntimeConfidencePreflightResult {
@@ -15,7 +16,9 @@ export function evaluateRuntimeConfidenceEnv(
   env: AgentServiceConfigInput = {},
   resolvedApiUrl: string = parseAgentServiceConfig(env).VERYFRONT_API_URL,
 ): RuntimeConfidencePreflightResult {
-  const messages: string[] = [`Resolved VERYFRONT_API_URL: ${resolvedApiUrl}`];
+  const messages: string[] = [
+    `Resolved VERYFRONT_API_URL: ${formatUrlForPublicMessage(resolvedApiUrl)}`,
+  ];
   let hasBlockers = false;
 
   if (typeof env.VERYFRONT_TOKEN !== "string" || env.VERYFRONT_TOKEN.length === 0) {

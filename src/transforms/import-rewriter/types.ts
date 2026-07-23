@@ -6,6 +6,8 @@
  */
 
 import type { ImportSpecifier } from "../esm/lexer.ts";
+import { isCrossProjectImport } from "../shared/cross-project-import.ts";
+import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 
 /**
  * Transform target environment.
@@ -119,8 +121,6 @@ export type SpecifierType =
   | "url" // https://esm.sh/..., http://...
   | "unknown";
 
-const CROSS_PROJECT_RE = /^[a-z0-9-]+(?:@[\d^~x][\d.x^~-]*)?\/@\//;
-
 /**
  * Classify a specifier for strategy matching.
  */
@@ -148,9 +148,9 @@ export function classifySpecifier(specifier: string): SpecifierType {
 
   if (specifier.startsWith("@/")) return "alias";
   if (specifier.startsWith("./") || specifier.startsWith("../")) return "relative";
-  if (CROSS_PROJECT_RE.test(specifier)) return "cross-project";
+  if (isCrossProjectImport(specifier)) return "cross-project";
 
-  return "bare";
+  return parseBarePackageSpecifier(specifier) ? "bare" : "unknown";
 }
 
 /**

@@ -73,7 +73,9 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 `POST` ingests a file, `GET` lists ingested documents, and `DELETE` removes a
 document. For local-only prototypes, pass
 `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
-unauthenticated upload routes.
+unauthenticated upload routes. Uploads default to a 10 MB file limit. Set
+`maxFileSize` in the same configuration object when you need a smaller limit.
+Veryfront rejects oversized request bodies before extraction.
 
 ## Understand ingestion
 
@@ -119,6 +121,8 @@ curl -X POST http://localhost:3000/api/ingest
 Keep indexing out of the chat request path. `indexContentDir()` reads files from
 `contentDir` and skips files that are already tracked by source. Uploaded
 documents do not need this call because the upload route ingests them directly.
+Stored source identifiers remain project-relative, so local filesystem paths are
+not exposed through search results.
 
 ## Add retrieval to the agent route
 
@@ -160,7 +164,9 @@ export const POST = createAgUiHandler("rag", {
 ```
 
 Veryfront wraps retrieved context before it reaches the model. Treat retrieved
-documents as reference data, not instructions.
+documents as reference data, not instructions. RAG search uses a minimum score
+of `0` by default. Pass `threshold` when the app needs a stricter relevance
+cutoff.
 
 ## Add the chat UI
 

@@ -1,5 +1,5 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
 
@@ -10,16 +10,29 @@ export type HostedServiceAuthErrorCode =
   | "NOT_FOUND"
   | "SERVER_ERROR";
 
+const DEFAULT_PROJECT_ACCESS_TIMEOUT_MS = 15_000;
+const MAX_PROJECT_ACCESS_TIMEOUT_MS = 2_147_483_647;
+const MAX_AUTH_TOKEN_LENGTH = 65_536;
+
 /** Error shape for hosted service auth. */
 export class HostedServiceAuthError extends Error {
+  /** Status code value. */
   readonly statusCode: number;
+  /** Error code value. */
   readonly errorCode: HostedServiceAuthErrorCode;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(statusCode: number, message: string) {
     super(message);
     this.name = "HostedServiceAuthError";
     this.statusCode = statusCode;
-    this.errorCode = statusCode === 401 ? "UNAUTHENTICATED" : "FORBIDDEN";
+    this.errorCode = statusCode === 401
+      ? "UNAUTHENTICATED"
+      : statusCode === 404
+      ? "NOT_FOUND"
+      : statusCode >= 500
+      ? "SERVER_ERROR"
+      : "FORBIDDEN";
   }
 }
 
@@ -89,6 +102,7 @@ export type HostedServiceAuthFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+/** JWT verification capability required by hosted service authentication. */
 export type HostedServiceJwtVerifier = Pick<AuthProvider, "verifyWithPublicKey">;
 
 type AuthJwtExtensionModule = {
@@ -123,11 +137,13 @@ export type AgentServiceJwtError = HostedServiceJwtError;
 export type AgentServiceJwtResult = HostedServiceJwtResult;
 export type AgentServiceProjectAccessError = HostedServiceProjectAccessError;
 export type AgentServiceProjectAccessResult = HostedServiceProjectAccessResult;
+/** Authentication configuration used by an agent service. */
 export type AgentServiceAuthConfig = HostedServiceAuthConfig;
 export type AgentServiceAuthLogger = HostedServiceAuthLogger;
 export type AgentServiceAuthTrace = HostedServiceAuthTrace;
 export type AgentServiceAuthFetch = HostedServiceAuthFetch;
 export type AgentServiceAuthOptions = HostedServiceAuthOptions;
+/** Authentication operations exposed by an agent service. */
 export type AgentServiceAuth = HostedServiceAuth;
 
 function defaultTrace<TResult>(
@@ -142,7 +158,17 @@ function getFetch(options: HostedServiceAuthOptions): HostedServiceAuthFetch {
 }
 
 function getProjectAccessTimeoutMs(options: HostedServiceAuthOptions): number {
-  return options.projectAccessTimeoutMs ?? 15_000;
+  const timeoutMs = options.projectAccessTimeoutMs ?? DEFAULT_PROJECT_ACCESS_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+    timeoutMs > MAX_PROJECT_ACCESS_TIMEOUT_MS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `projectAccessTimeoutMs must be a positive safe integer no greater than ${MAX_PROJECT_ACCESS_TIMEOUT_MS}`,
+    });
+  }
+  return timeoutMs;
 }
 
 let defaultAuthProviderPromise: Promise<HostedServiceJwtVerifier> | undefined;
@@ -170,7 +196,8 @@ export function getHostedServiceTokenFromRequest(request: Request): string | nul
   if (cookieMatch?.[1]) return cookieMatch[1];
 
   const authHeader = request.headers.get("authorization");
-  if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
+  const bearerMatch = authHeader?.match(/^Bearer[\t ]+([^\s]+)$/i);
+  if (bearerMatch?.[1]) return bearerMatch[1];
 
   return null;
 }
@@ -274,6 +301,7 @@ export function createHostedServiceAuth(
   options: HostedServiceAuthOptions,
 ): HostedServiceAuth {
   const trace = options.trace ?? defaultTrace;
+  const projectAccessTimeoutMs = getProjectAccessTimeoutMs(options);
 
   async function verifyJwt(token: string): Promise<HostedServiceJwtResult> {
     return await trace("auth.verifyJwt", async () => {
@@ -281,6 +309,12 @@ export function createHostedServiceAuth(
         return {
           success: false,
           error: makeUnauthenticatedError("Authentication token required"),
+        };
+      }
+      if (token.length > MAX_AUTH_TOKEN_LENGTH) {
+        return {
+          success: false,
+          error: makeUnauthenticatedError("Authentication token is too large"),
         };
       }
 
@@ -333,7 +367,7 @@ export function createHostedServiceAuth(
         };
       } catch (error) {
         options.logger?.debug?.("JWT verification failed", {
-          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : typeof error,
         });
 
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -362,7 +396,10 @@ export function createHostedServiceAuth(
 
     const auth = await verifyJwt(token);
     if (!auth.success) {
-      return Response.json({ errorCode: auth.error.errorCode }, { status: 401 });
+      return Response.json(
+        { errorCode: auth.error.errorCode },
+        { status: auth.error.statusCode },
+      );
     }
 
     return {
@@ -380,7 +417,7 @@ export function createHostedServiceAuth(
 
       try {
         const apiUrl = new URL(config.VERYFRONT_API_URL);
-        const restUrl = new URL(`/projects/${projectId}`, apiUrl.origin);
+        const restUrl = new URL(`/projects/${encodeURIComponent(projectId)}`, apiUrl.origin);
 
         const headers = new Headers({ "Content-Type": "application/json" });
         if (token) {
@@ -390,7 +427,7 @@ export function createHostedServiceAuth(
         const response = await getFetch(options)(restUrl.toString(), {
           method: "GET",
           headers,
-          signal: AbortSignal.timeout(getProjectAccessTimeoutMs(options)),
+          signal: AbortSignal.timeout(projectAccessTimeoutMs),
         });
 
         if (response.status === 404) {
@@ -416,10 +453,9 @@ export function createHostedServiceAuth(
         }
 
         if (!response.ok) {
-          const errorText = await response.text();
           options.logger?.error?.("Project access check failed", {
-            error: errorText,
-            projectId,
+            status: response.status,
+            projectIdLength: projectId.length,
           });
           return {
             success: false,

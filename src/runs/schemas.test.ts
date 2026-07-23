@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getRunKindSchema, RunSchema } from "./schemas.ts";
+import { getRunKindSchema, RunEventListSchema, RunSchema } from "./schemas.ts";
 
 function makeRun(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,5 +53,34 @@ describe("runs/schemas", () => {
     });
 
     assertEquals(RunSchema.parse(run), run);
+  });
+
+  it("rejects malformed timestamps and impossible counters", () => {
+    assertThrows(() => RunSchema.parse(makeRun({ created_at: "yesterday" })));
+    assertThrows(() => RunSchema.parse(makeRun({ duration_ms: -1 })));
+    assertThrows(() => RunSchema.parse(makeRun({ timeout_seconds: -1 })));
+    assertThrows(() => RunSchema.parse(makeRun({ backoff_limit: -1 })));
+  });
+
+  it("bounds identifiers and collection sizes", () => {
+    assertThrows(() => RunSchema.parse(makeRun({ run_id: "x".repeat(4_097) })));
+    assertThrows(() => RunSchema.parse(makeRun({ artifacts: Array(10_001).fill(null) })));
+  });
+
+  it("validates run events and strips forward-compatible response fields", () => {
+    const run = makeRun({ future_field: "ignored" });
+    assertEquals("future_field" in RunSchema.parse(run), false);
+
+    assertThrows(() =>
+      RunEventListSchema.parse({
+        data: [{
+          event_id: -1,
+          event_type: "RUN_STARTED",
+          payload: {},
+          created_at: "2026-06-20T08:00:00.000Z",
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      })
+    );
   });
 });

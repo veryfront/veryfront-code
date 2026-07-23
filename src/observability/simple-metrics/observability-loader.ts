@@ -5,6 +5,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import type { ObservabilityMetrics } from "./types.ts";
+import { classifyTelemetryError } from "#veryfront/observability/telemetry-safety.ts";
 
 const logger = serverLogger.component("metrics");
 
@@ -26,7 +27,7 @@ export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | 
 
   loadingPromise = (async () => {
     try {
-      const mod = await import("../../observability/metrics/index.ts");
+      const mod = await import("../metrics/index.ts");
       return {
         recordRender: mod.recordRender,
         recordCacheGet: mod.recordCacheGet,
@@ -37,7 +38,13 @@ export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | 
         recordRSCStream: mod.recordRSCStream,
       };
     } catch (error) {
-      logger.debug("Observability module not available (metrics disabled)", { error });
+      try {
+        logger.debug("Observability module not available (metrics disabled)", {
+          failure_category: classifyTelemetryError(error),
+        });
+      } catch {
+        // Lazy metrics remain optional when logging is unavailable.
+      }
       return null;
     }
   })();

@@ -16,8 +16,21 @@ const MODERATE_MAX_REQUESTS = 100;
 const LENIENT_MAX_REQUESTS = 1_000;
 const AUTH_MAX_REQUESTS = 5;
 
-/** Default Retry-After header value in seconds */
-const DEFAULT_RETRY_AFTER_SECONDS = "60";
+const MAX_CLIENT_KEY_LENGTH = 512;
+
+function assertPositiveSafeInteger(name: string, value: number): void {
+  if (Number.isSafeInteger(value) && value > 0) return;
+  throw new TypeError(`${name} must be a positive safe integer`);
+}
+
+function assertClientKey(key: unknown): asserts key is string {
+  if (typeof key === "string" && key.trim().length > 0 && key.length <= MAX_CLIENT_KEY_LENGTH) {
+    return;
+  }
+  throw new TypeError(
+    `Rate limit client key must be a non-empty string of at most ${MAX_CLIENT_KEY_LENGTH} characters`,
+  );
+}
 
 function defaultKeyGenerator(request: Request, trustProxy: boolean): string {
   return resolveRateLimitClientKey(request, trustProxy, "unknown");
@@ -46,7 +59,6 @@ function defaultRateLimitExceeded(_request: Request, _key: string, message: stri
       status: 429,
       headers: {
         "Content-Type": "application/json",
-        "Retry-After": DEFAULT_RETRY_AFTER_SECONDS,
       },
     },
   );
@@ -73,6 +85,23 @@ function applyRateLimitHeaders(response: Response, headers: Headers): void {
 export function createRateLimiter(
   config: RateLimitConfig,
 ): (request: Request, next: (req: Request) => Promise<Response>) => Promise<Response> {
+  assertPositiveSafeInteger("maxRequests", config.maxRequests);
+  assertPositiveSafeInteger("windowMs", config.windowMs);
+  if (
+    config.strategy !== undefined &&
+    !["fixed-window", "sliding-window", "token-bucket"].includes(config.strategy)
+  ) {
+    throw new TypeError(`Unsupported rate limit strategy: ${String(config.strategy)}`);
+  }
+  if (
+    config.strategy !== undefined && config.strategy !== "fixed-window" && config.store &&
+    !(config.store instanceof MemoryRateLimitStore)
+  ) {
+    throw new TypeError(
+      `${config.strategy} requires MemoryRateLimitStore; custom stores support fixed-window only`,
+    );
+  }
+
   const {
     maxRequests,
     windowMs,
@@ -99,11 +128,12 @@ export function createRateLimiter(
     }
 
     const key = resolvedKeyGenerator(request);
+    assertClientKey(key);
 
     let result: Awaited<ReturnType<typeof strategyFn>>;
     try {
       result = await strategyFn(key, { ...config, maxRequests, windowMs }, store);
-    } catch (error) {
+    } catch {
       // Fail closed: only the rate-limit store/strategy path triggers this.
       // If the store throws (e.g. Redis outage), reject the request with 503
       // instead of letting it through. Failing open would silently disable
@@ -114,9 +144,7 @@ export function createRateLimiter(
       // (skip, keyGenerator, onRateLimitExceeded) are intentionally NOT caught
       // here so they remain observable as 5xx via the normal error handler and
       // are not masked as rate-limit outages with Retry-After: 60.
-      logger.error("Rate limiting error — failing closed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error("Rate limiting store failed - failing closed");
 
       return new Response("Service temporarily unavailable", {
         status: 503,
@@ -131,8 +159,7 @@ export function createRateLimiter(
     });
 
     if (!result.allowed) {
-      logger.warn(`Rate limit exceeded for key: ${key}`, {
-        key,
+      logger.warn("Rate limit exceeded", {
         limit: maxRequests,
         window: windowMs,
       });
@@ -141,6 +168,13 @@ export function createRateLimiter(
         ? await onRateLimitExceeded(request, key)
         : defaultRateLimitExceeded(request, key, message);
 
+      response.headers.set(
+        "Retry-After",
+        Math.max(
+          1,
+          Math.ceil((result.retryAfterMs ?? result.resetTime - Date.now()) / 1_000),
+        ).toString(),
+      );
       applyRateLimitHeaders(response, headers);
       return response;
     }

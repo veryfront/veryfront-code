@@ -3,24 +3,40 @@ import { toNodeHandler } from "./node-handler.ts";
 
 type FakeRes = {
   statusCode?: number;
+  statusMessage?: string;
   headersSent: boolean;
+  destroyed: boolean;
+  writableEnded: boolean;
   writeHeadHeaders?: Record<string, unknown>;
   setHeaderCalls: Array<[string, unknown]>;
   chunks: Uint8Array[];
   ended: boolean;
+  writeBackpressureOnce: boolean;
+  backpressureActive: boolean;
+  backpressureViolation: boolean;
   writeHead(status: number, headers?: Record<string, unknown>): void;
   setHeader(name: string, value: unknown): void;
-  write(chunk: Uint8Array): void;
+  write(chunk: Uint8Array): boolean;
   end(body?: string): void;
   on(event: string, listener: () => void): void;
+  once(event: string, listener: (...args: unknown[]) => void): void;
+  off(event: string, listener: (...args: unknown[]) => void): void;
+  emit(event: string, ...args: unknown[]): void;
+  destroy(): void;
 };
 
-function createFakeRes(): FakeRes {
-  return {
+function createFakeRes(options: { writeBackpressureOnce?: boolean } = {}): FakeRes {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  const response: FakeRes = {
     headersSent: false,
+    destroyed: false,
+    writableEnded: false,
     setHeaderCalls: [],
     chunks: [],
     ended: false,
+    writeBackpressureOnce: options.writeBackpressureOnce ?? false,
+    backpressureActive: false,
+    backpressureViolation: false,
     writeHead(status, headers) {
       // Mirror Node: the head can only be written once, and never after
       // headers have already been flushed.
@@ -35,25 +51,76 @@ function createFakeRes(): FakeRes {
       this.setHeaderCalls.push([name, value]);
     },
     write(chunk) {
+      if (this.backpressureActive) this.backpressureViolation = true;
+      this.headersSent = true;
       this.chunks.push(chunk);
+      if (this.writeBackpressureOnce) {
+        this.writeBackpressureOnce = false;
+        this.backpressureActive = true;
+        queueMicrotask(() => {
+          this.backpressureActive = false;
+          this.emit("drain");
+        });
+        return false;
+      }
+      return true;
     },
     end(_body) {
       this.ended = true;
+      this.writableEnded = true;
     },
-    on(_event, _listener) {
-      // no-op: close-handler registration is not exercised in unit tests
+    on(event, listener) {
+      const registered = listeners.get(event) ?? new Set();
+      registered.add(listener);
+      listeners.set(event, registered);
+    },
+    once(event, listener) {
+      const wrapped = (...args: unknown[]) => {
+        this.off(event, wrapped);
+        listener(...args);
+      };
+      this.on(event, wrapped);
+    },
+    off(event, listener) {
+      listeners.get(event)?.delete(listener);
+    },
+    emit(event, ...args) {
+      for (const listener of [...(listeners.get(event) ?? [])]) listener(...args);
+    },
+    destroy() {
+      this.destroyed = true;
     },
   };
+  return response;
 }
 
 function createFakeReq(
   init: { method?: string; url?: string; headers?: Record<string, string | string[] | undefined> },
-): import("node:http").IncomingMessage {
+): import("node:http").IncomingMessage & { emitTestEvent(event: string): void } {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   return {
     method: init.method ?? "GET",
     url: init.url ?? "/",
     headers: { host: "localhost", ...(init.headers ?? {}) },
-  } as unknown as import("node:http").IncomingMessage;
+    on(event: string, listener: (...args: unknown[]) => void) {
+      const registered = listeners.get(event) ?? new Set();
+      registered.add(listener);
+      listeners.set(event, registered);
+      return this;
+    },
+    pause() {
+      return this;
+    },
+    resume() {
+      return this;
+    },
+    destroy() {
+      return this;
+    },
+    emitTestEvent(event: string) {
+      for (const listener of [...(listeners.get(event) ?? [])]) listener();
+    },
+  } as unknown as import("node:http").IncomingMessage & { emitTestEvent(event: string): void };
 }
 
 function collectSetCookies(res: FakeRes): string[] {
@@ -163,4 +230,91 @@ Deno.test("toNodeHandler passes array-valued request headers through to the Requ
 
   // A collapsed-to-first-element bug would yield only "one".
   assertEquals(seen, "one, two");
+});
+
+Deno.test("toNodeHandler does not write response bodies for HEAD requests", async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("must-not-be-written"));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const nodeHandler = toNodeHandler(() => new Response(body));
+  const res = createFakeRes();
+
+  await nodeHandler(
+    createFakeReq({ method: "HEAD", url: "/" }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  assertEquals(res.chunks.length, 0);
+  assertEquals(res.ended, true);
+  assertEquals(cancelled, true);
+});
+
+Deno.test("toNodeHandler honors Node response backpressure", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1]));
+      controller.enqueue(new Uint8Array([2]));
+      controller.close();
+    },
+  });
+  const nodeHandler = toNodeHandler(() => new Response(body));
+  const res = createFakeRes({ writeBackpressureOnce: true });
+
+  await nodeHandler(
+    createFakeReq({ url: "/" }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  assertEquals(res.chunks.length, 2);
+  assertEquals(res.backpressureViolation, false);
+});
+
+Deno.test("toNodeHandler destroys a partial response when streaming fails", async () => {
+  let reads = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      reads++;
+      if (reads === 1) controller.enqueue(new Uint8Array([1]));
+      else controller.error(new Error("stream failed"));
+    },
+  });
+  const nodeHandler = toNodeHandler(() => new Response(body));
+  const res = createFakeRes();
+
+  await nodeHandler(
+    createFakeReq({ url: "/" }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  assertEquals(res.statusCode, 200);
+  assertEquals(res.destroyed, true);
+});
+
+Deno.test("toNodeHandler propagates client aborts to the Web Request", async () => {
+  let requestSignal: AbortSignal | undefined;
+  let releaseHandler: (() => void) | undefined;
+  const waitForRelease = new Promise<void>((resolve) => {
+    releaseHandler = resolve;
+  });
+  const nodeHandler = toNodeHandler(async (request) => {
+    requestSignal = request.signal;
+    await waitForRelease;
+    return new Response("ok");
+  });
+  const req = createFakeReq({ url: "/" });
+  const res = createFakeRes();
+
+  const pending = nodeHandler(req, res as unknown as import("node:http").ServerResponse);
+  await Promise.resolve();
+  req.emitTestEvent("aborted");
+
+  assertEquals(requestSignal?.aborted, true);
+  releaseHandler?.();
+  await pending;
 });

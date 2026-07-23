@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateVendorCacheKey, VENDOR_CACHE_NAMESPACE } from "./vendor-cache.ts";
 
@@ -61,6 +61,49 @@ describe("build/vendor-cache", () => {
         generateVendorCacheKey("proj2", "18.3.1", {}),
       ]);
       assertEquals(key1 !== key2, true);
+    });
+
+    it("rejects project identifiers that can alter cache-key segments", async () => {
+      for (const projectId of ["", " project", "project ", "project:other", "a/b", "a\nb"]) {
+        await assertRejects(
+          () => generateVendorCacheKey(projectId, "18.3.1", {}),
+          TypeError,
+          "safe cache-key identifier",
+        );
+      }
+    });
+
+    it("rejects invalid React and dependency versions", async () => {
+      for (const reactVersion of ["", " 18.3.1", "18.3.1\n"]) {
+        await assertRejects(
+          () => generateVendorCacheKey("project", reactVersion, {}),
+          TypeError,
+          "non-empty dependency version",
+        );
+      }
+
+      for (
+        const dependencies of ([
+          { "../package": "1.0.0" },
+          { "package/subpath": "1.0.0" },
+          { package: "" },
+          { package: " 1.0.0" },
+          { package: "1.0.0\n" },
+        ] as Array<Record<string, string>>)
+      ) {
+        await assertRejects(
+          () => generateVendorCacheKey("project", "18.3.1", dependencies),
+          TypeError,
+        );
+      }
+    });
+
+    it("rejects non-record dependency containers", async () => {
+      await assertRejects(
+        () => generateVendorCacheKey("project", "18.3.1", [] as never),
+        TypeError,
+        "plain object",
+      );
     });
   });
 });

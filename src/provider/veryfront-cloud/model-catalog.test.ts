@@ -12,9 +12,15 @@ import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
+  VERYFRONT_CLOUD_CHAT_MODELS,
 } from "./model-catalog.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
+  it("keeps the exported model catalog immutable", () => {
+    assertEquals(Object.isFrozen(VERYFRONT_CLOUD_CHAT_MODELS), true);
+    assertEquals(VERYFRONT_CLOUD_CHAT_MODELS.every(Object.isFrozen), true);
+  });
+
   it("finds catalog models by alias", () => {
     const opus = findVeryfrontCloudModel("opus");
     assertExists(opus);
@@ -48,7 +54,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertThrows(
       () => getVeryfrontCloudProviderFromModelId("unknown/model"),
       Error,
-      'Unknown model provider prefix "unknown"',
+      "unknown provider prefix",
     );
   });
 
@@ -58,6 +64,7 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       "anthropic",
     );
     assertEquals(tryGetVeryfrontCloudProviderFromModelId("unknown/model"), undefined);
+    assertEquals(tryGetVeryfrontCloudProviderFromModelId("openai/model\nprivate"), undefined);
   });
 
   it("finds catalog entries for direct and hosted model ids", () => {
@@ -66,6 +73,11 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       findVeryfrontCloudModelByModelId("veryfront-cloud/anthropic/claude-opus-4-8")
         ?.thinkingBudgetTokens,
       2048,
+    );
+    assertThrows(
+      () => findVeryfrontCloudModelByModelId("veryfront-cloud/"),
+      Error,
+      "model ID is invalid",
     );
   });
 
@@ -98,17 +110,22 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertThrows(
       () => resolveVeryfrontCloudModelId("mistral/mistral-small-2603"),
       Error,
-      'Unsupported Mistral model "mistral/mistral-small-2603"',
+      "Mistral model is not supported",
     );
     assertThrows(
       () => resolveVeryfrontCloudModelId("mistral/mistral-medium-3-5"),
       Error,
-      'Unsupported Mistral model "mistral/mistral-medium-3-5"',
+      "Mistral model is not supported",
     );
     assertThrows(
       () => resolveVeryfrontCloudModelId("not-a-real-model"),
       Error,
-      'Unknown model alias "not-a-real-model"',
+      "model alias is unknown",
+    );
+    assertThrows(
+      () => resolveVeryfrontCloudModelId(null as unknown as string),
+      Error,
+      "model ID is invalid",
     );
   });
 
@@ -180,6 +197,11 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
     assertEquals(resolveVeryfrontCloudGatewayModelId("opus"), "opus");
     assertEquals(resolveVeryfrontCloudGatewayModelId(undefined), undefined);
+    assertThrows(
+      () => resolveVeryfrontCloudGatewayModelId(""),
+      Error,
+      "model ID is invalid",
+    );
     assertEquals(
       resolveHostedVeryfrontCloudModelId("openai/gpt-5.5"),
       "veryfront-cloud/openai/gpt-5.5",

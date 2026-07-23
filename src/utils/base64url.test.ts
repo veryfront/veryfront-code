@@ -26,9 +26,11 @@ describe("base64url", () => {
     });
 
     it("should handle latin1 characters", () => {
-      const result = base64urlEncode("café");
-      assertEquals(typeof result, "string");
-      assertEquals(result.length > 0, true);
+      assertEquals(base64urlEncode("café"), "Y2Fmw6k");
+    });
+
+    it("encodes arbitrary Unicode as UTF-8", () => {
+      assertEquals(base64urlEncode("👋 世界"), "8J-RiyDkuJbnlYw");
     });
 
     it("should produce consistent output", () => {
@@ -64,6 +66,16 @@ describe("base64url", () => {
     it("should produce consistent output for same bytes", () => {
       const bytes = new Uint8Array([1, 2, 3, 4, 5]);
       assertEquals(base64urlEncodeBytes(bytes), base64urlEncodeBytes(bytes));
+    });
+
+    it("encodes large byte arrays without spreading them onto the call stack", () => {
+      const bytes = new Uint8Array(1_000_000);
+      bytes.fill(0xff);
+
+      const encoded = base64urlEncodeBytes(bytes);
+
+      assertEquals(encoded.length, 1_333_334);
+      assertEquals(encoded.startsWith("_____"), true);
     });
   });
 });

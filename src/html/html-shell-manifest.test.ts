@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { afterEach, beforeEach } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { generateHTMLShellParts } from "./html-shell-generator.ts";
 import type { RenderMetadata } from "#veryfront/types";
@@ -162,6 +167,100 @@ describe("html shell release asset manifest consumption", () => {
     assertStringIncludes(result.start, `/_vf/assets/${CSS_HASH}.css`);
     // The JIT project-CSS link is replaced, not duplicated.
     assert(!result.start.includes("/_vf/css/"));
+  });
+
+  it("does not start JIT CSS work when the manifest carries valid CSS", async () => {
+    const CSS_HASH = "c".repeat(64);
+    let thenCalls = 0;
+    const shouldNotBeAwaited = {
+      then() {
+        thenCalls++;
+        throw new Error("JIT CSS should not run");
+      },
+    } as unknown as Promise<never>;
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      {
+        ...prodOptions(),
+        releaseAssetManifest: {
+          ...manifest(),
+          css: [{
+            contentHash: CSS_HASH,
+            size: 10,
+            contentType: "text/css",
+            styleProfileHash: "sp",
+          }],
+        },
+      },
+      undefined,
+      undefined,
+      undefined,
+      shouldNotBeAwaited,
+    );
+
+    assertStringIncludes(result.start, `/_vf/assets/${CSS_HASH}.css`);
+    assertEquals(thenCalls, 0);
+  });
+
+  it("rejects manifest CSS entries with invalid content hashes", async () => {
+    const hostileHash = 'bad"><script>globalThis.pwned=1</script>';
+    const explicitManifest = {
+      ...manifest(),
+      css: [{
+        contentHash: hostileHash,
+        size: 10,
+        contentType: "text/css",
+        styleProfileHash: "sp",
+      }],
+    } as ReleaseAssetManifest;
+
+    await assertRejects(
+      () =>
+        generateHTMLShellParts(
+          meta(),
+          {
+            ...prodOptions(),
+            releaseAssetManifest: explicitManifest,
+          } as HTMLGenerationOptions,
+          undefined,
+          undefined,
+          undefined,
+          Promise.resolve({ css: ".safe{}", hash: "safe-hash", fromCache: false }),
+        ),
+      TypeError,
+      "Release asset manifest CSS entry is invalid",
+    );
+  });
+
+  it("does not execute manifest CSS accessors", async () => {
+    let accessorCalls = 0;
+    const cssEntry: Record<string, unknown> = {
+      size: 10,
+      contentType: "text/css",
+      styleProfileHash: "sp",
+    };
+    Object.defineProperty(cssEntry, "contentHash", {
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "c".repeat(64);
+      },
+    });
+
+    await assertRejects(
+      () =>
+        generateHTMLShellParts(meta(), {
+          ...prodOptions(),
+          releaseAssetManifest: {
+            ...manifest(),
+            css: [cssEntry],
+          } as never,
+        }),
+      TypeError,
+      "Release asset manifest CSS entry must not contain accessor properties",
+    );
+    assertEquals(accessorCalls, 0);
   });
 
   it("keeps covered HTTP import-map dependencies on CDN URLs by default", async () => {

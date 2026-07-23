@@ -8,6 +8,22 @@
  */
 
 import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import {
+  dirname,
+  isAbsolute,
+  normalize,
+  relative,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
+
+function isOutsideDirectory(relativePath: string): boolean {
+  return relativePath === ".." || relativePath.startsWith("../") ||
+    relativePath.startsWith("..\\") || isAbsolute(relativePath);
+}
+
+function toImportPath(path: string): string {
+  return path.replaceAll("\\", "/");
+}
 
 /**
  * Rewrite a cross-project import specifier to use a local temp path.
@@ -18,7 +34,7 @@ export async function rewriteCrossProjectImport(
   tempPath: string,
 ): Promise<string> {
   const jsSpecifier = toJsExtension(specifier);
-  const replacement = `file://${tempPath}`;
+  const replacement = toFileUrl(tempPath).href;
   const replacements = new Map<string, string>([
     [specifier, replacement],
     [jsSpecifier, replacement],
@@ -42,11 +58,16 @@ export async function rewriteLocalImports(
 ): Promise<string> {
   if (localImportPaths.size === 0) return transformed;
 
-  const normalizedProjectDir = projectDir.replace(/\/$/, "");
-  const fromFileDir = fromFilePath.substring(0, fromFilePath.lastIndexOf("/"));
-  const fromRelativeDir = fromFileDir.startsWith(normalizedProjectDir)
-    ? fromFileDir.substring(normalizedProjectDir.length + 1)
-    : fromFileDir;
+  const normalizedProjectDir = normalize(projectDir);
+  const normalizedFromFilePath = normalize(fromFilePath);
+  const fromRelativePath = relative(normalizedProjectDir, normalizedFromFilePath);
+  if (
+    fromRelativePath === "." || isOutsideDirectory(fromRelativePath)
+  ) {
+    throw new TypeError("fromFilePath must be inside projectDir");
+  }
+  const relativeDirectory = dirname(fromRelativePath);
+  const fromRelativeDir = relativeDirectory === "." ? "" : toImportPath(relativeDirectory);
 
   const replacements = new Map<string, string>();
 
@@ -55,7 +76,7 @@ export async function rewriteLocalImports(
 
     for (const pattern of patterns) {
       if (!replacements.has(pattern)) {
-        replacements.set(pattern, `file://${tempPath}`);
+        replacements.set(pattern, toFileUrl(tempPath).href);
       }
     }
   }
@@ -80,7 +101,7 @@ function buildImportPatterns(
     return buildAliasImportPatterns(specifierOrPath, fromRelativeDir);
   }
 
-  if (specifierOrPath.startsWith("/") || specifierOrPath.startsWith(projectDir)) {
+  if (isAbsolute(specifierOrPath)) {
     return buildAbsoluteImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
   }
 
@@ -110,9 +131,9 @@ function buildAbsoluteImportPatterns(
   fromRelativeDir: string,
   projectDir: string,
 ): string[] {
-  const depRelativePath = absolutePath.startsWith(projectDir)
-    ? absolutePath.substring(projectDir.length + 1)
-    : absolutePath.substring(1);
+  const depRelative = relative(projectDir, normalize(absolutePath));
+  if (depRelative === "." || isOutsideDirectory(depRelative)) return [];
+  const depRelativePath = toImportPath(depRelative);
 
   const lastSlash = depRelativePath.lastIndexOf("/");
   const depDir = depRelativePath.substring(0, lastSlash);

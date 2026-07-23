@@ -98,6 +98,19 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
 ];
 
+function clonePatterns(patterns: RegExp[] | undefined): RegExp[] | undefined {
+  return patterns?.map((pattern) => new RegExp(pattern.source, pattern.flags));
+}
+
+function patternMatches(pattern: RegExp, value: string): boolean {
+  pattern.lastIndex = 0;
+  try {
+    return pattern.test(value);
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
 /**
  * Input Validator
  */
@@ -105,7 +118,14 @@ export class InputValidator {
   private config: NonNullable<SecurityConfig["input"]>;
 
   constructor(config?: SecurityConfig["input"]) {
-    this.config = config ?? {};
+    this.config = {
+      ...(config?.maxLength === undefined ? {} : { maxLength: config.maxLength }),
+      ...(config?.blockedPatterns === undefined
+        ? {}
+        : { blockedPatterns: clonePatterns(config.blockedPatterns) }),
+      ...(config?.sanitize === undefined ? {} : { sanitize: config.sanitize }),
+      ...(config?.validate === undefined ? {} : { validate: config.validate }),
+    };
   }
 
   /**
@@ -128,7 +148,7 @@ export class InputValidator {
     }
 
     for (const pattern of this.config.blockedPatterns ?? []) {
-      if (!pattern.test(input)) continue;
+      if (!patternMatches(pattern, input)) continue;
 
       violations.push({
         type: "input",
@@ -161,8 +181,8 @@ export class InputValidator {
 
   /** Sanitization patterns to remove harmful content */
   private static readonly SANITIZE_PATTERNS: RegExp[] = [
-    /<script[^>]*>.*?<\/script>/gi, // Script tags
-    /on\w+\s*=\s*["'][^"']*["']/gi, // Event handlers
+    /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, // Script tags
+    /\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, // Event handlers
     /javascript:/gi, // JavaScript protocol
   ];
 
@@ -184,7 +204,13 @@ export class OutputFilter {
   private config: NonNullable<SecurityConfig["output"]>;
 
   constructor(config?: SecurityConfig["output"]) {
-    this.config = config ?? {};
+    this.config = {
+      ...(config?.blockedPatterns === undefined
+        ? {}
+        : { blockedPatterns: clonePatterns(config.blockedPatterns) }),
+      ...(config?.filterPII === undefined ? {} : { filterPII: config.filterPII }),
+      ...(config?.filter === undefined ? {} : { filter: config.filter }),
+    };
   }
 
   /**
@@ -198,7 +224,7 @@ export class OutputFilter {
     let filtered = output;
 
     for (const pattern of this.config.blockedPatterns ?? []) {
-      if (!pattern.test(filtered)) continue;
+      if (!patternMatches(pattern, filtered)) continue;
 
       violations.push({
         type: "output",

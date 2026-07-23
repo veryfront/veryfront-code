@@ -1,56 +1,34 @@
-import { dirname, join, relative, SEPARATOR } from "#veryfront/compat/path/index.ts";
-import { walk } from "#veryfront/compat/std/fs.ts";
-import { logger } from "#veryfront/utils";
-import type { BrowserTargets } from "#veryfront/types";
+import {
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  SEPARATOR,
+} from "#veryfront/compat/path/index.ts";
+import type { BrowserTargets } from "./types/index.ts";
 import { createError, toError } from "#veryfront/errors";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { minifyCSSLexically } from "../../utils/css-minifier.ts";
+import {
+  findCSSFiles as findCSSFilesShared,
+  globFiles as globFilesShared,
+  matchesGlob,
+} from "../../utils/asset-utils.ts";
+import { selectorReferencesUsed } from "./css-rule-parser.ts";
 
-export async function findCSSFiles(dir: string): Promise<string[]> {
-  const cssFiles: string[] = [];
-
-  try {
-    for await (const entry of walk(dir, { exts: [".css"], includeDirs: false })) {
-      cssFiles.push(entry.path);
-    }
-  } catch (error) {
-    logger.warn(`Could not read directory ${dir}`, { error });
-  }
-
-  return cssFiles;
-}
-
-export async function globFiles(pattern: string): Promise<string[]> {
-  const files: string[] = [];
-
-  const baseDir = pattern.split("**")[0] || ".";
-  const normalizedPattern = pattern.startsWith("./") ? pattern.slice(2) : pattern;
-
-  try {
-    for await (const entry of walk(baseDir, { includeDirs: false })) {
-      const normalizedPath = entry.path.startsWith("./") ? entry.path.slice(2) : entry.path;
-
-      if (matchPattern(normalizedPath, normalizedPattern)) {
-        files.push(entry.path);
-      }
-    }
-  } catch (error) {
-    logger.warn(`Could not glob pattern ${pattern}`, { error });
-  }
-
-  return files;
-}
+export const findCSSFiles = findCSSFilesShared;
+export const globFiles = globFilesShared;
 
 export function matchPattern(path: string, pattern: string): boolean {
-  const regexPattern = pattern
-    .replace(/\{([^}]+)\}/g, (_, group: string) => `(${group.split(",").join("|")})`)
-    .replace(/\./g, "\\.")
-    .replace(/\/\*\*\//g, "/(.*/)?")
-    .replace(/\*/g, "[^/]*");
-
-  return new RegExp(`^${regexPattern}$`).test(path);
+  return matchesGlob(path, pattern);
 }
 
 export function getOutputPath(inputPath: string, outputDir: string): string {
+  if (!outputDir.trim()) throw new TypeError("CSS output directory must not be blank");
+  if (extname(inputPath).toLowerCase() !== ".css") {
+    throw new TypeError("CSS input path must use the .css extension");
+  }
   const dir = dirname(inputPath);
   const filename = inputPath.split(SEPARATOR).pop();
 
@@ -63,9 +41,14 @@ export function getOutputPath(inputPath: string, outputDir: string): string {
     );
   }
 
-  const outputFilename = `${filename.replace(".css", "")}.min.css`;
-  const isAbsolute = dir.startsWith("/") || /^[a-zA-Z]:/.test(dir);
-  const relativePath = isAbsolute ? relative(cwd(), dir) : dir;
+  const outputFilename = `${filename.slice(0, -extname(filename).length)}.min.css`;
+  const absoluteInput = isAbsolute(inputPath);
+  const relativePath = absoluteInput ? relative(cwd(), dir) : dir;
+  if (
+    isAbsolute(relativePath) || relativePath.split(/[\\/]/).some((segment) => segment === "..")
+  ) {
+    throw new TypeError("CSS input path must not escape the current project");
+  }
 
   return join(outputDir, relativePath, outputFilename);
 }
@@ -122,21 +105,12 @@ export function extractSelectorsFromHTML(html: string): string[] {
 const UNIVERSAL_SELECTORS = new Set(["*", ":root", "html", "body", "@"]);
 
 export function shouldKeepSelector(selector: string, usedSelectors: Set<string>): boolean {
-  for (const u of UNIVERSAL_SELECTORS) {
-    if (selector.includes(u)) return true;
-  }
-
-  const parts = selector.split(/[\s>+~]/).map((p) => p.trim());
-  return parts.some((part) => usedSelectors.has(part));
+  if ([...UNIVERSAL_SELECTORS].some((universal) => selector === universal)) return true;
+  return selectorReferencesUsed(selector, usedSelectors);
 }
 
 export function basicMinify(css: string): string {
-  return css
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\s+/g, " ")
-    .replace(/\s*([{};:,])\s*/g, "$1")
-    .replace(/;}/g, "}")
-    .trim();
+  return minifyCSSLexically(css);
 }
 
 export function calculateSavings(originalSize: number, minifiedSize: number): number {
@@ -149,14 +123,48 @@ export function parseBrowserTargets(
 ): BrowserTargets | undefined {
   if (!targets) return undefined;
 
+  const encodeVersion = (version: number, browser: string): number => {
+    if (!Number.isFinite(version) || version <= 0) {
+      throw new TypeError(`Invalid ${browser} browser version`);
+    }
+    const parts = String(version).split(".").map(Number);
+    if (parts.length > 3 || parts.some((part) => !Number.isInteger(part) || part > 255)) {
+      throw new TypeError(`Invalid ${browser} browser version`);
+    }
+    const [major = 0, minor = 0, patch = 0] = parts;
+    return (major << 16) | (minor << 8) | patch;
+  };
+
   if (typeof targets === "string" || Array.isArray(targets)) {
-    return {
-      chrome: 90,
-      firefox: 88,
-      safari: 14,
-      edge: 90,
-    };
+    const entries = typeof targets === "string" ? [targets] : targets;
+    if (entries.length === 0) return undefined;
+    const result: BrowserTargets = {};
+    for (const entry of entries) {
+      const match = /^(chrome|firefox|safari|edge)\s+(\d+(?:\.\d{1,2}){0,2})$/i.exec(
+        entry.trim(),
+      );
+      if (!match?.[1] || !match[2]) {
+        throw new TypeError(
+          `Unsupported browser target "${entry}". Use explicit versions such as "chrome 120"`,
+        );
+      }
+      const browser = match[1].toLowerCase() as keyof BrowserTargets;
+      if (result[browser] !== undefined) {
+        throw new TypeError(`Duplicate browser target: ${browser}`);
+      }
+      result[browser] = encodeVersion(Number(match[2]), browser);
+    }
+    return result;
   }
 
-  return targets;
+  const result: BrowserTargets = {};
+  for (const [browser, version] of Object.entries(targets)) {
+    if (!(["chrome", "firefox", "safari", "edge"] as const).includes(browser as never)) {
+      throw new TypeError(`Unsupported browser target: ${browser}`);
+    }
+    if (version !== undefined) {
+      result[browser as keyof BrowserTargets] = encodeVersion(version, browser);
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }

@@ -6,11 +6,14 @@
  * @module extensions/observability/tracing-exporter
  */
 
+import type { NodeTelemetryLogRecordEmitter } from "./node-telemetry-provider.ts";
+
 /**
  * Minimal TracerProvider interface for the contract.
  * Structurally compatible with both the core shim and the real OTel SDK.
  */
 export interface TracerProvider {
+  /** Return a tracer for the named instrumentation scope. */
   getTracer(name: string, version?: string): unknown;
 }
 
@@ -92,17 +95,5 @@ export interface TracingExporter {
    * Return an emitter that forwards Veryfront structured log records into the
    * active telemetry backend. Returns `null` when log export is disabled.
    */
-  getLogRecordEmitter?():
-    | ((record: {
-      timestamp?: string;
-      level?: string;
-      service?: string;
-      message: string;
-      component?: string;
-      context?: Record<string, unknown>;
-      error?: unknown;
-      trace_id?: string;
-      span_id?: string;
-    }) => void)
-    | null;
+  getLogRecordEmitter?(): NodeTelemetryLogRecordEmitter | null;
 }

@@ -234,4 +234,106 @@ describe("proxy routing invalidation ingress", () => {
     assertEquals(cancelled, true);
     assertEquals(pulls < 10, true);
   });
+
+  it("rejects malformed content lengths before reading the body", async () => {
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "content-length": "12bytes" },
+        body: createBody(),
+      }),
+      {
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 400);
+  });
+
+  it("rejects invalid UTF-8 request bodies", async () => {
+    const invalidBody = encoder.encode(createBody());
+    const slugOffset = createBody().indexOf("demo-project");
+    invalidBody[slugOffset] = 0xff;
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body: invalidBody,
+      }),
+      {
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 400);
+  });
+
+  it("bounds request body reads that never settle", async () => {
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body: new ReadableStream<Uint8Array>({
+          pull: () => new Promise<void>(() => {}),
+        }),
+      }),
+      {
+        bodyReadTimeoutMs: 5,
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 400);
+  });
+
+  it("rejects blank, controlled, and oversized routing fields", async () => {
+    const invalidValues = [" ", "project\nname", "x".repeat(257)];
+    for (const projectSlug of invalidValues) {
+      const body = JSON.stringify({
+        ...JSON.parse(createBody()),
+        projectSlug,
+      });
+      const response = await handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          body,
+        }),
+        {
+          publicKeyPem: "configured",
+          publisher: {
+            publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+          },
+        },
+      );
+      assertEquals(response.status, 400);
+    }
+  });
+
+  it("fails closed when a publisher returns an invalid convergence result", async () => {
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": jws },
+        body,
+      }),
+      {
+        publicKeyPem,
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 2, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), { error: "Routing invalidation did not converge" });
+  });
 });

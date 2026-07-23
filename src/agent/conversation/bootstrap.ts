@@ -1,5 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
@@ -15,7 +15,9 @@ const CONVERSATION_API_TIMEOUT_MS = 15_000;
 // Hand-written transform output type.
 /** Record shape for conversation. */
 export interface ConversationRecord {
+  /** Resource identifier. */
   id: string;
+  /** Project ID value. */
   projectId: string | null;
 }
 
@@ -40,36 +42,47 @@ export const getConversationRecordSchema = defineSchema((v) =>
 /** Schema for conversation record.
  * @deprecated Use getConversationRecordSchema()
  */
-export const ConversationRecordSchema = lazySchema(getConversationRecordSchema);
-
-/** Zod schema for get conversation message record. */
-export const getConversationMessageRecordSchema = defineSchema((v) =>
-  v.object({
-    id: v.string().uuid(),
-  })
+export const ConversationRecordSchema: Schema<ConversationRecord> = lazySchema(
+  getConversationRecordSchema,
 );
+
+/** Persisted conversation message identity. */
+export interface ConversationMessageRecord {
+  /** Message identifier. */
+  id: string;
+}
+
+/** Returns the conversation message record schema. */
+export const getConversationMessageRecordSchema: () => Schema<ConversationMessageRecord> =
+  defineSchema((v) =>
+    v.object({
+      id: v.string().uuid(),
+    })
+  );
 
 /** Schema for conversation message record.
  * @deprecated Use getConversationMessageRecordSchema()
  */
-export const ConversationMessageRecordSchema = lazySchema(getConversationMessageRecordSchema);
-
-/** Record shape for conversation message. */
-export type ConversationMessageRecord = InferSchema<
-  ReturnType<typeof getConversationMessageRecordSchema>
->;
+export const ConversationMessageRecordSchema: Schema<ConversationMessageRecord> = lazySchema(
+  getConversationMessageRecordSchema,
+);
 
 /** Error shape for conversation control plane response. */
 export interface ConversationControlPlaneResponseError {
+  /** Status. */
   status: number;
+  /** Status text value. */
   statusText: string;
+  /** Body value. */
   body: string;
 }
 
 /** Public API contract for persist conversation user message failure. */
 export interface PersistConversationUserMessageFailure
   extends ConversationControlPlaneResponseError {
+  /** Conversation ID value. */
   conversationId: string;
+  /** Message ID value. */
   messageId: string;
 }
 
@@ -310,8 +323,11 @@ export async function persistLatestConversationUserMessage(input: {
 
 /** Result returned from bootstrap conversation agent run. */
 export interface BootstrapConversationAgentRunResult {
+  /** Conversation value. */
   conversation: ConversationRecord;
+  /** Message associated with the operation. */
   message: ConversationMessageRecord;
+  /** Run value. */
   run: ConversationRunProjection;
 }
 

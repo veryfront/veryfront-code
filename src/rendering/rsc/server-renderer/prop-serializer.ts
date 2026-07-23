@@ -3,9 +3,21 @@ import { serverLogger } from "#veryfront/utils";
 const logger = serverLogger.component("rsc");
 const UNSAFE_PROP_NAME_CHARACTERS = "\"'`=<>/";
 const EVENT_HANDLER_PROP = /^on[a-z]/i;
+const PROTOTYPE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const MAX_SERIALIZATION_DEPTH = 100;
+const MAX_SERIALIZATION_NODES = 10_000;
+const MAX_TOP_LEVEL_PROPS = 10_000;
+const INVALID = Symbol("invalid-serialized-prop");
+
+interface SerializationState {
+  active: WeakSet<object>;
+  nodes: number;
+}
 
 export function isSafeSerializedPropName(name: string): boolean {
-  if (name.length === 0 || EVENT_HANDLER_PROP.test(name)) return false;
+  if (name.length === 0 || EVENT_HANDLER_PROP.test(name) || PROTOTYPE_KEYS.has(name)) {
+    return false;
+  }
 
   for (const character of name) {
     const codePoint = character.codePointAt(0) ?? 0;
@@ -18,71 +30,143 @@ export function isSafeSerializedPropName(name: string): boolean {
 }
 
 export function serializeProps(props: Record<string, unknown>): Record<string, unknown> {
+  return sanitizeRecord(props, true);
+}
+
+export function stringifyProps(props: Record<string, unknown>): string {
+  return JSON.stringify(sanitizeRecord(props, false));
+}
+
+function sanitizeRecord(
+  props: Record<string, unknown>,
+  skipChildren: boolean,
+): Record<string, unknown> {
   const serializable: Record<string, unknown> = {};
+  const state: SerializationState = { active: new WeakSet(), nodes: 0 };
+  let descriptors: Record<string, PropertyDescriptor>;
 
-  for (const [key, value] of Object.entries(props)) {
-    if (key === "children") continue;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(props);
+  } catch {
+    logger.warn("Skipping props that could not be inspected safely");
+    return serializable;
+  }
+
+  let inspected = 0;
+  let skipped = 0;
+  let truncated = false;
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (inspected++ >= MAX_TOP_LEVEL_PROPS) {
+      truncated = true;
+      break;
+    }
+    if (!descriptor.enumerable || (skipChildren && key === "children")) continue;
     if (!isSafeSerializedPropName(key)) {
-      logger.warn("Skipping prop with an unsafe name");
+      skipped++;
+      continue;
+    }
+    if (!("value" in descriptor)) {
+      skipped++;
       continue;
     }
 
-    if (!isSerializable(value)) {
-      logger.warn(`Skipping non-serializable prop: ${key}`);
+    const value = cloneSerializableValue(descriptor.value, state, 0);
+    if (value === INVALID) {
+      skipped++;
       continue;
     }
 
-    serializable[key] = value;
+    // Define data properties explicitly so special names can never trigger a
+    // prototype setter, even if the name validation changes later.
+    Object.defineProperty(serializable, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+
+  if (skipped > 0 || truncated) {
+    logger.warn("Skipped props that are unsafe or not serializable", {
+      skipped,
+      truncated,
+    });
   }
 
   return serializable;
 }
 
-export function stringifyProps(props: Record<string, unknown>): string {
-  const seen = new WeakSet<object>();
+function cloneSerializableValue(
+  value: unknown,
+  state: SerializationState,
+  depth: number,
+): unknown | typeof INVALID {
+  if (depth > MAX_SERIALIZATION_DEPTH || state.nodes >= MAX_SERIALIZATION_NODES) return INVALID;
+  state.nodes++;
 
-  return JSON.stringify(props, (_key, value) => {
-    if (value === null || typeof value !== "object") return value;
-    if (seen.has(value)) return undefined;
-
-    seen.add(value);
-    return value;
-  });
-}
-
-function isSerializable(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
-  if (value == null) return true;
+  if (value === null) return null;
 
   switch (typeof value) {
     case "string":
-    case "number":
     case "boolean":
-      return true;
+      return value;
+    case "number":
+      return Number.isFinite(value) ? value : INVALID;
+    case "undefined":
     case "function":
     case "symbol":
     case "bigint":
-      return false;
+      return INVALID;
     case "object":
       break;
     default:
-      return false;
+      return INVALID;
   }
 
-  const obj = value as object;
-  if (seen.has(obj)) return false;
-  seen.add(obj);
+  const object = value as object;
+  if (state.active.has(object)) return INVALID;
 
-  if (Array.isArray(value)) {
-    return value.every((item) => isSerializable(item, seen));
+  const prototype = Object.getPrototypeOf(object);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+    return INVALID;
   }
 
+  state.active.add(object);
   try {
-    for (const v of Object.values(value as Record<string, unknown>)) {
-      if (!isSerializable(v, seen)) return false;
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      for (const item of value) {
+        const cloned = cloneSerializableValue(item, state, depth + 1);
+        if (cloned === INVALID) return INVALID;
+        result.push(cloned);
+      }
+      return result;
     }
-    return true;
-  } catch (_) {
-    /* expected: object may have non-enumerable or throwing getters */
-    return false;
+
+    const result: Record<string, unknown> = {};
+    let descriptors: Record<string, PropertyDescriptor>;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(object);
+    } catch {
+      return INVALID;
+    }
+
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable || PROTOTYPE_KEYS.has(key)) continue;
+      if (!("value" in descriptor)) continue;
+
+      const cloned = cloneSerializableValue(descriptor.value, state, depth + 1);
+      if (cloned === INVALID) return INVALID;
+      Object.defineProperty(result, key, {
+        configurable: true,
+        enumerable: true,
+        value: cloned,
+        writable: true,
+      });
+    }
+
+    return result;
+  } finally {
+    state.active.delete(object);
   }
 }

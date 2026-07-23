@@ -179,7 +179,9 @@ export function applySecurityHeaders(
     headers.set("X-Frame-Options", getHeaderOverride("x-frame-options") ?? "DENY");
   }
 
-  headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "1; mode=block");
+  // Disable legacy browser XSS auditors. They are obsolete and historically
+  // introduced their own cross-site data leaks; CSP is the active control.
+  headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "0");
 
   const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter, isVeryfrontDomain);
   if (csp) headers.set("Content-Security-Policy", csp);

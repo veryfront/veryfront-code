@@ -6,8 +6,9 @@ import type {
   ContentProcessingResult,
   ContentProcessor,
 } from "#veryfront/extensions/content/index.ts";
-import { createError, toError } from "#veryfront/errors";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { errorLogName, fileLogLabel } from "../../shared/log-context.ts";
 
 const logger = rendererLogger.component("mdx-compiler");
 
@@ -21,6 +22,7 @@ export function compileMDXRuntime(
   baseUrl?: string,
   studioEmbed?: boolean,
 ): Promise<ContentProcessingResult> {
+  const sourceFile = filePath === undefined ? "memory" : fileLogLabel(filePath);
   return withSpan(
     "transforms.compileMDXRuntime",
     async () => {
@@ -37,24 +39,18 @@ export function compileMDXRuntime(
           studioEmbed,
         });
       } catch (error) {
-        logger.error("Compilation failed:", {
-          filePath,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
+        logger.error("Compilation failed", {
+          sourceFile,
+          errorName: errorLogName(error),
         });
 
-        throw toError(
-          createError({
-            type: "build",
-            message: `MDX compilation error: ${
-              error instanceof Error ? error.message : String(error)
-            } | file: ${filePath ?? "<memory>"}`,
-          }),
-        );
+        throw COMPILATION_ERROR.create({
+          detail: `MDX compilation failed for ${sourceFile}.`,
+        });
       }
     },
     {
-      "mdx.filePath": filePath ?? "memory",
+      "mdx.source_file": sourceFile,
       "mdx.target": target,
       "mdx.contentLength": content.length,
     },

@@ -16,6 +16,7 @@
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
 import type {
@@ -41,9 +42,6 @@ export function importTransformers(): Promise<OpaqueModule> {
 
 /** Lazily import `@anthropic-ai/claude-agent-sdk` (~69MB). */
 export function importClaudeAgentSDK(): Promise<OpaqueModule> {
-  // Allow tests to inject a mock SDK without loading the real 69 MB package.
-  const mock = (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-  if (mock && typeof mock === "object" && "query" in mock) return Promise.resolve(mock);
   return dynamicImport(resolve(
     "@anthropic-ai/claude-agent-sdk",
     OPAQUE_DEPENDENCY_VERSIONS["@anthropic-ai/claude-agent-sdk"],
@@ -66,8 +64,8 @@ export async function importKreuzberg(): Promise<KreuzbergExtractor> {
   if (extractor?.importKreuzberg) {
     return extractor.importKreuzberg();
   }
-  throw new Error(
-    "Document extraction requires a DocumentExtractor extension. " +
+  throw NOT_SUPPORTED.create({
+    message: "Document extraction requires a DocumentExtractor extension. " +
       "Install @veryfront/ext-document-kreuzberg and add it to your extensions configuration.",
-  );
+  });
 }

@@ -73,6 +73,21 @@ describe("InputValidator", () => {
     assertEquals(result.sanitized?.includes("onclick"), false);
     assertEquals(result.sanitized?.includes("javascript:"), false);
   });
+
+  it("evaluates stateful blocked patterns independently on every validation", async () => {
+    const validator = new InputValidator({ blockedPatterns: [/blocked/g] });
+
+    assertEquals((await validator.validate("blocked")).valid, false);
+    assertEquals((await validator.validate("blocked")).valid, false);
+  });
+
+  it("sanitizes script tags whose content spans multiple lines", async () => {
+    const validator = new InputValidator({ sanitize: true });
+
+    const result = await validator.validate("<script>\nalert(1)\n</script>safe");
+
+    assertEquals(result.sanitized, "safe");
+  });
 });
 
 describe("OutputFilter", () => {

@@ -1,5 +1,5 @@
 /**
- * Declare and register prompts exposable over MCP.
+ * Declare and register bounded prompt templates exposed through MCP.
  *
  * @module prompt
  *
@@ -18,8 +18,17 @@
  *   text: "The runtime loads tools before an agent step starts.",
  * });
  * ```
+ *
+ * Prompt variables are inserted verbatim after type and size validation. Keep
+ * untrusted values clearly separated from instructions in the template.
  */
 
-export type { Prompt, PromptConfig } from "./types.ts";
+export type {
+  Prompt,
+  PromptArgument,
+  PromptConfig,
+  PromptGenerate,
+  PromptRenderContext,
+} from "./types.ts";
 export { prompt } from "./factory.ts";
 export { promptRegistry } from "./registry.ts";

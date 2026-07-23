@@ -1,16 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
 import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
-import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
+import { buildVerifiedHttpBundleKey, verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { sha256Short } from "#veryfront/cache/hash.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
@@ -30,11 +30,11 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
-function hashAsLoader(source: string, filePath: string, projectDir: string): string {
+function hashAsLoader(source: string, filePath: string, projectDir: string): Promise<string> {
   const rel = filePath.startsWith(projectDir)
     ? filePath.slice(projectDir.length).replace(/^\/+/, "")
     : filePath;
-  return hashCodeHex(injectNodePositions(source, { filePath: rel }));
+  return sha256Short(injectNodePositions(source, { filePath: rel }));
 }
 
 class FakeDistributedCache implements CacheBackend {
@@ -159,19 +159,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function CacheInvalTest() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const uniqueId = crypto.randomUUID().slice(0, 8);
@@ -222,19 +232,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function VerifiedStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const staleTempPath = join(projectDir, `verified-stale-${crypto.randomUUID()}.mjs`);
@@ -255,7 +275,10 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const staleEntry = { tempPath: staleTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, staleEntry);
       globalModuleCache.set(filePathCacheKey, staleEntry);
-      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+      verifiedHttpBundlePaths.set(
+        buildVerifiedHttpBundleKey(staleTempPath, contentHash),
+        true,
+      );
 
       await writeTextFile(filePath, source);
 
@@ -276,7 +299,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         "Expected verified stale cache entry to be replaced with retransformed output",
       );
       assertEquals(
-        verifiedHttpBundlePaths.get(`${staleTempPath}:${contentHash}`),
+        verifiedHttpBundlePaths.get(buildVerifiedHttpBundleKey(staleTempPath, contentHash)),
         undefined,
         "Expected stale verification marker to be cleared",
       );
@@ -298,26 +321,39 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function MissingCachedOutput() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const staleTempPath = join(projectDir, `missing-cached-output-${crypto.randomUUID()}.mjs`);
       const staleEntry = { tempPath: staleTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, staleEntry);
       globalModuleCache.set(filePathCacheKey, staleEntry);
-      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+      verifiedHttpBundlePaths.set(
+        buildVerifiedHttpBundleKey(staleTempPath, contentHash),
+        true,
+      );
 
       await writeTextFile(filePath, source);
 
@@ -338,7 +374,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         "Expected missing verified cache output to be replaced with retransformed output",
       );
       assertEquals(
-        verifiedHttpBundlePaths.get(`${staleTempPath}:${contentHash}`),
+        verifiedHttpBundlePaths.get(buildVerifiedHttpBundleKey(staleTempPath, contentHash)),
         undefined,
         "Expected stale verification marker to be cleared",
       );
@@ -365,22 +401,32 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(mdxComponentDir, { recursive: true });
 
       const source = "export default function VerifiedMdxStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
-      const staleTempPath = join(mdxComponentDir, `verified-mdx-stale-${crypto.randomUUID()}.js`);
+      const staleTempPath = join(mdxComponentDir, `verified-mdx-stale-${crypto.randomUUID()}.mjs`);
       const missingDependencyPath = join(
         mdxComponentDir,
         `missing-runtime-core-${crypto.randomUUID()}.js`,
@@ -405,7 +451,10 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const staleEntry = { tempPath: staleTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, staleEntry);
       globalModuleCache.set(filePathCacheKey, staleEntry);
-      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+      verifiedHttpBundlePaths.set(
+        buildVerifiedHttpBundleKey(staleTempPath, contentHash),
+        true,
+      );
 
       await writeTextFile(filePath, source);
 
@@ -449,19 +498,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(mdxComponentDir, { recursive: true });
 
       const source = "export default function ColdMdxStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const staleTempPath = join(mdxComponentDir, `cold-mdx-stale-${crypto.randomUUID()}.js`);
@@ -491,7 +550,10 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const staleEntry = { tempPath: staleTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, staleEntry);
       globalModuleCache.set(filePathCacheKey, staleEntry);
-      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+      verifiedHttpBundlePaths.set(
+        buildVerifiedHttpBundleKey(staleTempPath, contentHash),
+        true,
+      );
 
       await writeTextFile(filePath, source);
 
@@ -540,19 +602,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(mdxComponentDir, { recursive: true });
 
       const source = "export default function BranchMdxStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const staleTempPath = join(mdxComponentDir, `branch-mdx-stale-${crypto.randomUUID()}.js`);
@@ -582,7 +654,10 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const staleEntry = { tempPath: staleTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, staleEntry);
       globalModuleCache.set(filePathCacheKey, staleEntry);
-      verifiedHttpBundlePaths.set(`${staleTempPath}:${contentHash}`, true);
+      verifiedHttpBundlePaths.set(
+        buildVerifiedHttpBundleKey(staleTempPath, contentHash),
+        true,
+      );
 
       await writeTextFile(filePath, source);
 
@@ -628,19 +703,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function RecoveredViaCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
@@ -700,19 +785,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function CacheRetainOnRuntimeError() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const runtimeErrorTempPath = join(projectDir, `runtime-error-${crypto.randomUUID()}.mjs`);
@@ -724,7 +819,10 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const fakeEntry = { tempPath: runtimeErrorTempPath, contentHash };
       globalModuleCache.set(contentCacheKey, fakeEntry);
       globalModuleCache.set(filePathCacheKey, fakeEntry);
-      verifiedHttpBundlePaths.set(`${runtimeErrorTempPath}:${contentHash}`, true);
+      verifiedHttpBundlePaths.set(
+        buildVerifiedHttpBundleKey(runtimeErrorTempPath, contentHash),
+        true,
+      );
 
       await writeTextFile(filePath, source);
 
@@ -827,7 +925,104 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
             msg.includes("./does-not-exist.js"),
           `Expected missing dependency details in error, got: ${msg}`,
         );
+        assert(!msg.includes(projectDir), "Missing dependency error must not expose local paths");
       }
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects circular local imports without waiting for the in-progress timeout", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-cycle-" });
+    const componentsDir = join(projectDir, "components");
+    const firstPath = join(componentsDir, "First.ts");
+    const secondPath = join(componentsDir, "Second.ts");
+    const firstSource = [
+      `import { second } from "./Second.ts";`,
+      `export const first = second;`,
+      `export default function First() { return null; }`,
+    ].join("\n");
+    const secondSource = [
+      `import { first } from "./First.ts";`,
+      `export const second = first;`,
+    ].join("\n");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(firstPath, firstSource);
+      await writeTextFile(secondPath, secondSource);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "project-circular-dependency-test",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await assertRejects(
+          () =>
+            Promise.race([
+              loader.loadModule(firstPath, firstSource),
+              new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(
+                  () => reject(new Error("Circular dependency detection timed out")),
+                  1_000,
+                );
+              }),
+            ]),
+          Error,
+          "Circular module dependency detected",
+        );
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
+
+      assertEquals(globalInProgress.size, 0);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("isolates missing-dependency state across concurrent loads", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-concurrent-validation-" });
+    const componentsDir = join(projectDir, "components");
+    const goodPath = join(componentsDir, "ConcurrentGood.tsx");
+    const missingPath = join(componentsDir, "ConcurrentMissing.tsx");
+    const goodSource = `export default function ConcurrentGood() { return null; }`;
+    const missingSource = [
+      `import Missing from "./not-present.ts";`,
+      `export default function ConcurrentMissing() { return Missing; }`,
+    ].join("\n");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(goodPath, goodSource);
+      await writeTextFile(missingPath, missingSource);
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "project-concurrent-validation-test",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: true,
+      });
+      const [goodResult, missingResult] = await Promise.allSettled([
+        loader.loadModule(goodPath, goodSource),
+        loader.loadModule(missingPath, missingSource),
+      ]);
+
+      assertEquals(goodResult.status, "fulfilled");
+      if (goodResult.status === "fulfilled") {
+        assertEquals(goodResult.value.name, "ConcurrentGood");
+      }
+      assertEquals(missingResult.status, "rejected");
     } finally {
       await remove(projectDir, { recursive: true });
     }
@@ -876,19 +1071,29 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function RebuildAfterStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
       const filePathCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["path", filePath],
+        ]),
       );
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const staleTempPath = join(projectDir, `stale-unresolved-${crypto.randomUUID()}.mjs`);
@@ -923,7 +1128,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         "Expected stale cache entry to be replaced with retransformed output",
       );
       assertEquals(
-        verifiedHttpBundlePaths.get(`${staleTempPath}:${contentHash}`),
+        verifiedHttpBundlePaths.get(buildVerifiedHttpBundleKey(staleTempPath, contentHash)),
         undefined,
         "Expected stale verification marker to be cleared",
       );
@@ -947,13 +1152,18 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const source = "export default function RetryAfterInProgressError() { return null; }";
       await writeTextFile(filePath, source);
 
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
       const contentCacheKey = buildSSRModuleCacheKey(
         RUNTIME_VERSION,
         projectId,
-        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+        JSON.stringify([
+          contentSourceId,
+          reactVersion,
+          configHash,
+          ["content", filePath, contentHash],
+        ]),
       );
 
       const staleInProgress = Promise.reject(new Error("stale in-progress transform failed"));

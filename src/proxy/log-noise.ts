@@ -12,6 +12,7 @@ const SCANNER_PROBE_SEGMENTS = new Set([
   "zwso.php",
 ]);
 
+/** Return whether a path matches a common automated vulnerability probe. */
 export function isLikelyScannerProbePath(pathname: string): boolean {
   const normalized = pathname.replace(/^\/+/, "/").toLowerCase();
   if (PHP_PROBE_PATTERN.test(normalized)) return true;
@@ -22,8 +23,10 @@ export function isLikelyScannerProbePath(pathname: string): boolean {
     .some((segment) => SCANNER_PROBE_SEGMENTS.has(segment));
 }
 
+/** Log levels used for completed proxy requests that did not succeed. */
 export type ProxyFailureLogLevel = "info" | "warn" | "error";
 
+/** Select a failure log level while reducing noise from expected scanner probes. */
 export function getProxyFailureLogLevel(
   status: number,
   method: string,

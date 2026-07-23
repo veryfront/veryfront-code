@@ -3,18 +3,13 @@
  *
  * Default implementation: `@veryfront/ext-content-mdx`
  *
- * Implementations process MDX / Markdown source into renderable JavaScript
- * modules plus extracted metadata. Core's `src/transforms/md/compiler` and
- * `src/transforms/mdx/compiler` delegate to the registered implementation;
- * when none is registered, the compile paths throw an actionable install
- * message pointing at `@veryfront/ext-content-mdx`.
+ * Implementations process MDX or Markdown source into renderable JavaScript
+ * modules plus extracted metadata. Veryfront delegates content compilation to
+ * the registered implementation. When none is registered, compilation throws
+ * an actionable install error for `@veryfront/ext-content-mdx`.
  *
- * The two compile methods have the same option shape on purpose so a single
- * dispatcher (see `src/transforms/mdx/compiler/index.ts::compileContent`)
- * can route on file extension. Options match the long-standing
- * `compileMDXRuntime` / `compileMarkdownRuntime` signatures. Option order
- * and defaults are preserved so the extension boundary is a pure refactor,
- * not a behavior change.
+ * The two compile methods share one option shape so callers can dispatch by
+ * file extension without maintaining parallel configuration contracts.
  *
  * @module extensions/content/content-processor
  */
@@ -61,18 +56,18 @@ export interface ContentCompileOptions {
   studioEmbed?: boolean;
   /** MDX output shape. Defaults to "program". */
   outputFormat?: "program" | "function-body";
-  /** Additional remark plugins supplied by legacy build helpers. */
+  /** Additional remark plugins supplied by build-time compiler integrations. */
   remarkPlugins?: ContentPlugin[];
-  /** Additional rehype plugins supplied by legacy build helpers. */
+  /** Additional rehype plugins supplied by build-time compiler integrations. */
   rehypePlugins?: ContentPlugin[];
 }
 
 /**
- * Opaque unified-compatible plugin entry. Kept as an unknown-typed value or
- * tuple so the contract surface doesn't require consumers to depend on the
- * `unified` package directly. Callers cast to the plugin-list shape they need.
+ * Opaque unified-compatible plugin entry. The contract deliberately leaves
+ * plugin values unknown so consumers do not need the `unified` package only
+ * to implement this extension boundary.
  */
-export type ContentPlugin = unknown | [unknown, ...unknown[]];
+export type ContentPlugin = unknown;
 
 /**
  * ContentProcessor contract for MDX/Markdown processing.

@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findVfModuleImports, resolveProjectDir } from "./loader-helpers.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { findVfModuleImports, initializeCacheDir, resolveProjectDir } from "./loader-helpers.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
@@ -119,6 +120,22 @@ import { bar } from "/_vf_modules/components/Button.js";
         threw = true;
       }
       assertEquals(threw, true);
+    });
+  });
+
+  describe("initializeCacheDir", () => {
+    it("does not expose project identity in configuration errors", async () => {
+      const missingProjectId = await assertRejects(
+        () => initializeCacheDir(makeContext({ projectSlug: "private-project-slug" })),
+        VeryfrontError,
+      );
+      assertEquals(missingProjectId.message.includes("private-project-slug"), false);
+
+      const missingContentSource = await assertRejects(
+        () => initializeCacheDir(makeContext({ projectId: "private-project-id" })),
+        VeryfrontError,
+      );
+      assertEquals(missingContentSource.message.includes("private-project-id"), false);
     });
   });
 });

@@ -48,9 +48,8 @@ export function runInRenderSession<T>(sessionId: string, fn: () => T): T {
 export function startRenderSession(sessionId: string, projectSlug?: string, route?: string): void {
   renderSessions.set(sessionId, { modules: new Set(), projectSlug, route });
   globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
-    sessionId,
-    projectSlug,
-    route,
+    hasProject: projectSlug !== undefined,
+    hasRoute: route !== undefined,
   });
 }
 
@@ -60,19 +59,15 @@ export function startRenderSession(sessionId: string, projectSlug?: string, rout
 export function endRenderSession(sessionId: string): void {
   const session = renderSessions.get(sessionId);
   if (!session) {
-    globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`, {
-      sessionId,
-    });
+    globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`);
     return;
   }
 
   const modulePaths = Array.from(session.modules);
   globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} End render session`, {
-    sessionId,
     moduleCount: modulePaths.length,
-    projectSlug: session.projectSlug,
-    route: session.route,
-    sampleModules: modulePaths.slice(0, 5),
+    hasProject: session.projectSlug !== undefined,
+    hasRoute: session.route !== undefined,
   });
 
   if (session.projectSlug !== undefined && session.route !== undefined) {
@@ -83,8 +78,8 @@ export function endRenderSession(sessionId: string): void {
     globalLogger.debug(
       `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
       {
-        projectSlug: session.projectSlug,
-        route: session.route,
+        hasProject: session.projectSlug !== undefined,
+        hasRoute: session.route !== undefined,
       },
     );
   }

@@ -2,9 +2,29 @@
 export const MAX_CROSS_PROJECT_SOURCE_BYTES = 5 * 1024 * 1024; // 5MB
 
 export class CrossProjectSourceTooLargeError extends Error {
-  constructor(registryUrl: string, maxBytes = MAX_CROSS_PROJECT_SOURCE_BYTES) {
-    super(`Cross-project source exceeds size limit: ${registryUrl} (${maxBytes} bytes)`);
+  constructor(_registryUrl: string, maxBytes = MAX_CROSS_PROJECT_SOURCE_BYTES) {
+    super(`Cross-project source exceeds size limit (${maxBytes} bytes)`);
     this.name = "CrossProjectSourceTooLargeError";
+  }
+}
+
+export class CrossProjectSourceEncodingError extends Error {
+  constructor() {
+    super("Cross-project source must contain valid UTF-8");
+    this.name = "CrossProjectSourceEncodingError";
+  }
+}
+
+function decodeUtf8(
+  decoder: TextDecoder,
+  value?: Uint8Array,
+  options?: TextDecodeOptions,
+): string {
+  try {
+    return decoder.decode(value, options);
+  } catch (error) {
+    if (error instanceof TypeError) throw new CrossProjectSourceEncodingError();
+    throw error;
   }
 }
 
@@ -13,6 +33,10 @@ export async function readLimitedCrossProjectSource(
   registryUrl: string,
   maxBytes = MAX_CROSS_PROJECT_SOURCE_BYTES,
 ): Promise<string> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new RangeError("maxBytes must be a positive safe integer");
+  }
+
   const declaredLength = Number(response.headers.get("content-length") ?? "");
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     await response.body?.cancel();
@@ -28,9 +52,10 @@ export async function readLimitedCrossProjectSource(
   }
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   const chunks: string[] = [];
   let totalBytes = 0;
+  let completed = false;
 
   try {
     while (true) {
@@ -39,17 +64,24 @@ export async function readLimitedCrossProjectSource(
 
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
-        await reader.cancel();
         throw new CrossProjectSourceTooLargeError(registryUrl, maxBytes);
       }
 
-      chunks.push(decoder.decode(value, { stream: true }));
+      chunks.push(decodeUtf8(decoder, value, { stream: true }));
     }
 
-    const tail = decoder.decode();
+    const tail = decodeUtf8(decoder);
     if (tail.length > 0) chunks.push(tail);
+    completed = true;
     return chunks.join("");
   } finally {
+    if (!completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Preserve the source read or decoding error.
+      }
+    }
     reader.releaseLock();
   }
 }

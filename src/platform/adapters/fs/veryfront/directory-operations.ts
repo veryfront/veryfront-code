@@ -1,10 +1,10 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { DirectoryEntry } from "./types.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
 import { buildDirCacheKeyPrefix } from "./cache-keys.ts";
 import { loadAllProjectFiles } from "./file-list-access.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withFilesystemSpan } from "./telemetry.ts";
 
 const logger = baseLogger.component("directory-operations");
 
@@ -18,7 +18,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   private buildingTree: Promise<void> | null = null;
 
   readdir(path: string): Promise<DirectoryEntry[]> {
-    return withSpan(
+    return withFilesystemSpan(
       "fs.veryfront.readdir",
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
@@ -27,7 +27,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
 
         const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
         if (cached) {
-          logger.debug("Cache hit (readdir)", { path: normalizedPath });
+          logger.debug("Cache hit (readdir)", { entryCount: cached.length });
           return cached;
         }
 
@@ -61,13 +61,11 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         this.cache.set(cacheKey, entries);
 
         logger.debug("Listed directory", {
-          path: normalizedPath,
           entries: entries.length,
         });
 
         return entries;
       },
-      { "fs.path": path },
     );
   }
 
@@ -85,7 +83,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   }
 
   private buildTree(): Promise<void> {
-    return withSpan(
+    return withFilesystemSpan(
       "fs.veryfront.buildTree",
       async () => {
         const allFiles = await this.getAllFilesRaw();
@@ -100,10 +98,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           if (file.path.endsWith("/")) {
             const ext = file.type === "page" ? ".mdx" : ".tsx";
             normalizedPath = `${normalizedPath}/index${ext}`;
-            logger.debug("Normalized trailing slash path", {
-              original: file.path,
-              normalized: normalizedPath,
-            });
+            logger.debug("Normalized trailing slash path");
           }
 
           const parts = normalizedPath.split("/").filter(Boolean);
@@ -141,7 +136,6 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
         this.dirTree = tree;
         logger.debug("Tree built", { directories: tree.size });
       },
-      { "fs.tree.fileCount": "lazy" },
     );
   }
 
@@ -150,7 +144,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   }
 
   private getAllFilesRaw(): Promise<ProjectFile[]> {
-    return withSpan("fs.veryfront.getAllFilesRaw", () =>
+    return withFilesystemSpan("fs.veryfront.getAllFilesRaw", () =>
       loadAllProjectFiles({
         client: this.client,
         cache: this.cache,

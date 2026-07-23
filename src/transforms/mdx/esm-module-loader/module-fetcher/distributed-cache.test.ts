@@ -25,10 +25,11 @@ class FakeDistributedCache implements CacheBackend {
   readonly values = new Map<string, string>();
   readonly setCalls: SetCall[] = [];
   readonly failingGetKeys = new Set<string>();
+  readonly failingGetMessages = new Map<string, string>();
 
   get(key: string): Promise<string | null> {
     if (this.failingGetKeys.has(key)) {
-      return Promise.reject(new Error(`get failed for ${key}`));
+      return Promise.reject(new Error(this.failingGetMessages.get(key) ?? `get failed for ${key}`));
     }
     return Promise.resolve(this.values.get(key) ?? null);
   }
@@ -156,6 +157,44 @@ describe("module-fetcher/distributed-cache", () => {
         entries.some((entry) => entry.message.includes("Distributed cache get failed")),
         true,
       );
+    });
+  });
+
+  it("does not log project identity, cache keys, local paths, or raw errors", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeDistributedCache();
+      const { log, entries } = createCapturingLogger();
+      const transformCacheKey = "transform:private-project-id:secret-cache-key";
+      cache.values.set(transformCacheKey, "export const value = 1;");
+      cache.failingGetKeys.add(`${transformCacheKey}:bm`);
+      cache.failingGetMessages.set(`${transformCacheKey}:bm`, "raw-backend-message-with-secret");
+      installDistributedCache(cache);
+
+      await readDistributedCache(
+        transformCacheKey,
+        "private-project-id",
+        "private-content-source",
+        "/private/project/pages/private-module.ts?token=secret-value",
+        "private-project-slug",
+        projectDir,
+        undefined,
+        log,
+      );
+
+      const output = JSON.stringify(entries);
+      for (
+        const sensitive of [
+          "private-project-id",
+          "private-content-source",
+          "secret-cache-key",
+          "/private/project",
+          "secret-value",
+          "private-project-slug",
+          "raw-backend-message-with-secret",
+        ]
+      ) {
+        assertEquals(output.includes(sensitive), false, sensitive);
+      }
     });
   });
 

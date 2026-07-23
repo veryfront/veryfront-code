@@ -33,7 +33,7 @@ function generateStyledErrorHtml(statusCode: number, title: string, message: str
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width">
   <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png">
-  <title>${statusCode} ${escapeHTML(title)} — Veryfront</title>
+  <title>${statusCode} ${escapeHTML(title)} - Veryfront</title>
   <style>
     :root {
       --bg: #ffffff;

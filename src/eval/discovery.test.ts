@@ -230,4 +230,27 @@ describe("eval/discovery", () => {
     assertEquals(result.evals[0]?.definition.targetKind, "tool");
     assertEquals(result.evals[0]?.definition.target, "tool:lookup_order");
   });
+
+  it("reports duplicate explicit eval ids instead of returning an ambiguous definition", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/first.eval.ts": "",
+      "/project/evals/second.eval.ts": "",
+    });
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async () => ({
+        default: evalAgent({
+          id: "eval:duplicate",
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "capital" }]),
+        }),
+      }),
+    });
+
+    assertEquals(result.evals.length, 1);
+    assertEquals(result.errors.length, 1);
+    assertEquals(result.errors[0]?.error, 'Duplicate eval id "eval:duplicate"');
+  });
 });

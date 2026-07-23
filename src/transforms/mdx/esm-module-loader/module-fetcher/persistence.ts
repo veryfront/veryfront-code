@@ -9,6 +9,7 @@ import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { cacheModule } from "./module-cache.ts";
 import { writeDistributedCache } from "./distributed-cache.ts";
+import { fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 type CacheLocalModuleFn = typeof cacheModule;
 type WriteDistributedCacheFn = typeof writeDistributedCache;
@@ -55,8 +56,7 @@ export async function persistResolvedModule(
   }
 
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
-    projectSlug: input.projectSlug,
-    normalizedPath: input.normalizedPath,
+    moduleFile: fileLogLabel(input.normalizedPath),
   });
   const cacheStart = performance.now();
   const finalCachedPath = await cacheLocalModule(
@@ -68,8 +68,7 @@ export async function persistResolvedModule(
     input.reactVersion,
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
-    projectSlug: input.projectSlug,
-    normalizedPath: input.normalizedPath,
+    moduleFile: fileLogLabel(input.normalizedPath),
     cacheMs: (performance.now() - cacheStart).toFixed(1),
   });
 

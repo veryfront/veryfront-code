@@ -12,6 +12,60 @@ const MAX_ESTIMATION_DEPTH = 10;
 const OBJECT_OVERHEAD_BYTES = 32;
 const ARRAY_OVERHEAD_BYTES = 24;
 const STRING_OVERHEAD_BYTES = 16;
+const MAX_LRU_ENTRIES = 1_000_000;
+const MAX_LRU_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+const DEFAULT_MAX_ENTRIES = 1_000;
+const DEFAULT_MAX_SIZE_BYTES = 50 * 1024 * 1024;
+
+function requirePositiveSafeInteger(
+  value: number,
+  name: string,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw new TypeError(`${name} must be a positive safe integer no greater than ${maximum}`);
+  }
+  return value;
+}
+
+function normalizeTags(tags: string[] | undefined): string[] | undefined {
+  if (tags === undefined) return undefined;
+
+  let isArray: boolean;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    isArray = Array.isArray(tags);
+    lengthDescriptor = isArray ? Object.getOwnPropertyDescriptor(tags, "length") : undefined;
+  } catch {
+    throw new TypeError("tags must be a readable array of strings");
+  }
+
+  const length = lengthDescriptor?.value;
+  if (!isArray || !Number.isSafeInteger(length) || length < 0) {
+    throw new TypeError("tags must be an array of strings");
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < length; index++) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(tags, String(index));
+    } catch {
+      throw new TypeError("tags must be a readable array of strings");
+    }
+
+    if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
+      throw new TypeError("tags must contain only string values");
+    }
+    if (seen.has(descriptor.value)) continue;
+
+    seen.add(descriptor.value);
+    normalized.push(descriptor.value);
+  }
+
+  return normalized;
+}
 
 function estimateSizeRecursive(value: unknown, depth: number, seen: WeakSet<object>): number {
   if (value == null) return 0;
@@ -66,9 +120,18 @@ export class LRUCacheAdapter implements CacheAdapter {
   private readonly onEvict?: (key: string, value: unknown) => void;
 
   constructor(options: LRUCacheOptions = {}) {
-    this.maxEntries = options.maxEntries || 1000;
-    this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024;
-    this.defaultTtlMs = options.ttlMs;
+    this.maxEntries = requirePositiveSafeInteger(
+      options.maxEntries ?? DEFAULT_MAX_ENTRIES,
+      "maxEntries",
+      MAX_LRU_ENTRIES,
+    );
+    this.maxSizeBytes = requirePositiveSafeInteger(
+      options.maxSizeBytes ?? DEFAULT_MAX_SIZE_BYTES,
+      "maxSizeBytes",
+    );
+    this.defaultTtlMs = options.ttlMs === undefined
+      ? undefined
+      : requirePositiveSafeInteger(options.ttlMs, "ttlMs", MAX_LRU_TTL_MS);
     this.onEvict = options.onEvict;
 
     const estimateSizeOf = options.estimateSizeOf ?? defaultSizeEstimator;
@@ -94,14 +157,18 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   set<T>(key: string, value: T, ttlMs?: number, tags?: string[]): void {
+    const normalizedTtlMs = ttlMs === undefined
+      ? undefined
+      : requirePositiveSafeInteger(ttlMs, "ttlMs", MAX_LRU_TTL_MS);
+    const normalizedTags = normalizeTags(tags);
     const existingNode = this.store.get(key);
 
     if (existingNode) {
       this.currentSize += this.entryManager.updateExistingEntry(
         existingNode,
         value,
-        ttlMs,
-        tags,
+        normalizedTtlMs,
+        normalizedTags,
         this.defaultTtlMs,
         this.listManager,
         this.tagIndex,
@@ -111,8 +178,8 @@ export class LRUCacheAdapter implements CacheAdapter {
       const [, size] = this.entryManager.createNewEntry(
         key,
         value,
-        ttlMs,
-        tags,
+        normalizedTtlMs,
+        normalizedTags,
         this.defaultTtlMs,
         this.listManager,
         this.store,
@@ -120,7 +187,9 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.currentSize += size;
     }
 
-    if (tags?.length) this.entryManager.updateTagIndex(tags, key, this.tagIndex);
+    if (normalizedTags?.length) {
+      this.entryManager.updateTagIndex(normalizedTags, key, this.tagIndex);
+    }
 
     this.currentSize = this.evictionManager.enforceMemoryLimits(
       this.listManager,
@@ -146,8 +215,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.onEvict?.(key, node.entry.value);
     } catch (error) {
       logger.warn("onEvict callback threw during delete", {
-        key,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
     }
   }
@@ -169,7 +237,13 @@ export class LRUCacheAdapter implements CacheAdapter {
   clear(): void {
     if (this.onEvict) {
       for (const [key, node] of this.store) {
-        this.onEvict(key, node.entry.value);
+        try {
+          this.onEvict(key, node.entry.value);
+        } catch (error) {
+          logger.warn("onEvict callback threw during clear", {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        }
       }
     }
 
@@ -203,18 +277,27 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   keys(): IterableIterator<string> {
+    this.cleanupExpired();
     return this.store.keys();
   }
 
   *entries<T>(): IterableIterator<[string, T]> {
+    this.cleanupExpired();
     for (const [key, node] of this.store) {
-      if (!this.evictionManager.isExpired(node.entry)) {
-        yield [key, node.entry.value as T];
-      }
+      yield [key, node.entry.value as T];
     }
   }
 
   has(key: string): boolean {
-    return this.get(key) !== undefined;
+    const node = this.store.get(key);
+    if (!node) return false;
+
+    if (this.evictionManager.isExpired(node.entry)) {
+      this.delete(key);
+      return false;
+    }
+
+    this.listManager.moveToFront(node);
+    return true;
   }
 }

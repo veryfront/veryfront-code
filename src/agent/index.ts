@@ -108,6 +108,7 @@ export type {
   Agent,
   AgentConfig,
   AgentContext,
+  AgentInvocationMemoryMode,
   AgentMcpHttpTransport,
   AgentMcpServerAuth,
   AgentMcpServerConfig,
@@ -596,16 +597,17 @@ export {
   verifyHostedRuntimeSourceBinding,
 } from "./hosted/runtime-source-binding.ts";
 export {
+  type AgentServiceActiveSpanAttributes,
+  type AgentServiceDetachedCleanupInput,
+  type AgentServiceDetachedExecutionInput,
+  type AgentServiceRouteSet,
+  type AgentServiceStreamExecutionInput,
   createHostedAgentServiceRouteSet,
   createHostedAgentServiceRouteSet as createAgentServiceRouteSet,
   type HostedAgentServiceActiveSpanAttributes,
-  type HostedAgentServiceActiveSpanAttributes as AgentServiceActiveSpanAttributes,
   type HostedAgentServiceDetachedCleanupInput,
-  type HostedAgentServiceDetachedCleanupInput as AgentServiceDetachedCleanupInput,
   type HostedAgentServiceDetachedExecutionInput,
-  type HostedAgentServiceDetachedExecutionInput as AgentServiceDetachedExecutionInput,
   type HostedAgentServiceRouteSet,
-  type HostedAgentServiceRouteSet as AgentServiceRouteSet,
   type HostedAgentServiceRouteSetOptions,
   type HostedAgentServiceRouteSetOptions as AgentServiceRouteSetOptions,
   type HostedAgentServiceRoutesLogger,
@@ -613,7 +615,6 @@ export {
   type HostedAgentServiceRoutesTrace,
   type HostedAgentServiceRoutesTrace as AgentServiceRoutesTrace,
   type HostedAgentServiceStreamExecutionInput,
-  type HostedAgentServiceStreamExecutionInput as AgentServiceStreamExecutionInput,
 } from "./service/routes.ts";
 export {
   createHostedRuntimeStateResolver,
@@ -1800,14 +1801,14 @@ export {
 } from "./runtime/index.ts";
 
 export {
+  type AgentServiceAuth,
+  type AgentServiceAuthConfig,
   createHostedServiceAuth,
   createHostedServiceAuth as createAgentServiceAuth,
   getHostedServiceTokenFromRequest,
   getHostedServiceTokenFromRequest as getAgentServiceTokenFromRequest,
   type HostedServiceAuth,
-  type HostedServiceAuth as AgentServiceAuth,
   type HostedServiceAuthConfig,
-  type HostedServiceAuthConfig as AgentServiceAuthConfig,
   type HostedServiceAuthenticatedRequest,
   type HostedServiceAuthenticatedRequest as AgentServiceAuthenticatedRequest,
   HostedServiceAuthError,
@@ -1833,3 +1834,193 @@ export {
   isHostedServiceAuthError,
   isHostedServiceAuthError as isAgentServiceAuthError,
 } from "./service/auth.ts";
+
+// Supporting public contracts are exported explicitly so every type referenced
+// by this module's API remains discoverable in generated documentation.
+export type {
+  AgentHttpMcpServerConfig,
+  AgentVeryfrontMcpServerConfig,
+  AgentVeryfrontMcpServerKind,
+  RuntimeReasoningOption,
+  ToolExecutionResultHandler,
+  ToolExecutionResultRequest,
+} from "./types.ts";
+export {
+  type AgentResponseUsage,
+  getAgentContextSchema,
+  getAgentResponseSchema,
+  getAgentStatusSchema,
+  getEdgeConfigSchema,
+  getMemoryConfigSchema,
+  getMessagePartSchema,
+  getMessageSchema,
+  getModelProviderSchema,
+  getStreamToolCallSchema,
+  getToolCallPartSchema,
+  getToolCallPartWithArgsSchema,
+  getToolCallPartWithInputSchema,
+  getToolCallSchema,
+  getToolResultPartSchema,
+} from "./schemas/agent.schema.ts";
+export type { MemoryConfigBase, MinimalMessage } from "./memory/memory-interface.ts";
+export type { RedisEvalOptions } from "./memory/redis.ts";
+export {
+  type AgUiContextValue,
+  type AgUiDetachedExecutionStarter,
+  type AgUiDetachedStartExecutionInput,
+  type AgUiDetachedStartHandlerOptionsBase,
+  getAgUiDetachedStartAcceptedSchema,
+  getAgUiDetachedStartRequestSchema,
+} from "./ag-ui/detached-start.ts";
+export {
+  type AgUiRequestMessage,
+  getAgUiContextItemSchema,
+  getAgUiInjectedToolSchema,
+  getAgUiRequestSchema,
+  type NormalizeAgUiMessagesOptions,
+} from "./ag-ui/host-support.ts";
+export {
+  type AgUiRunControlHandlerOptions,
+  getAgUiResumeSignalSchema,
+  type ResumeValue,
+} from "./ag-ui/run-control.ts";
+export type { AgUiRuntimeChatStreamUsage } from "./ag-ui/runtime-chat-stream-encoder.ts";
+export type {
+  AgUiRuntimeRequestGate,
+  AgUiRuntimeRequestGateInput,
+  AgUiRuntimeValidationErrorInput,
+  AgUiRuntimeValidationErrorResponse,
+} from "./ag-ui/runtime-handler.ts";
+export type { AgentServiceContractBase, AgentServiceRuntime } from "./service/definition.ts";
+export type {
+  AgentServiceGenericMcpServerConfig,
+  AgentServiceMcpServerConfig,
+  AgentServiceVeryfrontApiMcpServerConfig,
+  AgentServiceVeryfrontStudioMcpServerConfig,
+} from "./service/mcp-server-config.ts";
+export type { HostedServiceJwtVerifier } from "./service/auth.ts";
+export type {
+  AgentServicePathOption,
+  NodeVeryfrontCloudAgentServiceAgentSource,
+} from "./hosted/veryfront-cloud-agent-service.ts";
+export type {
+  ContextBudgetDiagnostics,
+  ContextBudgetManagerOptions,
+  ContextCompactionEventPayload,
+  ContextCompactionReason,
+  ContextCompactionSummary,
+  ContextSummaryGenerator,
+} from "./hosted/context-budget-manager.ts";
+export { AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE } from "./hosted/context-budget-manager.ts";
+export type {
+  HostedChatContextBudgetLogger,
+  HostedChatContextBudgetOptions,
+} from "./hosted/chat-preparation.ts";
+export type {
+  HostedChatRuntimeTargetKind,
+  HostedSubmittedFormInputResult,
+} from "./hosted/chat-runtime-contract.ts";
+export type {
+  CoreMirroredPartType,
+  DurableMirrorChunkType,
+  ExtraMirroredHostedStreamPart,
+  HostedMirrorBasePart,
+  MirroredHostedStreamPart,
+  MirroredPartType,
+} from "./hosted/child-mirror.ts";
+export type { HostedRuntimeAllowedToolNames } from "./hosted/runtime-essential-tools.ts";
+export type { HostedChildConversationBody } from "./hosted/child-bootstrap.ts";
+export type { HostedChildForkExecutionRunContextFactoryInput } from "./hosted/child-fork-execution-runner.ts";
+export type {
+  HostedChildLifecycleCompletedState,
+  HostedChildLifecycleErrorState,
+} from "./hosted/child-lifecycle.ts";
+export type { HostedChildPendingToolLifecycle } from "./hosted/child-pending-tool-lifecycle.ts";
+export type { HostedConversationRunStatus } from "./hosted/child-status.ts";
+export type { HostedDurableChildInvokeSuccessResultOptions } from "./hosted/durable-child-fork-execution.ts";
+export type { SharedFinalizationHooks } from "./hosted/chat-execution-runtime.ts";
+export { getHostedAgUiChatForwardedConfigSchema } from "./hosted/ag-ui-chat-request.ts";
+export { getHostedChatRequestSchema } from "./hosted/chat-request.ts";
+export type { HostedChatRequestMessage } from "./hosted/chat-request.ts";
+export { getHostedChildForkToolInputSchema } from "./hosted/child-tool-input.ts";
+export type { HostedChildForkResultMode } from "./hosted/child-tool-input.ts";
+export { getDefaultHostedInvokeAgentInputSchema } from "./hosted/default-invoke-agent-tool.ts";
+export type {
+  CompleteConversationRunResponse,
+  ConversationRunRuntimeTargetKind,
+  ConversationRunSourceTargetKind,
+  CreateConversationAgentRunInput,
+  FinalizeConversationAgentRunInput,
+} from "./conversation/durable-contracts.ts";
+export type {
+  StarterIntentTurnPolicy,
+  StarterIntentTurnPolicyInput,
+} from "./conversation/delegation-policy.ts";
+export type { ConversationRunEventRecord } from "./conversation/run-event-normalization.ts";
+export type { ConversationRunMirrorHighBacklogState } from "./conversation/run-mirror.ts";
+export type { ConversationRunChunkMirrorSharedOptions } from "./conversation/run-chunk-mirror.ts";
+export { getConversationMessageRecordSchema } from "./conversation/bootstrap.ts";
+export { getConversationRunEventSchema } from "./conversation/run-events.ts";
+export type {
+  CreateInputRequestRequest,
+  InputRequestRestOutput,
+  InputResponseRestOutput,
+  InputResponseValues,
+} from "./input/request-protocol.ts";
+export {
+  getRuntimeAgentContextItemSchema,
+  getRuntimeAgentProjectContextSchema,
+  getRuntimeAgentRunContextSchema,
+  getRuntimeAgentRunInvocationSchema,
+  getRuntimeAgentSourceContextSchema,
+  getRuntimeAgentTargetKindSchema,
+  getRuntimeAgentToolSchema,
+  getRuntimeAgentValidatedClaimsSchema,
+  type RuntimeAgentTargetSelectionInput,
+} from "./runtime/agent-invocation-contract.ts";
+export type { AgentRuntimeMessageLikePart } from "./runtime/message-adapter.ts";
+export type { RuntimeFileContentFetcher } from "./runtime/message-file-url-refresh.ts";
+export type { RuntimeFileContentFetcherInput } from "./runtime/message-file-url-refresh.ts";
+export type { RuntimeToolDiscoveryContext } from "./runtime/tool-discovery-context.ts";
+export type { ExpandAllowedRemoteToolNamesOptions } from "./runtime/provider-native-tool-inventory.ts";
+export { getRuntimeLoadSkillToolInputSchema } from "./runtime/load-skill-tool.ts";
+export {
+  getRuntimeProjectFileListItemSchema,
+  getRuntimeProjectFileSchema,
+} from "./runtime/project-files-client.ts";
+export type {
+  ForkErrorPart,
+  ForkStreamPart,
+  ForkToolCallPart,
+  ForkToolErrorPart,
+  ForkToolInputDeltaPart,
+  ForkToolInputStartPart,
+  ForkToolResultPart,
+} from "./streaming/fork-runtime-types.ts";
+export type {
+  ForkRuntimeStepPreparation,
+  ForkRuntimeStepPreparationInput,
+} from "./streaming/fork-runtime-stream.ts";
+export type {
+  ForkRuntimeToolCallState,
+  RecoveredToolObservation,
+} from "./streaming/fork-runtime-part-mapper.ts";
+export type {
+  StreamedMessage,
+  StreamedStepState,
+  StreamedToolCallState,
+} from "./streaming/fork-runtime-step-state.ts";
+export type {
+  BuildChildRunResultSummaryOptions,
+  ChildRunContractFacts,
+  ChildRunResultMode,
+  ChildRunResultSummary,
+} from "./child-run/result-summary.ts";
+export type { ToolCallLike, ToolResultLike } from "./child-run/final-step-support.ts";
+export {
+  getInvokeAgentChildRunLifecycleCustomEventSchema,
+  getInvokeAgentChildRunLifecycleValueSchema,
+  getInvokeAgentChildRunStateDeltaSchema,
+} from "./child-run/invoke-agent-child-runs.ts";
+export type { EnvReader, TracePrimitive } from "./hosted/trace-attributes.ts";
+export type { RunHostedResponseStreamWithHeartbeatOptions } from "./hosted/response-stream.ts";

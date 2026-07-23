@@ -1,8 +1,7 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { AGENT_ERROR, AGENT_TIMEOUT } from "#veryfront/errors";
 import type {
-  InferInput,
-  InferSchema,
+  Schema,
   SchemaValidator,
   ValidationIssue,
 } from "#veryfront/extensions/schema/index.ts";
@@ -11,8 +10,182 @@ import { RunResumeSessionManager } from "../runtime/index.ts";
 
 const TOOL_CALL_ID_SCHEMA = (v: SchemaValidator) => v.string().min(1).max(128);
 
+/** Selectable option for choice-based human-input fields. */
+export interface HumanInputOption {
+  /** Submitted option value. */
+  value: string;
+  /** Label displayed to the user. */
+  label: string;
+  /** Optional supporting description. */
+  description?: string;
+  /** Whether the UI should present this option as recommended. */
+  recommended?: boolean;
+}
+
+/** Field displayed in a durable human-input request. */
+export type HumanInputField =
+  | {
+    /** Stable field name used in submitted values. */
+    name: string;
+    /** Label displayed to the user. */
+    label: string;
+    /** Optional supporting description. */
+    description?: string;
+    /** Whether a response value is required. */
+    required: boolean;
+    /** Whether the response value contains a secret. */
+    secret: boolean;
+    /** Single-line field category. */
+    type: "text" | "email" | "url" | "password" | "number";
+    /** Optional input placeholder. */
+    placeholder?: string;
+    /** Optional initial string value. */
+    defaultValue?: string;
+    /** Optional regular-expression source for string validation. */
+    pattern?: string;
+    /** Optional minimum string length. */
+    minLength?: number;
+    /** Optional maximum string length. */
+    maxLength?: number;
+    /** Optional minimum numeric value. */
+    min?: number;
+    /** Optional maximum numeric value. */
+    max?: number;
+  }
+  | {
+    /** Stable field name used in submitted values. */
+    name: string;
+    /** Label displayed to the user. */
+    label: string;
+    /** Optional supporting description. */
+    description?: string;
+    /** Whether a response value is required. */
+    required: boolean;
+    /** Whether the response value contains a secret. */
+    secret: boolean;
+    /** Multiline text field discriminator. */
+    type: "textarea";
+    /** Optional input placeholder. */
+    placeholder?: string;
+    /** Optional initial string value. */
+    defaultValue?: string;
+    /** Optional minimum string length. */
+    minLength?: number;
+    /** Optional maximum string length. */
+    maxLength?: number;
+    /** Number of visible text rows. */
+    rows: number;
+  }
+  | {
+    /** Stable field name used in submitted values. */
+    name: string;
+    /** Label displayed to the user. */
+    label: string;
+    /** Optional supporting description. */
+    description?: string;
+    /** Whether a response value is required. */
+    required: boolean;
+    /** Whether the response value contains a secret. */
+    secret: boolean;
+    /** Select field discriminator. */
+    type: "select";
+    /** Available choices. */
+    options: HumanInputOption[];
+    /** Optional initial option value. */
+    defaultValue?: string;
+    /** Optional input placeholder. */
+    placeholder?: string;
+  }
+  | {
+    /** Stable field name used in submitted values. */
+    name: string;
+    /** Label displayed to the user. */
+    label: string;
+    /** Optional supporting description. */
+    description?: string;
+    /** Whether a response value is required. */
+    required: boolean;
+    /** Whether the response value contains a secret. */
+    secret: boolean;
+    /** Checkbox field discriminator. */
+    type: "checkbox";
+    /** Initial checked state. */
+    defaultValue: boolean;
+  }
+  | {
+    /** Stable field name used in submitted values. */
+    name: string;
+    /** Label displayed to the user. */
+    label: string;
+    /** Optional supporting description. */
+    description?: string;
+    /** Whether a response value is required. */
+    required: boolean;
+    /** Whether the response value contains a secret. */
+    secret: boolean;
+    /** Radio field discriminator. */
+    type: "radio";
+    /** Available choices. */
+    options: HumanInputOption[];
+    /** Optional initial option value. */
+    defaultValue?: string;
+  }
+  | {
+    /** Stable field name used in submitted values. */
+    name: string;
+    /** Label displayed to the user. */
+    label: string;
+    /** Optional supporting description. */
+    description?: string;
+    /** Whether a response value is required. */
+    required: boolean;
+    /** Whether the response value contains a secret. */
+    secret: boolean;
+    /** Confirmation field discriminator. */
+    type: "confirm";
+    /** Label for the affirmative choice. */
+    confirmLabel: string;
+    /** Label for the negative choice. */
+    denyLabel: string;
+  };
+
+/** Durable form request presented to a human responder. */
+export interface HumanInputRequest {
+  /** Form title. */
+  title: string;
+  /** Optional form description. */
+  description?: string;
+  /** Fields displayed in the form. */
+  fields: HumanInputField[];
+  /** Label for the form submission action. */
+  submitLabel: string;
+  /** Optional host metadata. */
+  metadata?: Record<string, unknown>;
+}
+
+/** Input accepted when constructing a human-input field. */
+export type HumanInputFieldInput = HumanInputField;
+
+/** Input accepted when constructing a human-input request. */
+export type HumanInputRequestInput = HumanInputRequest;
+
+/** Result returned when a durable human-input request resolves. */
+export type HumanInputResult =
+  | { submitted: true; values: Record<string, string | boolean | number | null> }
+  | { submitted: false; values: Record<string, string | boolean | number | null> };
+
+/** Pending human-input request associated with a runtime wait. */
+export interface HumanInputPendingRequest {
+  /** Runtime run identifier. */
+  runId: string;
+  /** Tool call waiting for the response. */
+  toolCallId: string;
+  /** Form request presented to the user. */
+  request: HumanInputRequest;
+}
+
 /** Zod schema for get human input option. */
-export const getHumanInputOptionSchema = defineSchema((v) =>
+export const getHumanInputOptionSchema: () => Schema<HumanInputOption> = defineSchema((v) =>
   v.object({
     value: v.string(),
     label: v.string(),
@@ -34,7 +207,7 @@ const baseHumanInputFieldFields = (v: SchemaValidator) => ({
 });
 
 /** Zod schema for get human input field. */
-export const getHumanInputFieldSchema = defineSchema((v) =>
+export const getHumanInputFieldSchema: () => Schema<HumanInputField> = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
       ...baseHumanInputFieldFields(v),
@@ -94,7 +267,7 @@ export const humanInputRequestBaseFields = (v: SchemaValidator) => ({
 });
 
 /** Zod schema for get human input request. */
-export const getHumanInputRequestSchema = defineSchema((v) =>
+export const getHumanInputRequestSchema: () => Schema<HumanInputRequest> = defineSchema((v) =>
   v.object({
     ...humanInputRequestBaseFields(v),
     metadata: v.record(v.string(), v.unknown()).optional(),
@@ -109,7 +282,7 @@ export const getHumanInputResponseValuesSchema = defineSchema((v) =>
 );
 
 /** Zod schema for get human input result. */
-export const getHumanInputResultSchema = defineSchema((v) =>
+export const getHumanInputResultSchema: () => Schema<HumanInputResult> = defineSchema((v) =>
   v.discriminatedUnion("submitted", [
     v.object({
       submitted: v.literal(true),
@@ -123,30 +296,14 @@ export const getHumanInputResultSchema = defineSchema((v) =>
 );
 
 /** Zod schema for get human input pending request. */
-export const getHumanInputPendingRequestSchema = defineSchema((v) =>
-  v.object({
-    runId: getAgUiRuntimeRunIdSchema(),
-    toolCallId: TOOL_CALL_ID_SCHEMA(v),
-    request: getHumanInputRequestSchema(),
-  })
-);
-
-/** Public API contract for human input option. */
-export type HumanInputOption = InferSchema<ReturnType<typeof getHumanInputOptionSchema>>;
-/** Public API contract for human input field. */
-export type HumanInputField = InferSchema<ReturnType<typeof getHumanInputFieldSchema>>;
-/** Input payload for human input field. */
-export type HumanInputFieldInput = InferInput<ReturnType<typeof getHumanInputFieldSchema>>;
-/** Request payload for human input. */
-export type HumanInputRequest = InferSchema<ReturnType<typeof getHumanInputRequestSchema>>;
-/** Input payload for human input request. */
-export type HumanInputRequestInput = InferInput<ReturnType<typeof getHumanInputRequestSchema>>;
-/** Result returned from human input. */
-export type HumanInputResult = InferSchema<ReturnType<typeof getHumanInputResultSchema>>;
-/** Request payload for human input pending. */
-export type HumanInputPendingRequest = InferSchema<
-  ReturnType<typeof getHumanInputPendingRequestSchema>
->;
+export const getHumanInputPendingRequestSchema: () => Schema<HumanInputPendingRequest> =
+  defineSchema((v) =>
+    v.object({
+      runId: getAgUiRuntimeRunIdSchema(),
+      toolCallId: TOOL_CALL_ID_SCHEMA(v),
+      request: getHumanInputRequestSchema(),
+    })
+  );
 
 /** Public API contract for human input resume value. */
 export type HumanInputResumeValue = {
@@ -165,40 +322,61 @@ export interface ExecuteDurableHumanInputFlowOptions<
   TCreatedRequest,
   TSnapshot,
 > {
+  /** Session manager value. */
   sessionManager?: RunResumeSessionManager<HumanInputResumeValue> | undefined;
+  /** Run ID value. */
   runId: string;
+  /** Thread ID value. */
   threadId: string;
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Request value. */
   request: HumanInputRequestInput;
+  /** Timeout ms value. */
   timeoutMs: number;
+  /** Poll interval ms value. */
   pollIntervalMs: number;
+  /** On request value. */
   onRequest: (
     request: HumanInputPendingRequest,
   ) => TCreatedRequest | Promise<TCreatedRequest>;
+  /** Callback invoked when created request. */
   onCreatedRequest?: ((request: TCreatedRequest) => void | Promise<void>) | undefined;
+  /** Callback that handles get snapshot. */
   getSnapshot: (request: TCreatedRequest) => TSnapshot | Promise<TSnapshot>;
+  /** Callback that handles resolve snapshot. */
   resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
 }
 
 /** Options accepted by wait for durable human input resolution. */
 export interface WaitForDurableHumanInputResolutionOptions<TSnapshot> {
+  /** Deadline value. */
   deadline: number;
+  /** Poll interval ms value. */
   pollIntervalMs: number;
+  /** Callback that handles get snapshot. */
   getSnapshot: () => TSnapshot | Promise<TSnapshot>;
+  /** Callback that handles resolve snapshot. */
   resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
 }
 
 /** Options accepted by wait for human input. */
 export interface WaitForHumanInputOptions {
+  /** Session manager value. */
   sessionManager: RunResumeSessionManager<HumanInputResumeValue>;
+  /** Run ID value. */
   runId: string;
+  /** Tool call ID value. */
   toolCallId: string;
+  /** Request value. */
   request: HumanInputRequestInput;
+  /** Callback invoked when request. */
   onRequest?: ((request: HumanInputPendingRequest) => void | Promise<void>) | undefined;
 }
 
 /** Error shape for human input resume. */
 export class HumanInputResumeError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(readonly detail: unknown) {
     super(
       typeof detail === "string" ? detail : "Human input resume failed",
@@ -209,6 +387,7 @@ export class HumanInputResumeError extends Error {
 
 /** Error shape for invalid human input result. */
 export class InvalidHumanInputResultError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(readonly detail: ValidationIssue[]) {
     super("Invalid human input resume payload");
     this.name = "InvalidHumanInputResultError";

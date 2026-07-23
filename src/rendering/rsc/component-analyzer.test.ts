@@ -216,11 +216,11 @@ describe("rendering/rsc/component-analyzer", () => {
         ]),
       );
 
-      const result = await analyzeComponent("/project/app/Mixed.tsx", fs);
-
-      assertEquals(result.type, "client");
-      assertEquals(result.hasUseClient, true);
-      assertEquals(result.hasUseServer, true);
+      await assertRejects(
+        () => analyzeComponent("/project/app/Mixed.tsx", fs),
+        Error,
+        "both 'use client' and 'use server'",
+      );
     });
 
     it("should strip .client and .server suffixes from component ID", async () => {
@@ -245,6 +245,54 @@ describe("rendering/rsc/component-analyzer", () => {
   });
 
   describe("buildClientManifest", () => {
+    it("rejects app directories that escape the project before reading files", async () => {
+      let readDirCalls = 0;
+      const fs = createMockFs(new Map());
+      fs.readDir = () => {
+        readDirCalls++;
+        return (async function* (): AsyncGenerator<never> {})();
+      };
+
+      await assertRejects(
+        () => buildClientManifest("/project", "../outside", fs),
+        TypeError,
+        "project-relative path",
+      );
+      assertEquals(readDirCalls, 0);
+    });
+
+    it("skips symlinked files and directories", async () => {
+      const files = new Map([
+        [
+          "/project/app/Linked.tsx",
+          `'use client';\nexport default function Linked() { return null; }`,
+        ],
+      ]);
+      const fs = createMockFs(files);
+      fs.readDir = () =>
+        (async function* () {
+          yield { name: "linked-dir", isFile: false, isDirectory: true, isSymlink: true };
+          yield { name: "Linked.tsx", isFile: true, isDirectory: false, isSymlink: true };
+        })();
+
+      const manifest = await buildClientManifest("/project", "app", fs);
+
+      assertEquals(manifest.size, 0);
+    });
+
+    it("propagates operational directory failures instead of returning a partial manifest", async () => {
+      const fs = createMockFs(new Map());
+      fs.readDir = () => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      };
+
+      await assertRejects(
+        () => buildClientManifest("/project", "app", fs),
+        Error,
+        "permission denied",
+      );
+    });
+
     it("fails explicitly when different paths produce the same component ID", async () => {
       const files = new Map([
         [

@@ -119,7 +119,7 @@ describe("DirectoryOperations", () => {
 
       const entries = await dirOps.readdir("pages");
       assertEquals(entries.length, 1);
-      assertEquals(entries[0].name, "index.mdx");
+      assertEquals(entries[0]!.name, "index.mdx");
     });
 
     it("should cache readdir results", async () => {
@@ -151,7 +151,7 @@ describe("DirectoryOperations", () => {
 
       const entries = await dirOps.readdir("pages");
       assertEquals(entries.length, 1);
-      assertEquals(entries[0].name, "index.tsx");
+      assertEquals(entries[0]!.name, "index.tsx");
     });
 
     it("should handle deeply nested files", async () => {
@@ -161,17 +161,17 @@ describe("DirectoryOperations", () => {
 
       const rootEntries = await dirOps.readdir("");
       assertEquals(rootEntries.length, 1);
-      assertEquals(rootEntries[0].name, "a");
-      assertEquals(rootEntries[0].isDirectory, true);
+      assertEquals(rootEntries[0]!.name, "a");
+      assertEquals(rootEntries[0]!.isDirectory, true);
 
       const aEntries = await dirOps.readdir("a");
       assertEquals(aEntries.length, 1);
-      assertEquals(aEntries[0].name, "b");
+      assertEquals(aEntries[0]!.name, "b");
 
       const deepEntries = await dirOps.readdir("a/b/c/d");
       assertEquals(deepEntries.length, 1);
-      assertEquals(deepEntries[0].name, "file.tsx");
-      assertEquals(deepEntries[0].isFile, true);
+      assertEquals(deepEntries[0]!.name, "file.tsx");
+      assertEquals(deepEntries[0]!.isFile, true);
     });
   });
 });

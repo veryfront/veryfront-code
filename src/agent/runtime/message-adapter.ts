@@ -13,7 +13,8 @@ type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[n
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
-type AgentRuntimeMessageLikePart =
+/** Message part variants accepted by the provider message adapter. */
+export type AgentRuntimeMessageLikePart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
   | {
@@ -84,9 +85,13 @@ export type AgentRuntimeMessagePart =
 
 /** Message shape for agent runtime. */
 export interface AgentRuntimeMessage {
+  /** Resource identifier. */
   id: string;
+  /** Role value. */
   role: ProviderModelMessage["role"];
+  /** Parts value. */
   parts: AgentRuntimeMessagePart[];
+  /** Timestamp value. */
   timestamp: number;
 }
 
@@ -115,6 +120,7 @@ type ProviderToolCallPart = {
 
 /** Error shape for agent runtime message conversion. */
 export class AgentRuntimeMessageConversionError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(message: string) {
     super(message);
     this.name = "AgentRuntimeMessageConversionError";

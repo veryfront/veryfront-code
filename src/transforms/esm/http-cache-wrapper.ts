@@ -37,11 +37,16 @@ import {
 import { looksLikeHtmlContent as looksLikeHtml } from "./html-content.ts";
 import { fingerprintImportMap, type HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { MAX_HTTP_MODULE_RESPONSE_BYTES } from "#veryfront/transforms/shared/http-module-response.ts";
+import { errorLogName } from "../shared/log-context.ts";
 
 const logger = rendererLogger.component("http-cache-wrapper");
 
 /** Maximum number of keys per batch request to distributed cache API */
 const BATCH_FETCH_CHUNK_SIZE = 100;
+const MAX_GZIP_COMPRESSED_BYTES = MAX_HTTP_MODULE_RESPONSE_BYTES + 64 * 1024;
+const MAX_GZIP_BASE64_CHARACTERS = 4 * Math.ceil(MAX_GZIP_COMPRESSED_BYTES / 3);
+const textEncoder = new TextEncoder();
 
 /** Lazy-loaded distributed cache backend for cross-pod sharing */
 const getDistributedCache = createDistributedCacheAccessor(
@@ -198,25 +203,79 @@ function decodeGzip(content: string): DecodeResult {
     : null;
 
   if (!base64Data) {
+    if (
+      content.length > MAX_HTTP_MODULE_RESPONSE_BYTES ||
+      textEncoder.encode(content).byteLength > MAX_HTTP_MODULE_RESPONSE_BYTES
+    ) {
+      return {
+        code: "",
+        wasGzipped: false,
+        decodeFailed: true,
+        failureReason: "content_too_large",
+      };
+    }
     return { code: content, wasGzipped: false, decodeFailed: false };
+  }
+
+  if (base64Data.length > MAX_GZIP_BASE64_CHARACTERS) {
+    return {
+      code: "",
+      wasGzipped: false,
+      decodeFailed: true,
+      failureReason: "content_too_large",
+    };
   }
 
   try {
     const binaryString = atob(base64Data);
+    if (binaryString.length > MAX_GZIP_COMPRESSED_BYTES) {
+      return {
+        code: "",
+        wasGzipped: false,
+        decodeFailed: true,
+        failureReason: "content_too_large",
+      };
+    }
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i);
     }
 
-    const decompressed = gunzipSync(bytes);
+    const decompressed = gunzipSync(bytes, {
+      maxOutputLength: MAX_HTTP_MODULE_RESPONSE_BYTES + 1,
+    });
+    if (decompressed.byteLength > MAX_HTTP_MODULE_RESPONSE_BYTES) {
+      return {
+        code: "",
+        wasGzipped: false,
+        decodeFailed: true,
+        failureReason: "content_too_large",
+      };
+    }
     return {
       code: new TextDecoder().decode(decompressed),
       wasGzipped: true,
       decodeFailed: false,
     };
   } catch (error) {
-    logger.debug("Failed to decode gzip content", { error });
-    return { code: content, wasGzipped: false, decodeFailed: true };
+    if (
+      error && typeof error === "object" && "code" in error &&
+      error.code === "ERR_BUFFER_TOO_LARGE"
+    ) {
+      return {
+        code: "",
+        wasGzipped: false,
+        decodeFailed: true,
+        failureReason: "content_too_large",
+      };
+    }
+    logger.debug("Failed to decode gzip content", { errorName: errorLogName(error) });
+    return {
+      code: "",
+      wasGzipped: false,
+      decodeFailed: true,
+      failureReason: "gzip_decode_failed",
+    };
   }
 }
 
@@ -229,7 +288,12 @@ interface GetCodeResult {
   /** Whether the content was gzip-compressed in cache */
   wasGzipped: boolean;
   /** Reason for null result, if applicable */
-  failReason?: "not_found" | "gzip_decode_failed" | "html_content" | "error";
+  failReason?:
+    | "not_found"
+    | "gzip_decode_failed"
+    | "content_too_large"
+    | "html_content"
+    | "error";
 }
 
 /**
@@ -266,8 +330,15 @@ class HttpBundleCache {
 
       const decoded = decodeGzip(rawCode);
       if (decoded.decodeFailed) {
-        logger.warn("Gzip decode failed", { hash: hashStr });
-        return { code: null, wasGzipped: false, failReason: "gzip_decode_failed" };
+        logger.warn("Distributed cache code was rejected", {
+          hash: hashStr,
+          reason: decoded.failureReason,
+        });
+        return {
+          code: null,
+          wasGzipped: false,
+          failReason: decoded.failureReason ?? "gzip_decode_failed",
+        };
       }
 
       if (looksLikeHtml(decoded.code)) {
@@ -284,7 +355,7 @@ class HttpBundleCache {
       } catch (e) {
         logger.error("Detokenization incomplete", {
           hash: hashStr,
-          error: e,
+          errorName: errorLogName(e),
         });
         throw e;
       }
@@ -294,7 +365,7 @@ class HttpBundleCache {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      logger.debug("Get code failed", { hash: hashStr, error });
+      logger.debug("Get code failed", { hash: hashStr, errorName: errorLogName(error) });
       return { code: null, wasGzipped: false, failReason: "error" };
     }
   }
@@ -322,7 +393,11 @@ class HttpBundleCache {
 
       const decoded = decodeGzip(rawCode);
       if (decoded.decodeFailed) {
-        return { code: null, wasGzipped: false, failReason: "gzip_decode_failed" };
+        return {
+          code: null,
+          wasGzipped: false,
+          failReason: decoded.failureReason ?? "gzip_decode_failed",
+        };
       }
 
       if (looksLikeHtml(decoded.code)) {
@@ -338,7 +413,10 @@ class HttpBundleCache {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      logger.debug("Get code by URL failed", { hash: hashStr, error });
+      logger.debug("Get code by URL failed", {
+        hash: hashStr,
+        errorName: errorLogName(error),
+      });
       return { code: null, wasGzipped: false, failReason: "error" };
     }
   }
@@ -406,7 +484,7 @@ class HttpBundleCache {
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      logger.debug("Set code failed", { hash: hashStr, error });
+      logger.debug("Set code failed", { hash: hashStr, errorName: errorLogName(error) });
     }
   }
 
@@ -459,7 +537,7 @@ class HttpBundleCache {
         }
       }
     } catch (error) {
-      logger.debug("Batch get failed", { error });
+      logger.debug("Batch get failed", { errorName: errorLogName(error) });
     }
 
     return results;
@@ -544,7 +622,7 @@ class HttpBundleCache {
       logger.info("Deleted bundle from distributed cache", { hash: hashStr });
       return true;
     } catch (error) {
-      logger.debug("Delete code failed", { hash: hashStr, error });
+      logger.debug("Delete code failed", { hash: hashStr, errorName: errorLogName(error) });
       return false;
     }
   }

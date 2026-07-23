@@ -1,10 +1,27 @@
 /** Sanitize data to prevent XSS and prototype pollution attacks. */
 export function sanitizeData(data: unknown): unknown {
+  return sanitizeValue(data, new WeakSet<object>(), 0);
+}
+
+const MAX_SANITIZE_DEPTH = 100;
+
+function sanitizeValue(data: unknown, active: WeakSet<object>, depth: number): unknown {
+  if (depth > MAX_SANITIZE_DEPTH) {
+    throw new TypeError(`Cannot sanitize data deeper than ${MAX_SANITIZE_DEPTH} levels`);
+  }
   if (typeof data === "string") return sanitizeString(data);
-  if (Array.isArray(data)) return data.map(sanitizeData);
   if (data == null || typeof data !== "object") return data;
 
-  return sanitizeObject(data as Record<string, unknown>);
+  if (active.has(data)) throw new TypeError("Cannot sanitize cyclic data");
+  active.add(data);
+  try {
+    if (Array.isArray(data)) {
+      return data.map((value) => sanitizeValue(value, active, depth + 1));
+    }
+    return sanitizeObject(data as Record<string, unknown>, active, depth + 1);
+  } finally {
+    active.delete(data);
+  }
 }
 
 function sanitizeString(str: string): string {
@@ -17,14 +34,18 @@ function sanitizeString(str: string): string {
     .replace(/\//g, "&#x2F;");
 }
 
-function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
+function sanitizeObject(
+  obj: Record<string, unknown>,
+  active: WeakSet<object>,
+  depth: number,
+): Record<string, unknown> {
   const sanitized: Record<string, unknown> = Object.create(null);
 
   for (const [key, value] of Object.entries(obj)) {
     const safeKey = sanitizeKey(key);
     if (!isAllowedKey(safeKey)) continue;
 
-    sanitized[safeKey] = sanitizeData(value);
+    sanitized[safeKey] = sanitizeValue(value, active, depth);
   }
 
   return sanitized;

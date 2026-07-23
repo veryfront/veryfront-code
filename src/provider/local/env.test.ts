@@ -98,7 +98,7 @@ describe("provider/local/env", () => {
     assertEquals(vfError?.type, "config");
     assertEquals(
       (error as Error).message,
-      'Invalid VERYFRONT_LOCAL_AI_DEVICE value "metal". Supported values are "cpu" and "webgpu".',
+      'Invalid VERYFRONT_LOCAL_AI_DEVICE value. Supported values are "cpu" and "webgpu".',
     );
   });
 
@@ -133,7 +133,7 @@ describe("provider/local/env", () => {
     assertEquals(vfError?.type, "config");
     assertEquals(
       (error as Error).message,
-      'Invalid VERYFRONT_LOCAL_AI_THINKING value "maybe". Supported values are "1", "true", "yes", "on", "0", "false", "no", and "off".',
+      'Invalid VERYFRONT_LOCAL_AI_THINKING value. Supported values are "1", "true", "yes", "on", "0", "false", "no", and "off".',
     );
   });
 });

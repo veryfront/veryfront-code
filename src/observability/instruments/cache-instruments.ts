@@ -52,7 +52,16 @@ export function createCacheInstruments(
     unit: "entries",
   });
 
-  cacheSizeGauge.addCallback((result: ObservableResult) => result.observe(runtimeState.cacheSize));
+  cacheSizeGauge.addCallback((result: ObservableResult) => {
+    try {
+      const size = Number.isFinite(runtimeState.cacheSize) && runtimeState.cacheSize > 0
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(runtimeState.cacheSize))
+        : 0;
+      result.observe(size);
+    } catch {
+      // Observable callbacks must not disrupt metric collection.
+    }
+  });
 
   return {
     cacheGetCounter,

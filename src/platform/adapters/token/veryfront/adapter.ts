@@ -5,73 +5,142 @@
  * Tokens are encrypted client-side before being sent to the API.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
-import { TOKEN_STORAGE_ERROR } from "#veryfront/errors";
-import { TokenStorageApiClient } from "./api-client.ts";
+import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry/server.ts";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { TokenStorageApiClient, type TokenStorageApiClientDependencies } from "./api-client.ts";
 import {
   createTokenConfig,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
+  type TokenStorageRequestOptions,
 } from "./types.ts";
 
 const logger = baseLogger.component("veryfront-token-adapter");
 
+interface PendingInitialization {
+  generation: number;
+  promise: Promise<void>;
+}
+
 export class VeryfrontTokenAdapter implements TokenStorageAdapter {
-  private client: TokenStorageApiClient;
+  private readonly client: TokenStorageApiClient;
   private initialized = false;
+  private generation = 0;
+  private lifecycleController = new AbortController();
+  private pendingInitialization: PendingInitialization | null = null;
 
-  constructor(config: TokenStorageAdapterConfig) {
-    const tokenConfig = createTokenConfig(config);
-    this.client = new TokenStorageApiClient(tokenConfig);
-
-    logger.debug("Created", {
-      apiBaseUrl: tokenConfig.apiBaseUrl,
-      projectSlug: tokenConfig.projectSlug,
-    });
+  constructor(
+    config: TokenStorageAdapterConfig,
+    dependencies: TokenStorageApiClientDependencies = {},
+  ) {
+    this.client = new TokenStorageApiClient(createTokenConfig(config), dependencies);
+    logger.debug("Created token storage adapter");
   }
 
-  async initialize(): Promise<void> {
-    if (this.initialized) return;
+  initialize(): Promise<void> {
+    if (this.initialized) return Promise.resolve();
 
-    logger.debug("Initializing...");
+    const generation = this.generation;
+    if (this.pendingInitialization?.generation === generation) {
+      return this.pendingInitialization.promise;
+    }
 
-    const connected = await this.client.ping();
+    const pending = this.initializeGeneration(generation, this.lifecycleController.signal);
+    const tracked = pending.finally(() => {
+      if (
+        this.pendingInitialization?.generation === generation &&
+        this.pendingInitialization.promise === tracked
+      ) {
+        this.pendingInitialization = null;
+      }
+    });
+    this.pendingInitialization = { generation, promise: tracked };
+    return tracked;
+  }
+
+  async get(
+    key: string,
+    options: TokenStorageRequestOptions = {},
+  ): Promise<string | null> {
+    await this.waitForInitialization(options.signal);
+    logger.debug("Getting token");
+    return await this.client.get(key, options);
+  }
+
+  async set(
+    key: string,
+    value: string,
+    options: TokenStorageRequestOptions = {},
+  ): Promise<void> {
+    await this.waitForInitialization(options.signal);
+    logger.debug("Setting token");
+    await this.client.set(key, value, options);
+  }
+
+  async delete(key: string, options: TokenStorageRequestOptions = {}): Promise<void> {
+    await this.waitForInitialization(options.signal);
+    logger.debug("Deleting token");
+    await this.client.delete(key, options);
+  }
+
+  async list(
+    prefix?: string,
+    options: TokenStorageRequestOptions = {},
+  ): Promise<string[]> {
+    await this.waitForInitialization(options.signal);
+    logger.debug("Listing tokens");
+    return await this.client.list(prefix, options);
+  }
+
+  dispose(): void {
+    this.generation++;
+    this.initialized = false;
+    this.pendingInitialization = null;
+    this.lifecycleController.abort();
+    this.lifecycleController = new AbortController();
+    logger.debug("Disposed token storage adapter");
+  }
+
+  private async initializeGeneration(generation: number, signal: AbortSignal): Promise<void> {
+    logger.debug("Initializing token storage adapter");
+    const connected = await this.client.ping({ signal });
+
+    if (generation !== this.generation) throw this.cancelledError();
     if (!connected) {
       throw TOKEN_STORAGE_ERROR.create({
-        detail: "Failed to connect to Veryfront token storage API",
+        detail: "Veryfront token storage API is unavailable",
+        status: 502,
       });
     }
 
     this.initialized = true;
-    logger.debug("Initialized successfully");
+    logger.debug("Initialized token storage adapter");
   }
 
-  async get(key: string): Promise<string | null> {
-    await this.initialize();
-    logger.debug("Get", { key });
-    return this.client.get(key);
+  private async waitForInitialization(signal?: AbortSignal): Promise<void> {
+    if (!signal) {
+      await this.initialize();
+      return;
+    }
+    if (signal.aborted) throw this.cancelledError();
+
+    let cancelWait: (() => void) | undefined;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancelWait = () => reject(this.cancelledError());
+      signal.addEventListener("abort", cancelWait, { once: true });
+    });
+
+    try {
+      await Promise.race([this.initialize(), cancelled]);
+    } finally {
+      if (cancelWait) signal.removeEventListener("abort", cancelWait);
+    }
   }
 
-  async set(key: string, value: string): Promise<void> {
-    await this.initialize();
-    logger.debug("Set", { key, valueLength: value.length });
-    await this.client.set(key, value);
-  }
-
-  async delete(key: string): Promise<void> {
-    await this.initialize();
-    logger.debug("Delete", { key });
-    await this.client.delete(key);
-  }
-
-  async list(prefix?: string): Promise<string[]> {
-    await this.initialize();
-    logger.debug("List", { prefix });
-    return this.client.list(prefix);
-  }
-
-  dispose(): void {
-    this.initialized = false;
-    logger.debug("Disposed");
+  private cancelledError() {
+    return TOKEN_STORAGE_ERROR.create({
+      detail: "Token storage initialization was cancelled",
+      status: 499,
+    });
   }
 }

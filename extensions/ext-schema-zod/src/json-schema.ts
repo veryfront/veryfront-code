@@ -12,7 +12,7 @@
 import type { z } from "zod";
 import type { JsonSchema } from "veryfront/extensions/schema";
 
-/** Zod internal _def shape — covers fields from both v3 and v4. */
+/** Zod internal _def shape for fields used across Zod v3 and v4. */
 interface ZodDef {
   typeName?: string; // v3
   type?: string; // v4
@@ -30,8 +30,29 @@ interface ZodDef {
   innerType?: z.ZodTypeAny; // optional/nullable/default (v3)
   schema?: z.ZodTypeAny; // effects/optional/nullable (v3/v4)
   in?: z.ZodTypeAny; // pipe input (v4)
+  out?: z.ZodTypeAny; // pipe output (v4)
   getter?: () => z.ZodTypeAny; // lazy
   defaultValue?: (() => unknown) | unknown;
+  checks?: unknown[];
+  minLength?: { value?: unknown } | null; // zod v3 array
+  maxLength?: { value?: unknown } | null; // zod v3 array
+  exactLength?: { value?: unknown } | null; // zod v3 array
+}
+
+interface NumberCheckDefinition {
+  kind?: string; // zod v3
+  check?: string; // zod v4
+  value?: unknown;
+  inclusive?: boolean;
+  format?: string;
+  minimum?: unknown;
+  maximum?: unknown;
+  length?: unknown;
+}
+
+interface NumberBound {
+  value: number;
+  inclusive: boolean;
 }
 
 interface ConversionContext {
@@ -98,15 +119,19 @@ function convertInner(schema: z.ZodTypeAny, context: ConversionContext): JsonSch
   switch (tag) {
     case "ZodString":
     case "string":
-      return { type: "string" };
+      return applyLengthBounds({ type: "string" }, def, "minLength", "maxLength");
 
     case "ZodNumber":
     case "number":
-      return { type: "number" };
+      return convertNumberSchema(schema, def);
 
     case "ZodBoolean":
     case "boolean":
       return { type: "boolean" };
+
+    case "ZodNull":
+    case "null":
+      return { type: "null" };
 
     case "ZodBigInt":
     case "bigint":
@@ -157,8 +182,10 @@ function convertInner(schema: z.ZodTypeAny, context: ConversionContext): JsonSch
     case "array": {
       // v3: _def.type (item schema), v4: _def.element (item schema)
       const itemType = def.element ?? (def.type as unknown as z.ZodTypeAny | undefined);
-      if (!itemType || typeof itemType === "string") return { type: "array" };
-      return { type: "array", items: convertSchema(itemType, context) };
+      const json: JsonSchema = !itemType || typeof itemType === "string"
+        ? { type: "array" }
+        : { type: "array", items: convertSchema(itemType, context) };
+      return applyLengthBounds(json, def, "minItems", "maxItems");
     }
 
     case "ZodTuple":
@@ -212,12 +239,144 @@ function convertInner(schema: z.ZodTypeAny, context: ConversionContext): JsonSch
       // v3: ZodEffects wraps schema in _def.schema
       // v4: pipe wraps in _def.in (input schema)
       const innerSchema = def.schema ?? def.in;
+      if (innerSchema && getTypeTag(innerSchema) === "custom" && def.out) {
+        return convert(def.out, context);
+      }
       return innerSchema ? convert(innerSchema, context) : { type: "object" };
     }
 
     default:
       return { type: "object" };
   }
+}
+
+function finiteLength(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function applyLengthBounds(
+  json: JsonSchema,
+  def: ZodDef,
+  minimumKeyword: "minLength" | "minItems",
+  maximumKeyword: "maxLength" | "maxItems",
+): JsonSchema {
+  let minimum = finiteLength(def.minLength?.value);
+  let maximum = finiteLength(def.maxLength?.value);
+  const exact = finiteLength(def.exactLength?.value);
+  if (exact !== undefined) {
+    minimum = exact;
+    maximum = exact;
+  }
+
+  for (const rawCheck of def.checks ?? []) {
+    const check = getNumberCheckDefinition(rawCheck);
+    if (check === undefined) continue;
+
+    const exactValue = finiteLength(
+      check.length ?? (check.kind === "length" ? check.value : undefined),
+    );
+    if (check.check === "length_equals" || check.kind === "length") {
+      if (exactValue !== undefined) {
+        minimum = minimum === undefined ? exactValue : Math.max(minimum, exactValue);
+        maximum = maximum === undefined ? exactValue : Math.min(maximum, exactValue);
+      }
+      continue;
+    }
+
+    if (check.check === "min_length" || check.kind === "min") {
+      const value = finiteLength(check.minimum ?? check.value);
+      if (value !== undefined) minimum = minimum === undefined ? value : Math.max(minimum, value);
+      continue;
+    }
+
+    if (check.check === "max_length" || check.kind === "max") {
+      const value = finiteLength(check.maximum ?? check.value);
+      if (value !== undefined) maximum = maximum === undefined ? value : Math.min(maximum, value);
+    }
+  }
+
+  if (minimum !== undefined) json[minimumKeyword] = minimum;
+  if (maximum !== undefined) json[maximumKeyword] = maximum;
+  return json;
+}
+
+function getNumberCheckDefinition(check: unknown): NumberCheckDefinition | undefined {
+  if (check === null || typeof check !== "object") return undefined;
+  const record = check as Record<string, unknown>;
+  const zod = record._zod;
+  if (zod && typeof zod === "object") {
+    const definition = (zod as Record<string, unknown>).def;
+    if (definition && typeof definition === "object") {
+      return definition as NumberCheckDefinition;
+    }
+  }
+
+  const definition = record._def ?? record.def;
+  if (definition && typeof definition === "object") {
+    return definition as NumberCheckDefinition;
+  }
+  return record as NumberCheckDefinition;
+}
+
+function strongerLowerBound(
+  current: NumberBound | undefined,
+  candidate: NumberBound,
+): NumberBound {
+  if (current === undefined || candidate.value > current.value) return candidate;
+  if (candidate.value < current.value) return current;
+  return { value: current.value, inclusive: current.inclusive && candidate.inclusive };
+}
+
+function strongerUpperBound(
+  current: NumberBound | undefined,
+  candidate: NumberBound,
+): NumberBound {
+  if (current === undefined || candidate.value < current.value) return candidate;
+  if (candidate.value > current.value) return current;
+  return { value: current.value, inclusive: current.inclusive && candidate.inclusive };
+}
+
+function convertNumberSchema(schema: z.ZodTypeAny, def: ZodDef): JsonSchema {
+  const numberSchema = schema as z.ZodTypeAny & { isInt?: boolean };
+  let integer = numberSchema.isInt === true;
+  let lowerBound: NumberBound | undefined;
+  let upperBound: NumberBound | undefined;
+
+  for (const rawCheck of def.checks ?? []) {
+    const check = getNumberCheckDefinition(rawCheck);
+    if (check === undefined) continue;
+
+    if (
+      check.kind === "int" ||
+      (check.check === "number_format" &&
+        (check.format === "safeint" || check.format === "int32"))
+    ) {
+      integer = true;
+      continue;
+    }
+
+    if (typeof check.value !== "number" || !Number.isFinite(check.value)) continue;
+    if (check.kind === "min" || check.check === "greater_than") {
+      lowerBound = strongerLowerBound(lowerBound, {
+        value: check.value,
+        inclusive: check.inclusive !== false,
+      });
+    } else if (check.kind === "max" || check.check === "less_than") {
+      upperBound = strongerUpperBound(upperBound, {
+        value: check.value,
+        inclusive: check.inclusive !== false,
+      });
+    }
+  }
+
+  const json: JsonSchema = { type: integer ? "integer" : "number" };
+  if (lowerBound !== undefined) {
+    json[lowerBound.inclusive ? "minimum" : "exclusiveMinimum"] = lowerBound.value;
+  }
+  if (upperBound !== undefined) {
+    json[upperBound.inclusive ? "maximum" : "exclusiveMaximum"] = upperBound.value;
+  }
+  return json;
 }
 
 function getObjectAdditionalProperties(
@@ -261,10 +420,12 @@ function unwrapSchema(
         break;
 
       case "ZodEffects":
-      case "pipe":
-        current = def.schema ?? def.in ?? current;
+      case "pipe": {
+        const input = def.schema ?? def.in;
+        current = input && getTypeTag(input) === "custom" && def.out ? def.out : input ?? current;
         if (current === schema) return { schema: current, nullable, optional };
         break;
+      }
 
       default:
         return { schema: current, nullable, optional };

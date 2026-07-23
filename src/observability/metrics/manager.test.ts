@@ -1,13 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MetricsManager } from "./manager.ts";
+import {
+  _resetShimForTests,
+  type Meter,
+  setGlobalMetricsAPI,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 describe("observability/metrics/manager", () => {
   let manager: MetricsManager;
 
   beforeEach(() => {
+    _resetShimForTests();
     manager = new MetricsManager();
+  });
+
+  afterEach(() => {
+    _resetShimForTests();
   });
 
   describe("initial state", () => {
@@ -54,6 +64,27 @@ describe("observability/metrics/manager", () => {
 
       assertEquals(manager.getState().initialized, true);
     });
+
+    it("retries enabled initialization after the metrics API is registered", async () => {
+      await manager.initialize({ enabled: true });
+      assertEquals(manager.isEnabled(), false);
+
+      const instrument = {
+        add() {},
+        record() {},
+        addCallback() {},
+      };
+      const meter = {
+        createCounter: () => instrument,
+        createHistogram: () => instrument,
+        createUpDownCounter: () => instrument,
+        createObservableGauge: () => instrument,
+      } as unknown as Meter;
+      setGlobalMetricsAPI({ getMeter: () => meter });
+      await manager.initialize({ enabled: false });
+
+      assertEquals(manager.isEnabled(), true);
+    });
   });
 
   describe("getState", () => {
@@ -75,6 +106,20 @@ describe("observability/metrics/manager", () => {
       await manager.initialize({ enabled: false });
 
       manager.shutdown();
+    });
+
+    it("resets state and permits reinitialization", async () => {
+      await manager.initialize({ enabled: false });
+      manager.shutdown();
+
+      assertEquals(manager.getState(), {
+        initialized: false,
+        cacheSize: 0,
+        activeRequests: 0,
+      });
+
+      await manager.initialize({ enabled: false });
+      assertEquals(manager.getState().initialized, true);
     });
   });
 

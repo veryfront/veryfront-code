@@ -1,4 +1,9 @@
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BufferMemory,
@@ -59,6 +64,24 @@ describe("createAgentMemory", () => {
     assertInstanceOf(
       createAgentMemory({ type: "conversation", enabled: true }),
       ConversationMemory,
+    );
+  });
+
+  it("preserves a supplied Memory implementation", () => {
+    const supplied = new NoMemory();
+    assertStrictEquals(createAgentMemory(supplied), supplied);
+  });
+
+  it("rejects unsupported types and invalid limits instead of falling back", () => {
+    assertThrows(
+      () => createMemory({ type: "redis" }),
+      Error,
+      "createRedisMemory",
+    );
+    assertThrows(
+      () => createAgentMemory({ type: "buffer", maxMessages: 0 }),
+      Error,
+      "maxMessages",
     );
   });
 

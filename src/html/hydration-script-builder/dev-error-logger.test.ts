@@ -48,9 +48,25 @@ describe("hydration-script-builder/dev-error-logger", () => {
 
     it("should make failed log POSTs observable without blocking", () => {
       const result = generateDevErrorLoggerScript();
-      assertEquals(result.includes(".catch((error) => {"), true);
+      assertEquals(result.includes(".catch(() => {"), true);
       assertEquals(result.includes("console.debug?.('[Veryfront] dev log POST failed'"), true);
-      assertEquals(result.includes(".catch(() => {})"), false);
+    });
+
+    it("bounds and sanitizes client-provided log data", () => {
+      const result = generateDevErrorLoggerScript();
+      assertEquals(result.includes("MAX_LOG_TEXT_LENGTH"), true);
+      assertEquals(result.includes("MAX_LOG_POSTS"), true);
+      assertEquals(result.includes("sanitizeLogText"), true);
+      assertEquals(result.includes("args.slice(0, MAX_LOG_ARGS)"), true);
+    });
+
+    it("does not transmit raw URLs, source filenames, stacks, or user-agent data", () => {
+      const result = generateDevErrorLoggerScript();
+      assertEquals(result.includes("window.location.href"), false);
+      assertEquals(result.includes("event.filename"), false);
+      assertEquals(result.includes(".stack"), false);
+      assertEquals(result.includes("navigator.userAgent"), false);
+      assertEquals(result.includes("window.location.pathname"), true);
     });
 
     it("should override console.error", () => {
@@ -71,6 +87,44 @@ describe("hydration-script-builder/dev-error-logger", () => {
     it("should include HTML comment describing purpose", () => {
       const result = generateDevErrorLoggerScript();
       assertEquals(result.includes("Client-side error logger"), true);
+    });
+
+    it("installs listeners and console wrappers only once", () => {
+      const html = generateDevErrorLoggerScript();
+      const body = html.match(/<script[^>]*>([\s\S]*)<\/script>/)?.[1];
+      if (!body) throw new Error("generated logger script body was not found");
+
+      const listeners: Record<string, Array<(event: unknown) => void>> = {};
+      const windowStub = {
+        location: { pathname: "/page" },
+        addEventListener(type: string, listener: (event: unknown) => void) {
+          (listeners[type] ??= []).push(listener);
+        },
+      };
+      const requests: string[] = [];
+      const requestBodies: string[] = [];
+      const fetchStub = (url: string, init?: { body?: unknown }) => {
+        requests.push(url);
+        requestBodies.push(typeof init?.body === "string" ? init.body : "");
+        return Promise.resolve({ ok: true });
+      };
+      const consoleStub = {
+        debug(..._args: unknown[]) {},
+        error(..._args: unknown[]) {},
+        warn(..._args: unknown[]) {},
+      };
+      const execute = new Function("window", "fetch", "console", body);
+
+      execute(windowStub, fetchStub, consoleStub);
+      execute(windowStub, fetchStub, consoleStub);
+      consoleStub.error("/Users/example/private.ts?token=secret Bearer credential");
+
+      assertEquals(listeners.error?.length, 1);
+      assertEquals(listeners.unhandledrejection?.length, 1);
+      assertEquals(requests.length, 2);
+      assertEquals(requestBodies.at(-1)?.includes("/Users/example"), false);
+      assertEquals(requestBodies.at(-1)?.includes("credential"), false);
+      assertEquals(requestBodies.at(-1)?.includes("<REDACTED>"), true);
     });
   });
 });

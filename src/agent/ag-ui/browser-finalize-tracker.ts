@@ -7,13 +7,17 @@ import type { AgentResponse } from "../types.ts";
 
 /** Public API contract for AG-UI browser finalize tracker. */
 export interface AgUiBrowserFinalizeTracker<TChunk> {
+  /** Callback that handles observe chunk. */
   observeChunk: (chunk: TChunk) => void;
+  /** Callback that handles observe encoded events. */
   observeEncodedEvents: (events: readonly AgUiBrowserEncodedEvent[]) => void;
+  /** Callback that handles get final response. */
   getFinalResponse: () => AgentResponse | null;
 }
 
 /** Options accepted by create AG-UI browser finalize tracker. */
 export interface CreateAgUiBrowserFinalizeTrackerOptions<TChunk> {
+  /** Get metadata from chunk value. */
   getMetadataFromChunk: (
     chunk: TChunk,
   ) => Partial<AgUiBrowserRunFinishedMetadata> | null | undefined;

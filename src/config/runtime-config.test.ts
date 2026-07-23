@@ -19,10 +19,13 @@ import {
   updateRuntimeConfig,
 } from "./runtime-config.ts";
 import { _resetEnvironmentConfig, createTestEnvironmentConfig } from "./environment-config.ts";
+import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
 function reset(): void {
   _resetRuntimeConfig();
   _resetEnvironmentConfig();
+  __resetEnvLoaderForTests();
+  markEnvLoaded();
 }
 
 describe("RuntimeConfig", () => {
@@ -35,8 +38,19 @@ describe("RuntimeConfig", () => {
       expect(DEFAULT_CONFIG.description).toBe("Built with Veryfront");
       expect(DEFAULT_CONFIG.experimental?.esmLayouts).toBe(true);
       expect(DEFAULT_CONFIG.build?.outDir).toBe("dist");
-      expect(DEFAULT_CONFIG.dev?.port).toBe(3001);
-      expect(DEFAULT_CONFIG.cache?.dir).toBe(".veryfront");
+      expect(DEFAULT_CONFIG.dev?.port).toBe(3000);
+      expect(DEFAULT_CONFIG.cache?.dir).toBe(".veryfront/cache");
+    });
+
+    it("keeps exported runtime defaults immutable", () => {
+      expect(Object.isFrozen(DEFAULT_CONFIG)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.experimental)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.theme)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.theme?.colors)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.build)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.cache)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.cache?.render)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_CONFIG.dev)).toBe(true);
     });
   });
 
@@ -50,6 +64,59 @@ describe("RuntimeConfig", () => {
       expect(config.runtime.env).toBe(env);
     });
 
+    it("returns an immutable runtime snapshot", () => {
+      const extension = {
+        name: "mutable-extension",
+        enabled: false as const,
+        state: { ready: false },
+      };
+      const middleware = { handle: () => undefined };
+      const fileConfig = {
+        resolve: {
+          importMap: {
+            imports: { example: "https://example.com/module.ts" },
+          },
+        },
+        extensions: [extension],
+        middleware: { custom: [middleware] },
+      };
+      const config = createRuntimeConfig(fileConfig, createTestEnvironmentConfig());
+
+      expect(Object.isFrozen(config)).toBe(true);
+      expect(Object.isFrozen(config.runtime)).toBe(true);
+      expect(Object.isFrozen(config.runtime.env)).toBe(true);
+      expect(Object.isFrozen(config.dev)).toBe(true);
+      expect(Object.isFrozen(config.cache)).toBe(true);
+      expect(Object.isFrozen(config.cache?.render)).toBe(true);
+      expect(Object.isFrozen(config.observability)).toBe(true);
+      expect(Object.isFrozen(config.resolve)).toBe(true);
+      expect(Object.isFrozen(config.resolve?.importMap)).toBe(true);
+      expect(Object.isFrozen(config.resolve?.importMap?.imports)).toBe(true);
+      expect(config.resolve).not.toBe(fileConfig.resolve);
+      expect(Object.isFrozen(fileConfig.resolve)).toBe(false);
+
+      expect(Object.isFrozen(config.extensions)).toBe(true);
+      expect(config.extensions?.[0]).toBe(extension);
+      expect(Object.isFrozen(extension)).toBe(false);
+      expect(Object.isFrozen(config.middleware?.custom)).toBe(true);
+      expect(config.middleware?.custom?.[0]).toBe(middleware);
+      expect(Object.isFrozen(middleware)).toBe(false);
+    });
+
+    it("snapshots a mutable environment before computing runtime flags", () => {
+      const mutableEnv = {
+        ...createTestEnvironmentConfig({ nodeEnv: "development" }),
+      };
+      const config = createRuntimeConfig({}, mutableEnv);
+
+      mutableEnv.nodeEnv = "production";
+
+      expect(config.runtime.env).not.toBe(mutableEnv);
+      expect(config.runtime.env.nodeEnv).toBe("development");
+      expect(config.runtime.isDevelopment).toBe(true);
+      expect(config.runtime.isProduction).toBe(false);
+    });
+
     it("merges file config with defaults", () => {
       const env = createTestEnvironmentConfig();
       const config = createRuntimeConfig(
@@ -60,6 +127,32 @@ describe("RuntimeConfig", () => {
       expect(config.title).toBe("My App");
       expect(config.projectSlug).toBe("my-app");
       expect(config.description).toBe("Built with Veryfront");
+    });
+
+    it("preserves nested defaults when file config overrides one field", () => {
+      const config = createRuntimeConfig(
+        {
+          build: { outDir: "output" },
+          cache: { dir: "cache" },
+          theme: { colors: { secondary: "#000000" } },
+        },
+        createTestEnvironmentConfig(),
+      );
+
+      expect(config.build?.outDir).toBe("output");
+      expect(config.build?.trailingSlash).toBe(false);
+      expect(config.cache?.dir).toBe("cache");
+      expect(config.cache?.render?.type).toBe("memory");
+      expect(config.theme?.colors?.primary).toBe("#3B82F6");
+      expect(config.theme?.colors?.secondary).toBe("#000000");
+    });
+
+    it("keeps the file port when PORT is not explicitly configured", () => {
+      const env = createTestEnvironmentConfig({ port: 3001, portFromEnv: false });
+
+      const config = createRuntimeConfig({ dev: { port: 4321 } }, env);
+
+      expect(config.dev?.port).toBe(4321);
     });
 
     it("computes runtime flags correctly", () => {
@@ -128,9 +221,10 @@ describe("RuntimeConfig", () => {
     });
 
     it("env port overrides file config", () => {
+      const env = createTestEnvironmentConfig({ port: 9000, portFromEnv: true });
       const config = createRuntimeConfig(
         { dev: { port: 3000 } },
-        createTestEnvironmentConfig({ port: 9000 }),
+        env,
       );
 
       expect(config.dev?.port).toBe(9000);
@@ -191,6 +285,65 @@ describe("RuntimeConfig", () => {
         "https://platform-collector.example/otlp",
       );
       expect(config.observability?.tracing?.serviceName).toBe("veryfront-ops-agent");
+    });
+
+    it("preserves project logging configuration outside shared proxy mode", () => {
+      const config = createRuntimeConfig(
+        {
+          observability: {
+            logging: {
+              file: {
+                enabled: true,
+                path: "logs/application.log",
+                level: "warn",
+                format: "json",
+              },
+            },
+          },
+        },
+        createTestEnvironmentConfig({ proxyMode: false }),
+      );
+
+      expect(config.observability?.logging?.file).toEqual({
+        enabled: true,
+        path: "logs/application.log",
+        level: "warn",
+        format: "json",
+      });
+    });
+
+    it("prefers signal-specific OTel endpoints and falls back to the shared endpoint", () => {
+      const signalSpecific = createRuntimeConfig(
+        {},
+        createTestEnvironmentConfig({
+          otelEndpoint: "https://collector.example/otlp",
+          otelTracesEndpoint: "https://traces.example/otlp",
+          otelMetricsEndpoint: "https://metrics.example/otlp",
+        }),
+      );
+
+      expect(signalSpecific.observability?.tracing?.endpoint).toBe(
+        "https://traces.example/otlp",
+      );
+      expect(signalSpecific.observability?.metrics?.endpoint).toBe(
+        "https://metrics.example/otlp",
+      );
+
+      const shared = createRuntimeConfig(
+        {},
+        createTestEnvironmentConfig({
+          otelEndpoint: "https://collector.example/otlp",
+          otelTracesEndpoint: undefined,
+          otelMetricsEndpoint: undefined,
+        }),
+      );
+
+      expect(shared.observability?.tracing?.endpoint).toBe(
+        "https://collector.example/otlp",
+      );
+      expect(shared.observability?.metrics?.endpoint).toBe(
+        "https://collector.example/otlp",
+      );
     });
   });
 

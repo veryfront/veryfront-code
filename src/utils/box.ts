@@ -5,20 +5,79 @@
  * Inspired by Lip Gloss (charmbracelet).
  */
 
-// deno-lint-ignore no-control-regex -- intentional: matches ANSI escape sequences for terminal color stripping
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
+// deno-lint-ignore no-control-regex -- intentional: matches terminal control sequences
+const ANSI_REGEX = /\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g;
 const RESET = `\x1b[0m`;
+const MAX_LAYOUT_SIZE = 10_000;
+const TAB_WIDTH = 8;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const ZERO_WIDTH_CHARACTER = /[\p{Mark}\p{Cf}]/u;
+const EMOJI_WIDTH_CHARACTER = /[\p{Emoji_Presentation}\p{Regional_Indicator}\uFE0F\u20E3]/u;
 
 export function stripAnsi(text: string): string {
   return text.replace(ANSI_REGEX, "");
 }
 
 function visibleLength(text: string): number {
-  return stripAnsi(text).length;
+  let width = 0;
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(stripAnsi(text))) {
+    if (segment === "\t") {
+      width += TAB_WIDTH - (width % TAB_WIDTH);
+      continue;
+    }
+    if (EMOJI_WIDTH_CHARACTER.test(segment)) {
+      width += 2;
+      continue;
+    }
+
+    let baseCodePoint: number | undefined;
+    for (const character of segment) {
+      const codePoint = character.codePointAt(0)!;
+      if (
+        codePoint === 0 || codePoint < 0x20 ||
+        (codePoint >= 0x7f && codePoint <= 0x9f) ||
+        ZERO_WIDTH_CHARACTER.test(character)
+      ) continue;
+      baseCodePoint = codePoint;
+      break;
+    }
+    if (baseCodePoint !== undefined) width += isFullWidthCodePoint(baseCodePoint) ? 2 : 1;
+  }
+  return width;
+}
+
+/** Unicode code points that occupy two columns in conventional terminals. */
+function isFullWidthCodePoint(codePoint: number): boolean {
+  return codePoint >= 0x1100 &&
+    (codePoint <= 0x115f ||
+      codePoint === 0x2329 || codePoint === 0x232a ||
+      (codePoint >= 0x2e80 && codePoint <= 0x303e) ||
+      (codePoint >= 0x3040 && codePoint <= 0xa4cf) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+      (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+      (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+      (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+      (codePoint >= 0x1b000 && codePoint <= 0x1b2ff) ||
+      (codePoint >= 0x1f200 && codePoint <= 0x1f251) ||
+      (codePoint >= 0x20000 && codePoint <= 0x3fffd));
 }
 
 function repeat(char: string, count: number): string {
   return count <= 0 ? "" : char.repeat(count);
+}
+
+function validateLayoutSize(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_LAYOUT_SIZE) {
+    throw new RangeError(`${name} must be an integer between 0 and ${MAX_LAYOUT_SIZE}.`);
+  }
+}
+
+function validateChoice(value: string, choices: readonly string[], name: string): void {
+  if (!choices.includes(value)) {
+    throw new RangeError(`${name} must be one of: ${choices.join(", ")}.`);
+  }
 }
 
 function lines(text: string): string[] {
@@ -34,6 +93,7 @@ export function pad(
   width: number,
   align: "left" | "center" | "right" = "left",
 ): string {
+  validateChoice(align, ["left", "center", "right"], "align");
   const visible = visibleLength(text);
   if (visible >= width) return text;
 
@@ -134,6 +194,13 @@ export function box(content: string, options: BoxOptions = {}): string {
     width,
   } = options;
 
+  validateLayoutSize(padding, "padding");
+  validateLayoutSize(paddingX, "paddingX");
+  validateLayoutSize(paddingY, "paddingY");
+  if (width !== undefined) validateLayoutSize(width, "width");
+  validateChoice(style, Object.keys(BORDER_STYLES), "style");
+  validateChoice(titleAlign, ["left", "center", "right"], "titleAlign");
+
   const border = BORDER_STYLES[style];
   const contentLines = lines(content);
   const contentWidth = maxLineWidth(contentLines);
@@ -216,6 +283,8 @@ export function joinHorizontal(
   gap: number,
   ...items: string[]
 ): string {
+  validateLayoutSize(gap, "gap");
+  validateChoice(align, ["top", "center", "bottom"], "align");
   if (items.length === 0) return "";
   if (items.length === 1) return items[0] ?? "";
 
@@ -262,6 +331,8 @@ export function joinVertical(
   gap: number,
   ...items: string[]
 ): string {
+  validateLayoutSize(gap, "gap");
+  validateChoice(align, ["left", "center", "right"], "align");
   if (items.length === 0) return "";
   if (items.length === 1) return items[0] ?? "";
 
@@ -279,6 +350,8 @@ export function joinVertical(
  * Create a horizontal divider
  */
 export function divider(width: number, style: BorderStyle = "rounded"): string {
+  validateLayoutSize(width, "width");
+  validateChoice(style, Object.keys(BORDER_STYLES), "style");
   return repeat(BORDER_STYLES[style].horizontal, width);
 }
 
@@ -290,6 +363,8 @@ export function dividerWithText(
   width: number,
   style: BorderStyle = "rounded",
 ): string {
+  validateLayoutSize(width, "width");
+  validateChoice(style, Object.keys(BORDER_STYLES), "style");
   const border = BORDER_STYLES[style];
   const textLen = visibleLength(text) + 2;
   const remaining = width - textLen;

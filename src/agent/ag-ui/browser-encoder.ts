@@ -5,50 +5,87 @@ export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
 /** Public API contract for AG-UI browser run finished metadata. */
 export interface AgUiBrowserRunFinishedMetadata {
+  /** Provider value. */
   provider?: string;
+  /** Model value. */
   model?: string;
+  /** Input tokens value. */
   inputTokens?: number;
+  /** Output tokens value. */
   outputTokens?: number;
+  /** Total tokens value. */
   totalTokens?: number;
+  /** Cached input tokens value. */
   cachedInputTokens?: number;
+  /** Cache creation input tokens value. */
   cacheCreationInputTokens?: number;
+  /** Cache read input tokens value. */
   cacheReadInputTokens?: number;
+  /** Reasoning tokens value. */
   reasoningTokens?: number;
+  /** Billable input tokens value. */
   billableInputTokens?: number;
+  /** Billable output tokens value. */
   billableOutputTokens?: number;
+  /** Cost usd value. */
   costUsd?: number;
+  /** Provider input cost usd value. */
   providerInputCostUsd?: number;
+  /** Provider output cost usd value. */
   providerOutputCostUsd?: number;
+  /** Provider cost usd value. */
   providerCostUsd?: number;
+  /** Veryfront input charge usd value. */
   veryfrontInputChargeUsd?: number;
+  /** Veryfront output charge usd value. */
   veryfrontOutputChargeUsd?: number;
+  /** Veryfront charge usd value. */
   veryfrontChargeUsd?: number;
+  /** Veryfront billed usd value. */
   veryfrontBilledUsd?: number;
+  /** Cost credits value. */
   costCredits?: number;
+  /** Cost source value. */
   costSource?: "gateway" | "missing" | "partial";
+  /** Billing mode value. */
   billingMode?: "direct" | "deferred";
+  /** Finish reason value. */
   finishReason?: string;
+  /** Usage capture status value. */
   usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
 /** State for AG-UI browser encoder. */
 export interface AgUiBrowserEncoderState {
+  /** Message ID value. */
   messageId: string | null;
+  /** Whether text open. */
   textOpen: boolean;
+  /** Active text content ID value. */
   activeTextContentId: string | null;
+  /** Text content index value. */
   textContentIndex: number;
+  /** Reasoning message ID value. */
   reasoningMessageId: string | null;
+  /** Active step name value. */
   activeStepName: string | null;
+  /** Step count value. */
   stepCount: number;
+  /** Streamed tool input IDs value. */
   streamedToolInputIds: Set<string>;
+  /** Whether saw visible output. */
   sawVisibleOutput: boolean;
+  /** Whether saw terminal error. */
   sawTerminalError: boolean;
+  /** Additional structured metadata. */
   metadata: AgUiBrowserRunFinishedMetadata;
 }
 
 /** Event emitted for AG-UI browser encoded. */
 export interface AgUiBrowserEncodedEvent {
+  /** Event value. */
   event: string;
+  /** Payload value. */
   payload: Record<string, unknown>;
 }
 

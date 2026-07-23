@@ -6,6 +6,7 @@ interface RateLimitResult {
   allowed: boolean;
   remaining: number;
   resetTime: number;
+  retryAfterMs?: number;
 }
 
 /** Fixed window strategy - simple counter that resets at fixed intervals */
@@ -20,11 +21,13 @@ export function fixedWindowStrategy(
       const count = await store.increment(key, config.windowMs);
       const allowed = count <= config.maxRequests;
       const remaining = Math.max(0, config.maxRequests - count);
-      const resetTime = Date.now() + config.windowMs;
+      const resetTime = store instanceof MemoryRateLimitStore
+        ? store.getState(key)?.resetTime ?? Date.now() + config.windowMs
+        : Date.now() + config.windowMs;
 
       return { allowed, remaining, resetTime };
     },
-    { "rateLimit.key": key, "rateLimit.maxRequests": config.maxRequests },
+    { "rateLimit.maxRequests": config.maxRequests },
   );
 }
 
@@ -37,9 +40,8 @@ export function slidingWindowStrategy(
   return withSpan(
     "security.rateLimit.slidingWindow",
     async () => {
-      // Fallback to fixed window for non-memory stores
       if (!(store instanceof MemoryRateLimitStore)) {
-        return fixedWindowStrategy(key, config, store);
+        throw new TypeError("sliding-window requires MemoryRateLimitStore");
       }
 
       const now = Date.now();
@@ -55,10 +57,13 @@ export function slidingWindowStrategy(
         (timestamp) => timestamp > windowStart,
       );
       timestamps.push(now);
+      if (timestamps.length > config.maxRequests + 1) {
+        timestamps.splice(0, timestamps.length - config.maxRequests - 1);
+      }
 
       state.requestTimestamps = timestamps;
       state.count = timestamps.length;
-      state.resetTime = now + config.windowMs;
+      state.resetTime = (timestamps[0] ?? now) + config.windowMs;
       store.setState(key, state);
 
       const allowed = state.count <= config.maxRequests;
@@ -66,7 +71,7 @@ export function slidingWindowStrategy(
 
       return { allowed, remaining, resetTime: state.resetTime };
     },
-    { "rateLimit.key": key, "rateLimit.maxRequests": config.maxRequests },
+    { "rateLimit.maxRequests": config.maxRequests },
   );
 }
 
@@ -79,9 +84,8 @@ export function tokenBucketStrategy(
   return withSpan(
     "security.rateLimit.tokenBucket",
     async () => {
-      // Fallback to fixed window for non-memory stores
       if (!(store instanceof MemoryRateLimitStore)) {
-        return fixedWindowStrategy(key, config, store);
+        throw new TypeError("token-bucket requires MemoryRateLimitStore");
       }
 
       const now = Date.now();
@@ -113,7 +117,12 @@ export function tokenBucketStrategy(
       // Check if we have tokens available
       if (state.count < 1) {
         store.setState(key, state);
-        return { allowed: false, remaining: 0, resetTime: Math.floor(resetTime) };
+        return {
+          allowed: false,
+          remaining: 0,
+          resetTime: Math.floor(resetTime),
+          retryAfterMs: Math.ceil((1 - state.count) / refillRate),
+        };
       }
 
       // Consume one token
@@ -123,6 +132,6 @@ export function tokenBucketStrategy(
       const remaining = Math.floor(state.count);
       return { allowed: true, remaining, resetTime: Math.floor(resetTime) };
     },
-    { "rateLimit.key": key, "rateLimit.maxRequests": config.maxRequests },
+    { "rateLimit.maxRequests": config.maxRequests },
   );
 }

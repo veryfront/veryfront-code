@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { AgentContext, AgentResponse } from "../../types.ts";
@@ -192,6 +192,25 @@ describe("costTrackingMiddleware", () => {
 
     middleware.destroy();
   });
+
+  it("treats a zero budget as an immediate limit", async () => {
+    let nextCalls = 0;
+    const middleware = costTrackingMiddleware({
+      pricing: { openai: { input: 1, output: 0 } },
+      limits: { daily: 0 },
+    });
+
+    await assertRejects(
+      () =>
+        middleware(createContext(), () => {
+          nextCalls++;
+          return Promise.resolve(createResponse());
+        }),
+      VeryfrontError,
+    );
+    assertEquals(nextCalls, 0);
+    middleware.destroy();
+  });
 });
 
 describe("createCostTracker", () => {
@@ -344,5 +363,48 @@ describe("createCostTracker", () => {
     assertEquals(tracker.getTrackedUserCount(), 2);
 
     tracker.destroy();
+  });
+
+  it("bounds retained usage records", () => {
+    const tracker = createCostTracker({
+      pricing: { openai: { input: 1, output: 0 } },
+      maxRecords: 2,
+    });
+
+    tracker.track("agent-a", "openai/gpt-4.1", createResponse());
+    tracker.track("agent-b", "openai/gpt-4.1", createResponse());
+    tracker.track("agent-c", "openai/gpt-4.1", createResponse());
+
+    assertEquals(tracker.getAllRecords().map((record) => record.agentId), ["agent-b", "agent-c"]);
+    tracker.destroy();
+  });
+
+  it("protects accounting state from returned record mutation", () => {
+    const tracker = createCostTracker({
+      pricing: { openai: { input: 1, output: 0 } },
+    });
+
+    const record = tracker.track("agent", "openai/gpt-4.1", createResponse());
+    record.tokens.total = 0;
+    record.cost = 0;
+    const retained = tracker.getAllRecords()[0];
+    if (retained) retained.tokens.total = 0;
+
+    assertEquals(tracker.getSummary().tokens.total, 1_000_000);
+    assertEquals(tracker.getSummary().cost, 1);
+    tracker.destroy();
+  });
+
+  it("rejects invalid accounting configuration", () => {
+    assertThrows(
+      () => createCostTracker({ pricing: {}, maxRecords: 0 }),
+      Error,
+      "maxRecords must be a positive safe integer",
+    );
+    assertThrows(
+      () => createCostTracker({ pricing: { openai: { input: -1, output: 0 } } }),
+      Error,
+      "pricing must contain finite non-negative costs",
+    );
   });
 });

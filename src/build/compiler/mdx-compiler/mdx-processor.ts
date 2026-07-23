@@ -1,6 +1,7 @@
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { CompileOptions } from "./types.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 
 interface ProcessedMDX {
   code: string;
@@ -16,17 +17,9 @@ export async function compileMDX(content: string, options: CompileOptions): Prom
     target: "server",
   });
 
-  return { code: compiled.compiledCode, imports: extractImports(compiled.compiledCode) };
-}
-
-function extractImports(code: string): string[] {
-  const imports: string[] = [];
-  const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
-
-  for (const match of code.matchAll(importRegex)) {
-    const specifier = match[1];
-    if (specifier) imports.push(specifier);
-  }
-
-  return imports;
+  const imports = await parseImports(compiled.compiledCode);
+  return {
+    code: compiled.compiledCode,
+    imports: [...new Set(imports.flatMap((entry) => entry.n ? [entry.n] : []))],
+  };
 }

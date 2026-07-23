@@ -37,6 +37,19 @@ function getToolCallId(context: ToolExecutionContext | undefined): string | unde
   return typeof context?.toolCallId === "string" ? context.toolCallId : undefined;
 }
 
+function defineTracedTool(
+  tools: HostToolSet,
+  toolName: string,
+  definition: HostToolSet[string],
+): void {
+  Object.defineProperty(tools, toolName, {
+    value: definition,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 /** Wrap host tools with tracing metadata. */
 export function traceHostTools<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
@@ -49,12 +62,12 @@ export function traceHostTools<
 
   for (const [toolName, definition] of Object.entries(tools)) {
     if (!definition.execute) {
-      traced[toolName] = definition;
+      defineTracedTool(traced, toolName, definition);
       continue;
     }
 
     const originalExecute = definition.execute;
-    traced[toolName] = {
+    const tracedDefinition = {
       ...definition,
       execute: (input: unknown, context: ToolExecutionContext | undefined) =>
         options.trace(getSpanName(toolName), () => {
@@ -69,6 +82,7 @@ export function traceHostTools<
           return originalExecute(input, context);
         }),
     };
+    defineTracedTool(traced, toolName, tracedDefinition);
   }
 
   return traced;

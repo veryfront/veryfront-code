@@ -2,12 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   assertEquals,
+  assertMatch,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { dynamicTool, tool } from "./factory.ts";
 
 describe("tool factory", () => {
@@ -44,6 +45,70 @@ describe("tool factory", () => {
       });
       assertStringIncludes(t.id, "tool_");
       assertEquals(t.__veryfrontGeneratedId, t.id);
+      assertMatch(t.id, /^tool_[0-9a-f]{32}$/);
+    });
+
+    it("should reject an explicitly empty id", () => {
+      assertThrows(
+        () =>
+          tool({
+            id: "   ",
+            description: "invalid id",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+          }),
+        Error,
+        "Tool id must be a non-empty string",
+      );
+    });
+
+    it("should reject invalid runtime configuration", () => {
+      assertThrows(
+        () =>
+          tool({
+            id: "invalid-description",
+            description: "\t",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+          }),
+        Error,
+        "Tool description must be a non-empty string",
+      );
+      assertThrows(
+        () =>
+          tool({
+            id: "invalid-execute",
+            description: "Invalid execute",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: null,
+          } as never),
+        Error,
+        "Tool execute must be a function",
+      );
+      assertThrows(
+        () =>
+          tool({
+            id: "invalid-permissive-flag",
+            description: "Invalid flag",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+            allowUnknownSchema: "yes",
+          } as never),
+        Error,
+        "allowUnknownSchema must be a boolean",
+      );
+      assertThrows(
+        () =>
+          tool({
+            id: "invalid-output-schema",
+            description: "Invalid output schema",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            outputSchema: null as never,
+            execute: async () => null,
+          }),
+        Error,
+        "output schema is not a valid Veryfront schema",
+      );
     });
 
     it("should not mark explicit ids that happen to match the generated-id pattern", () => {
@@ -89,7 +154,7 @@ describe("tool factory", () => {
     });
 
     it("should preserve raw JSON input and output schemas", async () => {
-      const inputSchema = {
+      const inputSchema: JsonSchema = {
         type: "object",
         properties: {
           min: { type: "number" },
@@ -97,15 +162,15 @@ describe("tool factory", () => {
         },
         required: ["min", "max"],
         additionalProperties: false,
-      } as const;
-      const outputSchema = {
+      };
+      const outputSchema: JsonSchema = {
         type: "object",
         properties: {
           randomNumber: { type: "number" },
         },
         required: ["randomNumber"],
         additionalProperties: false,
-      } as const;
+      };
 
       const t = tool({
         id: "number-generator",
@@ -120,7 +185,192 @@ describe("tool factory", () => {
 
       assertEquals(t.inputSchemaJson, inputSchema);
       assertEquals(t.outputSchemaJson, outputSchema);
+      assertEquals(t.outputSchema, undefined);
       assertEquals(await t.execute({ min: 3, max: 9 }), { randomNumber: 12 });
+    });
+
+    it("should accept JSON schemas that do not use a scalar type keyword", () => {
+      const t = tool({
+        id: "schema-union",
+        description: "Accept a string or number",
+        inputSchema: {
+          anyOf: [{ type: "string" }, { type: "number" }],
+        },
+        execute: async () => null,
+      });
+
+      assertEquals(t.inputSchemaJson, {
+        anyOf: [{ type: "string" }, { type: "number" }],
+      });
+    });
+
+    it("should accept standard JSON schema validation and tuple keywords", () => {
+      const t = tool({
+        id: "schema-tuple",
+        description: "Accept a bounded tuple",
+        inputSchema: {
+          prefixItems: [{ type: "string" }, { type: "number" }],
+          minItems: 2,
+          maxItems: 2,
+        },
+        execute: async () => null,
+      });
+
+      assertEquals(t.inputSchemaJson, {
+        prefixItems: [{ type: "string" }, { type: "number" }],
+        minItems: 2,
+        maxItems: 2,
+      });
+    });
+
+    it("should snapshot raw JSON schemas", () => {
+      const inputSchema = {
+        type: "object" as const,
+        properties: { query: { type: "string" as const } },
+      };
+      const t = tool({
+        id: "schema-snapshot",
+        description: "Schema snapshot",
+        inputSchema,
+        execute: async () => null,
+      });
+
+      inputSchema.properties.query.type = "number" as never;
+
+      assertEquals(t.inputSchemaJson?.properties?.query, { type: "string" });
+    });
+
+    it("should reject cyclic and non-JSON schema values", () => {
+      const cyclic: Record<string, unknown> = { type: "object" };
+      cyclic.properties = { self: cyclic };
+
+      assertThrows(
+        () =>
+          tool({
+            id: "cyclic-schema",
+            description: "Cyclic schema",
+            inputSchema: cyclic as JsonSchema,
+            execute: async () => null,
+          }),
+        Error,
+        "cyclic references",
+      );
+      assertThrows(
+        () =>
+          tool({
+            id: "bigint-schema",
+            description: "BigInt schema",
+            inputSchema: { const: 1n },
+            execute: async () => null,
+          }),
+        Error,
+        "bigint values",
+      );
+      assertThrows(
+        () =>
+          tool({
+            id: "non-finite-schema",
+            description: "Non-finite schema",
+            inputSchema: { const: Number.POSITIVE_INFINITY },
+            execute: async () => null,
+          }),
+        Error,
+        "numbers must be finite",
+      );
+    });
+
+    it("should reject accessor-backed and unbounded raw schemas without invoking getters", () => {
+      let getterCalled = false;
+      const accessorSchema = Object.defineProperty({ type: "object" as const }, "properties", {
+        enumerable: true,
+        get() {
+          getterCalled = true;
+          return {};
+        },
+      });
+
+      assertThrows(
+        () =>
+          tool({
+            id: "accessor-schema",
+            description: "Accessor schema",
+            inputSchema: accessorSchema,
+            execute: async () => null,
+          }),
+        Error,
+        "data properties",
+      );
+      assertEquals(getterCalled, false);
+
+      const typeAccessorSchema = Object.defineProperty({ properties: {} }, "type", {
+        enumerable: true,
+        get() {
+          getterCalled = true;
+          return "object";
+        },
+      });
+      assertThrows(
+        () =>
+          tool({
+            id: "accessor-type-schema",
+            description: "Accessor type schema",
+            inputSchema: typeAccessorSchema,
+            execute: async () => null,
+          }),
+        Error,
+        "data properties",
+      );
+      assertEquals(getterCalled, false);
+
+      const revoked = Proxy.revocable({ type: "object" as const }, {});
+      revoked.revoke();
+      assertThrows(
+        () =>
+          tool({
+            id: "revoked-schema",
+            description: "Revoked schema",
+            inputSchema: revoked.proxy,
+            execute: async () => null,
+          }),
+        Error,
+        "input schema is not a valid Veryfront schema",
+      );
+      assertThrows(
+        () =>
+          tool({
+            id: "oversized-schema",
+            description: "Oversized schema",
+            inputSchema: { description: "x".repeat(1024 * 1024 + 1) },
+            execute: async () => null,
+          }),
+        Error,
+        "string length exceeds",
+      );
+    });
+
+    it("should snapshot execution and MCP configuration", async () => {
+      const mcp = {
+        title: "Original title",
+        annotations: { readOnlyHint: true },
+      };
+      const config = {
+        id: "config-snapshot",
+        description: "Configuration snapshot",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => "original",
+        mcp,
+      };
+      const t = tool(config);
+
+      config.execute = async () => "mutated";
+      mcp.title = "Mutated title";
+      mcp.annotations.readOnlyHint = false;
+
+      assertEquals(await t.execute({}), "original");
+      assertEquals(t.mcp, {
+        title: "Original title",
+        annotations: { readOnlyHint: true },
+      });
     });
 
     it("should preserve an output schema and converted JSON schema", () => {
@@ -134,6 +384,56 @@ describe("tool factory", () => {
 
       assertEquals(t.outputSchemaJson?.type, "object");
       assertEquals(t.outputSchemaJson?.properties?.result, { type: "string" });
+    });
+
+    it("should reject malformed delegated tool and MCP metadata", () => {
+      const base = {
+        id: "metadata-validation",
+        description: "Metadata validation",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => null,
+      };
+
+      assertThrows(
+        () => tool({ ...base, delegatedIntegrationTools: ["github__list", ""] }),
+        Error,
+        "delegated integration tool names",
+      );
+      assertThrows(
+        () => tool({ ...base, mcp: { enabled: "yes" } as never }),
+        Error,
+        "mcp.enabled must be a boolean",
+      );
+      assertThrows(
+        () => tool({ ...base, mcp: { annotations: { readOnlyHint: "yes" } } as never }),
+        Error,
+        "mcp.annotations.readOnlyHint must be a boolean",
+      );
+    });
+
+    it("should reject an already-aborted execution before parsing or calling execute", async () => {
+      const reason = new Error("tool execution canceled");
+      const controller = new AbortController();
+      controller.abort(reason);
+      let executed = false;
+      const t = tool({
+        id: "pre-aborted-tool",
+        description: "Pre-aborted tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => {
+          executed = true;
+        },
+      });
+
+      let thrown: unknown;
+      try {
+        await t.execute({}, { abortSignal: controller.signal });
+      } catch (error) {
+        thrown = error;
+      }
+
+      assertEquals(thrown, reason);
+      assertEquals(executed, false);
     });
 
     it("should reject schema-like raw objects by default", () => {
@@ -341,6 +641,49 @@ describe("tool factory", () => {
         required: ["query"],
       });
     });
+
+    it("should accept an empty explicit JSON schema override", () => {
+      const t = dynamicTool({
+        id: "remote-permissive",
+        description: "Remote permissive tool",
+        inputSchema: {},
+        inputSchemaJson: {},
+        execute: async () => null,
+      });
+
+      assertEquals(t.inputSchemaJson, {});
+    });
+
+    it("should snapshot execution and model-output transforms", async () => {
+      const config = {
+        id: "dynamic-snapshot",
+        description: "Dynamic snapshot",
+        inputSchema: {},
+        execute: async () => "original",
+        toModelOutput: (output: unknown) => `wrapped:${output}`,
+      };
+      const t = dynamicTool(config);
+
+      config.execute = async () => "mutated";
+      config.toModelOutput = () => "mutated-transform";
+
+      assertEquals(await t.execute({}), "wrapped:original");
+    });
+
+    it("should reject a non-callable model-output transform at creation", () => {
+      assertThrows(
+        () =>
+          dynamicTool({
+            id: "invalid-model-output-transform",
+            description: "Invalid transform",
+            inputSchema: {},
+            execute: async () => "executed",
+            toModelOutput: null as never,
+          }),
+        Error,
+        "toModelOutput must be a function",
+      );
+    });
   });
 
   describe("dynamicTool input validation", () => {
@@ -365,6 +708,21 @@ describe("tool factory", () => {
       await assertRejects(
         () => t.execute({ query: 123 }),
         Error,
+      );
+    });
+
+    it("should wrap schema failures in the same tool validation contract", async () => {
+      const t = dynamicTool({
+        id: "dynamic-validation-contract",
+        description: "Validate dynamic input",
+        inputSchema: defineSchema((v) => v.object({ count: v.number() }))(),
+        execute: async () => null,
+      });
+
+      await assertRejects(
+        () => t.execute({ count: "invalid" }),
+        Error,
+        'Tool "dynamic-validation-contract" input validation failed',
       );
     });
 

@@ -1,17 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { Agent, Suggestions } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
+import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
-import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
+  type ChannelRequestContext,
+  getRuntimeAgentPublicMetadata,
   isConfigOptionalControlPlaneRunRequest,
   listRuntimeAgents,
   resolveAgentSkills,
   RuntimeAgentListResponseSchema,
   verifyControlPlaneJws,
+  verifyControlPlaneJwsSignature,
 } from "./control-plane.ts";
 
 const encoder = new TextEncoder();
@@ -36,6 +39,8 @@ async function createControlPlaneSignature(
     requestId: string;
     surface: "studio" | "channels" | "a2a" | "mcp";
     requestHash: string;
+    claimFields: Record<string, unknown>;
+    headerFields: Record<string, unknown>;
     iat: number;
     exp: number;
   }> = {},
@@ -52,6 +57,7 @@ async function createControlPlaneSignature(
   const header = base64urlEncode(JSON.stringify({
     alg: overrides.algorithm ?? "EdDSA",
     typ: "JWT",
+    ...overrides.headerFields,
   }));
   const payload = base64urlEncode(JSON.stringify({
     iss: "veryfront-api",
@@ -62,6 +68,7 @@ async function createControlPlaneSignature(
     request_hash: overrides.requestHash ?? await sha256Base64url(body),
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
+    ...overrides.claimFields,
   }));
 
   const signingInput = encoder.encode(`${header}.${payload}`);
@@ -73,19 +80,8 @@ async function createControlPlaneSignature(
   };
 }
 
-function createHandlerContext(): HandlerContext {
-  return {
-    projectDir: "/project",
-    adapter: {
-      env: { get: () => undefined },
-      fs: {},
-    },
-    securityConfig: null,
-    cspUserHeader: null,
-    projectSlug: "demo-project",
-    projectId: "proj-1",
-    isLocalProject: false,
-  } as unknown as HandlerContext;
+function createHandlerContext(): ChannelRequestContext {
+  return { projectId: "proj-1" };
 }
 
 function createAgent(overrides: {
@@ -160,7 +156,9 @@ describe("channels/control-plane", () => {
         projectId: "proj-1",
         surface: "studio",
       });
-      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        claimFields: { untrusted_extra: "ignored" },
+      });
 
       const claims = await verifyControlPlaneJws(jws, body, {
         audience: "demo-project",
@@ -174,6 +172,11 @@ describe("channels/control-plane", () => {
       assertEquals(claims.surface, "studio");
       assertEquals(claims.project_id, "proj-1");
       assertEquals(claims.request_hash, await sha256Base64url(body));
+      assertEquals(Object.hasOwn(claims, "untrusted_extra"), false);
+      assertEquals(
+        await verifyControlPlaneJwsSignature(jws, { publicKeyPem, maxAgeSeconds: 60 }),
+        true,
+      );
     });
 
     it("rejects a control-plane signature when the body hash does not match", async () => {
@@ -212,6 +215,93 @@ describe("channels/control-plane", () => {
           maxAgeSeconds: 60,
         })
       );
+    });
+
+    it("rejects unsupported protected headers and sanitizes malformed JWS parsing errors", async () => {
+      const body = JSON.stringify({ requestId: "agents-1", projectId: "proj-1" });
+      const criticalHeader = await createControlPlaneSignature(body, {
+        headerFields: { crit: ["unsupported"], unsupported: true },
+      });
+      await assertRejects(() =>
+        verifyControlPlaneJws(criticalHeader.jws, body, {
+          audience: "demo-project",
+          publicKeyPem: criticalHeader.publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+
+      const valid = await createControlPlaneSignature(body);
+      const [header, , signature] = valid.jws.split(".");
+      const error = await assertRejects(() =>
+        verifyControlPlaneJws(
+          `${header}.${base64urlEncode("{")}.${signature}`,
+          body,
+          {
+            audience: "demo-project",
+            publicKeyPem: valid.publicKeyPem,
+            maxAgeSeconds: 60,
+          },
+        )
+      );
+      assertEquals(error instanceof VeryfrontError ? error.slug : undefined, "security-violation");
+    });
+
+    it("rejects invalid verifier age limits and impossible validity windows", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "studio",
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const invalidWindow = await createControlPlaneSignature(body, {
+        iat: now + 4,
+        exp: now + 1,
+      });
+
+      await assertRejects(() =>
+        verifyControlPlaneJws(invalidWindow.jws, body, {
+          audience: "demo-project",
+          publicKeyPem: invalidWindow.publicKeyPem,
+          maxAgeSeconds: 60,
+        })
+      );
+
+      const valid = await createControlPlaneSignature(body);
+      for (const maxAgeSeconds of [0, -1, Number.POSITIVE_INFINITY, 1.5]) {
+        await assertRejects(() =>
+          verifyControlPlaneJws(valid.jws, body, {
+            audience: "demo-project",
+            publicKeyPem: valid.publicKeyPem,
+            maxAgeSeconds,
+          })
+        );
+      }
+    });
+
+    it("rejects empty optional verifier bindings instead of omitting them", async () => {
+      const body = JSON.stringify({
+        requestId: "agents-1",
+        projectId: "proj-1",
+        surface: "studio",
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+
+      for (
+        const options of [
+          { expectedProjectId: "" },
+          { expectedSubject: "" },
+          { expectedSurface: "" as "studio" },
+        ]
+      ) {
+        await assertRejects(() =>
+          verifyControlPlaneJws(jws, body, {
+            audience: "demo-project",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            ...options,
+          })
+        );
+      }
     });
   });
 
@@ -306,6 +396,53 @@ describe("channels/control-plane", () => {
       );
     });
 
+    it("deduplicates repeated registry ids before resolving agent metadata", async () => {
+      let getAgentCalls = 0;
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) => {
+          getAgentCalls += 1;
+          return createAgent({ id });
+        },
+        getAllAgentIds: () => ["assistant", "assistant", "assistant"],
+      });
+
+      assertEquals(getAgentCalls, 1);
+      assertEquals(response.agents.length, 1);
+    });
+
+    it("rejects an unbounded duplicate-heavy registry snapshot", async () => {
+      await assertRejects(() =>
+        listRuntimeAgents(createHandlerContext(), {
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) => createAgent({ id }),
+          getAllAgentIds: () => Array.from({ length: 1_001 }, () => "assistant"),
+        })
+      );
+    });
+
+    it("rejects accessor-backed registry snapshots without executing them", async () => {
+      const ids = ["assistant"];
+      let accessorReads = 0;
+      Object.defineProperty(ids, 0, {
+        configurable: true,
+        enumerable: true,
+        get() {
+          accessorReads += 1;
+          return "assistant";
+        },
+      });
+
+      await assertRejects(() =>
+        listRuntimeAgents(createHandlerContext(), {
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) => createAgent({ id }),
+          getAllAgentIds: () => ids,
+        })
+      );
+      assertEquals(accessorReads, 0);
+    });
+
     it("uses the registry id for discovered agents whose factory id was auto-generated", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
         ensureProjectDiscovery: async () => {},
@@ -373,7 +510,7 @@ describe("channels/control-plane", () => {
       registerSkill("writer-helper", {
         id: "writer-helper",
         metadata: {
-          name: "Writer Helper",
+          name: "writer-helper",
           description: "Turns rough notes into polished copy",
         },
         rootPath: "/project/skills/writer-helper",
@@ -398,7 +535,7 @@ describe("channels/control-plane", () => {
               version: "2.0.0",
               skills: [{
                 id: "writer-helper",
-                name: "Writer Helper",
+                name: "writer-helper",
                 description: "Turns rough notes into polished copy",
               }],
             }],
@@ -503,6 +640,52 @@ describe("channels/control-plane", () => {
       );
     });
 
+    it("omits unsafe avatar URLs and normalizes public display text", () => {
+      const agent = createAgent({ id: "assistant" });
+      agent.config = {
+        ...agent.config,
+        name: "  Support  ",
+        description: "  Helps users  ",
+        avatarUrl: "javascript:alert(1)",
+      } as Agent["config"];
+
+      assertEquals(getRuntimeAgentPublicMetadata("assistant", agent), {
+        id: "assistant",
+        name: "Support",
+        description: "Helps users",
+      });
+    });
+
+    it("does not execute accessor-backed optional agent metadata", () => {
+      const agent = createAgent({ id: "assistant" });
+      let accessorReads = 0;
+      Object.defineProperties(agent.config, {
+        name: {
+          configurable: true,
+          enumerable: true,
+          get() {
+            accessorReads += 1;
+            return "Untrusted name";
+          },
+        },
+        suggestions: {
+          configurable: true,
+          enumerable: true,
+          get() {
+            accessorReads += 1;
+            return { suggestions: [{ type: "task", id: "unsafe" }] };
+          },
+        },
+      });
+
+      assertEquals(getRuntimeAgentPublicMetadata("assistant", agent), {
+        id: "assistant",
+        name: "assistant",
+        description: "Helps with support questions",
+      });
+      assertEquals(accessorReads, 0);
+    });
+
     it("omits invalid suggestions instead of failing the whole agent list", async () => {
       const response = await listRuntimeAgents(createHandlerContext(), {
         ensureProjectDiscovery: async () => {},
@@ -534,6 +717,39 @@ describe("channels/control-plane", () => {
           }],
         }),
       );
+    });
+
+    it("omits invalid optional model metadata instead of failing discovery", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) => ({
+          ...createAgent({ id }),
+          config: {
+            ...createAgent({ id }).config,
+            model: "x".repeat(1_000),
+            version: " ",
+          } as unknown as Agent["config"],
+        }),
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(response.agents[0]?.model, null);
+      assertEquals(response.agents[0]?.version, null);
+    });
+
+    it("rejects agent discovery responses that exceed the aggregate wire budget", () => {
+      const result = RuntimeAgentListResponseSchema.safeParse({
+        agents: Array.from({ length: 1_000 }, (_, index) => ({
+          id: `agent-${index}`,
+          name: `Agent ${index}`,
+          description: "x".repeat(4_096),
+          suggestions: {
+            suggestions: [{ type: "prompt", title: "Help", prompt: "x".repeat(4_096) }],
+          },
+        })),
+      });
+
+      assertEquals(result.success, false);
     });
 
     it("omits legacy suggestion payloads with unsupported fields", async () => {

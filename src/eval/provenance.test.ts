@@ -104,4 +104,33 @@ describe("eval/provenance", () => {
 
     assertNotEquals(first.git?.dirtyHash, second.git?.dirtyHash);
   });
+
+  it("does not read untracked paths outside the project", async () => {
+    let reads = 0;
+    const provenance = await resolveEvalRunProvenance({
+      projectDir: "/repo",
+      env: {},
+      commandRunner: async (_command, args) => {
+        if (args.join(" ") === "rev-parse HEAD") return { code: 0, stdout: "abc123\n" };
+        if (args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+          return { code: 0, stdout: "main\n" };
+        }
+        if (args.join(" ") === "status --porcelain=v1") {
+          return { code: 0, stdout: "?? ../outside\n" };
+        }
+        if (args.join(" ") === "diff --binary HEAD --") return { code: 0, stdout: "" };
+        if (args.join(" ") === "ls-files --others --exclude-standard -z") {
+          return { code: 0, stdout: "../outside\0" };
+        }
+        return { code: 1, stdout: "" };
+      },
+      fileReader: async () => {
+        reads += 1;
+        return new Uint8Array();
+      },
+    });
+
+    assertEquals(reads, 0);
+    assertEquals(typeof provenance.git?.dirtyHash, "string");
+  });
 });

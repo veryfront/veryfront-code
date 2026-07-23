@@ -1,8 +1,12 @@
-import { join } from "#veryfront/compat/path";
+import { isAbsolute, join, relative } from "#veryfront/compat/path";
 import {
   normalizeCssModuleKey,
   rewriteCssModuleContent,
 } from "#veryfront/transforms/css-modules/naming.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+
+const MAX_IMPORTED_STYLESHEETS = 1_000;
+const MAX_COMBINED_CSS_BYTES = 10 * 1024 * 1024;
 
 interface CssFsAdapterLike {
   readFile(path: string): Promise<string>;
@@ -30,16 +34,23 @@ export async function mergeImportedCSS({
   stylesheetPath,
 }: MergeImportedCssOptions): Promise<string | undefined> {
   if (!cssImports || cssImports.length === 0) return globalCSS;
+  if (cssImports.length > MAX_IMPORTED_STYLESHEETS) {
+    throw new RangeError("Imported stylesheet count exceeds the supported limit");
+  }
 
-  const normalizedStylesheetPath = stylesheetPath.replace(/^\/+/, "");
+  const normalizedStylesheetPath = normalizeProjectRelativePath(stylesheetPath);
   const configuredStylesheetAbsolute = normalizeCssModuleKey(
     join(projectDir, normalizedStylesheetPath),
   );
   const uniqueImports = new Map<string, string>();
   for (const cssPath of cssImports) {
-    const normalized = normalizeCssModuleKey(cssPath);
+    const absolutePath = isAbsolute(cssPath) ? cssPath : join(projectDir, cssPath);
+    if (!isPathWithin(projectDir, absolutePath)) {
+      throw new TypeError("Imported stylesheet is outside the project");
+    }
+    const normalized = normalizeCssModuleKey(absolutePath);
     if (!uniqueImports.has(normalized)) {
-      uniqueImports.set(normalized, cssPath);
+      uniqueImports.set(normalized, absolutePath);
     }
   }
 
@@ -61,8 +72,9 @@ export async function mergeImportedCSS({
       } else {
         regularCssSegments.push(content);
       }
-    } catch (_) {
-      logger.debug("Could not load imported CSS file", { cssPath });
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      logger.debug("Imported stylesheet was not found");
     }
   }
 
@@ -71,6 +83,9 @@ export async function mergeImportedCSS({
   const combined = [globalCSS, ...regularCssSegments, ...moduleCssSegments]
     .filter(Boolean)
     .join("\n");
+  if (new TextEncoder().encode(combined).byteLength > MAX_COMBINED_CSS_BYTES) {
+    throw new RangeError("Combined imported CSS exceeds the supported size");
+  }
   logger.debug("Merged imported CSS with global stylesheet", {
     importedCount: regularCssSegments.length + moduleCssSegments.length,
     regularCount: regularCssSegments.length,
@@ -78,4 +93,21 @@ export async function mergeImportedCSS({
     totalLength: combined.length,
   });
   return combined;
+}
+
+function normalizeProjectRelativePath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+/, "");
+  if (
+    !normalized ||
+    normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new TypeError("Configured stylesheet path must be project-relative");
+  }
+  return normalized;
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
 }

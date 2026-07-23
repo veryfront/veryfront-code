@@ -8,6 +8,7 @@ import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getLocalFs } from "../cache/local-fs.ts";
 
 const noopLog = {
   debug: () => {},
@@ -43,6 +44,20 @@ describe("module-fetcher/dependency-recovery", () => {
     const sourceDir = join(getMdxEsmCacheDir(), "project-a", "preview-main");
     const childPath = join(sourceDir, "vfmod-child.mjs");
     const grandChildPath = join(sourceDir, "vfmod-grandchild.mjs");
+    const localFs = getLocalFs();
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    const originalRename = localFs.rename?.bind(localFs);
+    if (!originalRename) throw new Error("Test filesystem must support rename");
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
+    localFs.writeTextFile = async (path, data) => {
+      writes.push(path);
+      await originalWriteTextFile(path, data);
+    };
+    localFs.rename = async (from, to) => {
+      renames.push([from, to]);
+      await originalRename(from, to);
+    };
 
     try {
       await distributedCache.set(
@@ -80,7 +95,18 @@ describe("module-fetcher/dependency-recovery", () => {
         ].join("\n"),
       );
       assertEquals(await readTextFile(grandChildPath), `export default "ok";`);
+      assertEquals(
+        renames.every(([from, to]) => from.startsWith(`${to}.tmp-`)),
+        true,
+      );
+      assertEquals(
+        new Set(renames.map(([, to]) => to)),
+        new Set([childPath, grandChildPath]),
+      );
+      assertEquals(writes.length, 2);
     } finally {
+      localFs.writeTextFile = originalWriteTextFile;
+      localFs.rename = originalRename;
       await remove(sourceDir, { recursive: true }).catch(() => {});
       await remove(tempDir, { recursive: true });
     }

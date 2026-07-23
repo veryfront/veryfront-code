@@ -11,17 +11,35 @@ import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/es
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createError, toError } from "#veryfront/errors";
+import { isFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { isAbsolute, normalize, relative } from "#veryfront/compat/path/index.ts";
+import { DEPENDENCY_MISSING, IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
+import {
+  MAX_SSR_IMPORTS_PER_MODULE,
+  MAX_TRANSFORM_DEPTH,
+  TRANSFORM_BATCH_SIZE,
+} from "./constants.ts";
 import { globalModuleCache } from "./cache/index.ts";
 import {
   createDependencyHashCache,
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
+import { stripUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
+import { isCrossProjectUnavailableError } from "./cross-project-import-loader.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+const MAX_MISSING_DEPENDENCIES = 100;
+const MAX_LOCAL_DEPENDENCY_SOURCE_BYTES = 5 * 1024 * 1024;
+
+function safeSpecifier(value: string): string {
+  const sanitized = stripUnsafeControlCharacters(value)
+    .replaceAll("\t", "")
+    .replaceAll("\n", "")
+    .replaceAll("\r", "");
+  return sanitized.length <= 256 ? sanitized : `${sanitized.slice(0, 253)}...`;
+}
 
 /**
  * Manages dependency validation for SSR module loading:
@@ -31,7 +49,11 @@ const logger = rendererLogger.component("ssr-module-loader");
  */
 export class SSRDependencyValidator {
   /** Accumulated missing dependencies across the transform tree. */
-  missingDependencies: MissingImport[] = [];
+  private collectedMissingDependencies: MissingImport[] = [];
+
+  get missingDependencies(): readonly MissingImport[] {
+    return this.collectedMissingDependencies;
+  }
 
   constructor(
     private getCacheKey: (filePath: string) => string,
@@ -40,6 +62,7 @@ export class SSRDependencyValidator {
       source: string | undefined,
       depth: number,
       dependencyHashCache: DependencyHashCache,
+      ancestry: ReadonlySet<string>,
     ) => Promise<void>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
@@ -50,34 +73,38 @@ export class SSRDependencyValidator {
 
   /** Reset missing dependencies for a new load cycle. */
   reset(): void {
-    this.missingDependencies = [];
+    this.collectedMissingDependencies = [];
+  }
+
+  /** Add bounded missing-dependency records for the current load cycle. */
+  addMissingDependencies(...missing: MissingImport[]): void {
+    const remaining = MAX_MISSING_DEPENDENCIES - this.collectedMissingDependencies.length;
+    if (remaining <= 0) return;
+    this.collectedMissingDependencies.push(...missing.slice(0, remaining));
   }
 
   /**
    * Throw a structured error with all accumulated missing dependencies.
    */
-  throwMissingDependencies(filePath: string): never {
-    const missingList = this.missingDependencies
-      .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
+  throwMissingDependencies(_filePath: string): never {
+    const missingList = this.collectedMissingDependencies
+      .slice(0, 20)
+      .map((missing) => `  - ${safeSpecifier(missing.specifier)}`)
       .join("\n");
+    const omitted = this.collectedMissingDependencies.length - 20;
+    const omittedSuffix = omitted > 0 ? `\n  - and ${omitted} more` : "";
 
     logger.error("Missing dependencies detected", {
-      file: filePath.slice(-60),
-      missing: this.missingDependencies.length,
-      details: this.missingDependencies,
+      missing: this.collectedMissingDependencies.length,
     });
 
-    throw toError(
-      createError({
-        type: "build",
-        message: `Component has missing dependencies:\n${missingList}`,
-        context: {
-          file: filePath,
-          phase: "dependency-resolution",
-          missing: this.missingDependencies,
-        },
-      }),
-    );
+    throw DEPENDENCY_MISSING.create({
+      detail: `Component has missing dependencies:\n${missingList}${omittedSuffix}`,
+      context: {
+        phase: "dependency-resolution",
+        missingCount: this.collectedMissingDependencies.length,
+      },
+    });
   }
 
   /**
@@ -88,8 +115,13 @@ export class SSRDependencyValidator {
     code: string,
     filePath: string,
     depth: number = 0,
+    ancestry: ReadonlySet<string> = new Set(),
   ): Promise<void> {
-    if (depth > MAX_TRANSFORM_DEPTH) return;
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      throw IMPORT_RESOLUTION_ERROR.create({
+        detail: `Module dependency graph exceeds the maximum depth of ${MAX_TRANSFORM_DEPTH}`,
+      });
+    }
 
     const parseResult = await parseLocalImports(
       code,
@@ -104,7 +136,17 @@ export class SSRDependencyValidator {
     }
 
     if (parseResult.missing.length > 0) {
-      this.missingDependencies.push(...parseResult.missing);
+      this.addMissingDependencies(...parseResult.missing);
+    }
+
+    if (
+      parseResult.imports.length + parseResult.cssImports.length +
+          parseResult.crossProjectImports.length + parseResult.missing.length >
+        MAX_SSR_IMPORTS_PER_MODULE
+    ) {
+      throw IMPORT_RESOLUTION_ERROR.create({
+        detail: `Module exceeds the import limit of ${MAX_SSR_IMPORTS_PER_MODULE}`,
+      });
     }
 
     const localFs = createFileSystem();
@@ -114,6 +156,7 @@ export class SSRDependencyValidator {
       depth,
       localFs,
       createDependencyHashCache(),
+      ancestry,
     );
 
     for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -123,12 +166,11 @@ export class SSRDependencyValidator {
           try {
             await this.transformCrossProjectImport(crossImport);
           } catch (error) {
-            this.missingDependencies.push({
+            if (!isCrossProjectUnavailableError(error)) throw error;
+            this.addMissingDependencies({
               specifier: crossImport.specifier,
               fromFile: filePath,
-              reason: `Failed to fetch cross-project import: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              reason: "Cross-project import could not be loaded",
             });
           }
         }),
@@ -146,38 +188,52 @@ export class SSRDependencyValidator {
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
     dependencyHashCache: DependencyHashCache,
+    ancestry: ReadonlySet<string> = new Set(),
   ): Promise<Map<string, string>> {
+    if (imports.length > MAX_SSR_IMPORTS_PER_MODULE) {
+      throw IMPORT_RESOLUTION_ERROR.create({
+        detail: `Module exceeds the import limit of ${MAX_SSR_IMPORTS_PER_MODULE}`,
+      });
+    }
     const importPathMap = new Map<string, string>();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
       await Promise.all(
         batch.map(async (imp) => {
+          let depSource: string;
           try {
-            const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
-
-            await this.transformWithDependencies(
-              imp.absolutePath,
-              depSource,
-              depth + 1,
-              dependencyHashCache,
-            );
-
-            const depCacheKey = this.getCacheKey(imp.absolutePath);
-            const depEntry = globalModuleCache.get(depCacheKey);
-            if (depEntry) {
-              importPathMap.set(imp.specifier, depEntry.tempPath);
-              importPathMap.set(imp.absolutePath, depEntry.tempPath);
-            }
-          } catch (error) {
-            this.missingDependencies.push({
+            depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
+          } catch {
+            this.addMissingDependencies({
               specifier: imp.specifier,
               fromFile: fromFilePath,
-              reason: `Failed to read file: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              reason: "Local import could not be loaded",
             });
+            return;
           }
+
+          await this.transformWithDependencies(
+            imp.absolutePath,
+            depSource,
+            depth + 1,
+            dependencyHashCache,
+            ancestry,
+          );
+
+          const depCacheKey = this.getCacheKey(imp.absolutePath);
+          const depEntry = globalModuleCache.get(depCacheKey);
+          if (!depEntry) {
+            this.addMissingDependencies({
+              specifier: imp.specifier,
+              fromFile: fromFilePath,
+              reason: "Transformed dependency is unavailable",
+            });
+            return;
+          }
+
+          importPathMap.set(imp.specifier, depEntry.tempPath);
+          importPathMap.set(imp.absolutePath, depEntry.tempPath);
         }),
       );
     }
@@ -186,23 +242,34 @@ export class SSRDependencyValidator {
   }
 
   private isProjectAbsolutePath(path: string): boolean {
-    const projectDir = this.projectDir.replace(/\/+$/, "");
-    if (!projectDir || projectDir === "/") return false;
-    return path === projectDir || path.startsWith(`${projectDir}/`);
+    const projectRelativePath = relative(normalize(this.projectDir), normalize(path));
+    return projectRelativePath === "" ||
+      (projectRelativePath !== ".." &&
+        !projectRelativePath.startsWith("../") &&
+        !projectRelativePath.startsWith("..\\") &&
+        !isAbsolute(projectRelativePath));
   }
 
-  private readLocalImportSource(
+  private async readLocalImportSource(
     path: string,
     localFs: ReturnType<typeof createFileSystem>,
   ): Promise<string> {
-    if (!path.startsWith("/")) {
-      return this.adapter.fs.readFile(path);
+    let source: string;
+    if (!isAbsolute(path)) {
+      source = await this.adapter.fs.readFile(path);
+    } else if (this.isProjectAbsolutePath(path)) {
+      source = await this.adapter.fs.readFile(path);
+    } else if (isFrameworkSourcePath(path)) {
+      source = await localFs.readTextFile(path);
+    } else {
+      throw IMPORT_RESOLUTION_ERROR.create({
+        detail: "Local dependency must stay inside the project root",
+      });
     }
 
-    if (this.isProjectAbsolutePath(path)) {
-      return this.adapter.fs.readFile(path);
+    if (new TextEncoder().encode(source).byteLength > MAX_LOCAL_DEPENDENCY_SOURCE_BYTES) {
+      throw new RangeError("Local dependency source exceeds size limit");
     }
-
-    return localFs.readTextFile(path);
+    return source;
   }
 }

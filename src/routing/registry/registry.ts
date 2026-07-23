@@ -1,45 +1,29 @@
 import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
-import { serverLogger } from "#veryfront/utils";
+import { getBaseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { normalizeHttpMethod } from "#veryfront/observability/telemetry-safety.ts";
 import { errorToRFC9457Response } from "#veryfront/errors";
+import type { RuntimeResponse } from "#veryfront/platform/adapters/base.ts";
 
-const logger = serverLogger.component("route-registry");
+const logger = getBaseLogger("SERVER").component("route-registry");
 
 type SpanAttributes = Record<string, string | number | boolean>;
 
+function getSafeErrorName(error: unknown): string {
+  const name = error instanceof Error ? error.name : typeof error;
+  return /^[A-Za-z][A-Za-z0-9.]{0,127}$/.test(name) ? name : "Error";
+}
+
 export function buildRouteRegistrySpanAttributes(
   req: Request,
-  url: URL,
-  ctx: HandlerContext,
+  _url: URL,
+  _ctx: HandlerContext,
 ): SpanAttributes {
-  const attributes: SpanAttributes = {
-    "http.method": req.method,
-    "http.path": url.pathname,
-  };
-
-  const projectSlug = ctx.projectSlug ?? ctx.enriched?.projectSlug;
-  if (projectSlug) {
-    attributes["veryfront.project_slug"] = projectSlug;
-    attributes["project.slug"] = projectSlug;
-    attributes["veryfront.environment"] = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ??
-      "unknown";
-  }
-
-  const projectId = ctx.projectId;
-  if (projectId) {
-    attributes["veryfront.project_id"] = projectId;
-    attributes["project.id"] = projectId;
-  }
-
-  if ((projectSlug || projectId) && ctx.environmentName) {
-    attributes["veryfront.environment_name"] = ctx.environmentName;
-  }
-
-  return attributes;
+  return { "http.method": normalizeHttpMethod(req.method) };
 }
 
 export class RouteRegistry {
-  private handlers: Handler[] = [];
+  private handlers: Handler<RuntimeResponse>[] = [];
   private config: RouteRegistryConfig;
 
   constructor(config: RouteRegistryConfig = {}) {
@@ -50,12 +34,12 @@ export class RouteRegistry {
     };
   }
 
-  register(handler: Handler): this {
+  register(handler: Handler<RuntimeResponse>): this {
     this.handlers.push(handler);
     this.handlers.sort((a, b) => a.metadata.priority - b.metadata.priority);
 
     if (this.config.debug) {
-      serverLogger.debug(
+      logger.debug(
         `[RouteRegistry] Registered handler: ${handler.metadata.name} (priority: ${handler.metadata.priority})`,
       );
     }
@@ -63,14 +47,14 @@ export class RouteRegistry {
     return this;
   }
 
-  registerAll(handlers: Handler[]): this {
+  registerAll(handlers: Handler<RuntimeResponse>[]): this {
     for (const handler of handlers) {
       this.register(handler);
     }
     return this;
   }
 
-  execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
+  execute(req: Request, ctx: HandlerContext): Promise<RuntimeResponse | null> {
     const url = new URL(req.url);
 
     return withSpan(
@@ -79,14 +63,16 @@ export class RouteRegistry {
         const startTime = Date.now();
 
         if (this.config.debug) {
-          logger.debug(`Processing ${req.method} ${url.pathname}`);
+          logger.debug("Processing request", {
+            method: normalizeHttpMethod(req.method),
+          });
         }
 
         for (const handler of this.handlers) {
           try {
             if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
               if (this.config.debug) {
-                serverLogger.debug(
+                logger.debug(
                   `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
                 );
               }
@@ -101,14 +87,14 @@ export class RouteRegistry {
             const handlerTime = Date.now() - handlerStart;
 
             if (this.config.debug && this.config.enableMetrics) {
-              serverLogger.debug(
+              logger.debug(
                 `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
               );
             }
 
             if (result.response) {
               if (this.config.debug) {
-                serverLogger.debug(
+                logger.debug(
                   `[RouteRegistry] Response from ${handler.metadata.name} (total: ${
                     Date.now() - startTime
                   }ms)`,
@@ -119,31 +105,27 @@ export class RouteRegistry {
 
             if (!result.continue) {
               if (this.config.debug) {
-                serverLogger.debug(
+                logger.debug(
                   `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
                 );
               }
               break;
             }
           } catch (error) {
-            // Always log handler errors - they should never be silently swallowed
-            serverLogger.error(
-              `[RouteRegistry] Handler ${handler.metadata.name} threw an error`,
-              {
-                handler: handler.metadata.name,
-                path: url.pathname,
-                method: req.method,
-                error: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-              },
-            );
             // Convert handler error to RFC 9457 response and return immediately
-            return errorToRFC9457Response(error, ctx, req);
+            const response = errorToRFC9457Response(error, ctx, req);
+            logger.error("Route handler failed", {
+              handler: handler.metadata.name,
+              method: normalizeHttpMethod(req.method),
+              status: response.status,
+              errorName: getSafeErrorName(error),
+            });
+            return response;
           }
         }
 
         if (this.config.debug) {
-          serverLogger.debug(
+          logger.debug(
             `[RouteRegistry] No handler matched (total: ${Date.now() - startTime}ms)`,
           );
         }
@@ -154,8 +136,8 @@ export class RouteRegistry {
     );
   }
 
-  getHandlers(): ReadonlyArray<Handler> {
-    return this.handlers;
+  getHandlers(): ReadonlyArray<Handler<RuntimeResponse>> {
+    return [...this.handlers];
   }
 
   clear(): this {

@@ -2,41 +2,72 @@ import type { VeryfrontConfig } from "../config/index.ts";
 import type { FileSystemAdapter } from "../platform/adapters/base.ts";
 import type { DiscoveryConfig } from "./types.ts";
 
-export const DEFAULT_PROJECT_DISCOVERY_DIRS = {
-  toolDirs: ["tools"],
-  agentDirs: ["agents"],
-  skillDirs: ["skills"],
-  resourceDirs: ["resources"],
-  promptDirs: ["prompts"],
-  workflowDirs: ["workflows"],
-  taskDirs: ["tasks"],
-  scheduleDirs: ["schedules"],
-  webhookDirs: ["webhooks"],
-  evalDirs: ["evals"],
-};
+/** Immutable default project-relative roots for every discovery concept. */
+export const DEFAULT_PROJECT_DISCOVERY_DIRS: Readonly<
+  Record<
+    | "toolDirs"
+    | "agentDirs"
+    | "skillDirs"
+    | "resourceDirs"
+    | "promptDirs"
+    | "workflowDirs"
+    | "taskDirs"
+    | "scheduleDirs"
+    | "webhookDirs"
+    | "evalDirs",
+    readonly string[]
+  >
+> = Object.freeze({
+  toolDirs: Object.freeze(["tools"]),
+  agentDirs: Object.freeze(["agents"]),
+  skillDirs: Object.freeze(["skills"]),
+  resourceDirs: Object.freeze(["resources"]),
+  promptDirs: Object.freeze(["prompts"]),
+  workflowDirs: Object.freeze(["workflows"]),
+  taskDirs: Object.freeze(["tasks"]),
+  scheduleDirs: Object.freeze(["schedules"]),
+  webhookDirs: Object.freeze(["webhooks"]),
+  evalDirs: Object.freeze(["evals"]),
+});
 
 type DiscoverySettings = {
   enabled?: boolean;
   paths?: string[];
 };
 
-type ProjectDiscoveryConfigInput = {
+/** Inputs used to derive discovery roots from a project configuration. */
+export type ProjectDiscoveryConfigInput = {
+  /** Local project root or virtual project identifier. */
   projectDir: string;
+  /** Validated Veryfront project configuration. */
   config?: VeryfrontConfig | null;
+  /** Optional project filesystem adapter. */
   fsAdapter?: FileSystemAdapter;
+  /** Whether discovery emits sanitized diagnostic logs. */
   verbose?: boolean;
 };
 
+/** Fully resolved discovery configuration for one project. */
 export type ProjectDiscoveryConfig = DiscoveryConfig & {
+  /** Tool discovery roots. */
   toolDirs: string[];
+  /** Agent discovery roots. */
   agentDirs: string[];
+  /** Skill discovery roots. */
   skillDirs: string[];
+  /** Resource discovery roots. */
   resourceDirs: string[];
+  /** Prompt discovery roots. */
   promptDirs: string[];
+  /** Workflow discovery roots. */
   workflowDirs: string[];
+  /** Task discovery roots. */
   taskDirs: string[];
+  /** Schedule discovery roots. */
   scheduleDirs: string[];
+  /** Webhook discovery roots. */
   webhookDirs: string[];
+  /** Eval discovery roots. */
   evalDirs: string[];
 };
 
@@ -46,12 +77,12 @@ function isDiscoveryEnabled(discovery: DiscoverySettings | undefined): boolean {
 
 function resolveDiscoveryPaths(
   discovery: DiscoverySettings | undefined,
-  defaultPaths: string[],
+  defaultPaths: readonly string[],
 ): string[] {
   if (!isDiscoveryEnabled(discovery)) {
     return [];
   }
-  return discovery?.paths ?? defaultPaths;
+  return [...(discovery?.paths ?? defaultPaths)];
 }
 
 function resolveProjectDiscoveryBaseDir(
@@ -62,6 +93,7 @@ function resolveProjectDiscoveryBaseDir(
   return fsType === "github" || fsType === "veryfront-api" ? "" : projectDir;
 }
 
+/** Resolve immutable defaults and configured project-relative discovery roots. */
 export function createProjectDiscoveryConfig(
   input: ProjectDiscoveryConfigInput,
 ): ProjectDiscoveryConfig {

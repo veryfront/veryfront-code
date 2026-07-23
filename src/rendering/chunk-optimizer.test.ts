@@ -131,7 +131,7 @@ describe("rendering/chunk-optimizer", () => {
           }
         },
         async readTextFile(path: string) {
-          if (path in files) return files[path];
+          if (Object.hasOwn(files, path)) return files[path]!;
           throw new Error("not found: " + path);
         },
       };

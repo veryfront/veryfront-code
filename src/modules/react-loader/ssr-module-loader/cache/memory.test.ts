@@ -8,6 +8,7 @@ import {
   failedComponents,
   getTransformStats,
   globalCrossProjectCache,
+  globalCrossProjectInProgress,
   globalInProgress,
   globalModuleCache,
   globalTmpDirs,
@@ -15,14 +16,21 @@ import {
   tryAcquireTransformSlot,
 } from "./memory.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
-import { getTransformPerProjectLimit } from "../constants.ts";
+import {
+  FAILED_COMPONENT_CACHE_MAX_ENTRIES,
+  getTransformPerProjectLimit,
+  MAX_PROJECT_TRANSFORM_WAITERS,
+  SSR_MODULE_CACHE_MAX_ENTRIES,
+} from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { getTmpDirCacheKey } from "../tmp-paths.ts";
+import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   function resetState(): void {
     clearSSRModuleCache();
     globalCrossProjectCache.clear();
+    globalCrossProjectInProgress.clear();
     globalInProgress.clear();
     globalTmpDirs.clear();
     verifiedHttpBundlePaths.clear();
@@ -175,6 +183,32 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         resetState();
       }
     });
+
+    it("bounds queued acquisitions for one project", async () => {
+      const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+      resetState();
+
+      try {
+        const projectId = "tenant-bounded-waiters";
+        assertEquals(acquireTransformSlot(projectId), true);
+        const queued = Array.from(
+          { length: MAX_PROJECT_TRANSFORM_WAITERS },
+          () => tryAcquireTransformSlot(projectId, 10_000),
+        );
+
+        assertEquals(await tryAcquireTransformSlot(projectId, 10_000), false);
+        clearSSRModuleCache();
+        assertEquals((await Promise.all(queued)).every((acquired) => !acquired), true);
+      } finally {
+        if (previousLimit === undefined) {
+          Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+        } else {
+          Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+        }
+        resetState();
+      }
+    });
   });
 
   describe("getTransformStats", () => {
@@ -217,6 +251,33 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       assertEquals(failedComponents.size, 0);
     });
 
+    it("bounds failed component records", () => {
+      resetState();
+
+      for (let index = 0; index <= FAILED_COMPONENT_CACHE_MAX_ENTRIES; index++) {
+        failedComponents.set(`component-${index}`, { count: 1, lastFailure: index });
+      }
+
+      assertEquals(failedComponents.size, FAILED_COMPONENT_CACHE_MAX_ENTRIES);
+      assertEquals(failedComponents.has("component-0"), false);
+    });
+
+    it("uses the advertised SSR module cache capacity", () => {
+      resetState();
+
+      for (let index = 0; index <= SSR_MODULE_CACHE_MAX_ENTRIES; index++) {
+        globalModuleCache.set(`module-${index}`, {
+          tempPath: `/tmp/module-${index}`,
+          contentHash: String(index),
+        });
+      }
+
+      assertEquals(globalModuleCache.size, SSR_MODULE_CACHE_MAX_ENTRIES);
+      assertEquals(globalModuleCache.has("module-0"), false);
+      assertEquals(globalModuleCache.has("module-1"), true);
+      resetState();
+    });
+
     it("should clear project transform counts", () => {
       resetState();
 
@@ -236,9 +297,45 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       clearSSRModuleCache();
       assertEquals(verifiedHttpBundlePaths.size, 0);
     });
+
+    it("clears every global SSR cache family", () => {
+      resetState();
+      globalCrossProjectCache.set("cross", { tempPath: "/tmp/cross", contentHash: "a" });
+      globalCrossProjectInProgress.set("cross-pending", Promise.resolve("/tmp/cross"));
+      globalInProgress.set("pending", Promise.resolve());
+      globalTmpDirs.set("tmp", "/tmp/project");
+
+      clearSSRModuleCache();
+
+      assertEquals(globalCrossProjectCache.size, 0);
+      assertEquals(globalCrossProjectInProgress.size, 0);
+      assertEquals(globalInProgress.size, 0);
+      assertEquals(globalTmpDirs.size, 0);
+    });
   });
 
   describe("clearSSRModuleCacheForProject", () => {
+    it("does not clear a cross-project cache entry for a containing project ID", () => {
+      resetState();
+
+      const targetKey = buildSSRModuleCacheKey("cross-project-default", "acme", "button");
+      const containingKey = buildSSRModuleCacheKey(
+        "cross-project-default",
+        "acme-enterprise",
+        "button",
+      );
+      globalCrossProjectCache.set(targetKey, { tempPath: "/tmp/acme", contentHash: "a" });
+      globalCrossProjectCache.set(containingKey, {
+        tempPath: "/tmp/acme-enterprise",
+        contentHash: "b",
+      });
+
+      clearSSRModuleCacheForProject("acme");
+
+      assertEquals(globalCrossProjectCache.has(targetKey), false);
+      assertEquals(globalCrossProjectCache.has(containingKey), true);
+    });
+
     it("should clear module cache entries for a specific project", () => {
       resetState();
 
@@ -285,8 +382,8 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       resetState();
 
       const baseCacheDir = getMdxEsmCacheDir();
-      const key1 = `${baseCacheDir}|${hashCodeHex("project-1")}|${hashCodeHex("preview-main")}`;
-      const key2 = `${baseCacheDir}|${hashCodeHex("project-2")}|${hashCodeHex("preview-main")}`;
+      const key1 = getTmpDirCacheKey(baseCacheDir, "project-1", "preview-main");
+      const key2 = getTmpDirCacheKey(baseCacheDir, "project-2", "preview-main");
 
       globalTmpDirs.set(key1, "/tmp/proj1");
       globalTmpDirs.set(key2, "/tmp/proj2");

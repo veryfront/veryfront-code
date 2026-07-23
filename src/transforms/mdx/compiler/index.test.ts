@@ -8,7 +8,7 @@ describe("transforms/mdx/compiler/index", { sanitizeResources: false, sanitizeOp
   describe("compileContent", () => {
     it("routes .md files to markdown compiler", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "# Hello World\n\nSome content.",
         undefined,
@@ -22,7 +22,7 @@ describe("transforms/mdx/compiler/index", { sanitizeResources: false, sanitizeOp
 
     it("routes .mdx files to MDX compiler", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "# Hello MDX\n\nSome **bold** content.",
         undefined,
@@ -35,7 +35,7 @@ describe("transforms/mdx/compiler/index", { sanitizeResources: false, sanitizeOp
 
     it("defaults target to server", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "# Test",
         undefined,
@@ -47,7 +47,7 @@ describe("transforms/mdx/compiler/index", { sanitizeResources: false, sanitizeOp
     it("passes frontmatter through to markdown compiler", async () => {
       const fm = { title: "My Doc", prose: false };
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "---\ntitle: My Doc\nprose: false\n---\n# Content",
         fm,
@@ -58,7 +58,7 @@ describe("transforms/mdx/compiler/index", { sanitizeResources: false, sanitizeOp
 
     it("handles files without extension as MDX", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "# No Extension",
         undefined,

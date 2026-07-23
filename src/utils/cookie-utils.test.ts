@@ -50,6 +50,34 @@ describe("cookie-utils", () => {
         name: "value=with=equals",
       });
     });
+
+    it("unwraps RFC-style quoted cookie values", () => {
+      assertEquals(parseCookies('session="hello%20world"'), {
+        session: "hello world",
+      });
+    });
+
+    it("ignores cookie names containing separators or control characters", () => {
+      assertEquals(parseCookies("bad name=value; good-name=ok; bad,name=no"), {
+        "good-name": "ok",
+      });
+    });
+
+    it("preserves malformed percent-encoding instead of rejecting the request", () => {
+      assertEquals(parseCookies("session=%E0%A4%A; theme=dark"), {
+        session: "%E0%A4%A",
+        theme: "dark",
+      });
+    });
+
+    it("stores prototype-shaped cookie names as ordinary own properties", () => {
+      const cookies = parseCookies("__proto__=safe; constructor=value");
+
+      assertEquals(Object.hasOwn(cookies, "__proto__"), true);
+      assertEquals(cookies.__proto__, "safe");
+      assertEquals(Object.hasOwn(cookies, "constructor"), true);
+      assertEquals(cookies["constructor"], "value");
+    });
   });
 
   describe("parseCookiesFromHeaders", () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FileLogSubscriber, parseMaxSize } from "./file-log-subscriber.ts";
 import { LogBuffer } from "./log-buffer.ts";
@@ -63,9 +63,54 @@ describe("observability/file-log-subscriber", () => {
         assertEquals((err as Error).message.includes("Invalid maxSize"), true);
       }
     });
+
+    it("does not echo invalid size input", () => {
+      try {
+        parseMaxSize("token=private-value");
+        throw new Error("should have thrown");
+      } catch (error) {
+        assertEquals((error as Error).message.includes("private-value"), false);
+      }
+    });
+
+    it("rejects non-positive and unsafe sizes", () => {
+      for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "0kb", "999999999gb"]) {
+        assertThrows(() => parseMaxSize(value));
+      }
+    });
   });
 
   describe("FileLogSubscriber", () => {
+    it("rejects invalid file logging configuration", () => {
+      assertThrows(() => new FileLogSubscriber(makeConfig({ path: "" })));
+      assertThrows(() => new FileLogSubscriber(makeConfig({ path: "test.log", maxFiles: 0 })));
+      assertThrows(() => new FileLogSubscriber(makeConfig({ path: "test.log", maxFiles: 101 })));
+      assertThrows(() =>
+        new FileLogSubscriber(makeConfig({
+          path: "test.log",
+          level: "trace" as unknown as FileLogConfig["level"],
+        }))
+      );
+    });
+
+    it("does not write when file logging is disabled", async () => {
+      const dir = await makeTempDir();
+      const logPath = `${dir}/disabled.log`;
+      const sub = new FileLogSubscriber(makeConfig({ path: logPath, enabled: false }));
+      sub.getSubscriber()({
+        id: "1",
+        level: "info",
+        message: "disabled",
+        source: "test",
+        timestamp: Date.now(),
+      });
+
+      await sub.flush();
+
+      assertEquals(await fileExists(logPath), false);
+      await sub.close();
+    });
+
     it("should write log entries as JSON", async () => {
       const dir = await makeTempDir();
       const logPath = `${dir}/test.log`;
@@ -152,6 +197,25 @@ describe("observability/file-log-subscriber", () => {
       const rotated1 = await fileExists(`${logPath}.1`);
       assertEquals(rotated1, true);
 
+      await sub.close();
+    });
+
+    it("does not create an empty rotation for one oversized entry", async () => {
+      const dir = await makeTempDir();
+      const logPath = `${dir}/test.log`;
+      const sub = new FileLogSubscriber(makeConfig({
+        path: logPath,
+        maxSize: 10,
+        maxFiles: 3,
+      }));
+
+      const buf = new LogBuffer();
+      buf.subscribe(sub.getSubscriber());
+      buf.info("one oversized entry", "test");
+      await sub.flush();
+
+      assertEquals(await fileExists(logPath), true);
+      assertEquals(await fileExists(`${logPath}.1`), false);
       await sub.close();
     });
 
@@ -250,13 +314,54 @@ describe("observability/file-log-subscriber", () => {
       await sub.close();
     });
 
+    it("sanitizes entries received without a LogBuffer", async () => {
+      const dir = await makeTempDir();
+      const logPath = `${dir}/test.log`;
+      const sub = new FileLogSubscriber(makeConfig({ path: logPath }));
+
+      sub.getSubscriber()({
+        id: "1",
+        level: "error",
+        message: "token=secret-value at /private/workspace/app.ts",
+        source: "test",
+        timestamp: Date.now(),
+        data: { apiKey: "secret-value" },
+      });
+      await sub.flush();
+
+      const content = await Deno.readTextFile(logPath);
+      assertEquals(content.includes("secret-value"), false);
+      assertEquals(content.includes("/private/workspace"), false);
+      assertEquals(content.includes("[REDACTED]"), true);
+      await sub.close();
+    });
+
+    it("normalizes invalid direct-entry timestamps", async () => {
+      const dir = await makeTempDir();
+      const logPath = `${dir}/test.log`;
+      const sub = new FileLogSubscriber(makeConfig({ path: logPath }));
+
+      sub.getSubscriber()({
+        id: "1",
+        level: "info",
+        message: "timestamp",
+        source: "test",
+        timestamp: Number.MAX_VALUE,
+      });
+      await sub.flush();
+
+      const parsed = JSON.parse((await Deno.readTextFile(logPath)).trim());
+      assertEquals(Number.isSafeInteger(parsed.timestamp), true);
+      await sub.close();
+    });
+
     it("should log non-permission write queue failures", async () => {
       const dir = await makeTempDir();
       const sub = new FileLogSubscriber(makeConfig({ path: dir }));
       const originalError = console.error;
-      const errors: string[] = [];
+      const errors: unknown[][] = [];
       console.error = (...args: unknown[]) => {
-        errors.push(args.map(String).join(" "));
+        errors.push(args);
       };
 
       try {
@@ -270,12 +375,13 @@ describe("observability/file-log-subscriber", () => {
       }
 
       assertEquals(
-        errors.some((line) =>
-          line.includes("[FileLogSubscriber] Failed writing to") &&
-          line.includes("File logging will continue")
+        errors.some((args) =>
+          args[0] === "[FileLogSubscriber] File write failed. File logging will continue." &&
+          JSON.stringify(args[1]) === JSON.stringify({ failure_category: "error" })
         ),
         true,
       );
+      assertEquals(JSON.stringify(errors).includes(dir), false);
     });
   });
 });

@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 
 const logger = baseLogger.component("invalidation-state");
 
@@ -31,7 +31,7 @@ function cleanupStaleInvalidations(): void {
 
   logger.warn("INVALIDATION_STALE_CLEANUP - removed orphaned entries", {
     removedCount: staleEntries.length,
-    entries: staleEntries,
+    oldestAgeMs: Math.max(...staleEntries.map((entry) => entry.ageMs)),
     remainingCount: pendingInvalidations.size,
   });
 }
@@ -47,8 +47,6 @@ export function addPendingInvalidation(prefix: string): void {
   const count = pendingInvalidations.get(prefix)?.count ?? 1;
 
   logger.info("INVALIDATION_STARTED - cache prefix marked for invalidation", {
-    prefix,
-    startedAt,
     count,
     totalPending: pendingInvalidations.size,
   });
@@ -70,7 +68,6 @@ export function removePendingInvalidation(prefix: string): void {
   const remainingCount = pendingInvalidations.get(prefix)?.count ?? 0;
 
   logger.info("INVALIDATION_COMPLETED - cache prefix invalidation finished", {
-    prefix,
     durationMs,
     remainingCount,
     totalPending: pendingInvalidations.size,
@@ -87,8 +84,6 @@ export function isPrefixBeingInvalidated(prefix: string): boolean {
     totalBlockedReads++;
 
     logger.info("CACHE_READ_BLOCKED - preventing stale cache read", {
-      requestedPrefix: prefix,
-      blockingPrefix: pendingPrefix,
       invalidationAgeMs: ageMs,
       blockingCount: entry.count,
       totalBlockedReads,

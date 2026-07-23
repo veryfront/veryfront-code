@@ -376,5 +376,13 @@ describe("transforms/esm/http-cache-helpers", () => {
       const result = resolveBareSpecifier("react-dom/client", emptyImportMap);
       assertEquals(result.includes("react-dom"), true);
     });
+
+    it("does not construct URLs for unsafe package specifiers", () => {
+      assertEquals(resolveBareSpecifier("lodash/../private", emptyImportMap), "lodash/../private");
+      assertEquals(
+        resolveBareSpecifier("pkg/path?token=secret", emptyImportMap),
+        "pkg/path?token=secret",
+      );
+    });
   });
 });

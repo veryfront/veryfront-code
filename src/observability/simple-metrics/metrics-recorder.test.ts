@@ -27,6 +27,14 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       assertEquals(state.jitHttpBlocked, 2);
       assertEquals(state.jitHttpFetchMsTotal, 150);
     });
+
+    it("ignores invalid and negative observations", () => {
+      resetMetrics();
+      recordHttp(-1, Number.NaN, Number.POSITIVE_INFINITY);
+      assertEquals(state.jitHttpResolved, 0);
+      assertEquals(state.jitHttpBlocked, 0);
+      assertEquals(state.jitHttpFetchMsTotal, 0);
+    });
   });
 
   describe("recordCacheGet", () => {
@@ -96,6 +104,13 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       recordCacheInvalidate(3);
       assertEquals(state.cacheInvalidations, 8);
     });
+
+    it("does not let invalid counts corrupt state", () => {
+      resetMetrics();
+      recordCacheInvalidate(-1);
+      recordCacheInvalidate(Number.NaN);
+      assertEquals(state.cacheInvalidations, 0);
+    });
   });
 
   describe("recordSSR", () => {
@@ -104,6 +119,12 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       recordSSR(50);
       const bucket50 = state._ssrCounts.find((c) => c > 0);
       assertEquals(bucket50 !== undefined, true);
+    });
+
+    it("normalizes invalid duration observations", () => {
+      resetMetrics();
+      recordSSR(Number.POSITIVE_INFINITY);
+      assertEquals(state._ssrCounts[0], 1);
     });
   });
 
@@ -124,6 +145,18 @@ describe("observability/simple-metrics/metrics-recorder", () => {
       resetMetrics();
       recordRSC("error");
       assertEquals(state.rscErrors, 1);
+    });
+
+    it("ignores prototype and unknown runtime kinds", () => {
+      resetMetrics();
+      recordRSC("toString" as never);
+      recordRSC("unknown" as never);
+
+      assertEquals(state.rscManifest, 0);
+      assertEquals(state.rscPage, 0);
+      assertEquals(state.rscStream, 0);
+      assertEquals(state.rscAction, 0);
+      assertEquals(state.rscErrors, 0);
     });
   });
 

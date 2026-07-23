@@ -5,8 +5,9 @@
  * catch-all routes, and optional catch-all routes.
  */
 
-import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { extractParamName } from "#veryfront/utils/route-path-utils.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { AppRouteMatch } from "./types.ts";
 
@@ -25,13 +26,14 @@ async function readDirectoryNames(current: string, ctx: HandlerContext): Promise
 
   try {
     for await (const entry of ctx.adapter.fs.readDir(current)) {
-      if (entry.isDirectory) names.push(entry.name);
+      if (entry.isDirectory && !entry.isSymlink) names.push(entry.name);
     }
-  } catch {
-    return null;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
 
-  return names;
+  return names.sort((left, right) => left.localeCompare(right));
 }
 
 async function findRouteFile(current: string, ctx: HandlerContext): Promise<string | null> {
@@ -42,9 +44,10 @@ async function findRouteFile(current: string, ctx: HandlerContext): Promise<stri
   for (const filePath of candidates) {
     try {
       const st = await ctx.adapter.fs.stat(filePath);
-      if (st.isFile) return filePath;
-    } catch {
-      // continue
+      if (st.isFile && !st.isSymlink) return filePath;
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
     }
   }
 
@@ -150,14 +153,16 @@ export async function resolveAppRouteFile(
   path: string,
   ctx: HandlerContext,
 ): Promise<AppRouteMatch | null> {
-  const appRoot = joinPath(ctx.projectDir, ctx.config?.directories?.app ?? "app");
+  const projectRoot = normalizePath(ctx.projectDir);
+  const appRoot = normalizePath(joinPath(projectRoot, ctx.config?.directories?.app ?? "app"));
+  if (!isWithinDirectory(projectRoot, appRoot)) return null;
 
   try {
     const st = await ctx.adapter.fs.stat(appRoot);
-    if (!st.isDirectory) return null;
-  } catch (_) {
-    // expected: app directory doesn't exist
-    return null;
+    if (!st.isDirectory || st.isSymlink) return null;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
 
   const normalized = path === "/" ? "/" : path.replace(/\/$/, "");

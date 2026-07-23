@@ -1,4 +1,5 @@
 import type { VeryfrontConfig } from "#veryfront/config";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 
 const DEFAULT_IGNORED_ROOTS = [
   "knowledge",
@@ -20,10 +21,10 @@ const DEFAULT_PROTECTED_ROOTS = [
 ];
 
 export interface StyleScopeProfile {
-  hash: string;
-  ignoredRoots: string[];
-  protectedRoots: string[];
-  protectedPaths: string[];
+  readonly hash: string;
+  readonly ignoredRoots: readonly string[];
+  readonly protectedRoots: readonly string[];
+  readonly protectedPaths: readonly string[];
 }
 
 function normalizePath(path: string): string {
@@ -31,20 +32,20 @@ function normalizePath(path: string): string {
 }
 
 function normalizeRelativePath(path: string): string {
-  return normalizePath(path).replace(/^\/+/, "").replace(/\/+$/, "");
+  try {
+    return resolveRelativePath(normalizePath(path), ".").replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
 }
 
-function toRelativeProjectPath(path: string, projectDir?: string): string {
+function toRelativeProjectPath(path: string, projectDir?: string): string | null {
   const normalized = normalizePath(path);
-  const normalizedProjectDir = projectDir
-    ? normalizePath(projectDir).replace(/\/+$/, "")
-    : undefined;
-
-  if (normalizedProjectDir && normalized.startsWith(normalizedProjectDir)) {
-    return normalized.slice(normalizedProjectDir.length).replace(/^\/+/, "");
+  try {
+    return resolveRelativePath(normalized, projectDir ? normalizePath(projectDir) : ".");
+  } catch {
+    return null;
   }
-
-  return normalized.replace(/^\/+/, "");
 }
 
 function isWithinPath(path: string, root: string): boolean {
@@ -59,12 +60,14 @@ function getParentDirectory(path: string): string | null {
 }
 
 function stableHash(input: string): string {
-  let hash = 0;
-  for (let index = 0; index < input.length; index++) {
-    hash = ((hash << 5) - hash) + input.charCodeAt(index);
-    hash |= 0;
+  let high = 0x811c9dc5;
+  let low = 0x9e3779b9;
+  for (const byte of new TextEncoder().encode(input)) {
+    high = Math.imul(high ^ byte, 0x01000193);
+    low = Math.imul(low ^ byte, 0x01000193);
   }
-  return hash.toString(36);
+  return (high >>> 0).toString(16).padStart(8, "0") +
+    (low >>> 0).toString(16).padStart(8, "0");
 }
 
 function addNormalizedPath(target: Set<string>, value: string | null | undefined): void {
@@ -101,11 +104,11 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
     ignoredRoots.delete(root);
   }
 
-  const sortedIgnoredRoots = [...ignoredRoots].sort();
-  const sortedProtectedRoots = [...protectedRoots].sort();
-  const sortedProtectedPaths = [...protectedPaths].sort();
+  const sortedIgnoredRoots = Object.freeze([...ignoredRoots].sort());
+  const sortedProtectedRoots = Object.freeze([...protectedRoots].sort());
+  const sortedProtectedPaths = Object.freeze([...protectedPaths].sort());
 
-  return {
+  return Object.freeze({
     ignoredRoots: sortedIgnoredRoots,
     protectedRoots: sortedProtectedRoots,
     protectedPaths: sortedProtectedPaths,
@@ -116,7 +119,7 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
         protectedPaths: sortedProtectedPaths,
       }),
     ),
-  };
+  });
 }
 
 function isProtectedPath(
@@ -132,7 +135,9 @@ export function shouldIncludeStylePath(
   path: string,
   projectDir?: string,
 ): boolean {
-  const relativePath = normalizeRelativePath(toRelativeProjectPath(path, projectDir));
+  const projectPath = toRelativeProjectPath(path, projectDir);
+  if (projectPath === null) return false;
+  const relativePath = normalizeRelativePath(projectPath);
   if (!relativePath) return true;
   if (isProtectedPath(profile, relativePath)) return true;
 
@@ -144,7 +149,9 @@ export function shouldTraverseStyleDirectory(
   directoryPath: string,
   projectDir?: string,
 ): boolean {
-  const relativePath = normalizeRelativePath(toRelativeProjectPath(directoryPath, projectDir));
+  const projectPath = toRelativeProjectPath(directoryPath, projectDir);
+  if (projectPath === null) return false;
+  const relativePath = normalizeRelativePath(projectPath);
   if (!relativePath) return true;
   if (isProtectedPath(profile, relativePath)) return true;
 

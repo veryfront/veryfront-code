@@ -4,7 +4,7 @@ import { runtimeProcess } from "./runtime-process.ts";
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
-  if (deno) return deno.args;
+  if (deno) return [...deno.args];
   if (runtimeProcess) return runtimeProcess.argv.slice(2);
   return [];
 }
@@ -96,7 +96,9 @@ export function getTerminalSize(): { columns: number; rows: number } {
   if (deno) {
     try {
       const { columns, rows } = deno.consoleSize();
-      return { columns, rows };
+      return isValidTerminalDimension(columns) && isValidTerminalDimension(rows)
+        ? { columns, rows }
+        : defaultSize;
     } catch (_) {
       /* expected: Deno.consoleSize() fails when not attached to a terminal */
       return defaultSize;
@@ -107,7 +109,9 @@ export function getTerminalSize(): { columns: number; rows: number } {
 
   const columns = runtimeProcess.stdout?.columns;
   const rows = runtimeProcess.stdout?.rows;
-  if (columns && rows) return { columns, rows };
+  if (isValidTerminalDimension(columns) && isValidTerminalDimension(rows)) {
+    return { columns, rows };
+  }
 
   return defaultSize;
 }
@@ -118,8 +122,9 @@ export function getTerminalSize(): { columns: number; rows: number } {
 export function getRuntimeVersion(): string {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) return `Deno ${deno.version.deno}`;
-  if ("Bun" in globalThis) {
-    return `Bun ${(globalThis as unknown as { Bun: { version: string } }).Bun.version}`;
+  if (IS_BUN) {
+    const bunVersion = getBunVersion();
+    if (bunVersion) return `Bun ${bunVersion}`;
   }
   if (runtimeProcess) return `Node.js ${runtimeProcess.version}`;
   return "unknown";
@@ -146,58 +151,62 @@ export function getOsType(): string {
 export function onSignal(
   signal: "SIGINT" | "SIGTERM",
   handler: () => void,
-): void {
+): () => void {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) {
     deno.addSignalListener(signal, handler);
-    return;
+    return createIdempotentCleanup(() => deno.removeSignalListener(signal, handler));
   }
-  if (runtimeProcess) runtimeProcess.on(signal, handler);
+  if (runtimeProcess) {
+    const process = runtimeProcess;
+    process.on(signal, handler);
+    return createIdempotentCleanup(() => process.off(signal, handler));
+  }
+  return () => {};
 }
 
 /**
  * Register global error handlers for uncaught exceptions and unhandled promise rejections.
- * These handlers prevent the process from crashing due to application code errors.
  *
  * IMPORTANT: These handlers should be registered early in the application lifecycle
  * to catch errors that escape try/catch blocks.
  *
- * @param onError - Callback invoked with the error. Return true to prevent process exit.
+ * @param onError - Callback invoked with the error. Return true to suppress default fatal behavior.
+ * @returns A cleanup function that unregisters both handlers.
  */
 export function onGlobalError(
   onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void,
-): void {
+): () => void {
   if (IS_DENO) {
-    // Intentionally permanent: process-level handlers must persist for the entire runtime
-    globalThis.addEventListener("error", (event) => {
-      const error = event.error instanceof Error ? event.error : new Error(String(event.error));
-      if (onError(error, "uncaughtException")) event.preventDefault();
-    });
+    const handleError = (event: ErrorEvent): void => {
+      const error = normalizeGlobalError(event.error);
+      if (invokeGlobalErrorHandler(onError, error, "uncaughtException")) event.preventDefault();
+    };
 
-    globalThis.addEventListener("unhandledrejection", (event) => {
-      const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
-      if (onError(error, "unhandledRejection")) event.preventDefault();
-    });
+    const handleRejection = (event: PromiseRejectionEvent): void => {
+      const error = normalizeGlobalError(event.reason);
+      if (invokeGlobalErrorHandler(onError, error, "unhandledRejection")) {
+        event.preventDefault();
+      }
+    };
 
-    return;
+    globalThis.addEventListener("error", handleError);
+    globalThis.addEventListener("unhandledrejection", handleRejection);
+
+    return createIdempotentCleanup(() => {
+      globalThis.removeEventListener("error", handleError);
+      globalThis.removeEventListener("unhandledrejection", handleRejection);
+    });
   }
 
-  if (!runtimeProcess) return;
+  if (!runtimeProcess) return () => {};
   const process = runtimeProcess;
 
   const handleNodeGlobalError = (
     error: Error,
     type: "uncaughtException" | "unhandledRejection",
   ): void => {
-    let shouldPreventExit = false;
-    try {
-      shouldPreventExit = onError(error, type) === true;
-    } catch (handlerError) {
-      const handlerException = handlerError instanceof Error
-        ? handlerError
-        : new Error(String(handlerError));
-      console.error("Global error handler threw while processing", type, handlerException);
-    }
+    const shouldPreventExit = invokeGlobalErrorHandler(onError, error, type);
 
     if (shouldPreventExit) return;
 
@@ -207,14 +216,69 @@ export function onGlobalError(
     process.exit(1);
   };
 
-  runtimeProcess.on("uncaughtException", (error: Error) => {
+  const handleUncaughtException = (error: Error): void => {
     handleNodeGlobalError(error, "uncaughtException");
-  });
+  };
 
-  runtimeProcess.on("unhandledRejection", (reason: unknown) => {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    handleNodeGlobalError(error, "unhandledRejection");
+  const handleUnhandledRejection = (reason: unknown): void => {
+    handleNodeGlobalError(normalizeGlobalError(reason), "unhandledRejection");
+  };
+
+  runtimeProcess.on("uncaughtException", handleUncaughtException);
+  runtimeProcess.on("unhandledRejection", handleUnhandledRejection);
+
+  return createIdempotentCleanup(() => {
+    process.off("uncaughtException", handleUncaughtException);
+    process.off("unhandledRejection", handleUnhandledRejection);
   });
+}
+
+function createIdempotentCleanup(cleanup: () => void): () => void {
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    cleanup();
+  };
+}
+
+function invokeGlobalErrorHandler(
+  onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void,
+  error: Error,
+  type: "uncaughtException" | "unhandledRejection",
+): boolean {
+  try {
+    return onError(error, type) === true;
+  } catch {
+    console.error("Global error handler failed", { type });
+    return false;
+  }
+}
+
+function normalizeGlobalError(value: unknown): Error {
+  try {
+    if (value instanceof Error) return value;
+  } catch {
+    // Revoked proxies and hostile values are normalized below.
+  }
+  return new Error("Unhandled non-Error value");
+}
+
+function isValidTerminalDimension(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function getBunVersion(): string | undefined {
+  try {
+    const bun = Reflect.get(globalThis, "Bun");
+    if ((typeof bun !== "object" && typeof bun !== "function") || bun === null) {
+      return undefined;
+    }
+    const version = Reflect.get(bun, "version");
+    return typeof version === "string" && version.length > 0 ? version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

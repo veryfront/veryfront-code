@@ -1,5 +1,5 @@
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontRouter } from "./router.ts";
 import { getNavigationStore } from "./navigation-store.ts";
@@ -48,7 +48,7 @@ function spyOnLoaders(router: VeryfrontRouter): string[] {
   return loads;
 }
 
-describe("rendering/client/VeryfrontRouter — soft same-route navigation", () => {
+describe("rendering/client/VeryfrontRouter soft same-route navigation", () => {
   it("initializes route state from the full browser URL", () => {
     const restore = installDom("https://example.com/dashboard?tab=a#top");
     try {
@@ -90,7 +90,7 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
       const loads = spyOnLoaders(router);
 
-      // No `shouldRevalidate` configured — the default refetches so server data
+      // With no `shouldRevalidate`, the default refetches so server data
       // keyed on the query is never shown stale.
       await router.navigate("/dashboard?tab=activity");
 
@@ -136,7 +136,7 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
 
       assertEquals(loads, []);
       assertEquals(notifications, 1);
-      // `history: "none"` must not push a new entry — the URL was set by the back/forward.
+      // `history: "none"` must not push a new entry. Back or forward set the URL.
       assertEquals(globalThis.location.search, "?tab=a");
     } finally {
       restore();
@@ -169,7 +169,7 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
 
       await router.navigate("/docs?tab=api#install");
 
-      // The snapshot is the full location — pathname + search + hash — so a
+      // The snapshot is the full location (pathname, search, and hash), so a
       // hash-only change is observable rather than silently swallowed.
       assertEquals(getNavigationStore().getHref(), "/docs?tab=api#install");
       assertEquals(globalThis.location.hash, "#install");
@@ -191,6 +191,26 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       await router.navigate("/dashboard?a=2");
 
       assertEquals(notifications, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("unregisters only the matching SPA navigation handler", () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      const firstHandler = async (): Promise<void> => {};
+      const secondHandler = async (): Promise<void> => {};
+      const internals = router as unknown as { spaNavigationHandler: unknown };
+
+      router.registerNavigationHandler(firstHandler);
+      router.registerNavigationHandler(secondHandler);
+      router.unregisterNavigationHandler(firstHandler);
+      assertStrictEquals(internals.spaNavigationHandler, secondHandler);
+
+      router.unregisterNavigationHandler(secondHandler);
+      assertStrictEquals(internals.spaNavigationHandler, null);
     } finally {
       restore();
     }

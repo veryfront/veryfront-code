@@ -2,48 +2,50 @@ import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { endSpan, setSpanAttributes, type SpanOptions, startSpan } from "../tracing/index.ts";
 import type { BatchOptions, InstrumentOptions } from "./types.ts";
 
-/** Instrument an async operation. */
-export function instrument<T extends (...args: unknown[]) => Promise<unknown>>(
-  fn: T,
+const MAX_BATCH_CONCURRENCY = 1_000;
+
+/** Instrument an async operation with bounded automatic telemetry. */
+export function instrument<TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => Promise<TResult>,
   spanName: string,
   options?: InstrumentOptions,
-): T {
-  return (async (...args: Parameters<T>): Promise<ReturnType<T>> => {
-    const span = createSpan(spanName, args, options);
-    const startTime = performance.now();
+): (...args: TArgs) => Promise<TResult> {
+  return async (...args: TArgs): Promise<TResult> => {
+    const span = createOperationSpan(spanName, options);
+    const startTime = readMonotonicTime();
 
     try {
       const result = await fn(...args);
       recordDuration(span, startTime);
-      endSpan(span);
-      return result as ReturnType<T>;
+      finishSpan(span);
+      return result;
     } catch (error) {
-      endSpan(span, error as Error);
+      finishSpan(span, error);
       throw error;
     }
-  }) as T;
+  };
 }
 
-/** Instrument a synchronous operation. */
-export function instrumentSync<T extends (...args: unknown[]) => unknown>(
-  fn: T,
+/** Instrument a synchronous operation with bounded automatic telemetry. */
+export function instrumentSync<TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => TResult,
   spanName: string,
   options?: InstrumentOptions,
-): T {
-  return ((...args: Parameters<T>): ReturnType<T> => {
-    const span = createSpan(spanName, args, options);
-    const startTime = performance.now();
+): (...args: TArgs) => TResult {
+  return (...args: TArgs): TResult => {
+    const span = createOperationSpan(spanName, options);
+    const startTime = readMonotonicTime();
 
     try {
       const result = fn(...args);
       recordDuration(span, startTime);
-      endSpan(span);
-      return result as ReturnType<T>;
+      finishSpan(span);
+      return result;
     } catch (error) {
-      endSpan(span, error as Error);
+      finishSpan(span, error);
       throw error;
     }
-  }) as T;
+  };
 }
 
 /** Instrument a batch operation. */
@@ -54,25 +56,31 @@ export async function instrumentBatch<T>(
   options?: BatchOptions,
 ): Promise<void> {
   const batchSize = options?.batchSize ?? 10;
-  const totalBatches = Math.ceil(items.length / batchSize);
+  if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
+    throw new TypeError("batchSize must be a positive safe integer");
+  }
+  if (batchSize > MAX_BATCH_CONCURRENCY) {
+    throw new TypeError(`batchSize must be at most ${MAX_BATCH_CONCURRENCY}`);
+  }
+  const stableItems = items.slice();
+  const totalBatches = Math.ceil(stableItems.length / batchSize);
 
-  const batchSpan = startSpan(operationName, {
+  const batchSpan = tryStartSpan(operationName, {
     kind: "internal",
     attributes: {
-      "batch.total_items": items.length,
+      "batch.total_items": stableItems.length,
       "batch.size": batchSize,
       "batch.total_batches": totalBatches,
-      ...(options?.attributes ?? {}),
     },
   });
 
   try {
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
       const start = batchIndex * batchSize;
-      const end = Math.min(start + batchSize, items.length);
-      const batch = items.slice(start, end);
+      const end = Math.min(start + batchSize, stableItems.length);
+      const batch = stableItems.slice(start, end);
 
-      const batchItemSpan = startSpan(`${operationName}.batch`, {
+      const batchItemSpan = tryStartSpan(`${operationName}.batch`, {
         kind: "internal",
         attributes: {
           "batch.index": batchIndex,
@@ -82,29 +90,68 @@ export async function instrumentBatch<T>(
 
       try {
         await Promise.all(batch.map((item, index) => processor(item, start + index)));
-        endSpan(batchItemSpan);
+        finishSpan(batchItemSpan);
       } catch (error) {
-        endSpan(batchItemSpan, error as Error);
+        finishSpan(batchItemSpan, error);
         throw error;
       }
     }
 
-    endSpan(batchSpan);
+    finishSpan(batchSpan);
   } catch (error) {
-    endSpan(batchSpan, error as Error);
+    finishSpan(batchSpan, error);
     throw error;
   }
 }
 
-function createSpan(spanName: string, args: unknown[], options?: InstrumentOptions): Span | null {
-  const spanOptions: SpanOptions = {
-    kind: options?.kind ?? "internal",
-    attributes: options?.attributes?.(args) ?? {},
-  };
-
-  return startSpan(spanName, spanOptions);
+function createOperationSpan(
+  spanName: string,
+  options?: InstrumentOptions,
+): Span | null {
+  try {
+    return startSpan(spanName, {
+      kind: options?.kind ?? "internal",
+    });
+  } catch {
+    return null;
+  }
 }
 
-function recordDuration(span: Span | null, startTime: number): void {
-  setSpanAttributes(span, { duration_ms: Math.floor(performance.now() - startTime) });
+function tryStartSpan(spanName: string, options: SpanOptions): Span | null {
+  try {
+    return startSpan(spanName, options);
+  } catch {
+    return null;
+  }
+}
+
+function finishSpan(span: Span | null, error?: unknown): void {
+  try {
+    endSpan(span, error);
+  } catch {
+    // Automatic telemetry must not affect the wrapped operation.
+  }
+}
+
+function readMonotonicTime(): number | undefined {
+  try {
+    const value = performance.now();
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function recordDuration(span: Span | null, startTime: number | undefined): void {
+  if (startTime === undefined) return;
+  const endTime = readMonotonicTime();
+  if (endTime === undefined) return;
+
+  try {
+    setSpanAttributes(span, {
+      duration_ms: Math.max(0, Math.floor(endTime - startTime)),
+    });
+  } catch {
+    // Automatic telemetry must not affect the wrapped operation.
+  }
 }

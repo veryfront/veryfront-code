@@ -1,5 +1,7 @@
 import { registerResource, registerTool } from "#veryfront/mcp";
 import { logger as baseLogger } from "#veryfront/utils";
+import { resourceRegistry } from "#veryfront/resource";
+import { toolRegistry } from "#veryfront/tool";
 import { createOpenAPIResource } from "./mcp-resource.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
@@ -19,32 +21,37 @@ export async function registerOpenAPIMCP(
   config: OpenAPIMCPConfig,
 ): Promise<{ resourceId?: string; toolIds: string[] }> {
   const result: { resourceId?: string; toolIds: string[] } = { toolIds: [] };
-
-  if (config.resource !== false) {
-    try {
-      const resource = createOpenAPIResource(getSpec);
-      registerResource("openapi_spec", resource);
-      result.resourceId = "openapi_spec";
-      logger.debug("Registered openapi://spec resource");
-    } catch (error) {
-      logger.warn("Failed to register resource:", { error: String(error) });
-    }
-  }
-
-  if (config.tools === false) {
-    return result;
-  }
-
-  try {
-    const spec = await getSpec();
-    const tools = generateMCPToolsFromSpec(spec, {
+  const shouldRegisterResource = config.resource !== false;
+  const shouldRegisterTools = config.tools !== false;
+  const resource = shouldRegisterResource ? createOpenAPIResource(getSpec) : undefined;
+  const tools = shouldRegisterTools
+    ? generateMCPToolsFromSpec(await getSpec(), {
       baseUrl: config.baseUrl,
       toolPrefix: config.toolPrefix,
       headers: config.headers,
-    });
+    })
+    : [];
+  const rollback: Array<() => void> = [];
+
+  try {
+    if (resource) {
+      const previous = resourceRegistry.getOwn("openapi_spec");
+      registerResource("openapi_spec", resource);
+      rollback.push(() => {
+        resourceRegistry.delete("openapi_spec");
+        if (previous) resourceRegistry.register("openapi_spec", previous);
+      });
+      result.resourceId = "openapi_spec";
+      logger.debug("Registered openapi://spec resource");
+    }
 
     for (const tool of tools) {
+      const previous = toolRegistry.getOwn(tool.id);
       registerTool(tool.id, tool);
+      rollback.push(() => {
+        toolRegistry.delete(tool.id);
+        if (previous) toolRegistry.register(tool.id, previous);
+      });
       result.toolIds.push(tool.id);
     }
 
@@ -53,7 +60,21 @@ export async function registerOpenAPIMCP(
       prefix: config.toolPrefix ?? "api",
     });
   } catch (error) {
-    logger.warn("Failed to generate tools:", { error: String(error) });
+    const rollbackErrors: unknown[] = [];
+    for (const undo of rollback.reverse()) {
+      try {
+        undo();
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "OpenAPI MCP registration and rollback failed",
+      );
+    }
+    throw error;
   }
 
   return result;

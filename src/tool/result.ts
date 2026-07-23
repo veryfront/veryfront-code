@@ -2,27 +2,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function getOwnDataProperty(value: Record<string, unknown>, property: string): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, property);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Check whether tool execution error marker is present. */
 export function hasToolExecutionErrorMarker(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
 
-  return typeof value.error === "string" || value.isError === true;
+  return typeof getOwnDataProperty(value, "error") === "string" ||
+    getOwnDataProperty(value, "isError") === true;
 }
 
 function hasIntegrationAuthenticationActionError(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && !Array.isArray(value) &&
-    (value.error === "authentication_required" || value.error === "reconnect_required");
+  if (!isRecord(value) || Array.isArray(value)) return false;
+  const error = getOwnDataProperty(value, "error");
+  return error === "authentication_required" || error === "reconnect_required";
+}
+
+const MAX_INTEGRATION_ID_LENGTH = 128;
+const MAX_CONNECT_URL_LENGTH = 4_096;
+
+function hasUnsafeControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function isSafeIntegrationId(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.trim() === value &&
+    value.length <= MAX_INTEGRATION_ID_LENGTH && !hasUnsafeControlCharacters(value);
+}
+
+function isSafeConnectUrl(value: unknown): value is string {
+  if (
+    typeof value !== "string" || value.trim().length === 0 || value.trim() !== value ||
+    value.length > MAX_CONNECT_URL_LENGTH || hasUnsafeControlCharacters(value)
+  ) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value, "https://veryfront.invalid/");
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username.length === 0 && url.password.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** Check whether a tool result contains a complete deferred OAuth action. */
 export function isIntegrationAuthenticationActionResult(value: unknown): boolean {
   return hasIntegrationAuthenticationActionError(value) &&
-    typeof value.integration === "string" &&
-    value.integration.trim().length > 0 &&
-    typeof value.connectUrl === "string" &&
-    value.connectUrl.trim().length > 0;
+    isSafeIntegrationId(getOwnDataProperty(value, "integration")) &&
+    isSafeConnectUrl(getOwnDataProperty(value, "connectUrl"));
 }
 
 function getMcpToolErrorMessage(result: unknown): string | undefined {
@@ -30,15 +72,17 @@ function getMcpToolErrorMessage(result: unknown): string | undefined {
     return undefined;
   }
 
-  if (typeof result.error !== "string" || result.error.length === 0) {
+  const error = getOwnDataProperty(result, "error");
+  if (typeof error !== "string" || error.trim().length === 0) {
     return undefined;
   }
 
-  if (typeof result.message === "string" && result.message.trim().length > 0) {
-    return result.message;
+  const message = getOwnDataProperty(result, "message");
+  if (typeof message === "string" && message.trim().length > 0) {
+    return message;
   }
 
-  return result.error;
+  return error;
 }
 
 /** Return the displayable error for a failed tool result. */
@@ -52,8 +96,9 @@ export function getToolResultError(result: unknown): string | undefined {
   }
 
   if (hasIntegrationAuthenticationActionError(result)) {
-    if (typeof result.message === "string" && result.message.trim().length > 0) {
-      return result.message;
+    const message = getOwnDataProperty(result, "message");
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message;
     }
     return "Integration authentication response is incomplete";
   }
@@ -64,12 +109,14 @@ export function getToolResultError(result: unknown): string | undefined {
   }
 
   const record = result as Record<string, unknown>;
-  if (typeof record.error === "string") {
-    return record.error.length > 0 ? record.error : JSON.stringify(record.error);
+  const error = getOwnDataProperty(record, "error");
+  if (typeof error === "string") {
+    return error.trim().length > 0 ? error : "Tool execution failed";
   }
 
-  if (typeof record.message === "string" && record.message.trim().length > 0) {
-    return record.message;
+  const message = getOwnDataProperty(record, "message");
+  if (typeof message === "string" && message.trim().length > 0) {
+    return message;
   }
 
   return "Tool execution failed";
@@ -85,5 +132,5 @@ export function isErroredToolExecutionResult(result: unknown): boolean {
     return false;
   }
 
-  return hasToolExecutionErrorMarker(result.output);
+  return hasToolExecutionErrorMarker(getOwnDataProperty(result, "output"));
 }

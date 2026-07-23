@@ -5,31 +5,24 @@
  * Tokens are lost when the process restarts.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import type { TokenStorageAdapter } from "./types.ts";
 
 const logger = baseLogger.component("memory-token-adapter");
 
-const STORAGE_KEY = "__veryfront_token_storage__" as const;
-
-interface GlobalWithTokenStorage {
-  __veryfront_token_storage__?: Map<string, string>;
-}
-
-const globalStore = globalThis as GlobalWithTokenStorage;
+let didWarnAboutMemoryStorage = false;
 
 export class MemoryTokenAdapter implements TokenStorageAdapter {
-  private storage: Map<string, string>;
+  private readonly storage = new Map<string, string>();
 
   constructor() {
-    globalStore[STORAGE_KEY] ??= new Map<string, string>();
-    this.storage = globalStore[STORAGE_KEY] ?? new Map<string, string>();
-
-    logger.warn(
-      "[MemoryTokenAdapter] Using in-memory storage. " +
-        "Tokens will be lost on restart. " +
-        "Configure Veryfront Cloud for production.",
-    );
+    if (!didWarnAboutMemoryStorage) {
+      didWarnAboutMemoryStorage = true;
+      logger.warn(
+        "Using in-memory token storage. Tokens are isolated to this adapter and lost on restart. " +
+          "Configure Veryfront Cloud for production.",
+      );
+    }
   }
 
   initialize(): Promise<void> {
@@ -57,6 +50,7 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   }
 
   dispose(): void {
+    this.storage.clear();
     logger.debug("Disposed");
   }
 

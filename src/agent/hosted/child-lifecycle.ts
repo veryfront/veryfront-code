@@ -14,55 +14,73 @@ import {
 
 /** State for hosted child lifecycle terminal. */
 export interface HostedChildLifecycleTerminalState {
+  /** Status. */
   status: "completed" | "failed" | "cancelled";
+  /** Usage value. */
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
   };
+  /** Terminal error code value. */
   terminalErrorCode?: string | null;
+  /** Terminal error message value. */
   terminalErrorMessage?: string | null;
 }
 
+/** Completed terminal state for hosted child execution. */
 export interface HostedChildLifecycleCompletedState
   extends Omit<HostedChildLifecycleTerminalState, "status"> {
+  /** Completed status discriminator. */
   status: "completed";
 }
 
 /** Public API contract for hosted child lifecycle adapter. */
 export interface HostedChildLifecycleAdapter {
+  /** Callback that handles pending. */
   pending?: () => Promise<void> | void;
+  /** Callback that handles running. */
   running?: () => Promise<void> | void;
+  /** Completed value. */
   completed?: (
     terminalState: HostedChildLifecycleTerminalState,
   ) => Promise<void> | void;
+  /** Failed value. */
   failed?: (
     terminalState: HostedChildLifecycleTerminalState,
   ) => Promise<void> | void;
+  /** Whether cancelled. */
   cancelled?: (
     terminalState: HostedChildLifecycleTerminalState,
   ) => Promise<void> | void;
 }
 
+/** Failed or cancelled terminal state for hosted child execution. */
 export interface HostedChildLifecycleErrorState
   extends Omit<HostedChildLifecycleTerminalState, "status"> {
+  /** Error status discriminator. */
   status: "failed" | "cancelled";
 }
 
 /** Options accepted by hosted child lifecycle runner. */
 export interface HostedChildLifecycleRunnerOptions<TResult> {
+  /** Adapter value. */
   adapter: HostedChildLifecycleAdapter;
+  /** Callback that handles execute. */
   execute: () => Promise<TResult> | TResult;
+  /** Resolve completed state value. */
   resolveCompletedState?: (
     result: TResult,
   ) =>
     | Promise<HostedChildLifecycleCompletedState>
     | HostedChildLifecycleCompletedState;
+  /** Resolve error state value. */
   resolveErrorState: (
     error: unknown,
   ) =>
     | Promise<HostedChildLifecycleErrorState>
     | HostedChildLifecycleErrorState;
+  /** Callback invoked when lifecycle error. */
   onLifecycleError?: (error: unknown) => Promise<void> | void;
 }
 
@@ -106,12 +124,19 @@ export function shouldSkipHostedChildTerminalPersistence(
 export interface HostedChildExecutionLifecycleOptions<
   TLocalResult extends ChildRunExecutionResult,
 > {
+  /** Adapter value. */
   adapter: HostedChildLifecycleAdapter;
+  /** Execution failed code value. */
   executionFailedCode: string;
+  /** Abort signal value. */
   abortSignal?: AbortSignal | undefined;
+  /** Callback that handles execute. */
   execute: () => Promise<TLocalResult> | TLocalResult;
+  /** Callback that handles get execution snapshot. */
   getExecutionSnapshot: () => ChildRunExecutionSnapshot | null;
+  /** Callback invoked when lifecycle error. */
   onLifecycleError?: (error: unknown) => Promise<void> | void;
+  /** Callback that handles skip terminal persistence. */
   skipTerminalPersistence?: (terminalState: HostedChildLifecycleTerminalState) => boolean;
 }
 

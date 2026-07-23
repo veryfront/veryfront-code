@@ -1,5 +1,5 @@
 import {
-  getRuntimeAgentPublicMetadata,
+  listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
   type RuntimeAgentPublicMetadata,
 } from "#veryfront/channels/control-plane.ts";
@@ -11,11 +11,11 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 const PUBLIC_AGENTS_LIST_PATH = "/api/agents";
 
 /**
- * Browser-facing `GET /api/agents` — returns the same browser-safe metadata as
+ * Browser-facing `GET /api/agents`. Returns the same browser-safe metadata as
  * {@link PublicAgentMetadataHandler}, but for every discovered agent, sorted by
  * name. Backs the {@link useAgents} React hook. Unlike the control-plane list
  * endpoint this is unsigned and public, so it exposes only the narrowed public
- * metadata (id / name / description / avatar_url / suggestions) — never model,
+ * metadata (id / name / description / avatar_url / suggestions), never model,
  * version, or resolved skills.
  */
 export class PublicAgentsListHandler extends BaseHandler {
@@ -41,15 +41,14 @@ export class PublicAgentsListHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      await this.deps.ensureProjectDiscovery(ctx);
-
-      const agents: RuntimeAgentPublicMetadata[] = this.deps.getAllAgentIds()
-        .map((id) => ({ id, agent: this.deps.getAgent(id) }))
-        .filter((entry): entry is { id: string; agent: NonNullable<typeof entry.agent> } =>
-          Boolean(entry.agent)
-        )
-        .map(({ id, agent }) => getRuntimeAgentPublicMetadata(id, agent))
-        .sort((left, right) => left.name.localeCompare(right.name));
+      const discovered = await listRuntimeAgents(ctx, this.deps);
+      const agents: RuntimeAgentPublicMetadata[] = discovered.agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        ...(agent.avatar_url === undefined ? {} : { avatar_url: agent.avatar_url }),
+        ...(agent.suggestions === undefined ? {} : { suggestions: agent.suggestions }),
+      }));
 
       return this.respond(builder.json({ agents }, 200));
     });

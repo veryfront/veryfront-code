@@ -52,20 +52,22 @@ describe("rendering/rsc/actions/helpers", () => {
     });
 
     it("should return true when cookie and header match", () => {
+      const { token } = generateCsrfToken();
       const req = new Request("http://localhost/", {
         headers: {
-          cookie: "__Host-vf_csrf=matching_token",
-          "x-csrf-token": "matching_token",
+          cookie: `__Host-vf_csrf=${token}`,
+          "x-csrf-token": token,
         },
       });
       assertEquals(validateCsrf(req), true);
     });
 
     it("should support custom cookie and header names", () => {
+      const { token } = generateCsrfToken();
       const req = new Request("http://localhost/", {
         headers: {
-          cookie: "custom_csrf=tok123",
-          "x-custom-csrf": "tok123",
+          cookie: `custom_csrf=${token}`,
+          "x-custom-csrf": token,
         },
       });
       assertEquals(

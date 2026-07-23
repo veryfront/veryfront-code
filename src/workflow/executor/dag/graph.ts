@@ -1,5 +1,6 @@
 import type { NodeState, WorkflowNode } from "../../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { getOwnRecordValue } from "./context-patch.ts";
 
 interface DAGGraph {
   adjList: Map<string, string[]>;
@@ -17,6 +18,11 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
   const nodeMap = new Map<string, WorkflowNode>();
 
   for (const node of nodes) {
+    if (nodeMap.has(node.id)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate workflow node ID: "${node.id}"`,
+      });
+    }
     adjList.set(node.id, []);
     inDegree.set(node.id, 0);
     nodeMap.set(node.id, node);
@@ -72,7 +78,7 @@ export function getReadyNodes(
   const ready: string[] = [];
 
   for (const [nodeId, degree] of inDegree) {
-    const state = nodeStates[nodeId];
+    const state = getOwnRecordValue(nodeStates, nodeId);
     if (degree === 0 && (!state || state.status === "pending" || state.status === "failed")) {
       ready.push(nodeId);
     }

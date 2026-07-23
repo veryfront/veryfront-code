@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   getCurrentRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { MemoryBackend } from "../backends/memory.ts";
@@ -10,6 +10,7 @@ import { waitForApproval, workflow } from "../dsl/index.ts";
 import type { WorkflowRun } from "../types.ts";
 import {
   createIsolatedWorkflowExecutor,
+  createTenantFSConfig,
   failRunExecution,
   getFinalRunExitCode,
   getTenantFromEnv,
@@ -113,6 +114,81 @@ describe("workflow worker shared helpers", () => {
     Deno.env.set("VERYFRONT_BRANCH_REF", "feature/ref");
 
     assertEquals(getTenantFromEnv()?.branch, "feature/ref");
+  });
+
+  it("creates an authenticated branch filesystem config for preview runs", () => {
+    assertEquals(
+      createTenantFSConfig(
+        {
+          projectSlug: "acme",
+          token: "secret",
+          projectId: "project-123",
+          productionMode: false,
+          branch: "feature/ref",
+        },
+        "https://api.example.com",
+      ),
+      {
+        fs: {
+          type: "veryfront-api",
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "secret",
+            projectId: "project-123",
+            projectSlug: "acme",
+            proxyMode: false,
+            contentSource: { type: "branch", branch: "feature/ref" },
+          },
+        },
+      },
+    );
+  });
+
+  it("creates release and environment filesystem configs for production runs", () => {
+    const release = createTenantFSConfig(
+      {
+        projectSlug: "acme",
+        token: "secret",
+        productionMode: true,
+        releaseId: "release-1",
+        environmentName: "production",
+      },
+      "https://api.example.com",
+    );
+    assertEquals(release.fs.veryfront?.contentSource, {
+      type: "release",
+      releaseId: "release-1",
+    });
+
+    const environment = createTenantFSConfig(
+      {
+        projectSlug: "acme",
+        token: "secret",
+        productionMode: true,
+        environmentName: "staging",
+      },
+      "https://api.example.com",
+    );
+    assertEquals(environment.fs.veryfront?.contentSource, {
+      type: "environment",
+      name: "staging",
+    });
+  });
+
+  it("rejects production filesystem configs without a content source", () => {
+    assertThrows(
+      () =>
+        createTenantFSConfig(
+          {
+            projectSlug: "acme",
+            token: "secret",
+            productionMode: true,
+          },
+          "https://api.example.com",
+        ),
+      Error,
+      "requires a release ID or environment name",
+    );
   });
 
   it("restores branch context while executing workflow work", async () => {

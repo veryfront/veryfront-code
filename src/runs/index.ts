@@ -8,7 +8,7 @@
  * import { VeryfrontRunsClient } from "veryfront/runs";
  *
  * const runs = new VeryfrontRunsClient({
- *   authToken: process.env.VERYFRONT_API_TOKEN,
+ *   authToken: "<TOKEN>",
  *   projectReference: "my-project",
  * });
  *
@@ -22,6 +22,17 @@
  * ```
  */
 
+export type {
+  InferSchema,
+  InferShape,
+  RefinementCtx,
+  Schema,
+  ValidationFailure,
+  ValidationIssue,
+  ValidationResult,
+  ValidationSuccess,
+} from "#veryfront/extensions/schema/index.ts";
+
 export {
   type CreateEvalRunInput,
   createRunsClient,
@@ -33,8 +44,11 @@ export {
   type ListRunEventsOptions,
   type ListRunsOptions,
   type ProjectScopedOptions,
-  type RunRuntimeTargetKind,
+  type RunCreateBaseInput,
   type RunRuntimeTargetOptions,
+  type RunsRequestIdentity,
+  type RunsRequestPolicy,
+  type RunsRetryConfig,
   VeryfrontRunsClient,
   type VeryfrontRunsClientConfig,
 } from "./runs-client.ts";
@@ -45,6 +59,7 @@ export {
   CreateRunResponseSchema,
   type Run,
   type RunEvent,
+  type RunEventList,
   RunEventListSchema,
   RunEventSchema,
   type RunExecutionError,
@@ -52,6 +67,8 @@ export {
   type RunList,
   RunListSchema,
   type RunOwner,
+  type RunPageInfo,
+  type RunRuntimeTargetKind,
   RunSchema,
   type RunStatus,
   type RunTriggerKind,

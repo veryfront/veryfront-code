@@ -62,6 +62,24 @@ describe("server/handlers/request/public-agents-list.handler", () => {
     });
   });
 
+  it("deduplicates repeated registry identifiers", async () => {
+    const handler = new PublicAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => createAgentWithConfig(id, { name: "Support Agent" }),
+      getAllAgentIds: () => ["support-agent", "support-agent"],
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/agents", { method: "GET" }),
+      createCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(await result.response.json(), {
+      agents: [{ id: "support-agent", name: "Support Agent", description: null }],
+    });
+  });
+
   it("returns an empty list when the project exposes no agents", async () => {
     const handler = new PublicAgentsListHandler({
       ensureProjectDiscovery: async () => {},

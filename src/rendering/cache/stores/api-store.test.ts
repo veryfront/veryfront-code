@@ -2,6 +2,34 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { APICacheStore } from "./api-store.ts";
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
+
+function createMemoryBackend(): CacheBackend & { values: Map<string, string> } {
+  const values = new Map<string, string>();
+  return {
+    type: "memory",
+    values,
+    get: (key) => Promise.resolve(values.get(key) ?? null),
+    set: (key, value) => {
+      values.set(key, value);
+      return Promise.resolve();
+    },
+    del: (key) => {
+      values.delete(key);
+      return Promise.resolve();
+    },
+    delByPattern: (pattern) => {
+      const prefix = pattern.endsWith("*") ? pattern.slice(0, -1) : pattern;
+      let deleted = 0;
+      for (const key of [...values.keys()]) {
+        if (!key.startsWith(prefix)) continue;
+        values.delete(key);
+        deleted++;
+      }
+      return Promise.resolve(deleted);
+    },
+  } as CacheBackend & { values: Map<string, string> };
+}
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -75,6 +103,48 @@ describe("rendering/cache/stores/api-store", () => {
     it("should delete without error", async () => {
       const store = new APICacheStore();
       await store.delete("some-key");
+    });
+  });
+
+  describe("distributed lifecycle", () => {
+    it("clears both local and distributed entries", async () => {
+      const backend = createMemoryBackend();
+      const store = new APICacheStore({
+        enableLocalCache: false,
+        backendFactory: () => Promise.resolve(backend),
+      });
+      const payload = {
+        result: { html: "<p>distributed</p>", frontmatter: {}, stream: null },
+        storedAt: Date.now(),
+      } as any;
+
+      await store.set("entry", payload);
+      assertEquals(backend.values.size, 1);
+      await store.clear();
+      assertEquals(backend.values.size, 0);
+    });
+
+    it("retries backend initialization after a transient failure", async () => {
+      const backend = createMemoryBackend();
+      let attempts = 0;
+      const store = new APICacheStore({
+        enableLocalCache: false,
+        backendFactory: () => {
+          attempts++;
+          return attempts === 1
+            ? Promise.reject(new Error("temporary initialization failure"))
+            : Promise.resolve(backend);
+        },
+      });
+      const payload = {
+        result: { html: "<p>retry</p>", frontmatter: {}, stream: null },
+        storedAt: Date.now(),
+      } as any;
+
+      assertEquals(await store.get("missing"), undefined);
+      await store.set("entry", payload);
+      assertEquals(attempts, 2);
+      assertEquals(backend.values.size, 1);
     });
   });
 

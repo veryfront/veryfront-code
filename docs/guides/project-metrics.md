@@ -26,6 +26,9 @@ metrics.counter("vf_signup_total", 1, {
 
 metrics.histogram("vf_checkout_duration_seconds", 1.24, {
   step: "payment",
+}, {
+  description: "Time spent completing checkout",
+  unit: "s",
 });
 
 metrics.gauge("vf_queue_depth", 42, {
@@ -36,6 +39,11 @@ metrics.gauge("vf_queue_depth", 42, {
 Use counters for totals, histograms for durations and sizes, and gauges for
 current values. Prefer stable `vf_`-prefixed metric names so they are easy to
 discover in Studio.
+
+Metric names must start with an ASCII letter. The remaining characters can be
+ASCII letters, digits, underscores, dots, slashes, or hyphens, up to 255
+characters total. Counter increments must be non-negative. Counter, histogram,
+gauge, and numeric attribute values must be finite.
 
 When code runs inside Veryfront, the SDK adds request-scoped labels for
 `project_id`, `project_slug`, `environment`, and `branch` for preview requests.
@@ -86,6 +94,19 @@ Use a small allowlist per metric. Do not put tenant identity, project identity,
 credentials, or personally identifiable data into user-supplied labels.
 Project, environment, and preview branch labels are injected by the platform.
 
+Each measurement accepts at most 128 user-supplied attributes. Attribute names
+can contain at most 255 UTF-8 bytes. String values can contain at most 4,096
+UTF-8 bytes, and all user-supplied attribute names and values together can
+contain at most 16,384 UTF-8 bytes. Null and undefined values are omitted.
+Invalid measurements throw a `TypeError` or `RangeError` before they reach the
+exporter.
+
+Veryfront bounds instrument, series, queue, and export concurrency state. A
+gauge keeps at most 2,000 series per instrument and uses an
+`otel.metric.overflow=true` series after that threshold. The overflow series
+retains platform-owned project and environment labels. Treat metrics as
+best-effort operational signals, not as a durable business event ledger.
+
 ## Relationship to OpenTelemetry
 
 `veryfront/metrics` writes to the active OpenTelemetry metrics API. Export
@@ -98,6 +119,18 @@ routing is owned by the runtime process:
 - Local or customer-cloud deployments can use any Prometheus-compatible backend
   that the runtime config points at; Studio should treat the backend as an
   implementation detail.
+
+The direct OTLP path uses HTTP/JSON. A signal-specific
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is used as configured. The generic
+`OTEL_EXPORTER_OTLP_ENDPOINT` receives the `/v1/metrics` suffix. The exporter
+supports `none` and `gzip` compression, applies the configured OTLP metrics
+timeout, limits concurrent requests, and retries network failures plus HTTP
+429, 502, 503, and 504 responses with bounded exponential backoff. An explicit
+unsupported protocol or compression setting defers to the installed
+OpenTelemetry SDK instead of sending a mismatched payload.
+
+During graceful production shutdown, Veryfront stops accepting new metric
+samples and flushes queued samples within the remaining cleanup deadline.
 
 Regular OpenTelemetry traces and metrics describe runtime behavior. Project
 metrics describe product, app, and eval behavior inside one project.

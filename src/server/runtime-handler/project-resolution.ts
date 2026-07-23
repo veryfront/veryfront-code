@@ -101,15 +101,9 @@ export function extractRequestHeaders(
   const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
-  // The WebSocket endpoint uses this query parameter for its existing HMR
-  // handshake. Other routes must not let client-controlled query/header values
-  // override the host-derived environment unless a trusted proxy supplied them.
-  const websocketEnvironment = url.pathname === "/_ws"
-    ? url.searchParams.get("x-environment") ?? undefined
-    : undefined;
   const environment = (proxyTrusted ?? trustForwardedHeaders())
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
-    : websocketEnvironment;
+    : undefined;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
@@ -212,9 +206,7 @@ export async function resolveProject(
     const baseUrl = opts.config.fs.veryfront.apiBaseUrl ?? "https://api.veryfront.com";
 
     if (effectiveToken) {
-      logger.debug("Custom domain detected, looking up project", {
-        host,
-      });
+      logger.debug("Custom domain detected, looking up project");
 
       const lookupResult = await withSpan(
         SpanNames.DOMAIN_LOOKUP,
@@ -223,7 +215,7 @@ export async function resolveProject(
             apiBaseUrl: baseUrl,
             apiToken: effectiveToken,
           }),
-        { "domain.host": host },
+        { "domain.lookup_kind": "custom" },
       );
 
       if (lookupResult) {
@@ -235,13 +227,10 @@ export async function resolveProject(
         if (!proxyEnv) proxyEnv = deps.getEnvironmentType(lookupResult);
 
         logger.debug("Domain lookup successful", {
-          domain: host,
-          projectSlug: lookupResult.project_slug,
-          projectId: lookupResult.project_id,
           environment: proxyEnv,
         });
       } else {
-        logger.warn("No project found for domain", { host });
+        logger.warn("No project found for custom domain");
       }
     }
   }
@@ -270,7 +259,7 @@ export async function resolveProject(
             apiBaseUrl: baseUrl,
             apiToken: effectiveToken,
           }),
-        { "domain.host": host, "domain.project_slug": projectSlug },
+        { "domain.lookup_kind": "release" },
       );
 
       if (lookupResult?.release_id) {
@@ -279,11 +268,7 @@ export async function resolveProject(
         environmentName = environmentName ?? lookupResult.environment?.name;
         proxyEnv = "production";
 
-        logger.debug("Veryfront domain release lookup successful", {
-          projectSlug,
-          releaseId,
-          projectId,
-        });
+        logger.debug("Veryfront domain release lookup successful");
       }
     }
   }

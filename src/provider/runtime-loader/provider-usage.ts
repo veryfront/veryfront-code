@@ -10,27 +10,125 @@ export function readGatewayBillingMode(value: unknown): GatewayBillingMode | und
 
 /** Public API contract for runtime usage. */
 export type RuntimeUsage = {
+  /** Input tokens consumed by the request. */
   inputTokens?: number;
+  /** Output tokens produced by the request. */
   outputTokens?: number;
+  /** Total tokens reported for the request. */
   totalTokens?: number;
+  /** Input tokens written to a provider cache. */
   cacheCreationInputTokens?: number;
+  /** Input tokens read from a provider cache. */
   cacheReadInputTokens?: number;
+  /** Output tokens used for model reasoning. */
   reasoningTokens?: number;
+  /** Input tokens billable by the gateway. */
   billableInputTokens?: number;
+  /** Output tokens billable by the gateway. */
   billableOutputTokens?: number;
+  /** Total request cost in US dollars. */
+  costUsd?: number;
+  /** Total upstream provider cost in US dollars. */
   providerCostUsd?: number;
+  /** Upstream input-token cost in US dollars. */
   providerInputCostUsd?: number;
+  /** Upstream output-token cost in US dollars. */
   providerOutputCostUsd?: number;
+  /** Total Veryfront charge in US dollars. */
   veryfrontChargeUsd?: number;
+  /** Veryfront input-token charge in US dollars. */
   veryfrontInputChargeUsd?: number;
+  /** Veryfront output-token charge in US dollars. */
   veryfrontOutputChargeUsd?: number;
+  /** Final amount billed by Veryfront in US dollars. */
   veryfrontBilledUsd?: number;
+  /** Usage cost expressed in Veryfront credits. */
   costCredits?: number;
+  /** Source and completeness of the cost metadata. */
   costSource?: "gateway" | "missing" | "partial";
+  /** Gateway settlement mode for the request. */
   billingMode?: GatewayBillingMode;
+  /** Completeness of the captured usage metadata. */
   usageCaptureStatus?: "complete" | "partial" | "missing";
 };
 
+function readTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function readNonNegativeFinite(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Validate and snapshot provider usage metadata. */
+export function normalizeRuntimeUsage(value: RuntimeUsage | undefined): RuntimeUsage | undefined {
+  if (!value) return undefined;
+  const usage = readRecord(value);
+  if (!usage) return undefined;
+  const normalized: RuntimeUsage = {
+    inputTokens: readTokenCount(usage.inputTokens),
+    outputTokens: readTokenCount(usage.outputTokens),
+    totalTokens: readTokenCount(usage.totalTokens),
+    cacheCreationInputTokens: readTokenCount(usage.cacheCreationInputTokens),
+    cacheReadInputTokens: readTokenCount(usage.cacheReadInputTokens),
+    reasoningTokens: readTokenCount(usage.reasoningTokens),
+    billableInputTokens: readTokenCount(usage.billableInputTokens),
+    billableOutputTokens: readTokenCount(usage.billableOutputTokens),
+    costUsd: readNonNegativeFinite(usage.costUsd),
+    providerCostUsd: readNonNegativeFinite(usage.providerCostUsd),
+    providerInputCostUsd: readNonNegativeFinite(usage.providerInputCostUsd),
+    providerOutputCostUsd: readNonNegativeFinite(usage.providerOutputCostUsd),
+    veryfrontChargeUsd: readNonNegativeFinite(usage.veryfrontChargeUsd),
+    veryfrontInputChargeUsd: readNonNegativeFinite(usage.veryfrontInputChargeUsd),
+    veryfrontOutputChargeUsd: readNonNegativeFinite(usage.veryfrontOutputChargeUsd),
+    veryfrontBilledUsd: readNonNegativeFinite(usage.veryfrontBilledUsd),
+    costCredits: readNonNegativeFinite(usage.costCredits),
+    costSource: usage.costSource === "gateway" || usage.costSource === "missing" ||
+        usage.costSource === "partial"
+      ? usage.costSource
+      : undefined,
+    billingMode: readGatewayBillingMode(usage.billingMode),
+    usageCaptureStatus: usage.usageCaptureStatus === "complete" ||
+        usage.usageCaptureStatus === "partial" || usage.usageCaptureStatus === "missing"
+      ? usage.usageCaptureStatus
+      : undefined,
+  };
+  for (const key of Object.keys(normalized) as Array<keyof RuntimeUsage>) {
+    if (normalized[key] === undefined) delete normalized[key];
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function extractGatewayUsage(usage: Record<string, unknown>): RuntimeUsage {
+  const veryfront = readRecord(usage.veryfront);
+  if (!veryfront) return {};
+
+  return normalizeRuntimeUsage({
+    billableInputTokens: readTokenCount(veryfront.billable_input_tokens),
+    billableOutputTokens: readTokenCount(veryfront.billable_output_tokens),
+    costUsd: readNonNegativeFinite(veryfront.cost_usd),
+    providerInputCostUsd: readNonNegativeFinite(veryfront.provider_input_cost_usd),
+    providerOutputCostUsd: readNonNegativeFinite(veryfront.provider_output_cost_usd),
+    providerCostUsd: readNonNegativeFinite(veryfront.provider_cost_usd),
+    veryfrontInputChargeUsd: readNonNegativeFinite(veryfront.veryfront_input_charge_usd),
+    veryfrontOutputChargeUsd: readNonNegativeFinite(veryfront.veryfront_output_charge_usd),
+    veryfrontChargeUsd: readNonNegativeFinite(veryfront.veryfront_charge_usd),
+    veryfrontBilledUsd: readNonNegativeFinite(veryfront.veryfront_billed_usd),
+    costCredits: readNonNegativeFinite(veryfront.cost_credits),
+    costSource: veryfront.cost_source === "gateway" || veryfront.cost_source === "missing" ||
+        veryfront.cost_source === "partial"
+      ? veryfront.cost_source
+      : undefined,
+    billingMode: readGatewayBillingMode(veryfront.billing_mode),
+    usageCaptureStatus: veryfront.usage_capture_status === "complete" ||
+        veryfront.usage_capture_status === "partial" ||
+        veryfront.usage_capture_status === "missing"
+      ? veryfront.usage_capture_status
+      : undefined,
+  }) ?? {};
+}
+
+/** Extract normalized token and gateway usage from an Anthropic response payload. */
 export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usage);
@@ -38,23 +136,24 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
     return undefined;
   }
 
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  const cacheReadInputTokens = usage.cache_read_input_tokens;
+  const inputTokens = readTokenCount(usage.input_tokens);
+  const outputTokens = readTokenCount(usage.output_tokens);
+  const cacheCreationInputTokens = readTokenCount(usage.cache_creation_input_tokens);
+  const cacheReadInputTokens = readTokenCount(usage.cache_read_input_tokens);
 
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
+  return normalizeRuntimeUsage({
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
       : undefined,
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
-  };
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...extractGatewayUsage(usage),
+  });
 }
 
+/** Extract normalized token and gateway usage from a Google response payload. */
 export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usageMetadata);
@@ -62,23 +161,25 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
     return undefined;
   }
 
-  const inputTokens = usage.promptTokenCount;
-  const outputTokens = usage.candidatesTokenCount;
-  const totalTokens = usage.totalTokenCount;
-  const cachedContentTokenCount = usage.cachedContentTokenCount;
-  const thoughtsTokenCount = usage.thoughtsTokenCount;
+  const inputTokens = readTokenCount(usage.promptTokenCount);
+  const outputTokens = readTokenCount(usage.candidatesTokenCount);
+  const totalTokens = readTokenCount(usage.totalTokenCount);
+  const cachedContentTokenCount = readTokenCount(usage.cachedContentTokenCount);
+  const thoughtsTokenCount = readTokenCount(usage.thoughtsTokenCount);
 
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedContentTokenCount === "number"
+  return normalizeRuntimeUsage({
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedContentTokenCount !== undefined
       ? { cacheReadInputTokens: cachedContentTokenCount }
       : {}),
-    ...(typeof thoughtsTokenCount === "number" ? { reasoningTokens: thoughtsTokenCount } : {}),
-  };
+    ...(thoughtsTokenCount !== undefined ? { reasoningTokens: thoughtsTokenCount } : {}),
+    ...extractGatewayUsage(usage),
+  });
 }
 
+/** Extract normalized token and gateway usage from an OpenAI chat response payload. */
 export function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
   const record = readRecord(payload);
   const usage = readRecord(record?.usage);
@@ -86,21 +187,22 @@ export function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
     return undefined;
   }
 
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
+  const inputTokens = readTokenCount(usage.prompt_tokens);
+  const outputTokens = readTokenCount(usage.completion_tokens);
+  const totalTokens = readTokenCount(usage.total_tokens);
   const promptTokensDetails = readRecord(usage.prompt_tokens_details);
-  const cachedTokens = promptTokensDetails?.cached_tokens;
+  const cachedTokens = readTokenCount(promptTokensDetails?.cached_tokens);
   const completionTokensDetails = readRecord(usage.completion_tokens_details);
-  const reasoningTokens = completionTokensDetails?.reasoning_tokens;
+  const reasoningTokens = readTokenCount(completionTokensDetails?.reasoning_tokens);
 
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-  };
+  return normalizeRuntimeUsage({
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cachedTokens !== undefined ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...extractGatewayUsage(usage),
+  });
 }
 
 /**
@@ -117,25 +219,25 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
   const usage = readRecord(responseRecord?.usage) ?? readRecord(record?.usage);
   if (!usage) return undefined;
 
-  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-  const totalTokens = typeof usage.total_tokens === "number"
-    ? usage.total_tokens
-    : (inputTokens !== undefined || outputTokens !== undefined
+  const inputTokens = readTokenCount(usage.input_tokens);
+  const outputTokens = readTokenCount(usage.output_tokens);
+  const totalTokens = readTokenCount(usage.total_tokens) ??
+    (inputTokens !== undefined || outputTokens !== undefined
       ? (inputTokens ?? 0) + (outputTokens ?? 0)
       : undefined);
   const inputDetails = readRecord(usage.input_tokens_details);
-  const cachedTokens = inputDetails?.cached_tokens;
+  const cachedTokens = readTokenCount(inputDetails?.cached_tokens);
   const outputDetails = readRecord(usage.output_tokens_details);
-  const reasoningTokens = outputDetails?.reasoning_tokens;
+  const reasoningTokens = readTokenCount(outputDetails?.reasoning_tokens);
 
-  return {
+  return normalizeRuntimeUsage({
     inputTokens,
     outputTokens,
     totalTokens,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-  };
+    ...(cachedTokens !== undefined ? { cacheReadInputTokens: cachedTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...extractGatewayUsage(usage),
+  });
 }
 
 /** Merge provider usage counters. */
@@ -143,13 +245,10 @@ export function mergeUsage(
   current: RuntimeUsage | undefined,
   next: RuntimeUsage | undefined,
 ): RuntimeUsage | undefined {
-  if (!current) {
-    return next;
-  }
-
-  if (!next) {
-    return current;
-  }
+  current = normalizeRuntimeUsage(current);
+  next = normalizeRuntimeUsage(next);
+  if (!current) return next;
+  if (!next) return current;
 
   const inputTokens = next.inputTokens ?? current.inputTokens;
   const outputTokens = next.outputTokens ?? current.outputTokens;
@@ -159,6 +258,7 @@ export function mergeUsage(
   const reasoningTokens = next.reasoningTokens ?? current.reasoningTokens;
   const billableInputTokens = next.billableInputTokens ?? current.billableInputTokens;
   const billableOutputTokens = next.billableOutputTokens ?? current.billableOutputTokens;
+  const costUsd = next.costUsd ?? current.costUsd;
   const providerCostUsd = next.providerCostUsd ?? current.providerCostUsd;
   const providerInputCostUsd = next.providerInputCostUsd ?? current.providerInputCostUsd;
   const providerOutputCostUsd = next.providerOutputCostUsd ?? current.providerOutputCostUsd;
@@ -181,20 +281,23 @@ export function mergeUsage(
   // the sum would discard those, undercounting usage. Take the larger of the
   // provider total and the recomputed sum so we never undercount.
   const reportedTotal = next.totalTokens ?? current.totalTokens;
-  const recomputedTotal = (inputTokens ?? 0) + (outputTokens ?? 0);
+  const recomputedTotal = inputTokens !== undefined || outputTokens !== undefined
+    ? (inputTokens ?? 0) + (outputTokens ?? 0)
+    : undefined;
   const totalTokens = reportedTotal !== undefined
-    ? Math.max(reportedTotal, recomputedTotal)
+    ? Math.max(reportedTotal, recomputedTotal ?? 0)
     : recomputedTotal;
 
   return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
     ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
     ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
     ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),

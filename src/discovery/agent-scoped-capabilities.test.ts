@@ -1,7 +1,7 @@
 /**
  * Directory-agent discovery tests: colocated capabilities register with owner
  * metadata (pure registration), and the owner-aware resolver keeps agents
- * isolated — including coordinators from their delegates (plan tests 14, 15).
+ * isolated, including coordinators from their delegates (plan tests 14, 15).
  */
 
 import "#veryfront/schemas/_test-setup.ts";
@@ -25,6 +25,9 @@ function emptyResult(): DiscoveryResult {
     prompts: new Map(),
     workflows: new Map(),
     tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
+    evals: new Map(),
     errors: [],
   };
 }
@@ -92,6 +95,8 @@ Deno.test("directory and flat agents discover side by side with owned skills reg
     assertEquals(own?.shortName, "researcher");
 
     const nested = skillRegistry.get("researcher--cite");
+    assertEquals(nested?.id, "researcher--cite");
+    assertEquals(nested?.metadata.name, "cite");
     assertEquals(nested?.ownerAgentId, "researcher");
     assertEquals(nested?.shortName, "cite");
   } finally {
@@ -214,6 +219,39 @@ Deno.test("agent ids that sanitize to the same namespace report a collision erro
   }
 });
 
+Deno.test("capability namespace collisions are detected across configured agent roots", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistry.clearAll();
+  try {
+    for (const [directory, id] of [["agents-a", "a.b"], ["agents-b", "a_b"]] as const) {
+      const agentRoot = `${root}/${directory}/${id}`;
+      await Deno.mkdir(`${agentRoot}/skills/cite`, { recursive: true });
+      await Deno.writeTextFile(
+        `${agentRoot}/AGENT.md`,
+        `---\nname: ${id}\n---\nAgent ${id}.\n`,
+      );
+      await Deno.writeTextFile(
+        `${agentRoot}/skills/cite/SKILL.md`,
+        `---\nname: cite\ndescription: Cite sources\n---\nCite.\n`,
+      );
+    }
+
+    const result = emptyResult();
+    await discoverRuntimeAgentMarkdownDefinitions(`${root}/agents-a`, result, context);
+    await discoverRuntimeAgentMarkdownDefinitions(`${root}/agents-b`, result, context);
+
+    const collisions = result.errors.filter((entry) =>
+      String(entry.error).includes("shares the sanitized capability namespace")
+    );
+    assertEquals(collisions.length, 1);
+    assertEquals(skillRegistry.get("a_b--cite")?.ownerAgentId, "a.b");
+  } finally {
+    skillRegistry.clearAll();
+    cleanupAgents(["a.b", "a_b"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // ── Full-pipeline regression (review finding: discoverAll wiped colocated skills) ──
 
 import { discoverAll } from "./index.ts";
@@ -223,7 +261,7 @@ Deno.test("discoverAll preserves directory-agent colocated skills through the sk
   skillRegistry.clearAll();
   try {
     await writeFixtureProject(root);
-    // A global skill whose id shadows researcher's "cite" short name —
+    // A global skill whose id shadows researcher's "cite" short name.
     // discovered through the real pipeline (skills before agents), so the
     // shadow diagnostic must fire without manual pre-registration.
     await Deno.mkdir(`${root}/skills/cite`, { recursive: true });
@@ -273,7 +311,7 @@ import { executeTool } from "#veryfront/tool";
 Deno.test({
   name: "discoverAll loads colocated tools/*.ts with owner metadata and gates execution",
   // importModule transpiles via esbuild, which keeps a warm child process
-  // alive across tests and trips Deno's op/resource sanitizers — same reason
+  // alive across tests and trips Deno's op/resource sanitizers. This is the same reason
   // src/discovery/transpiler.test.ts opts out (tracked in the lint baseline).
   sanitizeOps: false,
   sanitizeResources: false,
@@ -296,9 +334,16 @@ Deno.test({
   inputSchema: { type: "object", properties: {} },
   execute: () => Promise.resolve({ ok: true, paper: "attention-is-all-you-need" }),
 };
+export const zzConflictingFetchPaper = {
+  id: "fetch-paper",
+  type: "function",
+  description: "Conflicting export in the same module",
+  inputSchema: { type: "object", properties: {} },
+  execute: () => Promise.resolve({ ok: false, sameModuleDupe: true }),
+};
 `,
       );
-      // A second module exporting the same explicit short name — must be
+      // A second module exporting the same explicit short name must be
       // reported at discovery instead of silently dropped (sorted after
       // fetch-paper.ts, so the first registration wins).
       await Deno.writeTextFile(
@@ -317,7 +362,7 @@ Deno.test({
       const duplicateErrors = result.errors.filter((entry) =>
         String(entry.error).includes('Duplicate colocated tool "fetch-paper"')
       );
-      assertEquals(duplicateErrors.length, 1);
+      assertEquals(duplicateErrors.length, 2);
       assertEquals(
         result.errors.filter((entry) => !duplicateErrors.includes(entry)),
         [],
@@ -341,6 +386,34 @@ Deno.test({
         assertEquals(String(error).includes("not found"), true);
       }
       assertEquals(rejected, true);
+
+      // A colocated module initializer runs inside a registry savepoint. Even
+      // when it mutates a project registry before throwing, no hidden item can
+      // survive the failed import and the rest of discovery still completes.
+      await Deno.writeTextFile(
+        `${root}/agents/researcher/tools/broken.ts`,
+        [
+          'import { tool, toolRegistry } from "veryfront/tool";',
+          "const leaked = tool({",
+          '  id: "colocated-initializer-leak",',
+          '  description: "Must not survive failed discovery",',
+          '  inputSchema: { type: "object", properties: {} },',
+          "  execute: async () => null,",
+          "});",
+          "toolRegistry.register(leaked.id, leaked);",
+          'throw new Error("initializer failed");',
+          "export default leaked;",
+        ].join("\n"),
+      );
+
+      const failedResult = await discoverAll({ baseDir: root });
+      assertEquals(toolRegistry.has("colocated-initializer-leak"), false);
+      assertEquals(
+        failedResult.errors.filter((entry) =>
+          entry.error.message === "Discovery module initialization failed"
+        ).length,
+        2,
+      );
     } finally {
       skillRegistry.clearAll();
       clearMCPRegistry();

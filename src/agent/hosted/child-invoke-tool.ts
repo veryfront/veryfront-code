@@ -11,22 +11,35 @@ import { shouldBlockHostedChildSameTurnRetry } from "./child-status.ts";
 
 /** Public API contract for hosted child invoke failure. */
 export interface HostedChildInvokeFailure {
+  /** Terminal error code value. */
   terminalErrorCode: string;
+  /** Terminal error message value. */
   terminalErrorMessage: string;
 }
 
 /** Options accepted by create hosted child invoke tool. */
 export interface CreateHostedChildInvokeToolOptions<TInput, TResult> {
+  /** Resource identifier. */
   id?: string;
+  /** Input schema value. */
   inputSchema: ToolConfig<TInput, TResult>["inputSchema"];
+  /** Additional description parts value. */
   additionalDescriptionParts?: readonly string[];
+  /** Callback that handles execute. */
   execute: (input: TInput, context?: ToolExecutionContext) => Promise<TResult> | TResult;
+  /** Callback that handles build failure result. */
   buildFailureResult: (failure: HostedChildInvokeFailure) => TResult;
+  /** Callback that handles decorate result. */
   decorateResult?: (result: TResult) => TResult;
+  /** Callback that handles should block same turn retry. */
   shouldBlockSameTurnRetry?: (result: TResult) => boolean;
+  /** Retry blocked error code value. */
   retryBlockedErrorCode?: string;
+  /** Retry blocked message value. */
   retryBlockedMessage?: string;
+  /** Starter intent root ownership error code value. */
   starterIntentRootOwnershipErrorCode?: string;
+  /** Starter intent root ownership message value. */
   starterIntentRootOwnershipMessage?: string;
 }
 

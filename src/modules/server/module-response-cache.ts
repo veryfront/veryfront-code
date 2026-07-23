@@ -4,10 +4,29 @@ import { hashString } from "#veryfront/cache/hash.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_ENTRIES = 10_000;
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const RELEASE_MODULE_RESPONSE_DISTRIBUTED_TTL_SEC = TRANSFORM_DISTRIBUTED_TTL_SEC;
+const MAX_CACHE_KEY_LENGTH = 8_192;
+const MAX_IDENTITY_LENGTH = 4_096;
+const MAX_RESPONSE_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_DISTRIBUTED_ENTRY_BYTES = MAX_RESPONSE_BODY_BYTES + 64 * 1024;
+const MAX_RESPONSE_HEADERS = 64;
+const MAX_HEADER_VALUE_LENGTH = 8_192;
+const MAX_RESPONSE_HEADER_BYTES = 64 * 1024;
+const CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:./-]+$/;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const FORBIDDEN_RESPONSE_HEADERS = new Set([
+  "connection",
+  "content-length",
+  "location",
+  "proxy-authenticate",
+  "set-cookie",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 export interface ReleaseModuleResponseCacheEntry {
   body: string;
@@ -46,26 +65,63 @@ const getDistributedModuleResponseCache = createDistributedCacheAccessor(
 
 let injectedDistributedCache: CacheBackend | null | undefined;
 
-function parseDistributedEntry(raw: string): ReleaseModuleResponseCacheEntry | null {
-  try {
-    const parsed = JSON.parse(raw) as Partial<ReleaseModuleResponseCacheEntry>;
-    if (typeof parsed.body !== "string") return null;
-    if (typeof parsed.status !== "number") return null;
-    if (
-      !Array.isArray(parsed.headers) ||
-      !parsed.headers.every((entry) =>
-        Array.isArray(entry) &&
-        entry.length === 2 &&
-        typeof entry[0] === "string" &&
-        typeof entry[1] === "string"
-      )
-    ) return null;
+function isValidCacheKey(cacheKey: string): boolean {
+  return cacheKey.length > 0 && cacheKey.length <= MAX_CACHE_KEY_LENGTH &&
+    CACHE_KEY_PATTERN.test(cacheKey);
+}
 
-    return {
-      body: parsed.body,
-      status: parsed.status,
-      headers: parsed.headers as Array<[string, string]>,
-    };
+function cloneEntry(entry: ReleaseModuleResponseCacheEntry): ReleaseModuleResponseCacheEntry {
+  return {
+    body: entry.body,
+    status: entry.status,
+    headers: entry.headers.map(([name, value]) => [name, value]),
+  };
+}
+
+function validateEntry(value: unknown): ReleaseModuleResponseCacheEntry | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const parsed = value as Partial<ReleaseModuleResponseCacheEntry>;
+  if (
+    typeof parsed.body !== "string" ||
+    new TextEncoder().encode(parsed.body).byteLength > MAX_RESPONSE_BODY_BYTES ||
+    !Number.isSafeInteger(parsed.status) || parsed.status! < 100 || parsed.status! > 599 ||
+    !Array.isArray(parsed.headers) || parsed.headers.length > MAX_RESPONSE_HEADERS
+  ) {
+    return null;
+  }
+
+  const headers: Array<[string, string]> = [];
+  const seenHeaderNames = new Set<string>();
+  let headerBytes = 0;
+  for (const entry of parsed.headers) {
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
+    const [name, headerValue] = entry;
+    if (typeof name !== "string" || typeof headerValue !== "string") return null;
+    const normalizedName = name.toLowerCase();
+    if (
+      !HEADER_NAME_PATTERN.test(name) || FORBIDDEN_RESPONSE_HEADERS.has(normalizedName) ||
+      seenHeaderNames.has(normalizedName) ||
+      headerValue.length > MAX_HEADER_VALUE_LENGTH ||
+      hasUnsafeControlCharacters(headerValue)
+    ) {
+      return null;
+    }
+    headerBytes += new TextEncoder().encode(name).byteLength +
+      new TextEncoder().encode(headerValue).byteLength;
+    if (headerBytes > MAX_RESPONSE_HEADER_BYTES) return null;
+    seenHeaderNames.add(normalizedName);
+    headers.push([name, headerValue]);
+  }
+
+  if ([204, 205, 304].includes(parsed.status!) && parsed.body.length > 0) return null;
+
+  return { body: parsed.body, status: parsed.status!, headers };
+}
+
+function parseDistributedEntry(raw: string): ReleaseModuleResponseCacheEntry | null {
+  if (new TextEncoder().encode(raw).byteLength > MAX_DISTRIBUTED_ENTRY_BYTES) return null;
+  try {
+    return validateEntry(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -99,6 +155,43 @@ function sanitizeModulePathForCacheKey(modulePath: string): string {
 export function buildReleaseModuleResponseCacheKey(
   options: ReleaseModuleResponseCacheKeyOptions,
 ): string {
+  const requiredIdentities = [
+    options.projectIdentity,
+    options.projectDir,
+    options.releaseId,
+    options.runtimeVersion,
+    options.modulePath,
+  ];
+  if (requiredIdentities.some((identity) => identity.length === 0)) {
+    throw new RangeError("Invalid release module response cache identity");
+  }
+  for (
+    const identity of [
+      options.projectIdentity,
+      options.projectDir,
+      options.projectSlug ?? "",
+      options.branch ?? "",
+      options.releaseId,
+      options.runtimeVersion,
+      options.reactVersion ?? "",
+      options.modulePath,
+    ]
+  ) {
+    if (
+      identity.length > MAX_IDENTITY_LENGTH ||
+      hasUnsafeControlCharacters(identity)
+    ) {
+      throw new RangeError("Invalid release module response cache identity");
+    }
+  }
+  if (
+    options.releaseDependencyManifestVersion != null &&
+    (!Number.isSafeInteger(options.releaseDependencyManifestVersion) ||
+      options.releaseDependencyManifestVersion < 0)
+  ) {
+    throw new RangeError("Invalid release dependency manifest version");
+  }
+
   const projectScope = [
     options.projectIdentity,
     options.projectDir,
@@ -108,25 +201,28 @@ export function buildReleaseModuleResponseCacheKey(
 
   // Fields are joined with `:` (an allowed key character) rather than a NUL
   // byte, which the distributed cache backend's key validator also rejects.
-  return [
+  const key = [
     "module-server-release-response",
     hashString(projectScope),
-    options.releaseId,
-    options.runtimeVersion,
-    options.reactVersion ?? "",
+    hashString(options.releaseId),
+    hashString(options.runtimeVersion),
+    options.reactVersion ? hashString(options.reactVersion) : "default",
     options.releaseDependencyManifestVersion == null
       ? ""
       : `release-dependency-manifest:${options.releaseDependencyManifestVersion}`,
     sanitizeModulePathForCacheKey(options.modulePath),
   ].join(":");
+  if (!isValidCacheKey(key)) throw new RangeError("Invalid release module response cache key");
+  return key;
 }
 
 export async function getReleaseModuleResponse(
   cacheKey: string,
 ): Promise<ReleaseModuleResponseCacheHit | undefined> {
+  if (!isValidCacheKey(cacheKey)) return undefined;
   const localEntry = releaseModuleResponseCache.get(cacheKey);
   if (localEntry) {
-    return { entry: localEntry, source: "memory" };
+    return { entry: cloneEntry(localEntry), source: "memory" };
   }
 
   const distributedCache = await getDistributedCache();
@@ -139,8 +235,8 @@ export async function getReleaseModuleResponse(
     const entry = parseDistributedEntry(raw);
     if (!entry) return undefined;
 
-    releaseModuleResponseCache.set(cacheKey, entry);
-    return { entry, source: "distributed" };
+    releaseModuleResponseCache.set(cacheKey, cloneEntry(entry));
+    return { entry: cloneEntry(entry), source: "distributed" };
   } catch {
     return undefined;
   }
@@ -150,7 +246,14 @@ export async function rememberReleaseModuleResponse(
   cacheKey: string,
   entry: ReleaseModuleResponseCacheEntry,
 ): Promise<void> {
-  releaseModuleResponseCache.set(cacheKey, entry);
+  if (!isValidCacheKey(cacheKey)) {
+    throw new TypeError("Invalid release module response cache key");
+  }
+  const validatedEntry = validateEntry(entry);
+  if (!validatedEntry) {
+    throw new TypeError("Invalid release module response cache entry");
+  }
+  releaseModuleResponseCache.set(cacheKey, cloneEntry(validatedEntry));
 
   const distributedCache = await getDistributedCache();
   if (!distributedCache) return;
@@ -158,7 +261,7 @@ export async function rememberReleaseModuleResponse(
   try {
     await distributedCache.set(
       cacheKey,
-      JSON.stringify(entry),
+      JSON.stringify(validatedEntry),
       RELEASE_MODULE_RESPONSE_DISTRIBUTED_TTL_SEC,
     );
   } catch {

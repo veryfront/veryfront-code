@@ -152,6 +152,7 @@ export type NodeVeryfrontCloudAgentServiceProcessTarget =
     exit?: (code: number) => never | void;
   };
 
+/** Agent source accepted by the Node Veryfront Cloud service launcher. */
 export type NodeVeryfrontCloudAgentServiceAgentSource = ProjectAgentRuntimeAgentSource;
 
 /** Public API contract for node Veryfront Cloud agent service MCP server. */
@@ -171,7 +172,8 @@ export function veryfrontStudioMcpServer():
   return { kind: "veryfront-studio" };
 }
 
-type AgentServicePathOption = string | URL;
+/** Filesystem path or URL accepted by agent service startup options. */
+export type AgentServicePathOption = string | URL;
 
 /** Options accepted by node Veryfront Cloud agent service. */
 export type NodeVeryfrontCloudAgentServiceOptions = {

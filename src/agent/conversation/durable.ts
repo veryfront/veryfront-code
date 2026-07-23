@@ -103,9 +103,12 @@ const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 
 /** Error shape for conversation run terminal state. */
 export class ConversationRunTerminalStateError extends Error {
+  /** Status. */
   readonly status: TerminalConversationRunStatus;
+  /** Run value. */
   readonly run: ConversationRunProjection;
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(run: ConversationRunProjection, status: TerminalConversationRunStatus) {
     super(`Conversation run ${run.runId} became ${status} before host execution finished`);
     this.name = "ConversationRunTerminalStateError";

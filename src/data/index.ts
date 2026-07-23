@@ -11,6 +11,8 @@ export type {
   DataResult,
   InferGetServerDataProps,
   PageWithData,
+  Redirect,
+  StaticPathEntry,
   StaticPathsResult,
 } from "./types.ts";
 export { DataFetcher, type FetchDataOptions } from "./data-fetcher.ts";

@@ -14,8 +14,32 @@ import {
   getEnvironmentConfig,
   initEnvironmentConfig,
   isEnvironmentConfigInitialized,
+  refreshEnvironmentConfig,
 } from "./environment-config.ts";
 import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { DEFAULT_PORT } from "./defaults.ts";
+
+function withEnvironment(
+  values: Record<string, string | undefined>,
+  run: () => void,
+): void {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, Deno.env.get(key));
+    if (value === undefined) Deno.env.delete(key);
+    else Deno.env.set(key, value);
+  }
+
+  try {
+    run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    }
+  }
+}
 
 describe("EnvironmentConfig", () => {
   beforeEach(_resetEnvironmentConfig);
@@ -65,6 +89,16 @@ describe("EnvironmentConfig", () => {
 
       expect(retrieved).toBe(initialized);
     });
+
+    it("returns an immutable uncached snapshot before environment loading", () => {
+      __resetEnvLoaderForTests();
+      _resetEnvironmentConfig();
+
+      const env = getEnvironmentConfig();
+
+      expect(Object.isFrozen(env)).toBe(true);
+      expect(isEnvironmentConfigInitialized()).toBe(false);
+    });
   });
 
   describe("isEnvironmentConfigInitialized", () => {
@@ -92,6 +126,7 @@ describe("EnvironmentConfig", () => {
       expect(env.debug).toBe(false);
       expect(env.ci).toBe(false);
       expect(env.denoTesting).toBe(false);
+      expect(Object.isFrozen(env)).toBe(true);
     });
 
     it("allows overrides", () => {
@@ -134,6 +169,7 @@ describe("EnvironmentConfig", () => {
       const env = getEnvironmentConfig();
       expect(env.debug).toBe(true);
       expect(env.port).toBe(8888);
+      expect(env.portFromEnv).toBe(true);
     });
 
     it("freezes the overridden env", () => {
@@ -240,6 +276,7 @@ describe("EnvironmentConfig", () => {
         "port",
         "requestTimeoutMs",
         "httpFetchTimeoutMs",
+        "extensionSetupTimeoutMs",
         "ssrMaxConcurrentTransforms",
         "otelEnabled",
         "otelServiceName",
@@ -248,6 +285,9 @@ describe("EnvironmentConfig", () => {
         "otelMetricsEndpoint",
         "otelTracesExporter",
         "otelMetricsExporter",
+        "otelHeaders",
+        "otelTracesHeaders",
+        "otelMetricsHeaders",
         "otelMetricsEnabled",
         "openaiApiKey",
         "openaiBaseUrl",
@@ -268,6 +308,141 @@ describe("EnvironmentConfig", () => {
       for (const prop of expectedProps) {
         expect(prop in env).toBe(true);
       }
+    });
+
+    it("rejects partial, fractional, non-positive, and invalid port values", () => {
+      const invalidPositiveIntegers = [
+        "12px",
+        "1.5",
+        "0",
+        "-1",
+        "1e3",
+        "0x10",
+        "+42",
+        " 42 ",
+      ];
+
+      withEnvironment(
+        {
+          PORT: undefined,
+          REQUEST_TIMEOUT_MS: undefined,
+          VF_HTTP_FETCH_TIMEOUT: undefined,
+          VF_EXTENSION_SETUP_TIMEOUT_MS: undefined,
+          SSR_MAX_CONCURRENT_TRANSFORMS: undefined,
+          V8_MAX_OLD_SPACE_SIZE: undefined,
+        },
+        () => {
+          for (const value of invalidPositiveIntegers) {
+            Deno.env.set("PORT", value);
+            Deno.env.set("REQUEST_TIMEOUT_MS", value);
+            Deno.env.set("VF_HTTP_FETCH_TIMEOUT", value);
+            Deno.env.set("VF_EXTENSION_SETUP_TIMEOUT_MS", value);
+            Deno.env.set("SSR_MAX_CONCURRENT_TRANSFORMS", value);
+            Deno.env.set("V8_MAX_OLD_SPACE_SIZE", value);
+
+            const env = refreshEnvironmentConfig();
+            expect(env.port).toBe(DEFAULT_PORT);
+            expect(env.requestTimeoutMs).toBe(30_000);
+            expect(env.httpFetchTimeoutMs).toBe(30_000);
+            expect(env.extensionSetupTimeoutMs).toBe(30_000);
+            expect(env.ssrMaxConcurrentTransforms).toBe(3);
+            expect(env.v8MaxOldSpaceSize).toBeUndefined();
+          }
+
+          Deno.env.set("PORT", "65536");
+          expect(refreshEnvironmentConfig().port).toBe(DEFAULT_PORT);
+        },
+      );
+    });
+
+    it("accepts conventional truthy flags and respects NO_COLOR presence", () => {
+      withEnvironment(
+        {
+          CI: "true",
+          PROXY_MODE: "true",
+          DENO_TESTING: "yes",
+          VERYFRONT_PERF: "true",
+          VERYFRONT_EXPERIMENTAL_RSC: "yes",
+          VF_DISABLE_LRU_INTERVAL: "true",
+          NO_COLOR: "",
+          FORCE_COLOR: "0",
+        },
+        () => {
+          const env = refreshEnvironmentConfig();
+          expect(env.ci).toBe(true);
+          expect(env.proxyMode).toBe(true);
+          expect(env.denoTesting).toBe(true);
+          expect(env.perfEnabled).toBe(true);
+          expect(env.experimentalRsc).toBe(true);
+          expect(env.disableLruInterval).toBe(true);
+          expect(env.noColor).toBe(true);
+          expect(env.forceColor).toBe(false);
+        },
+      );
+    });
+
+    it("records whether PORT was explicitly configured", () => {
+      withEnvironment({ PORT: undefined }, () => {
+        expect("portFromEnv" in refreshEnvironmentConfig()).toBe(true);
+        expect(
+          (refreshEnvironmentConfig() as EnvironmentConfig & { portFromEnv: boolean }).portFromEnv,
+        )
+          .toBe(false);
+
+        Deno.env.set("PORT", "4321");
+        const configured = refreshEnvironmentConfig() as EnvironmentConfig & {
+          portFromEnv: boolean;
+        };
+        expect(configured.port).toBe(4321);
+        expect(configured.portFromEnv).toBe(true);
+      });
+    });
+
+    it("captures generic and signal-specific OpenTelemetry headers", () => {
+      withEnvironment(
+        {
+          OTEL_EXPORTER_OTLP_HEADERS: "x-shared=<TOKEN>",
+          OTEL_EXPORTER_OTLP_TRACES_HEADERS: "x-traces=<TOKEN>",
+          OTEL_EXPORTER_OTLP_METRICS_HEADERS: "x-metrics=<TOKEN>",
+        },
+        () => {
+          const env = refreshEnvironmentConfig();
+          expect(env.otelHeaders).toBe("x-shared=<TOKEN>");
+          expect(
+            (env as EnvironmentConfig & { otelTracesHeaders?: string }).otelTracesHeaders,
+          ).toBe("x-traces=<TOKEN>");
+          expect(
+            (env as EnvironmentConfig & { otelMetricsHeaders?: string }).otelMetricsHeaders,
+          ).toBe("x-metrics=<TOKEN>");
+        },
+      );
+    });
+
+    it("does not retain project-scoped secrets in the process snapshot", () => {
+      withEnvironment(
+        {
+          VERYFRONT_API_BASE_URL: "https://host.example.test/api",
+          VERYFRONT_API_TOKEN: "<HOST_TOKEN>",
+          OPENAI_API_KEY: "<HOST_OPENAI_KEY>",
+          GITHUB_TOKEN: "<HOST_GITHUB_TOKEN>",
+        },
+        () => {
+          const env = runWithProjectEnv(
+            {
+              VERYFRONT_API_BASE_URL: "https://tenant.example.test/api",
+              VERYFRONT_API_TOKEN: "<PROJECT_TOKEN>",
+              OPENAI_API_KEY: "<PROJECT_OPENAI_KEY>",
+              GITHUB_TOKEN: "<PROJECT_GITHUB_TOKEN>",
+            },
+            refreshEnvironmentConfig,
+          );
+
+          expect(env.apiBaseUrl).toBe("https://host.example.test/api");
+          expect(env.apiToken).toBe("<HOST_TOKEN>");
+          expect(env.openaiApiKey).toBe("<HOST_OPENAI_KEY>");
+          expect(env.githubToken).toBe("<HOST_GITHUB_TOKEN>");
+        },
+      );
     });
   });
 });

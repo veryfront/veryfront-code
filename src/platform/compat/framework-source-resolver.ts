@@ -1,8 +1,8 @@
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { isCompiledBinary } from "#veryfront/utils/platform.ts";
-import { createFileSystem } from "./fs.ts";
+import { createFileSystem, isNotFoundError, realPath } from "./fs.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
 
 /**
@@ -53,6 +53,7 @@ export const DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS = [
 
 export interface FrameworkSourceFileSystem {
   stat(path: string): Promise<FileInfo>;
+  realPath?(path: string): Promise<string>;
 }
 
 export interface FrameworkSourceLookupResult {
@@ -62,6 +63,7 @@ export interface FrameworkSourceLookupResult {
 
 export interface ResolveFrameworkSourcePathOptions {
   fileSystem?: FrameworkSourceFileSystem;
+  realPath?: (path: string) => Promise<string>;
   extraLookupDirs?: string[];
   extensions?: readonly string[];
   includeIndexFallback?: boolean;
@@ -72,6 +74,7 @@ export interface ResolveFrameworkSourcePathOptions {
 export interface ResolveRelativeFrameworkSourceImportOptions {
   fileSystem?: FrameworkSourceFileSystem;
   exists?: (path: string) => Promise<boolean>;
+  realPath?: (path: string) => Promise<string>;
   extensions?: readonly string[];
   /** Override runtime detection, primarily for deterministic tests. */
   compiled?: boolean;
@@ -136,23 +139,110 @@ function expandFrameworkCandidatePaths(
 
 async function findExistingFrameworkCandidate(
   candidatePath: string,
+  allowedLocations: ReadonlyArray<AllowedSourceLocation>,
   options: ResolveRelativeFrameworkSourceImportOptions = {},
 ): Promise<string | null> {
   const fs = options.fileSystem ?? createFileSystem();
+  const resolveRealPath = options.realPath ?? fs.realPath?.bind(fs) ?? realPath;
   const exists = options.exists ?? (async (path: string) => {
     try {
       const stat = await fs.stat(path);
       return stat.isFile;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
     }
   });
 
   for (const candidate of expandFrameworkCandidatePaths(candidatePath, options.compiled)) {
-    if (await exists(candidate)) return candidate;
+    if (!allowedLocations.some((location) => isAllowedSourcePath(location, candidate, false))) {
+      continue;
+    }
+    if (!await exists(candidate)) continue;
+
+    let canonicalCandidate: string;
+    try {
+      canonicalCandidate = await resolveRealPath(candidate);
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
+    }
+
+    if (
+      allowedLocations.some((location) => isAllowedSourcePath(location, canonicalCandidate, true))
+    ) {
+      return canonicalCandidate;
+    }
   }
 
   return null;
+}
+
+interface AllowedSourceLocation {
+  kind: "directory" | "file";
+  lexical: string;
+  canonical: string;
+}
+
+function isAllowedSourcePath(
+  location: AllowedSourceLocation,
+  candidate: string,
+  canonical: boolean,
+): boolean {
+  const allowedPath = canonical ? location.canonical : location.lexical;
+  return location.kind === "directory"
+    ? isWithinDirectory(allowedPath, candidate)
+    : normalize(candidate) === normalize(allowedPath);
+}
+
+async function canonicalizeExistingRoot(
+  path: string,
+  resolveRealPath: (path: string) => Promise<string>,
+): Promise<string | null> {
+  try {
+    return await resolveRealPath(path);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
+function getRelativeSourceRoots(fromSourcePath: string): {
+  primary: string;
+  directories: string[];
+  files: string[];
+} | null {
+  const normalizedPath = fromSourcePath.replaceAll("\\", "/");
+  const embeddedMarker = "/dist/framework-src/";
+  const embeddedIndex = normalizedPath.lastIndexOf(embeddedMarker);
+
+  if (embeddedIndex >= 0) {
+    const frameworkRoot = normalizedPath.slice(0, embeddedIndex);
+    const embeddedRoot = `${frameworkRoot}/dist/framework-src`;
+    return {
+      primary: embeddedRoot,
+      directories: [`${frameworkRoot}/src`, embeddedRoot],
+      files: [
+        `${frameworkRoot}/_dnt.shims.js`,
+        `${frameworkRoot}/_dnt.polyfills.js`,
+      ],
+    };
+  }
+
+  const sourceMarker = "/src/";
+  const sourceIndex = normalizedPath.lastIndexOf(sourceMarker);
+  if (sourceIndex < 0) return null;
+
+  const frameworkRoot = normalizedPath.slice(0, sourceIndex);
+  const sourceRoot = `${frameworkRoot}/src`;
+  return {
+    primary: sourceRoot,
+    directories: [sourceRoot, `${frameworkRoot}/dist/framework-src`],
+    files: [
+      `${frameworkRoot}/_dnt.shims.js`,
+      `${frameworkRoot}/_dnt.polyfills.js`,
+    ],
+  };
 }
 
 export async function resolveFrameworkSourcePath(
@@ -165,6 +255,7 @@ export async function resolveFrameworkSourcePath(
   if (!isSafeFrameworkSourceKey(relativePathWithoutExt)) return null;
 
   const fs = options.fileSystem ?? createFileSystem();
+  const resolveRealPath = options.realPath ?? fs.realPath?.bind(fs) ?? realPath;
   const lookupDirs = getFrameworkSourceLookupDirs(options.extraLookupDirs, options.compiled);
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
   const candidates = [relativePathWithoutExt];
@@ -174,6 +265,9 @@ export async function resolveFrameworkSourcePath(
   }
 
   for (const lookupDir of lookupDirs) {
+    const canonicalLookupDir = await canonicalizeExistingRoot(lookupDir, resolveRealPath);
+    if (!canonicalLookupDir) continue;
+
     for (const candidate of candidates) {
       for (const ext of extensions) {
         const candidatePath = join(lookupDir, candidate + ext);
@@ -184,14 +278,18 @@ export async function resolveFrameworkSourcePath(
 
         try {
           const stat = await fs.stat(candidatePath);
-          if (stat.isFile) {
-            return {
-              path: candidatePath,
-              lookupDir,
-            };
-          }
-        } catch {
-          /* expected: candidate may not exist */
+          if (!stat.isFile) continue;
+
+          const canonicalCandidate = await resolveRealPath(candidatePath);
+          if (!isWithinDirectory(canonicalLookupDir, canonicalCandidate)) continue;
+
+          return {
+            path: canonicalCandidate,
+            lookupDir: canonicalLookupDir,
+          };
+        } catch (error) {
+          if (isNotFoundError(error)) continue;
+          throw error;
         }
       }
     }
@@ -205,20 +303,42 @@ export async function resolveRelativeFrameworkSourceImport(
   fromSourcePath: string,
   options: ResolveRelativeFrameworkSourceImportOptions = {},
 ): Promise<string | null> {
-  const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
-  const fromDir = fromSourcePath.substring(0, fromSourcePath.lastIndexOf("/"));
-  const parts = fromDir.split("/").filter(Boolean);
-  const importParts = specifier.split("/").filter(Boolean);
-
-  for (const part of importParts) {
-    if (part === "..") {
-      parts.pop();
-    } else if (part !== ".") {
-      parts.push(part);
-    }
+  if (
+    (!specifier.startsWith("./") && !specifier.startsWith("../")) ||
+    specifier.includes("\0") || specifier.includes("\\")
+  ) {
+    return null;
   }
 
-  const basePath = "/" + parts.join("/");
+  const sourceRoots = getRelativeSourceRoots(fromSourcePath);
+  if (!sourceRoots) return null;
+
+  const fs = options.fileSystem ?? createFileSystem();
+  const resolveRealPath = options.realPath ?? fs.realPath?.bind(fs) ?? realPath;
+  const allowedLocations: AllowedSourceLocation[] = [];
+  for (const lexicalRoot of sourceRoots.directories) {
+    const canonicalRoot = await canonicalizeExistingRoot(lexicalRoot, resolveRealPath);
+    if (canonicalRoot) {
+      allowedLocations.push({
+        kind: "directory",
+        lexical: lexicalRoot,
+        canonical: canonicalRoot,
+      });
+    }
+  }
+  for (const lexicalFile of sourceRoots.files) {
+    const canonicalFile = await canonicalizeExistingRoot(lexicalFile, resolveRealPath);
+    if (canonicalFile) {
+      allowedLocations.push({ kind: "file", lexical: lexicalFile, canonical: canonicalFile });
+    }
+  }
+  if (allowedLocations.length === 0) return null;
+
+  const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
+  const basePath = normalize(join(dirname(fromSourcePath), specifier));
+  const isAllowedBasePath = isWithinDirectory(sourceRoots.primary, basePath) ||
+    sourceRoots.files.some((path) => normalize(path) === basePath);
+  if (!isAllowedBasePath) return null;
 
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     const explicitCandidates = [basePath, `${basePath}.src`];
@@ -231,7 +351,7 @@ export async function resolveRelativeFrameworkSourceImport(
     }
 
     for (const candidate of explicitCandidates) {
-      const resolved = await findExistingFrameworkCandidate(candidate, options);
+      const resolved = await findExistingFrameworkCandidate(candidate, allowedLocations, options);
       if (resolved) return resolved;
     }
 
@@ -239,12 +359,20 @@ export async function resolveRelativeFrameworkSourceImport(
   }
 
   for (const ext of extensions) {
-    const candidate = await findExistingFrameworkCandidate(basePath + ext, options);
+    const candidate = await findExistingFrameworkCandidate(
+      basePath + ext,
+      allowedLocations,
+      options,
+    );
     if (candidate) return candidate;
   }
 
   for (const ext of extensions) {
-    const candidate = await findExistingFrameworkCandidate(join(basePath, "index" + ext), options);
+    const candidate = await findExistingFrameworkCandidate(
+      join(basePath, "index" + ext),
+      allowedLocations,
+      options,
+    );
     if (candidate) return candidate;
   }
 

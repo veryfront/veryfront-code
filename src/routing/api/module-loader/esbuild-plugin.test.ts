@@ -305,6 +305,155 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("blocks every remote module when the allowed host list is empty", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: [] });
+      const mockBuild = createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      );
+      plugin.setup(mockBuild);
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (() => {
+          throw new Error("blocked host should not be fetched");
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/react@18",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("blocks redirects from an allowed host to a disallowed host", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const fetched: string[] = [];
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async (input) => {
+          fetched.push(String(input));
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://cdn.evil.example/module.js" },
+          });
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertEquals(fetched, ["https://esm.sh/module?target=es2020&bundle=true"]);
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects remote modules whose declared body size exceeds the limit", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response("export {};", {
+            headers: { "content-length": String(10 * 1024 * 1024 + 1) },
+          })) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/large-module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("exceeds the 10485760 byte limit"), true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("cancels a streamed remote module once its body exceeds the limit", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      let cancelled = false;
+      const chunk = new Uint8Array(1024 * 1024);
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => {
+          let chunks = 0;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                controller.enqueue(chunk);
+                chunks += 1;
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+          );
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/streamed-large-module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(cancelled, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("serves a previously fetched remote module when the CDN later returns an error", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await Deno.makeTempDir();

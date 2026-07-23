@@ -7,6 +7,7 @@ import {
   PRIORITY_FALLBACK,
 } from "#veryfront/utils/constants/index.ts";
 import { buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
+import { getSafeErrorName } from "../../utils/error-name.ts";
 
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -29,7 +30,7 @@ export class NotFoundHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
-      this.logDebug("404 fallback error", { error: this.getErrorMessage(e) }, ctx);
+      this.logDebug("404 fallback error", { errorName: getSafeErrorName(e) }, ctx);
 
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,

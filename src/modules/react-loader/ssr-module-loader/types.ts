@@ -22,6 +22,8 @@ export interface SSRModuleLoaderOptions {
   reactVersion?: string;
   /** Request mode ("preview" | "production") for studio features */
   mode?: string;
+  /** Cancels request-scoped remote module work. */
+  signal?: AbortSignal;
 }
 
 export interface ModuleCacheEntry {

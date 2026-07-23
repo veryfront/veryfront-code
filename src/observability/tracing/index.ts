@@ -4,7 +4,7 @@
  * @module observability/tracing
  */
 
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ObservabilityRuntimeAdapter } from "../runtime-adapter.ts";
 import { tracingManager } from "./manager.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
@@ -17,7 +17,7 @@ export { SpanNames } from "./span-names.ts";
 /** Initialize tracing for the current runtime. */
 export async function initTracing(
   config: Partial<TracingConfig> = {},
-  adapter?: RuntimeAdapter,
+  adapter?: ObservabilityRuntimeAdapter,
 ): Promise<void> {
   await tracingManager.initialize(config, adapter);
 }
@@ -27,6 +27,7 @@ export function isTracingEnabled(): boolean {
   return tracingManager.isEnabled();
 }
 
+/** Check whether tracing initialized in degraded mode. */
 export function isTracingDegraded(): boolean {
   return tracingManager.isDegraded();
 }
@@ -48,17 +49,17 @@ function getContextProp(): ReturnType<typeof tracingManager.getContextPropagatio
   return tracingManager.getContextPropagation();
 }
 
-/** Starts span. */
+/** Start a bounded manual span. */
 export function startSpan(name: string, options: SpanOptions = {}): Span | null {
   return getSpanOps()?.startSpan(name, options) ?? null;
 }
 
 /** End an active tracing span. */
-export function endSpan(span: Span | null, error?: Error): void {
+export function endSpan(span: Span | null, error?: unknown): void {
   getSpanOps()?.endSpan(span, error);
 }
 
-/** Sets span attributes. */
+/** Set bounded attributes on a span. */
 export function setSpanAttributes(
   span: Span | null,
   attributes: Record<string, string | number | boolean>,
@@ -66,7 +67,7 @@ export function setSpanAttributes(
   getSpanOps()?.setAttributes(span, attributes);
 }
 
-/** Event emitted for add span. */
+/** Add a bounded event to a span. */
 export function addSpanEvent(
   span: Span | null,
   name: string,
@@ -75,7 +76,7 @@ export function addSpanEvent(
   getSpanOps()?.addEvent(span, name, attributes);
 }
 
-/** Create child span. */
+/** Create a child span under an optional parent span. */
 export function createChildSpan(
   parentSpan: Span | null,
   name: string,
@@ -84,29 +85,29 @@ export function createChildSpan(
   return getSpanOps()?.createChildSpan(parentSpan, name, options) ?? null;
 }
 
-/** Context for extract. */
+/** Extract trace context from request headers. */
 export function extractContext(headers: Headers): Context | undefined {
   return getContextProp()?.extractContext(headers);
 }
 
-/** Context for inject. */
+/** Inject trace context into request headers. */
 export function injectContext(context: Context, headers: Headers): void {
   getContextProp()?.injectContext(context, headers);
 }
 
-/** Context for get active. */
+/** Return the active trace context. */
 export function getActiveContext(): Context | undefined {
   return getContextProp()?.getActiveContext();
 }
 
-/** Applies active span. */
+/** Run an asynchronous callback with a span active. */
 export async function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
   const contextProp = getContextProp();
   if (!contextProp) return fn();
   return contextProp.withActiveSpan(span, fn);
 }
 
-/** Applies span. */
+/** Run an asynchronous callback in a new span. */
 export async function withSpan<T>(
   name: string,
   fn: (span: Span | null) => Promise<T>,
@@ -125,7 +126,7 @@ export async function withSpan<T>(
   );
 }
 
-/** Applies span sync. */
+/** Run a synchronous callback in a new span. */
 export function withSpanSync<T>(
   name: string,
   fn: (span: Span | null) => T,

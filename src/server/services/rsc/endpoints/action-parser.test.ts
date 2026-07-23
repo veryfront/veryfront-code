@@ -59,6 +59,17 @@ describe("server/services/rsc/endpoints/action-parser", () => {
       assertErrorResponse(result, 400);
     });
 
+    it("rejects more than 50 action arguments", async () => {
+      const args = Array.from({ length: 51 }, (_, index) => index);
+      const result = await parseActionBody({ id: "myAction", args });
+      assertErrorResponse(result, 400);
+    });
+
+    it("rejects non-array action arguments instead of replacing them", async () => {
+      const result = await parseActionBody({ id: "myAction", args: "not-an-array" });
+      assertErrorResponse(result, 400);
+    });
+
     it("should return error Response for id starting with slash", async () => {
       const result = await parseActionBody({ id: "/leading-slash", args: [] });
       assertErrorResponse(result, 400);

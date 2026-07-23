@@ -4,10 +4,18 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import type { LockfileManager } from "#veryfront/utils/import-lockfile.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+  refreshLoggerConfig,
+} from "#veryfront/utils/logger/logger.ts";
 import {
   createBareExternalPlugin,
   createHttpExternalPlugin,
   createRelativeFsPlugin,
+  inspectBrowserModulePath,
 } from "./esbuild-plugins.ts";
 
 async function bundleWithPlugin(
@@ -38,6 +46,7 @@ describe(
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterEach(async () => {
+      __resetLogRecordEmitterForTests();
       const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
     });
@@ -59,6 +68,72 @@ describe(
       );
 
       assertEquals(output.includes('from "https://esm.sh/react@19"'), true);
+    });
+
+    it("keeps dependency URLs and fetch failures out of logs and build errors", async () => {
+      const previousLogLevel = Deno.env.get("LOG_LEVEL");
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      const logEntries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => logEntries.push(entry));
+
+      const importCanary = "private-package/PRIVATE_IMPORT_PATH?opaque=PRIVATE_QUERY_VALUE";
+      const resolvedCanary =
+        "https://private.example/PRIVATE_RESOLVED_PATH?opaque=PRIVATE_RESOLVED_QUERY";
+      const failureCanary = "PRIVATE_FETCH_FAILURE";
+      const lockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: () =>
+          Promise.resolve({
+            resolved: resolvedCanary,
+            integrity: "sha256-cached",
+          }),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(true),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.resolve(),
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () => Promise.reject(new Error(failureCanary));
+
+      let buildErrors: ReadonlyArray<{ text: string }> = [];
+      try {
+        const { build } = await import("veryfront/extensions/bundler");
+        try {
+          await build({
+            bundle: true,
+            write: false,
+            format: "esm",
+            platform: "browser",
+            stdin: {
+              contents: `import value from "${importCanary}"; console.log(value);`,
+              loader: "js",
+            },
+            plugins: [createBareExternalPlugin({ bundle: true, lockfile })],
+          });
+        } catch (error) {
+          buildErrors = (error as { errors?: ReadonlyArray<{ text: string }> }).errors ?? [];
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        __resetLogRecordEmitterForTests();
+        if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLogLevel);
+        refreshLoggerConfig();
+      }
+
+      assertEquals(buildErrors.length > 0, true);
+      // Esbuild owns source-location snippets and intentionally echoes the
+      // importing source in local build diagnostics. The plugin controls the
+      // message text and structured server logs, which must remain private.
+      const disclosed = JSON.stringify({
+        buildErrorText: buildErrors.map(({ text }) => text),
+        logEntries,
+      });
+      for (const privateValue of [importCanary, resolvedCanary, failureCanary]) {
+        assertEquals(disclosed.includes(privateValue), false);
+      }
     });
   },
 );
@@ -379,6 +454,8 @@ describe(
 
       assertEquals(errors.length > 0, true);
       assertEquals(output.includes(marker), false);
+      assertEquals(errors.some(({ text }) => text.includes("/project/")), false);
+      assertEquals(errors.some(({ text }) => text.includes("dependency read unavailable")), false);
     });
 
     it("rejects relative dependencies with symbolic-link path segments", async () => {
@@ -394,6 +471,18 @@ describe(
         assertEquals(errors.some(({ text }) => text.includes("symbolic link")), true);
         assertEquals(output.includes(marker), false);
       }
+    });
+
+    it("rejects a dependency whose canonical path escapes the project", async () => {
+      const adapter = createMockAdapter();
+      const dependencyPath = "/project/app/dependency.ts";
+      adapter.fs.files.set(dependencyPath, "export const marker = true;");
+      adapter.fs.realPath = (path) =>
+        Promise.resolve(path === dependencyPath ? "/private/dependency.ts" : path);
+
+      const status = await inspectBrowserModulePath("/project", dependencyPath, adapter);
+
+      assertEquals(status, "symlink");
     });
 
     it("resolves project files when esbuild callbacks fire outside the request context", async () => {

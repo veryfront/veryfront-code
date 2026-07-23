@@ -3,7 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "./errors.ts";
-import { parseJsonBody, parseQueryParams } from "./parsers.ts";
+import { parseFormData, parseJsonBody, parseQueryParams } from "./parsers.ts";
 
 describe("parseJsonBody", () => {
   const schema = defineSchema((v) =>
@@ -146,5 +146,29 @@ describe("parseQueryParams", () => {
     const request = new Request("http://localhost/search?name=alice");
     const result = parseQueryParams(request, simpleSchema);
     assertEquals(result, { name: "alice" });
+  });
+});
+
+describe("parseFormData", () => {
+  const schema = defineSchema((v) => v.object({ value: v.string() }))();
+
+  it("should enforce maxBodySize for streamed form bodies without Content-Length", async () => {
+    const body = new TextEncoder().encode(`value=${"x".repeat(128)}`);
+    const request = new Request("http://localhost/form", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(body);
+          controller.close();
+        },
+      }),
+    });
+
+    await assertRejects(
+      () => parseFormData(request, schema, { limits: { maxBodySize: 32 } }),
+      VeryfrontError,
+      "exceeds size limit",
+    );
   });
 });

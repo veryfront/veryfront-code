@@ -30,11 +30,29 @@ describe("chat/provider-errors", () => {
     );
   });
 
-  it("parses provider overload, rate-limit, context-length, and credit messages", () => {
-    assertEquals(parseProviderError({ type: "overloaded_error", message: "Overloaded" }), {
-      code: "OVERLOADED_ERROR",
-      message: "Overloaded",
+  it("bounds and normalizes gateway-provided public suggestions", () => {
+    const parsed = parseProviderError({
+      slug: "resource-limit-exceeded",
+      suggestion: `retry\n${"x".repeat(3_000)}`,
     });
+
+    assertEquals(parsed.code, "RESOURCE_LIMIT_EXCEEDED");
+    assertEquals(parsed.status, 402);
+    assertEquals(parsed.message.includes("\n"), false);
+    assertEquals(parsed.message.length, 2_048);
+  });
+
+  it("parses provider overload, rate-limit, context-length, and credit messages", () => {
+    assertEquals(
+      parseProviderError({
+        type: "overloaded_error",
+        message: "Overloaded while processing request <REDACTED>",
+      }),
+      {
+        code: "OVERLOADED_ERROR",
+        message: "The LLM provider is currently overloaded",
+      },
+    );
     assertEquals(parseProviderError({ type: "rate_limit_error" }), {
       code: "RATE_LIMITED",
       message: "Too many requests. Please wait a moment and try again.",
@@ -213,6 +231,31 @@ describe("chat/provider-errors", () => {
     });
   });
 
+  it("fails closed when provider error fields are accessor-backed", () => {
+    let getterCalls = 0;
+    const error: Record<string, unknown> = {};
+    Object.defineProperty(error, "responseBody", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted accessor");
+      },
+    });
+    Object.defineProperty(error, "lastError", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted accessor");
+      },
+    });
+
+    assertEquals(parseProviderError(error), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
+    assertEquals(getterCalls, 0);
+  });
+
   it("does not overmatch unrelated invalid request messages", () => {
     assertEquals(
       parseProviderError({
@@ -224,6 +267,23 @@ describe("chat/provider-errors", () => {
         message: "LLM provider service error",
       },
     );
+    assertEquals(parseProviderError("request req_429abc failed"), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
+    assertEquals(parseProviderError("HTTP 429: retry later"), {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait a moment and try again.",
+      status: 429,
+    });
+    assertEquals(parseProviderError("Invalid capacity parameter in request"), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
+    assertEquals(parseProviderError("The provider is temporarily at capacity"), {
+      code: "OVERLOADED_ERROR",
+      message: "The LLM provider is currently overloaded",
+    });
   });
 
   it("walks nested lastError chains without stack overflows or cycles", () => {
@@ -242,8 +302,24 @@ describe("chat/provider-errors", () => {
       }),
       {
         code: "OVERLOADED_ERROR",
-        message: "Overloaded",
+        message: "The LLM provider is currently overloaded",
       },
     );
+  });
+
+  it("bounds deeply nested lastError chains without recursing on the call stack", () => {
+    const root: Record<string, unknown> = {};
+    let cursor = root;
+    for (let index = 0; index < 20_000; index++) {
+      const next: Record<string, unknown> = {};
+      cursor.lastError = next;
+      cursor = next;
+    }
+    cursor.lastError = { type: "rate_limit_error" };
+
+    assertEquals(parseProviderError(root), {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    });
   });
 });

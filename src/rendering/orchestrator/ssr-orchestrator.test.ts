@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSROrchestrator, type SSROrchestratorConfig } from "./ssr-orchestrator.ts";
 import * as React from "react";
@@ -11,6 +11,7 @@ import {
   recordModuleToSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
+import { hasRenderSession } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 
 function createMockConfig(overrides: Partial<SSROrchestratorConfig> = {}): SSROrchestratorConfig {
   return {
@@ -135,7 +136,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       const config = createMockConfig({
         ssrRenderer: {
           renderToHTML: async () => ({
-            html: "<div>streamed</div>",
+            html: "",
             stream: mockStream,
           }),
         } as unknown as SSROrchestratorConfig["ssrRenderer"],
@@ -164,7 +165,39 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       );
 
       assertEquals(result.finalStream instanceof ReadableStream, true);
-      assertEquals(typeof result.ssrHash, "string");
+      assertEquals(result.ssrHash.startsWith("stream-"), true);
+      assertEquals(result.ssrHash.length, "stream-".length + 36);
+    });
+
+    it("finalizes the render session when SSR throws", async () => {
+      startRenderSession("render-session-failure", "project-slug", "failed-page");
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: () => Promise.reject(new Error("render failed")),
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+      });
+      const orchestrator = new SSROrchestrator(config);
+
+      await assertRejects(
+        () =>
+          orchestrator.performSSRRendering(
+            React.createElement("div") as React.ReactElement,
+            {
+              meta: { title: "Failure", slug: "/failure" },
+              pageBundle: {
+                compiledCode: "",
+                frontmatter: {},
+                globals: {},
+                headings: [],
+                nodeMap: new Map(),
+              },
+            } as any,
+            { renderSessionId: "render-session-failure" },
+          ),
+        Error,
+        "render failed",
+      );
+      assertEquals(hasRenderSession("render-session-failure"), false);
     });
 
     it("finalizes the render session before HTML shell generation", async () => {

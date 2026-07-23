@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
@@ -149,6 +155,35 @@ describe("ReadOperations", () => {
       const content = await readOps.readTextFile("pages/index.tsx");
       assertEquals(content, "draft content here");
       assertEquals(fetchedPath, "pages/index.tsx");
+    });
+
+    it("does not write fetched source content to debug logs", async () => {
+      const previousLevel = Deno.env.get("LOG_LEVEL");
+      const originalDebug = console.debug;
+      const entries: LogEntry[] = [];
+      const source = "PRIVATE_FETCH_CANARY export const value = 1";
+      Deno.env.set("LOG_LEVEL", "DEBUG");
+      console.debug = () => {};
+      __resetLoggerConfigForTests();
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+
+      try {
+        const readOps = createReadOps(
+          createMockClient({ getFileContent: () => Promise.resolve(source) }),
+          false,
+          createBranchContext(),
+        );
+        readOps.setFileListReadyPromise(Promise.resolve());
+
+        assertEquals(await readOps.readTextFile("pages/index.tsx"), source);
+        assertEquals(JSON.stringify(entries).includes("PRIVATE_FETCH_CANARY"), false);
+      } finally {
+        __resetLogRecordEmitterForTests();
+        console.debug = originalDebug;
+        if (previousLevel === undefined) Deno.env.delete("LOG_LEVEL");
+        else Deno.env.set("LOG_LEVEL", previousLevel);
+        __resetLoggerConfigForTests();
+      }
     });
 
     it("should fetch published content for release context", async () => {
@@ -408,7 +443,7 @@ describe("ReadOperations", () => {
       await assertRejects(
         () => readOps.readTextFile("deno.json"),
         Error,
-        "404 Not Found",
+        "Filesystem resource was not found",
       );
 
       assertEquals(resolveCallCount, 0);

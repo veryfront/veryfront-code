@@ -26,8 +26,12 @@ export function convertNodeRequestToWebRequest(
   // `RequestInit` type, hence the intersection.
   const init: RequestInit & { duplex?: "half" } = {
     method,
-    headers: req.headers as HeadersInit,
+    headers: toWebHeaders(req.headers),
   };
+
+  const abortController = new AbortController();
+  req.on("aborted", () => abortController.abort());
+  init.signal = abortController.signal;
 
   if (hasBody) {
     init.body = nodeRequestToReadableStream(req);
@@ -35,6 +39,18 @@ export function convertNodeRequestToWebRequest(
   }
 
   return new Request(url, init);
+}
+
+function toWebHeaders(headers: NodeIncomingMessage["headers"]): Headers {
+  const result = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value === "string") {
+      result.append(name, value);
+    } else if (Array.isArray(value)) {
+      for (const entry of value) result.append(name, entry);
+    }
+  }
+  return result;
 }
 
 function requestCanCarryBody(method: string): boolean {
@@ -67,20 +83,34 @@ function requestDeclaresBody(headers: NodeIncomingMessage["headers"]): boolean {
 function nodeRequestToReadableStream(
   req: NodeIncomingMessage,
 ): ReadableStream<Uint8Array> {
+  let settled = false;
   return new ReadableStream<Uint8Array>({
     start(controller) {
       req.on("data", (chunk) => {
+        if (settled) return;
         controller.enqueue(chunk);
         // Apply backpressure: once the stream's internal queue is full, pause
         // the Node request so it stops buffering the whole body in memory.
         if ((controller.desiredSize ?? 1) <= 0) req.pause?.();
       });
-      req.on("end", () => controller.close());
-      req.on("error", (error) => controller.error(error));
+      req.on("end", () => {
+        if (settled) return;
+        settled = true;
+        controller.close();
+      });
+      req.on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        controller.error(error);
+      });
     },
     pull() {
       // The consumer asked for more — resume flowing mode.
       req.resume?.();
+    },
+    cancel(reason) {
+      settled = true;
+      req.destroy?.(reason instanceof Error ? reason : undefined);
     },
   });
 }

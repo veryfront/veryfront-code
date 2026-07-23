@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertThrows } from "#veryfront/testing/assert.ts";
 import { convertPathToName, createEntryPoints } from "./entry-points.ts";
 
 describe("entry-points", () => {
@@ -34,6 +35,18 @@ describe("entry-points", () => {
         "blog-post-custom": "/project/pages/blog/post.tsx",
       });
       expect(result.routeMap.get("blog-post-custom")).toBe("/blog/post");
+    });
+
+    it("stores special entry names without mutating the entry-point record prototype", () => {
+      const result = createEntryPoints([{
+        path: "/prototype-test",
+        file: "/project/pages/prototype-test.tsx",
+        name: "__proto__",
+      }]);
+
+      expect(Object.getPrototypeOf(result.entryPoints)).toBe(null);
+      expect(Object.hasOwn(result.entryPoints, "__proto__")).toBe(true);
+      expect(result.entryPoints.__proto__).toBe("/project/pages/prototype-test.tsx");
     });
 
     it("should generate name from path when name not provided", () => {
@@ -93,6 +106,63 @@ describe("entry-points", () => {
       expect(result.entryPoints).toEqual({
         "blog-post-detail": "/project/pages/blog/post/detail.tsx",
       });
+    });
+
+    it("rejects entry-name collisions instead of overwriting a route", () => {
+      assertThrows(
+        () =>
+          createEntryPoints([
+            { path: "/a/b", file: "/project/pages/a/b.tsx" },
+            { path: "/a-b", file: "/project/pages/a-b.tsx" },
+          ]),
+        TypeError,
+        "Duplicate code-splitter entry name",
+      );
+    });
+
+    it("rejects custom entry names that can escape the output directory", () => {
+      assertThrows(
+        () =>
+          createEntryPoints([
+            { path: "/admin", file: "/project/pages/admin.tsx", name: "../admin" },
+          ]),
+        TypeError,
+        "Invalid code-splitter entry name",
+      );
+    });
+
+    it("rejects duplicate route paths", () => {
+      assertThrows(
+        () =>
+          createEntryPoints([
+            { path: "/account", file: "/project/pages/account.tsx", name: "account" },
+            { path: "/account", file: "/project/pages/profile.tsx", name: "profile" },
+          ]),
+        TypeError,
+        "Duplicate code-splitter route path",
+      );
+    });
+
+    it("rejects non-canonical and traversal route paths", () => {
+      for (
+        const path of [
+          "about",
+          "//about",
+          "/about/",
+          "/a//b",
+          "/../admin",
+          "/a/./b",
+          "/a?b",
+          "/a#b",
+          "/a\\b",
+        ]
+      ) {
+        assertThrows(
+          () => createEntryPoints([{ path, file: "/project/page.tsx" }]),
+          TypeError,
+          "Invalid code-splitter route path",
+        );
+      }
     });
   });
 

@@ -18,6 +18,7 @@ export interface StaticImportSpan {
   path: string;
   start: number;
   end: number;
+  statementStart: number;
 }
 
 type SpecifierMatcher = (specifier: string) => string | null | undefined;
@@ -51,7 +52,7 @@ export function replaceSourceSpans(
 
     if (expected !== undefined && source.slice(start, end) !== expected) {
       throw INVALID_ARGUMENT.create({
-        detail: `Source replacement span did not match expected text: ${expected}`,
+        detail: "Source replacement span did not match expected text.",
       });
     }
 
@@ -149,10 +150,11 @@ function readQuotedSpecifier(
 
 function findFromSpan(
   source: string,
+  scanStart: number,
   statementStart: number,
   matcher: SpecifierMatcher,
 ): StaticImportSpan | null {
-  let cursor = statementStart;
+  let cursor = scanStart;
 
   while (cursor < source.length) {
     const skipped = skipIgnored(source, cursor);
@@ -183,6 +185,7 @@ function findFromSpan(
         path: matchedPath,
         start: cursor,
         end: quoted.end,
+        statementStart,
       };
     }
 
@@ -220,7 +223,7 @@ export function findStaticImportFromSpans(
       continue;
     }
 
-    const span = findFromSpan(source, afterKeyword, matcher);
+    const span = findFromSpan(source, afterKeyword, cursor, matcher);
     if (span) {
       spans.push(span);
       cursor = span.end;
@@ -266,6 +269,7 @@ export function findStaticSideEffectImportSpans(
         path: matchedPath,
         start: cursor,
         end: quoted.end,
+        statementStart: cursor,
       });
     }
 

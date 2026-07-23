@@ -26,7 +26,7 @@ describe("server/handlers/preview/hmr-client-message", () => {
     assertEquals(getHmrWebSocketMessageSize(new Uint8Array([1, 2, 3])), 3);
     assertEquals(getHmrWebSocketMessageSize(new ArrayBuffer(5)), 5);
     assertEquals(getHmrWebSocketMessageSize(new Blob(["hello"])), 5);
-    assertEquals(getHmrWebSocketMessageSize({ type: "ping" }), 0);
+    assertEquals(getHmrWebSocketMessageSize({ type: "ping" }), Number.POSITIVE_INFINITY);
   });
 
   it("responds to ping messages and records activity", () => {
@@ -72,6 +72,24 @@ describe("server/handlers/preview/hmr-client-message", () => {
     ]);
     assertEquals(checkedRateLimit, false);
     assertEquals(activityCount, 0);
+  });
+
+  it("measures multibyte strings in UTF-8 bytes before enforcing the limit", () => {
+    const socket = new MockSocket();
+    const data = "😀".repeat(Math.floor(HMR_MAX_MESSAGE_SIZE_BYTES / 4) + 1);
+
+    assertEquals(data.length < HMR_MAX_MESSAGE_SIZE_BYTES, true);
+    assertEquals(getHmrWebSocketMessageSize(data) > HMR_MAX_MESSAGE_SIZE_BYTES, true);
+
+    handleHmrClientMessage({
+      socket,
+      data,
+      rateLimiter: { check: () => true },
+    });
+
+    assertEquals(socket.closed, [
+      { code: HMR_CLOSE_MESSAGE_TOO_LARGE, reason: "Message too large" },
+    ]);
   });
 
   it("closes rate-limited messages before activity updates", () => {

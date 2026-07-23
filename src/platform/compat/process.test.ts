@@ -5,7 +5,13 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests verify the cross-runtime process abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import {
@@ -28,6 +34,7 @@ import {
   isInteractive,
   isStdoutTTY,
   memoryUsage,
+  onGlobalError,
   onSignal,
   pid,
   promptSync,
@@ -43,7 +50,11 @@ import {
 describe("Process Compat", () => {
   describe("testHasRuntimeProcess", () => {
     it("should detect a real Node/Bun process object", () => {
-      assertEquals(testHasRuntimeProcess({ env: {}, versions: { node: "22.0.0" } }), true);
+      assertEquals(testHasRuntimeProcess(process), true);
+    });
+
+    it("should reject a version-only process shim", () => {
+      assertEquals(testHasRuntimeProcess({ env: {}, versions: { node: "22.0.0" } }), false);
     });
 
     it("should reject a browser process shim", () => {
@@ -75,6 +86,34 @@ describe("Process Compat", () => {
     it("should reject process with non-string versions.node", () => {
       assertEquals(testHasRuntimeProcess({ versions: { node: 22 } }), false);
     });
+
+    it("should reject hostile process shims without propagating getter failures", () => {
+      const hostileProcess = new Proxy({}, {
+        get() {
+          throw new Error("hostile process getter");
+        },
+      });
+
+      assertEquals(testHasRuntimeProcess(hostileProcess), false);
+    });
+
+    for (
+      const [property, value] of [
+        ["pid", Number.NaN],
+        ["off", undefined],
+        ["stdout", {}],
+      ] as const
+    ) {
+      it(`should reject a process with an invalid ${property}`, () => {
+        const invalidProcess = new Proxy(process, {
+          get(target, key, receiver) {
+            return key === property ? value : Reflect.get(target, key, receiver);
+          },
+        });
+
+        assertEquals(testHasRuntimeProcess(invalidProcess), false);
+      });
+    }
   });
 
   describe("getEnv / setEnv / deleteEnv", () => {
@@ -167,9 +206,24 @@ describe("Process Compat", () => {
       const original = Deno.env.get;
       try {
         Deno.env.get = () => {
-          throw new Error("Requires env access, run again with the --allow-env flag");
+          const error = new Error("Requires env access");
+          error.name = "NotCapable";
+          throw error;
         };
         assertEquals(getHostEnv("__DENIED_BY_ALLOWLIST__"), undefined);
+      } finally {
+        Deno.env.get = original;
+      }
+    });
+
+    it("does not hide unexpected environment failures", () => {
+      if (typeof Deno === "undefined") return;
+      const original = Deno.env.get;
+      try {
+        Deno.env.get = () => {
+          throw new Error("unexpected env failure");
+        };
+        assertThrows(() => getHostEnv("__UNEXPECTED_FAILURE__"), Error, "unexpected env failure");
       } finally {
         Deno.env.get = original;
       }
@@ -216,9 +270,9 @@ describe("Process Compat", () => {
       assertEquals(getEnvNumber(testKey), undefined);
     });
 
-    it("should return NaN for invalid env var when fallback is not provided", () => {
+    it("should return undefined for invalid env var when fallback is not provided", () => {
       setEnv(testKey, "invalid");
-      assertEquals(Number.isNaN(getEnvNumber(testKey) ?? Number.NaN), true);
+      assertEquals(getEnvNumber(testKey), undefined);
     });
 
     it("should return parsed number for valid values", () => {
@@ -233,6 +287,20 @@ describe("Process Compat", () => {
     it("should use fallback for invalid env var", () => {
       setEnv(testKey, "invalid");
       assertEquals(getEnvNumber(testKey, 99), 99);
+    });
+
+    for (const invalidValue of ["42px", "1.5.2", "Infinity", "", "   "]) {
+      it(`should reject non-numeric value ${JSON.stringify(invalidValue)}`, () => {
+        setEnv(testKey, invalidValue);
+        assertEquals(getEnvNumber(testKey), undefined);
+      });
+    }
+
+    it("should parse finite decimal and exponent values without truncation", () => {
+      setEnv(testKey, "1.5");
+      assertEquals(getEnvNumber(testKey), 1.5);
+      setEnv(testKey, "1e3");
+      assertEquals(getEnvNumber(testKey), 1000);
     });
   });
 
@@ -524,12 +592,9 @@ describe("Process Compat", () => {
       sanitizeOps: false,
     }, () => {
       const handler = () => {};
-      onSignal("SIGINT", handler);
-
-      // Clean up to avoid Deno leak detection
-      if (typeof Deno !== "undefined") {
-        Deno.removeSignalListener("SIGINT", handler);
-      }
+      const removeHandler = onSignal("SIGINT", handler);
+      assertEquals(typeof removeHandler, "function");
+      removeHandler();
     });
 
     it("should accept SIGTERM handler without throwing", {
@@ -537,12 +602,38 @@ describe("Process Compat", () => {
       sanitizeOps: false,
     }, () => {
       const handler = () => {};
-      onSignal("SIGTERM", handler);
+      const removeHandler = onSignal("SIGTERM", handler);
+      assertEquals(typeof removeHandler, "function");
+      removeHandler();
+    });
+  });
 
-      // Clean up to avoid Deno leak detection
-      if (typeof Deno !== "undefined") {
-        Deno.removeSignalListener("SIGTERM", handler);
-      }
+  describe("onGlobalError", () => {
+    it("returns an idempotent cleanup function", () => {
+      const removeHandlers = onGlobalError(() => true);
+      assertEquals(typeof removeHandlers, "function");
+      removeHandlers();
+      removeHandlers();
+    });
+
+    it("stops handling errors after cleanup", () => {
+      let handledErrors = 0;
+      const removeHandlers = onGlobalError(() => {
+        handledErrors += 1;
+        return true;
+      });
+
+      const handled = globalThis.dispatchEvent(
+        new ErrorEvent("error", { error: new Error("synthetic error"), cancelable: true }),
+      );
+      removeHandlers();
+      const unhandled = globalThis.dispatchEvent(
+        new ErrorEvent("error", { error: new Error("after cleanup"), cancelable: true }),
+      );
+
+      assertEquals(handled, false);
+      assertEquals(unhandled, true);
+      assertEquals(handledErrors, 1);
     });
   });
 
@@ -564,6 +655,81 @@ describe("Process Compat", () => {
       const storage = getEnvOverlayStorage();
       assertEquals(storage === null || typeof storage === "object", true);
     });
+
+    it("skips invalid legacy sentinels without invoking accessors", () => {
+      const globalRecord = globalThis as Record<string, unknown>;
+      const legacyKey = "__vfTestDenoEnvOverlay";
+      const currentKey = "__vfTestEnvOverlay";
+      const legacyDescriptor = Object.getOwnPropertyDescriptor(globalRecord, legacyKey);
+      const currentDescriptor = Object.getOwnPropertyDescriptor(globalRecord, currentKey);
+      let accessorCalls = 0;
+      const expectedStorage = {
+        getStore: () => undefined,
+        run: <T>(_store: unknown, fn: () => T) => fn(),
+      };
+
+      Object.defineProperty(globalRecord, legacyKey, {
+        configurable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("legacy sentinel accessor must not run");
+        },
+      });
+      Object.defineProperty(globalRecord, currentKey, {
+        configurable: true,
+        value: { storage: expectedStorage },
+        writable: true,
+      });
+
+      try {
+        assertStrictEquals(getEnvOverlayStorage(), expectedStorage);
+        assertEquals(accessorCalls, 0);
+      } finally {
+        if (legacyDescriptor) Object.defineProperty(globalRecord, legacyKey, legacyDescriptor);
+        else delete globalRecord[legacyKey];
+        if (currentDescriptor) Object.defineProperty(globalRecord, currentKey, currentDescriptor);
+        else delete globalRecord[currentKey];
+      }
+    });
+
+    it("does not invoke accessors nested inside sentinel containers", () => {
+      const globalRecord = globalThis as Record<string, unknown>;
+      const legacyKey = "__vfTestDenoEnvOverlay";
+      const currentKey = "__vfTestEnvOverlay";
+      const legacyDescriptor = Object.getOwnPropertyDescriptor(globalRecord, legacyKey);
+      const currentDescriptor = Object.getOwnPropertyDescriptor(globalRecord, currentKey);
+      let accessorCalls = 0;
+      const hostileContainer = Object.create(null);
+      Object.defineProperty(hostileContainer, "storage", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          throw new Error("storage accessor must not run");
+        },
+      });
+      const expectedStorage = { getStore: () => undefined };
+
+      Object.defineProperty(globalRecord, legacyKey, {
+        configurable: true,
+        value: hostileContainer,
+        writable: true,
+      });
+      Object.defineProperty(globalRecord, currentKey, {
+        configurable: true,
+        value: { storage: expectedStorage },
+        writable: true,
+      });
+
+      try {
+        assertStrictEquals(getEnvOverlayStorage(), expectedStorage);
+        assertEquals(accessorCalls, 0);
+      } finally {
+        if (legacyDescriptor) Object.defineProperty(globalRecord, legacyKey, legacyDescriptor);
+        else delete globalRecord[legacyKey];
+        if (currentDescriptor) Object.defineProperty(globalRecord, currentKey, currentDescriptor);
+        else delete globalRecord[currentKey];
+      }
+    });
   });
 
   describe("promptSync", () => {
@@ -581,12 +747,10 @@ describe("Process Compat", () => {
     });
 
     it("should return failure for non-existent command", async () => {
-      try {
-        const result = await runCommand("__nonexistent_command_12345__", { capture: true });
-        assertEquals(result.success, false);
-      } catch {
-        // In Deno, non-existent commands throw NotFound rather than returning failure
-      }
+      const result = await runCommand("__nonexistent_command_12345__", { capture: true });
+      assertEquals(result.success, false);
+      assertEquals(result.code, 1);
+      assertEquals(result.stderr?.includes("Unable to start command"), true);
     });
 
     it("should capture stderr", async () => {
@@ -621,6 +785,33 @@ describe("Process Compat", () => {
       assertEquals(result.stdout, undefined);
       assertEquals(result.stderr, undefined);
     });
+
+    it("should let inherit take precedence over capture", async () => {
+      const result = await runCommand("printf", {
+        args: ["inherited-output"],
+        capture: true,
+        inherit: true,
+      });
+      assertEquals(result.success, true);
+      assertEquals(result.stdout, undefined);
+      assertEquals(result.stderr, undefined);
+    });
+
+    it("should honor shell command strings", async () => {
+      const result = await runCommand("printf shell-ok", { shell: true, capture: true });
+      assertEquals(result.success, true);
+      assertEquals(result.stdout, "shell-ok");
+    });
+
+    for (const timeoutMs of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      it(`should reject invalid timeout ${String(timeoutMs)}`, async () => {
+        await assertRejects(
+          () => runCommand("echo", { timeoutMs }),
+          RangeError,
+          "timeoutMs",
+        );
+      });
+    }
 
     it("should terminate commands that exceed timeout", async () => {
       const result = await runCommand("deno", {

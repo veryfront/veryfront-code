@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { corsSimple } from "./cors-simple.ts";
 import { MiddlewareContext } from "../../core/context.ts";
@@ -7,6 +7,7 @@ import { MiddlewareContext } from "../../core/context.ts";
 describe("corsSimple", () => {
   function createContext(method = "GET", origin?: string): MiddlewareContext {
     const headers: Record<string, string> = origin ? { origin } : {};
+    if (method === "OPTIONS") headers["access-control-request-method"] = "GET";
     return new MiddlewareContext(
       new Request("https://example.com/api/test", { method, headers }),
     );
@@ -58,6 +59,21 @@ describe("corsSimple", () => {
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), null);
       assertEquals(calledNext, false);
     });
+
+    it("passes non-preflight OPTIONS requests to the next handler", async () => {
+      const middleware = corsSimple("*");
+      const ctx = new MiddlewareContext(
+        new Request("https://example.com/api/test", { method: "OPTIONS" }),
+      );
+
+      const response = await middleware(
+        ctx,
+        () => Promise.resolve(new Response("application options", { status: 200 })),
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "application options");
+    });
   });
 
   describe("actual requests", () => {
@@ -92,6 +108,18 @@ describe("corsSimple", () => {
       );
 
       assertEquals(response?.status, 201);
+    });
+
+    it("preserves the original response status text", async () => {
+      const middleware = corsSimple("*");
+      const ctx = createContext("GET", "https://other.com");
+
+      const response = await middleware(
+        ctx,
+        () => Promise.resolve(new Response("Created", { status: 201, statusText: "Stored" })),
+      );
+
+      assertEquals(response?.statusText, "Stored");
     });
 
     it("should handle undefined response from next", async () => {
@@ -136,6 +164,19 @@ describe("corsSimple", () => {
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
+    });
+
+    it("rejects malformed options during configuration", () => {
+      assertThrows(
+        () => corsSimple(null as never),
+        TypeError,
+        "options",
+      );
+      assertThrows(
+        () => corsSimple({ origin: 42 as never }),
+        TypeError,
+        "origin",
+      );
     });
   });
 });

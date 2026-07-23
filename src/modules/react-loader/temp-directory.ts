@@ -2,9 +2,13 @@ import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
-const globalTmpDirs = new Map<string, string>();
-const projectTmpDirs = new Map<string, string>();
+const globalTmpDirs = new LRUCache<string, string>({ maxEntries: 32 });
+const projectTmpDirs = new LRUCache<string, string>({ maxEntries: 1_000 });
+const MAX_PROJECT_ID_LENGTH = 4_096;
 
 /**
  * Create a safe directory name from projectId.
@@ -12,15 +16,13 @@ const projectTmpDirs = new Map<string, string>();
  * making percent-encoded paths unusable for dynamic imports.
  */
 function normalizeProjectKey(projectId: string): string {
-  if (!projectId) return "default";
-
-  let hash = 0;
-  for (let i = 0; i < projectId.length; i++) {
-    hash = (hash << 5) - hash + projectId.charCodeAt(i);
-    hash |= 0;
+  if (
+    projectId.length === 0 || projectId.length > MAX_PROJECT_ID_LENGTH ||
+    hasUnsafeControlCharacters(projectId)
+  ) {
+    throw new TypeError("projectId is invalid");
   }
-
-  return `proj-${Math.abs(hash).toString(16)}`;
+  return `proj-${hashString(projectId)}`;
 }
 
 export async function getGlobalTmpDir(): Promise<string> {
@@ -40,7 +42,7 @@ export async function getGlobalTmpDir(): Promise<string> {
 export async function getProjectTmpDir(projectId: string): Promise<string> {
   const baseDir = await getGlobalTmpDir();
   const normalizedKey = normalizeProjectKey(projectId);
-  const cacheKey = `${baseDir}:${normalizedKey}`;
+  const cacheKey = JSON.stringify([baseDir, normalizedKey]);
 
   const cached = projectTmpDirs.get(cacheKey);
   if (cached) return cached;

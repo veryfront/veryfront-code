@@ -12,7 +12,30 @@ import { CacheKeyPrefix } from "../prefixes.ts";
 import type { QueryParamCacheOptions } from "../prefixes.ts";
 import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
-import { encodeCacheSourceIdentity } from "../source-identity.ts";
+import { encodeCacheIdentitySegment, encodeCacheSourceIdentity } from "../source-identity.ts";
+
+const MAX_QUERY_AWARE_CACHE_KEY_LENGTH = 4096;
+
+function encodeQueryAwareSlug(slug: string): string {
+  encodeCacheIdentitySegment(slug, "slug");
+  if (!slug.includes(":q:") && !slug.includes("%")) return slug;
+  return slug.replaceAll("%", "%25").replaceAll(":", "%3A");
+}
+
+function assertQueryAwareCacheKeyLength(key: string): string {
+  if (key.length > MAX_QUERY_AWARE_CACHE_KEY_LENGTH) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Query-aware cache key exceeds the supported size",
+    });
+  }
+  return key;
+}
+
+function encodeRenderContentKey(contentKey: string): string {
+  encodeCacheIdentitySegment(contentKey, "contentKey");
+  if (!/^m\d+:/.test(contentKey) && !contentKey.includes("%")) return contentKey;
+  return contentKey.replaceAll("%", "%25").replaceAll(":", "%3A");
+}
 
 export function buildRenderCachePrefix(
   projectId: string,
@@ -22,11 +45,19 @@ export function buildRenderCachePrefix(
    * Release asset manifest version currently being consumed for this render.
    * When set (a ready manifest is in use), it is folded into the prefix so
    * manifest-rewritten HTML is cached separately from JIT HTML. Omitted when
-   * no manifest is consumed — preserving today's cache keys byte-for-byte.
+   * no manifest is consumed, preserving today's cache keys byte for byte.
    */
   manifestVersion?: number,
 ): string {
-  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  if (
+    manifestVersion !== undefined &&
+    (!Number.isSafeInteger(manifestVersion) || manifestVersion < 0)
+  ) {
+    throw CACHE_INVARIANT_VIOLATION.create({ detail: "Invalid render manifest version" });
+  }
+  const encodedProjectId = encodeCacheIdentitySegment(projectId, "projectId");
+  const encodedReleaseKey = encodeCacheIdentitySegment(releaseKey, "releaseKey");
+  const base = `${encodedProjectId}:${environment}:${encodedReleaseKey}:${VERSION}`;
   return manifestVersion === undefined ? base : `${base}:m${manifestVersion}`;
 }
 
@@ -66,15 +97,19 @@ export function computeContentSourceId(
 }
 
 export function buildRenderCacheKey(cachePrefix: string, contentKey: string): string {
-  return `${cachePrefix}:${contentKey}`;
+  return `${cachePrefix}:${encodeRenderContentKey(contentKey)}`;
 }
 
+/** Build a project-isolated compiled component cache key. */
 export function buildComponentCacheKey(
   projectId: string,
   filePath: string,
   contentHash: string,
 ): string {
-  return `${CacheKeyPrefix.COMPONENT}:${projectId}:${filePath}:${contentHash}`;
+  const encodedProjectId = encodeCacheIdentitySegment(projectId, "projectId");
+  const encodedFilePath = encodeCacheIdentitySegment(filePath, "filePath");
+  const encodedContentHash = encodeCacheIdentitySegment(contentHash, "contentHash");
+  return `${CacheKeyPrefix.COMPONENT}:${encodedProjectId}:${encodedFilePath}:${encodedContentHash}`;
 }
 
 export function buildLayoutComponentCacheKey(
@@ -83,17 +118,31 @@ export function buildLayoutComponentCacheKey(
   hash: string,
   contentSourceId: string,
 ): string {
-  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${contentSourceId}:${componentPath}:${hash}`;
+  const encodedProjectId = encodeCacheIdentitySegment(projectId, "projectId");
+  const encodedContentSourceId = encodeCacheIdentitySegment(
+    contentSourceId,
+    "contentSourceId",
+  );
+  const encodedComponentPath = encodeCacheIdentitySegment(componentPath, "componentPath");
+  const encodedHash = encodeCacheIdentitySegment(hash, "hash");
+  return `${CacheKeyPrefix.LAYOUT}:${encodedProjectId}:${encodedContentSourceId}:${encodedComponentPath}:${encodedHash}`;
 }
 
+/** Build a project-isolated rendered error-page cache key. */
 export function buildErrorPageCacheKey(
   projectId: string | undefined,
   projectDir: string,
   pageType: string,
 ): string {
-  return `${CacheKeyPrefix.ERROR_PAGE}:${projectId ?? projectDir}:${pageType}`;
+  const encodedProjectIdentity = encodeCacheIdentitySegment(
+    projectId ?? projectDir,
+    "project identity",
+  );
+  const encodedPageType = encodeCacheIdentitySegment(pageType, "pageType");
+  return `${CacheKeyPrefix.ERROR_PAGE}:${encodedProjectIdentity}:${encodedPageType}`;
 }
 
+/** Build a source-isolated proxy manager cache key. */
 export function buildProxyManagerCacheKey(
   projectSlug: string,
   productionMode: boolean,
@@ -102,21 +151,22 @@ export function buildProxyManagerCacheKey(
   environmentName?: string | null,
 ): string {
   const mode = productionMode ? "production" : "preview";
+  const encodedProjectSlug = encodeCacheIdentitySegment(projectSlug, "projectSlug");
 
   if (productionMode) {
     if (!releaseId) {
       throw CACHE_INVARIANT_VIOLATION.create({
-        detail: `Missing releaseId in production for ${projectSlug}`,
+        detail: "Missing releaseId for production proxy cache identity",
       });
     }
     const source = environmentName
       ? encodeCacheSourceIdentity({ type: "environment", environmentName, releaseId })
       : encodeCacheSourceIdentity({ type: "release", releaseId });
-    return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.key}`;
+    return `${CacheKeyPrefix.PROXY}:${encodedProjectSlug}:${mode}:${source.key}`;
   }
 
   const source = encodeCacheSourceIdentity({ type: "branch", branch: branch ?? "main" });
-  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${source.qualifier}`;
+  return `${CacheKeyPrefix.PROXY}:${encodedProjectSlug}:${mode}:${source.qualifier}`;
 }
 
 /**
@@ -132,9 +182,10 @@ export function buildQueryAwareCacheKey(
   url?: URL,
   options?: QueryParamCacheOptions,
 ): string {
-  const normalizedSlug = slug || "index";
-  if (!url) return normalizedSlug;
+  const normalizedSlug = encodeQueryAwareSlug(slug || "index");
+  if (!url) return assertQueryAwareCacheKeyLength(normalizedSlug);
 
   const queryPart = sanitizeQueryParamsForCacheKey(url, options);
-  return queryPart ? `${normalizedSlug}:q:${queryPart}` : normalizedSlug;
+  const key = queryPart ? `${normalizedSlug}:q:${queryPart}` : normalizedSlug;
+  return assertQueryAwareCacheKeyLength(key);
 }

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
@@ -74,9 +79,10 @@ describe("module-loader/transformModuleWithDeps", () => {
           jsonConfig,
         );
         const transformedCode = await Deno.readTextFile(transformedPath);
-        const depPath = assertTransformedImportPath(transformedCode, "/components/Label.json");
+        const depPath = assertTransformedImportPath(transformedCode, "/components/Label.");
 
-        assertStringIncludes(transformedPath, "/app/page.json");
+        assertStringIncludes(transformedPath, "/app/page.");
+        assertEquals(transformedPath.endsWith(".mjs"), true);
         assertEquals((await Deno.stat(depPath)).isFile, true);
       },
     );
@@ -99,10 +105,52 @@ describe("module-loader/transformModuleWithDeps", () => {
           config,
         );
         const transformedCode = await Deno.readTextFile(transformedPath);
-        const depPath = assertTransformedImportPath(transformedCode, "/lib/value.json");
+        const depPath = assertTransformedImportPath(transformedCode, "/lib/value.");
 
-        assertStringIncludes(transformedPath, "/app/page.json");
+        assertStringIncludes(transformedPath, "/app/page.");
+        assertEquals(transformedPath.endsWith(".mjs"), true);
         assertEquals((await Deno.stat(depPath)).isFile, true);
+      },
+    );
+  });
+
+  it("fails immediately when a local dependency cannot be resolved", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.json": `import value from "../missing.json";` },
+      async ({ projectDir, tmpDir, config }) => {
+        await assertRejects(
+          () =>
+            transformModuleWithDeps(
+              join(projectDir, "app/page.json"),
+              tmpDir,
+              config.adapter,
+              config,
+            ),
+          TypeError,
+          "Unable to resolve 1 local module dependency",
+        );
+      },
+    );
+  });
+
+  it("rejects circular local imports without recursing indefinitely", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/a.json": `import { b } from "./b.json"; export const a = b;`,
+        "app/b.json": `import { a } from "./a.json"; export const b = a;`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await assertRejects(
+          () =>
+            transformModuleWithDeps(
+              join(projectDir, "app/a.json"),
+              tmpDir,
+              config.adapter,
+              config,
+            ),
+          TypeError,
+          "Circular local module dependencies",
+        );
       },
     );
   });

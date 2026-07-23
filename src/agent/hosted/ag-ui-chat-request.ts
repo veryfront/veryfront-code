@@ -1,7 +1,7 @@
 import { mapAgUiRuntimeMessagesToChatUiMessages } from "#veryfront/chat/ag-ui.ts";
 import type { ChatRequestContext, ChatRuntimeOverrides } from "#veryfront/chat/types.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   createAgUiRuntimeContextMap,
   deriveAgUiForwardedConfig,
@@ -18,7 +18,30 @@ import type {
   ParseHostedChatRequestOptions,
 } from "./chat-request-parser.ts";
 
-export const getHostedAgUiChatForwardedConfigSchema = defineSchema((v) =>
+/** Forwarded hosted chat configuration parsed from AG-UI context. */
+export interface HostedAgUiChatForwardedConfig {
+  /** Optional agent override. */
+  agentId?: string;
+  /** Optional project context, including an explicit null selection. */
+  projectId?: string | null;
+  /** Optional branch context, including an explicit null selection. */
+  branchId?: string | null;
+  /** Optional durable conversation identifier. */
+  conversationId?: string;
+  /** Optional environment context name. */
+  environmentContext?: string;
+  /** Optional model override. */
+  model?: string;
+  /** Optional delegation policy override. */
+  allowDelegation?: boolean;
+  /** Optional hosted runtime overrides. */
+  runtimeOverrides?: ChatRuntimeOverrides;
+}
+
+/** Returns the hosted AG-UI forwarded configuration schema. */
+export const getHostedAgUiChatForwardedConfigSchema: () => Schema<
+  HostedAgUiChatForwardedConfig
+> = defineSchema((v) =>
   v.object({
     agentId: v.string().min(1).max(128).optional(),
     projectId: v.string().nullable().optional(),
@@ -36,14 +59,10 @@ export const getHostedAgUiChatForwardedConfigSchema = defineSchema((v) =>
  * Schema for hosted AG-UI chat forwarded config.
  * @deprecated Use getHostedAgUiChatForwardedConfigSchema()
  */
-export const hostedAgUiChatForwardedConfigSchema = lazySchema(
-  getHostedAgUiChatForwardedConfigSchema,
-);
-
-/** Configuration used by hosted AG-UI chat forwarded. */
-export type HostedAgUiChatForwardedConfig = InferSchema<
-  ReturnType<typeof getHostedAgUiChatForwardedConfigSchema>
->;
+export const hostedAgUiChatForwardedConfigSchema: Schema<HostedAgUiChatForwardedConfig> =
+  lazySchema(
+    getHostedAgUiChatForwardedConfigSchema,
+  );
 
 /** Context for derived hosted AG-UI chat. */
 export type DerivedHostedAgUiChatContext = {

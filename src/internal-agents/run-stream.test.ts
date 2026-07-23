@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { Agent, AgentMessage } from "#veryfront/agent";
@@ -19,7 +19,7 @@ import type {
 import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
 
 class RecordingSpan implements Span {
   readonly attributes: Record<string, AttributeValue> = {};
@@ -398,6 +398,43 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
   });
 
+  it("rejects merged remote grants above the bounded tool surface", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "bounded-agent",
+      config: {
+        id: "bounded-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        __vfAllowedRemoteTools: Array.from({ length: 256 }, (_, index) => `source_${index}`),
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "bounded-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_bounded_grants",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: { allowedTools: ["forwarded_256"] },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () => new ReadableStream<Uint8Array>(),
+          }),
+        }),
+      RangeError,
+      "Remote tool grants exceed",
+    );
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
   it("restricts the run tool surface to runtimeOverrides.toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
@@ -601,7 +638,7 @@ describe("internal-agents/run-stream", () => {
       context: [],
       forwardedProps: {
         runtimeOverrides: {
-          toolAllowlist: "read_baseline",
+          toolAllowlist: ["read_baseline", 42],
         },
       },
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
@@ -865,6 +902,51 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["github__list_issues"]);
+  });
+
+  it("fails closed when remote tool discovery exceeds its bounded surface", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+    const discoveredToolNames = Array.from(
+      { length: 257 },
+      (_, index) => index === 0 ? "github__list_issues" : `tool_${index}`,
+    );
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: true,
+        __vfRemoteToolSources: [remoteToolSource(discoveredToolNames)],
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: { toolAllowlist: ["github__list_issues"] },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        capturedAllowedRemoteTools = (
+          runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+        ).__vfAllowedRemoteTools;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+        };
+      },
+    });
+
+    assertEquals(capturedAllowedRemoteTools, []);
   });
 
   it("strips all tools for an explicitly empty toolAllowlist", async () => {
@@ -1321,6 +1403,43 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolResult, { randomNumber: 7 });
   });
 
+  it("does not expose injected tool failure payloads through runtime errors", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: "thread_1" });
+    const agent = {
+      id: "test",
+      config: { id: "test", model: "test", system: "test" },
+    } as unknown as Agent;
+    const input = {
+      agentId: "test",
+      threadId: "thread_1",
+      runId: "run_1",
+      messages: [],
+      tools: [{ name: "external_tool", description: "External tool" }],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    const mergedTools = buildMergedTools(agent, input, sessionManager);
+    const injectedTool = mergedTools && mergedTools !== true
+      ? mergedTools.external_tool
+      : undefined;
+    if (!injectedTool || injectedTool === true) {
+      throw new Error("Expected injected tool");
+    }
+
+    const pending = injectedTool.execute?.({}, { toolCallId: "tool-call-1" });
+    sessionManager.submitToolResult("run_1", {
+      toolCallId: "tool-call-1",
+      result: "private provider failure payload",
+      isError: true,
+    });
+
+    await assertRejects(
+      () => Promise.resolve(pending),
+      Error,
+      "Injected tool execution failed",
+    );
+  });
+
   it("keeps server-resolved project source tools out of injected studio waits", async () => {
     const sessionManager = new AgentRunSessionManager();
     const projectTool = {
@@ -1484,6 +1603,17 @@ describe("internal-agents/run-stream", () => {
             });
             return new ReadableStream<Uint8Array>({
               start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    `data: ${
+                      JSON.stringify({
+                        type: "text-delta",
+                        messageId: "assistant-usage",
+                        delta: "done",
+                      })
+                    }\n\n`,
+                  ),
+                );
                 controller.close();
               },
             });
@@ -1511,6 +1641,351 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.attributes["agent.usage.cost_source"], "gateway");
     assertEquals(runSpan?.attributes["agent.usage.billing_mode"], "deferred");
     assertEquals(runSpan?.attributes["agent.usage.capture_status"], "complete");
+    assertEquals(runSpan?.attributes["run.id"], undefined);
+    assertEquals(runSpan?.attributes["thread.id"], undefined);
+    assertEquals(runSpan?.attributes["project.id"], undefined);
+  });
+
+  it("does not tear down an existing run when a duplicate stream is rejected", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const threadId = crypto.randomUUID();
+    sessionManager.startRun({ runId: "run_duplicate", threadId });
+    let runtimeConstructionCalls = 0;
+    const agent = {
+      id: "duplicate-agent",
+      config: {
+        id: "duplicate-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "duplicate-agent",
+      threadId,
+      runId: "run_duplicate",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => {
+            runtimeConstructionCalls += 1;
+            return {
+              stream: async () => new ReadableStream<Uint8Array>(),
+            };
+          },
+        }),
+      Error,
+      "already active",
+    );
+
+    assertEquals(runtimeConstructionCalls, 0);
+    assertEquals(sessionManager.getRunStatus(input.runId), "running");
+    assertEquals(sessionManager.cancelRun(input.runId), true);
+  });
+
+  it("releases the run session and sandbox when runtime construction fails", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let closeCalls = 0;
+    const agent = {
+      id: "builder-agent",
+      config: {
+        id: "builder-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "builder-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_setup_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: () =>
+            Promise.resolve({
+              tools: {
+                bash: {
+                  description: "Run bash",
+                  execute: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+                },
+              },
+              sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+              closeSandbox: async () => {
+                closeCalls += 1;
+              },
+            }),
+          createRuntime: () => {
+            throw new Error("runtime construction failed");
+          },
+        }),
+      Error,
+      "runtime construction failed",
+    );
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("redacts runtime failures from client events and structured logs", async () => {
+    const logs = captureConsoleJsonLogs();
+    const secret = "private-provider-payload";
+    let responseText = "";
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const sessionManager = new AgentRunSessionManager();
+        const agent = {
+          id: "sensitive-agent-id",
+          config: {
+            id: "sensitive-agent-id",
+            model: "anthropic/claude-opus-4-6",
+            system: "test",
+          },
+        } as unknown as Agent;
+        const input = {
+          agentId: "sensitive-agent-id",
+          threadId: "10000000-1000-4000-8000-100000000099",
+          runId: "sensitive-run-id",
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.error(new Error(secret));
+                },
+              }),
+          }),
+        });
+        responseText = await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const serializedLogs = JSON.stringify(logs.getEntries());
+    assertEquals(responseText.includes(secret), false);
+    assertStringIncludes(responseText, "Internal agent runtime failed");
+    assertEquals(serializedLogs.includes(secret), false);
+    assertEquals(serializedLogs.includes("sensitive-agent-id"), false);
+    assertEquals(serializedLogs.includes("sensitive-run-id"), false);
+    assertEquals(serializedLogs.includes("10000000-1000-4000-8000-100000000099"), false);
+  });
+
+  it("redacts runtime and tool error payloads carried by data-stream events", async () => {
+    const secret = "private-runtime-error-detail";
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "event-error-agent",
+      config: {
+        id: "event-error-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "event-error-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_event_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    const frames = [
+      { type: "tool-output-error", toolCallId: "tool-1", errorText: secret },
+      { type: "error", error: secret },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(frames));
+              controller.close();
+            },
+          }),
+      }),
+    });
+
+    const body = await response.text();
+    assertEquals(body.includes(secret), false);
+    assertStringIncludes(body, "Tool execution failed");
+    assertStringIncludes(body, "Internal agent runtime failed");
+  });
+
+  it("marks runs with terminal runtime events as failed", async () => {
+    class RecordingSessionManager extends AgentRunSessionManager {
+      completedRuns = 0;
+      failedRuns = 0;
+
+      override completeRun(runId: string): void {
+        this.completedRuns += 1;
+        super.completeRun(runId);
+      }
+
+      override failRun(runId: string): void {
+        this.failedRuns += 1;
+        super.failRun(runId);
+      }
+    }
+
+    const sessionManager = new RecordingSessionManager();
+    const agent = {
+      id: "terminal-error-agent",
+      config: {
+        id: "terminal-error-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "terminal-error-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_terminal_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `data: ${JSON.stringify({ type: "error", error: "provider failed" })}\n\n`,
+                ),
+              );
+              controller.close();
+            },
+          }),
+      }),
+    });
+
+    await response.text();
+    assertEquals(sessionManager.completedRuns, 0);
+    assertEquals(sessionManager.failedRuns, 1);
+  });
+
+  it("fails closed when the runtime stream contains malformed UTF-8", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeCancelCalls = 0;
+    const agent = {
+      id: "encoding-agent",
+      config: {
+        id: "encoding-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "encoding-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_encoding",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array([0xc3, 0x28]));
+            },
+            cancel() {
+              runtimeCancelCalls += 1;
+            },
+          }),
+      }),
+    });
+
+    const body = await response.text();
+    assertStringIncludes(body, '"code":"RUNTIME_ERROR"');
+    assertEquals(body.includes("\uFFFD"), false);
+    assertEquals(runtimeCancelCalls, 1);
+  });
+
+  it("stops draining runtime output while the response consumer applies backpressure", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "backpressure-agent",
+      config: {
+        id: "backpressure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "backpressure-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_backpressure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    let runtimePulls = 0;
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              runtimePulls += 1;
+              if (runtimePulls > 10) {
+                controller.close();
+                return;
+              }
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `data: ${
+                    JSON.stringify({
+                      type: "text-delta",
+                      messageId: "assistant-1",
+                      delta: String(runtimePulls),
+                    })
+                  }\n\n`,
+                ),
+              );
+            },
+          }),
+      }),
+    });
+
+    assertEquals(response.headers.get("cache-control"), "no-cache, no-store");
+    assertEquals(response.headers.get("x-accel-buffering"), "no");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(runtimePulls <= 2, true);
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Expected a runtime response body");
+    await reader.read();
+    await reader.read();
+    await reader.cancel();
   });
 
   it("emits comment heartbeats while the runtime stream is idle", async () => {

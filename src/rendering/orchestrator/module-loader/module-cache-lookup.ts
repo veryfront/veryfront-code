@@ -5,14 +5,14 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   type CacheLookupResult,
   lookupMdxEsmCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { buildPodModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { UNRESOLVED_VF_MODULES_RE } from "./module-transform-cache.ts";
 
 const logger = rendererLogger.component("module-loader");
@@ -25,15 +25,14 @@ export function getModuleCacheKey(
   reactVersion?: string,
   mode?: "development" | "production",
 ): string {
-  const base = projectId ?? projectDir ?? "default";
-  const source = contentSourceId ?? "default";
-  return JSON.stringify([
-    base,
-    source,
-    reactVersion ?? REACT_DEFAULT_VERSION,
-    mode ?? "default",
+  return buildPodModuleCacheKey(
     filePath,
-  ]);
+    projectId,
+    projectDir,
+    contentSourceId,
+    reactVersion,
+    mode,
+  );
 }
 
 type LookupMdxCache = typeof lookupMdxEsmCache;
@@ -70,13 +69,9 @@ async function resolveInMemoryCachedPath(
 
     logger.warn(
       "[ModuleLoader] In-memory cache contains unresolved _vf_modules, invalidating",
-      {
-        filePath: input.filePath.slice(-60),
-        cachedPath: cachedPath.slice(-60),
-      },
     );
-  } catch (_) {
-    /* expected: cached file may no longer exist on disk */
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
   }
 
   input.moduleCache.delete(input.cacheKey);
@@ -113,7 +108,6 @@ async function resolveMdxEsmCachedPath(
 
   if (mdxCacheResult.status === "corrupted") {
     logger.warn("MDX-ESM cache corrupted, will re-transform", {
-      filePath: input.filePath,
       reason: mdxCacheResult.reason,
     });
   }

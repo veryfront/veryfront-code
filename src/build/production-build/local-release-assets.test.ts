@@ -249,4 +249,76 @@ describe("build/production-build/local-release-assets", () => {
 
     assertEquals(removed.includes("/tmp/vf-local-release-assets-test"), true);
   });
+
+  it("derives reproducible source hashes independent of the checkout path", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const first = makeAdapter();
+    const second = makeAdapter();
+    const shared = {
+      outputDir: "/output",
+      dryRun: true,
+      config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+      vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: fakeFrameworkTransform,
+    };
+
+    const firstManifest = await generateLocalReleaseAssetManifest({
+      ...shared,
+      adapter: first.adapter as never,
+      projectDir: "/checkout/one/project",
+    });
+    const secondManifest = await generateLocalReleaseAssetManifest({
+      ...shared,
+      adapter: second.adapter as never,
+      projectDir: "/different/root/project",
+    });
+
+    assertExists(firstManifest);
+    assertExists(secondManifest);
+    assertEquals(firstManifest.sourceContentHash, secondManifest.sourceContentHash);
+  });
+
+  it("validates the complete manifest before publishing any assets", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter, writes } = makeAdapter();
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter: adapter as never,
+          projectDir: "/project",
+          outputDir: "/output",
+          dryRun: false,
+          projectId: "invalid\nproject",
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+        }),
+      Error,
+      "Failed to generate local release dependency assets",
+    );
+
+    assertEquals(writes.size, 0);
+  });
+
+  it("reports temporary-directory cleanup failures", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const { adapter } = makeAdapter();
+    adapter.fs.remove = () => Promise.reject(new Error("cleanup failed"));
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter: adapter as never,
+          projectDir: "/project",
+          outputDir: "/output",
+          dryRun: true,
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+        }),
+      Error,
+      "cleanup failed",
+    );
+  });
 });

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewareContext } from "./context.ts";
 
@@ -13,6 +13,29 @@ function createCtx(
 
 describe("MiddlewareContext", () => {
   describe("constructor", () => {
+    it("rejects malformed runtime inputs", () => {
+      assertThrows(
+        () => new MiddlewareContext(null as never),
+        TypeError,
+        "request must be a Request",
+      );
+      assertThrows(
+        () => new MiddlewareContext(new Request("https://example.com"), null as never),
+        TypeError,
+        "env must be an object",
+      );
+      assertThrows(
+        () =>
+          new MiddlewareContext(
+            new Request("https://example.com"),
+            {},
+            { waitUntil: null } as never,
+          ),
+        TypeError,
+        "executionCtx",
+      );
+    });
+
     it("should initialize with request", () => {
       const req = new Request("https://example.com/test");
       const ctx = new MiddlewareContext(req);
@@ -86,6 +109,19 @@ describe("MiddlewareContext", () => {
 
       assertEquals(response.status, 201);
     });
+
+    it("preserves Headers input and an explicit content type", () => {
+      const ctx = createCtx();
+      const response = ctx.text("payload", {
+        headers: new Headers({
+          "content-type": "application/custom",
+          "x-request-id": "request_123",
+        }),
+      });
+
+      assertEquals(response.headers.get("content-type"), "application/custom");
+      assertEquals(response.headers.get("x-request-id"), "request_123");
+    });
   });
 
   describe("html", () => {
@@ -129,6 +165,18 @@ describe("MiddlewareContext", () => {
 
       assertEquals(response.headers.get("Location"), "https://other.com/path");
     });
+
+    it("rejects non-redirect status codes", () => {
+      const ctx = createCtx();
+
+      for (const status of [200, 299, 400, 500]) {
+        assertThrows(
+          () => ctx.redirect("/invalid", status),
+          RangeError,
+          "between 300 and 399",
+        );
+      }
+    });
   });
 
   describe("set and get", () => {
@@ -137,6 +185,25 @@ describe("MiddlewareContext", () => {
 
       ctx.set("userId", "123");
       assertEquals(ctx.get("userId"), "123");
+      assertEquals(ctx.var.userId, "123");
+    });
+
+    it("reads values assigned through var", () => {
+      const ctx = createCtx();
+
+      ctx.var.requestId = "request_123";
+
+      assertEquals(ctx.get("requestId"), "request_123");
+    });
+
+    it("stores reserved property names without changing the object prototype", () => {
+      const ctx = createCtx();
+      const originalPrototype = Object.getPrototypeOf(ctx.var);
+
+      ctx.set("__proto__", { polluted: true });
+
+      assertEquals(ctx.get("__proto__"), { polluted: true });
+      assertEquals(Object.getPrototypeOf(ctx.var), originalPrototype);
     });
 
     it("should return undefined for non-existent keys", () => {

@@ -12,6 +12,11 @@
 
 export const TAG_WIDTH = 10;
 export const PREFIX_WIDTH = 23; // timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1)
+const MAX_ERROR_NAME_LENGTH = 128;
+const MAX_ERROR_MESSAGE_LENGTH = 8_192;
+const MAX_ERROR_STACK_LENGTH = 32_768;
+const MAX_CONTEXT_KEY_LENGTH = 64;
+const TRUNCATION_MARKER = "[TRUNCATED]";
 
 export type LogLevelName = "debug" | "info" | "warn" | "error";
 
@@ -80,8 +85,14 @@ export function normalizeText(value: string): string {
  * Truncate text to maxLength, adding ellipsis if truncated.
  */
 export function truncateText(value: string, maxLength = 80): string {
+  if (!Number.isSafeInteger(maxLength) || maxLength < 1) return "";
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function truncateWithMarker(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
 }
 
 /**
@@ -90,7 +101,7 @@ export function truncateText(value: string, maxLength = 80): string {
 export function formatValue(value: unknown): string {
   if (typeof value === "string") {
     const trimmed = normalizeText(value);
-    return /\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed;
+    return truncateText(/\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed);
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (value === null) return "null";
@@ -101,7 +112,11 @@ export function formatValue(value: unknown): string {
     text = JSON.stringify(value);
   } catch (_) {
     /* expected: JSON.stringify fails on circular references */
-    text = String(value);
+    try {
+      text = String(value);
+    } catch {
+      text = "[Unserializable]";
+    }
   }
 
   // JSON.stringify can return undefined for certain values (e.g., functions, symbols)
@@ -132,10 +147,26 @@ export function formatErrorText(error: SerializedError | undefined): string {
  */
 export function serializeError(error: unknown): SerializedError | undefined {
   if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
+    try {
+      const name = truncateWithMarker(String(error.name), MAX_ERROR_NAME_LENGTH);
+      const message = truncateWithMarker(String(error.message), MAX_ERROR_MESSAGE_LENGTH);
+      const stack = typeof error.stack === "string"
+        ? truncateWithMarker(error.stack, MAX_ERROR_STACK_LENGTH)
+        : undefined;
+      return { name, message, stack };
+    } catch {
+      return { name: "Error", message: "Error details unavailable" };
+    }
   }
   if (error == null) return undefined;
-  return { name: "UnknownError", message: String(error) };
+  try {
+    return {
+      name: "UnknownError",
+      message: truncateWithMarker(String(error), MAX_ERROR_MESSAGE_LENGTH),
+    };
+  } catch {
+    return { name: "UnknownError", message: "Error details unavailable" };
+  }
 }
 
 /**
@@ -149,7 +180,11 @@ export function formatContextText(
 ): string {
   const entries = Object.entries(context)
     .filter(([_, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${formatValue(value)}`);
+    .map(([key, value]) => {
+      const safeKey = truncateText(key.replace(/[^A-Za-z0-9_.-]/g, "_"), MAX_CONTEXT_KEY_LENGTH) ||
+        "context";
+      return `${safeKey}=${formatValue(value)}`;
+    });
   if (error) entries.push(`err=${formatErrorText(error)}`);
   if (entries.length === 0) return "";
 

@@ -28,6 +28,9 @@ import {
   tokenizeCachePaths,
 } from "#veryfront/cache/paths.ts";
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
+import { readHttpModuleResponse } from "#veryfront/transforms/shared/http-module-response.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { errorLogName } from "../shared/log-context.ts";
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
@@ -51,6 +54,7 @@ import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-valida
 import {
   __clearInFlightHttpFetches,
   bundleAccumulatorStorage,
+  clearInFlightHttpFetchIfOwned,
   inFlightHttpFetches,
   processingStackStorage,
   refreshDistributedCacheAsync,
@@ -77,6 +81,10 @@ const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
 
+function httpLogContext(url: string): { scheme: string } {
+  return { scheme: new URL(url).protocol.replace(":", "") };
+}
+
 // Re-export for backwards compatibility
 export {
   CACHE_DIR_TOKEN,
@@ -99,14 +107,17 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   const cacheIdentity = await buildHttpCacheIdentity(normalizedUrl, options);
   const identityMetadata = await buildHttpCacheIdentityMetadata(normalizedUrl, options);
   const cacheKey = `${cacheDir}:${cacheIdentity}`;
+  const hash = await hashHttpCacheIdentity(cacheIdentity);
 
   const existing = getCachedPaths().get(cacheKey);
   if (existing) {
-    if (await exists(existing)) return existing;
+    if (await exists(existing)) {
+      await trackBundleAccumulator(hash, normalizedUrl, existing);
+      return existing;
+    }
     getCachedPaths().delete(cacheKey);
   }
 
-  const hash = await hashHttpCacheIdentity(cacheIdentity);
   const cachePath = join(cacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
@@ -118,7 +129,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       const depsValid = await validateBundleDepsExist(deps, cacheDir);
       if (!depsValid) {
         httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
-          url: normalizedUrl,
+          ...httpLogContext(normalizedUrl),
           hash,
           missingDeps: deps.length,
         });
@@ -132,7 +143,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           identityMetadata,
           getLastDistributedRefresh,
         );
-        trackBundleAccumulator(hash, normalizedUrl, cachePath);
+        await trackBundleAccumulator(hash, normalizedUrl, cachePath);
         return cachePath;
       }
     } else {
@@ -145,7 +156,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         identityMetadata,
         getLastDistributedRefresh,
       );
-      trackBundleAccumulator(hash, normalizedUrl, cachePath);
+      await trackBundleAccumulator(hash, normalizedUrl, cachePath);
       return cachePath;
     }
   }
@@ -154,13 +165,15 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   if (processingStack.has(cacheIdentity)) {
     if (await exists(cachePath)) {
       httpCacheLog.debug("Circular dependency detected, file exists", {
-        url: normalizedUrl,
+        ...httpLogContext(normalizedUrl),
       });
     } else {
       httpCacheLog.debug("Circular dependency detected, file pending write", {
-        url: normalizedUrl,
-        cachePath,
+        ...httpLogContext(normalizedUrl),
       });
+    }
+    if (await exists(cachePath)) {
+      await trackBundleAccumulator(hash, normalizedUrl, cachePath);
     }
     return cachePath;
   }
@@ -168,7 +181,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
     const result = await waitForInFlightFetch(inFlight, cacheKey);
-    if (result !== undefined) return result;
+    if (result !== undefined) {
+      if (result !== null) await trackBundleAccumulator(hash, normalizedUrl, result);
+      return result;
+    }
 
     if (inFlightHttpFetches.get(cacheKey) === inFlight) {
       inFlightHttpFetches.delete(cacheKey);
@@ -188,7 +204,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         const depsExist = await validateBundleDepsExist(deps, cacheDir);
         if (!depsExist) {
           httpCacheLog.debug("Cached code has missing bundle deps, will re-fetch", {
-            url: normalizedUrl,
+            ...httpLogContext(normalizedUrl),
             hash,
             missingDeps: deps.length,
           });
@@ -197,19 +213,17 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             cacheResult.wasGzipped
               ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
               : "[HTTP-CACHE] Distributed cache hit",
-            { url: normalizedUrl, hash },
+            { ...httpLogContext(normalizedUrl), hash },
           );
-          await fs.mkdir(cacheDir, { recursive: true });
-          await fs.writeTextFile(cachePath, cachedCode);
-
-          if (!(await exists(cachePath))) {
+          const written = await writeCacheFile(fs, cachePath, cachedCode, "HTTP-CACHE");
+          if (!written) {
             throw FILE_NOT_FOUND.create({
-              detail:
-                `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+              detail: "Recovered HTTP cache file was not created after a successful write.",
             });
           }
 
           getCachedPaths().set(cacheKey, cachePath);
+          await trackBundleAccumulator(hash, normalizedUrl, cachePath);
           return cachePath;
         }
       } else {
@@ -217,29 +231,27 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           cacheResult.wasGzipped
             ? "[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)"
             : "[HTTP-CACHE] Distributed cache hit",
-          { url: normalizedUrl, hash },
+          { ...httpLogContext(normalizedUrl), hash },
         );
-        await fs.mkdir(cacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
-
-        if (!(await exists(cachePath))) {
+        const written = await writeCacheFile(fs, cachePath, cachedCode, "HTTP-CACHE");
+        if (!written) {
           throw FILE_NOT_FOUND.create({
-            detail:
-              `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
+            detail: "Recovered HTTP cache file was not created after a successful write.",
           });
         }
 
         getCachedPaths().set(cacheKey, cachePath);
+        await trackBundleAccumulator(hash, normalizedUrl, cachePath);
         return cachePath;
       }
     } else if (cacheResult.failReason && cacheResult.failReason !== "not_found") {
       httpCacheLog.debug("Distributed cache get failed", {
-        url: normalizedUrl,
+        ...httpLogContext(normalizedUrl),
         reason: cacheResult.failReason,
       });
     }
 
-    httpCacheLog.debug("Fetching from network", { url: normalizedUrl });
+    httpCacheLog.debug("Fetching from network", httpLogContext(normalizedUrl));
 
     const urlObj = new URL(normalizedUrl);
     const controller = new AbortController();
@@ -247,38 +259,55 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
     const httpFetchStartTime = performance.now();
 
-    const response = await withSpan(
-      SpanNames.HTTP_CLIENT_FETCH,
-      () =>
-        fetch(normalizedUrl, {
-          headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-          signal: controller.signal,
-          redirect: "follow",
-        }),
-      {
-        "http.method": "GET",
-        "http.url": normalizedUrl,
-        "http.host": urlObj.host,
-        "http.scheme": urlObj.protocol.replace(":", ""),
-        "esm.package_fetch": true,
-      },
-    );
-    clearTimeout(timeout);
+    let response: Response;
+    let code: string;
+    try {
+      response = await withSpan(
+        SpanNames.HTTP_CLIENT_FETCH,
+        () =>
+          fetch(normalizedUrl, {
+            headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+            signal: controller.signal,
+            redirect: "follow",
+          }),
+        {
+          "http.method": "GET",
+          "http.scheme": urlObj.protocol.replace(":", ""),
+          "esm.package_fetch": true,
+        },
+      );
 
-    const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
-    contentMetricsLog.debug("HTTP_MODULE_FETCH", {
-      url: normalizedUrl.substring(0, 120),
-      host: urlObj.host,
-      duration_ms: httpFetchDuration,
-      status: response.status,
-      slow: httpFetchDuration > SLOW_HTTP_FETCH_THRESHOLD_MS,
-    });
+      const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
+      contentMetricsLog.debug("HTTP_MODULE_FETCH", {
+        scheme: urlObj.protocol.replace(":", ""),
+        duration_ms: httpFetchDuration,
+        status: response.status,
+        slow: httpFetchDuration > SLOW_HTTP_FETCH_THRESHOLD_MS,
+      });
 
-    if (!response.ok) {
-      throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${response.status}` });
+      if (!response.ok) {
+        throw BUILD_FAILED.create({
+          detail: `HTTP module request failed with status ${response.status}.`,
+        });
+      }
+
+      const responseCode = await readHttpModuleResponse(response);
+      if (responseCode === null) {
+        throw BUNDLE_ERROR.create({
+          detail: "HTTP module response exceeds the maximum allowed size.",
+        });
+      }
+      code = responseCode;
+    } catch (error) {
+      if (error instanceof VeryfrontError) throw error;
+      throw BUILD_FAILED.create({
+        detail: controller.signal.aborted
+          ? "HTTP module request timed out."
+          : "HTTP module request failed.",
+      });
+    } finally {
+      clearTimeout(timeout);
     }
-
-    let code = await response.text();
 
     const contentType = response.headers.get("content-type") ?? "";
     const isHtmlContent = contentType.includes("text/html") || looksLikeHtmlNotJs(code);
@@ -287,14 +316,12 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       logger.error(
         "[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page",
         {
-          url: normalizedUrl,
+          ...httpLogContext(normalizedUrl),
           contentType,
-          preview: code.slice(0, 200),
         },
       );
       throw BUNDLE_ERROR.create({
-        detail:
-          `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+        detail: "HTTP module response contains HTML instead of JavaScript.",
       });
     }
 
@@ -307,13 +334,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
     code = embedSourceUrl(code, normalizedUrl);
 
-    await fs.mkdir(cacheDir, { recursive: true });
-    await fs.writeTextFile(cachePath, code);
-
-    if (!(await exists(cachePath))) {
+    const written = await writeCacheFile(fs, cachePath, code, "HTTP-CACHE");
+    if (!written) {
       throw FILE_NOT_FOUND.create({
-        detail:
-          `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
+        detail: "HTTP cache file was not created after a successful write.",
       });
     }
 
@@ -329,19 +353,14 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      httpCacheLog.debug("Distributed cache set failed", { url: normalizedUrl, error });
+      httpCacheLog.debug("Distributed cache set failed", {
+        ...httpLogContext(normalizedUrl),
+        errorName: errorLogName(error),
+      });
     }
 
     getCachedPaths().set(cacheKey, cachePath);
-
-    const accumulator = bundleAccumulatorStorage.getStore();
-    if (accumulator) {
-      accumulator.push({
-        hash: String(hash),
-        url: normalizedUrl,
-        sizeBytes: code.length,
-      });
-    }
+    await trackBundleAccumulator(hash, normalizedUrl, cachePath);
 
     return cachePath;
   })();
@@ -350,7 +369,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   try {
     return await fetchPromise;
   } finally {
-    inFlightHttpFetches.delete(cacheKey);
+    clearInFlightHttpFetchIfOwned(cacheKey, fetchPromise);
   }
 }
 
@@ -412,7 +431,9 @@ export function cacheHttpImportsToLocal(
       });
       return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
     } catch (error) {
-      httpCacheLog.debug("Failed to create bundle manifest", { error });
+      httpCacheLog.debug("Failed to create bundle manifest", {
+        errorName: errorLogName(error),
+      });
       return { code: rewrittenCode };
     }
   });

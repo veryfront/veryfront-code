@@ -11,13 +11,17 @@ import type { AgentResponse } from "../types.ts";
 
 /** Public API contract for AG-UI runtime event encoder. */
 export interface AgUiRuntimeEventEncoder {
+  /** State value. */
   state: AgUiBrowserEncoderState;
+  /** Encodes one stream value. */
   encode: (event: AgUiRuntimeStreamEvent) => AgUiBrowserEncodedEvent[];
+  /** Finalizes the associated lifecycle. */
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
 }
 
 /** Options accepted by create AG-UI runtime event encoder. */
 export interface CreateAgUiRuntimeEventEncoderOptions {
+  /** Initial metadata value. */
   initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
 }
 

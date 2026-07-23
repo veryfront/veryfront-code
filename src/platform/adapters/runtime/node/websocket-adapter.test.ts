@@ -1,31 +1,63 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { isWebSocketUpgradeResponse } from "../../base.ts";
 import { EventEmitter } from "node:events";
 import { Buffer } from "node:buffer";
-import { resolveWebSocketUpgrade } from "./http-server.ts";
-import { NodeServerAdapter, NodeWebSocket } from "./websocket-adapter.ts";
+import {
+  NodeServerAdapter,
+  NodeWebSocket,
+  runWithNodeWebSocketRequest,
+} from "./websocket-adapter.ts";
 import type { WSWebSocket } from "./types.ts";
 
-/**
- * Build a minimal EventEmitter-backed mock that satisfies the `WSWebSocket`
- * interface for the methods `_attachRealSocket` actually uses (`on`, `send`,
- * `close`). The underlying EventEmitter drives `emit("close", ...)` etc. in
- * tests, mirroring the real `ws` library's close-callback shape
- * `(code?: number, reason?: Buffer)`.
- */
-function createMockWs(): WSWebSocket & EventEmitter {
-  const ee = new EventEmitter() as EventEmitter & {
+type MockWebSocket = WSWebSocket & EventEmitter & {
+  closes: Array<{ code?: number; reason?: string }>;
+  sent: Array<string | ArrayBuffer>;
+  terminated: boolean;
+};
+
+function createMockWs(): MockWebSocket {
+  const emitter = new EventEmitter() as EventEmitter & {
+    closes: Array<{ code?: number; reason?: string }>;
+    sent: Array<string | ArrayBuffer>;
+    terminated: boolean;
     send: (data: string | ArrayBuffer) => void;
     close: (code?: number, reason?: string) => void;
+    terminate: () => void;
   };
-  ee.send = () => {};
-  ee.close = () => {};
-  return ee as unknown as WSWebSocket & EventEmitter;
+  emitter.closes = [];
+  emitter.sent = [];
+  emitter.terminated = false;
+  emitter.send = (data) => emitter.sent.push(data);
+  emitter.close = (code, reason) => emitter.closes.push({ code, reason });
+  emitter.terminate = () => emitter.terminated = true;
+  return emitter as unknown as MockWebSocket;
 }
 
-function attach(): { socket: NodeWebSocket; ws: WSWebSocket & EventEmitter } {
+function createUpgradeRequest(protocols?: string): Request {
+  const headers = new Headers({
+    connection: "keep-alive, Upgrade",
+    upgrade: "websocket",
+    "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+    "sec-websocket-version": "13",
+  });
+  if (protocols) headers.set("sec-websocket-protocol", protocols);
+  return new Request("http://localhost/_ws", { headers });
+}
+
+function captureVeryfrontError(operation: () => unknown): VeryfrontError {
+  try {
+    operation();
+  } catch (error) {
+    if (error instanceof VeryfrontError) return error;
+    throw error;
+  }
+  throw new Error("Expected the operation to throw");
+}
+
+function attach(): { socket: NodeWebSocket; ws: MockWebSocket } {
   const socket = new NodeWebSocket();
   const ws = createMockWs();
   socket._attachRealSocket(ws);
@@ -33,39 +65,174 @@ function attach(): { socket: NodeWebSocket; ws: WSWebSocket & EventEmitter } {
 }
 
 describe("NodeServerAdapter WebSocket upgrade", () => {
-  it("returns an explicit non-DOM upgrade response signal", () => {
-    const requestId = "dGhlIHNhbXBsZSBub25jZQ==";
-    const adapter = new NodeServerAdapter();
-
-    const { response } = adapter.upgradeWebSocket(
-      new Request("http://localhost/_ws", {
-        headers: {
-          connection: "Upgrade",
-          upgrade: "websocket",
-          "sec-websocket-key": requestId,
-        },
-      }),
+  it("requires the active Node server request context", () => {
+    const error = captureVeryfrontError(() =>
+      new NodeServerAdapter().upgradeWebSocket(createUpgradeRequest())
     );
 
-    assertEquals(isWebSocketUpgradeResponse(response), true);
-    assertEquals(response.status, 101);
-    assertEquals(response.statusText, "Switching Protocols");
-    assertEquals(response.headers.get("upgrade"), "websocket");
-    assertEquals(response instanceof Response, false);
+    assertEquals(error.slug, "not-supported");
+  });
 
-    assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  it("registers an explicit upgrade signal with selected protocol and headers", async () => {
+    const request = createUpgradeRequest("alpha, beta");
+
+    const execution = await runWithNodeWebSocketRequest(
+      request,
+      () =>
+        new NodeServerAdapter().upgradeWebSocket(request, {
+          headers: { "x-websocket": "accepted" },
+          idleTimeout: 0,
+          protocol: "beta",
+        }),
+    );
+
+    assertExists(execution.upgrade);
+    assertEquals(execution.value, execution.upgrade.result);
+    assertEquals(execution.upgrade.socket, execution.value.socket);
+    assertEquals(execution.upgrade.protocol, "beta");
+    assertEquals(execution.upgrade.headers.get("x-websocket"), "accepted");
+    assertEquals(isWebSocketUpgradeResponse(execution.value.response), true);
+    assertEquals(execution.value.response instanceof Response, false);
+    assertEquals(execution.value.response.headers.get("sec-websocket-protocol"), "beta");
+    assertEquals(
+      execution.value.response.headers.get("sec-websocket-accept"),
+      "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+    );
+  });
+
+  it("rejects a selected protocol the client did not offer", async () => {
+    const request = createUpgradeRequest("alpha");
+
+    const execution = await runWithNodeWebSocketRequest(
+      request,
+      () =>
+        captureVeryfrontError(() =>
+          new NodeServerAdapter().upgradeWebSocket(request, { protocol: "beta" })
+        ),
+    );
+
+    assertEquals(execution.value.slug, "invalid-argument");
+    assertEquals(execution.upgrade, undefined);
+  });
+
+  it("rejects nonzero idle timeouts instead of silently ignoring them", async () => {
+    const request = createUpgradeRequest();
+
+    const execution = await runWithNodeWebSocketRequest(
+      request,
+      () =>
+        captureVeryfrontError(() =>
+          new NodeServerAdapter().upgradeWebSocket(request, { idleTimeout: 30 })
+        ),
+    );
+
+    assertEquals(execution.value.slug, "not-supported");
+    assertEquals(execution.upgrade, undefined);
+  });
+
+  it("rejects multiple upgrade registrations for one request", async () => {
+    const request = createUpgradeRequest();
+    let secondError: VeryfrontError | undefined;
+
+    const execution = await runWithNodeWebSocketRequest(request, () => {
+      const first = new NodeServerAdapter().upgradeWebSocket(request);
+      secondError = captureVeryfrontError(() => new NodeServerAdapter().upgradeWebSocket(request));
+      return first;
+    });
+
+    assertEquals(secondError?.slug, "invalid-argument");
+    assertExists(execution.upgrade);
   });
 });
 
-describe("NodeWebSocket close handling", () => {
-  it("invokes onclose with a CloseEvent-shaped object on a clean close", () => {
+describe("NodeWebSocket", () => {
+  it("dispatches open once and flushes bounded pending messages", () => {
+    const socket = new NodeWebSocket();
+    const ws = createMockWs();
+    let propertyOpens = 0;
+    let listenerOpens = 0;
+    socket.onopen = () => propertyOpens++;
+    socket.addEventListener("open", () => listenerOpens++, { once: true });
+    socket.send("queued");
+
+    socket._attachRealSocket(ws);
+    ws.emit("open");
+
+    assertEquals(socket.readyState, NodeWebSocket.OPEN);
+    assertEquals(ws.sent, ["queued"]);
+    assertEquals(propertyOpens, 1);
+    assertEquals(listenerOpens, 1);
+  });
+
+  it("supports multiple listeners, once, and listener-specific removal", () => {
+    const { socket, ws } = attach();
+    const calls: string[] = [];
+    const removed = () => calls.push("removed");
+    socket.addEventListener("message", () => calls.push("first"));
+    socket.addEventListener("message", () => calls.push("once"), { once: true });
+    socket.addEventListener("message", removed);
+    socket.removeEventListener("message", removed);
+
+    ws.emit("message", Buffer.from("one"), false);
+    ws.emit("message", Buffer.from("two"), false);
+
+    assertEquals(calls, ["first", "once", "first"]);
+  });
+
+  it("preserves binary messages as ArrayBuffer data", () => {
+    const { socket, ws } = attach();
+    let data: unknown;
+    socket.onmessage = (event) => data = event.data;
+
+    ws.emit("message", Buffer.from([0, 128, 255]), true);
+
+    assertEquals(data instanceof ArrayBuffer, true);
+    assertEquals([...new Uint8Array(data as ArrayBuffer)], [0, 128, 255]);
+  });
+
+  it("honors a close requested before the transport attaches", () => {
+    const socket = new NodeWebSocket();
+    const ws = createMockWs();
+    let opened = false;
+    socket.onopen = () => opened = true;
+    socket.send("discarded");
+
+    socket.close(1000, "done");
+    socket._attachRealSocket(ws);
+
+    assertEquals(socket.readyState, NodeWebSocket.CLOSING);
+    assertEquals(ws.closes, [{ code: 1000, reason: "done" }]);
+    assertEquals(ws.sent, []);
+    assertEquals(opened, false);
+  });
+
+  it("bounds messages queued while connecting", () => {
+    const socket = new NodeWebSocket();
+    for (let index = 0; index < 100; index++) socket.send(String(index));
+
+    const error = captureVeryfrontError(() => socket.send("overflow"));
+
+    assertEquals(error.slug, "network-error");
+  });
+
+  it("emits transport errors without relying on global ErrorEvent", () => {
+    const { socket, ws } = attach();
+    let received: Event | undefined;
+    socket.onerror = (event) => received = event;
+
+    ws.emit("error", new Error("transport failed"));
+
+    assertExists(received);
+    assertEquals(received.type, "error");
+  });
+
+  it("invokes onclose with close details and a monotonic closed state", () => {
     const { socket, ws } = attach();
     let received: CloseEvent | null = null;
-    socket.onclose = (event) => {
-      received = event;
-    };
+    socket.onclose = (event) => received = event;
 
     ws.emit("close", 1000, Buffer.from("bye"));
+    socket.close();
 
     assertExists(received);
     const event = received as unknown as CloseEvent;
@@ -73,14 +240,13 @@ describe("NodeWebSocket close handling", () => {
     assertEquals(event.code, 1000);
     assertEquals(event.reason, "bye");
     assertEquals(event.wasClean, true);
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
   });
 
-  it("defaults to code 1006 and wasClean=false when ws emits no arguments", () => {
+  it("defaults abnormal close details when ws emits no arguments", () => {
     const { socket, ws } = attach();
     let received: CloseEvent | null = null;
-    socket.onclose = (event) => {
-      received = event;
-    };
+    socket.onclose = (event) => received = event;
 
     ws.emit("close");
 
@@ -91,60 +257,10 @@ describe("NodeWebSocket close handling", () => {
     assertEquals(event.wasClean, false);
   });
 
-  it("treats any non-1006 code (e.g. 1001 going away) as clean", () => {
-    const { socket, ws } = attach();
-    let received: CloseEvent | null = null;
-    socket.onclose = (event) => {
-      received = event;
-    };
+  it("rejects invalid close codes and oversized reasons", () => {
+    const socket = new NodeWebSocket();
 
-    ws.emit("close", 1001, Buffer.from("going away"));
-
-    const event = received as unknown as CloseEvent;
-    assertEquals(event.code, 1001);
-    assertEquals(event.reason, "going away");
-    assertEquals(event.wasClean, true);
-  });
-
-  it("accepts a string reason in addition to a Buffer", () => {
-    const { socket, ws } = attach();
-    let received: CloseEvent | null = null;
-    socket.onclose = (event) => {
-      received = event;
-    };
-
-    ws.emit("close", 1000, "farewell");
-
-    const event = received as unknown as CloseEvent;
-    assertEquals(event.reason, "farewell");
-    assertEquals(event.wasClean, true);
-  });
-
-  it("does not throw ReferenceError on close when CloseEvent is not a global", () => {
-    // Regression test: Node <23 does not expose `CloseEvent` as a global. The
-    // previous implementation used `new CloseEvent("close")`, which crashed
-    // the dev server with an unhandled `ReferenceError` on every socket
-    // teardown. The handler must complete without throwing regardless of the
-    // runtime's `CloseEvent` support.
-    const { socket, ws } = attach();
-    socket.onclose = () => {};
-
-    ws.emit("close", 1000, Buffer.from("ok"));
-    // Reaching this line without throwing proves the regression is fixed.
-  });
-
-  it("transitions readyState to CLOSED after close", () => {
-    const { socket, ws } = attach();
-    socket.onclose = () => {};
-
-    ws.emit("close", 1000, Buffer.from("ok"));
-
-    assertEquals(socket.readyState, 3); // NodeWebSocket.CLOSED
-  });
-
-  it("is safe when onclose is not set (no listener attached)", () => {
-    const { ws } = attach();
-    // onclose left null — emitting should be a no-op, not a crash.
-    ws.emit("close", 1000, Buffer.from("ok"));
+    assertThrows(() => socket.close(1006), VeryfrontError);
+    assertThrows(() => socket.close(1000, "x".repeat(124)), VeryfrontError);
   });
 });

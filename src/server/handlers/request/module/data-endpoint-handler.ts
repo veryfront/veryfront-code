@@ -4,6 +4,16 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
+import { VeryfrontError } from "#veryfront/errors";
+import { getSafeErrorName } from "../../../utils/error-name.ts";
+
+function isDataNotFound(error: unknown): boolean {
+  try {
+    return error instanceof VeryfrontError && error.status === 404;
+  } catch {
+    return false;
+  }
+}
 
 export function handleDataEndpoint(
   req: Request,
@@ -11,7 +21,6 @@ export function handleDataEndpoint(
   ctx: HandlerContext,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
-  getErrorMessage: (error: unknown) => string,
 ): Promise<HandlerResult> {
   return withSpan(
     "module.data.handle",
@@ -30,7 +39,7 @@ export function handleDataEndpoint(
         };
 
         const body = JSON.stringify(data);
-        const etag = computeEtag(body);
+        const etag = await computeEtag(body);
 
         const builder = createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
 
@@ -46,16 +55,11 @@ export function handleDataEndpoint(
             .json(data, 200),
         );
       } catch (e) {
-        const errorMessage = getErrorMessage(e);
-        const lower = errorMessage.toLowerCase();
-        const isNotFound = lower.includes("not found") ||
-          lower.includes("404") ||
-          (e instanceof Error && e.message.toLowerCase().includes("no page"));
+        const isNotFound = isDataNotFound(e);
         const status = isNotFound ? 404 : 500;
 
         serverLogger.error("[data-endpoint] Failed to resolve data", {
-          pathname,
-          error: errorMessage,
+          errorName: getSafeErrorName(e),
           status,
         });
 
@@ -72,9 +76,6 @@ export function handleDataEndpoint(
         );
       }
     },
-    {
-      "module.data.pathname": pathname,
-      "module.data.projectSlug": ctx.projectSlug || "unknown",
-    },
+    { "http.method": req.method },
   );
 }

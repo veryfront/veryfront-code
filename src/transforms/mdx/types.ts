@@ -1,6 +1,6 @@
 import type React from "react";
 
-export type MDXComponents = Record<string, React.ComponentType<unknown>>;
+export type MDXComponents = Record<string, React.ElementType>;
 
 export interface MDXComponentProps {
   components?: MDXComponents;

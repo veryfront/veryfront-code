@@ -80,27 +80,44 @@ redis.call('hset', KEYS[1], 'workerId', ARGV[2], 'heartbeatAt', ARGV[4])
 if not started or started == '' then redis.call('hset', KEYS[1], 'startedAt', ARGV[4]) end
 return 1`;
 
-/**
- * Atomically move a run between status index sets and write its new status,
- * reading the previous status from the run hash inside the script. This closes
- * the read-then-write race where two concurrent updateRun() calls both read the
- * old status and then issue their own SREM/SADD, leaving the run in the wrong
- * status set (or in two at once).
- *
- * KEYS[1] = run hash key
- * ARGV[1] = runId
- * ARGV[2] = new status
- * ARGV[3] = status index key prefix (the status value is appended to it)
- *
- * The index keys are derived from ARGV (the old status is unknown to the
- * caller), so this assumes a single logical Redis, matching the lock scripts
- * above.
- */
-const MOVE_STATUS_SCRIPT = `local old = redis.call('hget', KEYS[1], 'status')
-if old == ARGV[2] then return 0 end
-redis.call('hset', KEYS[1], 'status', ARGV[2])
-if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
-redis.call('sadd', ARGV[3] .. ARGV[2], ARGV[1])
+/** Atomically verify that a run exists, patch it, and update its status index. */
+const UPDATE_RUN_SCRIPT = `-- atomic-run-update
+local oldStatus = redis.call('hget', KEYS[1], 'status')
+if not oldStatus or oldStatus == '' then return 0 end
+local nextStatus = ARGV[3]
+for i = 4, #ARGV, 2 do
+  redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+if nextStatus ~= '' and oldStatus ~= nextStatus then
+  redis.call('hset', KEYS[1], 'status', nextStatus)
+  redis.call('srem', ARGV[2] .. oldStatus, ARGV[1])
+  redis.call('sadd', ARGV[2] .. nextStatus, ARGV[1])
+end
+if nextStatus ~= '' and nextStatus ~= 'running' then
+  redis.call('del', KEYS[2])
+end
+return 1`;
+
+/** Atomically replace a canonical run hash and all of its secondary indexes. */
+const CREATE_RUN_SCRIPT = `-- atomic-run-create-or-replace
+local oldStatus = redis.call('hget', KEYS[1], 'status')
+local oldWorkflowId = redis.call('hget', KEYS[1], 'workflowId')
+if oldStatus and oldStatus ~= '' then
+  redis.call('srem', ARGV[2] .. oldStatus, ARGV[1])
+end
+if oldWorkflowId and oldWorkflowId ~= '' then
+  redis.call('srem', ARGV[3] .. oldWorkflowId, ARGV[1])
+end
+redis.call('del', KEYS[1])
+for i = 8, #ARGV, 2 do
+  redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+redis.call('sadd', ARGV[2] .. ARGV[4], ARGV[1])
+redis.call('sadd', ARGV[3] .. ARGV[5], ARGV[1])
+redis.call('sadd', ARGV[6], ARGV[1])
+if ARGV[7] ~= '' then
+  redis.call('expire', KEYS[1], ARGV[7])
+end
 return 1`;
 
 /** Atomically verify the current status, update fields, and move the status index. */
@@ -130,7 +147,25 @@ end
 for i = expectedCount + 6, #ARGV, 2 do
   redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
 end
+if nextStatus ~= '' and nextStatus ~= 'running' then
+  redis.call('del', KEYS[2])
+end
 return 1`;
+
+/** Atomically remove a canonical run, its auxiliary data, and secondary indexes. */
+const DELETE_RUN_SCRIPT = `-- atomic-run-delete
+local status = redis.call('hget', KEYS[1], 'status')
+local workflowId = redis.call('hget', KEYS[1], 'workflowId')
+redis.call('del', KEYS[1], KEYS[2], KEYS[3], KEYS[4])
+redis.call('srem', ARGV[4], ARGV[1])
+if status and status ~= '' then
+  redis.call('srem', ARGV[2] .. status, ARGV[1])
+end
+if workflowId and workflowId ~= '' then
+  redis.call('srem', ARGV[3] .. workflowId, ARGV[1])
+end
+if status or workflowId then return 1 end
+return 0`;
 
 /** Atomically verify canonical run ownership before appending auxiliary run state. */
 const APPEND_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-append
@@ -234,6 +269,13 @@ export class RedisBackend implements WorkflowBackend {
   private pendingMessageIds = new Map<string, string[]>();
 
   constructor(config: RedisBackendConfig = {}) {
+    if (
+      config.runTtl !== undefined &&
+      (!Number.isSafeInteger(config.runTtl) || config.runTtl <= 0)
+    ) {
+      throw INVALID_ARGUMENT.create({ detail: "runTtl must be a positive safe integer" });
+    }
+
     const resolvedConfig: RedisBackendInternalConfig = {
       prefix: "vf:workflow:",
       streamKey: "vf:workflow:stream",
@@ -508,11 +550,13 @@ export class RedisBackend implements WorkflowBackend {
     } catch (e) {
       // The node-redis client surfaces "group already exists" only as a
       // BUSYGROUP-prefixed error message (no structured code is exposed through
-      // our adapter), so substring matching is the only signal available. Any
-      // other error is a genuine failure worth logging.
+      // our adapter), so substring matching is the only signal available.
       const msg = String(e instanceof Error ? e.message : e);
       if (!msg.includes("BUSYGROUP")) {
-        logger.error("Error creating consumer group:", e);
+        throw INITIALIZATION_ERROR.create({
+          detail: "Failed to initialize the Redis workflow queue",
+          cause: e instanceof Error ? e : undefined,
+        });
       }
     }
 
@@ -525,12 +569,20 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Creating run: ${run.id}`);
 
-    await client.hset(this.runKey(run.id), serializedRun);
-    await client.sadd(this.statusIndexKey(run.status), run.id);
-    await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
-    await client.sadd(this.allRunsIndexKey(), run.id);
-
-    if (this.config.runTtl) await client.expire(this.runKey(run.id), this.config.runTtl);
+    await client.eval(
+      CREATE_RUN_SCRIPT,
+      [this.runKey(run.id)],
+      [
+        run.id,
+        `${this.storagePrefix()}index:status:`,
+        `${this.storagePrefix()}index:workflow:`,
+        run.status,
+        run.workflowId,
+        this.allRunsIndexKey(),
+        this.config.runTtl ? String(this.config.runTtl) : "",
+        ...Object.entries(serializedRun).flatMap(([field, value]) => [field, value]),
+      ],
+    );
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
@@ -550,22 +602,18 @@ export class RedisBackend implements WorkflowBackend {
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
     const fields = this.serializeRunPatch(patch);
-    // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
-    // move), so it is deliberately excluded from this plain hset.
-    if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
-
-    if (patch.status !== undefined) {
-      // Atomic status write + index move (see MOVE_STATUS_SCRIPT).
-      await client.eval(
-        MOVE_STATUS_SCRIPT,
-        [this.runKey(runId)],
-        [runId, patch.status, `${this.storagePrefix()}index:status:`],
-      );
-    }
-
-    // Terminal states should clear stale-claim markers.
-    if (patch.status && patch.status !== "running") {
-      await client.del(this.claimKey(runId));
+    const result = await client.eval(
+      UPDATE_RUN_SCRIPT,
+      [this.runKey(runId), this.claimKey(runId)],
+      [
+        runId,
+        `${this.storagePrefix()}index:status:`,
+        patch.status ?? "",
+        ...Object.entries(fields).flatMap(([field, value]) => [field, value]),
+      ],
+    );
+    if (Number(result) !== 1) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     }
   }
 
@@ -603,7 +651,7 @@ export class RedisBackend implements WorkflowBackend {
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,
-      [this.runKey(runId)],
+      [this.runKey(runId), this.claimKey(runId)],
       [
         String(expectedStatuses.length),
         ...expectedStatuses,
@@ -614,29 +662,26 @@ export class RedisBackend implements WorkflowBackend {
         ...fieldArgs,
       ],
     );
-    const updated = Number(result) === 1;
-
-    if (updated && patch.status && patch.status !== "running") {
-      await client.del(this.claimKey(runId));
-    }
-    return updated;
+    return Number(result) === 1;
   }
 
   async deleteRun(runId: string): Promise<void> {
     const client = await this.ensureClient();
-
-    const run = await this.getRun(runId);
-    if (!run) return;
-
-    await client.del(
-      this.runKey(runId),
-      this.checkpointsKey(runId),
-      this.approvalsKey(runId),
-      this.claimKey(runId),
+    await client.eval(
+      DELETE_RUN_SCRIPT,
+      [
+        this.runKey(runId),
+        this.checkpointsKey(runId),
+        this.approvalsKey(runId),
+        this.claimKey(runId),
+      ],
+      [
+        runId,
+        `${this.storagePrefix()}index:status:`,
+        `${this.storagePrefix()}index:workflow:`,
+        this.allRunsIndexKey(),
+      ],
     );
-    await client.srem(this.statusIndexKey(run.status), runId);
-    await client.srem(this.workflowIndexKey(run.workflowId), runId);
-    await client.srem(this.allRunsIndexKey(), runId);
     this.pendingMessageIds.delete(runId);
   }
 

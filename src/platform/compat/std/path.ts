@@ -18,19 +18,12 @@ export {
   toFileUrl,
 } from "../path/index.ts";
 
-interface PosixPath {
-  join(...paths: string[]): string;
-  resolve(...paths: string[]): string;
-  normalize(path: string): string;
-  relative(from: string, to: string): string;
-  dirname(path: string): string;
-  basename(path: string, ext?: string): string;
-  extname(path: string): string;
-  isAbsolute(path: string): boolean;
-  sep: string;
-  delimiter: string;
-}
-
-const { posix } = isDeno ? await import("#std/path.ts") : await import("node:path");
+const posix = isDeno
+  ? await import("#std/path/posix.ts").then((path) => ({
+    ...path,
+    delimiter: path.DELIMITER,
+    sep: path.SEPARATOR,
+  }))
+  : (await import("node:path")).posix;
 
 export { posix };

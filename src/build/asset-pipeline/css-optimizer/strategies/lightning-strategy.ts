@@ -13,23 +13,21 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
   readonly priority = 100;
 
   private lightningCSS: LightningCSSModule | null = null;
-  private initialized = false;
+  private initializationPromise: Promise<boolean> | null = null;
 
-  async init(): Promise<boolean> {
-    if (this.initialized) return this.lightningCSS !== null;
-
-    this.initialized = true;
-
-    try {
-      this.lightningCSS = await import("https://esm.sh/lightningcss@1.29.2");
-      logger.info("Lightning CSS optimizer loaded successfully");
-      return true;
-    } catch (error) {
-      logger.warn("Lightning CSS not available. Install with: npm install lightningcss", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
+  init(): Promise<boolean> {
+    if (this.initializationPromise) return this.initializationPromise;
+    this.initializationPromise = (async () => {
+      try {
+        this.lightningCSS = await import("npm:lightningcss@1.29.2");
+        logger.info("Lightning CSS optimizer loaded successfully");
+        return true;
+      } catch {
+        logger.warn("Lightning CSS is unavailable");
+        return false;
+      }
+    })();
+    return this.initializationPromise;
   }
 
   canProcess(options: CSSOptimizationOptions): boolean {
@@ -45,28 +43,22 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
       throw INITIALIZATION_ERROR.create({ detail: "Lightning CSS not initialized" });
     }
 
-    try {
-      const result = this.lightningCSS.transform({
-        filename,
-        code: new TextEncoder().encode(content),
-        minify: options.minify ?? true,
-        sourceMap: options.sourceMap ?? false,
-        targets: parseBrowserTargets(options.browsers),
-        analyzeDependencies: false,
-      });
+    const result = this.lightningCSS.transform({
+      filename,
+      code: new TextEncoder().encode(content),
+      minify: options.minify ?? true,
+      sourceMap: options.sourceMap ?? false,
+      targets: options.autoprefixer === false ? undefined : parseBrowserTargets(options.browsers),
+      analyzeDependencies: false,
+      errorRecovery: false,
+    });
 
-      const decoder = new TextDecoder();
+    const decoder = new TextDecoder();
 
-      return {
-        code: decoder.decode(result.code),
-        sourceMap: result.map ? decoder.decode(result.map) : undefined,
-      };
-    } catch (error) {
-      logger.warn(`Lightning CSS processing failed for ${filename}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
+    return {
+      code: decoder.decode(result.code),
+      sourceMap: result.map ? decoder.decode(result.map) : undefined,
+    };
   }
 
   isAvailable(): boolean {

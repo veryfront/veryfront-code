@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
-import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
+import { type BuildExecutorOptions, type BuildResult, executeBuild } from "./build-executor.ts";
 
 const baseConfig: VeryfrontConfig = {};
 
@@ -149,6 +149,37 @@ describe("BuildExecutor", () => {
       assertEquals(combined.pages, 0);
       assertEquals(combined.totalSize, 0);
       assertEquals(combined.ssgPaths.length, 0);
+    });
+  });
+
+  describe("route output validation", () => {
+    it("rejects Pages and App routes that target the same output", async () => {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () =>
+          executeBuild(
+            [{ slug: "index", path: "/", file: "/project/pages/index.mdx" }],
+            [{
+              path: "/",
+              pageFile: "/project/app/page.tsx",
+              segments: [],
+              segmentDirs: ["/project/app"],
+            }],
+            {
+              adapter,
+              projectDir: "/project",
+              outputDir: "/output",
+              renderer: createRenderer(),
+              config: baseConfig,
+              enablePrefetch: false,
+              chunkManifest: null,
+              baseUrl: "",
+              dryRun: true,
+            },
+          ),
+        TypeError,
+        "Duplicate static route path",
+      );
     });
   });
 

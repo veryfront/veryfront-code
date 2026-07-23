@@ -54,8 +54,11 @@ const AG_UI_HEADERS: Record<string, string> = {
  * the finalized conversation without reconstructing it from the SSE stream.
  */
 export interface AgUiCompletion {
+  /** Agent ID value. */
   agentId: string;
+  /** Thread ID value. */
   threadId: string;
+  /** Run ID value. */
   runId: string;
   /**
    * The finalized messages this run produced (the assistant turn plus any tool
@@ -480,10 +483,13 @@ async function createAgUiInjectedToolsStreamResponse(
 
 /** Options accepted by AG-UI handler. */
 export interface AgUiHandlerOptions {
+  /** Context supplied to the operation. */
   context?:
     | Record<string, unknown>
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
+  /** Session manager value. */
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
+  /** Before stream value. */
   beforeStream?: AgUiBeforeStream;
   /**
    * Called once after a successful run with the finalized conversation, so an
@@ -495,6 +501,7 @@ export interface AgUiHandlerOptions {
 
 /** Public API contract for AG-UI handler config with agent. */
 export interface AgUiHandlerConfigWithAgent extends AgUiHandlerOptions {
+  /** Agent used to execute requests. */
   agent: Agent;
 }
 

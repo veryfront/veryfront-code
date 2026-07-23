@@ -3,6 +3,9 @@
  *
  * Clears renderer caches and handlers for test and runtime cleanup.
  */
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
+
 export async function cleanupBundler(): Promise<void> {
   const { clearMDXRendererCache } = await import("#veryfront/transforms/mdx/index.ts");
   clearMDXRendererCache();
@@ -25,3 +28,5 @@ export async function cleanupBundler(): Promise<void> {
     /* expected: RSC handler registry might not be loaded */
   }
 }
+
+if (isBun) registerProcessStateReset("Bun bundler", cleanupBundler);

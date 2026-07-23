@@ -1,11 +1,86 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/index.ts";
 import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/compat/path";
+import { CONFIG_INVALID, CONFIG_PARSE_ERROR } from "#veryfront/errors/error-registry/config.ts";
 
 const logger = serverLogger.component("env");
 
 const envSources = new Map<string, string>();
 let envLoaded = false;
+let envLoadPromise: Promise<void> | null = null;
+
+const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+interface EnvLoadOptions {
+  cwd: string;
+  override: boolean;
+  debug: boolean;
+}
+
+interface EnvFileCandidate {
+  path: string;
+  kind: "base" | "environment" | "local";
+}
+
+function snapshotOptions(
+  options: { cwd?: string; override?: boolean; debug?: boolean },
+): EnvLoadOptions {
+  let cwd: unknown;
+  let override: unknown;
+  let debug: unknown;
+
+  try {
+    cwd = options.cwd ?? getCwd();
+    override = options.override ?? false;
+    debug = options.debug ?? false;
+  } catch {
+    throw CONFIG_INVALID.create({
+      message: "Environment loader options could not be read",
+      detail: "Environment loader options could not be read",
+    });
+  }
+
+  if (typeof cwd !== "string" || cwd.length === 0) {
+    throw CONFIG_INVALID.create({
+      message: "Environment loader cwd must be a non-empty string",
+      detail: "Environment loader cwd must be a non-empty string",
+    });
+  }
+  if (typeof override !== "boolean" || typeof debug !== "boolean") {
+    throw CONFIG_INVALID.create({
+      message: "Environment loader flags must be booleans",
+      detail: "Environment loader flags must be booleans",
+    });
+  }
+
+  return { cwd, override, debug };
+}
+
+function getEnvironmentName(): string {
+  const environment = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
+  if (ENVIRONMENT_NAME_PATTERN.test(environment)) return environment;
+
+  throw CONFIG_INVALID.create({
+    message: "Environment name must use letters, numbers, underscores, or hyphens",
+    detail: "Environment name must use letters, numbers, underscores, or hyphens",
+  });
+}
+
+function getEnvFiles(cwd: string, environment: string): EnvFileCandidate[] {
+  const candidates: EnvFileCandidate[] = [
+    { path: join(cwd, ".env"), kind: "base" },
+    { path: join(cwd, `.env.${environment}`), kind: "environment" },
+    { path: join(cwd, ".env.local"), kind: "local" },
+  ];
+  const seen = new Set<string>();
+  return candidates.filter(({ path }) => {
+    if (seen.has(path)) return false;
+    seen.add(path);
+    return true;
+  });
+}
 
 /** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
 export async function loadEnv(
@@ -16,56 +91,115 @@ export async function loadEnv(
   } = {},
 ): Promise<void> {
   if (envLoaded) return;
-  const { cwd = getCwd(), override = false, debug = false } = options;
+  if (envLoadPromise) return await envLoadPromise;
 
-  const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
-  const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
+  const snapshot = snapshotOptions(options);
+  const promise = loadEnvFiles(snapshot);
+  envLoadPromise = promise;
 
-  let loadedCount = 0;
-  let totalVars = 0;
+  try {
+    await promise;
+    envLoaded = true;
+  } finally {
+    if (envLoadPromise === promise) envLoadPromise = null;
+  }
+}
+
+async function loadEnvFiles(options: EnvLoadOptions): Promise<void> {
+  const environment = getEnvironmentName();
+  const envFiles = getEnvFiles(options.cwd, environment);
+  const pending = new Map<string, { value: string; file: string }>();
+  const inherited: Record<string, string> = Object.create(null);
+
+  let loadedFileCount = 0;
 
   for (const file of envFiles) {
     try {
-      const content = await readTextFile(file);
-      const vars = parseEnvFile(content);
+      const content = await readTextFile(file.path);
+      const vars = parseEnvFile(content, inherited);
 
       for (const [key, value] of Object.entries(vars)) {
-        const existing = getEnv(key);
-        if (existing && !override) continue;
-
-        setEnv(key, value);
-        envSources.set(key, file);
-        totalVars++;
-
-        if (debug) {
-          logger.debug(
-            `[env] ${key}=${value.substring(0, 20)}${value.length > 20 ? "..." : ""}`,
-          );
-        }
-        if (key === "VERYFRONT_API_BASE_URL") {
-          logger.info(`VERYFRONT_API_BASE_URL loaded: ${value}`);
-        }
+        pending.set(key, { value, file: file.path });
+        inherited[key] = value;
       }
 
-      loadedCount++;
-      if (debug) logger.debug(`[env] Loaded ${file}`);
+      loadedFileCount++;
+      if (options.debug) {
+        logger.debug("Environment file loaded", {
+          fileKind: file.kind,
+          variableCount: Object.keys(vars).length,
+        });
+      }
     } catch (error) {
       if (isNotFoundError(error)) continue;
-      logger.warn(`Failed to load ${file}:`, error);
+      throw CONFIG_PARSE_ERROR.create({
+        message: "Failed to load an environment file",
+        detail: "Failed to load an environment file",
+        context: { fileKind: file.kind },
+      });
     }
   }
 
-  envLoaded = true;
-  refreshLoggerConfig();
-  if (loadedCount === 0) return;
+  let appliedVariableCount = 0;
+  for (const [key, entry] of pending) {
+    if (!options.override && getEnv(key) !== undefined) continue;
+    setEnv(key, entry.value);
+    envSources.set(key, entry.file);
+    appliedVariableCount++;
+  }
 
-  logger.debug(
-    `[env] Loaded ${totalVars} environment variables from ${loadedCount} file(s)`,
-  );
+  refreshLoggerConfig();
+  if (loadedFileCount === 0 || !options.debug) return;
+
+  logger.debug("Environment files loaded", {
+    loadedFileCount,
+    appliedVariableCount,
+  });
 }
 
-function parseEnvFile(content: string): Record<string, string> {
-  const vars: Record<string, string> = {};
+function findClosingQuote(value: string, quote: '"' | "'"): number {
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "\\") {
+      index++;
+      continue;
+    }
+    if (value[index] === quote) return index;
+  }
+  return -1;
+}
+
+function decodeQuotedValue(value: string, quote: '"' | "'"): string {
+  let decoded = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (character !== "\\" || index + 1 >= value.length) {
+      decoded += character;
+      continue;
+    }
+
+    const next = value[index + 1]!;
+    if (next === quote || next === "\\") {
+      decoded += next;
+      index++;
+      continue;
+    }
+    decoded += `\\${next}`;
+    index++;
+  }
+  return decoded;
+}
+
+function validateQuotedRemainder(value: string): void {
+  const remainder = value.trim();
+  if (remainder === "" || remainder.startsWith("#") || remainder.startsWith("//")) return;
+  throw new SyntaxError("Unexpected content after quoted environment value");
+}
+
+function parseEnvFile(
+  content: string,
+  inherited: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const vars: Record<string, string> = Object.create(null);
   const lines = content.split("\n");
 
   let currentKey: string | null = null;
@@ -75,14 +209,18 @@ function parseEnvFile(content: string): Record<string, string> {
 
   for (let line of lines) {
     if (inMultiline) {
-      const endQuoteIndex = line.indexOf(quoteChar!);
+      const endQuoteIndex = findClosingQuote(line, quoteChar!);
       if (endQuoteIndex === -1) {
         currentValue += `\n${line}`;
         continue;
       }
 
+      validateQuotedRemainder(line.substring(endQuoteIndex + 1));
       currentValue += `\n${line.substring(0, endQuoteIndex)}`;
-      vars[currentKey!] = expandVariables(currentValue, vars);
+      const decodedValue = decodeQuotedValue(currentValue, quoteChar!);
+      vars[currentKey!] = quoteChar === '"'
+        ? expandVariables(decodedValue, vars, inherited)
+        : decodedValue;
 
       currentKey = null;
       currentValue = "";
@@ -97,16 +235,23 @@ function parseEnvFile(content: string): Record<string, string> {
     const equalIndex = line.indexOf("=");
     if (equalIndex === -1) continue;
 
-    const key = line.substring(0, equalIndex).trim();
-    let value = line.substring(equalIndex + 1).trim();
+    const assignment = line.startsWith("export ") ? line.slice("export ".length) : line;
+    const assignmentEqualIndex = assignment.indexOf("=");
+    if (assignmentEqualIndex === -1) continue;
+
+    const key = assignment.substring(0, assignmentEqualIndex).trim();
+    if (!ENV_KEY_PATTERN.test(key)) continue;
+    let value = assignment.substring(assignmentEqualIndex + 1).trim();
 
     if (value.startsWith('"') || value.startsWith("'")) {
       quoteChar = value[0] as '"' | "'";
       value = value.substring(1);
 
-      const endQuoteIndex = value.indexOf(quoteChar);
+      const endQuoteIndex = findClosingQuote(value, quoteChar);
       if (endQuoteIndex !== -1) {
-        vars[key] = expandVariables(value.substring(0, endQuoteIndex), vars);
+        validateQuotedRemainder(value.substring(endQuoteIndex + 1));
+        const quotedValue = decodeQuotedValue(value.substring(0, endQuoteIndex), quoteChar);
+        vars[key] = quoteChar === '"' ? expandVariables(quotedValue, vars, inherited) : quotedValue;
         continue;
       }
 
@@ -124,19 +269,25 @@ function parseEnvFile(content: string): Record<string, string> {
       value = value.substring(0, commentMatch.index).trim();
     }
 
-    vars[key] = expandVariables(value, vars);
+    vars[key] = expandVariables(value, vars, inherited);
   }
+
+  if (inMultiline) throw new SyntaxError("Unterminated quoted environment value");
 
   return vars;
 }
 
-function expandVariables(value: string, vars: Record<string, string>): string {
+function expandVariables(
+  value: string,
+  vars: Readonly<Record<string, string>>,
+  inherited: Readonly<Record<string, string>>,
+): string {
   value = value.replace(/\$\{([^}]+)\}/g, (_, varName: string) => {
-    return vars[varName] ?? getEnv(varName) ?? "";
+    return vars[varName] ?? inherited[varName] ?? getEnv(varName) ?? "";
   });
 
   value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName: string) => {
-    return vars[varName] ?? getEnv(varName) ?? "";
+    return vars[varName] ?? inherited[varName] ?? getEnv(varName) ?? "";
   });
 
   return value;
@@ -171,5 +322,6 @@ export function getEnvSource(
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
+  envLoadPromise = null;
   envSources.clear();
 }

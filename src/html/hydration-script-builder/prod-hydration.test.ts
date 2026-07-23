@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateProdHydrationScript } from "./prod-hydration.ts";
 
@@ -62,6 +62,14 @@ describe("hydration-script-builder/prod-hydration", () => {
     it("should include onRecoverableError handler", () => {
       const result = generateProdHydrationScript("index");
       assertEquals(result.includes("onRecoverableError"), true);
+      assertEquals(result.includes("onRecoverableError: () => {}"), false);
+      assertEquals(result.includes("Hydration recovery failed ("), true);
+    });
+
+    it("does not emit a top-level return in the generated module", () => {
+      const result = generateProdHydrationScript("index");
+      assertEquals(result.includes("if (!root) return"), false);
+      assertEquals(result.includes("if (root) {"), true);
     });
 
     it("should serialize empty props by default", () => {
@@ -76,19 +84,123 @@ describe("hydration-script-builder/prod-hydration", () => {
       assertEquals(result.includes('"count":42'), true);
     });
 
-    it("should encode slug and props as safe inline JavaScript literals", () => {
+    it("rejects non-object page props at the runtime boundary", () => {
+      assertThrows(
+        () => generateProdHydrationScript("index", undefined, [] as never),
+        TypeError,
+        "props",
+      );
+    });
+
+    it("does not execute page-prop accessors or custom serializers", () => {
+      let accessorCalls = 0;
+      const props: Record<string, unknown> = {};
+      Object.defineProperty(props, "value", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return "private";
+        },
+      });
+      assertThrows(
+        () => generateProdHydrationScript("index", undefined, props),
+        TypeError,
+        "accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
+
+      let serializerCalls = 0;
+      assertThrows(
+        () =>
+          generateProdHydrationScript("index", undefined, {
+            value: {
+              toJSON() {
+                serializerCalls++;
+                return "private";
+              },
+            },
+          }),
+        TypeError,
+        "JSON-serializable",
+      );
+      assertEquals(serializerCalls, 0);
+    });
+
+    it("rejects cyclic and oversized nested page props", () => {
+      const props: Record<string, unknown> = {};
+      props.self = props;
+      assertThrows(
+        () => generateProdHydrationScript("index", undefined, props),
+        TypeError,
+        "cycles",
+      );
+      assertThrows(
+        () =>
+          generateProdHydrationScript("index", undefined, {
+            values: Array.from({ length: 10_001 }, () => true),
+          }),
+        TypeError,
+        "entry limit",
+      );
+    });
+
+    it("rejects unsafe page module slugs", () => {
+      for (
+        const slug of [
+          "../private",
+          "blog/%2e%2e/private",
+          "x';globalThis.__veryfrontSlugInjection = true;//\nnext",
+        ]
+      ) {
+        assertThrows(
+          () => generateProdHydrationScript(slug),
+          TypeError,
+          "page slug",
+        );
+      }
+    });
+
+    it("rejects traversal hidden behind many percent-encoding layers", () => {
+      let traversal = "%2e%2e";
+      for (let layer = 0; layer < 12; layer++) {
+        traversal = traversal.replaceAll("%", "%25");
+      }
+
+      assertThrows(
+        () => generateProdHydrationScript(`blog/${traversal}/private`),
+        TypeError,
+        "page slug",
+      );
+    });
+
+    it("rejects encoded URL delimiters and malformed UTF-16 in page slugs", () => {
+      for (
+        const slug of [
+          "blog/%253fquery",
+          "blog/%2523fragment",
+          "blog/%25e2%2580%25ae",
+          "blog/invalid-\ud800",
+        ]
+      ) {
+        assertThrows(
+          () => generateProdHydrationScript(slug),
+          TypeError,
+          "page slug",
+        );
+      }
+    });
+
+    it("encodes props as a safe inline JavaScript literal", () => {
       const result = generateProdHydrationScript(
-        "x';globalThis.__veryfrontSlugInjection = true;//\nnext",
+        "safe-page",
         undefined,
         {
           marker: "</script><script>globalThis.__veryfrontPropsBreakout = true</script>",
         },
       );
 
-      assertEquals(result.includes("from '@/pages/x'"), false);
       assertEquals(result.includes("</script><script>"), false);
       assertEquals(result.includes("\\u003c/script"), true);
-      assertEquals(result.includes('from "@/pages/'), true);
     });
 
     it("should import App and Layout components", () => {

@@ -5,11 +5,57 @@ import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
+  getAgUiRunFinishedMetadataSchema,
+  getAgUiSnapshotMessageSchema,
   mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
+import { formatToolErrorText, toRenderableCustomChunk } from "./ag-ui-helpers.ts";
 
 describe("chat/ag-ui", () => {
+  it("does not execute accessors while formatting errors or custom chunks", () => {
+    let getterCalls = 0;
+    const error: Record<string, unknown> = { code: "failed" };
+    Object.defineProperty(error, "message", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted error getter");
+      },
+    });
+    const customChunk: Record<string, unknown> = { type: "source-url" };
+    Object.defineProperty(customChunk, "url", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("untrusted URL getter");
+      },
+    });
+
+    assertEquals(formatToolErrorText(error), '{"code":"failed"}');
+    assertEquals(toRenderableCustomChunk(customChunk), null);
+    assertEquals(getterCalls, 0);
+  });
+
+  it("keeps the global error snapshot entry budget across nested arrays", () => {
+    let descriptorReads = 0;
+    const trackDescriptors = (target: unknown[]) =>
+      new Proxy(target, {
+        getOwnPropertyDescriptor(target, key) {
+          if (typeof key === "string" && /^\d+$/u.test(key)) descriptorReads += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+    const inner = trackDescriptors(new Array(1_000).fill(null));
+    const outerValues = new Array(1_000).fill(null);
+    outerValues[0] = inner;
+    const outer = trackDescriptors(outerValues);
+
+    formatToolErrorText({ nested: outer });
+
+    assertEquals(descriptorReads <= 1_000, true);
+  });
+
   it("keeps the public browser entrypoint off server-side data stream imports", async () => {
     const source = await Deno.readTextFile(new URL("./ag-ui.ts", import.meta.url));
 
@@ -92,8 +138,14 @@ describe("chat/ag-ui", () => {
           threadId: "thread-1",
         },
       },
-      { type: "text-start", id: "msg-1", contentId: "text:0" },
-      { type: "text-delta", id: "msg-1", contentId: "text:0", delta: "Hello" },
+      { type: "text-start", id: "text:0", messageId: "msg-1", contentId: "text:0" },
+      {
+        type: "text-delta",
+        id: "text:0",
+        messageId: "msg-1",
+        contentId: "text:0",
+        delta: "Hello",
+      },
       {
         type: "tool-input-start",
         toolCallId: "tool-1",
@@ -139,11 +191,25 @@ describe("chat/ag-ui", () => {
     assertEquals(flushed.events.map((entry) => entry.eventId), [1]);
     assertEquals(flushed.events[0]?.chatEvents, [{
       type: "text-delta",
-      id: "msg-1",
+      id: "text:0",
+      messageId: "msg-1",
       contentId: "text:0",
       delta: "partial",
     }]);
     assertEquals(flushed.remainder, "");
+  });
+
+  it("flushes a frame that exactly reaches the configured buffer limit", () => {
+    const frame = 'event: Custom\ndata: {"name":"progress","value":1}';
+    const state = createAgUiChatEventDecoderState({
+      maxBufferedChars: frame.length,
+      maxFrameChars: frame.length,
+    });
+
+    assertEquals(decodeAgUiSseChunk(state, frame).events, []);
+    assertEquals(flushAgUiSseChunk(state).events[0]?.chatEvents, [
+      { type: "data-progress", data: 1 },
+    ]);
   });
 
   it("preserves AG-UI text content ids when decoding chat stream events", () => {
@@ -166,9 +232,15 @@ describe("chat/ag-ui", () => {
 
     const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
     assertEquals(chatEvents, [
-      { type: "text-start", id: "msg-1", contentId: "block-1" },
-      { type: "text-delta", id: "msg-1", contentId: "block-1", delta: "hello" },
-      { type: "text-end", id: "msg-1", contentId: "block-1" },
+      { type: "text-start", id: "block-1", messageId: "msg-1", contentId: "block-1" },
+      {
+        type: "text-delta",
+        id: "block-1",
+        messageId: "msg-1",
+        contentId: "block-1",
+        delta: "hello",
+      },
+      { type: "text-end", id: "block-1", messageId: "msg-1", contentId: "block-1" },
     ]);
   });
 
@@ -233,6 +305,51 @@ describe("chat/ag-ui", () => {
     );
   });
 
+  it("rejects unsafe run metadata and inconsistent decoder limits", () => {
+    const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+    assertThrows(
+      () =>
+        decodeAgUiSseChunk(
+          state,
+          'event: RunStarted\ndata: {"agent_avatar_url":"javascript:alert(1)"}\n\n',
+        ),
+      Error,
+      "Malformed AG-UI event payload for RunStarted",
+    );
+    assertThrows(
+      () => createAgUiChatEventDecoderState({ maxBufferedChars: 10, maxFrameChars: 11 }),
+      RangeError,
+      "maxFrameChars must not exceed maxBufferedChars",
+    );
+  });
+
+  it("validates nested snapshot, state-delta, and finish metadata payloads", () => {
+    assertEquals(
+      getAgUiRunFinishedMetadataSchema().safeParse({
+        inputTokens: Number.MAX_SAFE_INTEGER + 1,
+      }).success,
+      false,
+    );
+    assertEquals(
+      getAgUiSnapshotMessageSchema().safeParse({ id: "", role: "assistant" }).success,
+      false,
+    );
+    for (
+      const frame of [
+        'event: MessagesSnapshot\ndata: {"messages":[42]}\n\n',
+        'event: StateDelta\ndata: {"delta":[{"op":"add","path":""}]}\n\n',
+        'event: RunFinished\ndata: {"metadata":{"inputTokens":-1}}\n\n',
+      ]
+    ) {
+      const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
+      assertThrows(
+        () => decodeAgUiSseChunk(state, frame),
+        Error,
+        "Malformed AG-UI event payload",
+      );
+    }
+  });
+
   it("throws on malformed trailing handled payloads when flushed in strict mode", () => {
     const state = createAgUiChatEventDecoderState({ validationMode: "strict" });
     const initial = decodeAgUiSseChunk(
@@ -259,6 +376,19 @@ describe("chat/ag-ui", () => {
 
     assertEquals(result.events.length, 1);
     assertEquals(result.events[0]?.chatEvents, [{ type: "abort" }]);
+  });
+
+  it("redacts untrusted AG-UI run error details", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      'event: RunError\ndata: {"code":"PROVIDER_ERROR","message":"request <REDACTED> failed at internal host"}\n\n',
+    );
+
+    assertEquals(result.events[0]?.chatEvents, [{
+      type: "error",
+      errorText: "Conversation agent run failed",
+    }]);
   });
 
   it("keeps fallback reasoning ids stable across start, delta, and end", () => {
@@ -288,6 +418,32 @@ describe("chat/ag-ui", () => {
     assertEquals(state.activeFallbackReasoningPartId, null);
   });
 
+  it("keeps an explicit reasoning id for later id-less lifecycle events", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: ReasoningMessageStart",
+        'data: {"id":"reasoning-1"}',
+        "",
+        "event: ReasoningMessageContent",
+        'data: {"delta":"Thinking"}',
+        "",
+        "event: ReasoningMessageEnd",
+        "data: {}",
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    assertEquals(result.events.flatMap((entry) => entry.chatEvents), [
+      { type: "reasoning-start", id: "reasoning-1" },
+      { type: "reasoning-delta", id: "reasoning-1", delta: "Thinking" },
+      { type: "reasoning-end", id: "reasoning-1" },
+    ]);
+    assertEquals(state.activeFallbackReasoningPartId, null);
+  });
+
   it("preserves non-renderable custom events as data chunks", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
@@ -299,6 +455,19 @@ describe("chat/ag-ui", () => {
     assertEquals(result.events[0]?.chatEvents, [
       { type: "data-progress", data: { percent: 42 } },
     ]);
+  });
+
+  it("does not promote unsafe custom URLs into renderable links", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      'event: Custom\ndata: {"name":"source","value":{"type":"source-url","sourceId":"src-1","url":"javascript:alert(1)"}}\n\n',
+    );
+
+    assertEquals(result.events[0]?.chatEvents, [{
+      type: "data-source",
+      data: { type: "source-url", sourceId: "src-1", url: "javascript:alert(1)" },
+    }]);
   });
 
   it("emits tool output errors when AG-UI result payloads are marked as failures", () => {
@@ -333,7 +502,7 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
-  it("preserves ToolCallResult input when the result arrives without a prior tool start", () => {
+  it("emits an orphan ToolCallResult without inventing a tool input event", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
       state,
@@ -347,17 +516,6 @@ describe("chat/ag-ui", () => {
 
     const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
     assertEquals(chatEvents, [
-      {
-        type: "tool-input-available",
-        toolCallId: "tool-1",
-        toolName: "tool",
-        input: {
-          path: "report.md",
-          content: "hello",
-        },
-        dynamic: true,
-        providerExecuted: true,
-      },
       {
         type: "tool-output-available",
         toolCallId: "tool-1",
@@ -448,7 +606,7 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
-  it("maps runtime tool errors and orphan tool results into assistant tool parts", () => {
+  it("maps runtime tool errors and drops orphan tool results without inventing tool names", () => {
     const result = mapAgUiRuntimeMessagesToChatUiMessages([
       {
         id: "assistant-1",
@@ -500,20 +658,116 @@ describe("chat/ag-ui", () => {
           },
         ],
       },
+    ]);
+  });
+
+  it("does not attach a delayed runtime tool result across a user turn", () => {
+    const result = mapAgUiRuntimeMessagesToChatUiMessages([
       {
-        id: "tool-orphan",
+        id: "assistant-1",
         role: "assistant",
-        parts: [
-          {
-            type: "dynamic-tool",
-            toolName: "unknown",
-            toolCallId: "missing-tool-call",
-            input: {},
-            state: "output-available",
-            output: { matches: 2 },
-          },
-        ],
+        toolCalls: [{
+          id: "tool-call-1",
+          type: "function",
+          function: { name: "search_files", arguments: "{}" },
+        }],
+      },
+      { id: "user-2", role: "user", content: "Start a new turn" },
+      {
+        id: "late-tool-result",
+        role: "tool",
+        toolCallId: "tool-call-1",
+        content: '{"matches":2}',
       },
     ]);
+
+    assertEquals(result, [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "search_files",
+          toolCallId: "tool-call-1",
+          input: {},
+          state: "input-available",
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Start a new turn" }],
+      },
+    ]);
+  });
+
+  it("keeps distinct text content blocks separate under one assistant message", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        'event: TextMessageStart\ndata: {"messageId":"msg-1","contentId":"block-1"}',
+        'event: TextMessageContent\ndata: {"messageId":"msg-1","contentId":"block-1","delta":"first"}',
+        'event: TextMessageEnd\ndata: {"messageId":"msg-1","contentId":"block-1"}',
+        'event: TextMessageStart\ndata: {"messageId":"msg-1","contentId":"block-2"}',
+        'event: TextMessageContent\ndata: {"messageId":"msg-1","contentId":"block-2","delta":"second"}',
+        'event: TextMessageEnd\ndata: {"messageId":"msg-1","contentId":"block-2"}',
+      ].join("\n\n") + "\n\n",
+    );
+
+    assertEquals(
+      result.events.flatMap((event) => event.chatEvents).map((event) =>
+        "id" in event ? event.id : null
+      ),
+      ["block-1", "block-1", "block-1", "block-2", "block-2", "block-2"],
+    );
+  });
+
+  it("bounds incomplete SSE frames before buffering untrusted streams", () => {
+    const state = createAgUiChatEventDecoderState({ maxBufferedChars: 32 });
+
+    assertThrows(
+      () => decodeAgUiSseChunk(state, "x".repeat(33)),
+      Error,
+      "AG-UI SSE buffer exceeds 32 characters",
+    );
+    assertEquals(state.remainder, "");
+  });
+
+  it("releases completed tool state and does not fabricate an orphan tool start", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        'event: ToolCallStart\ndata: {"toolCallId":"tool-1","toolCallName":"search"}',
+        'event: ToolCallEnd\ndata: {"toolCallId":"tool-1"}',
+        'event: ToolCallResult\ndata: {"toolCallId":"tool-1","content":"{\\"ok\\":true}"}',
+        'event: ToolCallResult\ndata: {"toolCallId":"orphan","input":{"q":"x"},"content":"{\\"ok\\":true}"}',
+      ].join("\n\n") + "\n\n",
+    );
+
+    assertEquals(state.toolCalls.size, 0);
+    assertEquals(result.events[1]?.chatEvents, [{
+      type: "tool-input-available",
+      toolCallId: "tool-1",
+      toolName: "search",
+      input: {},
+      providerExecuted: true,
+    }]);
+    assertEquals(result.events.at(-1)?.chatEvents, [{
+      type: "tool-output-available",
+      toolCallId: "orphan",
+      output: { ok: true },
+      providerExecuted: true,
+    }]);
+  });
+
+  it("rejects empty, fractional, and unsafe SSE sequence ids", () => {
+    assertEquals(parseSseEvent("id:\nevent: Custom\ndata: {}\n").id, null);
+    assertEquals(parseSseEvent("id: 1.5\nevent: Custom\ndata: {}\n").id, null);
+    assertEquals(
+      parseSseEvent(`id: ${Number.MAX_SAFE_INTEGER + 1}\nevent: Custom\ndata: {}\n`).id,
+      null,
+    );
   });
 });

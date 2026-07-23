@@ -54,10 +54,30 @@ describe("routing/api/openapi/mcp-resource", () => {
       const result = await resource.load({});
 
       assertEquals(result.spec, spec);
+      assertEquals(result.spec === spec, false);
       assertEquals(result.summary.title, "My API");
       assertEquals(result.summary.version, "2.0.0");
       assertEquals(result.summary.endpoints, 1);
       assertEquals(result.summary.tags, ["users"]);
+    });
+
+    it("returns an isolated specification snapshot", async () => {
+      const spec = makeSpec({
+        paths: {
+          "/api/users": { get: { responses: { "200": { description: "OK" } } } },
+        },
+      });
+      const resource = createResource(spec);
+      const first = await resource.load({});
+
+      first.spec.info.title = "Changed by caller";
+      delete first.spec.paths["/api/users"];
+      const second = await resource.load({});
+
+      assertEquals(spec.info.title, "Test API");
+      assertEquals(Object.keys(spec.paths), ["/api/users"]);
+      assertEquals(second.spec.info.title, "Test API");
+      assertEquals(Object.keys(second.spec.paths), ["/api/users"]);
     });
 
     it("should handle spec with no tags", async () => {

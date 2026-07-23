@@ -37,15 +37,17 @@ Run `veryfront dev` and open [http://localhost:3000/dashboard?name=Grace](http:/
 
 The `DataContext` provides:
 
-| Property  | Type                     | Description                                 |
-| --------- | ------------------------ | ------------------------------------------- |
-| `request` | `Request`                | The incoming HTTP request                   |
-| `params`  | `Record<string, string>` | Route parameters (e.g. `{ slug: "hello" }`) |
-| `query`   | `URLSearchParams`        | Query string parameters                     |
+| Property  | Type                                 | Description                                   |
+| --------- | ------------------------------------ | --------------------------------------------- |
+| `request` | `Request`                            | The incoming HTTP request                     |
+| `params`  | `Record<string, string \| string[]>` | Route parameters, such as `{ slug: "hello" }` |
+| `query`   | `URLSearchParams`                    | Query string parameters                       |
+| `url`     | `URL`                                | Parsed request URL                            |
 
 ## Static data
 
-`getStaticData` runs at build time. Use it for content that doesn't change per request:
+`getStaticData` supplies cacheable data for static generation and production
+renders. Use it for content that does not depend on the incoming request:
 
 ```tsx
 // app/blog/[slug]/page.tsx
@@ -62,6 +64,7 @@ export async function getStaticData({ params }: { params: { slug: string } }) {
 export async function getStaticPaths() {
   return {
     paths: posts.map((p) => ({ params: { slug: p.slug } })),
+    fallback: false,
   };
 }
 

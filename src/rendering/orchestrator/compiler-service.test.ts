@@ -10,8 +10,6 @@ function createMockBundle(code: string): MdxBundle {
     compiledCode: code,
     frontmatter: {},
     globals: {},
-    headings: [],
-    nodeMap: new Map(),
   };
 }
 

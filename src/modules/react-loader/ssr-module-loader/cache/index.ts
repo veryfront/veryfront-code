@@ -12,6 +12,7 @@ export {
   getTransformSemaphore,
   getTransformStats,
   globalCrossProjectCache,
+  globalCrossProjectInProgress,
   globalInProgress,
   globalModuleCache,
   globalTmpDirs,

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { makeNodeTempDir } from "./temp-dir.ts";
 
 describe("platform/adapters/runtime/shared/temp-dir", () => {
@@ -29,6 +30,25 @@ describe("platform/adapters/runtime/shared/temp-dir", () => {
       await Deno.remove(dir2, { recursive: true });
     } catch (_) {
       /* expected: cleanup best-effort */
+    }
+  });
+
+  it("rejects prefixes that can escape or reshape the temp root", async () => {
+    for (const prefix of ["", "../escape-", "nested/path-", "nested\\path-", ".", "..", "bad\0-"]) {
+      await assertRejects(() => makeNodeTempDir(prefix), VeryfrontError);
+    }
+    await assertRejects(() => makeNodeTempDir("x".repeat(129)), VeryfrontError);
+  });
+
+  it("creates a direct child of the canonical temp root", async () => {
+    const { dirname } = await import("node:path");
+    const { realpath } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await makeNodeTempDir("contained-");
+    try {
+      assertEquals(dirname(await realpath(dir)), await realpath(tmpdir()));
+    } finally {
+      await Deno.remove(dir, { recursive: true });
     }
   });
 });

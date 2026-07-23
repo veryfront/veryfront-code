@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import {
   __injectDepsForTests,
   extractRequestHeaders,
@@ -20,6 +25,11 @@ const defaultParsedDomain: ParsedDomain = {
 };
 
 describe("server/runtime-handler/project-resolution", () => {
+  afterEach(() => {
+    __injectDepsForTests(null);
+    __resetLogRecordEmitterForTests();
+  });
+
   describe("extractRequestHeaders", () => {
     it("extracts project slug from header", () => {
       const req = new Request("http://localhost/", {
@@ -114,6 +124,13 @@ describe("server/runtime-handler/project-resolution", () => {
         wsSlugOverride: undefined,
       });
       assertEquals(result.proxyEnv, undefined);
+    });
+
+    it("ignores an unsigned WebSocket environment query override", () => {
+      const req = new Request("https://production.example/_ws?x-environment=preview");
+      const headers = extractRequestHeaders(req, new URL(req.url), false);
+
+      assertEquals(headers.environment, undefined);
     });
 
     it("extracts environment-id from header", () => {
@@ -467,6 +484,31 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.projectId, "proj-1");
       assertEquals(result.releaseId, "rel-99");
       assertEquals(result.proxyEnv, "production");
+    });
+
+    it("does not write custom domains or project identifiers to logs", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+      const config = {
+        fs: { veryfront: { apiToken: "test-token", apiBaseUrl: "https://api.test.com" } },
+      } as unknown as VeryfrontConfig;
+      const req = new Request("https://customer-private.example/");
+      const url = new URL(req.url);
+
+      await resolveProject(req, url, extractRequestHeaders(req, url), {
+        config,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(JSON.stringify(entries).includes("customer-private"), false);
     });
 
     it("uses x-forwarded-host for domain resolution when proxy is trusted", async () => {

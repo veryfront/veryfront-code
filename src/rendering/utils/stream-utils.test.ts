@@ -93,4 +93,19 @@ describe("streamToString", () => {
       assertEquals(error.partialContent, "Partial content");
     }
   });
+
+  it("rejects streams that exceed the configured byte limit", async () => {
+    const stream = createStream([new TextEncoder().encode("12345")]);
+
+    await assertRejects(
+      () => streamToString(stream, 1_000, 4),
+      RangeError,
+      "Stream exceeds the byte limit of 4",
+    );
+  });
+
+  it("rejects invalid UTF-8 instead of replacing bytes silently", async () => {
+    const stream = createStream([new Uint8Array([0xc3, 0x28])]);
+    await assertRejects(() => streamToString(stream), TypeError);
+  });
 });

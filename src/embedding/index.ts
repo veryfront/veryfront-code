@@ -29,9 +29,11 @@ export {
 export type {
   ChunkOptions,
   Embedding,
+  EmbeddingCallOptions,
   EmbeddingConfig,
   RagChunk,
   RagDocumentMeta,
+  RagIngestMetadata,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,
@@ -49,4 +51,9 @@ export type {
   UploadAuthorize,
   UploadHandlerAuthConfig,
   UploadHandlerConfig,
+  UploadHandlers,
+  UploadRouteContext,
 } from "./upload-handler.ts";
+export type { UploadLoadOptions } from "./upload-loader.ts";
+export type { EmbeddingProviderFactory } from "./resolve.ts";
+export type { EmbeddingRuntime, RuntimeMetadata } from "#veryfront/provider/types.ts";

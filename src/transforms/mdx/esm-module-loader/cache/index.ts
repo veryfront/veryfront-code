@@ -6,7 +6,7 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { join } from "#veryfront/compat/path";
+import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
   getCacheBaseDir,
@@ -27,8 +27,10 @@ import {
   isCacheVersionSegment,
 } from "#veryfront/utils/cache-version.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
+import { errorLogName, fileLogLabel } from "#veryfront/transforms/shared/log-context.ts";
 
 export type CacheLookupResult =
   | { status: "hit"; path: string }
@@ -37,17 +39,67 @@ export type CacheLookupResult =
 
 const MAX_VERIFIED_MODULE_DEPS = 2_000;
 const MAX_MODULE_PATH_CACHE_ENTRIES = 500;
+const MAX_MODULE_PATH_CACHE_DIRS = 128;
+const MAX_MODULE_PATH_INDEX_BYTES = 2 * 1024 * 1024;
+
+function isPathInside(parentPath: string, candidatePath: string): boolean {
+  const relativePath = relative(resolve(parentPath), resolve(candidatePath)).replace(/\\/g, "/");
+  return relativePath === "" || relativePath === "." ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath));
+}
+
+function isPathStrictlyInside(parentPath: string, candidatePath: string): boolean {
+  const relativePath = relative(resolve(parentPath), resolve(candidatePath)).replace(/\\/g, "/");
+  return relativePath !== "" && relativePath !== "." &&
+    relativePath !== ".." &&
+    !relativePath.startsWith("../") &&
+    !isAbsolute(relativePath);
+}
+
+function isSafeCachedModulePath(cacheDir: string, cachedPath: string): boolean {
+  return isAbsolute(cacheDir) &&
+    isAbsolute(cachedPath) &&
+    cachedPath.endsWith(".mjs") &&
+    isPathInside(cacheDir, cachedPath);
+}
+
+async function hasSafeCanonicalCachedModulePath(
+  cacheDir: string,
+  cachedPath: string,
+): Promise<boolean> {
+  if (!isSafeCachedModulePath(cacheDir, cachedPath)) return false;
+
+  const realPath = getLocalFs().realPath;
+  if (!realPath) return true;
+  try {
+    const [canonicalCacheDir, canonicalCachedPath] = await Promise.all([
+      realPath.call(getLocalFs(), cacheDir),
+      realPath.call(getLocalFs(), cachedPath),
+    ]);
+    return isPathInside(canonicalCacheDir, canonicalCachedPath);
+  } catch (error) {
+    return isNotFoundError(error);
+  }
+}
 
 export const verifiedModuleDeps = new LRUCache<string, true>({
   maxEntries: MAX_VERIFIED_MODULE_DEPS,
 });
 
 class BoundedModulePathCache extends Map<string, string> {
-  constructor(private readonly maxEntries: number) {
+  constructor(
+    private readonly cacheDir: string,
+    private readonly maxEntries: number,
+  ) {
     super();
   }
 
   override set(key: string, value: string): this {
+    if (!isSafeCachedModulePath(this.cacheDir, value)) {
+      throw new TypeError("Cached module path must stay inside its cache directory");
+    }
     if (!this.has(key) && this.size >= this.maxEntries) {
       const oldestKey = this.keys().next().value;
       if (oldestKey !== undefined) {
@@ -77,8 +129,7 @@ function hasIncompatibleCachePaths(code: string): boolean {
     // Check HTTP bundle paths
     if (path.includes("veryfront-http-bundle") && !path.startsWith(localHttpCacheDir)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible HTTP bundle path`, {
-        path,
-        expectedDir: localHttpCacheDir,
+        dependencyFile: fileLogLabel(path),
       });
       return true;
     }
@@ -86,8 +137,7 @@ function hasIncompatibleCachePaths(code: string): boolean {
     // Check MDX ESM cache paths
     if (path.includes("veryfront-mdx-esm") && !path.startsWith(localMdxCacheDir)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible MDX ESM path`, {
-        path,
-        expectedDir: localMdxCacheDir,
+        dependencyFile: fileLogLabel(path),
       });
       return true;
     }
@@ -95,8 +145,7 @@ function hasIncompatibleCachePaths(code: string): boolean {
     // Check any other cache paths (future-proofing)
     if (path.includes(".cache/") && !path.startsWith(localCacheBaseDir)) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible cache path`, {
-        path,
-        expectedDir: localCacheBaseDir,
+        dependencyFile: fileLogLabel(path),
       });
       return true;
     }
@@ -145,7 +194,7 @@ function hasUnresolvedVfModules(code: string): boolean {
   const first = matches[0];
   if (first) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached module has unresolved _vf_modules import`, {
-      importPath: first.path,
+      moduleFile: fileLogLabel(first.path),
     });
     return true;
   }
@@ -154,6 +203,20 @@ function hasUnresolvedVfModules(code: string): boolean {
 
 const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
+const modulePathCacheSaveQueues = new Map<string, Promise<void>>();
+
+function touchModulePathCache(cacheDir: string, cache: Map<string, string>): void {
+  modulePathCaches.delete(cacheDir);
+  modulePathCaches.set(cacheDir, cache);
+}
+
+function ensureModulePathCacheCapacity(): void {
+  if (modulePathCaches.size < MAX_MODULE_PATH_CACHE_DIRS) return;
+  const oldestCacheDir = modulePathCaches.keys().next().value;
+  if (oldestCacheDir === undefined) return;
+  modulePathCaches.delete(oldestCacheDir);
+  modulePathCacheLoaded.delete(oldestCacheDir);
+}
 
 export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
   return join(
@@ -168,15 +231,33 @@ function getLegacyHashedMdxEsmSsrCacheDir(projectId: string, contentSourceId: st
   return join(getMdxEsmCacheDir(), hashCodeHex(projectId), hashCodeHex(contentSourceId));
 }
 
-function getLegacyRawMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
-  return join(getMdxEsmCacheDir(), hashCodeHex(projectId), contentSourceId);
+function getLegacyRawMdxEsmSsrCacheDir(
+  projectId: string,
+  contentSourceId: string,
+): string | undefined {
+  const projectCacheDir = join(getMdxEsmCacheDir(), hashCodeHex(projectId));
+  const cacheDir = join(projectCacheDir, contentSourceId);
+  return isPathStrictlyInside(projectCacheDir, cacheDir) ? cacheDir : undefined;
+}
+
+function getLegacyEncodedMdxEsmCacheDir(
+  projectId: string,
+  contentSourceId: string,
+): string | undefined {
+  const cacheRoot = getMdxEsmCacheDir();
+  const projectCacheDir = join(cacheRoot, encodeURIComponent(projectId));
+  if (!isPathStrictlyInside(cacheRoot, projectCacheDir)) return undefined;
+
+  const cacheDir = join(projectCacheDir, encodeURIComponent(contentSourceId));
+  return isPathStrictlyInside(projectCacheDir, cacheDir) ? cacheDir : undefined;
 }
 
 export function getMdxEsmSsrCacheDirs(projectId: string, contentSourceId: string): string[] {
+  const legacyRawCacheDir = getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId);
   return [
     getMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyHashedMdxEsmSsrCacheDir(projectId, contentSourceId),
-    getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId),
+    ...(legacyRawCacheDir === undefined ? [] : [legacyRawCacheDir]),
   ].filter((cacheDir, index, cacheDirs) => cacheDirs.indexOf(cacheDir) === index);
 }
 
@@ -200,30 +281,61 @@ registerCache("mdx-esm-verified-deps", () => ({
 }));
 
 export async function getModulePathCache(cacheDir: string): Promise<Map<string, string>> {
-  const existing = modulePathCaches.get(cacheDir);
-  if (existing && modulePathCacheLoaded.has(cacheDir)) return existing;
+  if (!isAbsolute(cacheDir)) {
+    throw new TypeError("MDX ESM cache directory must be absolute");
+  }
 
-  const cache = existing ?? new BoundedModulePathCache(MAX_MODULE_PATH_CACHE_ENTRIES);
+  const existing = modulePathCaches.get(cacheDir);
+  if (existing && modulePathCacheLoaded.has(cacheDir)) {
+    touchModulePathCache(cacheDir, existing);
+    return existing;
+  }
+
+  if (!existing) ensureModulePathCacheCapacity();
+  const cache = existing ?? new BoundedModulePathCache(cacheDir, MAX_MODULE_PATH_CACHE_ENTRIES);
   modulePathCaches.set(cacheDir, cache);
 
   const indexPath = join(cacheDir, "_index.json");
 
   try {
+    const stat = await getLocalFs().stat(indexPath);
+    if (!stat.isFile || stat.size > MAX_MODULE_PATH_INDEX_BYTES) {
+      throw new TypeError("MDX ESM module index is invalid");
+    }
     const content = await getLocalFs().readTextFile(indexPath);
-    const index = JSON.parse(content) as Record<string, string>;
-    for (const [path, cachePath] of Object.entries(index)) {
+    const index = JSON.parse(content) as unknown;
+    if (index === null || typeof index !== "object" || Array.isArray(index)) {
+      throw new TypeError("MDX ESM module index is invalid");
+    }
+    const entries = Object.entries(index);
+    if (
+      entries.some(([path, cachePath]) =>
+        path.length === 0 || path.length > 2_048 ||
+        typeof cachePath !== "string" ||
+        !isSafeCachedModulePath(cacheDir, cachePath)
+      )
+    ) {
+      throw new TypeError("MDX ESM module index is invalid");
+    }
+    cache.clear();
+    for (const [path, cachePath] of entries as Array<[string, string]>) {
       cache.set(path, cachePath);
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
-  } catch (_) {
-    /* expected: _index.json may not exist yet */
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      cache.clear();
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Ignored invalid module index`, {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    }
   }
 
   modulePathCacheLoaded.add(cacheDir);
   return cache;
 }
 
-export async function saveModulePathCache(cacheDir: string): Promise<void> {
+async function persistModulePathCache(cacheDir: string): Promise<void> {
   const cache = modulePathCaches.get(cacheDir);
   if (!cache) return;
 
@@ -234,9 +346,37 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
   }
 
   try {
-    await getLocalFs().writeTextFile(indexPath, JSON.stringify(index));
+    const written = await writeCacheFile(
+      getLocalFs(),
+      indexPath,
+      JSON.stringify(index),
+      "MDX-ESM-INDEX",
+      { createParent: false },
+    );
+    if (!written) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to save module index`);
+    }
   } catch (error) {
-    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to save module index`, error);
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to save module index`, {
+      errorName: errorLogName(error),
+    });
+  }
+}
+
+export async function saveModulePathCache(cacheDir: string): Promise<void> {
+  const previousSave = modulePathCacheSaveQueues.get(cacheDir) ?? Promise.resolve();
+  const currentSave = previousSave.then(
+    () => persistModulePathCache(cacheDir),
+    () => persistModulePathCache(cacheDir),
+  );
+  modulePathCacheSaveQueues.set(cacheDir, currentSave);
+
+  try {
+    await currentSave;
+  } finally {
+    if (modulePathCacheSaveQueues.get(cacheDir) === currentSave) {
+      modulePathCacheSaveQueues.delete(cacheDir);
+    }
   }
 }
 
@@ -274,7 +414,7 @@ function queueIndexPersist(cacheDirs: string[]): void {
   };
   _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json`, {
-      error: error instanceof Error ? error.message : String(error),
+      errorName: errorLogName(error),
     });
   });
 }
@@ -305,7 +445,7 @@ export function invalidateModulePaths(changedPaths: string[]): void {
           // skip validation and serve a deleted .mjs file.
           verifiedModuleDeps.delete(`${cachedFilePath}:${cachedKey}`);
           invalidatedCount++;
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module: ${cachedKey}`);
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module`);
         }
       }
     }
@@ -327,13 +467,10 @@ export function invalidateModulePaths(changedPaths: string[]): void {
     for (const cacheDir of affectedCacheDirs) {
       try {
         await saveModulePathCache(cacheDir);
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Persisted _index.json after invalidation`, {
-          cacheDir,
-        });
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Persisted _index.json after invalidation`);
       } catch (error) {
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json after invalidation`, {
-          cacheDir,
-          error: error instanceof Error ? error.message : String(error),
+          errorName: errorLogName(error),
         });
       }
     }
@@ -342,7 +479,9 @@ export function invalidateModulePaths(changedPaths: string[]): void {
     for (const mjsPath of staleMjsFiles) {
       try {
         await localFs.remove(mjsPath);
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, { mjsPath });
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Deleted stale cached module`, {
+          cacheFile: fileLogLabel(mjsPath),
+        });
       } catch (_) {
         /* expected: file may already be gone */
       }
@@ -350,7 +489,7 @@ export function invalidateModulePaths(changedPaths: string[]): void {
   };
   _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Disk cleanup failed`, {
-      error: error instanceof Error ? error.message : String(error),
+      errorName: errorLogName(error),
     });
   });
 }
@@ -423,8 +562,8 @@ function invalidateMdxEsmModuleFromCache(
   cache.delete(cacheKey);
   verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
-    filePath,
-    cachedPath,
+    sourceFile: fileLogLabel(filePath),
+    cacheFile: fileLogLabel(cachedPath),
   });
 
   queueIndexPersist([cacheDir]);
@@ -491,7 +630,9 @@ export async function clearESMDiskCache(): Promise<void> {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
     if (!isNotFoundError(error)) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, {
+        errorName: errorLogName(error),
+      });
     }
   }
 }
@@ -500,18 +641,17 @@ export async function clearMdxEsmCacheNamespace(
   projectId: string,
   contentSourceId: string,
 ): Promise<void> {
-  const encodedCacheDir = join(
-    getMdxEsmCacheDir(),
-    encodeURIComponent(projectId),
-    encodeURIComponent(contentSourceId),
-  );
+  const cacheRoot = getMdxEsmCacheDir();
+  const encodedCacheDir = getLegacyEncodedMdxEsmCacheDir(projectId, contentSourceId);
   const currentSsrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
-  const cacheDirs = new Set([encodedCacheDir, currentSsrCacheDir]);
-  const removeDirs = new Set([
-    encodedCacheDir,
+  const cacheDirs = new Set([
+    ...(encodedCacheDir === undefined ? [] : [encodedCacheDir]),
     currentSsrCacheDir,
-    ...getMdxEsmSsrCacheDirs(projectId, contentSourceId),
   ]);
+  const removeDirs = new Set([
+    ...cacheDirs,
+    ...getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+  ].filter((cacheDir) => isPathStrictlyInside(cacheRoot, cacheDir)));
   const affectedCacheDirs = new Set(removeDirs);
 
   for (const loadedCacheDir of modulePathCaches.keys()) {
@@ -543,8 +683,7 @@ export async function clearMdxEsmCacheNamespace(
     } catch (error) {
       if (!isNotFoundError(error)) {
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to remove MDX-ESM cache namespace`, {
-          cacheDir,
-          error: error instanceof Error ? error.message : String(error),
+          errorName: errorLogName(error),
         });
       }
     }
@@ -553,15 +692,10 @@ export async function clearMdxEsmCacheNamespace(
 
     try {
       await getLocalFs().mkdir(cacheDir, { recursive: true });
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared MDX-ESM cache namespace`, {
-        projectId,
-        contentSourceId,
-        cacheDir,
-      });
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared MDX-ESM cache namespace`);
     } catch (error) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to recreate MDX-ESM cache namespace`, {
-        cacheDir,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: errorLogName(error),
       });
     }
   }
@@ -578,7 +712,9 @@ export async function clearHttpBundleCache(): Promise<void> {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared HTTP bundle cache`);
   } catch (error) {
     if (!isNotFoundError(error)) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear HTTP bundle cache`, error);
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear HTTP bundle cache`, {
+        errorName: errorLogName(error),
+      });
     }
   }
 }
@@ -629,6 +765,17 @@ export async function lookupMdxEsmCache(
   const cachedPath = cache.get(cacheKey);
   if (!cachedPath) return { status: "miss" };
 
+  if (!(await hasSafeCanonicalCachedModulePath(cacheDir, cachedPath))) {
+    cache.delete(cacheKey);
+    verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+    queueIndexPersist([cacheDir]);
+    return {
+      status: "corrupted",
+      reason: "Cached module path is outside its cache directory",
+      filePath,
+    };
+  }
+
   const verifyKey = `${cachedPath}:${cacheKey}`;
   if (verifiedModuleDeps.get(verifyKey)) {
     // Fast-path: skip the expensive read + content scans for already-verified
@@ -642,9 +789,10 @@ export async function lookupMdxEsmCache(
     try {
       const stat = await getLocalFs().stat(cachedPath);
       if (stat?.isFile) {
-        logger.debug(
-          `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
-        );
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified)`, {
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+        });
         return { status: "hit", path: cachedPath };
       }
     } catch (_) {
@@ -656,7 +804,10 @@ export async function lookupMdxEsmCache(
     // (an SSR-only caller may never re-register and re-save this entry itself).
     logger.debug(
       `${LOG_PREFIX_MDX_LOADER} Verified MDX-ESM artifact missing on disk, invalidating`,
-      { filePath, cachedPath },
+      {
+        sourceFile: fileLogLabel(filePath),
+        cacheFile: fileLogLabel(cachedPath),
+      },
     );
     verifiedModuleDeps.delete(verifyKey);
     cache.delete(cacheKey);
@@ -675,7 +826,10 @@ export async function lookupMdxEsmCache(
     if (hasIncompatibleCachePaths(cachedCode)) {
       logger.warn(
         `${LOG_PREFIX_MDX_LOADER} Cached module has incompatible cache paths, invalidating`,
-        { filePath, cachedPath },
+        {
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+        },
       );
       cache.delete(cacheKey);
 
@@ -699,7 +853,10 @@ export async function lookupMdxEsmCache(
     if (hasUnresolvedVfModules(cachedCode)) {
       logger.warn(
         `${LOG_PREFIX_MDX_LOADER} Cached module has unresolved _vf_modules imports, invalidating`,
-        { filePath, cachedPath },
+        {
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+        },
       );
       cache.delete(cacheKey);
       // Delete the stale file so it gets recreated
@@ -707,9 +864,9 @@ export async function lookupMdxEsmCache(
         await getLocalFs().remove(cachedPath);
       } catch (error) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Stale cached module cleanup failed`, {
-          filePath,
-          cachedPath,
-          error,
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+          errorName: errorLogName(error),
         });
       }
       return {
@@ -730,9 +887,9 @@ export async function lookupMdxEsmCache(
       });
       if (recovered.recovered.length > 0) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Recovered cached MDX-ESM dependencies`, {
-          filePath,
-          cachedPath,
-          recovered: recovered.recovered.slice(0, 5),
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+          recoveredCount: recovered.recovered.length,
         });
       }
       missingDeps = await findMissingFileDependencies(cachedCode);
@@ -741,7 +898,11 @@ export async function lookupMdxEsmCache(
     if (missingDeps.length > 0) {
       logger.warn(
         `${LOG_PREFIX_MDX_LOADER} Cached module has ${missingDeps.length} missing file dependencies, invalidating`,
-        { filePath, cachedPath, missingDeps: missingDeps.slice(0, 5) },
+        {
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+          missingCount: missingDeps.length,
+        },
       );
       cache.delete(cacheKey);
       // Delete the stale file so it gets recreated
@@ -749,9 +910,9 @@ export async function lookupMdxEsmCache(
         await getLocalFs().remove(cachedPath);
       } catch (error) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Stale cached module cleanup failed`, {
-          filePath,
-          cachedPath,
-          error,
+          sourceFile: fileLogLabel(filePath),
+          cacheFile: fileLogLabel(cachedPath),
+          errorName: errorLogName(error),
         });
       }
       return {
@@ -772,9 +933,10 @@ export async function lookupMdxEsmCache(
     // P3b: Mark as verified to skip re-stat on subsequent calls
     verifiedModuleDeps.set(verifyKey, true);
 
-    logger.debug(
-      `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
-    );
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache`, {
+      sourceFile: fileLogLabel(filePath),
+      cacheFile: fileLogLabel(cachedPath),
+    });
     return { status: "hit", path: cachedPath };
   } catch (_) {
     /* expected: cached file may be inaccessible or deleted between checks */

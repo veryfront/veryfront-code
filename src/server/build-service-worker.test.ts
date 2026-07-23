@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateServiceWorker } from "./build-service-worker.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/manifest.ts";
+import type { ChunkInfo } from "#veryfront/build/bundler/code-splitter/types.ts";
 
 function createManifest(overrides: Partial<BuildManifest> = {}): BuildManifest {
   return {
@@ -24,6 +25,90 @@ function createManifest(overrides: Partial<BuildManifest> = {}): BuildManifest {
       totalSize: "0 MB",
     },
     ...overrides,
+  };
+}
+
+function createChunkInfo(file: string, overrides: Partial<ChunkInfo> = {}): ChunkInfo {
+  return {
+    name: file,
+    file,
+    imports: [],
+    size: 0,
+    hash: "test-hash",
+    ...overrides,
+  };
+}
+
+function extractStaticCacheUrls(output: string): string[] {
+  const match = output.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
+  return JSON.parse(match?.[1] ?? "[]") as string[];
+}
+
+interface WorkerHarness {
+  listeners: Map<string, (event: unknown) => void>;
+  getCacheWrites(): number;
+}
+
+function executeGeneratedWorker(
+  source: string,
+  fetchImpl: (request: Request) => Promise<Response>,
+): WorkerHarness {
+  const listeners = new Map<string, (event: unknown) => void>();
+  let cacheWrites = 0;
+  const cache = {
+    match: async () => undefined,
+    put: async () => {
+      cacheWrites++;
+    },
+  };
+  const workerGlobal = {
+    location: { origin: "https://app.example" },
+    clients: { claim: async () => undefined },
+    skipWaiting: async () => undefined,
+    addEventListener: (type: string, listener: (event: unknown) => void) => {
+      listeners.set(type, listener);
+    },
+  };
+  const cacheStorage = {
+    open: async () => cache,
+    keys: async () => [],
+    delete: async () => true,
+  };
+
+  new Function("self", "caches", "fetch", source)(
+    workerGlobal,
+    cacheStorage,
+    fetchImpl,
+  );
+
+  return { listeners, getCacheWrites: () => cacheWrites };
+}
+
+async function dispatchWorkerFetch(
+  harness: WorkerHarness,
+  request: Request,
+): Promise<{ intercepted: boolean; response?: Response; backgroundTasks: number }> {
+  const listener = harness.listeners.get("fetch");
+  assertExists(listener);
+  let responsePromise: Promise<Response> | undefined;
+  const background: Promise<unknown>[] = [];
+
+  listener({
+    request,
+    respondWith: (response: Promise<Response>) => {
+      responsePromise = response;
+    },
+    waitUntil: (task: Promise<unknown>) => {
+      background.push(task);
+    },
+  });
+
+  const response = responsePromise ? await responsePromise : undefined;
+  await Promise.all(background);
+  return {
+    intercepted: responsePromise !== undefined,
+    response,
+    backgroundTasks: background.length,
   };
 }
 
@@ -59,7 +144,7 @@ describe("server/build-service-worker", () => {
     describe("cache version", () => {
       it("should include version in cache name", () => {
         const output = generateServiceWorker(createManifest({ version: "2.5.0" }));
-        assertStringIncludes(output, "veryfront-2.5.0-");
+        assertStringIncludes(output, "veryfront-sw-2.5.0-");
       });
 
       it("should include buildTime in cache name", () => {
@@ -74,7 +159,7 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({ version: "1.0.0-beta+build@special!" }),
         );
-        assertStringIncludes(output, "veryfront-1.0.0-betabuildspecial-");
+        assertStringIncludes(output, "veryfront-sw-1.0.0-betabuildspecial-");
       });
 
       it("should default to 'dev' when version is undefined", () => {
@@ -82,14 +167,23 @@ describe("server/build-service-worker", () => {
         // deno-lint-ignore no-explicit-any
         (manifest as any).version = undefined;
         const output = generateServiceWorker(manifest);
-        assertStringIncludes(output, "veryfront-dev-");
+        assertStringIncludes(output, "veryfront-sw-dev-");
+      });
+
+      it("keeps untrusted build metadata inside the generated comment", () => {
+        const output = generateServiceWorker(
+          createManifest({ buildTime: "safe\nself.pwned = true" }),
+        );
+
+        assertEquals(output.includes("\nself.pwned = true"), false);
+        assertStringIncludes(output, "Generated at: safe self.pwned = true");
       });
     });
 
     describe("default static assets", () => {
-      it("should always include root path", () => {
+      it("does not include the root navigation", () => {
         const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, '"/');
+        assertEquals(extractStaticCacheUrls(output).includes("/"), false);
       });
 
       it("should always include router.js", () => {
@@ -107,9 +201,9 @@ describe("server/build-service-worker", () => {
         assertStringIncludes(output, "/_veryfront/manifest.json");
       });
 
-      it("should always include sw.js", () => {
+      it("does not include the service worker itself", () => {
         const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "/sw.js");
+        assertEquals(extractStaticCacheUrls(output).includes("/sw.js"), false);
       });
     });
 
@@ -121,9 +215,7 @@ describe("server/build-service-worker", () => {
               version: "1.0.0",
               routes: {},
               chunks: {
-                "entry-main": {
-                  file: "main.js",
-                },
+                "entry-main": createChunkInfo("main.js"),
               },
               shared: [],
             },
@@ -139,10 +231,7 @@ describe("server/build-service-worker", () => {
               version: "1.0.0",
               routes: {},
               chunks: {
-                "entry-main": {
-                  file: "main.js",
-                  css: "main.css",
-                },
+                "entry-main": createChunkInfo("main.js", { css: "main.css" }),
               },
               shared: [],
             },
@@ -158,10 +247,9 @@ describe("server/build-service-worker", () => {
               version: "1.0.0",
               routes: {},
               chunks: {
-                "entry-main": {
-                  file: "main.js",
+                "entry-main": createChunkInfo("main.js", {
                   imports: ["vendor-abc123.js"],
-                },
+                }),
               },
               shared: [],
             },
@@ -182,6 +270,25 @@ describe("server/build-service-worker", () => {
           }),
         );
         assertStringIncludes(output, "/_veryfront/chunks/shared-utils.js");
+      });
+
+      it("rejects chunk paths that normalize outside framework asset namespaces", () => {
+        const output = generateServiceWorker(
+          createManifest({
+            chunks: {
+              version: "1.0.0",
+              routes: {},
+              chunks: {
+                external: createChunkInfo("//example.invalid/private.js"),
+                traversal: createChunkInfo("/_veryfront/../api/private.js"),
+              },
+              shared: [],
+            },
+          }),
+        );
+
+        assertEquals(output.includes("example.invalid"), false);
+        assertEquals(extractStaticCacheUrls(output).includes("/api/private.js"), false);
       });
     });
 
@@ -255,12 +362,14 @@ describe("server/build-service-worker", () => {
               version: "1.0.0",
               routes: {},
               chunks: {
-                "entry-main": {
+                "entry-main": createChunkInfo(
                   // deno-lint-ignore no-explicit-any
-                  file: null as any,
-                  // deno-lint-ignore no-explicit-any
-                  css: undefined as any,
-                },
+                  null as any,
+                  {
+                    // deno-lint-ignore no-explicit-any
+                    css: undefined as any,
+                  },
+                ),
               },
               shared: [],
             },
@@ -271,20 +380,109 @@ describe("server/build-service-worker", () => {
       });
     });
 
-    describe("cache strategies", () => {
-      it("should include networkFirst strategy", () => {
+    describe("cache safety", () => {
+      it("uses cache-first delivery for manifest assets", () => {
         const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "networkFirst");
+        const matchIndex = output.indexOf("await cache.match(request)");
+        const fetchIndex = output.indexOf("await fetch(request)", matchIndex);
+
+        assertEquals(matchIndex >= 0, true);
+        assertEquals(fetchIndex > matchIndex, true);
       });
 
-      it("should include cacheFirst strategy", () => {
+      it("does not precache navigations or the service worker itself", () => {
         const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "cacheFirst");
+        const urls = extractStaticCacheUrls(output);
+
+        assertEquals(urls.includes("/"), false);
+        assertEquals(urls.includes("/sw.js"), false);
       });
 
-      it("should include staleWhileRevalidate strategy", () => {
+      it("only intercepts same-origin manifest assets without authorization", () => {
         const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "staleWhileRevalidate");
+
+        assertStringIncludes(output, "url.origin !== self.location.origin");
+        assertStringIncludes(output, "request.headers.has('authorization')");
+        assertStringIncludes(output, "STATIC_CACHE_PATHS.has(url.pathname)");
+      });
+
+      it("rejects private and explicitly uncacheable responses", () => {
+        const output = generateServiceWorker(createManifest());
+
+        assertStringIncludes(output, "cacheDirectives.has('private')");
+        assertStringIncludes(output, "cacheDirectives.has('no-store')");
+        assertStringIncludes(output, "cacheDirectives.has('no-cache')");
+        assertStringIncludes(output, "response.headers.has('set-cookie')");
+      });
+
+      it("versions the runtime cache with the build", () => {
+        const output = generateServiceWorker(createManifest());
+
+        assertStringIncludes(output, "const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`");
+      });
+
+      it("limits cleanup to owned and recognized legacy caches", () => {
+        const output = generateServiceWorker(createManifest());
+
+        assertStringIncludes(output, "name.startsWith('veryfront-sw-')");
+        assertStringIncludes(output, "name === LEGACY_RUNTIME_CACHE");
+        assertStringIncludes(output, "LEGACY_BUILD_CACHE_PATTERN.test(name)");
+      });
+
+      it("discards a partial precache when installation fails", () => {
+        const output = generateServiceWorker(createManifest());
+
+        assertStringIncludes(output, "await caches.delete(RUNTIME_CACHE)");
+        assertStringIncludes(output, "throw error");
+      });
+
+      it("bypasses sensitive and non-manifest requests at runtime", async () => {
+        let fetches = 0;
+        const harness = executeGeneratedWorker(
+          generateServiceWorker(createManifest()),
+          async () => {
+            fetches++;
+            return new Response("network");
+          },
+        );
+
+        for (
+          const request of [
+            new Request("https://other.example/_veryfront/router.js"),
+            new Request("https://app.example/api/account"),
+            new Request("https://app.example/_veryfront/router.js?user=1"),
+            new Request("https://app.example/_veryfront/router.js", {
+              headers: { Authorization: "Bearer <TOKEN>" },
+            }),
+          ]
+        ) {
+          assertEquals((await dispatchWorkerFetch(harness, request)).intercepted, false);
+        }
+        assertEquals(fetches, 0);
+        assertEquals(harness.getCacheWrites(), 0);
+      });
+
+      it("caches public manifest assets but not private responses", async () => {
+        let cacheControl = "private, max-age=60";
+        const harness = executeGeneratedWorker(
+          generateServiceWorker(createManifest()),
+          async () =>
+            new Response("network", {
+              headers: { "Cache-Control": cacheControl },
+            }),
+        );
+        const request = new Request("https://app.example/_veryfront/router.js");
+
+        const privateResult = await dispatchWorkerFetch(harness, request);
+        assertEquals(privateResult.intercepted, true);
+        assertEquals(privateResult.backgroundTasks, 0);
+        assertEquals(harness.getCacheWrites(), 0);
+
+        cacheControl = "public, max-age=31536000, immutable";
+        const publicResult = await dispatchWorkerFetch(harness, request);
+        assertEquals(publicResult.intercepted, true);
+        assertEquals(publicResult.backgroundTasks, 1);
+        assertEquals(harness.getCacheWrites(), 1);
       });
     });
 
@@ -297,17 +495,14 @@ describe("server/build-service-worker", () => {
             chunks: {
               version: "3.0.0",
               routes: {
-                "/": { chunks: ["route-index.js"] },
+                "/": { entry: "route-index.js", chunks: ["route-index.js"] },
               },
               chunks: {
-                "entry-main": {
-                  file: "main.js",
+                "entry-main": createChunkInfo("main.js", {
                   css: "main.css",
                   imports: ["vendor.js"],
-                },
-                "page-about": {
-                  file: "about.js",
-                },
+                }),
+                "page-about": createChunkInfo("about.js"),
               },
               shared: ["shared-runtime.js"],
             },
@@ -319,7 +514,7 @@ describe("server/build-service-worker", () => {
         );
 
         // Version
-        assertStringIncludes(output, "veryfront-3.0.0-");
+        assertStringIncludes(output, "veryfront-sw-3.0.0-");
 
         // Default assets
         assertStringIncludes(output, "/_veryfront/router.js");
@@ -343,7 +538,7 @@ describe("server/build-service-worker", () => {
         // Sorted output (STATIC_CACHE_URLS is sorted)
         const urlsMatch = output.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
         if (urlsMatch) {
-          const urls = JSON.parse(urlsMatch[1]) as string[];
+          const urls = JSON.parse(urlsMatch[1] ?? "[]") as string[];
           const sorted = [...urls].sort();
           assertEquals(urls, sorted);
         }

@@ -62,12 +62,28 @@ export interface MetricsInstruments {
 
 /** Configuration used by metrics. */
 export interface MetricsConfig {
+  /** Whether metrics collection is enabled. */
   enabled: boolean;
+  /** Metrics exporter selected for this runtime. */
   exporter: "prometheus" | "otlp" | "console";
+  /** Optional exporter endpoint. */
   endpoint?: string;
+  /** Prefix applied to metric instrument names. */
   prefix?: string;
+  /** Collection interval in milliseconds. */
   collectInterval?: number;
+  /** Whether diagnostic telemetry logging is enabled. */
   debug?: boolean;
+}
+
+/** Immutable snapshot of the metrics manager's runtime state. */
+export interface MetricsRuntimeState {
+  /** Whether the manager has completed initialization. */
+  initialized: boolean;
+  /** Most recently recorded cache size. */
+  cacheSize: number;
+  /** Number of requests currently being tracked. */
+  activeRequests: number;
 }
 
 export interface RuntimeState {

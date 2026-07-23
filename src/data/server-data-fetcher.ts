@@ -3,13 +3,28 @@ import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
+import {
+  type CircuitBreaker,
+  CircuitBreakerOpen,
+  getCircuitBreaker,
+} from "#veryfront/utils/circuit-breaker.ts";
 import { getWorkerPool, isDataIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import {
   MAX_WORKER_BODY_BYTES,
   type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
 import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+import {
+  isRequestBodyTooLargeError,
+  readBodyBytesWithLimit,
+  validateRequestLimits,
+} from "#veryfront/security/input-validation/limits.ts";
+import { resolveDataProjectScope } from "./project-scope.ts";
+import { parseDataResult } from "./result-validation.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+
+const ISOLATED_BODY_TOO_LARGE_DETAIL = "Request body too large for isolated data fetch";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -32,9 +47,10 @@ export class ServerDataFetcher {
     }
 
     const pathname = context.url?.pathname ?? "unknown";
-    const projectId = context.request?.headers?.get("x-project-id") ?? "default";
+    const pathnameHash = hashString(pathname);
+    const projectScope = resolveDataProjectScope(context);
 
-    const circuitBreaker = getCircuitBreaker(`data-fetch:${projectId}`, {
+    const circuitBreaker = getCircuitBreaker(`data-fetch:${projectScope}`, {
       failureThreshold: 5,
       resetTimeoutMs: 30_000,
       successThreshold: 2,
@@ -51,15 +67,27 @@ export class ServerDataFetcher {
         const start = performance.now();
 
         try {
-          const result = await circuitBreaker.execute(() =>
-            withTimeoutThrow(
-              useIsolation
-                ? this.fetchIsolated(options!.modulePath!, options!.projectDir!, context)
-                : Promise.resolve(pageModule.getServerData!(context)),
+          const label = "getServerData";
+          const result = useIsolation
+            ? await withTimeoutThrow(
+              this.fetchIsolated(
+                options!.modulePath!,
+                options!.projectDir!,
+                context,
+                circuitBreaker,
+                start + DATA_FETCH_TIMEOUT_MS,
+                label,
+              ),
               DATA_FETCH_TIMEOUT_MS,
-              `getServerData for ${pathname}`,
+              label,
             )
-          );
+            : await circuitBreaker.execute(() =>
+              withTimeoutThrow(
+                Promise.resolve(pageModule.getServerData!(context)),
+                DATA_FETCH_TIMEOUT_MS,
+                label,
+              ).then((value) => parseDataResult(value, "getServerData"))
+            );
 
           if (result.redirect) return { redirect: result.redirect };
           if (result.notFound) return { notFound: true };
@@ -70,8 +98,8 @@ export class ServerDataFetcher {
 
           if (error instanceof CircuitBreakerOpen) {
             serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
-              pathname,
-              projectId,
+              pathnameHash,
+              projectScope,
               retryAfterMs: error.nextAttemptMs,
             });
             throw error;
@@ -79,7 +107,7 @@ export class ServerDataFetcher {
 
           if (error instanceof TimeoutError) {
             serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
-              pathname,
+              pathnameHash,
               durationMs,
               timeoutMs: DATA_FETCH_TIMEOUT_MS,
             });
@@ -87,7 +115,7 @@ export class ServerDataFetcher {
           }
 
           this.logError("DATA_FETCH_ERROR getServerData failed", error, {
-            pathname,
+            pathnameHash,
             durationMs,
             isolated: useIsolation,
           });
@@ -96,9 +124,9 @@ export class ServerDataFetcher {
       },
       {
         "data.fetch_method": "getServerData",
-        "data.pathname": pathname,
+        "data.pathname_hash": pathnameHash,
         "data.timeout_ms": DATA_FETCH_TIMEOUT_MS,
-        "data.project_id": projectId,
+        "data.project_scope": projectScope,
         "data.isolated": useIsolation,
       },
     );
@@ -111,69 +139,71 @@ export class ServerDataFetcher {
     modulePath: string,
     projectDir: string,
     context: DataContext,
+    circuitBreaker: CircuitBreaker,
+    deadline: number,
+    label: string,
   ): Promise<DataResult> {
     const pool = getWorkerPool();
     let body: Uint8Array | null = null;
-    if (context.request?.body) {
-      // Fast path: reject before buffering if Content-Length is known
-      const contentLength = context.request.headers?.get("content-length");
-      if (contentLength) {
-        const bytes = parseInt(contentLength, 10);
-        if (bytes > MAX_WORKER_BODY_BYTES) {
-          throw new Error(
-            `Request body too large for isolated data fetch (${
-              (bytes / 1024 / 1024).toFixed(1)
-            } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-          );
+    if (context.request) {
+      try {
+        validateRequestLimits(context.request, { maxBodySize: MAX_WORKER_BODY_BYTES });
+        if (context.request.body) {
+          body = await readBodyBytesWithLimit(context.request, MAX_WORKER_BODY_BYTES);
         }
-      }
-
-      body = new Uint8Array(await context.request.arrayBuffer());
-
-      // Fallback: check actual size for chunked/streaming bodies
-      if (body.byteLength > MAX_WORKER_BODY_BYTES) {
-        throw new Error(
-          `Request body too large for isolated data fetch (${
-            (body.byteLength / 1024 / 1024).toFixed(1)
-          } MB, limit ${MAX_WORKER_BODY_BYTES / 1024 / 1024} MB)`,
-        );
+      } catch (error) {
+        if (!isRequestBodyTooLargeError(error)) throw error;
+        throw INPUT_VALIDATION_FAILED.create({
+          detail: ISOLATED_BODY_TOO_LARGE_DETAIL,
+          cause: error,
+          context: { maxBodyBytes: MAX_WORKER_BODY_BYTES },
+        });
       }
     }
 
-    const workerResponse: WorkerResponse = await pool.execute(
-      projectDir,
-      [projectDir],
-      {
-        type: "fetch-data",
-        id: crypto.randomUUID(),
-        modulePath,
-        context: {
-          params: context.params,
-          query: context.query?.toString() ?? "",
-          request: {
-            url: context.request?.url ?? context.url?.toString() ?? "http://localhost",
-            method: context.request?.method ?? "GET",
-            headers: context.request ? [...context.request.headers.entries()] : [],
-            body,
+    const sourceIntegrationPolicy = requireActiveSourceIntegrationPolicy();
+    const remainingMs = Math.ceil(deadline - performance.now());
+    if (remainingMs <= 0) throw new TimeoutError(label, DATA_FETCH_TIMEOUT_MS);
+
+    return circuitBreaker.execute(async () => {
+      const workerResponse: WorkerResponse = await withTimeoutThrow(
+        pool.execute(
+          projectDir,
+          [projectDir],
+          {
+            type: "fetch-data",
+            id: crypto.randomUUID(),
+            modulePath,
+            context: {
+              params: context.params,
+              query: context.query?.toString() ?? "",
+              request: {
+                url: context.request?.url ?? context.url?.toString() ?? "http://localhost",
+                method: context.request?.method ?? "GET",
+                headers: context.request ? [...context.request.headers.entries()] : [],
+                body,
+              },
+              url: context.url?.toString() ?? "http://localhost",
+            },
+            sourceIntegrationPolicy,
           },
-          url: context.url?.toString() ?? "http://localhost",
-        },
-        sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-      },
-    );
+        ),
+        remainingMs,
+        label,
+      );
 
-    if (workerResponse.type === "error") {
-      const err = new Error(workerResponse.error.message);
-      err.name = workerResponse.error.name;
-      throw err;
-    }
+      if (workerResponse.type === "error") {
+        const err = new Error(workerResponse.error.message);
+        err.name = workerResponse.error.name;
+        throw err;
+      }
 
-    if (workerResponse.type === "data-result") {
-      return workerResponse.result as DataResult;
-    }
+      if (workerResponse.type === "data-result") {
+        return parseDataResult(workerResponse.result, "getServerData");
+      }
 
-    // Unexpected response type — shouldn't happen but be defensive
-    throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
+      throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
+    });
   }
 
   /**
@@ -181,6 +211,9 @@ export class ServerDataFetcher {
    * @see plans/architecture-audit/010-error-handling.md
    */
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
-    serverLogger.error(message, context ?? {}, error);
+    serverLogger.error(message, {
+      ...context,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
   }
 }

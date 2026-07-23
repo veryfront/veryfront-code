@@ -42,7 +42,7 @@ async function mintDispatchJws(
     sub: "dispatch-proxy-trust",
     project_id: overrides.projectId ?? "proj-1",
     platform: "slack",
-    body_sha256: "n/a",
+    body_sha256: "a".repeat(43),
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
   };

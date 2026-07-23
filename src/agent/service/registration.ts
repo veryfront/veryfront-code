@@ -81,26 +81,29 @@ export const agentServiceRegistrationModeSchema = lazySchema(
 );
 
 /** Zod schema for agent service registration config. */
-export const agentServiceRegistrationConfigSchema = lazySchema(
-  defineSchema<AgentServiceRegistrationConfig>((v) =>
-    v.object({
-      VERYFRONT_API_URL: v.string().url(),
-      VERYFRONT_API_TOKEN: v.string().min(1).optional(),
-      VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
-      VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
-      VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
-      VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationMode(v),
-      VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.number().positive(),
-      VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
-      POD_NAME: v.string().min(1).max(128).optional(),
-      POD_UID: v.string().min(1).max(128).optional(),
-      POD_IP: v.string().min(1).max(128).optional(),
-    })
-  ),
-);
+export const agentServiceRegistrationConfigSchema: Schema<AgentServiceRegistrationConfig> =
+  lazySchema(
+    defineSchema<AgentServiceRegistrationConfig>((v) =>
+      v.object({
+        VERYFRONT_API_URL: v.string().url(),
+        VERYFRONT_API_TOKEN: v.string().min(1).optional(),
+        VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
+        VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
+        VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
+        VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationMode(v),
+        VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.number().positive(),
+        VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
+        POD_NAME: v.string().min(1).max(128).optional(),
+        POD_UID: v.string().min(1).max(128).optional(),
+        POD_IP: v.string().min(1).max(128).optional(),
+      })
+    ),
+  );
 
 /** Zod schema for resolved agent service registration input. */
-export const resolvedAgentServiceRegistrationInputSchema = lazySchema(
+export const resolvedAgentServiceRegistrationInputSchema: Schema<
+  ResolvedAgentServiceRegistrationInput
+> = lazySchema(
   defineSchema<ResolvedAgentServiceRegistrationInput>((v) =>
     v.object({
       apiUrl: v.string().url(),

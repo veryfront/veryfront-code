@@ -8,79 +8,98 @@ const logger = rendererLogger.component("veryfront");
 
 export class PageTransition {
   private pendingTransitionTimeout?: number;
+  private pendingTransitionRoot?: HTMLElement;
 
   constructor(private setupViewportPrefetch: (root: Document | HTMLElement) => void) {}
 
   destroy(): void {
-    if (this.pendingTransitionTimeout === undefined) return;
-    clearTimeout(this.pendingTransitionTimeout);
-    this.pendingTransitionTimeout = undefined;
+    this.cancelPendingTransition();
   }
 
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
+    this.cancelPendingTransition();
+
     const title = data.frontmatter?.title;
     if (title) document.title = title;
 
     updateMetaTags(data.frontmatter ?? {});
 
     const rootElement = document.getElementById("root");
-    if (!rootElement || !data.html) return;
+    if (!rootElement || data.html === undefined) return;
 
-    this.performTransition(rootElement, data, isPopState, scrollY);
+    const trustedHtml = validateTrustedHtml(data.html, { allowInlineScripts: true });
+
+    this.performTransition(rootElement, trustedHtml, isPopState, scrollY);
   }
 
   private performTransition(
     rootElement: HTMLElement,
-    data: RouteData,
+    trustedHtml: string,
     isPopState: boolean,
     scrollY: number,
   ): void {
+    rootElement.style.opacity = "0";
+    this.pendingTransitionRoot = rootElement;
+
+    this.pendingTransitionTimeout = setTimeout(() => {
+      this.pendingTransitionTimeout = undefined;
+      this.pendingTransitionRoot = undefined;
+
+      try {
+        rootElement.innerHTML = trustedHtml;
+        rootElement.style.opacity = "1";
+
+        executeScripts(rootElement);
+        applyHeadDirectives(rootElement);
+        this.setupViewportPrefetch(rootElement);
+        manageFocus(rootElement);
+        this.handleScroll(isPopState, scrollY);
+      } catch (error) {
+        rootElement.style.opacity = "1";
+        this.showError(error instanceof Error ? error : new Error("Page transition failed"));
+      }
+    }, PAGE_TRANSITION_DELAY_MS);
+  }
+
+  private cancelPendingTransition(): void {
     if (this.pendingTransitionTimeout !== undefined) {
       clearTimeout(this.pendingTransitionTimeout);
       this.pendingTransitionTimeout = undefined;
     }
-
-    rootElement.style.opacity = "0";
-
-    this.pendingTransitionTimeout = setTimeout(() => {
-      this.pendingTransitionTimeout = undefined;
-
-      // Server-rendered navigation HTML may include framework-managed scripts.
-      rootElement.innerHTML = validateTrustedHtml(String(data.html), { allowInlineScripts: true });
-      rootElement.style.opacity = "1";
-
-      executeScripts(rootElement);
-      applyHeadDirectives(rootElement);
-      this.setupViewportPrefetch(rootElement);
-      manageFocus(rootElement);
-      this.handleScroll(isPopState, scrollY);
-    }, PAGE_TRANSITION_DELAY_MS);
+    if (this.pendingTransitionRoot) this.pendingTransitionRoot.style.opacity = "1";
+    this.pendingTransitionRoot = undefined;
   }
 
   private handleScroll(isPopState: boolean, scrollY: number): void {
     try {
       globalThis.scrollTo(0, isPopState ? scrollY : 0);
     } catch (error) {
-      logger.warn("scroll handling failed", error);
+      logger.warn("scroll handling failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
   showError(error: Error): void {
+    this.cancelPendingTransition();
+    logger.error("page transition failed", { errorName: error.name });
+
     const rootElement = document.getElementById("root");
     if (!rootElement) return;
+    rootElement.style.opacity = "1";
 
     const errorDiv = document.createElement("div");
     errorDiv.className = "veryfront-error-page";
 
     const heading = document.createElement("h1");
-    heading.textContent = "Oops! Something went wrong";
+    heading.textContent = "Something went wrong";
 
     const message = document.createElement("p");
-    message.textContent = error.message;
+    message.textContent = "Reload the page and try again.";
 
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Reload Page";
+    button.textContent = "Reload page";
     button.onclick = () => globalThis.location.reload();
 
     errorDiv.append(heading, message, button);

@@ -19,33 +19,49 @@ function invokeFailWithoutLeaking(
 
 /** State for AG-UI browser response request. */
 export interface AgUiBrowserResponseRequestState {
+  /** Run ID value. */
   runId?: string;
+  /** Thread ID value. */
   threadId?: string;
+  /** State value. */
   state?: unknown;
+  /** Messages associated with the operation. */
   messages: unknown[];
 }
 
 /** Public API contract for AG-UI browser response execution. */
 export interface AgUiBrowserResponseExecution<TChunk> {
+  /** Agent UI stream value. */
   agentUIStream: AsyncIterable<TChunk>;
+  /** Marks the execution as failed. */
   fail: (error: unknown) => Promise<void>;
+  /** Resolves after execution finishes. */
   waitForFinish: () => Promise<void>;
 }
 
 /** Public API contract for AG-UI browser response encoder. */
 export interface AgUiBrowserResponseEncoder<TChunk> {
+  /** Encodes one stream value. */
   encode: (chunk: TChunk) => AgUiSseEvent[];
+  /** Finalizes the associated lifecycle. */
   finalize: (response: AgentResponse | null) => AgUiSseEvent[];
 }
 
 /** Input payload for create AG-UI browser response stream. */
 export interface CreateAgUiBrowserResponseStreamInput<TChunk, TState> {
+  /** AG-UI input value. */
   agUiInput: AgUiBrowserResponseRequestState;
+  /** Agent ID value. */
   agentId: string;
+  /** Execution value. */
   execution: AgUiBrowserResponseExecution<TChunk>;
+  /** Encoder value. */
   encoder: AgUiBrowserResponseEncoder<TChunk>;
+  /** Initial state value. */
   initialState: TState;
+  /** Callback invoked when chunk. */
   onChunk?: (state: TState, chunk: TChunk) => void;
+  /** Callback that handles get final response. */
   getFinalResponse?: (state: TState) => AgentResponse | null;
 }
 

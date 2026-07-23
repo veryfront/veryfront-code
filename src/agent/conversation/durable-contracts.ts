@@ -1,11 +1,12 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 
 /** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
   v.object({
-    sourceTargetKind: v.enum(["project", "environment", "preview_branch"]).nullable(),
-    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"]).nullable(),
+    sourceTargetKind: v.enum(["project", "environment", "preview_branch"] as const).nullable(),
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"] as const).nullable(),
     targetEnvironmentId: v.string().uuid().nullable().optional(),
     targetBranchId: v.string().uuid().nullable(),
   })
@@ -14,7 +15,9 @@ export const getConversationRunTargetsSchema = defineSchema((v) =>
 /** Schema for conversation run targets.
  * @deprecated Use getConversationRunTargetsSchema()
  */
-export const ConversationRunTargetsSchema = lazySchema(getConversationRunTargetsSchema);
+export const ConversationRunTargetsSchema: Schema<ConversationRunTargets> = lazySchema(
+  getConversationRunTargetsSchema,
+);
 
 /** Source target kind recorded on project-backed conversation runs. */
 export type ConversationRunSourceTargetKind = "project" | "environment" | "preview_branch";
@@ -24,9 +27,13 @@ export type ConversationRunRuntimeTargetKind = "main_branch" | "environment" | "
 
 /** Public API contract for conversation run targets. */
 export interface ConversationRunTargets {
+  /** Source target kind value. */
   sourceTargetKind: ConversationRunSourceTargetKind | null;
+  /** Runtime target kind value. */
   runtimeTargetKind: ConversationRunRuntimeTargetKind | null;
+  /** Target environment ID value. */
   targetEnvironmentId?: string | null;
+  /** Target branch ID value. */
   targetBranchId: string | null;
 }
 
@@ -74,23 +81,33 @@ export function resolveConversationRunTargets(input: {
 
 /** Zod schema for get conversation run status. */
 export const getConversationRunStatusSchema = defineSchema((v) =>
-  v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"])
+  v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"] as const)
 );
 
 /** Schema for conversation run status.
  * @deprecated Use getConversationRunStatusSchema()
  */
-export const ConversationRunStatusSchema = lazySchema(getConversationRunStatusSchema);
+export const ConversationRunStatusSchema: Schema<ConversationRunProjection["status"]> = lazySchema(
+  getConversationRunStatusSchema,
+);
 
 /** Public API contract for conversation run projection. */
 export interface ConversationRunProjection {
+  /** Run ID value. */
   runId: string;
+  /** Conversation ID value. */
   conversationId: string;
+  /** Message ID value. */
   messageId: string;
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
+  /** Waiting tool call ID value. */
   waitingToolCallId: string | null;
+  /** Waiting tool name value. */
   waitingToolName: string | null;
+  /** Status. */
   status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
 }
 
@@ -158,7 +175,9 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
 /** Schema for conversation run projection.
  * @deprecated Use getConversationRunProjectionSchema()
  */
-export const ConversationRunProjectionSchema = lazySchema(getConversationRunProjectionSchema);
+export const ConversationRunProjectionSchema: Schema<ConversationRunProjection> = lazySchema(
+  getConversationRunProjectionSchema,
+);
 
 /** Public API contract for a conversation run status is active. */
 export type ActiveConversationRunStatus = Extract<
@@ -211,7 +230,9 @@ export type ConversationRunQueueFlushOutcome =
 
 /** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
+  /** Performs the enqueue operation. */
   enqueue(events: unknown[]): void;
+  /** Performs the flush operation. */
   flush(): Promise<
     | {
       outcome: "idle" | "flushed";
@@ -245,6 +266,7 @@ export interface ConversationRunEventQueueController {
       errorMessage: string;
     }
   >;
+  /** Returns snapshot. */
   getSnapshot(): {
     latestEventId: number;
     latestExternalEventSequence: number;
@@ -289,34 +311,67 @@ export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
     run: v.object({
       runId: v.string().min(1).optional(),
       run_id: v.string().min(1).optional(),
-      status: v.enum([
-        "pending",
-        "running",
-        // The completion API has historically reported "waiting" where run
-        // projections use "waiting_for_tool"; accept both so a server-side
-        // normalization to either value cannot break finalization.
-        "waiting",
-        "waiting_for_tool",
-        "completed",
-        "failed",
-        "cancelled",
-      ]),
+      status: v.enum(
+        [
+          "pending",
+          "running",
+          // The completion API has historically reported "waiting" where run
+          // projections use "waiting_for_tool"; accept both so a server-side
+          // normalization to either value cannot break finalization.
+          "waiting",
+          "waiting_for_tool",
+          "completed",
+          "failed",
+          "cancelled",
+        ] as const,
+      ),
     }).passthrough(),
   }).passthrough()
 );
 
+/** Response returned after completing a conversation run. */
+export interface CompleteConversationRunResponse {
+  /** Whether the completion request finished the run. */
+  completed: boolean;
+  /** Updated run state returned by the control plane. */
+  run: {
+    /** Canonical run identifier when returned in camel case. */
+    runId?: string;
+    /** Canonical run identifier when returned in REST snake case. */
+    run_id?: string;
+    /** Current durable run status. */
+    status:
+      | "pending"
+      | "running"
+      | "waiting"
+      | "waiting_for_tool"
+      | "completed"
+      | "failed"
+      | "cancelled";
+    /** Additional run fields returned by the control plane. */
+    [key: string]: unknown;
+  };
+  /** Additional completion response fields returned by the control plane. */
+  [key: string]: unknown;
+}
+
 /** Schema for complete conversation run response.
  * @deprecated Use getCompleteConversationRunResponseSchema()
  */
-export const CompleteConversationRunResponseSchema = lazySchema(
-  getCompleteConversationRunResponseSchema,
-);
+export const CompleteConversationRunResponseSchema: Schema<CompleteConversationRunResponse> =
+  lazySchema(
+    getCompleteConversationRunResponseSchema,
+  );
 
 /** Response payload for append conversation run events. */
 export interface AppendConversationRunEventsResponse {
+  /** Latest event ID value. */
   latestEventId: number;
+  /** Latest external event sequence value. */
   latestExternalEventSequence: number;
+  /** Appended count value. */
   appendedCount: number;
+  /** Run value. */
   run: {
     runId: string;
     conversationId: string;
@@ -372,7 +427,9 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
 /** Schema for append conversation run events response.
  * @deprecated Use getAppendConversationRunEventsResponseSchema()
  */
-export const AppendConversationRunEventsResponseSchema = lazySchema(
+export const AppendConversationRunEventsResponseSchema: Schema<
+  AppendConversationRunEventsResponse
+> = lazySchema(
   getAppendConversationRunEventsResponseSchema,
 );
 
@@ -386,38 +443,64 @@ export const getConversationRunErrorSchema = defineSchema((v) =>
 
 /** Public API contract for conversation agent run usage. */
 export interface ConversationAgentRunUsage {
+  /** Input tokens value. */
   inputTokens: number;
+  /** Output tokens value. */
   outputTokens: number;
+  /** Total tokens value. */
   totalTokens: number;
 }
 
 /** Input payload for create conversation agent run. */
 export interface CreateConversationAgentRunInput {
+  /** Bearer token used for control-plane requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Conversation identifier. */
   conversationId: string;
+  /** Optional caller-selected run identifier. */
   runId?: string;
+  /** Optional parent run identifier. */
   parentRunId?: string;
+  /** Agent identifier. */
   agentId: string;
+  /** Optional runtime implementation kind. */
   implementationKind?: string | null;
+  /** Optional project identifier. */
   projectId?: string | null;
+  /** Optional runtime target category. */
   runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+  /** Optional target environment identifier. */
   runtimeTargetEnvironmentId?: string | null;
+  /** Optional target branch identifier. */
   branchId?: string | null;
+  /** Signal used to cancel the control-plane request. */
   abortSignal?: AbortSignal;
 }
 
 /** Input payload for finalize conversation agent run. */
 export interface FinalizeConversationAgentRunInput {
+  /** Bearer token used for control-plane requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Conversation identifier. */
   conversationId: string;
+  /** Run identifier. */
   runId: string;
+  /** Terminal run status. */
   status: "completed" | "failed" | "cancelled";
+  /** Model used by the run. */
   model: string;
+  /** Provider used by the run. */
   provider: string;
+  /** Optional final token usage. */
   usage?: ConversationAgentRunUsage;
+  /** Optional provider finish reason. */
   finishReason?: string;
+  /** Optional stable terminal error code. */
   terminalErrorCode?: string | null;
+  /** Optional terminal error message. */
   terminalErrorMessage?: string | null;
 }

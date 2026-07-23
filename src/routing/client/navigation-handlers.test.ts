@@ -238,6 +238,43 @@ describe("NavigationHandlers", () => {
         mocks.cleanup();
       }
     });
+
+    it("should preserve native behavior for modified, secondary, and handled clicks", () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers();
+        let navigationCount = 0;
+        const clickHandler = handlers.createClickHandler({
+          onNavigate() {
+            navigationCount++;
+            return Promise.resolve();
+          },
+          onPrefetch() {},
+        });
+        const anchor = createMockAnchor("/about");
+
+        for (
+          const eventFields of [
+            { button: 1 },
+            { button: 0, metaKey: true },
+            { button: 0, ctrlKey: true },
+            { button: 0, shiftKey: true },
+            { button: 0, altKey: true },
+            { button: 0, defaultPrevented: true },
+          ]
+        ) {
+          clickHandler({
+            target: anchor,
+            preventDefault() {},
+            ...eventFields,
+          } as unknown as MouseEvent);
+        }
+
+        assertEquals(navigationCount, 0);
+      } finally {
+        mocks.cleanup();
+      }
+    });
   });
 
   describe("createPopStateHandler", () => {
@@ -342,6 +379,30 @@ describe("NavigationHandlers", () => {
         await delay(100);
 
         assertEquals(prefetchedUrl, "/page", "Should prefetch link after delay");
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("should prefetch when a nested element inside a link is hovered", async () => {
+      const mocks = setupNavigationHandlerMocks();
+      try {
+        const handlers = new NavigationHandlers(scaleMs(10), { hover: true });
+        let prefetchedUrl = "";
+        const mouseOverHandler = handlers.createMouseOverHandler({
+          onNavigate: async () => {},
+          onPrefetch(url) {
+            prefetchedUrl = url;
+          },
+        });
+        const anchor = createMockAnchor("/nested");
+        const child = createMockElement("span");
+        child.parentElement = anchor;
+
+        mouseOverHandler({ target: child } as unknown as MouseEvent);
+        await delay(50);
+
+        assertEquals(prefetchedUrl, "/nested");
       } finally {
         mocks.cleanup();
       }

@@ -1,21 +1,37 @@
 import { serverLogger } from "#veryfront/utils";
-import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
+import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
+import { normalizeComponentRoute } from "./component-resolver.ts";
 import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
 
 const logger = serverLogger.component("rsc");
 
-const STREAM_DELAY_MS = 30;
-const FALLBACK_HTML = "<div>OK</div>";
-
 export class StreamHandler {
   constructor(private renderHandler: RenderHandler) {}
 
   async handle(pathname: string, searchParams: URLSearchParams): Promise<Response> {
-    const finalHtml = await this.getFinalHtml(pathname, searchParams);
-    const stream = this.createStream(finalHtml, searchParams);
+    const requestedPage = searchParams.get("page") ?? pathname ?? "/";
+    if (normalizeComponentRoute(requestedPage) === null) {
+      return jsonErrorResponse(HttpStatus.BAD_REQUEST, "Invalid page route");
+    }
 
-    return new Response(stream, {
+    const renderResponse = await this.renderHandler.handle(requestedPage, searchParams);
+    if (!renderResponse.ok) {
+      return renderResponse;
+    }
+
+    const html = await this.readRenderedHtml(renderResponse);
+    if (html === null) {
+      return jsonErrorResponse(
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        "Invalid render response",
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
+
+    const slot: StreamSlot = { type: "slot", id: "root", html };
+
+    return new Response(`${JSON.stringify(slot)}\n`, {
       headers: {
         "content-type": "application/x-ndjson; charset=utf-8",
         "cache-control": "no-cache",
@@ -23,71 +39,23 @@ export class StreamHandler {
     });
   }
 
-  private async getFinalHtml(pathname: string, searchParams: URLSearchParams): Promise<string> {
-    const pageParam = searchParams.get("page") ?? pathname ?? "/";
-    const response = await this.renderHandler.handle(pageParam, searchParams);
-
-    if (!response.ok) return FALLBACK_HTML;
-
+  private async readRenderedHtml(response: Response): Promise<string | null> {
     try {
-      const payload = (await response.json()) as RSCPayload;
-      return payload.html ?? FALLBACK_HTML;
+      const payload: unknown = await response.json();
+      if (
+        payload === null || typeof payload !== "object" ||
+        typeof (payload as { html?: unknown }).html !== "string"
+      ) {
+        logger.warn("render response is missing HTML");
+        return null;
+      }
+
+      return (payload as { html: string }).html;
     } catch (error) {
-      logger.warn("[dev] failed to parse final HTML payload", error);
-      return FALLBACK_HTML;
+      logger.warn("failed to parse render response", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return null;
     }
   }
-
-  private createStream(
-    finalHtml: string,
-    searchParams: URLSearchParams,
-  ): ReadableStream<Uint8Array> {
-    return new ReadableStream<Uint8Array>({
-      async start(controller) {
-        const encoder = new TextEncoder();
-
-        try {
-          enqueueSlot(controller, encoder, { type: "slot", id: "root", html: "<p>Loading...</p>" });
-          enqueueSlot(controller, encoder, {
-            type: "slot",
-            id: "sidebar",
-            html: "<p>Sidebar loading…</p>",
-          });
-
-          await sleep(STREAM_DELAY_MS);
-
-          enqueueSlot(controller, encoder, {
-            type: "slot",
-            id: "sidebar",
-            html: "<aside><ul><li>A</li><li>B</li></ul></aside>",
-          });
-
-          if (searchParams.get("bad") === "1") {
-            controller.enqueue(encoder.encode("MALFORMED_JSON\n"));
-          }
-
-          await sleep(STREAM_DELAY_MS);
-
-          enqueueSlot(controller, encoder, { type: "slot", id: "root", html: finalHtml });
-
-          controller.close();
-        } catch (error) {
-          logger.warn("[dev] stream handler error", error);
-          controller.error(error instanceof Error ? error : new Error(String(error)));
-        }
-      },
-    });
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms)); // no cleanup needed: one-shot
-}
-
-function enqueueSlot(
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
-  slot: StreamSlot,
-): void {
-  controller.enqueue(encoder.encode(`${JSON.stringify(slot)}\n`));
 }

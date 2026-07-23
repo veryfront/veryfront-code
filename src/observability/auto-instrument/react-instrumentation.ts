@@ -1,79 +1,138 @@
+import { serverLogger } from "#veryfront/utils";
 import { type Span, SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  classifyTelemetryError,
+  extractSafeHttpScheme,
+  normalizeHttpMethod,
+  setSanitizedSpanError,
+} from "#veryfront/observability/telemetry-safety.ts";
 import { endSpan, setSpanAttributes, SpanNames, startSpan, withSpan } from "../tracing/index.ts";
 import { recordRenderError } from "../metrics/index.ts";
 
-/** Instrument a React render operation. */
-export function instrumentReactRender<T>(
-  renderFn: () => Promise<T> | T,
-  componentName: string,
-): Promise<T> {
-  return withSpan(
-    SpanNames.RENDER_COMPONENT,
-    async (span) => {
-      const startTime = performance.now();
+const logger = serverLogger.component("auto-instrument");
 
-      try {
-        const result = renderFn();
-        const resolved = result instanceof Promise ? await result : result;
+type RenderOutcome<T> =
+  | { state: "pending" }
+  | { state: "resolved"; value: T }
+  | { state: "rejected"; error: unknown };
 
-        recordRenderDuration(span, startTime);
-        return resolved;
-      } catch (error) {
-        handleRenderError(span, error, componentName);
-        throw error;
-      }
-    },
-    {
-      kind: "internal",
-      attributes: { "component.name": componentName },
-    },
-  );
+function logInstrumentationFailure(message: string, error: unknown): void {
+  try {
+    logger.debug(message, { failure_category: classifyTelemetryError(error) });
+  } catch {
+    // Logging must not affect application behavior.
+  }
 }
 
-/** Handler for instrument error. */
+/** Instrument a React render operation without recording component identity. */
+export async function instrumentReactRender<T>(
+  renderFn: () => Promise<T> | T,
+  _componentName: string,
+): Promise<T> {
+  const startTime = readMonotonicTime();
+  const operationState: { outcome: RenderOutcome<T> } = { outcome: { state: "pending" } };
+  let operationPromise: Promise<T> | undefined;
+
+  const invokeRenderOnce = (span: Span | null): Promise<T> => {
+    operationPromise ??= (async () => {
+      try {
+        const value = await renderFn();
+        operationState.outcome = { state: "resolved", value };
+        try {
+          recordRenderDuration(span, startTime);
+        } catch (instrumentationError) {
+          logInstrumentationFailure("Render duration instrumentation failed", instrumentationError);
+        }
+        return value;
+      } catch (error) {
+        operationState.outcome = { state: "rejected", error };
+        handleRenderError(span, error);
+        throw error;
+      }
+    })();
+    return operationPromise;
+  };
+
+  try {
+    return await withSpan(
+      SpanNames.RENDER_COMPONENT,
+      invokeRenderOnce,
+      { kind: "internal" },
+    );
+  } catch (instrumentationError) {
+    if (operationState.outcome.state === "resolved") return operationState.outcome.value;
+    if (operationState.outcome.state === "rejected") throw operationState.outcome.error;
+
+    logInstrumentationFailure("React render instrumentation failed", instrumentationError);
+    if (operationPromise) return await operationPromise;
+    return await renderFn();
+  }
+}
+
+/** Instrument an error handler with bounded failure metadata. */
 export function instrumentErrorHandler(
   handler: (error: Error, request?: Request) => Promise<Response> | Response,
   captureToSpan = true,
 ): (error: Error, request?: Request) => Promise<Response> | Response {
   return (error: Error, request?: Request): Promise<Response> | Response => {
-    if (captureToSpan) captureErrorToSpan(error, request);
+    if (captureToSpan) {
+      try {
+        captureErrorToSpan(error, request);
+      } catch (instrumentationError) {
+        logInstrumentationFailure("Error handler instrumentation failed", instrumentationError);
+      }
+    }
     return handler(error, request);
   };
 }
 
-function handleRenderError(span: Span | null, error: unknown, componentName: string): void {
-  recordRenderError({ component: componentName });
+function handleRenderError(span: Span | null, error: unknown): void {
+  try {
+    recordRenderError();
+  } catch (instrumentationError) {
+    logInstrumentationFailure("Render error metric failed", instrumentationError);
+  }
 
-  // endSpan is handled by withActiveSpan automatically,
-  // but we need to record the exception and status
-  if (!span) return;
-
-  span.recordException(error as Error);
-  span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
+  setSanitizedSpanError(span, SpanStatusCode.ERROR, error);
 }
 
-function recordRenderDuration(span: Span | null, startTime: number): void {
-  const duration = performance.now() - startTime;
-  setSpanAttributes(span, { "render.duration_ms": Math.floor(duration) });
+function recordRenderDuration(span: Span | null, startTime: number | undefined): void {
+  if (startTime === undefined) return;
+  const endTime = readMonotonicTime();
+  if (endTime === undefined) return;
+  const duration = endTime - startTime;
+  setSpanAttributes(span, {
+    "render.duration_ms": Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : 0,
+  });
+}
+
+function readMonotonicTime(): number | undefined {
+  try {
+    const value = performance.now();
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function captureErrorToSpan(error: Error, request?: Request): void {
+  const category = classifyTelemetryError(error);
   const span = startSpan("error.handler", {
     kind: "internal",
     attributes: {
-      "error.type": error.constructor.name,
-      "error.message": error.message,
-      "error.stack": error.stack ?? "",
+      error: true,
+      "error.category": category,
+      "error.type": category,
     },
   });
 
   if (request) {
-    const url = new URL(request.url);
-    setSpanAttributes(span, {
-      "http.method": request.method,
-      "http.url": request.url,
-      "http.path": url.pathname,
-    });
+    const requestAttributes: Record<string, string | number | boolean> = {
+      "http.method": normalizeHttpMethod(request.method),
+    };
+    const scheme = extractSafeHttpScheme(request.url);
+    if (scheme) requestAttributes["http.scheme"] = scheme;
+    setSpanAttributes(span, requestAttributes);
   }
 
   endSpan(span, error);

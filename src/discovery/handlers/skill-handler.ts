@@ -2,11 +2,10 @@
  * Skill Discovery Handler
  *
  * Discovers skills from SKILL.md files in project directories.
- * This is a parallel discovery path — it does NOT implement DiscoveryHandler<T>
+ * This is a parallel discovery path. It does NOT implement DiscoveryHandler<T>
  * (which expects TypeScript import()). Instead, it operates on markdown files.
  */
 
-import { exists, readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { agentLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors";
@@ -14,6 +13,13 @@ import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/p
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import type { Skill } from "#veryfront/skill";
 import type { FileDiscoveryContext } from "../types.ts";
+import {
+  discoveryFileExists,
+  listDiscoveryDirectoryEntries,
+  readDiscoveryTextFile,
+} from "../file-discovery.ts";
+import { discoveryFileLabel, isSafePathSegment } from "../discovery-utils.ts";
+import { recordDiscoveryError } from "../discovery-errors.ts";
 
 const logger = agentLogger.component("skill-discovery");
 
@@ -44,57 +50,60 @@ export async function discoverSkills(
   const { fsAdapter } = context;
 
   // Check if directory exists
-  const dirExists = fsAdapter ? await fsAdapter.exists(dir) : await exists(dir);
+  const dirExists = await discoveryFileExists(dir, context);
 
   if (!dirExists) {
     if (verbose) {
-      logger.info(`Skills directory does not exist: ${dir}`);
+      logger.info("Skills directory does not exist");
     }
     return { skills, errors };
   }
 
   // Iterate subdirectories
-  const entries = fsAdapter ? fsAdapter.readDir(dir) : readDir(dir);
+  const entries = await listDiscoveryDirectoryEntries(dir, context);
 
-  for await (const entry of entries) {
+  for (const entry of entries) {
     if (!entry.isDirectory) continue;
+    if (!isSafePathSegment(entry.name)) {
+      recordDiscoveryError(errors, {
+        file: discoveryFileLabel(dir, context.baseDir),
+        error: ensureError("Skill directory has an invalid name"),
+      });
+      continue;
+    }
 
     const skillDir = join(dir, entry.name);
     const skillMdPath = join(skillDir, SKILL_MD_FILENAME);
 
     try {
       // Check if SKILL.md exists
-      const mdExists = fsAdapter ? await fsAdapter.exists(skillMdPath) : await exists(skillMdPath);
+      const mdExists = await discoveryFileExists(skillMdPath, context);
 
       if (!mdExists) {
         if (verbose) {
-          logger.info(`Skipping ${entry.name}: no ${SKILL_MD_FILENAME}`);
+          logger.info("Skill directory has no definition file");
         }
         continue;
       }
 
       // Read SKILL.md content
-      const content = fsAdapter
-        ? await fsAdapter.readFile(skillMdPath)
-        : await readTextFile(skillMdPath);
+      const content = await readDiscoveryTextFile(skillMdPath, context);
 
       // Parse frontmatter
       const parsed = await parseSkillFrontmatter(content);
 
-      // Validate metadata (directory name as fallback for skill name)
+      // Validate metadata against the skill's parent directory name.
       const metadata = validateSkillMetadata(parsed.frontmatter, entry.name);
 
-      // Warn if metadata name differs from directory name, use directory name as ID
       const skillId = entry.name;
-      if (metadata.name !== entry.name) {
-        logger.warn(
-          `Skill "${metadata.name}" in directory "${entry.name}" — using directory name as ID`,
-        );
-      }
 
       // Check for duplicate IDs (first wins)
       if (skills.has(skillId)) {
-        logger.warn(`Duplicate skill "${skillId}" — keeping first registration`);
+        recordDiscoveryError(errors, {
+          file: discoveryFileLabel(skillMdPath, context.baseDir),
+          error: ensureError("Duplicate skill id; keeping the first definition"),
+        });
+        if (verbose) logger.warn("Duplicate skill id ignored");
         continue;
       }
 
@@ -108,13 +117,19 @@ export async function discoverSkills(
       skills.set(skillId, skill);
 
       if (verbose) {
-        logger.info(`Discovered skill: ${skillId}`);
+        logger.info("Skill discovered");
       }
     } catch (error) {
-      errors.push({ file: skillMdPath, error: ensureError(error) });
+      recordDiscoveryError(errors, {
+        file: discoveryFileLabel(skillMdPath, context.baseDir),
+        error: ensureError(error),
+      });
 
       if (verbose) {
-        logger.error(`Error loading skill from ${entry.name}:`, error);
+        logger.error("Skill discovery failed", {
+          file: discoveryFileLabel(skillMdPath, context.baseDir),
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
       }
     }
   }

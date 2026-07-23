@@ -1,88 +1,49 @@
-import { isDeno, nodePath } from "./runtime.ts";
-
-function hasWindowsLikePath(path: string): boolean {
-  return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
-}
-
-/** Normalize backslashes to forward slashes (for Deno on Windows). */
-function normSep(p: string): string {
-  return p.includes("\\") ? p.replace(/\\/g, "/") : p;
-}
-
-/** Match Windows drive letter prefix like "C:/" */
-const DRIVE_LETTER = /^[A-Za-z]:\//;
+import {
+  canonicalizeSeparators,
+  getRuntimeCwd,
+  normalizeCanonicalPath,
+  parsePathRoot,
+} from "./internals.ts";
 
 /** Resolve path segments to an absolute path. */
 export function resolve(...paths: string[]): string {
-  if (!isDeno && nodePath && !paths.some(hasWindowsLikePath)) return nodePath.resolve(...paths);
-
-  let resolvedPath = normSep(globalThis.Deno?.cwd?.() ?? "/");
+  let resolvedPath = getRuntimeCwd();
 
   for (const rawPath of paths) {
     if (!rawPath) continue;
-    const path = normSep(rawPath);
-    if (path.startsWith("/") || DRIVE_LETTER.test(path)) {
+    const path = canonicalizeSeparators(rawPath);
+    if (parsePathRoot(path).absolute) {
       resolvedPath = path;
     } else {
       resolvedPath = `${resolvedPath}/${path}`;
     }
   }
-
-  // Preserve drive letter prefix (e.g. "D:/") if present
-  let prefix = "/";
-  const driveMatch = resolvedPath.match(DRIVE_LETTER);
-  if (driveMatch) {
-    prefix = driveMatch[0]; // e.g. "D:/"
-    resolvedPath = resolvedPath.slice(prefix.length);
-  } else if (resolvedPath.startsWith("/")) {
-    resolvedPath = resolvedPath.slice(1);
-  }
-
-  const parts = resolvedPath.split("/").filter(Boolean);
-  const resolved: string[] = [];
-
-  for (const part of parts) {
-    if (part === "..") {
-      resolved.pop();
-      continue;
-    }
-    if (part !== ".") resolved.push(part);
-  }
-
-  return `${prefix}${resolved.join("/")}`;
+  return normalizeCanonicalPath(resolvedPath);
 }
 
 export function isAbsolute(path: string): boolean {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path) && nodePath.isAbsolute(path)) return true;
-  // Cross-platform fallback: Unix, Windows drive letters, and UNC paths
-  if (path.startsWith("/")) return true;
-  if (/^[A-Za-z]:[/\\]/.test(path)) return true;
-  return /^\\\\[^\\]+\\[^\\]+/.test(path);
+  return parsePathRoot(path).absolute;
 }
 
 export function relative(from: string, to: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(from) && !hasWindowsLikePath(to)) {
-    const relativePath = nodePath.relative(from, to);
-    return relativePath || ".";
-  }
-
   const resolvedFrom = resolve(from);
   const resolvedTo = resolve(to);
+  const fromRoot = parsePathRoot(resolvedFrom);
+  const toRoot = parsePathRoot(resolvedTo);
 
-  // Strip drive prefix for comparison (both will share the same drive after resolve)
-  const fromDrive = resolvedFrom.match(DRIVE_LETTER);
-  const fromBase = fromDrive ? resolvedFrom.slice(fromDrive[0].length) : resolvedFrom.slice(1);
-  const toDrive = resolvedTo.match(DRIVE_LETTER);
-  const toBase = toDrive ? resolvedTo.slice(toDrive[0].length) : resolvedTo.slice(1);
+  if (fromRoot.comparisonRoot !== toRoot.comparisonRoot) return resolvedTo;
 
-  const fromParts = fromBase.split("/").filter(Boolean);
-  const toParts = toBase.split("/").filter(Boolean);
+  const fromParts = fromRoot.rest.split("/").filter(Boolean);
+  const toParts = toRoot.rest.split("/").filter(Boolean);
+  const caseInsensitive = fromRoot.windowsLike || toRoot.windowsLike;
 
   let common = 0;
   const minLen = Math.min(fromParts.length, toParts.length);
 
   for (let i = 0; i < minLen; i++) {
-    if (fromParts[i] !== toParts[i]) break;
+    const fromPart = caseInsensitive ? fromParts[i]?.toLowerCase() : fromParts[i];
+    const toPart = caseInsensitive ? toParts[i]?.toLowerCase() : toParts[i];
+    if (fromPart !== toPart) break;
     common++;
   }
 
@@ -93,44 +54,5 @@ export function relative(from: string, to: string): string {
 }
 
 export function normalize(path: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.normalize(path);
-  if (path === "") return ".";
-
-  const p = normSep(path);
-  const abs = isAbsolute(p);
-
-  // Preserve drive letter prefix
-  let prefix = "";
-  const driveMatch = p.match(DRIVE_LETTER);
-  if (driveMatch) {
-    prefix = driveMatch[0];
-  } else if (abs) {
-    prefix = "/";
-  }
-
-  const pathWithoutPrefix = driveMatch ? p.slice(prefix.length) : abs ? p.slice(1) : p;
-  const parts = pathWithoutPrefix.split("/").filter((s) => s && s !== ".");
-
-  const normalized: string[] = [];
-
-  for (const part of parts) {
-    if (part !== "..") {
-      normalized.push(part);
-      continue;
-    }
-
-    const last = normalized[normalized.length - 1];
-    if (normalized.length > 0 && last !== "..") {
-      normalized.pop();
-      continue;
-    }
-
-    if (!abs) normalized.push("..");
-  }
-
-  const result = normalized.join("/");
-
-  if (abs) return result ? `${prefix}${result}` : prefix || "/";
-
-  return result || ".";
+  return normalizeCanonicalPath(path);
 }

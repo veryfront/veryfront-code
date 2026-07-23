@@ -2,7 +2,7 @@
 
 import { computeEtag } from "../../utils/etag.ts";
 
-function normalizeWeakEtag(hash: string): string {
+async function normalizeWeakEtag(hash: string): Promise<string> {
   const trimmed = hash.trim();
   if (!trimmed) return computeEtag("");
 
@@ -13,6 +13,6 @@ function normalizeWeakEtag(hash: string): string {
 }
 
 /** Compute ETag for SSR result (prefers ssrHash if available) */
-export function computeSSRETag(ssrHash: string | undefined, html: string): string {
+export function computeSSRETag(ssrHash: string | undefined, html: string): Promise<string> {
   return ssrHash ? normalizeWeakEtag(ssrHash) : computeEtag(html);
 }

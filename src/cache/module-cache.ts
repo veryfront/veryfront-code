@@ -10,7 +10,10 @@ import {
   MODULE_CACHE_MAX_ENTRIES,
   MODULE_CACHE_TTL_MS,
 } from "#veryfront/utils/constants/cache.ts";
-import { registerLRUCache } from "./registry.ts";
+import { cacheRegistry, registerLRUCache } from "./registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { getPodModuleCacheProjectId } from "./keys/builders/module.ts";
+import { containsUnsafeCacheStringCharacter } from "./validation.ts";
 
 const logger = rendererLogger.component("module-cache");
 
@@ -53,8 +56,8 @@ function getOrInitPodCache(options: PodCacheOptions): LRUCache<string, string> {
     ttlMs: options.ttlMs,
   });
 
-  options.assign(cache);
   registerLRUCache(options.registryName, cache);
+  options.assign(cache);
 
   logger.info(options.logMessage, {
     maxEntries: options.maxEntries,
@@ -171,25 +174,14 @@ class LRUBackedMap implements ModuleCacheMap {
   }
 
   values(): MapIterator<string> {
-    const keysIter = this.cache.keys();
-    const cacheRef = this.cache;
+    const entries = this.cache.entries();
     return toMapIterator((function* () {
-      for (const key of keysIter) {
-        const value = cacheRef.get(key);
-        if (value !== undefined) yield value;
-      }
+      for (const [, value] of entries) yield value;
     })());
   }
 
   entries(): MapIterator<[string, string]> {
-    const keysIter = this.cache.keys();
-    const cacheRef = this.cache;
-    return toMapIterator((function* () {
-      for (const key of keysIter) {
-        const value = cacheRef.get(key);
-        if (value !== undefined) yield [key, value] as [string, string];
-      }
-    })());
+    return toMapIterator(this.cache.entries());
   }
 
   forEach(
@@ -228,18 +220,26 @@ export function clearModuleCaches(): void {
 }
 
 export function clearModuleCacheForProject(projectId: string): number {
+  if (
+    typeof projectId !== "string" || projectId.length === 0 || projectId.length > 4096 ||
+    containsUnsafeCacheStringCharacter(projectId)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      message:
+        "Project identity must be a bounded string without control characters or unpaired UTF-16 surrogates",
+    });
+  }
   if (!moduleCache) return 0;
 
   let cleared = 0;
 
   for (const key of moduleCache.keys()) {
-    if (!key.startsWith(`${projectId}:`)) continue;
-    moduleCache.delete(key);
-    cleared++;
+    if (getPodModuleCacheProjectId(key) !== projectId) continue;
+    if (moduleCache.delete(key)) cleared++;
   }
 
   if (cleared > 0) {
-    logger.info("Cleared module cache for project", { projectId, cleared });
+    logger.info("Cleared module cache for project", { cleared });
   }
 
   return cleared;
@@ -248,6 +248,8 @@ export function clearModuleCacheForProject(projectId: string): number {
 export function destroyModuleCaches(): void {
   moduleCache?.destroy();
   esmCache?.destroy();
+  cacheRegistry.unregister(modulePodCacheOptions.registryName);
+  cacheRegistry.unregister(esmPodCacheOptions.registryName);
   moduleCache = null;
   esmCache = null;
   logger.info("Module caches destroyed");

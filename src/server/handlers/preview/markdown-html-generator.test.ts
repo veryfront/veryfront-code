@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
+import { MAX_STUDIO_CONFIG_ID_LENGTH } from "#veryfront/studio/limits.ts";
 
 function makeOptions(overrides: Partial<Parameters<typeof generateMarkdownHtml>[0]> = {}) {
   return {
@@ -146,5 +147,29 @@ describe("generateMarkdownHtml", () => {
     assert(html.includes('<script nonce="nonce-123">window.__VF_BRIDGE_CONFIG__='));
     assert(html.includes('<script type="module" nonce="nonce-123">'));
     assert(html.includes('<script src="/_veryfront/preview-hmr.js" nonce="nonce-123"></script>'));
+  });
+
+  it("rejects Studio query identifiers the browser bridge cannot initialize", () => {
+    const url = new URL("http://localhost/test.md?studio_embed=true");
+    url.searchParams.set("vf_file_id", "f".repeat(MAX_STUDIO_CONFIG_ID_LENGTH + 1));
+
+    assertThrows(
+      () => generateMarkdownHtml(makeOptions({ url })),
+      Error,
+      "Studio page ID",
+    );
+  });
+
+  it("keeps a long markdown source path without emitting it as a page identifier", () => {
+    const filePath = `${"a".repeat(MAX_STUDIO_CONFIG_ID_LENGTH + 1)}.md`;
+    const html = generateMarkdownHtml(
+      makeOptions({
+        filePath,
+        url: new URL("http://localhost/test.md?studio_embed=true"),
+      }),
+    );
+
+    assert(html.includes('"pageId":""'));
+    assert(html.includes(`"pagePath":"${filePath}"`));
   });
 });

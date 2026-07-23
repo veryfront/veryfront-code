@@ -5,15 +5,21 @@ export type HostedChildExecutionLogLevel = "error" | "info" | "warn";
 
 /** Entry shape for hosted child execution log. */
 export interface HostedChildExecutionLogEntry {
+  /** Level value. */
   level: HostedChildExecutionLogLevel;
+  /** Message associated with the operation. */
   message: string;
+  /** Context supplied to the operation. */
   context: Record<string, unknown>;
 }
 
 /** Public API contract for hosted child execution log writer. */
 export interface HostedChildExecutionLogWriter {
+  /** Writes an error log entry. */
   error: (message: string, context: Record<string, unknown>) => void;
+  /** Callback that handles info. */
   info: (message: string, context: Record<string, unknown>) => void;
+  /** Writes a warning log entry. */
   warn: (message: string, context: Record<string, unknown>) => void;
 }
 

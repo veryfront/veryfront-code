@@ -1,4 +1,4 @@
-/****
+/**
  * Resource Registry
  *
  * Project-scoped registry for MCP resources. Each project has its own
@@ -10,35 +10,135 @@
 import type { Resource } from "./types.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { snapshotResourceDefinition } from "./definition.ts";
+import {
+  assertResourceUri,
+  type CompiledResourcePattern,
+  compileResourcePattern,
+  decodeResourceParams,
+  hasUnresolvedGeneratedResourcePattern,
+  matchResourcePattern,
+  resourcePatternsOverlap,
+} from "./pattern.ts";
 
-const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource");
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function sameResourceDefinition(existing: Resource, incoming: Resource): boolean {
+  return existing.id === incoming.id && existing.pattern === incoming.pattern &&
+    existing.description === incoming.description && existing.title === incoming.title &&
+    existing.paramsSchema === incoming.paramsSchema && existing.load === incoming.load &&
+    existing.subscribe === incoming.subscribe && existing.mcp?.enabled === incoming.mcp?.enabled &&
+    existing.mcp?.cachePolicy === incoming.mcp?.cachePolicy;
 }
 
+const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource", {
+  validateRegistration(id, existing, incoming) {
+    if (sameResourceDefinition(existing, incoming)) return;
+    throw INVALID_ARGUMENT.create({
+      detail: `Resource registry already contains a conflicting definition for "${id}"`,
+    });
+  },
+});
+
 class ResourceRegistry extends ScopedRegistryFacade<Resource> {
-  findByPattern(uri: string): Resource | undefined {
-    for (const resource of this.getAll().values()) {
-      if (this.matchPattern(uri, resource.pattern)) return resource;
+  private readonly compiledPatterns = new WeakMap<Resource, CompiledResourcePattern>();
+
+  override register(id: string, item: Resource): void {
+    this.assertResolvedPattern(item);
+    const snapshot = snapshotResourceDefinition(item, id);
+    const compiled = compileResourcePattern(snapshot.pattern);
+    this.assertNoAmbiguousPattern(id, compiled);
+    this.compiledPatterns.set(snapshot, compiled);
+    super.register(id, snapshot);
+  }
+
+  override registerShared(id: string, item: Resource): void {
+    this.assertResolvedPattern(item);
+    const snapshot = snapshotResourceDefinition(item, id);
+    const existing = this.getShared(id);
+    if (existing !== undefined && !sameResourceDefinition(existing, snapshot)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Resource registry already contains a conflicting definition for "${id}"`,
+      });
     }
-    return undefined;
+    const compiled = compileResourcePattern(snapshot.pattern);
+    this.assertNoAmbiguousPattern(id, compiled);
+    this.compiledPatterns.set(snapshot, compiled);
+    super.registerShared(id, snapshot);
   }
 
-  private patternToRegex(pattern: string): RegExp {
-    const escapedPattern = escapeRegExp(pattern).replace(
-      /:([A-Za-z_][A-Za-z0-9_]*)/g,
-      "(?<$1>[^/]+)",
-    );
-    return new RegExp(`^${escapedPattern}$`);
+  private compiled(resource: Resource): CompiledResourcePattern {
+    const cached = this.compiledPatterns.get(resource);
+    if (cached) return cached;
+    const compiled = compileResourcePattern(resource.pattern);
+    this.compiledPatterns.set(resource, compiled);
+    return compiled;
   }
 
-  private matchPattern(uri: string, pattern: string): RegExpMatchArray | null {
-    return uri.match(this.patternToRegex(pattern));
+  private assertResolvedPattern(resource: Resource): void {
+    if (hasUnresolvedGeneratedResourcePattern(resource)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Directly registered resources must define an explicit URI pattern",
+      });
+    }
+  }
+
+  private assertNoAmbiguousPattern(id: string, incoming: CompiledResourcePattern): void {
+    for (const [existingId, resource] of this.getAll()) {
+      if (existingId === id) continue;
+      const existing = this.compiled(resource);
+      if (existing.structuralKey === incoming.structuralKey) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Resource registry patterns must have distinct URI structures",
+        });
+      }
+      if (
+        existing.parameterNames.length === incoming.parameterNames.length &&
+        existing.literalLength === incoming.literalLength &&
+        resourcePatternsOverlap(existing, incoming)
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Overlapping resource registry patterns must have distinct specificity",
+        });
+      }
+    }
+  }
+
+  findByPattern(uri: string): Resource | undefined {
+    const validatedUri = assertResourceUri(uri);
+    let best:
+      | { resource: Resource; compiled: CompiledResourcePattern }
+      | undefined;
+
+    for (const resource of this.getAll().values()) {
+      const compiled = this.compiled(resource);
+      if (!matchResourcePattern(validatedUri, compiled)) continue;
+      if (!best || this.isMoreSpecific(compiled, best.compiled)) {
+        best = { resource, compiled };
+      }
+    }
+    return best?.resource;
+  }
+
+  private isMoreSpecific(
+    candidate: CompiledResourcePattern,
+    current: CompiledResourcePattern,
+  ): boolean {
+    if (candidate.parameterNames.length !== current.parameterNames.length) {
+      return candidate.parameterNames.length < current.parameterNames.length;
+    }
+    return candidate.literalLength > current.literalLength;
   }
 
   extractParams(uri: string, pattern: string): Record<string, string> {
-    return this.matchPattern(uri, pattern)?.groups ?? {};
+    const validatedUri = assertResourceUri(uri);
+    const compiled = compileResourcePattern(pattern);
+    const captures = matchResourcePattern(validatedUri, compiled);
+    return captures ? decodeResourceParams(captures, compiled) : {};
+  }
+
+  /** Convert a parameterized resource pattern to its MCP URI-template form. */
+  toUriTemplate(pattern: string): string | undefined {
+    return compileResourcePattern(pattern).uriTemplate;
   }
 
   list(): string[] {

@@ -1,5 +1,9 @@
 import type { RSCPayload } from "./types.ts";
 import { HASH_SEED_FNV1A } from "#veryfront/utils";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
+
+const FNV_PRIME = 16_777_619;
+const SECOND_HASH_SEED = HASH_SEED_FNV1A ^ 0x9e3779b9;
 
 export class RSCProductionOptimizer {
   static optimizePayload(payload: RSCPayload): RSCPayload {
@@ -12,7 +16,10 @@ export class RSCProductionOptimizer {
   }
 
   private static minifyHTML(html: string): string {
-    return html.replace(/<!--[\s\S]*?-->/g, "").replace(/>\s+</g, "><").trim();
+    // Rewriting HTML with regular expressions corrupts script, style, template,
+    // and preformatted content. Outer trimming is lossless for the generated
+    // document and leaves structural minification to the build pipeline.
+    return html.trim();
   }
 
   static getCacheHeaders(
@@ -35,29 +42,35 @@ export class RSCProductionOptimizer {
   }
 
   static generateETag(payload: RSCPayload): string {
-    let hash = HASH_SEED_FNV1A;
-
-    for (let i = 0; i < payload.html.length; i++) {
-      hash ^= payload.html.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-
+    const parts = [payload.html];
     for (const key of Object.keys(payload.clientRefs).sort()) {
-      for (let i = 0; i < key.length; i++) {
-        hash ^= key.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
+      parts.push(key, payload.clientRefs[key] ?? "");
+    }
+    parts.push(...(payload.assets?.css ?? []), ...(payload.assets?.js ?? []));
+
+    let first = HASH_SEED_FNV1A;
+    let second = SECOND_HASH_SEED;
+    for (const part of parts) {
+      const framed = `${part.length}:${part};`;
+      for (let index = 0; index < framed.length; index++) {
+        const code = framed.charCodeAt(index);
+        first = Math.imul(first ^ code, FNV_PRIME);
+        second = Math.imul(second ^ code, FNV_PRIME);
       }
     }
 
-    return `"${(hash >>> 0).toString(36)}"`;
+    return `"${(first >>> 0).toString(36)}${(second >>> 0).toString(36)}"`;
   }
 
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
     if (!requestETag) return false;
 
-    const normalizeETag = (etag: string): string => etag.replace(/^W\//, "").replace(/"/g, "");
-
-    return normalizeETag(requestETag) === normalizeETag(payloadETag);
+    const normalizeETag = (etag: string): string => etag.trim().replace(/^W\//, "");
+    const expected = normalizeETag(payloadETag);
+    return requestETag.split(",").some((candidate) => {
+      const normalized = normalizeETag(candidate);
+      return normalized === "*" || normalized === expected;
+    });
   }
 
   static optimizeClientRefs(
@@ -75,25 +88,39 @@ export class RSCProductionOptimizer {
     bundles: Record<string, RSCPayload>;
     manifest: Record<string, string[]>;
   } {
-    const bundles: Record<string, RSCPayload> = {};
-    const manifest: Record<string, string[]> = {};
+    const bundles: Record<string, RSCPayload> = Object.create(null);
+    const manifest: Record<string, string[]> = Object.create(null);
 
     for (const [route, payload] of payloads) {
       const bundleId = RSCProductionOptimizer.generateBundleId(route);
+      if (Object.hasOwn(bundles, bundleId)) {
+        throw new Error("RSC bundle identifier collision");
+      }
       bundles[bundleId] = RSCProductionOptimizer.optimizePayload(payload);
-      manifest[route] = Object.keys(payload.clientRefs);
+      Object.defineProperty(manifest, route, {
+        configurable: true,
+        enumerable: true,
+        value: Object.keys(payload.clientRefs),
+        writable: true,
+      });
     }
 
     return { bundles, manifest };
   }
 
   private static generateBundleId(route: string): string {
-    return route.replace(/[^a-zA-Z0-9]/g, "_");
+    if (route === "/") return "_";
+    const readable = route.replace(/[^a-zA-Z0-9]/g, "_") || "_";
+    let hash = HASH_SEED_FNV1A;
+    for (let index = 0; index < route.length; index++) {
+      hash = Math.imul(hash ^ route.charCodeAt(index), FNV_PRIME);
+    }
+    return `${readable}_${(hash >>> 0).toString(36)}`;
   }
 
   static generatePreloadLinks(clientRefs: Record<string, string>): string[] {
     return Object.values(clientRefs).map(
-      (path) => `<link rel="modulepreload" href="${path}" as="script" crossorigin>`,
+      (path) => `<link rel="modulepreload" href="${escapeHtml(path)}" as="script" crossorigin>`,
     );
   }
 

@@ -7,9 +7,13 @@ import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 
 /** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
+  /** Status. */
   status: HostedLifecycleTerminalState["status"];
+  /** Additional structured metadata. */
   metadata?: HostedLifecycleTerminalState["metadata"];
+  /** Terminal error code value. */
   terminalErrorCode?: string | null;
+  /** Terminal error message value. */
   terminalErrorMessage?: string | null;
 }
 
@@ -27,9 +31,13 @@ const DEFAULT_CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_MESSAGE =
 
 /** Input payload for resolve conversation hosted terminal state. */
 export interface ResolveConversationHostedTerminalStateInput {
+  /** Whether aborted. */
   isAborted: boolean;
+  /** Whether incomplete tool parts. */
   hasIncompleteToolParts: boolean;
+  /** Aborted terminal error message value. */
   abortedTerminalErrorMessage?: string;
+  /** Incomplete tool calls terminal error message value. */
   incompleteToolCallsTerminalErrorMessage?: string;
 }
 
@@ -77,6 +85,7 @@ export function resolveConversationHostedStreamErrorState(
 
 /** Public API contract for conversation hosted terminal runtime adapter. */
 export interface ConversationHostedTerminalRuntimeAdapter {
+  /** Terminal value. */
   terminal: Pick<
     ConversationHostedTerminalAdapter,
     "toTerminalState" | "finalizeRun" | "cancelRun" | "onTerminalState"
@@ -111,20 +120,31 @@ export async function dispatchConversationHostedStreamErrorState(
 
 /** Options accepted by create conversation hosted terminal adapter. */
 export interface CreateConversationHostedTerminalAdapterOptions {
+  /** Bearer token used for authenticated API requests. */
   authToken: string;
+  /** Base URL for Veryfront API requests. */
   apiUrl: string;
+  /** Run value. */
   run: ConversationRunProjection | null;
+  /** Fallback model ID value. */
   fallbackModelId: string;
+  /** Callback that handles resolve provider. */
   resolveProvider: (modelId: string) => string;
+  /** Callback invoked when terminal state. */
   onTerminalState?: (terminalState: HostedLifecycleTerminalState) => Promise<void> | void;
 }
 
 /** Public API contract for conversation hosted terminal adapter. */
 export interface ConversationHostedTerminalAdapter {
+  /** Callback that handles to terminal state. */
   toTerminalState: (state: ConversationHostedTerminalStateInput) => HostedLifecycleTerminalState;
+  /** Callback that handles finalize run. */
   finalizeRun: (terminalState: HostedLifecycleTerminalState) => Promise<void>;
+  /** Callback that handles cancel run. */
   cancelRun: (terminalState: HostedLifecycleTerminalState) => Promise<void>;
+  /** Callback invoked when terminal state. */
   onTerminalState: (terminalState: HostedLifecycleTerminalState) => Promise<void>;
+  /** Callback that handles dispatch. */
   dispatch: (state: ConversationHostedTerminalStateInput) => Promise<HostedLifecycleTerminalState>;
 }
 

@@ -1,42 +1,115 @@
-type GlobalWithRuntime = typeof globalThis & {
-  process?: { versions?: { node?: string; deno?: string } };
-  Bun?: unknown;
-};
+export type DetectedRuntime = "deno" | "node" | "bun" | "cloudflare" | "unknown";
 
-function hasNodeProcess(): boolean {
-  const global = globalThis as GlobalWithRuntime;
-  return global.process?.versions?.node != null && !global.process?.versions?.deno;
+type PropertyHost = object | ((...args: never[]) => unknown);
+
+function isPropertyHost(value: unknown): value is PropertyHost {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
 }
 
-function hasBunGlobal(): boolean {
-  return (globalThis as GlobalWithRuntime).Bun != null;
+function readProperty(value: unknown, key: PropertyKey): unknown {
+  if (!isPropertyHost(value)) return undefined;
+  try {
+    return Reflect.get(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasCloudflareRuntime(host: unknown): boolean {
+  const navigator = readProperty(host, "navigator");
+  if (readProperty(navigator, "userAgent") === "Cloudflare-Workers") return true;
+
+  return isPropertyHost(readProperty(host, "caches")) &&
+    typeof readProperty(host, "WebSocketPair") === "function";
+}
+
+function hasBunRuntime(host: unknown): boolean {
+  const bun = readProperty(host, "Bun");
+  return isNonEmptyString(readProperty(bun, "version")) &&
+    typeof readProperty(bun, "serve") === "function";
+}
+
+function hasNodeRuntime(host: unknown): boolean {
+  const process = readProperty(host, "process");
+  const versions = readProperty(process, "versions");
+  const release = readProperty(process, "release");
+  return isNonEmptyString(readProperty(versions, "node")) &&
+    !isNonEmptyString(readProperty(versions, "deno")) &&
+    readProperty(release, "name") === "node" &&
+    typeof readProperty(process, "cwd") === "function";
+}
+
+function hasDenoRuntime(host: unknown): boolean {
+  const deno = readProperty(host, "Deno");
+  const version = readProperty(deno, "version");
+  const build = readProperty(deno, "build");
+  return isNonEmptyString(readProperty(version, "deno")) &&
+    isNonEmptyString(readProperty(build, "os")) &&
+    typeof readProperty(deno, "execPath") === "function";
+}
+
+/**
+ * Classify a supplied host without mutating globals.
+ *
+ * Cloudflare must win over its Node-compatible process shim. Bun must win over
+ * its Node-compatible process object. Node wins over an injected dnt Deno shim.
+ */
+export function detectRuntimeFromHost(host: unknown): DetectedRuntime {
+  if (hasCloudflareRuntime(host)) return "cloudflare";
+  if (hasBunRuntime(host)) return "bun";
+  if (hasNodeRuntime(host)) return "node";
+  if (hasDenoRuntime(host)) return "deno";
+  return "unknown";
+}
+
+function preferredRuntimeHost(): unknown {
+  // dnt does not rewrite `self`; using it preserves the native Deno and Worker
+  // host. Node normally has no `self`, while Veryfront SSR may install a
+  // browser-shaped stub. Unknown preferred hosts fall back to globalThis so
+  // that stub cannot hide the native Node process.
+  try {
+    if (typeof self !== "undefined") return self;
+  } catch {
+    // Continue with the universal host below.
+  }
+  return globalThis;
+}
+
+/** Classify a preferred host, falling back only when it has no runtime. */
+export function detectRuntimeFromHosts(
+  preferredHost: unknown,
+  universalHost: unknown,
+): DetectedRuntime {
+  const preferredRuntime = detectRuntimeFromHost(preferredHost);
+  return preferredRuntime === "unknown" ? detectRuntimeFromHost(universalHost) : preferredRuntime;
+}
+
+export function detectRuntimeEnvironment(): DetectedRuntime {
+  return detectRuntimeFromHosts(preferredRuntimeHost(), globalThis);
 }
 
 export function getDenoRuntime(): typeof Deno | undefined {
-  const deno = Reflect.get(globalThis, "Deno") as typeof Deno | undefined;
-  if (
-    deno &&
-    typeof deno.version === "object" &&
-    typeof deno.build === "object" &&
-    typeof deno.build.os === "string"
-  ) {
-    return deno;
+  const preferredHost = preferredRuntimeHost();
+  if (detectRuntimeFromHost(preferredHost) === "deno") {
+    return readProperty(preferredHost, "Deno") as typeof Deno;
   }
-  return undefined;
-}
-
-function hasRealDeno(): boolean {
-  return getDenoRuntime() != null;
+  if (detectRuntimeFromHost(globalThis) !== "deno") return undefined;
+  return readProperty(globalThis, "Deno") as typeof Deno;
 }
 
 /**
  * Check if an executable path is a compiled Deno binary.
- * Detects by binary name: "deno" or "deno.exe" = standard runtime, anything else = compiled.
+ * Uses Deno's standalone signal when available. Older runtimes fall back to
+ * executable names: deno and deno.exe identify the standard runtime.
  * @internal Exported for testing only.
  */
 export function testDenoCompiledDetection(execPath: string, standalone?: boolean): boolean {
-  if (standalone !== undefined) return standalone;
-  if (!execPath) return false;
+  if (standalone !== undefined) return standalone === true;
+  if (typeof execPath !== "string" || !execPath) return false;
 
   const binaryName = execPath.split(/[/\\]/).pop()?.toLowerCase();
   if (!binaryName) return false;
@@ -55,71 +128,40 @@ function isDenoCompiledBinary(): boolean {
       deno.execPath(),
       typeof standalone === "boolean" ? standalone : undefined,
     );
-  } catch (_) {
-    /* expected: Deno.execPath() may not be available in all environments */
+  } catch {
     return false;
   }
 }
 
-function hasCloudflareGlobals(): boolean {
-  return "caches" in globalThis && "WebSocketPair" in globalThis;
-}
+const detectedRuntime = detectRuntimeEnvironment();
 
-/** True if running in Bun runtime (check first since Bun has process.versions.node) */
-export const isBun: boolean = hasBunGlobal();
+/** True if running in Bun. */
+export const isBun = detectedRuntime === "bun";
 
-/** True if running in Node.js runtime (has process.versions.node, not Bun, not shimmed Deno) */
-export const isNode: boolean = !isBun && hasNodeProcess();
+/** True if running in Node.js. */
+export const isNode = detectedRuntime === "node";
 
-/** True if running in real Deno runtime (not dnt shim) */
-export const isDeno: boolean = !isNode && !isBun && hasRealDeno();
+/** True if running in native Deno rather than a compatibility shim. */
+export const isDeno = detectedRuntime === "deno";
 
-/**
- * True if running in a compiled Deno binary.
- * Compiled binaries cannot dynamically import HTTP URLs - they must use local file:// paths.
- * This is evaluated once at module load time.
- */
-export const isDenoCompiled: boolean = isDeno && isDenoCompiledBinary();
+/** True if running in Cloudflare Workers. */
+export const isCloudflare = detectedRuntime === "cloudflare";
 
-/** True if running in Cloudflare Workers runtime */
-export const isCloudflare: boolean = hasCloudflareGlobals();
+/** True when the native Deno runtime is a compiled executable. */
+export const isDenoCompiled = isDeno && isDenoCompiledBinary();
 
-/**
- * Detect if running in Node.js (vs Deno) at call time.
- * Use this function instead of the constant when runtime detection needs to happen
- * at call time (e.g., when bundled with esbuild's __esm lazy initialization pattern).
- */
+/** Detect Node.js at call time for lazy bundled initialization paths. */
 export function isNodeRuntime(): boolean {
-  return !hasBunGlobal() && hasNodeProcess();
+  return detectRuntimeEnvironment() === "node";
 }
 
-/**
- * Detect if code is executing in a server environment (SSR).
- *
- * This function provides consistent SSR detection that works correctly even when
- * SSR globals stub the window/document objects. It should be used instead of
- * `typeof window === "undefined"` checks to avoid hydration mismatches.
- *
- * Priority:
- * 1. Check __VERYFRONT_SSR__ flag (set by ssr-globals/index.ts) - most reliable
- * 2. Check if window is undefined (fallback for non-veryfront environments)
- *
- * @returns true if executing on server, false if in browser
- * @see plans/architecture-audit/006.1-ssr-detection-inconsistencies.md
- */
+/** Detect whether code is executing in a server environment. */
 export function isServerEnvironment(): boolean {
-  const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;
-  if (ssrFlag === true) return true;
-
-  return typeof window === "undefined";
+  if (readProperty(globalThis, "__VERYFRONT_SSR__") === true) return true;
+  return readProperty(globalThis, "window") === undefined;
 }
 
-/**
- * Detect if code is executing in a browser environment.
- * Inverse of isServerEnvironment() - use this instead of `typeof window !== "undefined"`.
- *
- * @returns true if executing in browser, false if on server
- */
+/** Detect whether code is executing in a browser environment. */
 export function isBrowserEnvironment(): boolean {
   return !isServerEnvironment();
 }

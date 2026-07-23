@@ -44,13 +44,18 @@ export type { Font, GoogleFontsProps } from "./fonts/index.ts";
 // Markdown (veryfront/markdown)
 // ---------------------------------------------------------------------------
 export { Markdown } from "./components/chat/markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "./components/chat/markdown.tsx";
+export type {
+  CodeBlockProps,
+  Components,
+  MarkdownProps,
+  PluggableList,
+} from "./components/chat/markdown.tsx";
 
 // ---------------------------------------------------------------------------
 // MDX (veryfront/mdx)
 // ---------------------------------------------------------------------------
 export { MDXProvider, useMDXComponents } from "./components/MDXProvider.tsx";
-export type { MDXProviderProps } from "./components/MDXProvider.tsx";
+export type { MDXComponents, MDXProviderProps } from "./components/MDXProvider.tsx";
 
 // ---------------------------------------------------------------------------
 // Chat — Core preset + compound

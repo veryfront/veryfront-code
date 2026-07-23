@@ -39,14 +39,18 @@ describe("pattern-route-matcher", () => {
       assertEquals(match?.route.page, "docs-single.tsx");
     });
 
-    it("should cache route matches", () => {
+    it("should not expose mutable cached matches", () => {
       const router = new PageRouteMatcher();
-      router.addRoute("/about", "about.tsx");
+      router.addRoute("/users/[id]", "user.tsx");
 
-      const match1 = router.match("/about");
-      const match2 = router.match("/about");
+      const match1 = router.match("/users/123");
+      if (!match1) throw new Error("expected route match");
+      match1.params.id = "poisoned";
+      match1.route.page = "poisoned.tsx";
+      const match2 = router.match("/users/123");
 
-      assertEquals(match1, match2);
+      assertEquals(match2?.params.id, "123");
+      assertEquals(match2?.route.page, "user.tsx");
     });
 
     it("should clear cache", () => {
@@ -84,6 +88,8 @@ describe("pattern-route-matcher", () => {
 
       const routes = router.getRoutes();
       assertEquals(routes.length, 2);
+      routes[0]!.page = "poisoned.tsx";
+      assertEquals(router.getRoutes().some((route) => route.page === "poisoned.tsx"), false);
     });
 
     it("should normalize trailing slashes", () => {

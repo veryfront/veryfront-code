@@ -24,9 +24,9 @@ describe("code-generator", () => {
         "export default function MDXContent() { return <div>Hello</div>; }",
         (result) => {
           expect(result).toContain("export const frontmatter");
-          expect(result).toContain('"title": "Test Title"');
-          expect(result).toContain('"description": "Test Description"');
-          expect(result).toContain('"layout": true');
+          expect(result).toContain('\\"title\\":\\"Test Title\\"');
+          expect(result).toContain('\\"description\\":\\"Test Description\\"');
+          expect(result).toContain('\\"layout\\":true');
         },
       );
     });
@@ -86,7 +86,7 @@ describe("code-generator", () => {
 
     it("should handle empty frontmatter", () => {
       runGenerateModuleCodeTest({}, "export default function MDXContent() {}", (result) => {
-        expect(result).toContain("export const frontmatter = {}");
+        expect(result).toContain('export const frontmatter = JSON.parse("{}")');
         expect(result).toContain('export const title = ""');
         expect(result).toContain('export const description = ""');
         expect(result).toContain("export const layout = true");
@@ -100,7 +100,7 @@ describe("code-generator", () => {
       });
     });
 
-    it("should format frontmatter with indentation", () => {
+    it("should serialize frontmatter deterministically", () => {
       runGenerateModuleCodeTest(
         {
           title: "Test",
@@ -109,8 +109,9 @@ describe("code-generator", () => {
         },
         "export default function MDXContent() {}",
         (result) => {
-          expect(result).toContain('{\n  "title"');
-          expect(result).toContain("\n}");
+          expect(result).toContain('\\"title\\":\\"Test\\"');
+          expect(result).toContain('\\"description\\":\\"Desc\\"');
+          expect(result).toContain('\\"custom\\":\\"value\\"');
         },
       );
     });
@@ -125,11 +126,11 @@ describe("code-generator", () => {
         },
         "export default function MDXContent() {}",
         (result) => {
-          expect(result).toContain('"author": "John Doe"');
-          expect(result).toContain('"date": "2024-01-01"');
-          expect(result).toContain('"tags"');
-          expect(result).toContain('"react"');
-          expect(result).toContain('"typescript"');
+          expect(result).toContain('\\"author\\":\\"John Doe\\"');
+          expect(result).toContain('\\"date\\":\\"2024-01-01\\"');
+          expect(result).toContain('\\"tags\\"');
+          expect(result).toContain('\\"react\\"');
+          expect(result).toContain('\\"typescript\\"');
         },
       );
     });
@@ -146,6 +147,12 @@ describe("code-generator", () => {
           expect(result).toContain("Test's apostrophe");
         },
       );
+    });
+
+    it("rejects prototype-mutating metadata keys", () => {
+      const frontmatter = JSON.parse('{"__proto__":{"polluted":true}}') as MDXFrontmatter;
+      expect(() => generateModuleCode(frontmatter, "export default function MDXContent() {}"))
+        .toThrow("unsafe key");
     });
 
     it("should handle multiline MDX code", () => {

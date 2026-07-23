@@ -6,6 +6,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
+import { validateConcurrency } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
@@ -31,6 +32,9 @@ export function map(id: string, options: MapOptions): WorkflowNode {
     throw INVALID_ARGUMENT.create({
       detail: `Map node "${id}" must have a 'processor' configured`,
     });
+  }
+  if (options.concurrency !== undefined) {
+    validateConcurrency(options.concurrency, `Map node "${id}" concurrency`);
   }
 
   const config: MapNodeConfig = {

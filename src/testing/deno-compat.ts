@@ -15,13 +15,34 @@
  */
 
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { scaleMs } from "./timing.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { sanitizeErrorText } from "#veryfront/errors/sanitization.ts";
+import {
+  assertEnvKey,
+  assertEnvValue,
+  createChildEnvOverlay,
+  ensureEnvOverlayRuntime,
+} from "./env-overlay.ts";
+import {
+  isAlreadyExistsError,
+  isNotFoundError as isMissingPathError,
+  remove as removePath,
+} from "#veryfront/platform/compat/fs.ts";
+
+const MAX_TEMP_FILE_CREATE_ATTEMPTS = 8;
+const DEFAULT_WAIT_TIMEOUT_MS = 5_000;
+const DEFAULT_WAIT_INTERVAL_MS = 100;
+const MAX_WAIT_MESSAGE_LENGTH = 4_096;
+const MAX_ENV_OVERRIDE_KEYS = 10_000;
+const WAIT_DEADLINE_REACHED = Symbol("wait-deadline-reached");
 
 export {
   chmod,
   createFileSystem,
   exists,
+  type FileSystem,
   isAlreadyExistsError,
   isNotFoundError,
   makeTempDir,
@@ -34,6 +55,8 @@ export {
   writeFile,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
+
+export type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 
 export {
   cwd,
@@ -48,35 +71,48 @@ export {
 export async function makeTempFile(
   options?: { prefix?: string; suffix?: string },
 ): Promise<string> {
+  const prefix = options?.prefix ?? "tmp-";
+  const suffix = options?.suffix ?? "";
+  validateTempAffix(prefix, "prefix");
+  validateTempAffix(suffix, "suffix");
+
   if (isDeno) {
-    // @ts-ignore - Deno global
-    return await Deno.makeTempFile(options);
+    return await Deno.makeTempFile({ ...options, prefix, suffix });
   }
 
-  const [{ default: os }, { default: fs }, { default: path }] = await Promise.all([
+  const [{ default: os }, { default: fs }, { default: path }, { randomUUID }] = await Promise.all([
     import("node:os"),
     import("node:fs/promises"),
     import("node:path"),
+    import("node:crypto"),
   ]);
 
-  const prefix = options?.prefix ?? "tmp-";
-  const suffix = options?.suffix ?? "";
-  const randomPart = Math.random().toString(36).substring(2, 10);
-  const filename = `${prefix}${randomPart}${suffix}`;
-  const tempPath = path.join(os.tmpdir(), filename);
+  for (let attempt = 0; attempt < MAX_TEMP_FILE_CREATE_ATTEMPTS; attempt++) {
+    const filename = `${prefix}${randomUUID()}${suffix}`;
+    const tempPath = path.join(os.tmpdir(), filename);
+    try {
+      await fs.writeFile(tempPath, "", { flag: "wx" });
+      return tempPath;
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+    }
+  }
 
-  await fs.writeFile(tempPath, "");
-  return tempPath;
+  throw new Error(
+    `Unable to create a unique temporary file after ${MAX_TEMP_FILE_CREATE_ATTEMPTS} attempts`,
+  );
 }
 
-/** Options accepted by make temp dir with. */
+/** Create a temporary directory, optionally under a specific base directory. */
 export async function makeTempDirWithOptions(options?: {
   prefix?: string;
   dir?: string;
 }): Promise<string> {
+  const prefix = options?.prefix ?? "tmp-";
+  validateTempAffix(prefix, "prefix");
+
   if (isDeno) {
-    // @ts-ignore - Deno global
-    return await Deno.makeTempDir(options);
+    return await Deno.makeTempDir({ ...options, prefix });
   }
 
   const [{ default: os }, { default: fs }, { default: path }] = await Promise.all([
@@ -86,39 +122,123 @@ export async function makeTempDirWithOptions(options?: {
   ]);
 
   const baseDir = options?.dir ?? os.tmpdir();
-  const prefix = options?.prefix ?? "tmp-";
-  const randomPart = Math.random().toString(36).substring(2, 10);
-  const dirname = `${prefix}${randomPart}`;
-  const tempPath = path.join(baseDir, dirname);
+  const joinedPrefix = path.join(baseDir, prefix);
+  const tempPrefix = prefix.length === 0 && !joinedPrefix.endsWith(path.sep)
+    ? `${joinedPrefix}${path.sep}`
+    : joinedPrefix;
+  return await fs.mkdtemp(tempPrefix);
+}
 
-  await fs.mkdir(tempPath, { recursive: true });
-  return tempPath;
+function validateTempAffix(value: string, label: string): void {
+  if (
+    typeof value !== "string" || value.includes("\0") || value.includes("/") ||
+    value.includes("\\")
+  ) {
+    throw new TypeError(`Temporary path ${label} must not contain path separators`);
+  }
+}
+
+/** Options for bounded condition polling. */
+export interface WaitForOptions {
+  /** Maximum total wait duration in milliseconds. */
+  timeout?: number;
+  /** Delay between condition attempts in milliseconds. */
+  interval?: number;
+  /** Bounded diagnostic detail included in the timeout error. */
+  message?: string;
+  /** Signal that stops polling before the timeout. */
+  signal?: AbortSignal;
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  if (signal.reason !== undefined) return signal.reason;
+  const error = new Error("Wait aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+async function settleBeforeDeadline<T>(
+  operation: Promise<T>,
+  remainingMs: number,
+  signal?: AbortSignal,
+): Promise<T | typeof WAIT_DEADLINE_REACHED> {
+  if (signal?.aborted) throw abortReason(signal);
+
+  return await new Promise<T | typeof WAIT_DEADLINE_REACHED>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => finish(() => reject(abortReason(signal!)));
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      complete();
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(
+      () => finish(() => resolve(WAIT_DEADLINE_REACHED)),
+      Math.max(0, remainingMs),
+    );
+    operation.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
+async function waitForNextAttempt(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw abortReason(signal);
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(abortReason(signal!));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+  });
 }
 
 /** Wait until a condition succeeds. */
 export async function waitFor(
   condition: () => boolean | Promise<boolean>,
-  options?: {
-    timeout?: number;
-    interval?: number;
-    message?: string;
-  },
+  options?: WaitForOptions,
 ): Promise<void> {
-  const timeout = scaleMs(options?.timeout ?? 5000, 10);
-  const interval = scaleMs(options?.interval ?? 100, 5);
-  const message = options?.message ?? "Condition not met within timeout";
-  const start = Date.now();
+  if (typeof condition !== "function") throw new TypeError("Wait condition must be a function");
 
-  while (Date.now() - start < timeout) {
-    if (await condition()) return;
-    // no cleanup needed: one-shot
-    await new Promise<void>((resolve) => setTimeout(resolve, interval));
+  const timeout = scaleMs(options?.timeout ?? DEFAULT_WAIT_TIMEOUT_MS, 0);
+  const interval = scaleMs(options?.interval ?? DEFAULT_WAIT_INTERVAL_MS);
+  const rawMessage = options?.message ?? "Condition not met within timeout";
+  if (typeof rawMessage !== "string") throw new TypeError("Wait message must be a string");
+  const message = sanitizeErrorText(rawMessage, MAX_WAIT_MESSAGE_LENGTH) ||
+    "Condition not met within timeout";
+  const signal = options?.signal;
+  const deadline = performance.now() + timeout;
+
+  while (true) {
+    const remainingBeforeAttempt = Math.max(0, deadline - performance.now());
+    const result = await settleBeforeDeadline(
+      Promise.resolve().then(condition),
+      remainingBeforeAttempt,
+      signal,
+    );
+    if (result === WAIT_DEADLINE_REACHED) break;
+    if (result) return;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await waitForNextAttempt(Math.min(interval, remaining), signal);
   }
 
   throw TIMEOUT_ERROR.create({ detail: `${message} (timeout: ${timeout}ms)` });
 }
 
-// no cleanup needed: one-shot
 /** Wait for a duration in milliseconds. */
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
@@ -127,86 +247,161 @@ export function delay(ms: number): Promise<void> {
 /** Exit the current process. */
 export function exit(code: number): never {
   if (isDeno) {
-    // @ts-ignore - Deno global
     Deno.exit(code);
   }
 
   process.exit(code);
 }
 
-/** Applies temp dir. */
+async function runWithPathCleanup<T>(
+  path: string,
+  recursive: boolean,
+  fn: (path: string) => T | Promise<T>,
+): Promise<T> {
+  let callbackResult: T | undefined;
+  let callbackError: unknown;
+  let callbackFailed = false;
+  try {
+    callbackResult = await fn(path);
+  } catch (error) {
+    callbackFailed = true;
+    callbackError = error;
+  }
+
+  let cleanupError: unknown;
+  let cleanupFailed = false;
+  try {
+    await removePath(path, recursive ? { recursive: true } : undefined);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      cleanupFailed = true;
+      cleanupError = error;
+    }
+  }
+
+  if (callbackFailed && cleanupFailed) {
+    throw new AggregateError(
+      [callbackError, cleanupError],
+      "Temporary path callback and cleanup both failed",
+    );
+  }
+  if (cleanupFailed) throw cleanupError;
+  if (callbackFailed) throw callbackError;
+  return callbackResult as T;
+}
+
+/** Run a callback with a temporary directory, then remove the directory. */
 export async function withTempDir<T>(
-  fn: (tempDir: string) => Promise<T>,
+  fn: (tempDir: string) => T | Promise<T>,
   options?: { prefix?: string },
 ): Promise<T> {
   const tempDir = await makeTempDirWithOptions({ prefix: options?.prefix ?? "test-" });
-
-  try {
-    return await fn(tempDir);
-  } finally {
-    try {
-      if (isDeno) {
-        // @ts-ignore - Deno global
-        await Deno.remove(tempDir, { recursive: true });
-      } else {
-        const { default: fs } = await import("node:fs/promises");
-        await fs.rm(tempDir, { recursive: true, force: true });
-      }
-    } catch (_) {
-      /* expected: temp dir may already be removed or inaccessible */
-    }
-  }
+  return await runWithPathCleanup(tempDir, true, fn);
 }
 
-/** Applies temp file. */
+/** Run a callback with a temporary file, then remove the file. */
 export async function withTempFile<T>(
-  fn: (tempFile: string) => Promise<T>,
+  fn: (tempFile: string) => T | Promise<T>,
   options?: { prefix?: string; suffix?: string },
 ): Promise<T> {
   const tempFile = await makeTempFile({ prefix: options?.prefix, suffix: options?.suffix });
-
-  try {
-    return await fn(tempFile);
-  } finally {
-    try {
-      if (isDeno) {
-        // @ts-ignore - Deno global
-        await Deno.remove(tempFile);
-      } else {
-        const { default: fs } = await import("node:fs/promises");
-        await fs.rm(tempFile, { force: true });
-      }
-    } catch (_) {
-      /* expected: temp file may already be removed or inaccessible */
-    }
-  }
+  return await runWithPathCleanup(tempFile, false, fn);
 }
 
-/** Applies env. */
+/**
+ * Run a callback with isolated environment variable overrides.
+ *
+ * Overrides must be enumerable own data properties. The helper rejects accessor-backed
+ * values and records with more than 10,000 own keys before changing the environment.
+ */
 export async function withEnv<T>(
   vars: Record<string, string>,
-  fn: () => Promise<T>,
+  fn: () => T | Promise<T>,
 ): Promise<T> {
-  const { getEnv, setEnv, deleteEnv } = await import("../platform/compat/process.ts");
-
-  const original: Record<string, string | undefined> = {};
-  for (const key of Object.keys(vars)) {
-    original[key] = getEnv(key);
+  if (!vars || typeof vars !== "object" || Array.isArray(vars)) {
+    throw new TypeError("Environment variables must be a record");
   }
+  if (typeof fn !== "function") throw new TypeError("Environment callback must be a function");
 
-  for (const [key, value] of Object.entries(vars)) {
-    setEnv(key, value);
-  }
-
+  let keys: PropertyKey[];
   try {
-    return await fn();
-  } finally {
-    for (const [key, value] of Object.entries(original)) {
-      if (value === undefined) {
-        deleteEnv(key);
-      } else {
-        setEnv(key, value);
+    keys = Reflect.ownKeys(vars);
+  } catch {
+    throw new TypeError("Environment variables must be an inspectable record");
+  }
+  if (keys.length > MAX_ENV_OVERRIDE_KEYS) {
+    throw new RangeError(
+      `Environment variables must contain at most ${MAX_ENV_OVERRIDE_KEYS} own keys`,
+    );
+  }
+
+  const entries: Array<[string, string]> = [];
+  for (const key of keys) {
+    if (typeof key !== "string") continue;
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(vars, key);
+    } catch {
+      throw new TypeError("Environment variables must be an inspectable record");
+    }
+    if (!descriptor?.enumerable) continue;
+    if (!("value" in descriptor)) {
+      throw new TypeError("Environment variable overrides must use data properties");
+    }
+    entries.push([key, descriptor.value as string]);
+  }
+  for (const [key, value] of entries) {
+    assertEnvKey(key);
+    if (typeof value !== "string") {
+      throw new TypeError("Environment variable values must be strings");
+    }
+    assertEnvValue(value);
+  }
+
+  const run = async (): Promise<T> => {
+    const original = new Map<string, string | undefined>();
+    for (const [key] of entries) {
+      original.set(key, getEnv(key));
+    }
+
+    let callbackResult: T | undefined;
+    let operationError: unknown;
+    let operationFailed = false;
+    try {
+      for (const [key, value] of entries) setEnv(key, value);
+      callbackResult = await fn();
+    } catch (error) {
+      operationFailed = true;
+      operationError = error;
+    }
+
+    const restorationErrors: unknown[] = [];
+    for (const [key, value] of original.entries()) {
+      try {
+        if (value === undefined) {
+          deleteEnv(key);
+        } else {
+          setEnv(key, value);
+        }
+      } catch (error) {
+        restorationErrors.push(error);
       }
     }
-  }
+
+    if (operationFailed && restorationErrors.length > 0) {
+      throw new AggregateError(
+        [operationError, ...restorationErrors],
+        "Environment callback and restoration both failed",
+      );
+    }
+    if (restorationErrors.length > 0) {
+      throw new AggregateError(restorationErrors, "Environment restoration failed");
+    }
+    if (operationFailed) throw operationError;
+    return callbackResult as T;
+  };
+
+  const storage = ensureEnvOverlayRuntime();
+  if (!storage.run) return await run();
+  return await storage.run(createChildEnvOverlay(), run);
 }

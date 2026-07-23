@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { clearImportMapCache, getCachedImportMap, preloadImportMap } from "./preloader.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -45,6 +45,17 @@ describe("modules/import-map/preloader", () => {
       const map2 = await preloadImportMap("/test-cache-same", adapter);
 
       assertEquals(map1, map2);
+    });
+
+    it("returns defensive copies of cached import maps", async () => {
+      clearImportMapCache();
+      const adapter = createMinimalAdapter();
+
+      const first = await preloadImportMap("/test-cache-defensive", adapter);
+      first.imports!.react = "https://invalid.example/react.js";
+      const second = await preloadImportMap("/test-cache-defensive", adapter);
+
+      assertEquals(second.imports?.react === "https://invalid.example/react.js", false);
     });
 
     it("should cache different projects independently", async () => {
@@ -123,6 +134,13 @@ describe("modules/import-map/preloader", () => {
 
       assertEquals(cachedA, undefined);
       assertEquals(cachedB !== undefined, true);
+    });
+
+    it("rejects empty and oversized cache identities", () => {
+      const adapter = createMinimalAdapter();
+      assertThrows(() => preloadImportMap("", adapter), RangeError);
+      assertThrows(() => preloadImportMap("x".repeat(4_097), adapter), RangeError);
+      assertThrows(() => clearImportMapCache(""), RangeError);
     });
   });
 });

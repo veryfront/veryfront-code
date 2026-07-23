@@ -12,9 +12,13 @@ const MAX_NESTED_TOOL_RESULT_DEPTH = 8;
 
 /** Input payload for hosted child written artifact path. */
 export interface HostedChildWrittenArtifactPathInput {
+  /** Tool name value. */
   toolName: string;
+  /** Tool input value. */
   toolInput: unknown;
+  /** Tool output value. */
   toolOutput: unknown;
+  /** Writing tool names value. */
   writingToolNames?: readonly string[];
 }
 
@@ -26,11 +30,13 @@ export type HostedChildFileWriteFallbackToolExecute = (
 
 /** Public API contract for hosted child file write fallback tool. */
 export interface HostedChildFileWriteFallbackTool {
+  /** Execute value. */
   execute?: HostedChildFileWriteFallbackToolExecute;
 }
 
 /** Public API contract for hosted child file write fallback logger. */
 export interface HostedChildFileWriteFallbackLogger {
+  /** Callback that handles info. */
   info?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 

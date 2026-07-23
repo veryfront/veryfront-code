@@ -1,6 +1,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
 import { getReactVersionInfo, hasFeature } from "./version-detector/index.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 
 export interface FormStatus {
   pending: boolean;
@@ -222,6 +223,8 @@ function getCompatHooksContext(): React.Context<CompatHooks> {
 export function resetCompatHooksContext(): void {
   compatHooksContext = null;
 }
+
+registerProcessStateReset("React compat hooks", resetCompatHooksContext);
 
 export function useCompatHooks(): CompatHooks {
   return React.useContext(getCompatHooksContext());

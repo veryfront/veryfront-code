@@ -15,7 +15,7 @@ const DEFAULT_ENDPOINT = "https://mcp.context7.com/mcp";
 
 function resolveApiKey(config: Context7ToolSourceConfig): string {
   const key = config.apiKey ?? getEnv("CONTEXT7_API_KEY");
-  if (!key) {
+  if (typeof key !== "string" || key.trim().length === 0) {
     throw CONFIG_VALIDATION_ERROR.create({
       detail:
         "Context7 API key is required. Pass apiKey or set the CONTEXT7_API_KEY environment variable.",

@@ -1,59 +1,68 @@
 /**
- * VFS path utilities for compiled Deno binaries.
+ * Framework-root resolution for source trees and compiled Deno VFS paths.
  *
- * In compiled binaries, import.meta.url resolves to embedded paths like
- * /tmp/deno-compile-xyz/Users/original/path/src/... which preserve the original
- * absolute path structure after the extraction root. These utilities handle
- * path resolution across both dev and compiled contexts.
- *
- * Key insight: Deno compile with --include embeds files with their original
- * absolute paths, and those files are accessible via those original paths
- * at runtime (Deno's VFS maps them transparently).
+ * Compiled binaries expose included files below a `deno-compile-*` directory.
+ * Development and package builds retain a `src` path segment. These helpers
+ * return the root before that marker using portable forward slashes.
  */
 
-/**
- * Get the framework root directory from a file path.
- * Handles both dev paths and compiled binary VFS paths.
- *
- * For compiled binaries, files are embedded with --include and extracted to:
- *   /tmp/deno-compile-xxx/{relative_path_from_include}
- *
- * The extraction root IS the framework root because --include paths are
- * relative to the project root. So dist/framework-src extracts to
- * /tmp/deno-compile-xxx/dist/framework-src.
- */
+function restoreRoot(normalizedPath: string, parts: string[], end: number): string {
+  const prefix = parts.slice(0, end).join("/");
+  if (prefix === "" && normalizedPath.startsWith("/")) return "/";
+  if (/^[A-Za-z]:$/.test(prefix)) return `${prefix}/`;
+  return prefix;
+}
+
+/** Resolve the framework root from a portable or platform-native file path. */
 export function getFrameworkRoot(filePath: string): string {
-  const denoCompileMatch = filePath.match(/^(.*[/\\]deno-compile-[^/\\]+)[/\\]/);
-  if (denoCompileMatch && denoCompileMatch[1]) {
-    // For compiled binaries, always return the extraction root.
-    // Files included with --include are placed relative to the extraction root,
-    // matching their original relative paths from the compile command's CWD.
-    // This means dist/framework-src is at {extraction_root}/dist/framework-src.
-    return denoCompileMatch[1];
+  if (typeof filePath !== "string" || filePath.length === 0 || filePath.includes("\0")) return "";
+
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  const parts = normalizedPath.split("/");
+  const compiledRootIndex = parts.findIndex((part) => /^deno-compile-[^/]+$/.test(part));
+  if (compiledRootIndex >= 0) {
+    return restoreRoot(normalizedPath, parts, compiledRootIndex + 1);
   }
 
-  // Dev mode: find the last /src/ and return the path before it
-  const parts = filePath.replace(/\\/g, "/").split("/");
-  const srcIndex = parts.lastIndexOf("src");
-  if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
-
+  const sourceIndex = parts.lastIndexOf("src");
+  if (sourceIndex >= 0) return restoreRoot(normalizedPath, parts, sourceIndex);
   return "";
 }
 
-/**
- * Get the framework root from import.meta.url.
- * Convenience wrapper for module-level initialization.
- */
-export function getFrameworkRootFromMeta(importMetaUrl: string): string {
-  const filePath = new URL(importMetaUrl).pathname;
-  const root = getFrameworkRoot(filePath);
-  if (root) return root;
+function pathFromFileUrl(importMetaUrl: string): string {
+  const url = new URL(importMetaUrl);
+  if (url.protocol !== "file:") {
+    throw new TypeError("Framework module location must be a file URL");
+  }
+  if (/%(?:2f|5c)/i.test(url.pathname)) {
+    throw new TypeError("Framework module file URL contains an encoded path separator");
+  }
 
-  // Go up from typical src/some/nested/module.ts structure
-  return new URL("../../..", importMetaUrl).pathname;
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    throw new TypeError("Framework module file URL is invalid");
+  }
+  if (pathname.includes("\0")) {
+    throw new TypeError("Framework module file URL is invalid");
+  }
+
+  if (url.hostname && url.hostname !== "localhost") {
+    return `//${url.hostname}${pathname}`;
+  }
+  if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1);
+  return pathname;
 }
 
-/** Testable version for unit tests. */
+/** Resolve the framework root from an `import.meta.url` file URL. */
+export function getFrameworkRootFromMeta(importMetaUrl: string): string {
+  const root = getFrameworkRoot(pathFromFileUrl(importMetaUrl));
+  if (!root) throw new Error("Framework root could not be resolved from the module location");
+  return root;
+}
+
+/** Compatibility alias retained for existing tests and internal consumers. */
 export function testGetFrameworkRoot(filePath: string): string {
   return getFrameworkRoot(filePath);
 }

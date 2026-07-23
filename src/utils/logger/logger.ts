@@ -1,4 +1,4 @@
-import { getEnv, getHostEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
@@ -12,7 +12,12 @@ import {
   type SerializedError,
   serializeError,
 } from "./core.ts";
-import { redactSensitive, sanitizeSerializedError, sanitizeUrlCredentials } from "./redact.ts";
+import {
+  REDACTED,
+  redactSensitive,
+  sanitizeSerializedError,
+  sanitizeUrlCredentials,
+} from "./redact.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -113,6 +118,64 @@ type ConsoleLoggerOptions = {
 };
 
 type LogRecordEmitter = (entry: LogEntry) => void;
+
+const MAX_LOG_MESSAGE_LENGTH = 8_192;
+const MAX_TOP_LEVEL_FIELD_LENGTH = 4_096;
+const MAX_CONTEXT_FIELDS = 100;
+const MAX_COMPONENT_NAME_LENGTH = 128;
+// deno-lint-ignore no-control-regex -- log messages must stay on one terminal line
+const ASCII_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]+/g;
+
+function sanitizeLogMessage(message: unknown): string {
+  let text: string;
+  try {
+    text = typeof message === "string" ? message : String(message);
+  } catch {
+    text = "[Unserializable message]";
+  }
+  const singleLine = sanitizeUrlCredentials(text).replace(ASCII_CONTROL_CHARACTERS, " ");
+  return singleLine.length <= MAX_LOG_MESSAGE_LENGTH
+    ? singleLine
+    : `${singleLine.slice(0, MAX_LOG_MESSAGE_LENGTH)}[TRUNCATED]`;
+}
+
+function defineContextValue(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function mergeContextRecords(
+  ...records: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  let fieldCount = 0;
+  for (const record of records) {
+    if (!record) continue;
+    try {
+      for (const key in record) {
+        if (!Object.hasOwn(record, key)) continue;
+        if (!Object.hasOwn(merged, key) && fieldCount >= MAX_CONTEXT_FIELDS) {
+          defineContextValue(merged, "__truncated__", REDACTED);
+          return merged;
+        }
+        const isNew = !Object.hasOwn(merged, key);
+        defineContextValue(merged, key, record[key]);
+        if (isNew) fieldCount++;
+      }
+    } catch {
+      defineContextValue(merged, "unserializable_context", REDACTED);
+    }
+  }
+  return merged;
+}
 
 // ---- Config helpers (must be declared before the eager init below) ----
 
@@ -218,16 +281,26 @@ function extractContext(
       continue;
     }
     if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
-      const contextArg = arg as Record<string, unknown>;
-      if (contextArg.error instanceof Error) {
-        const { error: contextError, ...rest } = contextArg;
-        error = serializeError(contextError);
-        if (Object.keys(rest).length > 0) {
-          context = { ...context, ...rest };
+      try {
+        const safeContext: Record<string, unknown> = {};
+        let fieldCount = 0;
+        for (const key in arg as Record<string, unknown>) {
+          if (!Object.hasOwn(arg, key)) continue;
+          if (fieldCount++ >= MAX_CONTEXT_FIELDS) {
+            defineContextValue(safeContext, "__truncated__", REDACTED);
+            break;
+          }
+          const value = (arg as Record<string, unknown>)[key];
+          if (key === "error" && value instanceof Error) {
+            error = serializeError(value);
+          } else {
+            defineContextValue(safeContext, key, value);
+          }
         }
-        continue;
+        context = mergeContextRecords(context, safeContext);
+      } catch {
+        context = mergeContextRecords(context, { unserializable_context: REDACTED });
       }
-      context = { ...context, ...contextArg };
     }
   }
 
@@ -254,13 +327,13 @@ function isTty(): boolean {
 }
 
 function shouldUseColor(): boolean {
-  const noColor = getEnv("NO_COLOR");
-  const forceColor = getEnv("FORCE_COLOR");
-  const logColor = getEnv("LOG_COLOR");
+  const noColor = getHostEnv("NO_COLOR");
+  const forceColor = getHostEnv("FORCE_COLOR");
+  const logColor = getHostEnv("LOG_COLOR");
 
   if (forceColor === "0" || logColor === "0") return false;
   if (noColor !== undefined) return false;
-  if (getEnv("CI") !== undefined) return false;
+  if (getHostEnv("CI") !== undefined) return false;
   if (forceColor || logColor === "1" || logColor === "true") return true;
 
   return isTty();
@@ -272,8 +345,15 @@ function extractToEntryField(
   key: keyof LogEntry,
   coerce: (value: unknown) => LogEntry[keyof LogEntry],
 ): void {
-  if (!(key in context)) return;
-  entry[key] = coerce(context[key]) as never;
+  if (!Object.hasOwn(context, key)) return;
+  try {
+    const coerced = coerce(context[key]);
+    entry[key] = (typeof coerced === "string"
+      ? sanitizeUrlCredentials(coerced).slice(0, MAX_TOP_LEVEL_FIELD_LENGTH)
+      : coerced) as never;
+  } catch {
+    // Omit malformed known fields so the structured log schema stays valid.
+  }
   delete context[key];
 }
 
@@ -284,9 +364,22 @@ function extractAliasToEntryField(
   targetKey: keyof LogEntry,
   coerce: (value: unknown) => LogEntry[keyof LogEntry],
 ): void {
-  if (entry[targetKey] !== undefined || !(sourceKey in context)) return;
-  entry[targetKey] = coerce(context[sourceKey]) as never;
+  if (entry[targetKey] !== undefined || !Object.hasOwn(context, sourceKey)) return;
+  try {
+    const coerced = coerce(context[sourceKey]);
+    entry[targetKey] = (typeof coerced === "string"
+      ? sanitizeUrlCredentials(coerced).slice(0, MAX_TOP_LEVEL_FIELD_LENGTH)
+      : coerced) as never;
+  } catch {
+    // Omit malformed known fields so the structured log schema stays valid.
+  }
   delete context[sourceKey];
+}
+
+function coerceFiniteNumber(value: unknown): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) throw new TypeError("Expected a finite number");
+  return number;
 }
 
 class ConsoleLogger implements Logger {
@@ -300,32 +393,34 @@ class ConsoleLogger implements Logger {
     private readonly options: ConsoleLoggerOptions = {},
   ) {
     this.boundContext = boundContext ?? {};
-    this.componentName = componentName;
+    this.componentName = componentName === undefined
+      ? undefined
+      : sanitizeLogMessage(componentName).slice(0, MAX_COMPONENT_NAME_LENGTH);
   }
 
   child(context: Record<string, unknown>): Logger {
     return new ConsoleLogger(
       this.prefix,
-      { ...this.boundContext, ...context },
+      mergeContextRecords(this.boundContext, extractContext([context]).context),
       this.componentName,
       this.options,
     );
   }
 
   component(name: string): Logger {
-    return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
+    return new ConsoleLogger(this.prefix, this.boundContext, name, this.options);
   }
 
   private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
     const { context, error } = extractContext(args);
-    const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
+    const mergedContext = mergeContextRecords(this.boundContext, context);
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       service: this.prefix.toLowerCase(),
       veryfrontVersion: RUNTIME_VERSION,
-      message,
+      message: sanitizeLogMessage(message),
     };
 
     if (this.componentName) entry.component = this.componentName;
@@ -335,14 +430,23 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "traceId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "spanId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "projectSlug", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
+    extractToEntryField(entry, mergedContext, "durationMs", coerceFiniteNumber);
 
     // Auto-inject trace context from OTel when not already set
     if ((this.options.injectTraceContext ?? true) && traceContextGetter && !entry.traceId) {
-      const traceCtx = traceContextGetter();
-      if (traceCtx.traceId) {
-        entry.traceId = traceCtx.traceId;
-        entry.spanId = traceCtx.spanId;
+      try {
+        const traceCtx = traceContextGetter();
+        if (traceCtx.traceId) {
+          entry.traceId = sanitizeUrlCredentials(traceCtx.traceId).slice(
+            0,
+            MAX_TOP_LEVEL_FIELD_LENGTH,
+          );
+          entry.spanId = traceCtx.spanId === undefined
+            ? undefined
+            : sanitizeUrlCredentials(traceCtx.spanId).slice(0, MAX_TOP_LEVEL_FIELD_LENGTH);
+        }
+      } catch {
+        // Trace correlation is optional and must not affect application logging.
       }
     }
 
@@ -378,7 +482,7 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "task", (v) => String(v));
     extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
     extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
+    extractToEntryField(entry, mergedContext, "duration_ms", coerceFiniteNumber);
     extractToEntryField(entry, mergedContext, "user_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "conversation_id", (v) => String(v));
 
@@ -422,14 +526,9 @@ class ConsoleLogger implements Logger {
     return entry;
   }
 
-  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
-    const entry = this.createEntry(level, message, args);
-    return JSON.stringify(entry);
-  }
-
   private formatTextLine(level: LogEntry["level"], message: string, args: unknown[]): string {
     const { context, error } = extractContext(args);
-    const mergedContext = { ...this.boundContext, ...context };
+    const mergedContext = mergeContextRecords(this.boundContext, context);
     const enableColor = shouldUseColor();
 
     const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
@@ -444,7 +543,26 @@ class ConsoleLogger implements Logger {
       enableColor,
     );
 
-    return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
+    return `${timestamp}  ${tag} ${glyph}${componentTag} ${
+      sanitizeLogMessage(message)
+    }${contextText}`;
+  }
+
+  private serializeEntry(entry: LogEntry): string {
+    try {
+      return JSON.stringify(entry);
+    } catch {
+      return JSON.stringify(
+        {
+          timestamp: entry.timestamp,
+          level: entry.level,
+          service: entry.service,
+          veryfrontVersion: entry.veryfrontVersion,
+          message: entry.message,
+          context: { serialization_error: REDACTED },
+        } satisfies LogEntry,
+      );
+    }
   }
 
   private log(
@@ -461,7 +579,7 @@ class ConsoleLogger implements Logger {
     const line = resolvedFormat === "json"
       ? (() => {
         entry = this.createEntry(level, message, args);
-        return JSON.stringify(entry);
+        return this.serializeEntry(entry);
       })()
       : this.formatTextLine(level, message, args);
 
@@ -575,8 +693,12 @@ export function __resetTraceContextGetterForTests(): void {
 }
 
 function withRequestLogger(base: Logger): Logger {
-  const ctx = requestContextGetter?.();
-  return ctx?.logger ?? base;
+  try {
+    const ctx = requestContextGetter?.();
+    return ctx?.logger ?? base;
+  } catch {
+    return base;
+  }
 }
 
 /**

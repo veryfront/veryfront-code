@@ -1,179 +1,48 @@
-# Import Rewriter
+# Import rewriter reference
 
-The import rewriter transforms import specifiers for different execution contexts (browser vs SSR). It uses a strategy pattern where each import type has a dedicated handler.
+The import rewriter parses a module once, classifies each specifier, and applies
+the first matching strategy. Lower numeric priorities run first. A custom
+strategy list preserves caller order.
 
-## Module Resolution Overview
+## Default strategies
 
-| Import Pattern    | Example                | Browser Resolution                                 | SSR Resolution                         |
-| ----------------- | ---------------------- | -------------------------------------------------- | -------------------------------------- |
-| **Framework**     | `veryfront/head`       | `/_vf_modules/_veryfront/react/components/Head.js` | `/_vf_modules/_veryfront/...?ssr=true` |
-| **Internal**      | `#veryfront/react/...` | `/_vf_modules/_veryfront/...`                      | `/_vf_modules/_veryfront/...?ssr=true` |
-| **Relative**      | `./Button`             | `/_vf_modules/...`                                 | Kept as-is (resolved by loader)        |
-| **NPM Package**   | `lodash`               | `https://esm.sh/lodash`                            | `https://esm.sh/lodash`                |
-| **Cross-Project** | `acme-ui@1.0/@/Button` | Registry URL                                       | Registry → local cache                 |
-| **Node Builtin**  | `node:fs`              | Polyfill or noop                                   | Kept as-is                             |
-| **URL**           | `https://esm.sh/...`   | Kept as-is                                         | Kept as-is                             |
+| Priority | Strategy               | Scope                                                |
+| -------: | ---------------------- | ---------------------------------------------------- |
+|       -1 | `VendorStrategy`       | Configured React vendor bundle for browser output    |
+|        0 | `ReactStrategy`        | React CDN mapping when no vendor bundle applies      |
+|      0.5 | `NodeBuiltinStrategy`  | `node:` imports                                      |
+|        1 | `AliasStrategy`        | Project aliases such as `@/components/Button`        |
+|      1.5 | `VeryfrontStrategy`    | `veryfront/*`, `#veryfront/*`, and framework aliases |
+|        2 | `BareStrategy`         | Valid npm package specifiers for browser output      |
+|        3 | `RelativeStrategy`     | Relative project imports                             |
+|        4 | `CrossProjectStrategy` | `project@version/@/path` and `project/@/path`        |
+|        5 | `ImportMapStrategy`    | SSR import-map resolution                            |
+|        7 | `UrlStrategy`          | Existing esm.sh URLs                                 |
 
-## URL Prefixes
+`BareStrategy` explicitly excludes valid cross-project imports. This is needed
+because their syntax can otherwise look like an npm package subpath.
 
-### `/_vf_modules/`
+## Resolution behavior
 
-Served by the local module server. Contains:
+| Specifier                  | Browser                                                    | SSR                                  |
+| -------------------------- | ---------------------------------------------------------- | ------------------------------------ |
+| `react`                    | Vendor bundle when configured, otherwise pinned esm.sh URL | Pinned React mapping                 |
+| `lodash@4.17.21`           | Validated esm.sh URL                                       | Resolved later by the SSR HTTP cache |
+| `@/components/Button`      | Module-server URL                                          | SSR module path                      |
+| `./Button`                 | Module-server URL when configured                          | Normalized relative module path      |
+| `shared-ui@1.0.0/@/Button` | Cross-project module URL                                   | Preserved for SSR resolution         |
+| `node:fs`                  | Built-in strategy result                                   | Preserved                            |
 
-| Path                        | Contents                                 |
-| --------------------------- | ---------------------------------------- |
-| `/_vf_modules/_veryfront/*` | Framework internal modules (from `src/`) |
-| `/_vf_modules/*`            | User project modules                     |
-| `/_vf_modules/_batch`       | Batch module loading endpoint            |
+Package and cross-project parsers reject parent traversal, encoded traversal,
+backslashes, query strings, fragments, empty path segments, invalid project
+slugs, and overlong values. URL builders repeat validation so callers cannot
+bypass the parser.
 
-### External URLs
-
-| URL                                | Purpose               |
-| ---------------------------------- | --------------------- |
-| `https://esm.sh/*`                 | NPM packages via CDN  |
-| `https://registry.veryfront.com/*` | Cross-project imports |
-
-## Import Strategies
-
-Strategies are applied in priority order (lower number = higher priority):
-
-| Priority | Strategy               | Handles                             |
-| -------- | ---------------------- | ----------------------------------- |
-| 1        | `ReactStrategy`        | `react`, `react-dom`, `react/*`     |
-| 2        | `NodeBuiltinStrategy`  | `node:*` builtins                   |
-| 3        | `VeryfrontStrategy`    | `veryfront/*`, `#veryfront/*`       |
-| 4        | `CrossProjectStrategy` | `project@version/@/path`            |
-| 5        | `RelativeStrategy`     | `./`, `../` paths                   |
-| 6        | `BareStrategy`         | NPM packages (`lodash`, `@org/pkg`) |
-| 7        | `URLStrategy`          | `https://`, `http://` URLs          |
-
-## Intentional non-strategy rewrites
+## Intentional separate rewrite phase
 
 `rewriteDntImports` in
-`src/transforms/mdx/esm-module-loader/module-fetcher/import-rewriter.ts`
-intentionally remains outside this strategy pipeline.
-
-The unified import-rewriter strategies are synchronous specifier transforms. They
-decide a replacement from the parsed import specifier and the transform context.
-DNT rewriting is a later MDX/framework module relocation step:
-
-- It only applies to Veryfront framework files from `FRAMEWORK_ROOT`,
-  embedded framework source, or `node_modules`.
-- It resolves relative imports from the actual source file directory.
-- It probes the local filesystem for generated `.src`, TypeScript, TSX, JSX,
-  JavaScript, and MJS fallback targets before choosing the replacement.
-- It rewrites both `from` imports and side-effect imports to absolute `file://`
-  URLs so cached framework modules do not resolve relative imports from the
-  cache directory.
-
-Do not move this path into the synchronous strategy pipeline unless the strategy
-contract gains an async filesystem-aware phase and the MDX framework relocation
-tests move with it.
-
-## Framework Imports
-
-User-facing imports map to internal framework paths via `deno.json`:
-
-```json
-{
-  "imports": {
-    "veryfront/head": "./src/react/components/Head.tsx",
-    "veryfront/router": "./src/react/router/index.tsx",
-    "veryfront/image": "./src/react/components/Image.tsx"
-  }
-}
-```
-
-The import rewriter transforms these:
-
-```
-veryfront/head
-    ↓ (deno.json lookup)
-./src/react/components/Head.tsx
-    ↓ (path transformation)
-/_vf_modules/_veryfront/react/components/Head.js
-```
-
-The `_veryfront` segment in the URL identifies **framework-provided modules** as distinct from user project modules.
-
-## Cross-Project Imports
-
-Import from other Veryfront projects:
-
-```typescript
-// With specific version
-import { Button } from "acme-ui@1.0.0/@/components/Button";
-
-// Latest version
-import { utils } from "shared-lib/@/utils";
-```
-
-**Pattern:** `{project-slug}@{version}/@/{path}` or `{project-slug}/@/{path}`
-
-**Resolution:**
-
-- **Browser:** Rewrites to registry URL (`https://registry.veryfront.com/acme-ui@1.0/@/components/Button`)
-- **SSR:** Fetches from registry, transforms, caches locally as `file://` path
-
-## SSR-Specific Handling
-
-For SSR, framework imports get `?ssr=true` appended:
-
-```
-/_vf_modules/_veryfront/react/components/Head.js?ssr=true
-```
-
-This signals to the `ssrVfModulesPlugin` to:
-
-1. Identify the import as needing server-side resolution
-2. Resolve the source file from the framework (`src/react/components/Head.tsx`)
-3. Transform and cache it locally
-4. Rewrite to a `file://` path for Deno's module loader
-
-## Node Builtins
-
-| Context     | Handling                                |
-| ----------- | --------------------------------------- |
-| **SSR**     | Kept as `node:*` (Deno supports these)  |
-| **Browser** | Replaced with polyfills or noop modules |
-
-Polyfill mappings:
-
-- `node:async_hooks` → `/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js`
-- Other builtins → noop module
-
-## Architecture
-
-```
-src/transforms/import-rewriter/
-├── index.ts              # Main rewriteImports() function
-├── types.ts              # TypeScript interfaces
-├── url-builder.ts        # URL construction helpers
-├── strategies/
-│   ├── index.ts          # Strategy exports
-│   ├── react-strategy.ts
-│   ├── node-builtin-strategy.ts
-│   ├── veryfront-strategy.ts
-│   ├── cross-project-strategy.ts
-│   ├── relative-strategy.ts
-│   ├── bare-strategy.ts
-│   └── url-strategy.ts
-└── __tests__/
-    └── hydration-parity.test.ts
-```
-
-## Testing
-
-```bash
-# Run import rewriter tests
-deno test src/transforms/import-rewriter/
-
-# Run hydration parity tests (browser/SSR consistency)
-deno test src/transforms/import-rewriter/__tests__/hydration-parity.test.ts
-```
-
-## Related
-
-- [`src/modules/README.md`](../../modules/README.md) - Module loading system
-- [`src/transforms/pipeline/`](../pipeline/) - Transform pipeline stages
-- [`src/server/handlers/request/module/`](../../server/handlers/request/module/) - Module HTTP handler
+`src/transforms/mdx/esm-module-loader/module-fetcher/import-rewriter.ts` is not a
+unified import strategy. It is an asynchronous filesystem-aware relocation pass
+for framework source and generated DNT modules. Moving it into this pipeline
+would require an asynchronous strategy contract and the associated cache and
+framework-resolution tests.

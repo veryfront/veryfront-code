@@ -6,6 +6,7 @@
  */
 
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { fileLogLabel } from "../shared/log-context.ts";
 import { applyRewrites, parseAllImports } from "./parse-cache.ts";
 import {
   aliasStrategy,
@@ -25,6 +26,7 @@ import type { ImportRewriteStrategy, RewriteContext, RewriteResult } from "./typ
  * Default strategy execution order by priority.
  */
 const DEFAULT_STRATEGIES: ImportRewriteStrategy[] = [
+  vendorStrategy, // -1 - configured React vendor bundle
   nodeBuiltinStrategy, // 0.5 - Node.js built-ins (noop for browser)
   reactStrategy, // 0 - React packages first
   aliasStrategy, // 1 - @/ aliases
@@ -33,7 +35,6 @@ const DEFAULT_STRATEGIES: ImportRewriteStrategy[] = [
   relativeStrategy, // 3 - ./relative imports
   crossProjectStrategy, // 4 - cross-project imports
   importMapStrategy, // 5 - import map resolution (SSR)
-  vendorStrategy, // 6 - vendor bundle (browser)
   urlStrategy, // 7 - esm.sh URL handling
 ].sort((a, b) => a.priority - b.priority);
 
@@ -77,7 +78,7 @@ export class UnifiedImportRewriter {
       },
       {
         "transform.target": ctx.target,
-        "transform.file": ctx.filePath.split("/").pop() ?? ctx.filePath,
+        "transform.file": fileLogLabel(ctx.filePath),
       },
     );
   }

@@ -12,6 +12,12 @@ import { describe, it } from "#std/testing/bdd";
 import { getRequiredPolyfillPaths } from "#veryfront/transforms/import-rewriter/strategies/node-builtin-strategy.ts";
 import { EMBEDDED_POLYFILLS } from "#veryfront/modules/server/module-server.ts";
 
+async function importEmbeddedPolyfill(path: string): Promise<Record<string, unknown>> {
+  const content = EMBEDDED_POLYFILLS[path];
+  if (!content) throw new Error(`Embedded polyfill is missing: ${path}`);
+  return await import(`data:text/javascript,${encodeURIComponent(content)}`);
+}
+
 describe("Embedded Polyfills", () => {
   it("all import-rewritten polyfill paths have embedded content", () => {
     const requiredPaths = getRequiredPolyfillPaths();
@@ -47,6 +53,18 @@ describe("Embedded Polyfills", () => {
         );
       }
     }
+  });
+
+  it("keeps source and embedded Node polyfill export contracts aligned", async () => {
+    const [sourceAsyncHooks, sourceNoop, embeddedAsyncHooks, embeddedNoop] = await Promise.all([
+      import("./node-async-hooks.ts"),
+      import("./node-noop.ts"),
+      importEmbeddedPolyfill("_veryfront/platform/polyfills/node-async-hooks"),
+      importEmbeddedPolyfill("_veryfront/platform/polyfills/node-noop"),
+    ]);
+
+    assertEquals(Object.keys(embeddedAsyncHooks).sort(), Object.keys(sourceAsyncHooks).sort());
+    assertEquals(Object.keys(embeddedNoop).sort(), Object.keys(sourceNoop).sort());
   });
 
   it("dnt shim polyfills exist with _veryfront/ prefix", () => {

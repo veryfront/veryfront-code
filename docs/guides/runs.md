@@ -34,13 +34,34 @@ Use the runs SDK for one-off task, workflow, and eval execution:
 import { createRunsClient } from "veryfront/runs";
 
 const runs = createRunsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
+  authToken: "<TOKEN>",
   projectReference: "dreamy-haven",
 });
 ```
 
 If you are already running inside a Veryfront request context, the client can
 also pick up request-scoped auth and project context automatically.
+
+If one client serves concurrent requests, configure `requestIdentityProvider`
+to return the current request's token and project reference together. The
+legacy `setRequestToken()` and `setProjectReference()` methods are only safe on
+a client that serves one request at a time.
+
+Set bounded request lifecycles through `requestPolicy`:
+
+```ts
+const controller = new AbortController();
+const boundedRuns = createRunsClient({
+  authToken: "<TOKEN>",
+  projectReference: "dreamy-haven",
+  requestPolicy: {
+    signal: controller.signal,
+    timeoutMs: 10_000,
+    totalTimeoutMs: 30_000,
+    maxResponseBytes: 8 * 1024 * 1024,
+  },
+});
+```
 
 ## Create a task run
 
@@ -130,13 +151,18 @@ const accepted = await runs.createTaskRun({
 });
 console.log("created", accepted.run.run_id);
 
-// Poll status until terminal
-while (true) {
+// Poll status until terminal, with a fixed attempt budget.
+let terminal = false;
+for (let attempt = 0; attempt < 60; attempt++) {
   const { status } = await runs.get(accepted.run.run_id);
   if (status === "completed" || status === "failed" || status === "cancelled") {
+    terminal = true;
     break;
   }
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 2_000));
+}
+if (!terminal) {
+  throw new Error("Run did not reach a terminal state within two minutes");
 }
 
 // Read the canonical event stream

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertRejects, assertThrows } from "#std/assert";
 import { MemoryTokenStore } from "./memory.ts";
 import type { OAuthTokens, StoredOAuthState } from "../types.ts";
 
@@ -130,4 +130,93 @@ Deno.test("MemoryTokenStore warns once when persisting tokens in production (#19
     if (prevNodeEnv === undefined) Deno.env.delete("NODE_ENV");
     else Deno.env.set("NODE_ENV", prevNodeEnv);
   }
+});
+
+Deno.test("MemoryTokenStore keeps delimiter-bearing service and user IDs isolated", async () => {
+  const store = new MemoryTokenStore("project:with:delimiter");
+  await store.setTokens("service:tenant", "alice", tokens("first"));
+  await store.setTokens("service", "tenant:alice", tokens("second"));
+
+  assertEquals(
+    (await store.getTokens("service:tenant", "alice"))?.accessToken,
+    "first",
+  );
+  assertEquals(
+    (await store.getTokens("service", "tenant:alice"))?.accessToken,
+    "second",
+  );
+});
+
+Deno.test("MemoryTokenStore returns defensive token and state snapshots", async () => {
+  const store = new MemoryTokenStore();
+  const originalTokens = tokens("original", { scope: "read" });
+  await store.setTokens("svc", "alice", originalTokens);
+  originalTokens.accessToken = "mutated-after-set";
+
+  const firstRead = await store.getTokens("svc", "alice");
+  firstRead!.accessToken = "mutated-after-get";
+  assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "original");
+
+  const state: StoredOAuthState = {
+    userId: "alice",
+    serviceId: "svc",
+    createdAt: Date.now(),
+    metadata: { nested: { value: "original" } },
+  };
+  await store.setState("state", state);
+  (state.metadata!.nested as { value: string }).value = "mutated-after-set";
+  const consumed = await store.consumeState("state");
+  assertEquals(consumed?.metadata, { nested: { value: "original" } });
+});
+
+Deno.test("MemoryTokenStore rejects invalid state capacity instead of becoming unbounded", () => {
+  for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assertThrows(
+      () => new MemoryTokenStore("default", { maxStateEntries: invalid }),
+      TypeError,
+      "maxStateEntries",
+    );
+  }
+});
+
+Deno.test("MemoryTokenStore rejects oversized or invalid persisted values", async () => {
+  const store = new MemoryTokenStore();
+  await assertRejects(
+    () => store.setTokens("svc", "alice", { accessToken: "" }),
+    TypeError,
+    "accessToken",
+  );
+  await assertRejects(
+    () => store.setTokens("svc", "alice", { accessToken: "   " }),
+    TypeError,
+    "accessToken",
+  );
+  await assertRejects(
+    () => store.setTokens("svc", "alice", { accessToken: "token", tokenType: "" }),
+    TypeError,
+    "tokenType",
+  );
+  await assertRejects(
+    () =>
+      store.setState("state", {
+        userId: "alice",
+        serviceId: "svc",
+        createdAt: Date.now(),
+        metadata: { payload: "x".repeat(70_000) },
+      }),
+    TypeError,
+    "state metadata",
+  );
+  await assertRejects(
+    () =>
+      store.setState("state-with-function", {
+        userId: "alice",
+        serviceId: "svc",
+        createdAt: Date.now(),
+        metadata: { invalid: () => "not persistent" },
+      }),
+    TypeError,
+    "JSON-compatible",
+  );
+  assertEquals(await store.consumeState("x".repeat(5_000)), null);
 });

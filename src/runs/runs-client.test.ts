@@ -5,8 +5,10 @@ import {
   assertExists,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createRunsClient, VeryfrontRunsClient } from "./runs-client.ts";
 
 const originalFetch = globalThis.fetch;
@@ -373,6 +375,304 @@ describe("VeryfrontRunsClient", () => {
       () => client.list(),
       Error,
       "Runs project reference not configured",
+    );
+  });
+
+  it("snapshots and validates configuration at construction", async () => {
+    const config = {
+      apiUrl: "https://api.test.com/v1/",
+      authToken: "original-token",
+      projectReference: "original-project",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    };
+    const client = new VeryfrontRunsClient(config);
+    config.apiUrl = "https://attacker.invalid";
+    config.authToken = "mutated-token";
+    config.projectReference = "mutated-project";
+
+    mockFetch([jsonResponse(makeRun())]);
+    await client.get("run_11111111-1111-4111-8111-111111111111");
+
+    assertEquals(
+      call(0).url,
+      "https://api.test.com/v1/runs/run_11111111-1111-4111-8111-111111111111",
+    );
+    assertEquals(headerValue(0, "Authorization"), "Bearer original-token");
+
+    assertThrows(
+      () =>
+        new VeryfrontRunsClient({
+          apiUrl: "https://api.test.com?token=secret",
+          authToken: "token",
+        }),
+      Error,
+      "must not include a query string or fragment",
+    );
+    assertThrows(
+      () =>
+        new VeryfrontRunsClient({
+          apiUrl: "https://api.test.com",
+          authToken: "token",
+          retry: { maxRetries: -1 },
+        }),
+      Error,
+      "Retry maxRetries",
+    );
+    assertThrows(
+      () =>
+        new VeryfrontRunsClient({
+          apiUrl: "https://api.test.com",
+          authToken: "token",
+          retry: { maxRetries: null } as unknown as { maxRetries: number },
+        }),
+      Error,
+      "Retry maxRetries",
+    );
+  });
+
+  it("reads an atomic request identity once per operation", async () => {
+    interface TestIdentity {
+      authToken: string;
+      projectReference: string;
+    }
+
+    const identity = new AsyncLocalStorage<TestIdentity>();
+    const reads = new Map<string, number>();
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      requestIdentityProvider: () => {
+        const current = identity.getStore();
+        if (current) {
+          reads.set(current.projectReference, (reads.get(current.projectReference) ?? 0) + 1);
+        }
+        return current;
+      },
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+
+    mockFetch([
+      jsonResponse({ data: [], page_info: { self: null, first: null, next: null, prev: null } }),
+      jsonResponse({ data: [], page_info: { self: null, first: null, next: null, prev: null } }),
+    ]);
+
+    await Promise.all([
+      identity.run(
+        { authToken: "token-a", projectReference: "project-a" },
+        () => client.list(),
+      ),
+      identity.run(
+        { authToken: "token-b", projectReference: "project-b" },
+        () => client.list(),
+      ),
+    ]);
+
+    const requests = fetchCalls.map((entry) => ({
+      authorization: new Headers(entry.init?.headers).get("Authorization"),
+      pathname: new URL(entry.url).pathname,
+    })).sort((left, right) => left.pathname.localeCompare(right.pathname));
+    assertEquals(requests, [
+      { authorization: "Bearer token-a", pathname: "/projects/project-a/runs" },
+      { authorization: "Bearer token-b", pathname: "/projects/project-b/runs" },
+    ]);
+    assertEquals(reads, new Map([["project-a", 1], ["project-b", 1]]));
+  });
+
+  it("rejects invalid mutable request identity values", () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+    });
+
+    assertThrows(() => client.setRequestToken(""), Error, "non-empty string");
+    assertThrows(() => client.setRequestToken("bad\nvalue"), Error, "invalid");
+    assertThrows(() => client.setProjectReference(""), Error, "non-empty string");
+  });
+
+  it("rejects invalid request inputs before fetching", async () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      projectReference: "project",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+
+    await assertRejects(() => client.get(""), Error, "run ID must be a non-empty string");
+    await assertRejects(() => client.list({ limit: 0 }), Error, "limit must be a positive integer");
+    await assertRejects(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          timeoutSeconds: -1,
+        }),
+      Error,
+      "timeoutSeconds must be a non-negative integer",
+    );
+
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    await assertRejects(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          config: circular,
+        }),
+      Error,
+      "JSON-serializable",
+    );
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("supports cancellation and bounded response policies", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      requestPolicy: { signal: controller.signal, maxResponseBytes: 1_024 },
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+
+    await assertRejects(() => client.get("run_1"), Error, "cancelled");
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("rejects inconsistent runtime targets", async () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+
+    await assertRejects(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          runtimeTargetKind: "environment",
+        }),
+      Error,
+      "runtimeTargetEnvironmentId is required",
+    );
+    await assertRejects(
+      () =>
+        client.createEvalRun({
+          projectId,
+          target: "eval:smoke",
+          runtimeTargetKind: "main_branch",
+          runtimeTargetBranchId: "branch-1",
+        }),
+      Error,
+      "requires a preview_branch runtime target",
+    );
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("validates knowledge ingest collections and paths", async () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+
+    await assertRejects(
+      () => client.knowledge.ingestByUploadIds({ projectId, uploadIds: [] }),
+      Error,
+      "between 1 and 10000 items",
+    );
+    await assertRejects(
+      () =>
+        client.knowledge.ingestByUploadPaths({
+          projectId,
+          uploadPaths: ["knowledge/valid.md", "knowledge/invalid\0.md"],
+        }),
+      Error,
+      "invalid control characters",
+    );
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("reports invalid API payloads without echoing response data", async () => {
+    mockFetch([
+      jsonResponse(makeRun({
+        created_at: "PRIVATE_INVALID_TIMESTAMP",
+      })),
+    ]);
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+
+    const error = await assertRejects(
+      () => client.get("run_1"),
+      Error,
+      "Veryfront API returned an invalid runs response",
+    );
+    assertEquals(error.message.includes("PRIVATE_INVALID_TIMESTAMP"), false);
+  });
+
+  it("snapshots request identity fields exactly once", async () => {
+    let tokenReads = 0;
+    let projectReads = 0;
+    const identity = {
+      get authToken() {
+        tokenReads++;
+        if (tokenReads > 1) throw new Error("TOKEN_GETTER_READ_TWICE");
+        return "request-token";
+      },
+      get projectReference() {
+        projectReads++;
+        if (projectReads > 1) throw new Error("PROJECT_GETTER_READ_TWICE");
+        return "request-project";
+      },
+    };
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      requestIdentityProvider: () => identity,
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+    mockFetch([jsonResponse(makeRun())]);
+
+    await client.get("run_1");
+
+    assertEquals(tokenReads, 1);
+    assertEquals(projectReads, 1);
+  });
+
+  it("does not consult environment defaults when explicit configuration is complete", async () => {
+    setEnv("VERYFRONT_API_URL", "not-a-url");
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      projectReference: "project",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+    mockFetch([jsonResponse(makeRun())]);
+
+    await client.get("run_1");
+
+    assertEquals(call(0).url, "https://api.test.com/runs/run_1");
+  });
+
+  it("preserves human-readable names instead of normalizing request data", async () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "token",
+      retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+    });
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+
+    await client.createTaskRun({
+      projectId,
+      name: "  Intentional spacing  ",
+      target: "task:sync-data",
+    });
+
+    assertEquals(
+      (jsonBody(0) as { request: { name: string } }).request.name,
+      "  Intentional spacing  ",
     );
   });
 });

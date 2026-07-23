@@ -12,11 +12,17 @@ export interface Extract<T> {
   frontMatter: string;
 }
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)(?:\r?\n)?---(?:\r?\n|$)([\s\S]*)$/;
+const OPENING_DELIMITER_RE = /^---\r?\n/;
+const CLOSING_DELIMITER_RE = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/g;
+
+function stripByteOrderMark(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
 
 export function extract<T = Record<string, unknown>>(text: string): Extract<T> {
-  const match = text.match(FRONTMATTER_RE);
-  if (!match) {
+  const content = stripByteOrderMark(text);
+  const openingDelimiter = OPENING_DELIMITER_RE.exec(content);
+  if (!openingDelimiter) {
     return {
       attrs: {} as T,
       body: text,
@@ -24,16 +30,27 @@ export function extract<T = Record<string, unknown>>(text: string): Extract<T> {
     };
   }
 
-  const frontMatter = match[1] ?? "";
+  const afterOpening = content.slice(openingDelimiter[0].length);
+  CLOSING_DELIMITER_RE.lastIndex = 0;
+  const closingDelimiter = CLOSING_DELIMITER_RE.exec(afterOpening);
+  if (!closingDelimiter) {
+    return {
+      attrs: {} as T,
+      body: text,
+      frontMatter: "",
+    };
+  }
+
+  const frontMatter = afterOpening.slice(0, closingDelimiter.index);
   const parsed = frontMatter.trim() ? parse(frontMatter) : {};
   const attrs = (parsed && typeof parsed === "object" ? parsed : {}) as T;
   return {
     attrs,
-    body: match[2] ?? "",
+    body: afterOpening.slice(closingDelimiter.index + closingDelimiter[0].length),
     frontMatter,
   };
 }
 
 export function test(text: string): boolean {
-  return /^---\r?\n/.test(text);
+  return OPENING_DELIMITER_RE.test(stripByteOrderMark(text));
 }

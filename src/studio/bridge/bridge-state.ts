@@ -13,7 +13,6 @@ export const state = {
   inspectMode: false,
   selectedNodeId: null as string | null,
   hoveredNodeId: null as string | null,
-  lastTreeSignature: "",
 
   // Overlays
   hoverOverlay: null as HTMLElement | null,
@@ -26,6 +25,12 @@ export const state = {
   // Screenshot
   html2canvasLoaded: false,
   html2canvasPromise: null as Promise<void> | null,
+  html2canvasImplementation: null as
+    | ((
+      element: HTMLElement,
+      options?: Record<string, unknown>,
+    ) => Promise<HTMLCanvasElement>)
+    | null,
 };
 
 export const CONSOLE_METHODS = [

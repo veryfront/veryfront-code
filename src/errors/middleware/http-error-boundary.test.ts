@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert";
 import { httpErrorBoundary, wrapHandlerWithErrorBoundary } from "./http-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
@@ -34,6 +34,14 @@ function createMockRequest(url = "http://example.com/test"): Request {
 
 describe("http-error-boundary", () => {
   describe("httpErrorBoundary", () => {
+    it("rejects an invalid handler before request processing", () => {
+      assertThrows(
+        () => httpErrorBoundary(null as never),
+        TypeError,
+        "handlerFn must be a function",
+      );
+    });
+
     it("should pass through successful handler results", async () => {
       const handler = httpErrorBoundary(async () => {
         return { response: new Response("OK"), continue: false };
@@ -55,6 +63,8 @@ describe("http-error-boundary", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 404);
       assertEquals(result.response.headers.get("Content-Type"), PROBLEM_JSON_CONTENT_TYPE);
+      assertEquals(result.response.headers.get("Cache-Control"), "no-store");
+      assertEquals(result.response.headers.get("X-Content-Type-Options"), "nosniff");
 
       const body = await result.response.json();
       assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
@@ -138,6 +148,22 @@ describe("http-error-boundary", () => {
       assertEquals(body.detail, undefined);
     });
 
+    it("does not expose causes in production responses", async () => {
+      const handler = httpErrorBoundary(async () => {
+        throw new VeryfrontError("Bad request", {
+          slug: "invalid-input",
+          category: "GENERAL",
+          status: 400,
+          title: "Invalid input",
+          cause: "password=<TOKEN> at /private/project/server.ts",
+        });
+      });
+
+      const result = await handler(createMockRequest(), createMockContext(false));
+      const body = await result.response?.json();
+      assertEquals(body.cause, undefined);
+    });
+
     it("should include detail for 5xx errors in dev mode", async () => {
       const handler = httpErrorBoundary(async () => {
         throw new VeryfrontError("Internal error", {
@@ -157,6 +183,57 @@ describe("http-error-boundary", () => {
       assertExists(result.response);
       const body = await result.response.json();
       assertEquals(body.detail, "Sensitive database connection string: postgres://...");
+    });
+
+    it("sanitizes developer diagnostics before returning them", async () => {
+      const handler = httpErrorBoundary(async () => {
+        throw new Error("password=<TOKEN> at /private/project/server.ts");
+      });
+
+      const result = await handler(createMockRequest(), createMockContext(true));
+      const body = await result.response?.json();
+      const serialized = JSON.stringify(body);
+      assertEquals(serialized.includes("<TOKEN>"), false);
+      assertEquals(serialized.includes("/private/project"), false);
+      assertEquals(typeof body.stack, "string");
+    });
+
+    it("fails closed for hostile mutable error properties", async () => {
+      const error = CONFIG_NOT_FOUND.create();
+      Object.defineProperty(error, "status", {
+        get() {
+          throw new Error("getter leaked password=<TOKEN>");
+        },
+      });
+      const handler = httpErrorBoundary(async () => {
+        throw error;
+      });
+
+      const result = await handler(createMockRequest(), createMockContext(true));
+      const body = await result.response?.json();
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(JSON.stringify(body).includes("<TOKEN>"), false);
+    });
+
+    it("fails closed when development-mode metadata is hostile", async () => {
+      const context = Object.defineProperty({}, "isLocalProject", {
+        get() {
+          throw new Error("password=<TOKEN>");
+        },
+      }) as HandlerContext;
+      const handler = httpErrorBoundary(async () => {
+        throw new Error("password=<TOKEN>");
+      });
+
+      const result = await handler(createMockRequest(), context);
+      const body = await result.response?.json();
+
+      assertEquals(result.response?.status, 500);
+      assertEquals(body.detail, undefined);
+      assertEquals(body.stack, undefined);
+      assertEquals(JSON.stringify(body).includes("<TOKEN>"), false);
     });
 
     it("should include detail for 4xx errors in production", async () => {
@@ -193,6 +270,28 @@ describe("http-error-boundary", () => {
       assertExists(result.response);
       const body = await result.response.json();
       assertEquals(body.instance, "/api/users/123");
+    });
+
+    it("should project the request instance without mutating the error", async () => {
+      const error = new VeryfrontError("Error", {
+        slug: "test-error",
+        category: "GENERAL",
+        status: 500,
+        title: "Test",
+      });
+      const handler = httpErrorBoundary(async () => {
+        throw error;
+      });
+
+      const result = await handler(
+        createMockRequest("http://example.com/api/users/123"),
+        createMockContext(),
+      );
+
+      assertExists(result.response);
+      const body = await result.response.json();
+      assertEquals(body.instance, "/api/users/123");
+      assertEquals(error.instance, undefined);
     });
 
     it("should preserve existing instance if set", async () => {
@@ -251,6 +350,19 @@ describe("http-error-boundary", () => {
   });
 
   describe("wrapHandlerWithErrorBoundary", () => {
+    it("rejects malformed handler objects", () => {
+      assertThrows(
+        () => wrapHandlerWithErrorBoundary(null as never),
+        TypeError,
+        "handler must provide a handle method",
+      );
+      assertThrows(
+        () => wrapHandlerWithErrorBoundary({ metadata: {}, handle: null } as never),
+        TypeError,
+        "handler must provide a handle method",
+      );
+    });
+
     it("should wrap a Handler object with error boundary", async () => {
       const handler: Handler = {
         metadata: {

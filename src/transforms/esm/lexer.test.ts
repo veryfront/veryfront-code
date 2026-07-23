@@ -133,6 +133,20 @@ const url = "https://example.com/api";
       assertEquals(result.includes("https://example.com/api"), true);
       assertEquals(result.includes("baz"), true);
     });
+
+    it("does not unmask placeholder-like text from the original source", async () => {
+      const code =
+        `const sentinel = "__VF_HTTP_MASK_e3c2_0__";\nimport value from "https://example.com/value.js";`;
+      const result = await replaceSpecifiers(
+        code,
+        (specifier) => specifier === "https://example.com/value.js" ? "./value.js" : null,
+      );
+
+      assertEquals(
+        result,
+        `const sentinel = "__VF_HTTP_MASK_e3c2_0__";\nimport value from "./value.js";`,
+      );
+    });
   });
 
   describe("rewriteImports", () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getEsbuildLoader,
@@ -154,8 +154,12 @@ describe("build/utils/file-types", () => {
       assertEquals(getOptimizedImageFormat("PNG"), "png");
     });
 
-    it("should default to jpeg for unknown", () => {
-      assertEquals(getOptimizedImageFormat("bmp"), "jpeg");
+    it("rejects unknown image formats", () => {
+      assertThrows(
+        () => getOptimizedImageFormat("bmp"),
+        TypeError,
+        "Unsupported image format",
+      );
     });
   });
 
@@ -168,6 +172,8 @@ describe("build/utils/file-types", () => {
         ["comp.jsx", "jsx"],
         ["lib.mjs", "js"],
         ["lib.cjs", "js"],
+        ["lib.mts", "ts"],
+        ["lib.cts", "ts"],
       ];
 
       for (const [file, expected] of cases) {
@@ -194,8 +200,12 @@ describe("build/utils/file-types", () => {
       assertEquals(getEsbuildLoader("data.json"), "json");
     });
 
-    it("should default to text for unknown", () => {
-      assertEquals(getEsbuildLoader("file.xyz"), "text");
+    it("rejects unknown extensions instead of treating them as text", () => {
+      assertThrows(
+        () => getEsbuildLoader("file.xyz"),
+        TypeError,
+        "Unsupported esbuild input extension",
+      );
     });
   });
 

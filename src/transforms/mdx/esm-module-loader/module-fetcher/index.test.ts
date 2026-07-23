@@ -410,15 +410,17 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
   });
 
   describe("circular imports", () => {
-    function createCircularAdapter(): any {
+    function createCircularAdapter(projectDir: string): any {
+      const aPath = join(projectDir, "a");
+      const bPath = join(projectDir, "b");
       const sourceByPath = new Map<string, string>([
         [
-          "/virtual/a.ts",
-          `import B from "./b.js"; export default function A() { return B; }`,
+          aPath,
+          `import B from "./b"; export default function A() { return B; }`,
         ],
         [
-          "/virtual/b.ts",
-          `import A from "./a.js"; export default function B() { return A; }`,
+          bPath,
+          `import A from "./a"; export default function B() { return A; }`,
         ],
       ]);
 
@@ -426,8 +428,8 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         env: { get: (_key: string) => undefined },
         fs: {
           resolveFile: (path: string) => {
-            if (path === "a") return Promise.resolve("/virtual/a.ts");
-            if (path === "b") return Promise.resolve("/virtual/b.ts");
+            if (path === "a") return Promise.resolve(aPath);
+            if (path === "b") return Promise.resolve(bPath);
             return Promise.resolve(null);
           },
           readFile: (path: string) => {
@@ -442,7 +444,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("throws CircularModuleDependencyError in strict mode", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-cycle-strict-cache-" });
       const projectDir = await makeTempDir({ prefix: "vf-mdx-cycle-strict-proj-" });
-      const adapter = createCircularAdapter();
+      const adapter = createCircularAdapter(projectDir);
 
       try {
         const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {
@@ -463,7 +465,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("falls back to stub resolution in non-strict mode", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-cycle-nonstrict-cache-" });
       const projectDir = await makeTempDir({ prefix: "vf-mdx-cycle-nonstrict-proj-" });
-      const adapter = createCircularAdapter();
+      const adapter = createCircularAdapter(projectDir);
 
       try {
         const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {

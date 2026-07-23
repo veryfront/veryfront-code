@@ -16,7 +16,7 @@ export class EntryManager {
     key: string,
   ): number {
     const oldSize = node.entry.size;
-    const newSize = this.estimateSizeOf(value);
+    const newSize = this.estimateSize(value);
     const expiry = this.calculateExpiry(ttlMs, defaultTtlMs);
 
     if (node.entry.tags?.length) this.cleanupTags(node.entry.tags, key, tagIndex);
@@ -43,7 +43,7 @@ export class EntryManager {
     listManager: LRUListManager<unknown>,
     store: Map<string, LRUNode<unknown>>,
   ): [LRUNode<unknown>, number] {
-    const size = this.estimateSizeOf(value);
+    const size = this.estimateSize(value);
     const expiry = this.calculateExpiry(ttlMs, defaultTtlMs);
 
     const entry: LRUEntry<unknown> = {
@@ -94,5 +94,13 @@ export class EntryManager {
     if (typeof ttlMs === "number") return Date.now() + ttlMs;
     if (typeof defaultTtlMs === "number") return Date.now() + defaultTtlMs;
     return undefined;
+  }
+
+  private estimateSize(value: unknown): number {
+    const size = this.estimateSizeOf(value);
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new TypeError("estimateSizeOf must return a non-negative safe integer");
+    }
+    return size;
   }
 }

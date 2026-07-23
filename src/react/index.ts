@@ -19,7 +19,12 @@ export {
 // Components
 export { AppWrapper, type AppWrapperProps } from "./components/AppWrapper.tsx";
 export { Head } from "./components/Head.tsx";
-export { MDXProvider, type MDXProviderProps, useMDXComponents } from "./components/MDXProvider.tsx";
+export {
+  type MDXComponents,
+  MDXProvider,
+  type MDXProviderProps,
+  useMDXComponents,
+} from "./components/MDXProvider.tsx";
 export {
   generateBlurDataURL,
   getAspectRatioPadding,

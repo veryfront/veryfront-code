@@ -29,42 +29,9 @@ describe("platform/compat/opaque-deps", () => {
       assertEquals(typeof importClaudeAgentSDK, "function");
     });
 
-    it("should return mock when __vfMockClaudeSDK is set", async () => {
-      const mockSDK = { query: () => "mock" };
-      (globalThis as Record<string, unknown>).__vfMockClaudeSDK = mockSDK;
-      try {
-        const result = await importClaudeAgentSDK();
-        assertEquals(result, mockSDK);
-      } finally {
-        delete (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-      }
-    });
-
-    it("should not return mock when __vfMockClaudeSDK has no query property", {
-      sanitizeOps: false,
-      sanitizeResources: false,
-    }, () => {
-      (globalThis as Record<string, unknown>).__vfMockClaudeSDK = { notQuery: true };
-      try {
-        const result = importClaudeAgentSDK();
-        // Should try real import (will likely fail), not return mock
-        result.catch(() => {});
-      } finally {
-        delete (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-      }
-    });
-
-    it("should not return mock when __vfMockClaudeSDK is a primitive", {
-      sanitizeOps: false,
-      sanitizeResources: false,
-    }, () => {
-      (globalThis as Record<string, unknown>).__vfMockClaudeSDK = "not-an-object";
-      try {
-        const result = importClaudeAgentSDK();
-        result.catch(() => {});
-      } finally {
-        delete (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-      }
+    it("does not expose a production global mock bypass", async () => {
+      const source = await Deno.readTextFile(new URL("./opaque-deps.ts", import.meta.url));
+      assertEquals(source.includes("__vfMockClaudeSDK"), false);
     });
   });
 
@@ -74,7 +41,7 @@ describe("platform/compat/opaque-deps", () => {
     });
 
     it("throws an actionable error when DocumentExtractor is not registered", async () => {
-      // No extension registered — expect a helpful install message.
+      // No extension registered, expect a helpful install message.
       await assertRejects(
         () => importKreuzberg(),
         Error,

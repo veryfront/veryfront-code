@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -37,7 +37,7 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
       const options = service.getOptions();
       assertEquals(options.enabled, true);
       assertEquals(options.minify, true);
-      assertEquals(options.autoprefixer, true);
+      assertEquals(options.autoprefixer, false);
       assertEquals(options.purge, false);
       assertEquals(options.criticalCSS, false);
     });
@@ -53,6 +53,34 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
       assertEquals(options.minify, false);
       assertEquals(options.purge, true);
       assertEquals(options.enabled, true); // default kept
+    });
+
+    it("rejects paths outside the configured project and nested output directories", () => {
+      const tmpDir = "/tmp/test-css-optimizer";
+      const adapter = createMockAdapter(tmpDir);
+      assertThrows(
+        () => new CSSOptimizerService(adapter, tmpDir, { inputDir: "/outside" }),
+        TypeError,
+        "inside baseDir",
+      );
+      assertThrows(
+        () =>
+          new CSSOptimizerService(adapter, tmpDir, {
+            inputDir: "styles",
+            outputDir: "styles/generated",
+          }),
+        TypeError,
+        "contain one another",
+      );
+    });
+
+    it("returns detached normalized options", () => {
+      const tmpDir = "/tmp/test-css-optimizer";
+      const adapter = createMockAdapter(tmpDir);
+      const service = new CSSOptimizerService(adapter, tmpDir);
+      const options = service.getOptions();
+      options.purgeContent.splice(0);
+      assertEquals(service.getOptions().purgeContent.length > 0, true);
     });
 
     it("should return empty stats initially", () => {

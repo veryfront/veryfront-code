@@ -15,17 +15,25 @@ export type AgUiBeforeStreamMessageInput = Omit<Message, "id"> & {
 
 /** Context for AG-UI before stream. */
 export interface AgUiBeforeStreamContext {
+  /** Request value. */
   request: Request;
+  /** Messages associated with the operation. */
   messages: Message[];
+  /** Context supplied to the operation. */
   context: Record<string, unknown>;
+  /** Last user text value. */
   lastUserText: string;
 }
 
 /** Result returned from AG-UI before stream. */
 export interface AgUiBeforeStreamResult {
+  /** Prepend value. */
   prepend?: AgUiBeforeStreamMessageInput[];
+  /** Append value. */
   append?: AgUiBeforeStreamMessageInput[];
+  /** Replace messages value. */
   replaceMessages?: AgUiBeforeStreamMessageInput[];
+  /** Context supplied to the operation. */
   context?: Record<string, unknown>;
 }
 

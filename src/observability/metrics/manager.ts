@@ -6,14 +6,33 @@
 import type { Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ObservabilityRuntimeAdapter } from "../runtime-adapter.ts";
 import { loadConfig } from "./config.ts";
 import { initializeInstruments } from "../instruments/index.ts";
 import { MetricsRecorder } from "./recorder.ts";
-import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
+import type {
+  MetricsConfig,
+  MetricsInstruments,
+  MetricsRuntimeState,
+  OpenTelemetryAPI,
+  RuntimeState,
+} from "./types.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import { classifyTelemetryError } from "../telemetry-safety.ts";
 
 const logger = serverLogger.component("metrics");
+
+function safeLog(
+  level: "debug" | "info" | "warn",
+  message: string,
+  context?: Record<string, unknown>,
+): void {
+  try {
+    logger[level](message, context);
+  } catch {
+    // Telemetry logging must not affect application execution.
+  }
+}
 
 /**
  * Metrics manager class
@@ -23,6 +42,7 @@ export class MetricsManager {
   private initialized = false;
   private meter: Meter | null = null;
   private api: OpenTelemetryAPI | null = null;
+  private config: MetricsConfig | null = null;
   private instruments: MetricsInstruments = this.createEmptyInstruments();
   private runtimeState: RuntimeState = { cacheSize: 0, activeRequests: 0 };
   private recorder = new MetricsRecorder(this.instruments, this.runtimeState);
@@ -64,27 +84,39 @@ export class MetricsManager {
     };
   }
 
-  async initialize(config: Partial<MetricsConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
+  async initialize(
+    config: Partial<MetricsConfig> = {},
+    adapter?: ObservabilityRuntimeAdapter,
+  ): Promise<void> {
     if (this.initialized) {
-      logger.debug("Already initialized");
+      if (this.config?.enabled && this.meter === null && getGlobalMetricsAPI()) {
+        this.initializeMeter(this.config);
+        return;
+      }
+      safeLog("debug", "Already initialized");
       return;
     }
 
     const finalConfig = loadConfig(config, adapter);
 
     this.initialized = true;
+    this.config = finalConfig;
 
     if (!finalConfig.enabled) {
-      logger.debug("Metrics collection disabled");
+      safeLog("debug", "Metrics collection disabled");
       return;
     }
 
+    this.initializeMeter(finalConfig);
+  }
+
+  private initializeMeter(finalConfig: MetricsConfig): void {
     try {
-      // The metrics API is injected by ext-observability-opentelemetry via setGlobalMetricsAPI().
+      // The metrics API is injected by the observability extension via setGlobalMetricsAPI().
       // When the extension is not active, metrics collection is disabled.
       const metricsApi = getGlobalMetricsAPI();
       if (!metricsApi) {
-        logger.debug("No metrics API available — metrics collection disabled");
+        safeLog("debug", "No metrics API available, metrics collection disabled");
         return;
       }
       this.api = { metrics: metricsApi } as OpenTelemetryAPI;
@@ -93,13 +125,13 @@ export class MetricsManager {
       this.instruments = initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;
 
-      logger.info("OpenTelemetry metrics initialized", {
+      safeLog("info", "OpenTelemetry metrics initialized", {
         exporter: finalConfig.exporter,
-        endpoint: finalConfig.endpoint,
-        prefix: finalConfig.prefix,
       });
     } catch (error) {
-      logger.warn("Failed to initialize OpenTelemetry metrics", error);
+      safeLog("warn", "Failed to initialize OpenTelemetry metrics", {
+        failure_category: classifyTelemetryError(error),
+      });
     }
   }
 
@@ -111,7 +143,7 @@ export class MetricsManager {
     return this.recorder;
   }
 
-  getState(): { initialized: boolean; cacheSize: number; activeRequests: number } {
+  getState(): MetricsRuntimeState {
     return {
       initialized: this.initialized,
       cacheSize: this.runtimeState.cacheSize,
@@ -122,11 +154,15 @@ export class MetricsManager {
   shutdown(): void {
     if (!this.initialized) return;
 
-    try {
-      logger.info("Metrics shutdown initiated");
-    } catch (error) {
-      logger.warn("Error during metrics shutdown", error);
-    }
+    safeLog("info", "Metrics shutdown initiated");
+    this.initialized = false;
+    this.config = null;
+    this.meter = null;
+    this.api = null;
+    this.instruments = this.createEmptyInstruments();
+    this.runtimeState.cacheSize = 0;
+    this.runtimeState.activeRequests = 0;
+    this.recorder.instruments = this.instruments;
   }
 }
 

@@ -7,13 +7,15 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   CACHE_DIR_TOKEN,
   detokenizeAllCachePaths,
+  detokenizeCachePaths,
   hasHardcodedCachePaths,
   tokenizeAllVeryFrontPaths,
+  tokenizeCachePaths,
 } from "./paths.ts";
 import { createTokenizingGateway, type TokenizingCacheGateway } from "./tokenizing-gateway.ts";
 import { type CacheBackend, MemoryCacheBackend } from "./backend.ts";
@@ -156,6 +158,30 @@ describe("Cache Portability", () => {
       assert(tokenized.includes("https://esm.sh/react@18"), "Should preserve esm.sh URL");
       assert(tokenized.includes("./local-file.ts"), "Should preserve relative import");
     });
+
+    it("rejects an empty cache directory instead of replacing every file URL", () => {
+      assertThrows(
+        () => tokenizeCachePaths('import x from "file:///tmp/module.mjs"', ""),
+        Error,
+      );
+    });
+
+    it("normalizes Windows cache paths to canonical file URLs", () => {
+      const code = 'import x from "file:///C:/Users/dev/.cache/module.mjs"';
+      const tokenized = tokenizeCachePaths(code, "C:\\Users\\dev\\.cache");
+      assertEquals(tokenized.includes(`file://${CACHE_DIR_TOKEN}/module.mjs`), true);
+      assertEquals(
+        detokenizeCachePaths(tokenized, "C:\\Users\\dev\\.cache"),
+        code,
+      );
+    });
+
+    it("rejects relative cache directories", () => {
+      assertThrows(
+        () => tokenizeCachePaths('import x from "file://cache/module.mjs"', "cache"),
+        Error,
+      );
+    });
   });
 
   describe("Detokenization", () => {
@@ -285,8 +311,61 @@ describe("Cache Portability", () => {
       assertEquals(results?.get("third"), "export const value = 1;");
     });
 
+    it("preserves empty cached code in single and batch reads", async () => {
+      await mockBackend.set("empty", "");
+
+      assertEquals(await gateway.getCode("empty"), "");
+      assertEquals((await gateway.getCodeBatch?.(["empty"]))?.get("empty"), "");
+    });
+
+    it("bounds batch reads before invoking the backend", async () => {
+      await assertRejects(() =>
+        gateway.getCodeBatch(Array.from({ length: 101 }, (_, index) => `key-${index}`))
+      );
+    });
+
+    it("rejects aggregate batch read values above the gateway byte limit", async () => {
+      const value = "x".repeat(32 * 1024 * 1024 + 1);
+      mockBackend.getBatch = () =>
+        Promise.resolve(
+          new Map([
+            ["first", value],
+            ["second", value],
+          ]),
+        );
+      gateway = createTokenizingGateway(mockBackend, "TEST-GATEWAY");
+
+      await assertRejects(() => gateway.getCodeBatch(["first", "second"]));
+    });
+
+    it("validates a full write batch before storing any entry", async () => {
+      const entries = [
+        { key: "valid", code: "export const valid = true;" },
+        { key: "invalid", code: 42 },
+      ] as unknown as Array<{ key: string; code: string }>;
+
+      await assertRejects(() => gateway.setCodeBatch(entries));
+      assertEquals(mockBackend.getRawStoredValue("valid"), undefined);
+    });
+
     it("provides isDistributed() = true for distributed backends", () => {
       assertEquals(gateway.isDistributed(), true);
+    });
+
+    it("snapshots backend methods at construction", async () => {
+      await mockBackend.set("stable", "export const stable = true;");
+      (mockBackend as unknown as { get: (key: string) => Promise<string | null> }).get = () =>
+        Promise.resolve("tampered");
+
+      assertEquals(await gateway.getCode("stable"), "export const stable = true;");
+    });
+
+    it("rejects invalid gateway names", () => {
+      assertThrows(() => createTokenizingGateway(mockBackend, "bad\nname"), Error);
+    });
+
+    it("reports unsupported pattern deletion instead of claiming zero deletions", async () => {
+      await assertRejects(() => gateway.delCodeByPattern("module:*"));
     });
 
     it("provides isDistributed() = false for memory backends", () => {
@@ -332,6 +411,14 @@ describe("Cache Portability", () => {
 
         const stored = mockBackend.getRawStoredValue("key");
         assert(stored?.includes(CACHE_DIR_TOKEN), "Stored code should contain token");
+      });
+
+      it("rejects a pre-existing portability token on distributed writes", async () => {
+        const ambiguousCode =
+          `import x from "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/user-controlled.mjs";`;
+
+        await assertRejects(() => gateway.setCode("ambiguous", ambiguousCode));
+        assertEquals(mockBackend.getRawStoredValue("ambiguous"), undefined);
       });
     });
 

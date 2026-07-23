@@ -1,6 +1,7 @@
-import { createError, toError } from "#veryfront/errors";
+import { SERVICE_OVERLOADED } from "#veryfront/errors";
 
-const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/;
+const MISSING_HTTP_BUNDLE_PATTERN = /veryfront-http-bundle\/http-([a-f0-9]{8,128})\.mjs/i;
+const MAX_IMPORT_ERROR_MESSAGE_LENGTH = 4_096;
 
 export type TransformCapacityErrorMode = "plain" | "build";
 
@@ -10,12 +11,18 @@ export type ImportErrorClassification =
   | { type: "unknown"; message: string };
 
 export function classifyImportError(importError: unknown): ImportErrorClassification {
-  const message = importError instanceof Error ? importError.message : String(importError);
+  let rawMessage: string;
+  try {
+    rawMessage = importError instanceof Error ? importError.message : String(importError);
+  } catch {
+    rawMessage = "Unknown import error";
+  }
+  const message = rawMessage.slice(0, MAX_IMPORT_ERROR_MESSAGE_LENGTH);
   const bundleMatch = message.match(MISSING_HTTP_BUNDLE_PATTERN);
   if (bundleMatch?.[1]) {
     return { type: "http-bundle-missing", hash: bundleMatch[1], message };
   }
-  if (message.includes("Cannot find module") || message.includes("Module not found")) {
+  if (/cannot find module|module not found/i.test(message)) {
     return { type: "module-not-found", message };
   }
   return { type: "unknown", message };
@@ -24,14 +31,8 @@ export function classifyImportError(importError: unknown): ImportErrorClassifica
 export function createTransformCapacityError(
   mode: TransformCapacityErrorMode,
   message: string,
-  filePath: string,
+  _filePath: string,
 ): Error {
   if (mode === "plain") return new Error(message);
-  return toError(
-    createError({
-      type: "build",
-      message,
-      context: { file: filePath, phase: "transform" },
-    }),
-  );
+  return SERVICE_OVERLOADED.create({ detail: message });
 }

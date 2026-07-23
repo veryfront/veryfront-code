@@ -4,6 +4,7 @@ import type {
   ChatToolResultPart,
   ChatUiMessage,
   ChatUiMessagePart,
+  JsonValue,
   ProviderModelMessage,
 } from "./types.ts";
 
@@ -122,7 +123,7 @@ export const getApiConversationSchema = defineSchema((v) =>
     status: v.enum(["active", "archived", "deleted"]),
     summary: v.string().nullable().optional(),
     currentNode: v.string().nullable().optional(),
-    messageCount: v.number(),
+    messageCount: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     lastMessageAt: v.string().nullable().optional(),
     metadata: v.record(v.string(), v.unknown()).nullable().optional(),
     createdBy: v.string(),
@@ -141,12 +142,15 @@ export const getApiMessageSchema = defineSchema((v) =>
     id: v.string(),
     conversationId: v.string(),
     parentId: v.string().nullable(),
-    seq: v.number(),
+    seq: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     role: v.enum(["user", "assistant", "tool"]),
     parts: v.array(getMessagePartSchema()),
     status: getMessageStatusSchema(),
     model: v.string().nullable(),
-    tokenUsage: v.object({ input: v.number(), output: v.number() }).nullable(),
+    tokenUsage: v.object({
+      input: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      output: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }).nullable(),
     finishReason: v.string().nullable(),
     costCredits: v.string().nullable().optional(),
     createdBy: v.string().nullable(),
@@ -195,9 +199,11 @@ export interface ReasoningPartLike {
 
 /** Chat UI tool part with a call ID and state. */
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 const PROVIDER_NATIVE_WEB_TOOL_NAMES = new Set(["web_fetch", "web_search"]);
+const MAX_JSON_CONVERSION_DEPTH = 64;
+const MAX_JSON_COLLECTION_ENTRIES = 10_000;
+const MAX_STRINGIFIED_UNKNOWN_CHARS = 65_536;
 
 /** Shared UUID pattern value. */
 export const UUID_PATTERN =
@@ -205,7 +211,11 @@ export const UUID_PATTERN =
 
 /** Check whether a value is a UUID. */
 export function isUuid(value: string | null | undefined): value is string {
-  return typeof value === "string" && UUID_PATTERN.test(value);
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return value.match(UUID_PATTERN)?.[0] === value;
 }
 
 /** Extract upload ID. */
@@ -218,12 +228,14 @@ export function extractUploadId(url: string): string | null {
 export function mapToolState(sdkState: string): "streaming" | "pending" | "completed" | "error" {
   switch (sdkState) {
     case "input-streaming":
+    case "output-streaming":
       return "streaming";
     case "input-available":
     case "approval-requested":
     case "approval-responded":
       return "pending";
     case "output-available":
+    case "completed":
       return "completed";
     case "output-error":
     case "output-denied":
@@ -236,16 +248,22 @@ export function mapToolState(sdkState: string): "streaming" | "pending" | "compl
 
 /** Record shape for is. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
 }
 
 /** Return string field. */
 export function getStringField(value: unknown, field: string, fallback: string): string {
-  if (!isRecord(value) || typeof value[field] !== "string") {
+  if (!isRecord(value)) {
     return fallback;
   }
 
-  return value[field];
+  const fieldValue = getOwnDataProperty(value, field);
+  return typeof fieldValue === "string" ? fieldValue : fallback;
 }
 
 function getOptionalStringField(value: unknown, key: string): string | undefined {
@@ -253,7 +271,7 @@ function getOptionalStringField(value: unknown, key: string): string | undefined
     return undefined;
   }
 
-  const field = value[key];
+  const field = getOwnDataProperty(value, key);
   return typeof field === "string" ? field : undefined;
 }
 
@@ -262,18 +280,46 @@ function getNonEmptyStringField(value: unknown, key: string): string | undefined
   return field && field.length > 0 ? field : undefined;
 }
 
-function toRecord(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
+function getOwnDataProperty(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasOwnDataProperty(value: object, key: PropertyKey): boolean {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor;
+  } catch {
+    return false;
+  }
+}
+
+function toJsonRecord(value: unknown): Record<string, JsonValue> {
+  if (!isRecord(value)) return {};
+  const converted = toJsonValue(value);
+  return isRecord(converted) ? converted as Record<string, JsonValue> : {};
 }
 
 /** Stringify unknown helper. */
 export function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    return value.slice(0, MAX_STRINGIFIED_UNKNOWN_CHARS);
+  }
+  if ((typeof value === "object" || typeof value === "function") && value !== null) {
+    const message = getOwnDataProperty(value, "message");
+    if (typeof message === "string" && message.length > 0) {
+      return message.slice(0, MAX_STRINGIFIED_UNKNOWN_CHARS);
+    }
+  }
   try {
-    const serialized = JSON.stringify(value);
-    return serialized ?? String(value);
+    const serialized = JSON.stringify(toJsonValue(value)) ?? "[Unserializable]";
+    return serialized.slice(0, MAX_STRINGIFIED_UNKNOWN_CHARS);
   } catch {
-    return String(value);
+    return "[Unserializable]";
   }
 }
 
@@ -330,12 +376,14 @@ export function pushToolParts(
     providerExecuted?: unknown;
   },
 ): void {
-  const input = toRecord(part.input);
+  const input = toJsonRecord(getOwnDataProperty(part, "input"));
+  const output = getOwnDataProperty(part, "output");
+  const errorText = getOwnDataProperty(part, "errorText");
   const isErroredState = state === "output-error" || state === "error" || state === "output-denied";
   const isProviderOwnedAvailable = isProviderOwnedInputAvailableTool({
     toolName,
     state,
-    providerExecuted: part.providerExecuted,
+    providerExecuted: getOwnDataProperty(part, "providerExecuted"),
   });
   const hasResultState = state === "output-available" || state === "completed" ||
     isErroredState || isProviderOwnedAvailable;
@@ -350,14 +398,14 @@ export function pushToolParts(
     });
 
     const resultOutput = isErroredState
-      ? part.output ?? part.errorText ?? "Tool error"
+      ? output ?? errorText ?? "Tool error"
       : isProviderOwnedAvailable
       ? null
-      : part.output ?? null;
+      : output ?? null;
     parts.push({
       type: "tool_result",
       tool_call_id: toolCallId,
-      output: resultOutput,
+      output: toJsonValue(resultOutput),
       is_error: isErroredState,
     });
     return;
@@ -451,7 +499,7 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
         parts.push({
           type: "data",
           name,
-          value: part.data,
+          value: toJsonValue(getOwnDataProperty(part, "data")),
         });
       }
       continue;
@@ -547,9 +595,9 @@ function markToolPartAsErrored(part: ToolUiPart, errorText: string): ChatUiMessa
 export function isToolCallPart(value: unknown): value is ToolCallLike {
   return (
     isRecord(value) &&
-    value.type === "tool-call" &&
-    typeof value.toolCallId === "string" &&
-    typeof value.toolName === "string"
+    getOptionalStringField(value, "type") === "tool-call" &&
+    typeof getOptionalStringField(value, "toolCallId") === "string" &&
+    typeof getOptionalStringField(value, "toolName") === "string"
   );
 }
 
@@ -557,23 +605,24 @@ export function isToolCallPart(value: unknown): value is ToolCallLike {
 export function isToolResultPart(value: unknown): value is ToolResultLike {
   return (
     isRecord(value) &&
-    value.type === "tool-result" &&
-    typeof value.toolCallId === "string" &&
-    typeof value.toolName === "string"
+    getOptionalStringField(value, "type") === "tool-result" &&
+    typeof getOptionalStringField(value, "toolCallId") === "string" &&
+    typeof getOptionalStringField(value, "toolName") === "string"
   );
 }
 
 /** Check whether a value is a text part. */
 export function isTextPart(value: unknown): value is TextPartLike {
-  return isRecord(value) && value.type === "text" && typeof value.text === "string";
+  return isRecord(value) && getOptionalStringField(value, "type") === "text" &&
+    typeof getOptionalStringField(value, "text") === "string";
 }
 
 /** Check whether a value is a reasoning part. */
 export function isReasoningPart(value: unknown): value is ReasoningPartLike {
-  return isRecord(value) && value.type === "reasoning" &&
-    (typeof value.text === "string" ||
-      typeof value.signature === "string" ||
-      typeof value.redactedData === "string");
+  return isRecord(value) && getOptionalStringField(value, "type") === "reasoning" &&
+    (typeof getOptionalStringField(value, "text") === "string" ||
+      typeof getOptionalStringField(value, "signature") === "string" ||
+      typeof getOptionalStringField(value, "redactedData") === "string");
 }
 
 /** Message shape for extract text from. */
@@ -599,26 +648,79 @@ export function extractTextFromMessage(message: ProviderModelMessage): string {
   return "";
 }
 
-function toJsonValue(value: unknown): JsonValue {
+function toJsonValue(
+  value: unknown,
+  context: {
+    activeObjects: WeakSet<object>;
+    remainingEntries: number;
+  } = {
+    activeObjects: new WeakSet<object>(),
+    remainingEntries: MAX_JSON_COLLECTION_ENTRIES,
+  },
+  depth = 0,
+): JsonValue {
+  if (depth > MAX_JSON_CONVERSION_DEPTH) {
+    return "[MaxDepth]";
+  }
+
   if (value == null) {
     return null;
   }
 
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (typeof value === "string" || typeof value === "boolean") {
     return value;
   }
 
-  if (Array.isArray(value)) {
-    return value.map((entry) => toJsonValue(entry));
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
   }
 
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, toJsonValue(entry)]),
-    );
+  if (typeof value === "bigint") {
+    return value.toString();
   }
 
-  return JSON.stringify(value);
+  if (typeof value !== "object") {
+    return null;
+  }
+
+  if (context.activeObjects.has(value)) {
+    return "[Circular]";
+  }
+  context.activeObjects.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      const result: JsonValue[] = [];
+      for (
+        let index = 0;
+        index < value.length && context.remainingEntries > 0;
+        index += 1
+      ) {
+        context.remainingEntries -= 1;
+        const entry = getOwnDataProperty(value, index);
+        result.push(toJsonValue(entry, context, depth + 1));
+      }
+      return result;
+    }
+
+    if (isRecord(value)) {
+      const entries: Array<[string, JsonValue]> = [];
+      for (const key of Object.keys(value)) {
+        if (context.remainingEntries <= 0) break;
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !("value" in descriptor)) continue;
+        context.remainingEntries -= 1;
+        entries.push([key, toJsonValue(descriptor.value, context, depth + 1)]);
+      }
+      return Object.fromEntries(entries);
+    }
+
+    return null;
+  } catch {
+    return "[Unserializable]";
+  } finally {
+    context.activeObjects.delete(value);
+  }
 }
 
 function getFilePart(part: unknown): {
@@ -685,16 +787,44 @@ function getToolPart(part: unknown): {
   }
 
   const errorText = getOptionalStringField(part, "errorText");
-  const output = Object.hasOwn(part, "output") ? part.output : undefined;
+  const output = getOwnDataProperty(part, "output");
 
   return {
     toolCallId,
     toolName,
-    input: toRecord(part.input),
+    input: toJsonRecord(getOwnDataProperty(part, "input")),
     state,
     ...(output !== undefined ? { output } : {}),
     ...(errorText !== undefined ? { errorText } : {}),
   };
+}
+
+function getUiToolIdentity(part: unknown): {
+  toolCallId: string;
+  toolName: string;
+} | null {
+  if (!isRecord(part)) return null;
+
+  const type = getNonEmptyStringField(part, "type");
+  if (
+    !type ||
+    (type !== "dynamic-tool" && type !== "tool_call" && !type.startsWith("tool-"))
+  ) {
+    return null;
+  }
+
+  const toolCallId = getNonEmptyStringField(part, "toolCallId") ??
+    getNonEmptyStringField(part, "tool_call_id") ??
+    getNonEmptyStringField(part, "id");
+  const explicitToolName = getNonEmptyStringField(part, "toolName") ??
+    getNonEmptyStringField(part, "tool_name") ??
+    getNonEmptyStringField(part, "name");
+  const derivedToolName = type === "dynamic-tool" || type === "tool_call"
+    ? undefined
+    : type.slice("tool-".length);
+  const toolName = explicitToolName ?? derivedToolName;
+
+  return toolCallId && toolName ? { toolCallId, toolName } : null;
 }
 
 function getRawToolCallPart(part: unknown): {
@@ -720,7 +850,7 @@ function getRawToolCallPart(part: unknown): {
   return {
     toolCallId,
     toolName,
-    input: toRecord(part.input),
+    input: toJsonRecord(getOwnDataProperty(part, "input")),
   };
 }
 
@@ -751,15 +881,20 @@ function getRawToolResultPart(part: unknown): {
   const toolName = getNonEmptyStringField(part, "toolName") ??
     getNonEmptyStringField(part, "tool_name") ??
     getNonEmptyStringField(part, "name");
-  const isError = part.is_error === true || part.isError === true;
+  const isError = getOwnDataProperty(part, "is_error") === true ||
+    getOwnDataProperty(part, "isError") === true;
+  const outputValue = getOwnDataProperty(part, "output");
+  const rawOutput = hasOwnDataProperty(part, "output")
+    ? outputValue
+    : getOwnDataProperty(part, "result");
   const output = isError
     ? {
       type: "error-text" as const,
-      value: stringifyUnknown(part.output ?? "Tool error"),
+      value: stringifyUnknown(rawOutput ?? "Tool error"),
     }
     : {
       type: "json" as const,
-      value: toJsonValue(part.output),
+      value: toJsonValue(rawOutput),
     };
 
   return {
@@ -773,12 +908,13 @@ function buildRawToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string>
   const toolNames = new Map<string, string>();
 
   for (const part of parts) {
-    const rawToolCall = getRawToolCallPart(part);
-    if (!rawToolCall) {
+    if (!isRecord(part) || getOptionalStringField(part, "type") !== "tool_call") {
       continue;
     }
-
-    toolNames.set(rawToolCall.toolCallId, rawToolCall.toolName);
+    const identity = getUiToolIdentity(part);
+    if (identity) {
+      toolNames.set(identity.toolCallId, identity.toolName);
+    }
   }
 
   return toolNames;
@@ -794,7 +930,7 @@ function buildToolResultOutput(toolPart: { state: string; output?: unknown; erro
     value: string;
   }
   | null {
-  if (toolPart.state === "output-available") {
+  if (toolPart.state === "output-available" || toolPart.state === "completed") {
     return {
       type: "json",
       value: toJsonValue(toolPart.output),
@@ -1039,8 +1175,10 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   return messages;
 }
 
-function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
-  const rawToolNameMap = buildRawToolNameMap(message.parts);
+function convertToolMessage(
+  message: ChatUiMessage,
+  knownToolNames: ReadonlyMap<string, string>,
+): ProviderModelMessage[] {
   const toolResults: ChatToolResultPart[] = [];
 
   for (const part of message.parts) {
@@ -1049,10 +1187,15 @@ function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
       continue;
     }
 
+    const expectedToolName = knownToolNames.get(rawResult.toolCallId);
+    if (!expectedToolName || (rawResult.toolName && rawResult.toolName !== expectedToolName)) {
+      continue;
+    }
+
     toolResults.push({
       type: "tool-result",
       toolCallId: rawResult.toolCallId,
-      toolName: rawResult.toolName ?? rawToolNameMap.get(rawResult.toolCallId) ?? "unknown",
+      toolName: expectedToolName,
       output: rawResult.output,
     });
   }
@@ -1064,13 +1207,131 @@ function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
   return [{ role: "tool", content: toolResults }];
 }
 
+function registerKnownUiToolNames(
+  message: ChatUiMessage,
+  names: Map<string, string>,
+  conflicts: Set<string>,
+): void {
+  for (const part of message.parts) {
+    const tool = getUiToolIdentity(part);
+    if (!tool) {
+      continue;
+    }
+    const existing = names.get(tool.toolCallId);
+    if (existing && existing !== tool.toolName) {
+      conflicts.add(tool.toolCallId);
+      names.delete(tool.toolCallId);
+      continue;
+    }
+    if (!conflicts.has(tool.toolCallId)) {
+      names.set(tool.toolCallId, tool.toolName);
+    }
+  }
+}
+
+function retainPairedProviderToolsInTurn(
+  messages: readonly ProviderModelMessage[],
+): ProviderModelMessage[] {
+  const calls = new Map<string, { name: string; count: number }>();
+  const results = new Map<string, { name: string; count: number }>();
+
+  for (const message of messages) {
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (!isToolCallPart(part)) {
+          continue;
+        }
+        const existing = calls.get(part.toolCallId);
+        calls.set(part.toolCallId, {
+          name: existing?.name ?? part.toolName,
+          count: (existing?.count ?? 0) + 1,
+        });
+      }
+    }
+    if (message.role === "tool") {
+      for (const part of message.content) {
+        const existing = results.get(part.toolCallId);
+        results.set(part.toolCallId, {
+          name: existing?.name ?? part.toolName,
+          count: (existing?.count ?? 0) + 1,
+        });
+      }
+    }
+  }
+
+  const pairedIds = new Set<string>();
+  for (const [toolCallId, call] of calls) {
+    const result = results.get(toolCallId);
+    if (
+      call.count === 1 && result?.count === 1 && call.name === result.name
+    ) {
+      pairedIds.add(toolCallId);
+    }
+  }
+
+  const retained: ProviderModelMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      const content = message.content.filter((part) =>
+        !isToolCallPart(part) || pairedIds.has(part.toolCallId)
+      );
+      if (content.length > 0) {
+        retained.push(copyProviderModelMessageSourceId(message, { ...message, content }));
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      const content = message.content.filter((part) => pairedIds.has(part.toolCallId));
+      if (content.length > 0) {
+        retained.push(copyProviderModelMessageSourceId(message, { ...message, content }));
+      }
+      continue;
+    }
+    retained.push(message);
+  }
+  return retained;
+}
+
+function retainPairedProviderTools(
+  messages: readonly ProviderModelMessage[],
+): ProviderModelMessage[] {
+  const retained: ProviderModelMessage[] = [];
+  let currentTurn: ProviderModelMessage[] = [];
+
+  const flushTurn = () => {
+    retained.push(...retainPairedProviderToolsInTurn(currentTurn));
+    currentTurn = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      flushTurn();
+      retained.push(message);
+      continue;
+    }
+    currentTurn.push(message);
+  }
+  flushTurn();
+
+  return retained;
+}
+
 /** Convert UI messages to provider model messages. */
 export function convertUiMessagesToProviderModelMessages(
   messages: ChatUiMessage[],
 ): ProviderModelMessage[] {
   const providerMessages: ProviderModelMessage[] = [];
+  const knownToolNames = new Map<string, string>();
+  const conflictingToolCallIds = new Set<string>();
 
   for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      knownToolNames.clear();
+      conflictingToolCallIds.clear();
+    } else if (message.role === "assistant") {
+      registerKnownUiToolNames(message, knownToolNames, conflictingToolCallIds);
+    }
+
     const converted = (() => {
       switch (message.role) {
         case "system":
@@ -1080,7 +1341,7 @@ export function convertUiMessagesToProviderModelMessages(
         case "assistant":
           return convertAssistantMessage(message);
         case "tool":
-          return convertToolMessage(message);
+          return convertToolMessage(message, knownToolNames);
         default:
           return [];
       }
@@ -1101,5 +1362,5 @@ export function convertUiMessagesToProviderModelMessages(
     }
   }
 
-  return providerMessages;
+  return retainPairedProviderTools(providerMessages);
 }

@@ -1,11 +1,15 @@
-import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "#veryfront/chat/types.ts";
+import type {
+  ChatRequestContext,
+  ChatRuntimeOverrides,
+  DurableRootRunDescriptor,
+} from "#veryfront/chat/types.ts";
 import {
   getChatRequestContextSchema,
   getChatUiMessagePartSchema,
   getChatUiMessageRoleSchema,
 } from "#veryfront/chat/types.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeAgentRunInvocation } from "../runtime/agent-invocation-contract.ts";
 
 const getDurableRootRunIdSchema = defineSchema((v) =>
@@ -27,7 +31,7 @@ export const getHostedDurableRootRunDescriptorSchema = defineSchema((v) =>
 /** Schema for hosted durable root run descriptor.
  * @deprecated Use getHostedDurableRootRunDescriptorSchema()
  */
-export const hostedDurableRootRunDescriptorSchema = lazySchema(
+export const hostedDurableRootRunDescriptorSchema: Schema<DurableRootRunDescriptor> = lazySchema(
   getHostedDurableRootRunDescriptorSchema,
 );
 
@@ -42,7 +46,9 @@ export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
 /** Schema for hosted chat runtime overrides.
  * @deprecated Use getHostedChatRuntimeOverridesSchema()
  */
-export const hostedChatRuntimeOverridesSchema = lazySchema(getHostedChatRuntimeOverridesSchema);
+export const hostedChatRuntimeOverridesSchema: Schema<ChatRuntimeOverrides> = lazySchema(
+  getHostedChatRuntimeOverridesSchema,
+);
 
 const getHostedChatRequestMessageSchema = defineSchema((v) =>
   v.object({
@@ -57,7 +63,38 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
   v.array(getHostedChatRequestMessageSchema())
 );
 
-export const getHostedChatRequestSchema = defineSchema((v) =>
+/** Message accepted by the hosted chat request schema. */
+export interface HostedChatRequestMessage {
+  /** Message identifier. */
+  id: string;
+  /** Message author role. */
+  role: string;
+  /** Ordered UI message parts. */
+  parts: Array<{ type: string; [key: string]: unknown }>;
+  /** Optional message metadata. */
+  metadata?: Record<string, unknown>;
+}
+
+/** Validated request used to execute hosted chat. */
+export interface HostedChatRequest {
+  /** Conversation messages. */
+  messages: HostedChatRequestMessage[];
+  /** Validated chat request context. */
+  context: ChatRequestContext;
+  /** Optional model override. */
+  model?: string;
+  /** Optional delegation policy override. */
+  allowDelegation?: boolean;
+  /** Opaque properties forwarded to the runtime. */
+  forwardedProps?: Record<string, unknown>;
+  /** Optional runtime behavior overrides. */
+  runtimeOverrides?: ChatRuntimeOverrides;
+  /** Optional descriptor for a durable root run. */
+  durableRootRun?: DurableRootRunDescriptor;
+}
+
+/** Returns the hosted chat request schema. */
+export const getHostedChatRequestSchema: () => Schema<HostedChatRequest> = defineSchema((v) =>
   v.object({
     messages: getHostedChatRequestMessagesSchema(),
     context: getChatRequestContextSchema(),
@@ -72,14 +109,14 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
 /** Schema for hosted chat request.
  * @deprecated Use getHostedChatRequestSchema()
  */
-export const hostedChatRequestSchema = lazySchema(getHostedChatRequestSchema);
+export const hostedChatRequestSchema: Schema<HostedChatRequest> = lazySchema(
+  getHostedChatRequestSchema,
+);
 
-/** Request payload for hosted chat. */
-export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatRequestSchema>>;
 /** Input payload for hosted chat request. */
 export type HostedChatRequestInput = {
   messages: RuntimeAgentRunInvocation["messages"];
-  context: InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
+  context: ChatRequestContext;
   model?: string;
   allowDelegation?: boolean;
   forwardedProps?: Record<string, unknown>;

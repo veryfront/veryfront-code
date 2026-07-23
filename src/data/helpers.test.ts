@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { notFound, redirect } from "./helpers.ts";
 
@@ -54,6 +54,41 @@ describe("helpers.ts", () => {
 
       assertEquals(result.props, undefined);
       assertEquals(result.notFound, undefined);
+    });
+
+    it("rejects invalid redirect destinations and flags", () => {
+      assertThrows(() => redirect(""), Error, "Redirect destination");
+      assertThrows(() => redirect("   "), Error, "Redirect destination");
+      assertThrows(
+        () => redirect("/safe\r\nx-injected: value"),
+        Error,
+        "Redirect destination",
+      );
+      assertThrows(
+        () => redirect("javascript:alert(1)"),
+        Error,
+        "Redirect destination",
+      );
+      assertThrows(
+        () => redirect("data:text/html,unsafe"),
+        Error,
+        "Redirect destination",
+      );
+      assertThrows(
+        () => redirect(" http://example.com"),
+        Error,
+        "Redirect destination",
+      );
+      assertThrows(
+        () => redirect("http://[invalid"),
+        Error,
+        "Redirect destination",
+      );
+      assertThrows(
+        () => redirect("/safe", "yes" as unknown as boolean),
+        Error,
+        "permanent",
+      );
     });
   });
 

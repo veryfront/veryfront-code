@@ -6,4 +6,4 @@
  * @module tool/schema/json-schema
  */
 
-export type { JsonSchema } from "#veryfront/extensions/schema/json-schema.ts";
+export type { JsonSchema, JsonSchemaTypeName } from "#veryfront/extensions/schema/json-schema.ts";

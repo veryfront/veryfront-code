@@ -17,6 +17,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { clearConfigCache } from "#veryfront/config";
+import { VeryfrontError } from "#veryfront/errors";
 import { join } from "#veryfront/compat/path";
 import { mkdir } from "#veryfront/compat/fs.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
@@ -272,7 +273,7 @@ describe("bootstrap - FSAdapter Initialization", {
     });
   });
 
-  it("should handle fs config with missing credentials gracefully", async () => {
+  it("fails closed with a typed error when Veryfront filesystem config is missing", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("missing_creds", async (projectDir) => {
@@ -285,13 +286,16 @@ describe("bootstrap - FSAdapter Initialization", {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
+      const error = await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        VeryfrontError,
+        "Veryfront adapter requires veryfront configuration",
+      );
+      assertEquals(error.slug, "config-invalid");
     });
   });
 
-  it("should handle FSAdapter initialization errors gracefully", async () => {
+  it("initializes the configured memory filesystem adapter", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("fs_error", async (projectDir) => {
@@ -305,7 +309,11 @@ describe("bootstrap - FSAdapter Initialization", {
 
       assertExists(result);
       assertExists(result.config);
-      assertEquals(result.usingFSAdapter, false);
+      assertEquals(result.usingFSAdapter, true);
+      assertEquals(result.fsAdapterType, "memory");
+      await result.adapter.fs.writeFile("/memory-test.txt", "memory");
+      assertEquals(await result.adapter.fs.readFile("/memory-test.txt"), "memory");
+      await result.dispose?.();
     });
   });
 
@@ -853,6 +861,29 @@ describe("bootstrap - Dev and Prod Modes", () => {
           () => bootstrapProd(projectDir, adapter),
           Error,
           "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+        );
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("should reject proxy mode startup outside production environment", async () => {
+    const adapter = await getAdapter();
+    const restore = withEnvOverrides({
+      NODE_ENV: "development",
+      PROXY_MODE: "1",
+      CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "not-used",
+    });
+
+    try {
+      await withTempProjectDir("prod_invalid_node_env", async (projectDir) => {
+        await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
+
+        await assertRejects(
+          () => bootstrapProd(projectDir, adapter),
+          Error,
+          "NODE_ENV must be set to 'production'",
         );
       });
     } finally {

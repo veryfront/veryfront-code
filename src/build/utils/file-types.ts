@@ -13,7 +13,7 @@ export type ImageFormat = "jpeg" | "jpg" | "png" | "webp" | "avif" | "gif" | "sv
 /**
  * Supported script formats
  */
-type ScriptFormat = "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs";
+type ScriptFormat = "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts";
 
 /**
  * Supported style formats
@@ -30,7 +30,7 @@ type DocumentFormat = "md" | "mdx";
  */
 export const FILE_EXTENSIONS = {
   IMAGE: [".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif", ".svg"] as const,
-  SCRIPT: [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"] as const,
+  SCRIPT: [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"] as const,
   STYLE: [".css", ".scss", ".sass", ".less"] as const,
   DOCUMENT: [".md", ".mdx"] as const,
 } as const;
@@ -45,6 +45,8 @@ const ESBUILD_LOADERS = {
   ".tsx": "tsx",
   ".mjs": "js",
   ".cjs": "js",
+  ".mts": "ts",
+  ".cts": "ts",
   ".json": "json",
   ".css": "css",
   ".scss": "css",
@@ -112,15 +114,21 @@ const IMAGE_FORMAT_MAP: Record<string, ImageFormat> = {
  */
 export function getOptimizedImageFormat(originalFormat: string): ImageFormat {
   const format = originalFormat.toLowerCase().replace(".", "");
-  return IMAGE_FORMAT_MAP[format] ?? "jpeg";
+  const optimizedFormat = IMAGE_FORMAT_MAP[format];
+  if (!optimizedFormat) throw new TypeError(`Unsupported image format: ${originalFormat}`);
+  return optimizedFormat;
 }
 
 /**
  * Get esbuild loader type from file path
  */
-export function getEsbuildLoader(filePath: string): string {
+export function getEsbuildLoader(
+  filePath: string,
+): (typeof ESBUILD_LOADERS)[keyof typeof ESBUILD_LOADERS] {
   const ext = getLowerExt(filePath);
-  return ESBUILD_LOADERS[ext as keyof typeof ESBUILD_LOADERS] ?? "text";
+  const loader = ESBUILD_LOADERS[ext as keyof typeof ESBUILD_LOADERS];
+  if (!loader) throw new TypeError(`Unsupported esbuild input extension: ${ext || "<none>"}`);
+  return loader;
 }
 
 /**
@@ -141,7 +149,8 @@ export function getFileCategory(filePath: string): FileCategory {
  */
 export function needsTranspilation(filePath: string): boolean {
   const ext = getLowerExt(filePath);
-  return ext === ".ts" || ext === ".tsx" || ext === ".jsx" || ext === ".mdx";
+  return ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts" ||
+    ext === ".jsx" || ext === ".mdx";
 }
 
 /**
@@ -149,7 +158,7 @@ export function needsTranspilation(filePath: string): boolean {
  */
 export function isTypeScriptFile(filePath: string): boolean {
   const ext = getLowerExt(filePath);
-  return ext === ".ts" || ext === ".tsx";
+  return ext === ".ts" || ext === ".tsx" || ext === ".mts" || ext === ".cts";
 }
 
 /**
@@ -181,6 +190,8 @@ const MIME_TYPES: Record<string, string> = {
   ".tsx": "application/typescript",
   ".mjs": "application/javascript",
   ".cjs": "application/javascript",
+  ".mts": "application/typescript",
+  ".cts": "application/typescript",
   ".json": "application/json",
   ".css": "text/css",
   ".scss": "text/x-scss",

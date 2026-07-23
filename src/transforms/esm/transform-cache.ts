@@ -9,11 +9,17 @@ import {
 } from "#veryfront/cache/backend.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { errorLogName } from "../shared/log-context.ts";
 
 const logger = baseLogger.component("transform-cache");
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
+
+function cacheKeyLogId(key: string): string {
+  return hashCodeHex(key).slice(0, 16);
+}
 
 /**
  * Pattern to match unresolved /_vf_modules/_veryfront/ imports.
@@ -29,6 +35,8 @@ interface TransformCacheEntry {
   code: string;
   hash: string;
   timestamp: number;
+  /** Absolute expiration time for the local fallback. Legacy distributed entries may omit it. */
+  expiresAt?: number;
   /** ID of the bundle manifest tracking HTTP bundles for this transform */
   bundleManifestId?: string;
 }
@@ -108,6 +116,46 @@ function getEffectiveCacheGateway(): TokenizingCacheGateway | CacheBackend | nul
   return injectedCacheGateway !== undefined ? injectedCacheGateway : cacheGateway;
 }
 
+function getLocalFallbackEntry(key: string): TransformCacheEntry | undefined {
+  const fallback = getLocalFallback();
+  const entry = fallback.get(key);
+  if (!entry) return undefined;
+  if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
+    fallback.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+
+function parseTransformCacheEntry(raw: string): TransformCacheEntry | undefined {
+  const value: unknown = JSON.parse(raw);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.code !== "string" || record.code.length === 0 ||
+    typeof record.hash !== "string" || record.hash.length === 0 || record.hash.length > 4_096 ||
+    typeof record.timestamp !== "number" || !Number.isFinite(record.timestamp) ||
+    record.timestamp < 0 ||
+    (record.expiresAt !== undefined &&
+      (typeof record.expiresAt !== "number" || !Number.isFinite(record.expiresAt) ||
+        record.expiresAt < 0)) ||
+    (record.bundleManifestId !== undefined &&
+      (typeof record.bundleManifestId !== "string" || record.bundleManifestId.length === 0 ||
+        record.bundleManifestId.length > 4_096))
+  ) {
+    return undefined;
+  }
+
+  return {
+    code: record.code,
+    hash: record.hash,
+    timestamp: record.timestamp,
+    expiresAt: record.expiresAt as number | undefined,
+    bundleManifestId: record.bundleManifestId as string | undefined,
+  };
+}
+
 /**
  * Inject custom caches for testing.
  * Call with null to restore default behavior.
@@ -154,7 +202,7 @@ export async function initializeTransformCache(): Promise<boolean> {
       cacheGateway = await CacheBackends.codeStore("TRANSFORM-CACHE", { keyPrefix: "transform" });
       logger.info("Initialized with gateway", { backend: cacheGateway.type });
     } catch (error) {
-      logger.warn("Backend init failed, using memory", { error });
+      logger.warn("Backend init failed, using memory", { errorName: errorLogName(error) });
       // Fallback to memory backend wrapped in gateway for consistent interface
       const memBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
       const { createTokenizingGateway } = await import("../../cache/tokenizing-gateway.ts");
@@ -196,9 +244,12 @@ export async function getCachedTransformAsync(
       // Use raw get() since we store JSON and handle tokenization at the entry level
       const raw = await gateway.get(key);
       if (raw) {
-        const entry = JSON.parse(raw) as TransformCacheEntry;
-        if (!entry.code) {
-          logger.warn("Cache entry has empty code, discarding", { key });
+        const entry = parseTransformCacheEntry(raw);
+        if (!entry) {
+          logger.warn("Cache entry is malformed, discarding", { keyId: cacheKeyLogId(key) });
+          return undefined;
+        }
+        if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
           return undefined;
         }
         // Detokenize code from distributed cache
@@ -213,19 +264,19 @@ export async function getCachedTransformAsync(
       }
     } catch (error) {
       logger.error("Transform cache backend get failed", {
-        key: key.slice(-60),
-        error: error instanceof Error ? error.message : String(error),
+        keyId: cacheKeyLogId(key),
+        errorName: errorLogName(error),
       });
     }
   }
 
-  return getLocalFallback().get(key);
+  return getLocalFallbackEntry(key);
 }
 
 export function getCachedTransform(key: string): TransformCacheEntry | undefined {
   const gateway = getEffectiveCacheGateway();
   if (gateway && gateway.type !== "memory") return undefined;
-  return getLocalFallback().get(key);
+  return getLocalFallbackEntry(key);
 }
 
 export async function setCachedTransformAsync(
@@ -235,7 +286,8 @@ export async function setCachedTransformAsync(
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
   bundleManifestId?: string,
 ): Promise<void> {
-  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now(), bundleManifestId };
+  const normalizedTtl = normalizeTtl(ttlSeconds);
+  const entry = createTransformCacheEntry(code, hash, normalizedTtl, bundleManifestId);
   const gateway = getEffectiveCacheGateway();
 
   if (gateway) {
@@ -248,12 +300,12 @@ export async function setCachedTransformAsync(
       const entryToStore = isDistributed
         ? { ...entry, code: tokenizeAllVeryFrontPaths(code) }
         : entry;
-      await gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds));
+      await gateway.set(key, JSON.stringify(entryToStore), normalizedTtl);
       return;
     } catch (error) {
       logger.error("Transform cache backend set failed", {
-        key: key.slice(-60),
-        error: error instanceof Error ? error.message : String(error),
+        keyId: cacheKeyLogId(key),
+        errorName: errorLogName(error),
       });
     }
   }
@@ -267,7 +319,8 @@ export function setCachedTransform(
   hash: string,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
 ): void {
-  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now() };
+  const normalizedTtl = normalizeTtl(ttlSeconds);
+  const entry = createTransformCacheEntry(code, hash, normalizedTtl);
   const gateway = getEffectiveCacheGateway();
 
   if (!gateway) {
@@ -281,15 +334,33 @@ export function setCachedTransform(
     ? (gateway as TokenizingCacheGateway).isDistributed()
     : gateway.type !== "memory";
   const entryToStore = isDistributed ? { ...entry, code: tokenizeAllVeryFrontPaths(code) } : entry;
-  gateway.set(key, JSON.stringify(entryToStore), normalizeTtl(ttlSeconds)).catch((error) => {
-    logger.debug("Backend set failed", { key, error });
+  gateway.set(key, JSON.stringify(entryToStore), normalizedTtl).catch((error) => {
+    logger.debug("Backend set failed", {
+      keyId: cacheKeyLogId(key),
+      errorName: errorLogName(error),
+    });
   });
 
   if (gateway.type === "memory") setLocalFallback(key, entry);
 }
 
 function normalizeTtl(ttlSeconds: number): number {
-  return ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
+  return Number.isFinite(ttlSeconds) && ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
+}
+
+function createTransformCacheEntry(
+  code: string,
+  hash: string,
+  ttlSeconds: number,
+  bundleManifestId?: string,
+): TransformCacheEntry {
+  const timestamp = Date.now();
+  const requestedExpiry = timestamp + ttlSeconds * 1_000;
+  const expiresAt = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    Number.isFinite(requestedExpiry) ? requestedExpiry : Number.MAX_SAFE_INTEGER,
+  );
+  return { code, hash, timestamp, expiresAt, bundleManifestId };
 }
 
 function setLocalFallback(key: string, entry: TransformCacheEntry): void {
@@ -316,10 +387,23 @@ interface TransformCacheResult {
   cacheHit: boolean;
 }
 
+const transformComputeFlight = new Singleflight<TransformCacheResult>();
+
 export async function getOrComputeTransform(
   key: string,
   computeFn: () => Promise<string>,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
+): Promise<TransformCacheResult> {
+  return await transformComputeFlight.do(
+    key,
+    () => getOrComputeTransformOnce(key, computeFn, ttlSeconds),
+  );
+}
+
+async function getOrComputeTransformOnce(
+  key: string,
+  computeFn: () => Promise<string>,
+  ttlSeconds: number,
 ): Promise<TransformCacheResult> {
   const cached = await getCachedTransformAsync(key);
   if (cached) {
@@ -327,24 +411,25 @@ export async function getOrComputeTransform(
     // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.
     // If they're still present, the cache is stale and we need to recompute.
     if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
-      const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
       logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
-        key: key.slice(-60),
-        unresolvedImport: match?.[1]?.slice(0, 60),
+        keyId: cacheKeyLogId(key),
       });
       // Fall through to recompute
     } else {
-      logger.debug("Cache hit", { key });
+      logger.debug("Cache hit", { keyId: cacheKeyLogId(key) });
       return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
     }
   }
 
-  logger.debug("Cache miss, computing", { key });
+  logger.debug("Cache miss, computing", { keyId: cacheKeyLogId(key) });
   const code = await computeFn();
 
   const hash = hashCodeHex(code).slice(0, 16);
-  setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
-    logger.debug("Failed to cache computed transform", { key, error });
+  await setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
+    logger.debug("Failed to cache computed transform", {
+      keyId: cacheKeyLogId(key),
+      errorName: errorLogName(error),
+    });
   });
 
   return { code, cacheHit: false };

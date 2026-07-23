@@ -35,13 +35,23 @@ export {
 
 // SSE chunk parser
 export { parseSseChunk } from "../runtime-loader/provider-sse.ts";
+export type { ParseSseChunkOptions } from "../runtime-loader/provider-sse.ts";
 
 // Retry / error / HTTP plumbing (currently in runtime-loader.ts).
 export {
   buildProviderError,
   createWarningCollector,
+  extractAnthropicUsage,
+  extractGoogleEmbedding,
+  extractGoogleUsage,
+  extractGoogleUsageTokens,
+  extractOpenAIEmbeddings,
+  extractOpenAIResponsesUsage,
+  extractOpenAIUsage,
+  extractOpenAIUsageTokens,
   isNumberArray,
   mergeUsage,
+  normalizeRuntimeUsage,
   parseRetryAfterMs,
   ProviderError,
   ProviderOverloadedError,
@@ -60,10 +70,14 @@ export {
   unwrapToolInputSchema,
 } from "../runtime-loader.ts";
 
+export type { ProviderKind } from "../runtime-loader/provider-http.ts";
+export type { GatewayBillingMode } from "../runtime-loader/provider-usage.ts";
 export type {
   OpenAICompatibleChatMessage,
   OpenAICompatibleChatRequest,
   ProviderWarning,
   RuntimePromptMessage,
+  RuntimeToolDefinition,
   RuntimeUsage,
+  WarningCollector,
 } from "../runtime-loader.ts";

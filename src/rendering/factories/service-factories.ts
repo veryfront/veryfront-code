@@ -56,6 +56,7 @@ export function createComponentRegistry(
     undefined, // vendorBundleHash
     ctx.projectId, // Project ID for cache isolation
     ctx.contentSourceId,
+    ctx.mode === "development",
   );
 }
 

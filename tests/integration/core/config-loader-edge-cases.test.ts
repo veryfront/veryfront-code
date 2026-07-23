@@ -71,13 +71,21 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
 
     it("should reject null config export", async () => {
       await withConfigTest("export default null;", async ({ projectDir, adapter }) => {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Expected object, received null",
+        );
       });
     });
 
     it("should reject undefined config export", async () => {
       await withConfigTest("export default undefined;", async ({ projectDir, adapter }) => {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Expected object, received undefined",
+        );
       });
     });
 

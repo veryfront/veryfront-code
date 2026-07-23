@@ -1,5 +1,31 @@
-import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
+import {
+  getErrorMessage,
+  INPUT_VALIDATION_FAILED,
+  PERMISSION_DENIED,
+  RESOURCE_NOT_FOUND,
+} from "#veryfront/errors";
+import { snapshotJsonValue } from "./json-value.ts";
+import { raceWithAbort } from "./abort.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
+
+const MAX_PROJECT_SCOPED_TOOL_DEFINITIONS = 10_000;
+const MAX_PROJECT_SCOPED_DEFINITION_BYTES = 16 * 1024 * 1024;
+const MAX_PROJECT_SCOPED_TOOL_NAME_LENGTH = 128;
+const MAX_PROJECT_SCOPED_TOOL_DESCRIPTION_LENGTH = 16_384;
+
+function hasUnsafeControlCharacters(value: string, allowFormattingWhitespace = false): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code === 0x7f ||
+      (code < 0x20 &&
+        !(allowFormattingWhitespace && (code === 0x09 || code === 0x0a || code === 0x0d)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Options accepted by project scoped remote tool. */
 export type ProjectScopedRemoteToolOptions = {
@@ -131,6 +157,7 @@ function validateRequiredToolInput(input: {
   }
 
   const missingProperties = getRequiredToolProperties(input.toolDefinition).filter((property) =>
+    !Object.hasOwn(input.toolInput, property) ||
     isMissingRequiredToolInput(input.toolInput[property])
   );
   if (missingProperties.length === 0) {
@@ -190,7 +217,10 @@ export function hydrateProjectScopedRemoteToolInput(input: {
     return input.toolInput;
   }
 
-  if (input.toolInput.project_reference) {
+  if (
+    Object.hasOwn(input.toolInput, "project_reference") &&
+    input.toolInput.project_reference === input.activeProjectId
+  ) {
     return input.toolInput;
   }
 
@@ -198,6 +228,67 @@ export function hydrateProjectScopedRemoteToolInput(input: {
     ...input.toolInput,
     project_reference: input.activeProjectId,
   };
+}
+
+function cloneToolDefinitions(definitions: readonly ToolDefinition[]): ToolDefinition[] {
+  if (!Array.isArray(definitions)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Remote tool definitions must be an array" });
+  }
+  if (definitions.length > MAX_PROJECT_SCOPED_TOOL_DEFINITIONS) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail:
+        `Remote tool definitions cannot exceed ${MAX_PROJECT_SCOPED_TOOL_DEFINITIONS} entries`,
+    });
+  }
+  let snapshot: ToolDefinition[];
+  try {
+    snapshot = snapshotJsonValue(definitions, {
+      label: "Remote tool definitions",
+      maxBytes: MAX_PROJECT_SCOPED_DEFINITION_BYTES,
+      maxStringLength: MAX_PROJECT_SCOPED_DEFINITION_BYTES,
+      maxNodes: 250_000,
+    });
+  } catch (error) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: getErrorMessage(error) });
+  }
+
+  for (let index = 0; index < snapshot.length; index += 1) {
+    const definition = snapshot[index];
+    if (
+      typeof definition !== "object" || definition === null || Array.isArray(definition) ||
+      typeof definition.name !== "string" || definition.name.trim().length === 0 ||
+      definition.name.trim() !== definition.name ||
+      definition.name.length > MAX_PROJECT_SCOPED_TOOL_NAME_LENGTH ||
+      hasUnsafeControlCharacters(definition.name) ||
+      typeof definition.description !== "string" ||
+      definition.description.trim().length === 0 ||
+      definition.description.length > MAX_PROJECT_SCOPED_TOOL_DESCRIPTION_LENGTH ||
+      hasUnsafeControlCharacters(definition.description, true) ||
+      typeof definition.parameters !== "object" || definition.parameters === null ||
+      Array.isArray(definition.parameters)
+    ) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: `Remote tool definition ${index} is invalid`,
+      });
+    }
+  }
+  return snapshot;
+}
+
+function snapshotRemoteToolInput(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Remote tool input must be a JSON object" });
+  }
+  try {
+    return snapshotJsonValue(value, {
+      label: "Remote tool input",
+      maxBytes: MAX_PROJECT_SCOPED_DEFINITION_BYTES,
+      maxStringLength: MAX_PROJECT_SCOPED_DEFINITION_BYTES,
+      maxNodes: 250_000,
+    }) as Record<string, unknown>;
+  } catch (error) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: getErrorMessage(error) });
+  }
 }
 
 /** Resolves project scoped remote tool project ID. */
@@ -243,46 +334,42 @@ function withActiveProjectContext(
 export function createProjectScopedRemoteToolCatalog(
   input: ProjectScopedRemoteToolCatalogOptions,
 ): ProjectScopedRemoteToolCatalog {
-  let cachedProjectId: string | null | undefined;
-  let cachedToolDefinitions: ToolDefinition[] | null = null;
-
   async function listActiveToolDefinitions(
     context?: ToolExecutionContext,
   ): Promise<ProjectScopedRemoteToolDefinitions> {
+    context?.abortSignal?.throwIfAborted();
     const activeProjectId = resolveProjectScopedRemoteToolProjectId(
       context,
       resolveDefaultProjectId(input.defaultProjectId),
     );
 
-    if (
-      !input.filterToolDefinitions && cachedToolDefinitions &&
-      cachedProjectId === activeProjectId
-    ) {
-      return {
-        activeProjectId,
-        toolDefinitions: cachedToolDefinitions,
-      };
-    }
-
     const sourceContext = withActiveProjectContext(context, activeProjectId);
+    const sourceToolDefinitions = cloneToolDefinitions(
+      await raceWithAbort(
+        Promise.resolve().then(() => input.source.listTools(sourceContext)),
+        context?.abortSignal,
+      ),
+    );
     const scopedToolDefinitions = filterProjectScopedRemoteToolDefinitions(
-      await input.source.listTools(sourceContext),
+      sourceToolDefinitions,
       activeProjectId,
       input.projectScopedRemoteToolOptions,
     );
-    const toolDefinitions = input.filterToolDefinitions
-      ? await input.filterToolDefinitions({
-        source: input.source,
-        toolDefinitions: scopedToolDefinitions,
-        activeProjectId,
-        context: sourceContext,
-      })
-      : scopedToolDefinitions;
-
-    if (!input.filterToolDefinitions) {
-      cachedProjectId = activeProjectId;
-      cachedToolDefinitions = toolDefinitions;
-    }
+    const toolDefinitions = cloneToolDefinitions(
+      input.filterToolDefinitions
+        ? await raceWithAbort(
+          Promise.resolve().then(() =>
+            input.filterToolDefinitions!({
+              source: input.source,
+              toolDefinitions: scopedToolDefinitions,
+              activeProjectId,
+              context: sourceContext,
+            })
+          ),
+          context?.abortSignal,
+        )
+        : scopedToolDefinitions,
+    );
 
     return {
       activeProjectId,
@@ -300,6 +387,7 @@ export function createProjectScopedRemoteToolCatalog(
       );
     },
     async prepareExecution(executionInput) {
+      const executionToolInput = snapshotRemoteToolInput(executionInput.toolInput);
       if (!isRemoteToolNameAllowed(executionInput.toolName, input.allowedToolNames)) {
         throw PERMISSION_DENIED.create({
           detail: `Tool "${executionInput.toolName}" is not allowed for this run`,
@@ -312,10 +400,16 @@ export function createProjectScopedRemoteToolCatalog(
       const toolDefinition = toolDefinitions.find((definition) =>
         definition.name === executionInput.toolName
       );
+      if (!toolDefinition) {
+        throw RESOURCE_NOT_FOUND.create({
+          detail:
+            `Tool "${executionInput.toolName}" is not available from remote source "${input.source.id}"`,
+        });
+      }
       const toolInput = hydrateProjectScopedRemoteToolInput({
         toolDefinition,
         activeProjectId,
-        toolInput: executionInput.toolInput,
+        toolInput: executionToolInput,
       });
       validateRequiredToolInput({ toolDefinition, toolInput });
 
@@ -339,8 +433,14 @@ export async function listProjectScopedRemoteToolNames(
   const sourceContext = withActiveProjectContext(options.context, options.projectId);
 
   for (const source of remoteSources) {
+    options.context?.abortSignal?.throwIfAborted();
     const toolDefinitions = filterProjectScopedRemoteToolDefinitions(
-      await source.listTools(sourceContext),
+      cloneToolDefinitions(
+        await raceWithAbort(
+          Promise.resolve().then(() => source.listTools(sourceContext)),
+          options.context?.abortSignal,
+        ),
+      ),
       options.projectId,
       options.projectScopedRemoteToolOptions,
     );

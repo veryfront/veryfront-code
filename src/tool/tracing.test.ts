@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { HostToolSet } from "./host-tools.ts";
 import { traceHostTools, type TraceHostToolsOptions } from "./tracing.ts";
 
@@ -11,7 +12,7 @@ function requireTool(tools: HostToolSet, toolName: string) {
   return definition;
 }
 
-Deno.test("traceHostTools passes through tools without execute unchanged", () => {
+it("traceHostTools passes through tools without execute unchanged", () => {
   const providerTool = { description: "A provider tool" };
   const toolset: HostToolSet = { web_search: providerTool };
 
@@ -22,7 +23,7 @@ Deno.test("traceHostTools passes through tools without execute unchanged", () =>
   assertStrictEquals(traced.web_search, providerTool);
 });
 
-Deno.test("traceHostTools wraps executable tools with a trace span", async () => {
+it("traceHostTools wraps executable tools with a trace span", async () => {
   const spans: string[] = [];
   const calls: unknown[] = [];
   const toolset: HostToolSet = {
@@ -49,7 +50,7 @@ Deno.test("traceHostTools wraps executable tools with a trace span", async () =>
   assertEquals(calls, [{ input: "val" }]);
 });
 
-Deno.test("traceHostTools publishes attributes with tool name and tool call id", async () => {
+it("traceHostTools publishes attributes with tool name and tool call id", async () => {
   const attributes: Record<string, unknown>[] = [];
   const toolset: HostToolSet = {
     bash: {
@@ -80,7 +81,7 @@ Deno.test("traceHostTools publishes attributes with tool name and tool call id",
   ]);
 });
 
-Deno.test("traceHostTools keeps build/set attribute callbacks on the same narrowed type", async () => {
+it("traceHostTools keeps build/set attribute callbacks on the same narrowed type", async () => {
   type NarrowAttributes = Record<string, string | number>;
   const seen: NarrowAttributes[] = [];
   const options: TraceHostToolsOptions<NarrowAttributes> = {
@@ -103,7 +104,7 @@ Deno.test("traceHostTools keeps build/set attribute callbacks on the same narrow
   assertEquals(seen, [{ "tool.name": "typed", count: 1 }]);
 });
 
-Deno.test("traceHostTools preserves non-execute properties on wrapped tools", () => {
+it("traceHostTools preserves non-execute properties on wrapped tools", () => {
   const providerOptions = { anthropic: { cacheControl: { type: "ephemeral" } } };
   const toolset: HostToolSet = {
     my_tool: {
@@ -122,7 +123,22 @@ Deno.test("traceHostTools preserves non-execute properties on wrapped tools", ()
   assertStrictEquals(tracedTool.providerOptions, providerOptions);
 });
 
-Deno.test("traceHostTools propagates errors from the original execute function", async () => {
+it("traceHostTools preserves prototype-named tools as own properties", async () => {
+  const toolset: HostToolSet = {};
+  Object.defineProperty(toolset, "__proto__", {
+    value: { execute: () => "ok" },
+    enumerable: true,
+  });
+
+  const traced = traceHostTools(toolset, {
+    trace: (_spanName, operation) => operation(),
+  });
+
+  assertEquals(Object.hasOwn(traced, "__proto__"), true);
+  assertEquals(await requireTool(traced, "__proto__").execute?.({}), "ok");
+});
+
+it("traceHostTools propagates errors from the original execute function", async () => {
   const toolset: HostToolSet = {
     fail: {
       execute: () => {
@@ -144,7 +160,7 @@ Deno.test("traceHostTools propagates errors from the original execute function",
   );
 });
 
-Deno.test("traceHostTools returns an empty toolset for empty input", () => {
+it("traceHostTools returns an empty toolset for empty input", () => {
   const traced = traceHostTools({}, {
     trace: (_spanName, operation) => operation(),
   });

@@ -80,4 +80,53 @@ describe("local project resolver", () => {
 
     assertEquals(await resolver.find("shop"), `${workspace}/projects/shop`);
   });
+
+  it("does not resolve inherited configuration keys", async () => {
+    const resolver = createLocalProjectResolver({
+      localProjects: {},
+      basePath: () => "/workspace",
+      fs: { exists: () => Promise.resolve(false) },
+    });
+
+    assertEquals(await resolver.find("toString"), undefined);
+  });
+
+  it("rejects unsafe dynamic slugs before filesystem discovery", async () => {
+    const existsCalls: string[] = [];
+    const resolver = createLocalProjectResolver({
+      basePath: () => "/workspace",
+      fs: {
+        exists(path: string): Promise<boolean> {
+          existsCalls.push(path);
+          return Promise.resolve(true);
+        },
+      },
+    });
+
+    assertEquals(await resolver.find("../outside"), undefined);
+    assertEquals(await resolver.find("nested/project"), undefined);
+    assertEquals(await resolver.find(""), undefined);
+    assertEquals(existsCalls, []);
+  });
+
+  it("snapshots configured mappings without executing accessors", async () => {
+    let getterCalls = 0;
+    const localProjects = Object.defineProperty({}, "unsafe", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "/unsafe";
+      },
+    }) as Record<string, string>;
+
+    let error: unknown;
+    try {
+      createLocalProjectResolver({ localProjects });
+    } catch (caught) {
+      error = caught;
+    }
+
+    assertEquals(error instanceof TypeError, true);
+    assertEquals(getterCalls, 0);
+  });
 });

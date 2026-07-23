@@ -6,6 +6,8 @@ import type {
 } from "../types.ts";
 import { getReactImportMap } from "../url-builder.ts";
 
+const MAX_REACT_IMPORT_MAP_CACHE_ENTRIES = 64;
+
 export class ReactStrategy implements ImportRewriteStrategy {
   readonly name = "react";
   readonly priority = 0;
@@ -37,9 +39,17 @@ export class ReactStrategy implements ImportRewriteStrategy {
 
   private getImportMap(version: string): Record<string, string> {
     const cached = this.importMapCache.get(version);
-    if (cached) return cached;
+    if (cached) {
+      this.importMapCache.delete(version);
+      this.importMapCache.set(version, cached);
+      return cached;
+    }
 
     const importMap = getReactImportMap(version);
+    if (this.importMapCache.size >= MAX_REACT_IMPORT_MAP_CACHE_ENTRIES) {
+      const oldestVersion = this.importMapCache.keys().next().value;
+      if (oldestVersion !== undefined) this.importMapCache.delete(oldestVersion);
+    }
     this.importMapCache.set(version, importMap);
     return importMap;
   }

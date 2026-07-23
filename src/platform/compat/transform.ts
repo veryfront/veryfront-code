@@ -5,8 +5,6 @@
 
 import { getEsbuild, initializeEsbuild } from "./esbuild.ts";
 
-let esbuildInitialized = false;
-
 export interface TransformResult {
   code: string;
 }
@@ -33,10 +31,10 @@ export async function transformJsx(
 
 /** Call at server startup to ensure esbuild binary is available. */
 export async function initializeTransform(): Promise<void> {
-  if (esbuildInitialized) return;
-
+  // The bundler registry owns initialization and idempotency. Keeping a second
+  // boolean here allowed concurrent callers to observe an unrelated local
+  // state and could become stale when the registered bundler changed.
   await initializeEsbuild();
-  esbuildInitialized = true;
 }
 
 export function isUsingEsbuild(): boolean {

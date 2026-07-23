@@ -24,9 +24,16 @@ import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { mergeConfigs } from "#veryfront/config/loader.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { dirname, join, normalize, toFileUrl } from "#veryfront/compat/path/index.ts";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
@@ -55,6 +62,8 @@ import {
 import { sha256HexBytes } from "./hash.ts";
 import {
   RELEASE_ASSET_BASE_PATH,
+  RELEASE_ASSET_CACHED_HTTP_MAX_FILES,
+  RELEASE_ASSET_CACHED_HTTP_MAX_TOTAL_BYTES,
   RELEASE_ASSET_CONTENT_TYPES,
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
@@ -64,10 +73,11 @@ import {
 } from "./constants.ts";
 import { routeForPage } from "./route-path.ts";
 export { routeForPage } from "./route-path.ts";
-import type {
-  ReleaseAssetCssEntry,
-  ReleaseAssetManifest,
-  ReleaseAssetRouteEntry,
+import {
+  parseReleaseAssetManifest,
+  type ReleaseAssetCssEntry,
+  type ReleaseAssetManifest,
+  type ReleaseAssetRouteEntry,
 } from "./manifest-schema.ts";
 
 const logger = serverLogger.component("release-asset-build");
@@ -629,9 +639,10 @@ function resolveLocalDependencyPath(specifier: string, parentFilePath?: string):
 }
 
 function isPathInsideRoot(filePath: string, rootPath: string): boolean {
-  const file = normalize(filePath);
-  const root = normalize(rootPath);
-  return file === root || file.startsWith(`${root}/`) || file.startsWith(`${root}\\`);
+  const relativePath = relative(normalize(rootPath), normalize(filePath));
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." &&
+      !relativePath.startsWith("../") && !relativePath.startsWith("..\\"));
 }
 
 function resolveMaterializedReleasePath(tempDir: string, filePath: string): string {
@@ -791,62 +802,140 @@ async function collectCachedHttpDependencyModules(
   const fs = createFileSystem();
   const cacheRoot = normalize(cacheDir);
 
-  async function visit(dir: string): Promise<void> {
-    let entries: AsyncIterable<{ name: string; isFile?: boolean; isDirectory?: boolean }>;
-    try {
-      entries = fs.readDir(dir);
-    } catch {
-      return;
-    }
+  const sources: Array<{ filePath: string; size: number }> = [];
+  let sourceBytes = 0;
 
-    for await (const entry of entries) {
+  async function discover(dir: string): Promise<void> {
+    for await (const entry of fs.readDir(dir)) {
+      if (entry.isSymlink) continue;
       const path = join(dir, entry.name);
       if (entry.isDirectory) {
-        await visit(path);
+        await discover(path);
         continue;
       }
       if (!entry.isFile || !/^http-[a-z0-9]+\.mjs$/i.test(entry.name)) continue;
-      const filePath = normalize(path);
+      const info = fs.lstat ? await fs.lstat(path) : await fs.stat(path);
+      if (info.isSymlink || !info.isFile) continue;
+      if (!Number.isSafeInteger(info.size) || info.size < 0) {
+        throw new TypeError("Cached HTTP dependency source has an invalid size");
+      }
+      if (info.size > RELEASE_ASSET_MAX_SIZE_BYTES) {
+        throw new TypeError("Cached HTTP dependency source exceeds the release asset size limit");
+      }
+      if (sources.length >= RELEASE_ASSET_CACHED_HTTP_MAX_FILES) {
+        throw new TypeError("Cached HTTP dependency source count exceeds the build limit");
+      }
+      if (sourceBytes > RELEASE_ASSET_CACHED_HTTP_MAX_TOTAL_BYTES - info.size) {
+        throw new TypeError("Cached HTTP dependency aggregate size exceeds the build limit");
+      }
+
+      const filePath = normalize(fs.realPath ? await fs.realPath(path) : path);
       if (!isPathInsideRoot(filePath, cacheRoot)) {
-        throw new Error(`Cached HTTP dependency resolved outside cache root: ${filePath}`);
+        throw new TypeError("Cached HTTP dependency source resolves outside its cache root");
       }
 
-      const code = await fs.readTextFile(filePath);
-      const manifestKey = extractSourceUrl(code) ?? `file://${filePath}`;
-      const specifiers = [`file://${filePath}`];
-      if (manifestKey.startsWith("http://") || manifestKey.startsWith("https://")) {
-        specifiers.push(manifestKey);
-      }
-
-      const existing = dependencies.get(manifestKey);
-      if (existing) {
-        for (const specifier of specifiers) existing.specifiers.add(specifier);
-        existing.sourcePath ??= filePath;
-      } else {
-        dependencies.set(manifestKey, {
-          manifestKey,
-          specifiers: new Set(specifiers),
-          sourcePath: filePath,
-          code,
-        });
-      }
+      sourceBytes += info.size;
+      sources.push({ filePath, size: info.size });
     }
   }
 
-  await visit(cacheDir);
+  await discover(cacheRoot);
+  sources.sort((left, right) => left.filePath.localeCompare(right.filePath));
+
+  let materializedBytes = 0;
+  for (const { filePath, size } of sources) {
+    const code = await fs.readTextFile(filePath);
+    const actualSize = new TextEncoder().encode(code).byteLength;
+    if (actualSize > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      throw new TypeError("Cached HTTP dependency source exceeds the release asset size limit");
+    }
+    if (materializedBytes > RELEASE_ASSET_CACHED_HTTP_MAX_TOTAL_BYTES - actualSize) {
+      throw new TypeError("Cached HTTP dependency aggregate size exceeds the build limit");
+    }
+    // A changed size means the file changed after discovery. Keep the stricter
+    // of the discovered and materialized totals within the same build budget.
+    materializedBytes += Math.max(size, actualSize);
+    if (materializedBytes > RELEASE_ASSET_CACHED_HTTP_MAX_TOTAL_BYTES) {
+      throw new TypeError("Cached HTTP dependency aggregate size exceeds the build limit");
+    }
+
+    const sourceMetadata = extractSourceUrl(code);
+    if (!sourceMetadata) {
+      throw new TypeError("Cached HTTP dependency is missing valid source metadata");
+    }
+    let sourceUrl: URL;
+    try {
+      sourceUrl = new URL(sourceMetadata);
+    } catch {
+      throw new TypeError("Cached HTTP dependency is missing valid source metadata");
+    }
+    if (
+      (sourceUrl.protocol !== "http:" && sourceUrl.protocol !== "https:") ||
+      sourceUrl.username || sourceUrl.password
+    ) {
+      throw new TypeError("Cached HTTP dependency is missing valid source metadata");
+    }
+    const manifestKey = sourceMetadata;
+    const specifiers = [`file://${filePath}`];
+    specifiers.push(manifestKey);
+
+    const existing = dependencies.get(manifestKey);
+    if (existing) {
+      for (const specifier of specifiers) existing.specifiers.add(specifier);
+      existing.sourcePath ??= filePath;
+    } else {
+      dependencies.set(manifestKey, {
+        manifestKey,
+        specifiers: new Set(specifiers),
+        sourcePath: filePath,
+        code,
+      });
+    }
+  }
 }
 
 export async function buildCachedHttpDependencyAssets(options: {
   cacheDir: string;
+  /** Trusted root that must canonically contain cacheDir when provided. */
+  rootDir?: string;
 }): Promise<{
   dependencies: Record<string, PreparedAsset>;
   assets: PreparedReleaseAsset[];
   gaps: string[];
 }> {
   const fs = createFileSystem();
-  const cacheStat = await fs.stat(options.cacheDir).catch(() => null);
-  if (!cacheStat?.isDirectory) {
+  const cacheDir = normalize(options.cacheDir);
+  if (
+    options.rootDir &&
+    (cacheDir === normalize(options.rootDir) || !isPathInsideRoot(cacheDir, options.rootDir))
+  ) {
+    throw new TypeError("Cached HTTP dependency directory must stay inside its trusted root");
+  }
+
+  let cacheStat;
+  try {
+    cacheStat = fs.lstat ? await fs.lstat(cacheDir) : await fs.stat(cacheDir);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     return { dependencies: {}, assets: [], gaps: [] };
+  }
+  if (cacheStat.isSymlink) {
+    throw new TypeError("Cached HTTP dependency directory must not be a symbolic link");
+  }
+  if (!cacheStat.isDirectory) return { dependencies: {}, assets: [], gaps: [] };
+
+  let canonicalCacheDir = cacheDir;
+  if (fs.realPath) {
+    canonicalCacheDir = normalize(await fs.realPath(cacheDir));
+    if (options.rootDir) {
+      const canonicalRootDir = normalize(await fs.realPath(options.rootDir));
+      if (
+        canonicalCacheDir === canonicalRootDir ||
+        !isPathInsideRoot(canonicalCacheDir, canonicalRootDir)
+      ) {
+        throw new TypeError("Cached HTTP dependency directory resolves outside its trusted root");
+      }
+    }
   }
 
   const dependencyModules = new Map<string, DependencyModule>();
@@ -854,7 +943,7 @@ export async function buildCachedHttpDependencyAssets(options: {
   const pendingBytes = new Map<string, { bytes: Uint8Array<ArrayBuffer>; contentType: string }>();
   const gaps: string[] = [];
 
-  await collectCachedHttpDependencyModules(options.cacheDir, dependencyModules);
+  await collectCachedHttpDependencyModules(canonicalCacheDir, dependencyModules);
 
   const finalized = await finalizeDependencyModules(
     dependencyModules,
@@ -1500,6 +1589,9 @@ async function runBuildInner(
   // 1. Begin (idempotent). H2: capture manifest_version from the API response.
   const beginResult = await client.beginReleaseAssetManifestBuild(input.releaseVersionRef);
   const manifestVersion = beginResult.manifest_version;
+  if (!Number.isSafeInteger(manifestVersion) || manifestVersion < 0) {
+    throw new Error("Manifest build returned an invalid manifest version");
+  }
 
   // 2. Materialize the release file set.
   const files = await client.listAllReleaseFiles(input.releaseVersionRef);
@@ -1525,7 +1617,13 @@ async function runBuildInner(
   const knownPaths = new Set(sourceByPath.keys());
   const vendorHttpImports = input.vendorHttpImports ?? vendorHttpImportsWithCache;
   const vendorDependencies = isDependencyImportMapEnabled();
-  const releaseConfig = await resolveReleaseConfigFromSourceFiles(sourceByPath, input, tempDir);
+  const sourceContentHash = await hashReleaseFileSet(sourceByPath);
+  const releaseConfig = await resolveReleaseConfigFromSourceFiles(
+    sourceByPath,
+    input,
+    tempDir,
+    sourceContentHash,
+  );
   const releaseReactVersion = await resolveReleaseReactVersion(
     sourceByPath,
     releaseConfig,
@@ -1712,22 +1810,30 @@ async function runBuildInner(
       });
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
-        const contentHash = await sha256HexBytes(bytes);
-        css.push({
-          contentHash,
-          size: bytes.byteLength,
-          contentType: RELEASE_ASSET_CONTENT_TYPES.css,
-          styleProfileHash: compiled.styleProfileHash,
-        });
-        cssHashes.push(contentHash);
-        if (!pendingBytes.has(contentHash)) {
-          pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.css });
-          uploadQueue.push({
-            logicalPath: `__css__/${contentHash}`,
+        if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+          pushGap(gaps, "css:oversized");
+          logger.warn("Compiled release CSS exceeds max asset size, skipping", {
+            size: bytes.byteLength,
+            limit: RELEASE_ASSET_MAX_SIZE_BYTES,
+          });
+        } else {
+          const contentHash = await sha256HexBytes(bytes);
+          css.push({
             contentHash,
             size: bytes.byteLength,
             contentType: RELEASE_ASSET_CONTENT_TYPES.css,
+            styleProfileHash: compiled.styleProfileHash,
           });
+          cssHashes.push(contentHash);
+          if (!pendingBytes.has(contentHash)) {
+            pendingBytes.set(contentHash, { bytes, contentType: RELEASE_ASSET_CONTENT_TYPES.css });
+            uploadQueue.push({
+              logicalPath: `__css__/${contentHash}`,
+              contentHash,
+              size: bytes.byteLength,
+              contentType: RELEASE_ASSET_CONTENT_TYPES.css,
+            });
+          }
         }
       } else {
         // The compiler degraded (returned null/empty) — record the gap so a
@@ -1751,12 +1857,15 @@ async function runBuildInner(
   await uploadWithConcurrency(uploadQueue, RELEASE_ASSET_UPLOAD_CONCURRENCY, async (asset) => {
     const stored = pendingBytes.get(asset.contentHash);
     if (!stored) return;
-    await client.uploadReleaseAsset(
+    const result = await client.uploadReleaseAsset(
       input.releaseVersionRef,
       asset.contentHash,
       stored.contentType,
       stored.bytes,
     );
+    if (!result.stored && !result.existed) {
+      throw new Error("Release asset upload was not acknowledged");
+    }
     // M3: drop bytes immediately after upload.
     pendingBytes.delete(asset.contentHash);
   });
@@ -1796,9 +1905,6 @@ async function runBuildInner(
   }
 
   // 6. Assemble and PUT the manifest.
-  const sourceContentHash = await sha256HexBytes(
-    new TextEncoder().encode([...sourceByPath.keys()].sort().join("\n")) as Uint8Array<ArrayBuffer>,
-  );
   const manifest: ReleaseAssetManifest = {
     schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
     projectId: input.projectId,
@@ -1829,7 +1935,12 @@ async function runBuildInner(
     fallback: { mode: "jit", gaps },
   };
 
-  const result = await client.putReleaseAssetManifest(input.releaseVersionRef, manifest);
+  const validatedManifest = parseReleaseAssetManifest(manifest);
+  if (!validatedManifest) {
+    throw new Error("Release asset build produced an invalid manifest");
+  }
+
+  const result = await client.putReleaseAssetManifest(input.releaseVersionRef, validatedManifest);
   logger.info("Release asset manifest built", {
     releaseId: input.releaseId,
     manifestVersion,
@@ -1959,12 +2070,10 @@ async function loadReleaseConfigModule(
   }
 }
 
-async function releaseFileSetSignature(sourceByPath: Map<string, string>): Promise<string> {
-  const separator = "::veryfront-release-file::";
-  const serialized = [...sourceByPath.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([path, content]) => `${path}${separator}${content}`)
-    .join(separator);
+async function hashReleaseFileSet(sourceByPath: Map<string, string>): Promise<string> {
+  const serialized = JSON.stringify(
+    [...sourceByPath.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
+  );
   return await sha256HexBytes(new TextEncoder().encode(serialized) as Uint8Array<ArrayBuffer>);
 }
 
@@ -1972,8 +2081,8 @@ async function resolveReleaseConfigFromSourceFiles(
   sourceByPath: Map<string, string>,
   input: ReleaseAssetBuildInput,
   tempDir: string,
+  releaseSignature: string,
 ): Promise<VeryfrontConfig> {
-  const releaseSignature = await releaseFileSetSignature(sourceByPath);
   const configFile = VERYFRONT_CONFIG_FILES.find((candidate) =>
     typeof sourceByPath.get(candidate) === "string"
   );

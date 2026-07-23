@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  CacheNodeModulesLinkCoordinator,
   getCacheBaseDir,
   getCacheDirFromContext,
   getHttpBundleCacheDir,
@@ -156,6 +157,53 @@ describe("cache-dir", () => {
       const result = runWithCacheDir("/tmp/test", getHttpBundleCacheDir);
       assert(result.startsWith("/tmp/test"));
       assert(result.endsWith("veryfront-http-bundle"));
+    });
+  });
+
+  describe("CacheNodeModulesLinkCoordinator", () => {
+    it("coalesces work per cache root without suppressing other roots", async () => {
+      const coordinator = new CacheNodeModulesLinkCoordinator();
+      let attempts = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const operation = () => {
+        attempts += 1;
+        return gate;
+      };
+
+      const first = coordinator.ensure("/cache/one", operation);
+      const second = coordinator.ensure("/cache/one", operation);
+      assert(first === second);
+      await Promise.resolve();
+      assertEquals(attempts, 1);
+      release();
+      await Promise.all([first, second]);
+
+      await coordinator.ensure("/cache/two", () => {
+        attempts += 1;
+        return Promise.resolve();
+      });
+      assertEquals(attempts, 2);
+    });
+
+    it("retries a cache root after a failed link attempt", async () => {
+      const coordinator = new CacheNodeModulesLinkCoordinator();
+      let attempts = 0;
+
+      await assertRejects(() =>
+        coordinator.ensure("/cache/retry", () => {
+          attempts += 1;
+          return Promise.reject(new Error("link failed"));
+        })
+      );
+      await coordinator.ensure("/cache/retry", () => {
+        attempts += 1;
+        return Promise.resolve();
+      });
+
+      assertEquals(attempts, 2);
     });
   });
 });

@@ -14,6 +14,7 @@ export type {
   BunNamespace,
   BunServeOptions,
   BunServer as BunServerType,
+  BunServerWebSocket,
   BunWatchEvent,
   BunWatchOptions,
 } from "./types.ts";

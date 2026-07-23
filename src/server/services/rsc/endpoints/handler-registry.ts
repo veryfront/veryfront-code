@@ -27,6 +27,7 @@ export interface HandlerCache<T> {
   set(key: string, value: T): void;
   delete(key: string): boolean;
   clear(): void;
+  keys(): IterableIterator<string>;
   readonly size: number;
 }
 
@@ -35,7 +36,6 @@ let cacheRegistered = false;
 
 /** Injected cache for testing (overrides default LRUCache) */
 let injectedCache: HandlerCache<RSCDevServerHandler> | null = null;
-const handlerKeysByProject = new Map<string, Set<string>>();
 
 function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   if (injectedCache) return injectedCache;
@@ -84,10 +84,16 @@ export function getRSCHandler(
 
   const handler = new RSCDevServerHandler(projectDir, options);
   cache.set(cacheKey, handler);
-  const projectKeys = handlerKeysByProject.get(baseKey) ?? new Set<string>();
-  projectKeys.add(cacheKey);
-  handlerKeysByProject.set(baseKey, projectKeys);
   return handler;
+}
+
+function getProjectKey(cacheKey: string): string | undefined {
+  try {
+    const parts: unknown = JSON.parse(cacheKey);
+    return Array.isArray(parts) && typeof parts[0] === "string" ? parts[0] : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function invalidateRSCHandlersForProject(
@@ -95,12 +101,10 @@ export function invalidateRSCHandlersForProject(
   projectId?: string,
 ): void {
   const projectKey = projectId ?? projectDir;
-  const cacheKeys = handlerKeysByProject.get(projectKey);
-  if (!cacheKeys) return;
-
   const cache = getHandlersCache();
-  for (const cacheKey of cacheKeys) cache.delete(cacheKey);
-  handlerKeysByProject.delete(projectKey);
+  for (const cacheKey of Array.from(cache.keys())) {
+    if (getProjectKey(cacheKey) === projectKey) cache.delete(cacheKey);
+  }
 }
 
 export function __injectCacheForTests(
@@ -112,12 +116,10 @@ export function __injectCacheForTests(
 export function __resetRSCHandlerForTests(): void {
   const cache = injectedCache ?? rscHandlersByProject;
   cache?.clear();
-  handlerKeysByProject.clear();
 }
 
 export function __destroyRSCHandlerForTests(): void {
   injectedCache = null;
   rscHandlersByProject?.destroy();
   rscHandlersByProject = null;
-  handlerKeysByProject.clear();
 }

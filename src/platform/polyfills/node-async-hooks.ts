@@ -1,14 +1,18 @@
 /**
  * Browser polyfill for node:async_hooks.
  *
- * Provides a no-op AsyncLocalStorage that safely does nothing in the browser.
- * Server-only modules like head-collector.ts import AsyncLocalStorage at the top level,
- * but their functions already guard against missing stores (returning early in browser).
- * This polyfill prevents the import from crashing without changing module behavior.
+ * Provides the callback-running subset used by browser-served framework modules.
+ * Browser execution does not retain request-local state, so getStore always returns
+ * undefined and enterWith and disable are no-ops. Consumers must already treat a
+ * missing store as the browser-safe state.
  */
 
 export class AsyncLocalStorage<T = unknown> {
-  run<R>(_store: T, callback: (...args: unknown[]) => R, ...args: unknown[]): R {
+  run<R, Args extends unknown[]>(
+    _store: T,
+    callback: (...args: Args) => R,
+    ...args: Args
+  ): R {
     return callback(...args);
   }
 

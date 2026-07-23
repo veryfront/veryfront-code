@@ -371,7 +371,7 @@ export function resolveBareSpecifier(
 
   const parsed = parseBarePackageSpecifier(specifier);
   if (parsed == null) {
-    return `https://esm.sh/${specifier}?target=es2022`;
+    return specifier;
   }
 
   return buildEsmShUrl(
@@ -394,10 +394,7 @@ export function hasIncompatibleFilePaths(code: string, localCacheDir: string): b
     if (!path.includes("veryfront-http-bundle")) continue;
 
     if (!path.startsWith(localCacheDir)) {
-      logger.debug("Bundle has incompatible file path from different environment", {
-        path,
-        expectedDir: localCacheDir,
-      });
+      logger.debug("Bundle has incompatible file path from different environment");
       return true;
     }
   }

@@ -245,6 +245,35 @@ describe("API Context Builder", () => {
 
       assertEquals(context.query.getAll("tags"), ["js", "ts", "deno"]);
     });
+
+    it("should isolate params from the matched route result", () => {
+      const params = { slug: ["guide", "intro"] };
+      const request = new Request("http://localhost/api/docs/guide/intro");
+      const context = createContext(
+        request,
+        createMatch("/api/docs/[...slug]", "/api/docs/[...slug].ts", params),
+        mockFs,
+      );
+
+      (context.params.slug as string[])[0] = "poisoned";
+      assertEquals(params, { slug: ["guide", "intro"] });
+    });
+
+    it("should preserve Headers instances and caller content types", async () => {
+      const request = new Request("http://localhost/api/users");
+      const context = createContext(request, createMatch("/api/users", "/api/users.ts"), mockFs);
+
+      const response = context.json({ ok: true }, {
+        headers: new Headers([
+          ["x-request-id", "req-1"],
+          ["content-type", "application/problem+json"],
+        ]),
+      });
+
+      assertEquals(response.headers.get("x-request-id"), "req-1");
+      assertEquals(response.headers.get("content-type"), "application/problem+json");
+      assertEquals(await response.json(), { ok: true });
+    });
   });
 
   describe("normalizeParams()", () => {

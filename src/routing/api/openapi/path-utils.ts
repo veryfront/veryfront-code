@@ -6,6 +6,12 @@
  * @module routing/api/openapi/path-utils
  */
 
+import {
+  extractParamName,
+  isCatchAllSegment,
+  isDynamicSegment,
+} from "#veryfront/utils/route-path-utils.ts";
+
 /**
  * Path parameter extracted from route pattern.
  */
@@ -37,17 +43,9 @@ interface PathParam {
  * ```
  */
 export function toOpenAPIPath(pattern: string): string {
-  return pattern.replace(
-    /\[\[\.\.\.([^\]]+)\]\]|\[\.\.\.([^\]]+)\]|\[([^\]]+)\]/g,
-    (
-      _match,
-      optionalCatchAll: string | undefined,
-      catchAll: string | undefined,
-      segment: string | undefined,
-    ) => {
-      return `{${optionalCatchAll ?? catchAll ?? segment ?? ""}}`;
-    },
-  );
+  return pattern.split("/").map((segment) =>
+    isDynamicSegment(segment) ? `{${extractParamName(segment)}}` : segment
+  ).join("/");
 }
 
 /**
@@ -80,18 +78,11 @@ export function extractPathParams(pattern: string): PathParam[] {
     params.push({ name, required, catchAll });
   }
 
-  for (const match of pattern.matchAll(/\[\[\.\.\.([^\]]+)\]\]/g)) {
-    addParam(match[1], false, true);
-  }
-
-  for (const match of pattern.matchAll(/\[\.\.\.([^\]]+)\]/g)) {
-    addParam(match[1], true, true);
-  }
-
-  for (const match of pattern.matchAll(/\[([^\[\]]+)\]/g)) {
-    const name = match[1];
-    if (!name || name.startsWith("...")) continue;
-    addParam(name, true, false);
+  for (const segment of pattern.split("/")) {
+    if (!isDynamicSegment(segment)) continue;
+    const catchAll = isCatchAllSegment(segment);
+    const required = !segment.startsWith("[[...");
+    addParam(extractParamName(segment), required, catchAll);
   }
 
   return params;

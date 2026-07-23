@@ -8,7 +8,13 @@ function getAllowedMethods(
   methods: readonly string[],
   exclude: (method: string) => boolean = () => false,
 ): string[] {
-  return methods.filter((method) => !exclude(method) && typeof handler[method] === "function");
+  const allowed = methods.filter(
+    (method) => !exclude(method) && typeof handler[method] === "function",
+  );
+  if (allowed.includes("GET") && !allowed.includes("HEAD")) {
+    allowed.splice(allowed.indexOf("GET") + 1, 0, "HEAD");
+  }
+  return allowed;
 }
 
 export function createAppRouteMethodNotAllowed(handlerModule: Record<string, unknown>): Response {
@@ -17,10 +23,6 @@ export function createAppRouteMethodNotAllowed(handlerModule: Record<string, unk
 }
 
 export function createPagesRouteMethodNotAllowed(handler: Record<string, unknown>): Response {
-  const allowed = getAllowedMethods(
-    handler,
-    Object.keys(handler),
-    (method) => method === "default",
-  );
+  const allowed = getAllowedMethods(handler, HTTP_METHODS);
   return methodNotAllowed(allowed);
 }

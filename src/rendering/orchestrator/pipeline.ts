@@ -92,10 +92,12 @@ import {
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
+import { mergeFrontmatter, resolveDocumentMetadata } from "./html-head.ts";
 
 const renderPageLog = logger.component("render-page");
 const renderPipelineLog = logger.component("render-pipeline");
 const resolvePageDataLog = logger.component("resolve-page-data");
+const CSS_GENERATION_ERROR_MESSAGE = "CSS generation failed";
 // Re-export test helper for backward compatibility
 export { __injectCssCacheForTests } from "./css-cache.ts";
 
@@ -138,7 +140,7 @@ interface DataResolutionResult {
   layoutProps: Map<string, Record<string, unknown>>;
 }
 
-interface MdxMetadataResult {
+interface PageMetadataResult {
   frontmatter: Record<string, unknown>;
   headings: Array<{ id: string; text: string; level: number }>;
 }
@@ -174,6 +176,12 @@ export class RenderPipeline {
       moduleCache: createModuleCache(),
       esmCache: createEsmCache(),
     };
+  }
+
+  /** Release resources owned by this pipeline. */
+  destroy(): void {
+    this.dataFetcher.destroy();
+    this.reactVersionPromise = null;
   }
 
   private getReactVersion(): Promise<string> {
@@ -410,10 +418,12 @@ export class RenderPipeline {
                 dataJobs.map(async (job) => {
                   try {
                     const jobPath = (job as LoadedModule & { path?: string }).path;
-                    const fetchOptions: FetchDataOptions = {
-                      modulePath: jobPath,
-                      projectDir: this.config.projectDir,
-                    };
+                    const fetchOptions: FetchDataOptions | undefined = jobPath
+                      ? {
+                        modulePath: jobPath,
+                        projectDir: this.config.projectDir,
+                      }
+                      : undefined;
                     const result = await this.dataFetcher
                       .fetchData(
                         job.mod as PageWithData,
@@ -831,7 +841,7 @@ export class RenderPipeline {
     const { frontmatter, headings } = await profilePhase(
       "page_data.extract_mdx_metadata",
       () =>
-        this.extractMdxMetadata(
+        this.extractPageMetadata(
           pageType,
           pageInfo,
           slug,
@@ -867,6 +877,10 @@ export class RenderPipeline {
       "page_data.resolve_css",
       () => this.resolvePageDataCss(slug, options, projectUpdatedAt),
     );
+    const requiresFullDocumentNavigation = pageType === "ts" || pageType === "js" ||
+        (pageIslandPlan?.serverLayouts.length ?? 0) > 0
+      ? true
+      : undefined;
 
     resolvePageDataLog.debug("Resolved page data", {
       slug,
@@ -875,7 +889,7 @@ export class RenderPipeline {
       layoutCount: layouts.length,
       appPath,
       isolatedClientPage: pageIslandPlan ? true : undefined,
-      requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
+      requiresFullDocumentNavigation,
       headingsCount: headings.length,
       hasCss: !!css,
       cssAction,
@@ -895,7 +909,7 @@ export class RenderPipeline {
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
       isolatedClientPage: pageIslandPlan ? true : undefined,
-      requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
+      requiresFullDocumentNavigation,
       releaseId: options?.releaseId,
       releaseAssetModules: buildReleaseAssetModules(options?.releaseAssetManifest),
       headings,
@@ -905,47 +919,44 @@ export class RenderPipeline {
     };
   }
 
-  private async extractMdxMetadata(
+  private async extractPageMetadata(
     pageType: PageDataResponse["pageType"],
     pageInfo: Awaited<ReturnType<PageResolver["resolvePage"]>>,
     slug: string,
     options: RenderOptions | undefined,
     params: Record<string, string | string[]>,
-  ): Promise<MdxMetadataResult> {
-    if (pageType !== "mdx") {
-      return { frontmatter: {}, headings: [] };
-    }
-
-    try {
-      const bundleResult = await this.config.pageRenderer.preparePageBundles(
+  ): Promise<PageMetadataResult> {
+    if (pageType !== "mdx" && pageType !== "md") {
+      const mergedFrontmatter = mergeFrontmatter({
         pageInfo,
-        slug,
-        undefined,
-        {
-          ...options,
-          ...(Object.keys(params).length > 0 ? { params } : {}),
-        },
-      );
-
-      const pageBundle = bundleResult.pageBundle;
-      return {
-        frontmatter: pageBundle && "frontmatter" in pageBundle
-          ? (pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter || {}
-          : {},
-        headings: pageBundle && "headings" in pageBundle
-          ? (pageBundle as {
-            headings?: Array<{ id: string; text: string; level: number }>;
-          }).headings || []
-          : [],
-      };
-    } catch (error) {
-      renderPipelineLog.error("Frontmatter/headings extraction failed", {
-        slug,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        pageBundle: {},
       });
-      return { frontmatter: {}, headings: [] };
+      return {
+        frontmatter: resolveDocumentMetadata(mergedFrontmatter).frontmatter,
+        headings: [],
+      };
     }
+
+    const bundleResult = await this.config.pageRenderer.preparePageBundles(
+      pageInfo,
+      slug,
+      undefined,
+      {
+        ...options,
+        ...(Object.keys(params).length > 0 ? { params } : {}),
+      },
+    );
+    const pageBundle = bundleResult.pageBundle;
+    const mergedFrontmatter = mergeFrontmatter({
+      pageInfo,
+      pageBundle: { frontmatter: pageBundle?.frontmatter },
+      collectedMetadata: bundleResult.collectedMetadata,
+    });
+
+    return {
+      frontmatter: resolveDocumentMetadata(mergedFrontmatter).frontmatter,
+      headings: pageBundle?.headings ?? [],
+    };
   }
 
   private async resolveAppPath(): Promise<string | undefined> {
@@ -1055,7 +1066,7 @@ export class RenderPipeline {
       return {
         css: undefined,
         cssAction: undefined,
-        cssError: `CSS generation failed: ${errorMessage}`,
+        cssError: CSS_GENERATION_ERROR_MESSAGE,
       };
     }
   }

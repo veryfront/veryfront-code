@@ -17,13 +17,10 @@ export async function loadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
 ): Promise<MDXModule> {
-  const projectSlug = context.projectSlug || "unknown";
-
   return await withSpan(
     SpanNames.MDX_LOAD_MODULE_ESM,
     () => doLoadModuleESM(compiledProgramCode, context),
     {
-      "mdx.project_slug": projectSlug,
       "mdx.code_length": compiledProgramCode.length,
     },
   );

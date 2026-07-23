@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { recordError } from "./error-instruments.ts";
 import { CONFIG_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { Counter } from "#veryfront/observability/tracing/api-shim.ts";
@@ -27,10 +27,12 @@ describe("error-instruments", () => {
       recordError(error, mockCounter);
 
       assertEquals(calls.length, 1);
-      assertEquals(calls[0].value, 1);
-      assertEquals(calls[0].attributes.slug, "config-not-found");
-      assertEquals(calls[0].attributes.category, "CONFIG");
-      assertEquals(calls[0].attributes.status, "404");
+      const call = calls[0];
+      assertExists(call);
+      assertEquals(call.value, 1);
+      assertEquals(call.attributes.slug, "config-not-found");
+      assertEquals(call.attributes.category, "CONFIG");
+      assertEquals(call.attributes.status, "404");
     });
 
     it("should handle different error types", () => {
@@ -47,9 +49,11 @@ describe("error-instruments", () => {
       recordError(error, mockCounter);
 
       assertEquals(calls.length, 1);
-      assertEquals(calls[0].attributes.slug, "render-error");
-      assertEquals(calls[0].attributes.category, "RUNTIME");
-      assertEquals(calls[0].attributes.status, "500");
+      const call = calls[0];
+      assertExists(call);
+      assertEquals(call.attributes.slug, "render-error");
+      assertEquals(call.attributes.category, "RUNTIME");
+      assertEquals(call.attributes.status, "500");
     });
 
     it("should do nothing when counter is null", () => {
@@ -79,8 +83,21 @@ describe("error-instruments", () => {
 
       recordError(error, mockCounter);
 
-      assertEquals(typeof calls[0].attributes.status, "string");
-      assertEquals(calls[0].attributes.status, "404");
+      const call = calls[0];
+      assertExists(call);
+      assertEquals(typeof call.attributes.status, "string");
+      assertEquals(call.attributes.status, "404");
+    });
+
+    it("does not let exporter failures affect error handling", () => {
+      const error = CONFIG_NOT_FOUND.create();
+      const counter = {
+        add() {
+          throw new Error("exporter failure");
+        },
+      } as Counter;
+
+      recordError(error, counter);
     });
   });
 });

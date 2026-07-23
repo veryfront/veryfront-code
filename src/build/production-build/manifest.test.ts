@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateManifest, generateRedirects } from "./manifest.ts";
 
@@ -44,7 +44,7 @@ describe("build/production-build/manifest", () => {
         enableCompression: true,
       });
 
-      assertEquals(result.features.codeSplitting, true);
+      assertEquals(result.features.codeSplitting, false);
       assertEquals(result.features.prefetching, true);
       assertEquals(result.features.compression, true);
       assertEquals(result.features.streaming, true);
@@ -116,9 +116,24 @@ describe("build/production-build/manifest", () => {
     it("should include chunks when splitting enabled with valid manifest", () => {
       const chunkManifest = {
         version: "1.0",
-        routes: { "/": { chunks: ["chunk-a.js"] } },
-        chunks: { "chunk-a.js": { file: "chunk-a.js" } },
-        shared: ["shared.js"],
+        routes: { "/": { entry: "chunk-a.js", chunks: ["chunk-shared.js"] } },
+        chunks: {
+          "chunk-a.js": {
+            name: "chunk-a",
+            file: "chunk-a.js",
+            imports: [],
+            size: 1,
+            hash: "deadbeef".repeat(8),
+          },
+          "chunk-shared.js": {
+            name: "chunk-shared",
+            file: "chunk-shared.js",
+            imports: [],
+            size: 1,
+            hash: "c0ffee00".repeat(8),
+          },
+        },
+        shared: ["chunk-shared.js"],
       };
 
       const result = generateManifest({
@@ -131,17 +146,46 @@ describe("build/production-build/manifest", () => {
 
       const route = result.routes[0];
       assertExists(route);
-      assertEquals(route.chunks, ["chunk-a.js"]);
+      assertEquals(route.chunks, ["chunk-shared.js"]);
     });
 
-    it("should return null chunks for invalid manifest", () => {
+    it("rejects an invalid chunk manifest instead of silently disabling chunks", () => {
+      assertThrows(
+        () =>
+          generateManifest({
+            ...baseOptions,
+            enableSplitting: true,
+            chunkManifest: { invalid: true } as never,
+          }),
+        TypeError,
+        "chunk manifest",
+      );
+    });
+
+    it("reports code splitting as disabled when no chunk manifest exists", () => {
       const result = generateManifest({
         ...baseOptions,
         enableSplitting: true,
-        chunkManifest: { invalid: true },
+        chunkManifest: null,
       });
+      assertEquals(result.features.codeSplitting, false);
+    });
 
-      assertEquals(result.chunks, null);
+    it("rejects duplicate generated route paths", () => {
+      assertThrows(
+        () =>
+          generateManifest({
+            ...baseOptions,
+            appRoutes: [{
+              path: "/about",
+              pageFile: "app/about/page.tsx",
+              segments: ["about"],
+              segmentDirs: ["app", "about"],
+            }],
+          }),
+        TypeError,
+        "Duplicate build manifest route",
+      );
     });
   });
 

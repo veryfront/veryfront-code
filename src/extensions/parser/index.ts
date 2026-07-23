@@ -1,5 +1,5 @@
 /**
- * Parser category barrel — CodeParser (AST traversal) contract.
+ * Parser category barrel for the CodeParser AST traversal contract.
  *
  * @module extensions/parser
  */

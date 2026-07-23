@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -548,7 +548,7 @@ describe("ComponentRegistry", () => {
       });
     });
 
-    it("should handle component name conflicts by last-write-wins", async () => {
+    it("should reject component name conflicts", async () => {
       await withTestContext("registry-conflict", async (context) => {
         const componentsDir = join(context.projectDir, "components");
         const dir1 = join(componentsDir, "dir1");
@@ -559,10 +559,12 @@ describe("ComponentRegistry", () => {
         await writeTextFile(join(dir2, "Component.tsx"), "export default function C2(){}");
 
         const reg = await createRegistry(context.projectDir);
-        await reg.discover();
-
-        assertEquals(reg.getComponentNames().length, 1);
-        assert(reg.has("Component"));
+        await assertRejects(
+          () => reg.discover(),
+          Error,
+          "Multiple components use the name Component",
+        );
+        assertEquals(reg.getComponentNames().length, 0);
       });
     });
 
@@ -592,7 +594,7 @@ describe("ComponentRegistry", () => {
       });
     });
 
-    it("should handle components with same name in different directories", async () => {
+    it("should reject components with the same name in different directories", async () => {
       await withTestContext("registry-same-name", async (context) => {
         const componentsDir = join(context.projectDir, "components");
         const islandsDir = join(context.projectDir, "islands");
@@ -602,9 +604,12 @@ describe("ComponentRegistry", () => {
         await writeTextFile(join(islandsDir, "Button.tsx"), "export default function B2(){}");
 
         const reg = await createRegistry(context.projectDir);
-        await reg.discover();
-
-        assertEquals(reg.getComponentNames().filter((n) => n === "Button").length, 1);
+        await assertRejects(
+          () => reg.discover(),
+          Error,
+          "Multiple components use the name Button",
+        );
+        assertEquals(reg.getComponentNames().length, 0);
       });
     });
 
@@ -689,12 +694,12 @@ describe("ComponentRegistry", () => {
       await withTestContext("registry-loader", async (context) => {
         const reg = await createRegistry(context.projectDir);
 
-        assertEquals(reg.getLoader(), undefined);
+        const loader = reg.getLoader();
+        assertExists(loader);
 
         await reg.discover();
 
-        const _loader = reg.getLoader();
-        void _loader;
+        assertEquals(reg.getLoader(), loader);
       });
     });
 

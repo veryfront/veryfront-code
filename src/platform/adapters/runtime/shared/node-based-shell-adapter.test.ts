@@ -1,10 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeBasedShellAdapter } from "./node-based-shell-adapter.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function createAdapter(): NodeBasedShellAdapter {
   return new NodeBasedShellAdapter();
+}
+
+function captureError(operation: () => unknown): VeryfrontError {
+  try {
+    operation();
+  } catch (error) {
+    if (error instanceof VeryfrontError) return error;
+    throw error;
+  }
+  throw new Error("Expected operation to throw");
 }
 
 describe("NodeBasedShellAdapter", () => {
@@ -37,7 +48,10 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should throw for non-existent path", () => {
-      assertThrows(() => createAdapter().statSync("./non-existent-file-12345.txt"), Error);
+      const path = "./non-existent-file-12345.txt";
+      const error = captureError(() => createAdapter().statSync(path));
+      assertEquals(error.slug, "file-not-found");
+      assertEquals(error.message.includes(path), false);
     });
   });
 
@@ -55,7 +69,10 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should throw for non-existent file", () => {
-      assertThrows(() => createAdapter().readFileSync("./non-existent-file-12345.txt"), Error);
+      const path = "./non-existent-file-12345.txt";
+      const error = captureError(() => createAdapter().readFileSync(path));
+      assertEquals(error.slug, "file-not-found");
+      assertEquals(error.message.includes(path), false);
     });
   });
 });

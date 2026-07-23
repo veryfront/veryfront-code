@@ -11,14 +11,19 @@ export type ProviderToolCompatProvider =
 
 /** Public API contract for provider tool profile. */
 export interface ProviderToolProfile {
+  /** Provider value. */
   provider: ProviderToolCompatProvider;
+  /** Max tools value. */
   maxTools?: number;
+  /** Whether sanitize schema. */
   sanitizeSchema: boolean;
 }
 
 /** Options accepted by provider tool compat. */
 export interface ProviderToolCompatOptions {
+  /** Model value. */
   model?: string;
+  /** Required tool names value. */
   requiredToolNames?: readonly string[];
 }
 

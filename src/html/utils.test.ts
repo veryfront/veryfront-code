@@ -1,10 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import {
+  buildImportMap,
   buildImportMapJson,
   buildRootAttributes,
   clearImportMapCache,
+  PLATFORM_UTILITIES,
   shouldDisableLayout,
 } from "./utils.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
@@ -53,7 +61,11 @@ describe("html-generation/utils", () => {
     });
 
     it("should escape HTML in attributes", () => {
-      const result = buildRootAttributes('<script>alert("xss")</script>', "dev", false);
+      const result = buildRootAttributes(
+        '<script>alert("xss")</script>',
+        "development",
+        false,
+      );
 
       assert(!result.includes("<script>"));
       assertStringIncludes(result, "&lt;script&gt;");
@@ -63,6 +75,14 @@ describe("html-generation/utils", () => {
       const result = buildRootAttributes("", "development", false);
 
       assertStringIncludes(result, 'data-veryfront-slug=""');
+    });
+
+    it("rejects unsupported runtime modes", () => {
+      assertThrows(
+        () => buildRootAttributes("test", "preview" as never, false),
+        TypeError,
+        "mode",
+      );
     });
   });
 
@@ -104,6 +124,125 @@ describe("html-generation/utils", () => {
   });
 
   describe("buildImportMapJson", () => {
+    it("rejects unsupported module-resolution modes", async () => {
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            config: { client: { moduleResolution: "fallback" } },
+          } as never),
+        Error,
+        "module resolution mode",
+      );
+    });
+
+    it("rejects unsupported CDN providers instead of silently using esm.sh", async () => {
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            config: { client: { cdn: { provider: "unknown" } } },
+          } as never),
+        Error,
+        "CDN provider",
+      );
+    });
+
+    it("rejects malformed custom import-map values", async () => {
+      await assertRejects(
+        () => buildImportMapJson({ invalid: 42 } as never),
+        Error,
+        "import-map value",
+      );
+    });
+
+    it("enforces per-entry import-map limits in UTF-8 bytes", async () => {
+      await assertRejects(
+        () => buildImportMapJson({ ["é".repeat(4_096)]: "/module.js" }),
+        Error,
+        "specifier",
+      );
+      await assertRejects(
+        () => buildImportMapJson({ module: "é".repeat(4_096) }),
+        Error,
+        "value",
+      );
+    });
+
+    it("converts inaccessible custom import maps into typed validation failures", async () => {
+      const inaccessibleMap = new Proxy({}, {
+        ownKeys() {
+          throw new Error("private implementation detail");
+        },
+      });
+      await assertRejects(
+        () => buildImportMapJson(inaccessibleMap as Record<string, string>),
+        Error,
+        "cannot be inspected",
+      );
+
+      const inaccessibleEntry = {} as Record<string, string>;
+      Object.defineProperty(inaccessibleEntry, "module", {
+        enumerable: true,
+        get() {
+          throw new Error("private implementation detail");
+        },
+      });
+      await assertRejects(
+        () => buildImportMapJson(inaccessibleEntry),
+        Error,
+        "entry cannot be inspected",
+      );
+    });
+
+    it("rejects excessive custom import-map entries", async () => {
+      const imports = Object.fromEntries(
+        Array.from(
+          { length: 1025 },
+          (_, index) => [`package-${index}`, `/modules/package-${index}.js`],
+        ),
+      );
+
+      await assertRejects(
+        () => buildImportMapJson(imports),
+        Error,
+        "entry limit",
+      );
+    });
+
+    it("rejects custom import maps beyond the aggregate byte budget", async () => {
+      const imports = Object.fromEntries(
+        Array.from(
+          { length: 300 },
+          (_, index) => [`package-${index}`, `/${"x".repeat(4090)}${index}`],
+        ),
+      );
+
+      await assertRejects(
+        () => buildImportMapJson(imports),
+        Error,
+        "byte budget",
+      );
+    });
+
+    it("does not let callers mutate cached import maps", async () => {
+      const first = await buildImportMap({ pretty: false });
+      const originalReact = first.imports.react;
+      first.imports.react = "https://attacker.invalid/react.js";
+
+      const second = await buildImportMap({ pretty: false });
+
+      assertEquals(second.imports.react, originalReact);
+    });
+
+    it("does not expose internal cache keys in public results", async () => {
+      const result = await buildImportMap({ pretty: false });
+
+      assertEquals(Object.hasOwn(result, "cacheKey"), false);
+    });
+
+    it("publishes an immutable platform utility map", () => {
+      assertEquals(Object.isFrozen(PLATFORM_UTILITIES), true);
+    });
+
     it("should build import map JSON with custom imports", async () => {
       const customMap = { "custom-lib": "https://cdn.example.com/lib.js" };
       const result = await buildImportMapJson(customMap);
@@ -282,6 +421,144 @@ describe("html-generation/utils", () => {
       assertEquals(imports["react/jsx-dev-runtime"], `/_vf/assets/${"5".repeat(64)}.js`);
     });
 
+    it("does not execute release manifest accessors", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      let dependencyReads = 0;
+      const changingManifest = {
+        releaseId: "release-id",
+        get dependencies() {
+          dependencyReads++;
+          return {};
+        },
+      } as never;
+
+      await assertRejects(
+        () =>
+          buildImportMap({
+            pretty: false,
+            releaseAssetManifest: changingManifest,
+          }),
+        TypeError,
+        "Release manifest must not contain accessor properties",
+      );
+      assertEquals(dependencyReads, 0);
+    });
+
+    it("rejects manifest dependency entries with invalid content hashes", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const manifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.802",
+        sourceContentHash: "source",
+        createdAt: "2026-06-14T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies: {
+          react: {
+            contentHash: "../invalid",
+            size: 10,
+            contentType: "text/javascript",
+          },
+        },
+        fallback: { mode: "jit", gaps: [] },
+      } as ReleaseAssetManifest;
+
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            pretty: false,
+            releaseAssetManifest: manifest,
+          }),
+        Error,
+        "dependency entry is invalid",
+      );
+    });
+
+    it("does not execute manifest dependency entry accessors", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      let accessorCalls = 0;
+      const entry: Record<string, unknown> = {
+        size: 1,
+        contentType: "text/javascript",
+      };
+      Object.defineProperty(entry, "contentHash", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return "a".repeat(64);
+        },
+      });
+
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            pretty: false,
+            releaseAssetManifest: {
+              releaseId: "release-id",
+              dependencies: { react: entry },
+            } as never,
+          }),
+        TypeError,
+        "dependency entry must not contain accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("rejects manifest dependency collections beyond the resource limit", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const dependencies = Object.fromEntries(
+        Array.from({ length: 10_001 }, (_, index) => [
+          `dependency-${index}`,
+          {
+            contentHash: "a".repeat(64),
+            size: 1,
+            contentType: "text/javascript",
+          },
+        ]),
+      );
+
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            pretty: false,
+            releaseAssetManifest: {
+              releaseId: "release-id",
+              dependencies,
+            } as never,
+          }),
+        Error,
+        "dependency collection exceeds",
+      );
+    });
+
+    it("rejects manifest dependency collections that cannot be inspected", async () => {
+      setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+      const dependencies = new Proxy({}, {
+        ownKeys() {
+          throw new Error("private implementation detail");
+        },
+      });
+
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            pretty: false,
+            releaseAssetManifest: {
+              releaseId: "release-id",
+              dependencies,
+            } as never,
+          }),
+        Error,
+        "dependency collection cannot be inspected",
+      );
+    });
+
     it("rewrites local Veryfront import-map aliases from manifest dependency keys", async () => {
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
       const headHash = "a".repeat(64);
@@ -359,6 +636,37 @@ describe("html-generation/utils", () => {
         `/_vf_modules/_veryfront/react/runtime/core.js?vf_release=release-id&vf_runtime=${VERYFRONT_VERSION}`,
       );
       assertEquals(imports["@/"], "/_vf_modules/");
+    });
+
+    it("rejects oversized release IDs before import-map URL construction", async () => {
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            pretty: false,
+            releaseAssetManifest: {
+              releaseId: "r".repeat(257),
+              dependencies: {},
+            } as never,
+          }),
+        Error,
+        "release ID",
+      );
+    });
+
+    it("rejects oversized release IDs even when no local import needs versioning", async () => {
+      await assertRejects(
+        () =>
+          buildImportMapJson({
+            pretty: false,
+            config: { client: { moduleResolution: "bundled" } },
+            releaseAssetManifest: {
+              releaseId: "r".repeat(257),
+              dependencies: {},
+            } as never,
+          }),
+        Error,
+        "release ID",
+      );
     });
 
     it("refreshes cached import maps when project package versions change", async () => {
@@ -469,6 +777,25 @@ describe("html-generation/utils", () => {
 
     it("should return false when layout is a string path", () => {
       assertEquals(shouldDisableLayout({ layout: "custom-layout" }), false);
+    });
+
+    it("does not execute frontmatter accessors", () => {
+      let accessorCalls = 0;
+      const frontmatter: Record<string, unknown> = {};
+      Object.defineProperty(frontmatter, "layout", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return false;
+        },
+      });
+
+      assertThrows(
+        () => shouldDisableLayout(frontmatter),
+        TypeError,
+        "frontmatter must not contain accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
     });
   });
 });

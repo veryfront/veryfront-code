@@ -7,7 +7,8 @@ const MAX_SUMMARY_STRING_BYTES = 8 * 1024;
 
 const encoder = new TextEncoder();
 
-type ConversationRunEventRecord = Record<string, unknown> & { type: string };
+/** Record shape accepted by conversation run event normalization. */
+export type ConversationRunEventRecord = Record<string, unknown> & { type: string };
 
 function hasStringField<TField extends "delta" | "content">(
   event: ConversationRunEventRecord,

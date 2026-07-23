@@ -2,9 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createIssueSchema,
   generateIssueId,
   ISSUE_PREFIXES,
+  ISSUE_STORAGE_LIMITS,
+  issueSchema,
   isValidIssueId,
+  listIssuesResultSchema,
   parseIssueId,
   parseState,
 } from "./issue.schema.ts";
@@ -39,6 +43,8 @@ describe("issues/schema", () => {
         ["BUG-001", false], // wrong prefix
         ["ISSUE001", false], // missing dash
         ["issue-001", false], // lowercase
+        ["ISSUE-000", false], // zero is not a valid sequence number
+        ["ISSUE-12345678901", false], // bounded numeric component
         ["", false],
       ];
 
@@ -62,7 +68,7 @@ describe("issues/schema", () => {
     });
 
     it("should return null for invalid IDs", () => {
-      for (const id of ["INVALID", "BUG-001"] as const) {
+      for (const id of ["INVALID", "BUG-001", "ISSUE-000", "ISSUE-12345678901"] as const) {
         assertEquals(parseIssueId(id), null);
       }
     });
@@ -100,6 +106,117 @@ describe("issues/schema", () => {
 
     it("should handle numbers beyond 3 digits", () => {
       assertEquals(generateIssueId("ISSUE", ["ISSUE-999"]), "ISSUE-1000");
+    });
+
+    it("should reject unbounded existing ID collections", () => {
+      const existing = Array.from(
+        { length: ISSUE_STORAGE_LIMITS.maxIssues },
+        (_, index) => `ISSUE-${String(index + 1).padStart(3, "0")}`,
+      );
+      let error: unknown;
+      try {
+        generateIssueId("ISSUE", existing);
+      } catch (caught) {
+        error = caught;
+      }
+      assertEquals(error instanceof RangeError, true);
+    });
+  });
+
+  describe("resource bounds", () => {
+    it("should reject bodies whose UTF-8 representation exceeds the byte budget", () => {
+      assertEquals(
+        createIssueSchema.safeParse({
+          title: "Multibyte body",
+          body: "😀".repeat(225_001),
+        }).success,
+        false,
+      );
+    });
+
+    it("should reject blank, duplicate, and NUL-bearing create fields", () => {
+      for (
+        const input of [
+          { title: "   " },
+          { title: "Valid", labels: [" "] },
+          { title: "Valid", labels: ["bug", "bug"] },
+          { title: "Valid", assignees: ["alice", "alice"] },
+          { title: "Valid", milestone: "" },
+          { title: "Valid", body: "before\0after" },
+        ]
+      ) {
+        assertEquals(createIssueSchema.safeParse(input).success, false);
+      }
+    });
+
+    it("should reject line, control, and bidirectional override characters in metadata", () => {
+      for (const unsafe of ["line\u0085break", "line\u2028break", "spoof\u202Etxt"]) {
+        assertEquals(createIssueSchema.safeParse({ title: unsafe }).success, false);
+        assertEquals(
+          createIssueSchema.safeParse({ title: "Valid", labels: [unsafe] }).success,
+          false,
+        );
+      }
+    });
+
+    it("should require the issue path to match its metadata ID", () => {
+      assertEquals(
+        issueSchema.safeParse({
+          metadata: {
+            id: "ISSUE-001",
+            title: "Path invariant",
+            state: "open",
+            labels: [],
+            assignees: [],
+            created_at: "2026-01-23T00:00:00.000Z",
+            updated_at: "2026-01-23T00:00:00.000Z",
+          },
+          body: "",
+          path: "issues/ISSUE-002.md",
+        }).success,
+        false,
+      );
+    });
+
+    it("should reject metadata updated before it was created", () => {
+      assertEquals(
+        issueSchema.safeParse({
+          metadata: {
+            id: "ISSUE-001",
+            title: "Timestamp invariant",
+            state: "open",
+            labels: [],
+            assignees: [],
+            created_at: "2026-01-23T00:00:00.001Z",
+            updated_at: "2026-01-23T00:00:00.000Z",
+          },
+          body: "",
+          path: "issues/ISSUE-001.md",
+        }).success,
+        false,
+      );
+    });
+
+    it("should represent no-limit list results beyond the explicit query limit", () => {
+      const issue = {
+        metadata: {
+          id: "ISSUE-001",
+          title: "Result",
+          state: "open" as const,
+          labels: [],
+          assignees: [],
+          created_at: "2026-01-23T00:00:00.000Z",
+          updated_at: "2026-01-23T00:00:00.000Z",
+        },
+        body: "",
+        path: "issues/ISSUE-001.md",
+      };
+
+      assertEquals(
+        listIssuesResultSchema.safeParse({ issues: Array(1_001).fill(issue), total: 1_001 })
+          .success,
+        true,
+      );
     });
   });
 

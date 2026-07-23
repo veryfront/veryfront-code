@@ -2,13 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 /**
  * Simple Cross-Runtime Compatibility Test
  *
- * Tests the platform compat layer using relative imports (no import maps needed).
- * This test can run in Deno, Node.js, and Bun without any configuration.
+ * Tests the source-tree platform compatibility layer through relative module imports.
+ * Use each distribution's package test harness to validate Node.js and Bun builds.
  *
  * Run with:
- *   deno test src/platform/compat/cross-runtime-simple.test.ts
- *   npx tsx --test src/platform/compat/cross-runtime-simple.test.ts
- *   bun test src/platform/compat/cross-runtime-simple.test.ts
+ *   deno test --no-check --allow-all src/platform/compat/cross-runtime-simple.test.ts
  */
 
 import { assert, assertEquals } from "#std/assert.ts";
@@ -42,7 +40,7 @@ import {
 } from "./process.ts";
 
 import { createFileSystem } from "./fs.ts";
-import { isBun, isDeno, isNode } from "./runtime.ts";
+import { detectRuntimeEnvironment, isBun, isDeno, isNode } from "./runtime.ts";
 
 function getCurrentRuntime(): string {
   if (isDeno) return "Deno";
@@ -124,6 +122,11 @@ describe("Process Operations", () => {
     assertEquals(getEnv(key), undefined);
   });
 
+  it("does not read inherited process environment properties", () => {
+    assertEquals(getEnv("__proto__"), undefined);
+    assertEquals(getEnv("constructor"), undefined);
+  });
+
   it("pid returns number", () => {
     const p = pid();
     assert(typeof p === "number" && p > 0, "should be positive number");
@@ -160,11 +163,11 @@ describe("Filesystem Operations", () => {
 });
 
 describe("Runtime Detection", () => {
-  it("exactly one runtime detected", () => {
+  it("keeps runtime flags consistent with the canonical classifier", () => {
+    const runtime = detectRuntimeEnvironment();
     assertEquals(
       [isDeno, isBun, isNode].filter(Boolean).length,
-      1,
-      "should detect exactly one runtime",
+      runtime === "unknown" || runtime === "cloudflare" ? 0 : 1,
     );
   });
 

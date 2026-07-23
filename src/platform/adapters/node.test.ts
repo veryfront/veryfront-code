@@ -35,7 +35,7 @@ describe("node.ts exports", () => {
       assertEquals(nodeAdapter.capabilities.typescript, false);
       assertEquals(nodeAdapter.capabilities.jsx, false);
       assertEquals(nodeAdapter.capabilities.websocket, true);
-      assertEquals(nodeAdapter.capabilities.http2, true);
+      assertEquals(nodeAdapter.capabilities.http2, false);
     });
 
     it("has serve method", () => {

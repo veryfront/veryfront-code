@@ -34,6 +34,14 @@ describe("validateTrustedHtml", () => {
         "inline script",
       );
     });
+
+    it("throws on self-closing script start tags", () => {
+      assertThrows(
+        () => validateTrustedHtml('<script src="/payload.js"/>', { strict: true }),
+        Error,
+        "inline script",
+      );
+    });
   });
 
   describe("allows inline scripts only when explicitly requested", () => {
@@ -133,5 +141,9 @@ describe("jsonForInlineScript", () => {
     assertStringIncludes(result, "\\u2029");
     assertStringIncludes(result, "\\u0026");
     assertEquals(JSON.parse(result), value);
+  });
+
+  it("serializes values omitted by JSON.stringify as null", () => {
+    assertEquals(jsonForInlineScript(undefined), "null");
   });
 });

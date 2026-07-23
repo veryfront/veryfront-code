@@ -5,6 +5,7 @@ export type RunSessionStatus = "running" | "waiting" | "completed" | "cancelled"
 
 /** Error shape for run cancelled. */
 export class RunCancelledError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(message = "Run cancelled") {
     super(message);
     this.name = "RunCancelledError";
@@ -13,6 +14,7 @@ export class RunCancelledError extends Error {
 
 /** Error shape for run already exists. */
 export class RunAlreadyExistsError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(runId: string) {
     super(`Run "${runId}" is already active`);
     this.name = "RunAlreadyExistsError";
@@ -21,6 +23,7 @@ export class RunAlreadyExistsError extends Error {
 
 /** Error shape for run not active. */
 export class RunNotActiveError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(runId: string) {
     super(`Run "${runId}" is not active`);
     this.name = "RunNotActiveError";
@@ -29,6 +32,7 @@ export class RunNotActiveError extends Error {
 
 /** Error shape for wait not pending. */
 export class WaitNotPendingError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(runId: string, waitKey: string) {
     super(`Run "${runId}" is not waiting for "${waitKey}"`);
     this.name = "WaitNotPendingError";
@@ -37,6 +41,7 @@ export class WaitNotPendingError extends Error {
 
 /** Error shape for wait conflict. */
 export class WaitConflictError extends Error {
+  /** Creates an instance with the supplied dependencies. */
   constructor(runId: string, waitKey: string) {
     super(`Conflicting resume value for run "${runId}" and wait key "${waitKey}"`);
     this.name = "WaitConflictError";
@@ -45,7 +50,9 @@ export class WaitConflictError extends Error {
 
 /** Public API contract for submit resume value outcome. */
 export interface SubmitResumeValueOutcome {
+  /** Accepted value. */
   accepted: true;
+  /** Duplicate value. */
   duplicate?: true;
 }
 
@@ -76,11 +83,17 @@ const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
 
 /** Options accepted by run resume session manager. */
 export interface RunResumeSessionManagerOptions<T> {
+  /** Waiting TTL ms value. */
   waitingTtlMs?: number;
+  /** Session TTL ms value. */
   sessionTtlMs?: number | null;
+  /** Max concurrent sessions value. */
   maxConcurrentSessions?: number;
+  /** Set timeout fn value. */
   setTimeoutFn?: typeof setTimeout;
+  /** Clear timeout fn value. */
   clearTimeoutFn?: typeof clearTimeout;
+  /** Callback that handles get conflict key. */
   getConflictKey?: (value: T) => string;
 }
 
@@ -92,47 +105,57 @@ function defaultConflictKey(value: unknown): string {
 export class RunResumeSessionManager<T> {
   private readonly sessions = new Map<string, RunSession<T>>();
 
+  /** Creates an instance with the supplied dependencies. */
   constructor(
     private readonly options: RunResumeSessionManagerOptions<T> = {},
   ) {}
 
+  /** Returns the configured waiting TTL ms. */
   private get waitingTtlMs(): number {
     return this.options.waitingTtlMs ?? DEFAULT_WAITING_TTL_MS;
   }
 
+  /** Returns the configured session TTL ms. */
   private get sessionTtlMs(): number | null {
     return this.options.sessionTtlMs ?? null;
   }
 
+  /** Returns the configured max concurrent sessions. */
   private get maxConcurrentSessions(): number {
     return this.options.maxConcurrentSessions ?? DEFAULT_MAX_CONCURRENT_SESSIONS;
   }
 
+  /** Returns the configured set timeout fn. */
   private get setTimeoutFn(): typeof setTimeout {
     return this.options.setTimeoutFn ?? globalThis.setTimeout.bind(globalThis);
   }
 
+  /** Returns the configured clear timeout fn. */
   private get clearTimeoutFn(): typeof clearTimeout {
     return this.options.clearTimeoutFn ?? globalThis.clearTimeout.bind(globalThis);
   }
 
+  /** Returns conflict key. */
   private getConflictKey(value: T): string {
     const createConflictKey = this.options.getConflictKey ?? defaultConflictKey;
     return createConflictKey(value);
   }
 
+  /** Clears waiting timeout. */
   private clearWaitingTimeout(session: RunSession<T>): void {
     if (session.waitingTimeoutId === null) return;
     this.clearTimeoutFn(session.waitingTimeoutId);
     session.waitingTimeoutId = null;
   }
 
+  /** Clears session timeout. */
   private clearSessionTimeout(session: RunSession<T>): void {
     if (session.sessionTimeoutId === null) return;
     this.clearTimeoutFn(session.sessionTimeoutId);
     session.sessionTimeoutId = null;
   }
 
+  /** Performs the schedule session timeout operation. */
   private scheduleSessionTimeout(session: RunSession<T>): void {
     if (this.sessionTtlMs === null) return;
     this.clearSessionTimeout(session);
@@ -141,6 +164,7 @@ export class RunResumeSessionManager<T> {
     }, this.sessionTtlMs);
   }
 
+  /** Performs the schedule waiting timeout operation. */
   private scheduleWaitingTimeout(session: RunSession<T>): void {
     this.clearWaitingTimeout(session);
     session.waitingTimeoutId = this.setTimeoutFn(() => {
@@ -148,12 +172,14 @@ export class RunResumeSessionManager<T> {
     }, this.waitingTtlMs);
   }
 
+  /** Performs the touch session operation. */
   private touchSession(session: RunSession<T>): void {
     if (session.status === "running" || session.status === "waiting") {
       this.scheduleSessionTimeout(session);
     }
   }
 
+  /** Performs the finalize session operation. */
   private finalizeSession(
     session: RunSession<T>,
     status: Exclude<RunSessionStatus, "running" | "waiting">,
@@ -165,6 +191,7 @@ export class RunResumeSessionManager<T> {
     this.sessions.delete(session.runId);
   }
 
+  /** Starts run. */
   startRun(input: { runId: string; threadId: string }): AbortSignal {
     const existing = this.sessions.get(input.runId);
     if (existing && (existing.status === "running" || existing.status === "waiting")) {
@@ -193,6 +220,7 @@ export class RunResumeSessionManager<T> {
     return session.abortController.signal;
   }
 
+  /** Performs the prepare for signal operation. */
   prepareForSignal(runId: string, waitKey: string): void {
     const session = this.sessions.get(runId);
     if (!session) {
@@ -210,6 +238,7 @@ export class RunResumeSessionManager<T> {
     this.touchSession(session);
   }
 
+  /** Performs the wait for signal operation. */
   async waitForSignal(runId: string, waitKey: string): Promise<T> {
     const session = this.sessions.get(runId);
     if (!session || session.status === "completed" || session.status === "failed") {
@@ -265,6 +294,7 @@ export class RunResumeSessionManager<T> {
     });
   }
 
+  /** Performs the submit signal operation. */
   submitSignal(
     runId: string,
     input: { waitKey: string; value: T },
@@ -315,6 +345,7 @@ export class RunResumeSessionManager<T> {
     return { accepted: true };
   }
 
+  /** Performs the cancel run operation. */
   cancelRun(runId: string): boolean {
     const session = this.sessions.get(runId);
     if (!session) return false;
@@ -337,27 +368,29 @@ export class RunResumeSessionManager<T> {
     return true;
   }
 
+  /** Performs the complete run operation. */
   completeRun(runId: string): void {
     const session = this.sessions.get(runId);
     if (!session) return;
     this.finalizeSession(session, "completed");
   }
 
+  /** Performs the fail run operation. */
   failRun(runId: string): void {
     const session = this.sessions.get(runId);
     if (!session) return;
     this.finalizeSession(session, "failed");
   }
 
+  /** Returns run status. */
   getRunStatus(runId: string): RunSessionStatus | null {
     return this.sessions.get(runId)?.status ?? null;
   }
 
+  /** Resets reset. */
   reset(): void {
-    for (const session of this.sessions.values()) {
-      this.clearWaitingTimeout(session);
-      this.clearSessionTimeout(session);
+    for (const runId of [...this.sessions.keys()]) {
+      this.cancelRun(runId);
     }
-    this.sessions.clear();
   }
 }

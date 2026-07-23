@@ -51,6 +51,24 @@ async function withModuleServerUrl<T>(tempDir: string, fn: () => Promise<T>): Pr
 }
 
 describe("client/spa/ClientApp", () => {
+  it("renders a safe fallback for invalid initial page data", () => {
+    const initialData: PageDataResponse = {
+      slug: "/invalid",
+      pagePath: "pages/../private.tsx",
+      pageType: "tsx",
+      layouts: [],
+      providers: [],
+      frontmatter: {},
+      props: {},
+      params: {},
+      layoutProps: {},
+    };
+
+    const html = renderToString(<ClientApp initialData={initialData} />);
+    assertStringIncludes(html, "Something went wrong");
+    assertStringIncludes(html, "The page could not be loaded. Try again.");
+  });
+
   it("renders from cached page and layout modules with the provided props", async () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
@@ -84,8 +102,78 @@ describe("client/spa/ClientApp", () => {
 
         assertStringIncludes(html, "dark");
         assertStringIncludes(html, "&quot;title&quot;:&quot;Welcome&quot;");
-        assertStringIncludes(html, "&quot;slug&quot;:[&quot;guide&quot;,&quot;intro&quot;]");
+        assertStringIncludes(html, "&quot;slug&quot;:&quot;guide/intro&quot;");
       });
     }, { prefix: "vf-client-app-" });
+  });
+
+  it("exposes server-provided headings through page context", async () => {
+    await withTempDir(async (tempDir) => {
+      await writeModule(
+        tempDir,
+        "pages/headings.js",
+        `import React from "react";
+         import { usePageContext } from "veryfront/context";
+         export default function Page() {
+           const context = usePageContext();
+           return React.createElement("span", null, context.headings[0]?.text || "missing");
+         }`,
+      );
+
+      await withModuleServerUrl(tempDir, async () => {
+        await loadComponent("pages/headings.tsx");
+        const initialData = {
+          slug: "/headings",
+          pagePath: "pages/headings.tsx",
+          pageType: "tsx" as const,
+          layouts: [],
+          providers: [],
+          frontmatter: {},
+          props: {},
+          params: {},
+          layoutProps: {},
+          headings: [{ id: "intro", text: "Introduction", level: 2 }],
+        };
+
+        const html = renderToString(<ClientApp initialData={initialData} />);
+        assertStringIncludes(html, "Introduction");
+      });
+    }, { prefix: "vf-client-headings-" });
+  });
+
+  it("wraps page layouts with the configured app component", async () => {
+    await withTempDir(async (tempDir) => {
+      await writeModule(
+        tempDir,
+        "pages/app-page.js",
+        'export default function Page() { return "page"; }',
+      );
+      await writeModule(
+        tempDir,
+        "app/app.js",
+        'export default function App(props) { return ["app:", props.children]; }',
+      );
+
+      await withModuleServerUrl(tempDir, async () => {
+        await loadComponent("pages/app-page.tsx");
+        await loadComponent("app/app.tsx");
+        const initialData = {
+          slug: "/app-page",
+          pagePath: "pages/app-page.tsx",
+          pageType: "tsx" as const,
+          layouts: [],
+          providers: [],
+          frontmatter: {},
+          props: {},
+          params: {},
+          layoutProps: {},
+          appPath: "app/app.tsx",
+        };
+
+        const html = renderToString(<ClientApp initialData={initialData} />);
+        assertStringIncludes(html, "app:");
+        assertStringIncludes(html, "page");
+      });
+    }, { prefix: "vf-client-app-wrapper-" });
   });
 });

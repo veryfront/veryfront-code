@@ -9,25 +9,26 @@ import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts"
 import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import type { VerifiedControlPlaneRequestClaims } from "#veryfront/internal-agents/control-plane-auth.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
+import type { RuntimeResponse } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
 import { ResponseBuilder } from "./response/index.ts";
 
-export interface HandlerHelpers {
+export interface HandlerHelpers<TResponse extends RuntimeResponse = Response> {
   createResponseBuilder: (ctx: HandlerContext, nonce?: string) => ResponseBuilder;
   respond: (
-    response: Response | WebSocketUpgradeResponse,
+    response: TResponse,
     metadata?: Record<string, unknown>,
-  ) => HandlerResult;
+  ) => HandlerResult<TResponse>;
   logDebug: (message: string, extra?: Record<string, unknown>, ctx?: HandlerContext) => void;
   getErrorMessage: (error: unknown) => string;
-  continue: () => HandlerResult;
+  continue: () => HandlerResult<TResponse>;
 }
 
-export abstract class BaseHandler implements Handler {
+export abstract class BaseHandler<TResponse extends RuntimeResponse = Response>
+  implements Handler<TResponse> {
   abstract metadata: HandlerMetadata;
 
-  protected readonly helpers: HandlerHelpers = {
+  protected readonly helpers: HandlerHelpers<TResponse> = {
     createResponseBuilder: (ctx, nonce) => this.createResponseBuilder(ctx, nonce),
     respond: (response, metadata) => this.respond(response, metadata),
     logDebug: (message, extra, ctx) => this.logDebug(message, extra, ctx),
@@ -35,7 +36,7 @@ export abstract class BaseHandler implements Handler {
     continue: () => this.continue(),
   };
 
-  abstract handle(req: Request, ctx: HandlerContext): Promise<HandlerResult>;
+  abstract handle(req: Request, ctx: HandlerContext): Promise<HandlerResult<TResponse>>;
 
   protected shouldHandle(req: Request, ctx: HandlerContext): boolean {
     if (this.metadata.enabled && !this.metadata.enabled(ctx)) return false;
@@ -101,15 +102,15 @@ export abstract class BaseHandler implements Handler {
     return String(error);
   }
 
-  protected continue(): HandlerResult {
+  protected continue(): HandlerResult<TResponse> {
     return { continue: true };
   }
 
   protected respond(
-    response: Response | WebSocketUpgradeResponse,
+    response: TResponse,
     metadata?: Record<string, unknown>,
-  ): HandlerResult {
-    return { response: response as Response, continue: false, metadata };
+  ): HandlerResult<TResponse> {
+    return { response, continue: false, metadata };
   }
 
   protected withProxyContext<T>(
@@ -171,7 +172,7 @@ export abstract class BaseHandler implements Handler {
     // (no token = no access to remote project files).
     if (requireToken && !effectiveToken) {
       serverLogger.warn(
-        `[${this.metadata.name}] No API token for proxy context — project content will be unavailable`,
+        `[${this.metadata.name}] No API token for proxy context. Project content will be unavailable`,
         { projectSlug: ctx.projectSlug },
       );
       return fn();

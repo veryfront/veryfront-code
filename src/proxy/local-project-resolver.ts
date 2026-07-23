@@ -24,6 +24,36 @@ export interface LocalProjectResolver {
   find(slug: string): Promise<string | undefined>;
 }
 
+const MAX_LOCAL_PROJECT_SLUG_LENGTH = 128;
+
+function isSafeDynamicProjectSlug(slug: string): boolean {
+  return slug.length > 0 && slug.length <= MAX_LOCAL_PROJECT_SLUG_LENGTH && slug !== "." &&
+    slug !== ".." && !slug.includes("/") && !slug.includes("\\") && !slug.includes("\0");
+}
+
+function snapshotLocalProjects(input: Record<string, string> | undefined): Map<string, string> {
+  const projects = new Map<string, string>();
+  if (!input) return projects;
+
+  let descriptors: Record<string, PropertyDescriptor>;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(input);
+  } catch {
+    throw new TypeError("Local project mappings must be a plain data record");
+  }
+
+  for (const [slug, descriptor] of Object.entries(descriptors)) {
+    if (descriptor.get || descriptor.set || typeof descriptor.value !== "string") {
+      throw new TypeError("Local project mappings must contain only string data properties");
+    }
+    if (!descriptor.value) {
+      throw new TypeError("Local project paths must not be empty");
+    }
+    projects.set(slug, descriptor.value);
+  }
+  return projects;
+}
+
 /**
  * Bounded cache for project paths discovered dynamically at request time
  * (slug -> absolute path). Configured `localProjects` are never written here,
@@ -35,14 +65,15 @@ registerLRUCache("proxy-discovered-local-projects", discoveredLocalProjects);
 export function createLocalProjectResolver(
   options: LocalProjectResolverOptions,
 ): LocalProjectResolver {
-  const localProjects = options.localProjects ?? {};
+  const localProjects = snapshotLocalProjects(options.localProjects);
   const fs = options.fs ?? createFileSystem();
   const getBasePath = options.basePath ?? cwd;
   const logger = options.logger;
 
   async function find(slug: string): Promise<string | undefined> {
-    const mapped = localProjects[slug];
+    const mapped = localProjects.get(slug);
     if (mapped) return mapped;
+    if (!isSafeDynamicProjectSlug(slug)) return undefined;
 
     const projectDirs = ["projects", "data/projects", "examples"];
     const basePath = getBasePath();
@@ -81,7 +112,7 @@ export function createLocalProjectResolver(
         if (!hasApp && !hasPages && !hasComponents && !configMarkers.some(Boolean)) continue;
 
         discoveredLocalProjects.set(cacheKey, projectPath);
-        logger?.debug("Dynamically discovered local project", { slug, projectPath });
+        logger?.debug("Dynamically discovered local project", { slug });
         return projectPath;
       } catch (_) {
         // expected: filesystem check may fail

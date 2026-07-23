@@ -1,4 +1,4 @@
-// Auto-generated — do not edit
+// Auto-generated, do not edit
 import type { IntegrationEndpointHistoricalSummary } from "./schema.ts";
 
 export const historicalToolSummaries: Record<string, IntegrationEndpointHistoricalSummary> = {

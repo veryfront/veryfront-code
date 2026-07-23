@@ -14,6 +14,10 @@ describe("proxy main request URL parsing", () => {
 
     assertStringIncludes(source, "getReplayableRequestBodies(req, maxRetries)");
     assertStringIncludes(source, "body: upstreamBodies[attempt] ?? null");
+    assertStringIncludes(source, "stripHopByHopHeaders(newHeaders)");
+    assertStringIncludes(source, "stripHopByHopHeaders(responseHeaders)");
+    assertStringIncludes(source, 'newHeaders.set("x-forwarded-proto"');
+    assertEquals(source.match(/if \(req\.signal\.aborted\)/g)?.length, 3);
   });
 
   it("drains tracked responses before closing the proxy server", async () => {
@@ -33,6 +37,15 @@ describe("proxy main request URL parsing", () => {
     const closeIndex = source.indexOf("await closeProxyServerWithin");
     assertEquals(drainIndex >= 0, true);
     assertEquals(closeIndex > drainIndex, true);
+
+    const shuttingDownIndex = source.indexOf(
+      "if (shuttingDown) return createProxyDrainingResponse()",
+    );
+    const healthIndex = source.indexOf('if (url.pathname === "/_proxy/health")');
+    assertEquals(shuttingDownIndex >= 0, true);
+    assertEquals(healthIndex > shuttingDownIndex, true);
+    assertStringIncludes(source, "exitCode = 1");
+    assertStringIncludes(source, "exit(exitCode)");
   });
 
   it("starts acknowledged routing invalidation fan-out and handles signed ingress", async () => {
@@ -58,5 +71,15 @@ describe("proxy main request URL parsing", () => {
     assertEquals(drainIndex >= 0, true);
     assertEquals(busCloseIndex > drainIndex, true);
     assertEquals(serverCloseIndex > busCloseIndex, true);
+  });
+
+  it("fails closed on missing production credentials and production stats access", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "if (isProduction() && missingCredentials.length > 0)");
+    assertStringIncludes(
+      source,
+      "isProduction() || Object.keys(proxyHandler.localProjects).length === 0",
+    );
   });
 });

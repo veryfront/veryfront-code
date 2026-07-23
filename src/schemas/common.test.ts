@@ -14,6 +14,10 @@ function assertParseFailure(result: { success: boolean }): void {
 }
 
 describe("CommonSchemas", () => {
+  it("exposes an immutable shared schema registry", () => {
+    assertEquals(Object.isFrozen(CommonSchemas), true);
+  });
+
   describe("email", () => {
     it("should accept valid email", () => {
       assertParseSuccess(CommonSchemas.email.safeParse("user@example.com"));
@@ -87,6 +91,10 @@ describe("CommonSchemas", () => {
     it("should reject phone number with letters", () => {
       assertParseFailure(CommonSchemas.phoneNumber.safeParse("+1415abc1234"));
     });
+
+    it("should reject phone numbers longer than the E.164 representation limit", () => {
+      assertParseFailure(CommonSchemas.phoneNumber.safeParse(`+${"1".repeat(16)}`));
+    });
   });
 
   describe("pagination", () => {
@@ -121,6 +129,24 @@ describe("CommonSchemas", () => {
       assertEquals(result.data.limit, 20);
     });
 
+    it("should reject non-numeric coercion inputs", () => {
+      for (const value of [true, false, null, [2], " 2 ", "02", "+2"]) {
+        assertParseFailure(CommonSchemas.pagination.safeParse({ page: value }));
+      }
+    });
+
+    it("should reject unsafe or unbounded integer inputs", () => {
+      for (
+        const value of [
+          Number.MAX_SAFE_INTEGER + 1,
+          String(Number.MAX_SAFE_INTEGER + 1),
+          "9".repeat(100_000),
+        ]
+      ) {
+        assertParseFailure(CommonSchemas.pagination.safeParse({ page: value }));
+      }
+    });
+
     it("should reject negative page numbers", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ page: -1 }));
     });
@@ -131,6 +157,11 @@ describe("CommonSchemas", () => {
 
     it("should reject invalid order values", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ order: "random" }));
+    });
+
+    it("should reject empty or oversized sort fields", () => {
+      assertParseFailure(CommonSchemas.pagination.safeParse({ sort: "" }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ sort: "s".repeat(129) }));
     });
   });
 
@@ -195,6 +226,10 @@ describe("CommonSchemas", () => {
 
     it("should reject password without special character", () => {
       assertParseFailure(CommonSchemas.strongPassword.safeParse("MyPassw0rd"));
+    });
+
+    it("should reject unbounded password input", () => {
+      assertParseFailure(CommonSchemas.strongPassword.safeParse(`A1!${"a".repeat(1022)}`));
     });
   });
 });

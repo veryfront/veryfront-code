@@ -3,47 +3,67 @@ import { AGENT_TIMEOUT } from "#veryfront/errors";
 
 /** Result returned from detached run drain. */
 export interface DetachedRunDrainResult {
+  /** Whether drained. */
   drained: boolean;
+  /** Pending run IDs value. */
   pendingRunIds: string[];
 }
 
 /** Options accepted by detached run tracker. */
 export interface DetachedRunTrackerOptions<TResumeValue> {
+  /** Session manager value. */
   sessionManager?: RunResumeSessionManager<TResumeValue>;
+  /** Poll interval ms value. */
   pollIntervalMs?: number;
 }
 
 /** Public API contract for detached run tracker. */
 export interface DetachedRunTracker<TResumeValue> {
+  /** Session manager value. */
   readonly sessionManager: RunResumeSessionManager<TResumeValue>;
+  /** Performs the track run operation. */
   trackRun(runId: string): void;
+  /** Performs the untrack run operation. */
   untrackRun(runId: string): void;
+  /** Performs the cancel run operation. */
   cancelRun(runId: string): boolean;
+  /** Performs the register execution operation. */
   registerExecution(runId: string, execution: Promise<void>): void;
+  /** Performs the cancel all runs operation. */
   cancelAllRuns(): string[];
+  /** Performs the wait for drain operation. */
   waitForDrain(
     input: { timeoutMs: number; pollIntervalMs?: number },
   ): Promise<DetachedRunDrainResult>;
+  /** Resets reset. */
   reset(): void;
 }
 
 /** Public API contract for detached run shutdown logger. */
 export interface DetachedRunShutdownLogger {
+  /** Performs the info operation. */
   info(message: string, metadata?: Record<string, unknown>): void;
+  /** Performs the error operation. */
   error(message: string, metadata?: Record<string, unknown>): void;
 }
 
 /** Public API contract for detached run shutdown lifecycle. */
 export interface DetachedRunShutdownLifecycle {
+  /** Sets shutting down. */
   setShuttingDown(): void;
+  /** Releases resources used by stop. */
   stop(): Promise<void>;
 }
 
 /** Options accepted by detached run shutdown lifecycle. */
 export interface DetachedRunShutdownLifecycleOptions<TResumeValue> {
+  /** Tracker value. */
   tracker: DetachedRunTracker<TResumeValue>;
+  /** Logger value. */
   logger: DetachedRunShutdownLogger;
+  /** Drain timeout ms value. */
   drainTimeoutMs?: number;
+  /** Poll interval ms value. */
   pollIntervalMs?: number;
 }
 

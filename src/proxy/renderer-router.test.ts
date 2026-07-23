@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "@std/assert";
+import { assertEquals, assertNotEquals, assertThrows } from "@std/assert";
 import { jumpHash, RendererRouter } from "./renderer-router.ts";
 
 Deno.test("jumpHash", async (t) => {
@@ -42,6 +42,16 @@ Deno.test("jumpHash", async (t) => {
   await t.step("single bucket always returns 0", () => {
     for (let i = 0; i < 100; i++) {
       assertEquals(jumpHash(`key-${i}`, 1), 0);
+    }
+  });
+
+  await t.step("rejects invalid bucket counts", () => {
+    for (const bucketCount of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => jumpHash("test", bucketCount),
+        RangeError,
+        "positive safe integer",
+      );
     }
   });
 
@@ -165,11 +175,57 @@ Deno.test({ name: "RendererRouter", sanitizeOps: false, sanitizeResources: false
       const url = router.resolve("my-project");
       assertNotEquals(url, fallback);
       assertEquals(url.startsWith("http://10.0.1."), true);
+      router._setLastRefresh(Date.now() - 6 * 60 * 1000);
+      assertNotEquals(router.resolve("my-project"), fallback);
       // Should be immediately ready (no DNS)
       await router.ready();
       router.close();
     } finally {
       Deno.env.delete("VERYFRONT_SERVER_TARGETS");
     }
+  });
+
+  await t.step("filters malformed and duplicate static targets", () => {
+    Deno.env.set(
+      "VERYFRONT_SERVER_TARGETS",
+      "10.0.1.2, attacker.test/path, 10.0.1.1, 10.0.1.2, 999.0.0.1",
+    );
+    try {
+      const router = new RendererRouter("unused-host", fallback, 999999);
+      assertEquals(router.targetCount, 2);
+      for (let index = 0; index < 20; index++) {
+        const target = router.resolve(`project-${index}`);
+        assertEquals(/^http:\/\/10\.0\.1\.[12]:20000$/u.test(target), true);
+      }
+      router.close();
+    } finally {
+      Deno.env.delete("VERYFRONT_SERVER_TARGETS");
+    }
+  });
+
+  await t.step("ignores malformed server ports", () => {
+    Deno.env.set("VERYFRONT_SERVER_TARGETS", "10.0.1.1");
+    Deno.env.set("VERYFRONT_SERVER_PORT", "8080trailing");
+    try {
+      const router = new RendererRouter("unused-host", fallback, 999999);
+      assertEquals(router.resolve("project"), "http://10.0.1.1:20000");
+      router.close();
+    } finally {
+      Deno.env.delete("VERYFRONT_SERVER_TARGETS");
+      Deno.env.delete("VERYFRONT_SERVER_PORT");
+    }
+  });
+
+  await t.step("rejects malformed renderer origins and discovery hosts", () => {
+    assertThrows(
+      () => new RendererRouter("valid.test", "file:///tmp/renderer", 999999),
+      TypeError,
+      "valid HTTP origin",
+    );
+    assertThrows(
+      () => new RendererRouter("attacker.test/path", fallback, 999999),
+      TypeError,
+      "discovery host",
+    );
   });
 });

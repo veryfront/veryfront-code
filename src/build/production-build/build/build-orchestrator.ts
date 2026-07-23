@@ -1,6 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, ensureError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   cleanupCaches,
@@ -10,13 +10,19 @@ import {
 } from "./build-cleanup.ts";
 import { executeBuild } from "./build-executor.ts";
 import { initializeBuildContext, normalizeBuildOptions } from "./build-initializer.ts";
-import { setupBuildDirectories } from "./build-setup.ts";
+import {
+  commitBuildOutput,
+  createBuildOutputTransaction,
+  rollbackBuildOutput,
+  setupBuildDirectories,
+} from "./build-setup.ts";
 import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 
+/** Build production output transactionally and return aggregate build statistics. */
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
     "build.production",
@@ -26,29 +32,38 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
 
       try {
         const fs = createFileSystem();
-        const exists = await fs.exists(normalizedOptions.projectDir);
-        if (!exists) throw new Error("Directory does not exist");
-      } catch (error) {
-        logger.error(`Project directory check failed: ${error}`);
+        const stat = await fs.stat(normalizedOptions.projectDir);
+        if (!stat.isDirectory) throw new Error("Path is not a directory");
+      } catch {
+        logger.error("Project directory check failed");
         throw toError(
           createError({
             type: "config",
-            message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
+            message: "Invalid project directory: it does not exist or is not a directory",
           }),
         );
       }
 
-      logger.info("Starting production build", options);
+      logger.info("Starting production build", {
+        ssg: normalizedOptions.ssg,
+        dryRun: normalizedOptions.dryRun,
+      });
 
       const context = await withSpan(
         "build.initializeContext",
-        () => initializeBuildContext(options),
+        () => initializeBuildContext(normalizedOptions),
         {},
       );
+      const finalOutputDir = normalizedOptions.outputDir ?? "";
+      const dryRun = normalizedOptions.dryRun ?? false;
+      const outputTransaction = createBuildOutputTransaction(finalOutputDir, dryRun);
+      let outputCommitted = false;
+      let buildError: Error | null = null;
+      let cleanupAttempted = false;
+      let result: BuildStats | null = null;
 
       try {
-        const outputDir = normalizedOptions.outputDir ?? "";
-        const dryRun = normalizedOptions.dryRun ?? false;
+        const outputDir = outputTransaction.workingOutputDir;
         const enableSplitting = normalizedOptions.enableSplitting ?? true;
         const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
         const enableCompression = normalizedOptions.enableCompression ?? true;
@@ -144,15 +159,59 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           {},
         );
 
+        cleanupAttempted = true;
+        await withSpan(
+          "build.cleanup",
+          () => performCleanup(context.renderer),
+          {},
+        );
+
+        await withSpan(
+          "build.commitOutput",
+          () => commitBuildOutput(outputTransaction),
+          {},
+        );
+        outputCommitted = true;
+
         context.stats.duration = Date.now() - startTime;
         logBuildCompletion(context.stats);
 
-        return context.stats;
-      } finally {
-        await performCleanup(context.renderer);
+        result = context.stats;
+      } catch (error) {
+        buildError = ensureError(error);
+        if (!outputCommitted) {
+          try {
+            await rollbackBuildOutput(outputTransaction);
+          } catch (rollbackError) {
+            buildError = new AggregateError(
+              [buildError, ensureError(rollbackError)],
+              "Production build and staging rollback both failed",
+            );
+          }
+        }
       }
+
+      let cleanupError: Error | null = null;
+      if (!cleanupAttempted) {
+        try {
+          await performCleanup(context.renderer);
+        } catch (error) {
+          cleanupError = ensureError(error);
+        }
+      }
+
+      if (buildError && cleanupError) {
+        throw new AggregateError(
+          [buildError, cleanupError],
+          "Production build and resource cleanup both failed",
+        );
+      }
+      if (buildError) throw buildError;
+      if (cleanupError) throw cleanupError;
+      if (!result) throw new Error("Production build completed without build statistics");
+      return result;
     },
-    { "build.projectDir": options.projectDir },
+    {},
   );
 }
 

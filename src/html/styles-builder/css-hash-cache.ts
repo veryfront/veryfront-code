@@ -17,11 +17,23 @@ import { serverLogger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { hashCSS } from "./candidate-extractor.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   buildCSSCacheEntry,
   parseCSSCacheEntry,
   resolveStylesheet,
 } from "./tailwind-compiler-utils.ts";
+import {
+  MAX_CSS_CANDIDATE_BYTES,
+  MAX_CSS_CANDIDATES,
+  MAX_GENERATED_CSS_BYTES,
+  MAX_LOCAL_CSS_INPUTS_CACHE_BYTES,
+  MAX_LOCAL_HASH_CSS_CACHE_BYTES,
+  MAX_STYLESHEET_BYTES,
+  MAX_TOTAL_CSS_CANDIDATE_BYTES,
+  utf8ByteLength,
+} from "./resource-limits.ts";
 
 const logger = serverLogger.component("tailwind");
 
@@ -62,6 +74,41 @@ const CSS_CACHE_TTL_SECONDS = 24 * 3600;
 
 const LOCAL_CACHE_MAX_SIZE = 100;
 const LOCAL_CSS_INPUTS_CACHE_MAX = 50;
+const CACHE_HASH_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "UnknownError";
+}
+
+function validInputs(entry: CSSInputsCacheEntry): boolean {
+  if (
+    utf8ByteLength(entry.stylesheet) > MAX_STYLESHEET_BYTES ||
+    entry.candidates.length > MAX_CSS_CANDIDATES
+  ) return false;
+
+  let totalBytes = 0;
+  for (const candidate of entry.candidates) {
+    if (typeof candidate !== "string") return false;
+    const candidateBytes = utf8ByteLength(candidate);
+    if (candidateBytes > MAX_CSS_CANDIDATE_BYTES) return false;
+    totalBytes += candidateBytes;
+    if (totalBytes > MAX_TOTAL_CSS_CANDIDATE_BYTES) return false;
+  }
+  return true;
+}
+
+function validCacheEntry(entry: CSSCacheEntry): boolean {
+  return utf8ByteLength(entry.css) <= MAX_GENERATED_CSS_BYTES && validInputs(entry);
+}
+
+function assertCacheWrite(hash: string, entry: CSSCacheEntry): void {
+  if (!CACHE_HASH_PATTERN.test(hash)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid CSS cache hash" });
+  }
+  if (!validCacheEntry(entry)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid CSS cache entry" });
+  }
+}
 
 // ============================================================================
 // Distributed cache initialization infrastructure
@@ -94,7 +141,7 @@ async function getOrInitializeDistributedCache(
       logger.debug(options.initializedLog, { type: backend.type });
       return backend;
     } catch (error) {
-      logger.warn(options.initFailureLog, { error });
+      logger.warn(options.initFailureLog, { error: errorName(error) });
       const fallback = new MemoryCacheBackend(options.localFallbackSize);
       options.setCache(fallback);
       return fallback;
@@ -106,33 +153,16 @@ async function getOrInitializeDistributedCache(
 }
 
 // ============================================================================
-// Bounded local cache utility
-// ============================================================================
-
-function storeInBoundedLocalCache<T>(
-  cache: Map<string, T>,
-  maxSize: number,
-  key: string,
-  entry: T,
-): void {
-  if (cache.has(key)) return;
-
-  if (cache.size >= maxSize) {
-    const firstKey = cache.keys().next().value as string | undefined;
-    if (firstKey) cache.delete(firstKey);
-  }
-
-  cache.set(key, entry);
-}
-
-// ============================================================================
 // CSS cache state
 // ============================================================================
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
 
-const localCssCache = new Map<string, CSSCacheEntry>();
+const localCssCache = new LRUCache<string, CSSCacheEntry>({
+  maxEntries: LOCAL_CACHE_MAX_SIZE,
+  maxSizeBytes: MAX_LOCAL_HASH_CSS_CACHE_BYTES,
+});
 
 const cssCacheOptions: DistributedCacheInitOptions = {
   getCache: () => cssCache,
@@ -154,11 +184,6 @@ function getCssCache(): Promise<CacheBackend> {
 }
 
 function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
-  storeInBoundedLocalCache(localCssCache, LOCAL_CACHE_MAX_SIZE, hash, entry);
-}
-
-function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
-  localCssCache.delete(hash);
   localCssCache.set(hash, entry);
 }
 
@@ -168,7 +193,10 @@ function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
 
 let cssInputsCache: CacheBackend | null = null;
 let cssInputsCacheInitPromise: Promise<CacheBackend> | null = null;
-const localCssInputsCache = new Map<string, CSSInputsCacheEntry>();
+const localCssInputsCache = new LRUCache<string, CSSInputsCacheEntry>({
+  maxEntries: LOCAL_CSS_INPUTS_CACHE_MAX,
+  maxSizeBytes: MAX_LOCAL_CSS_INPUTS_CACHE_BYTES,
+});
 
 const cssInputsCacheOptions: DistributedCacheInitOptions = {
   getCache: () => cssInputsCache,
@@ -190,7 +218,7 @@ function getCssInputsCache(): Promise<CacheBackend> {
 }
 
 function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): void {
-  storeInBoundedLocalCache(localCssInputsCache, LOCAL_CSS_INPUTS_CACHE_MAX, hash, entry);
+  localCssInputsCache.set(hash, entry);
 }
 
 // ============================================================================
@@ -209,6 +237,7 @@ export async function cacheCSSAsync(
 ): Promise<string> {
   const resolvedHash = hash ?? hashCSS(css);
   const entry: CSSCacheEntry = buildCSSCacheEntry(css, inputs, DEFAULT_STYLESHEET);
+  assertCacheWrite(resolvedHash, entry);
 
   storeInLocalCache(resolvedHash, entry);
 
@@ -217,8 +246,7 @@ export async function cacheCSSAsync(
     await cache.set(resolvedHash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
   } catch (error) {
     logger.debug("Failed to store CSS in distributed cache", {
-      hash: resolvedHash,
-      error,
+      error: errorName(error),
     });
   }
 
@@ -226,21 +254,18 @@ export async function cacheCSSAsync(
 }
 
 export function getCSSByHash(hash: string): string | undefined {
+  if (!CACHE_HASH_PATTERN.test(hash)) return undefined;
   const entry = localCssCache.get(hash);
-  if (entry) {
-    touchLocalCache(hash, entry);
-    return entry.css;
-  }
-  return undefined;
+  return entry?.css;
 }
 
 export async function getCSSByHashAsync(hash: string): Promise<string | undefined> {
+  if (!CACHE_HASH_PATTERN.test(hash)) return undefined;
   return await withSpan(
     SpanNames.HTML_GET_CSS_BY_HASH,
     async () => {
       const local = localCssCache.get(hash);
       if (local) {
-        touchLocalCache(hash, local);
         return local.css;
       }
 
@@ -250,16 +275,16 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
         if (!raw) return undefined;
 
         const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
+        if (!validCacheEntry(entry)) return undefined;
 
         storeInLocalCache(hash, entry);
-        logger.debug("CSS cache hit from distributed cache", { hash });
+        logger.debug("CSS cache hit from distributed cache");
         return entry.css;
       } catch (error) {
-        logger.debug("Failed to read from distributed CSS cache", { hash, error });
+        logger.debug("Failed to read from distributed CSS cache", { error: errorName(error) });
         return undefined;
       }
     },
-    { "css.hash": hash },
   );
 }
 
@@ -277,9 +302,12 @@ export async function cacheCSSInputsAsync(
   inputs: { candidates: string[] | Set<string>; stylesheet: string },
 ): Promise<void> {
   const entry: CSSInputsCacheEntry = {
-    candidates: Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates],
+    candidates: [...inputs.candidates],
     stylesheet: resolveStylesheet(inputs.stylesheet, DEFAULT_STYLESHEET),
   };
+  if (!CACHE_HASH_PATTERN.test(hash) || !validInputs(entry)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid CSS inputs cache entry" });
+  }
 
   storeInLocalCssInputsCache(hash, entry);
 
@@ -288,8 +316,7 @@ export async function cacheCSSInputsAsync(
     await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
   } catch (error) {
     logger.debug("Failed to store CSS inputs in distributed cache", {
-      hash,
-      error,
+      error: errorName(error),
     });
   }
 }
@@ -303,9 +330,9 @@ export async function cacheCSSInputsAsync(
  * Returns the full entry (CSS + inputs) if available.
  */
 async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined> {
+  if (!CACHE_HASH_PATTERN.test(hash)) return undefined;
   const local = localCssCache.get(hash);
   if (local && local.candidates.length > 0) {
-    touchLocalCache(hash, local);
     return local;
   }
 
@@ -315,10 +342,11 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
     if (!raw) return undefined;
 
     const entry = parseCSSCacheEntry(raw, DEFAULT_STYLESHEET);
+    if (!validCacheEntry(entry)) return undefined;
     storeInLocalCache(hash, entry);
     return entry;
   } catch (error) {
-    logger.debug("Failed to read CSS cache entry", { hash, error });
+    logger.debug("Failed to read CSS cache entry", { error: errorName(error) });
   }
 
   return undefined;
@@ -328,29 +356,47 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
  * Get CSS generation inputs by hash for JIT regeneration.
  */
 async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | undefined> {
+  if (!CACHE_HASH_PATTERN.test(hash)) return undefined;
   const local = localCssInputsCache.get(hash);
-  if (local) return local;
+  if (local) {
+    return copyCSSInputs(local);
+  }
 
   try {
     const cache = await getCssInputsCache();
     const raw = await cache.get(hash);
     if (!raw) return undefined;
 
-    const entry = JSON.parse(raw) as CSSInputsCacheEntry;
+    if (raw.length > MAX_STYLESHEET_BYTES + MAX_TOTAL_CSS_CANDIDATE_BYTES + 4096) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as Partial<CSSInputsCacheEntry>;
+    if (!Array.isArray(parsed.candidates) || typeof parsed.stylesheet !== "string") {
+      return undefined;
+    }
+    const entry: CSSInputsCacheEntry = {
+      candidates: parsed.candidates as string[],
+      stylesheet: parsed.stylesheet,
+    };
+    if (!validInputs(entry)) return undefined;
     storeInLocalCssInputsCache(hash, entry);
-    logger.debug("CSS inputs cache hit from distributed cache", { hash });
-    return entry;
+    logger.debug("CSS inputs cache hit from distributed cache");
+    return copyCSSInputs(entry);
   } catch (error) {
-    logger.debug("Failed to read CSS inputs from distributed cache", { hash, error });
+    logger.debug("Failed to read CSS inputs from distributed cache", { error: errorName(error) });
     return undefined;
   }
 }
 
 function toCSSInputsEntry(cacheEntry: CSSCacheEntry | undefined): CSSInputsCacheEntry | undefined {
   if (!cacheEntry || cacheEntry.candidates.length === 0) return undefined;
+  return copyCSSInputs(cacheEntry);
+}
+
+function copyCSSInputs(entry: CSSInputsCacheEntry): CSSInputsCacheEntry {
   return {
-    candidates: cacheEntry.candidates,
-    stylesheet: cacheEntry.stylesheet,
+    candidates: [...entry.candidates],
+    stylesheet: entry.stylesheet,
   };
 }
 
@@ -365,7 +411,7 @@ export async function resolveRegenerationInputs(
   const unifiedEntry = await getCSSCacheEntry(expectedHash);
   const unifiedInputs = toCSSInputsEntry(unifiedEntry);
   if (unifiedInputs) {
-    logger.debug("Found inputs in unified CSS cache", { hash: expectedHash });
+    logger.debug("Found inputs in unified CSS cache");
     return unifiedInputs;
   }
 
@@ -379,15 +425,20 @@ export async function persistRegeneratedCSSEntry(
   hash: string,
   entry: CSSCacheEntry,
 ): Promise<void> {
-  storeInLocalCache(hash, entry);
+  const safeEntry: CSSCacheEntry = {
+    css: entry.css,
+    candidates: [...entry.candidates],
+    stylesheet: entry.stylesheet,
+  };
+  assertCacheWrite(hash, safeEntry);
+  storeInLocalCache(hash, safeEntry);
 
   try {
     const cache = await getCssCache();
-    await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
+    await cache.set(hash, JSON.stringify(safeEntry), CSS_CACHE_TTL_SECONDS);
   } catch (error) {
     logger.error("CSS cache write failed", {
-      hash: hash.slice(-20),
-      error: error instanceof Error ? error.message : String(error),
+      error: errorName(error),
     });
   }
 }

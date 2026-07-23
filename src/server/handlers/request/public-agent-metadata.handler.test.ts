@@ -96,6 +96,26 @@ describe("server/handlers/request/public-agent-metadata.handler", () => {
     assertEquals(await result.response.json(), { error: "Invalid agent id" });
   });
 
+  it("returns 400 for an oversized agent identifier before discovery", async () => {
+    let discoveryCalls = 0;
+    const handler = new PublicAgentMetadataHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+
+    const result = await handler.handle(
+      new Request(`https://example.com/api/agents/${"x".repeat(257)}`, { method: "GET" }),
+      createCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(discoveryCalls, 0);
+  });
+
   it("ignores non-GET requests", async () => {
     const handler = new PublicAgentMetadataHandler();
 

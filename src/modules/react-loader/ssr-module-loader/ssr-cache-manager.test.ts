@@ -37,6 +37,22 @@ class FakeDistributedCache implements CacheBackend {
 }
 
 describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("uses a collision-resistant content identity for small and large modules", async () => {
+    const cacheManager = new SSRCacheManager({
+      projectDir: "/project",
+      projectId: "project",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+    });
+
+    const smallHash = await cacheManager.hashContentAsync("export default 1;");
+    const largeHash = await cacheManager.hashContentAsync("x".repeat(20_000));
+
+    assertEquals(/^[a-f0-9]{32}$/.test(smallHash), true);
+    assertEquals(/^[a-f0-9]{32}$/.test(largeHash), true);
+  });
+
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const distributedCache = new FakeDistributedCache();
@@ -206,6 +222,17 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       );
 
       assertEquals(realImportIsInvalid, false);
+
+      const invalidUrlTextIsValid = await cacheManager.validateCachedCode(
+        'const text = "https://esm.sh/_vf_modules/not-an-import.js"; export default text;',
+        join(projectDir, "pages", "index.tsx"),
+        "redis-cache",
+        {
+          checkLocalPaths: false,
+          checkInvalidEsmShPath: true,
+        },
+      );
+      assertEquals(invalidUrlTextIsValid, true);
     } finally {
       await remove(projectDir, { recursive: true });
     }

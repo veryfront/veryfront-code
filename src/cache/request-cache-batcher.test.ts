@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
 import type { CacheBackend } from "./backend.ts";
 import {
   getCachedWithBatching,
@@ -61,6 +62,54 @@ describe("cache/request-cache-batcher", () => {
       assertNotEquals(caught, null);
       assertEquals(caught!.message, "test error");
     });
+
+    it("flushes queued work before the request scope closes", async () => {
+      const backend = createMockBackend({ queued: "value" });
+      let queued!: Promise<string | null>;
+
+      await runWithCacheBatching(() => {
+        queued = getCachedWithBatching(backend, "queued");
+        return Promise.resolve();
+      });
+
+      assertEquals(await queued, "value");
+    });
+
+    it("waits for an already-running threshold flush before closing", async () => {
+      let releaseBatch!: () => void;
+      let markBatchStarted!: () => void;
+      const batchStarted = new Promise<void>((resolve) => {
+        markBatchStarted = resolve;
+      });
+      const batchRelease = new Promise<void>((resolve) => {
+        releaseBatch = resolve;
+      });
+      const backend = createMockBackend();
+      backend.getBatch = async (keys) => {
+        markBatchStarted();
+        await batchRelease;
+        return new Map(keys.map((key) => [key, key]));
+      };
+
+      const pending: Array<Promise<string | null>> = [];
+      let scopeResolved = false;
+      const scope = runWithCacheBatching(() => {
+        for (let index = 0; index < MAX_BATCH_SIZE; index++) {
+          pending.push(getCachedWithBatching(backend, `key-${index}`));
+        }
+        return Promise.resolve();
+      }).then(() => {
+        scopeResolved = true;
+      });
+
+      await batchStarted;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(scopeResolved, false);
+
+      releaseBatch();
+      await scope;
+      assertEquals((await Promise.all(pending)).length, MAX_BATCH_SIZE);
+    });
   });
 
   describe("getRequestCacheContext", () => {
@@ -103,6 +152,26 @@ describe("cache/request-cache-batcher", () => {
         const stats = getRequestCacheStats();
         assertExists(stats);
         assertEquals(stats.stored, 2);
+      });
+    });
+
+    it("bounds stored entries across all backends in one request", async () => {
+      const left = createMockBackend();
+      const right = createMockBackend();
+
+      await runWithCacheBatching(async () => {
+        await Promise.all([
+          ...Array.from(
+            { length: 501 },
+            (_, index) => getCachedWithBatching(left, `left-${index}`),
+          ),
+          ...Array.from(
+            { length: 501 },
+            (_, index) => getCachedWithBatching(right, `right-${index}`),
+          ),
+        ]);
+
+        assertEquals(getRequestCacheStats()?.stored, 1_000);
       });
     });
   });
@@ -198,6 +267,42 @@ describe("cache/request-cache-batcher", () => {
       });
     });
 
+    it("bounds stalled pending work and never exceeds the backend batch limit", async () => {
+      const backend = createMockBackend();
+      let releaseBatches!: () => void;
+      const batchRelease = new Promise<void>((resolve) => {
+        releaseBatches = resolve;
+      });
+      backend.getBatch = async (keys) => {
+        backend.getBatchCalls.push([...keys]);
+        await batchRelease;
+        return new Map(keys.map((key) => [key, key]));
+      };
+
+      await runWithCacheBatching(async () => {
+        const accepted = Array.from(
+          { length: 2000 },
+          (_, index) => getCachedWithBatching(backend, `key-${index}`),
+        );
+        let overflowRejected = false;
+        const overflow = getCachedWithBatching(backend, "overflow").catch(() => {
+          overflowRejected = true;
+          return null;
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const rejectedBeforeRelease = overflowRejected;
+        releaseBatches();
+        await Promise.all([...accepted, overflow]);
+
+        assertEquals(rejectedBeforeRelease, true);
+        assertEquals(
+          backend.getBatchCalls.every((keys) => keys.length <= MAX_BATCH_SIZE),
+          true,
+        );
+      });
+    });
+
     it("should deduplicate requests for the same key", async () => {
       const backend = createMockBackend({ dup: "dup-value" });
 
@@ -226,6 +331,24 @@ describe("cache/request-cache-batcher", () => {
 
         const totalCallsAfter = backend.getCalls.length + backend.getBatchCalls.length;
         assertEquals(totalCallsAfter, totalCallsBefore);
+        assertEquals(getRequestCacheStats()?.hits, 1);
+      });
+    });
+
+    it("isolates identical keys owned by different backends", async () => {
+      const left = createMockBackend({ shared: "left-value" });
+      const right = createMockBackend({ shared: "right-value" });
+
+      await runWithCacheBatching(async () => {
+        const [leftValue, rightValue] = await Promise.all([
+          getCachedWithBatching(left, "shared"),
+          getCachedWithBatching(right, "shared"),
+        ]);
+
+        assertEquals(leftValue, "left-value");
+        assertEquals(rightValue, "right-value");
+        assertEquals(left.getCalls, ["shared"]);
+        assertEquals(right.getCalls, ["shared"]);
       });
     });
 

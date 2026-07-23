@@ -14,14 +14,27 @@ import {
   type RendererInitializer,
   setRendererInitializer,
 } from "./adapter.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /** Minimal mock Renderer that records calls. */
-function createMockRenderer(): Renderer & { calls: Record<string, number> } {
-  const calls: Record<string, number> = {
+type RendererCallCounters = {
+  renderPage: number;
+  resolvePageData: number;
+  getAllPages: number;
+  clearCache: number;
+  destroy: number;
+};
+
+function createMockRenderer(): Renderer & { calls: RendererCallCounters } {
+  const calls: RendererCallCounters = {
     renderPage: 0,
     resolvePageData: 0,
     getAllPages: 0,
@@ -55,7 +68,7 @@ function createMockRenderer(): Renderer & { calls: Record<string, number> } {
     },
     // deno-lint-ignore no-explicit-any
     async initialize(_opts?: any) {},
-  } as unknown as Renderer & { calls: Record<string, number> };
+  } as unknown as Renderer & { calls: RendererCallCounters };
 }
 
 /**
@@ -158,6 +171,7 @@ describe("RendererAdapter with RendererInitializer", () => {
     // Tear down and restore the default initializer
     await destroyRendererAdapter();
     setRendererInitializer(undefined);
+    __resetLogRecordEmitterForTests();
   });
 
   // -- Lifecycle ------------------------------------------------------------
@@ -317,24 +331,6 @@ describe("RendererAdapter with RendererInitializer", () => {
       assertEquals(mockRenderer.calls.clearCache, 1);
     });
 
-    it("getVirtualModuleSystem returns stub methods", async () => {
-      const adapter = await getRendererForProject(stubHandlerContext());
-      const vms = adapter.getVirtualModuleSystem();
-
-      assertEquals(vms.handleRequest(new Request("http://localhost/test")), null);
-      assertEquals(await vms.register("id", "source", "/dir"), "");
-      assertEquals(await vms.registerModule("id", "source", "/dir"), "");
-      assertEquals(vms.getModule("id"), undefined);
-      // clear should not throw
-      vms.clear();
-    });
-
-    it("initializeComponents resolves without error", async () => {
-      const adapter = await getRendererForProject(stubHandlerContext());
-      await adapter.initializeComponents();
-      // No error thrown = success
-    });
-
     it("destroy resolves without error", async () => {
       const adapter = await getRendererForProject(stubHandlerContext());
       await adapter.destroy();
@@ -471,15 +467,48 @@ describe("RendererAdapter with RendererInitializer", () => {
 
       await getRendererForProject(ctx);
       assertEquals(ctx.enriched !== undefined, true);
-      // Should derive from last path segment
-      assertEquals(ctx.enriched.projectId, "my-special-project");
+      assertEquals(ctx.enriched.projectId.startsWith("local-"), true);
+      assertEquals(ctx.enriched.projectId.includes("my-special-project"), false);
     });
 
-    it("clearCache handles renderer.clearCache rejection silently", async () => {
+    it("does not collide for local projects with the same directory basename", async () => {
+      const first = stubHandlerContext();
+      const second = stubHandlerContext();
+      for (
+        const [ctx, projectDir] of [
+          [first, "/workspace-one/site"],
+          [second, "/workspace-two/site"],
+        ] as const
+      ) {
+        ctx.enriched = undefined;
+        ctx.projectId = undefined;
+        ctx.projectSlug = undefined;
+        ctx.projectDir = projectDir;
+        ctx.config = { pages: { include: ["**/*.mdx"] } };
+        ctx.adapter = {
+          fs: {
+            exists: () => Promise.resolve(false),
+            readFile: () => Promise.resolve(""),
+            readDir: async function* () {},
+            stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+          },
+          env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+        };
+      }
+
+      await getRendererForProject(first);
+      await getRendererForProject(second);
+
+      assertEquals(first.enriched.projectId === second.enriched.projectId, false);
+    });
+
+    it("clearCache sanitizes renderer failures", async () => {
+      const entries: LogEntry[] = [];
+      __registerLogRecordEmitter((entry) => entries.push(entry));
       // Create a renderer whose clearCache rejects
       const failingRenderer = createMockRenderer();
       (failingRenderer as any).clearCache = async () => {
-        throw new Error("cache clear fail");
+        throw new Error("PRIVATE_CACHE_FAILURE_MARKER");
       };
       const failingInit = createMockInitializer(failingRenderer);
       setRendererInitializer(failingInit);
@@ -488,7 +517,9 @@ describe("RendererAdapter with RendererInitializer", () => {
       // Should not throw
       adapter.clearCache("test-slug");
       await new Promise((r) => setTimeout(r, 20));
-      // Just verify it didn't crash
+      const serializedLogs = JSON.stringify(entries);
+      assertEquals(serializedLogs.includes("PRIVATE_CACHE_FAILURE_MARKER"), false);
+      assertEquals(serializedLogs.includes("test-slug"), false);
     });
   });
 

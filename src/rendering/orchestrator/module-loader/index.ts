@@ -12,7 +12,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, join, normalize, relative, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { invalidateMdxEsmModule } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   resolveModuleDependencies,
@@ -30,8 +30,10 @@ export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 function decodeFileContent(fileContent: string | Uint8Array): string {
   if (typeof fileContent === "string") return fileContent;
-  return new TextDecoder().decode(fileContent);
+  return new TextDecoder("utf-8", { fatal: true }).decode(fileContent);
 }
+
+const MAX_MODULE_SOURCE_BYTES = 2 * 1024 * 1024;
 
 /**
  * Transform a module and all its local dependencies (@/ alias and relative imports).
@@ -43,14 +45,36 @@ function decodeFileContent(fileContent: string | Uint8Array): string {
  * @param useLocalAdapter - Whether to use local adapter for reading
  * @returns Path to the transformed module file
  */
-export async function transformModuleWithDeps(
+export function transformModuleWithDeps(
   filePath: string,
   tmpDir: string,
   localAdapter: RuntimeAdapter,
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
 ): Promise<string> {
+  return transformModuleWithDepsInternal(
+    filePath,
+    tmpDir,
+    localAdapter,
+    config,
+    useLocalAdapter,
+    new Set(),
+  );
+}
+
+async function transformModuleWithDepsInternal(
+  filePath: string,
+  tmpDir: string,
+  localAdapter: RuntimeAdapter,
+  config: ModuleLoaderConfig,
+  useLocalAdapter: boolean,
+  visiting: Set<string>,
+): Promise<string> {
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
+  if (!isPathWithinRoot(filePath, projectDir)) {
+    throw new TypeError("Module source path must stay inside the project");
+  }
+
   const cacheKey = getModuleCacheKey(
     filePath,
     projectId,
@@ -73,75 +97,73 @@ export async function transformModuleWithDeps(
     return cachedPath;
   }
 
-  const readAdapter = useLocalAdapter ? localAdapter : adapter;
-  let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
+  if (visiting.has(cacheKey)) {
+    throw new TypeError("Circular local module dependencies are not supported by SSR transforms");
+  }
+  visiting.add(cacheKey);
 
-  const resolvedDeps = await resolveModuleDependencies({
-    adapter,
-    fileContent,
-    filePath,
-    projectDir,
-  });
+  try {
+    const readAdapter = useLocalAdapter ? localAdapter : adapter;
+    let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
+    if (new TextEncoder().encode(fileContent).byteLength > MAX_MODULE_SOURCE_BYTES) {
+      throw new RangeError("Module source exceeds the size limit");
+    }
 
-  const transformedDeps = await Promise.all(
-    resolvedDeps.filter((d) => d.depFilePath).map(async (dep) => {
-      logger.debug("Found dependency:", {
-        path: dep.path,
-        depFilePath: dep.depFilePath,
-        isLocalLib: dep.isLocalLib,
-      });
+    const resolvedDeps = await resolveModuleDependencies({
+      adapter,
+      fileContent,
+      filePath,
+      projectDir,
+    });
+    const unresolvedCount = resolvedDeps.filter((dependency) => !dependency.depFilePath).length;
+    if (unresolvedCount > 0) {
+      throw new TypeError(
+        `Unable to resolve ${unresolvedCount} local module ${
+          unresolvedCount === 1 ? "dependency" : "dependencies"
+        }`,
+      );
+    }
 
-      const depTempPath = await transformModuleWithDeps(
+    const transformedDeps = [];
+    for (const dep of resolvedDeps) {
+      const depTempPath = await transformModuleWithDepsInternal(
         dep.depFilePath!,
         tmpDir,
         localAdapter,
         config,
         dep.isLocalLib,
+        visiting,
       );
+      transformedDeps.push({ ...dep, depTempPath });
+    }
 
-      return { ...dep, depTempPath };
-    }),
-  );
+    fileContent = rewriteResolvedDependencyImports(fileContent, transformedDeps);
 
-  fileContent = rewriteResolvedDependencyImports(fileContent, transformedDeps);
-  for (const dep of transformedDeps) {
-    logger.debug("Replaced import:", {
-      path: dep.path,
-      depTempPath: dep.depTempPath,
-    });
-  }
-
-  for (const dep of resolvedDeps) {
-    if (dep.depFilePath) continue;
-    logger.warn("Could not find dependency:", {
-      path: dep.path,
-      relativePath: dep.relativePath,
+    const effectiveProjectId = projectId ?? projectDir;
+    const { code: transformedCode } = await transformModuleCodeWithCache({
+      fileContent,
+      filePath,
       projectDir,
+      effectiveProjectId,
+      mode,
+      adapter,
+      reactVersion: config.reactVersion,
     });
+
+    return await persistTransformedModule({
+      filePath,
+      projectDir,
+      tmpDir,
+      transformedCode,
+      localAdapter,
+      moduleCache,
+      cacheKey,
+      contentSourceId,
+      reactVersion: config.reactVersion,
+    });
+  } finally {
+    visiting.delete(cacheKey);
   }
-
-  const effectiveProjectId = projectId ?? projectDir;
-  const { code: transformedCode } = await transformModuleCodeWithCache({
-    fileContent,
-    filePath,
-    projectDir,
-    effectiveProjectId,
-    mode,
-    adapter,
-    reactVersion: config.reactVersion,
-  });
-
-  return await persistTransformedModule({
-    filePath,
-    projectDir,
-    tmpDir,
-    transformedCode,
-    localAdapter,
-    moduleCache,
-    cacheKey,
-    contentSourceId,
-    reactVersion: config.reactVersion,
-  });
 }
 
 export interface ModuleLoaderConfig {
@@ -206,7 +228,7 @@ export async function loadModule(
   const localAdapter = await getLocalAdapter();
 
   const tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
-  const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
+  const moduleUrl = toFileUrl(tempFilePath).href;
 
   try {
     return await import(moduleUrl);
@@ -217,12 +239,11 @@ export async function loadModule(
     // `veryfront-http-bundle/http-<hash>.mjs` remaining stable. If the cache
     // layout changes, this recovery silently stops firing — update the regex
     // alongside any cache-dir rename.
-    const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
+    const bundleMatch = errorMsg.match(/veryfront-http-bundle[\\/]http-([a-f0-9]{8,64})\.mjs/);
 
     if (bundleMatch) {
       const hash = bundleMatch[1]!;
       logger.warn("Import failed due to missing HTTP bundle, attempting recovery", {
-        filePath,
         hash,
       });
 
@@ -232,7 +253,7 @@ export async function loadModule(
 
       if (recovered) {
         logger.info("HTTP bundle recovered, retrying import", { hash });
-        return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);
+        return await import(withImportMarker(tempFilePath, "recovered"));
       }
     }
 
@@ -244,8 +265,7 @@ export async function loadModule(
     // import once. Skip HTTP-bundle misses, which have dedicated recovery above.
     if (!bundleMatch && isMissingModuleError(error)) {
       logger.warn("Cached module missing on disk, rebuilding and retrying import", {
-        filePath,
-        tempFilePath,
+        recovery: "rebuild",
       });
 
       config.moduleCache.delete(
@@ -264,14 +284,24 @@ export async function loadModule(
       invalidateMdxEsmModule(tmpDir, filePath, config.projectDir, config.reactVersion);
 
       const rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
-      return await import(`file://${rebuiltPath}?t=${Date.now()}&rebuilt=1`);
+      return await import(withImportMarker(rebuiltPath, "rebuilt"));
     }
 
     logger.error("Failed to import module:", {
-      filePath,
-      tempFilePath,
-      error: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : "UnknownError",
     });
     throw error;
   }
+}
+
+function withImportMarker(path: string, marker: "recovered" | "rebuilt"): string {
+  const url = toFileUrl(path);
+  url.searchParams.set("vf_attempt", marker);
+  return url.href;
+}
+
+function isPathWithinRoot(path: string, root: string): boolean {
+  const relativePath = relative(normalize(root), normalize(path));
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
 }

@@ -285,6 +285,19 @@ describe("Dependency tracking cache invalidation", () => {
       expect(key1).not.toBe(key2);
     });
 
+    it("uses the complete dependency and config identities", () => {
+      const first = buildTransformCacheKey("file.tsx", "content123", false, false, {
+        depsHash: "12345678aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        configHash: "abcdef12aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      });
+      const second = buildTransformCacheKey("file.tsx", "content123", false, false, {
+        depsHash: "12345678bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        configHash: "abcdef12bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      });
+
+      expect(first).not.toBe(second);
+    });
+
     it("should work without dependency tracking (backward compatible)", () => {
       const key = buildTransformCacheKey("file.tsx", "content123", false, false);
 

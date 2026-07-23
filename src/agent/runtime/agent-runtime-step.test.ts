@@ -23,9 +23,10 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
-  it("does not let runtime context shadow the trusted abort signal", async () => {
+  it("pins trusted identity, cancellation, and auth while preserving runtime context", async () => {
     const trustedAbort = new AbortController();
     const shadowAbort = new AbortController();
+    let discoveryContext: ToolExecutionContext | undefined;
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -33,22 +34,38 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "auto", system: "Base" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      getAvailableTools: async () => [],
-      isLocalModel: true,
+      getAvailableTools: async (_toolsConfig, options) => {
+        discoveryContext = options?.remoteToolContext;
+        return [];
+      },
+      isLocalModel: false,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
       resolveRuntimeState: async () => ({
         systemPrompt: "Base",
-        context: { abortSignal: shadowAbort.signal },
+        context: {
+          agentId: "other_agent",
+          abortSignal: shadowAbort.signal,
+          authToken: "shadow-token",
+          refreshedValue: "preserved",
+        },
       }),
       runtimeContext: undefined,
       step: 0,
       systemPrompt: "Base",
-      toolContextBase: { abortSignal: trustedAbort.signal },
+      toolContextBase: {
+        agentId: "agent_1",
+        abortSignal: trustedAbort.signal,
+        authToken: "request-token",
+      },
     });
 
+    assertEquals(prepared.toolContext.agentId, "agent_1");
     assertStrictEquals(prepared.toolContext.abortSignal, trustedAbort.signal);
+    assertEquals(prepared.toolContext.authToken, "request-token");
+    assertEquals(prepared.toolContext.refreshedValue, "preserved");
+    assertStrictEquals(discoveryContext, prepared.toolContext);
   });
 
   it("resolves runtime state, merges tool context, and applies active skill policy", async () => {
@@ -77,6 +94,7 @@ describe("agent/runtime-step", () => {
       isLocalModel: false,
       messages,
       mode: "generate",
+      providerTools: ["allowed_tool", "blocked_tool"],
       remoteToolSources: [remoteSource],
       runtimeContext: { projectId: "old_project", keep: true },
       step: 2,
@@ -117,6 +135,7 @@ describe("agent/runtime-step", () => {
       traceId: "trace_1",
     });
     assertEquals(prepared.toolContext, {
+      agentId: "agent_1",
       projectId: "runtime_project",
       userId: "user_1",
       keep: true,
@@ -124,6 +143,55 @@ describe("agent/runtime-step", () => {
     });
     assertEquals(capturedContexts, [prepared.toolContext]);
     assertEquals(prepared.tools.map((tool) => tool.name), ["allowed_tool"]);
+    assertEquals(prepared.providerTools, ["allowed_tool"]);
+  });
+
+  it("denies every provider-native tool for an explicit empty skill policy", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: [],
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base" } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      isLocalModel: false,
+      messages: [],
+      mode: "generate",
+      providerTools: ["web_search", "web_fetch"],
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.providerTools, []);
+  });
+
+  it("preserves configured provider-native tools when no skill policy is active", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base" } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [],
+      isLocalModel: false,
+      messages: [],
+      mode: "stream",
+      providerTools: ["web_search", "web_fetch"],
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.providerTools, ["web_search", "web_fetch"]);
   });
 
   it("passes active skill state to tool execution context", async () => {
@@ -218,7 +286,7 @@ describe("agent/runtime-step", () => {
     });
 
     assertEquals(prepared.tools, []);
-    assertEquals(prepared.toolContext, {});
+    assertEquals(prepared.toolContext, { agentId: "agent_1" });
   });
 
   it("hides intake tools but keeps delegation tools after submitted form input", async () => {

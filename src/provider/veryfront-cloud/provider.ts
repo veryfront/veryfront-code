@@ -13,8 +13,39 @@ import {
 } from "./openai.ts";
 import { resolveVeryfrontCloudModelThinking } from "./model-catalog.ts";
 
-function preferStreamedGenerate(model: ModelRuntime): ModelRuntime {
-  return Object.assign(model, { _generateViaStream: true as const });
+/** Enable streamed generation without breaking class or private-field runtime receivers. */
+export function preferStreamedGenerate(model: ModelRuntime): ModelRuntime {
+  try {
+    Object.defineProperty(model, "_generateViaStream", {
+      configurable: false,
+      enumerable: true,
+      value: true,
+      writable: false,
+    });
+    return model;
+  } catch {
+    try {
+      const wrapperTarget = Object.create(Object.getPrototypeOf(model)) as ModelRuntime;
+      return new Proxy(wrapperTarget, {
+        get(_target, property) {
+          if (property === "_generateViaStream") return true;
+          const value = Reflect.get(model, property, model);
+          return typeof value === "function" ? value.bind(model) : value;
+        },
+        has(_target, property) {
+          return property === "_generateViaStream" || Reflect.has(model, property);
+        },
+        set(_target, property, value) {
+          return Reflect.set(model, property, value, model);
+        },
+      });
+    } catch {
+      throw toError(createError({
+        type: "config",
+        message: "Veryfront Cloud provider returned an invalid model runtime.",
+      }));
+    }
+  }
 }
 
 function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
@@ -25,7 +56,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
+  const fetch = createVeryfrontCloudFetch(apiToken, projectSlug, baseURL);
   const registry = ensureBuiltinLLMProviders();
 
   switch (provider) {

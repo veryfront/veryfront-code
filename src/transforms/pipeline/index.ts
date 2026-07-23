@@ -31,9 +31,24 @@ import {
   ssrVfModulesPlugin,
 } from "./stages/index.ts";
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import {
+  fromFileUrl,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+  sep,
+} from "#veryfront/compat/path";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
 import { extractFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
+import { errorLogName, fileLogLabel, textLogLabel } from "../shared/log-context.ts";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+
+function cacheKeyLogId(cacheKey: string): string {
+  return hashCodeHex(cacheKey).slice(0, 16);
+}
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -80,10 +95,8 @@ async function validateFrameworkBundles(
   // These should have been transformed to file:// paths.
   // If they're still present, the cache is stale from a failed transform.
   if (UNRESOLVED_VF_MODULES_PATTERN.test(code)) {
-    const match = code.match(UNRESOLVED_VF_MODULES_PATTERN);
     logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
-      cacheKey: cacheKey.slice(-40),
-      unresolvedImport: match?.[1]?.slice(0, 60),
+      cacheKeyId: cacheKeyLogId(cacheKey),
     });
     return false;
   }
@@ -99,8 +112,8 @@ async function validateFrameworkBundles(
       }
     } catch (error) {
       rendererLogger.error("Framework bundle validation error", {
-        path,
-        error: error instanceof Error ? error.message : String(error),
+        bundleFile: fileLogLabel(path),
+        errorName: errorLogName(error),
       });
       missing.push(path);
     }
@@ -109,10 +122,10 @@ async function validateFrameworkBundles(
   if (missing.length === 0) return true;
 
   logger.debug("Framework bundle validation failed", {
-    cacheKey: cacheKey.slice(-40),
+    cacheKeyId: cacheKeyLogId(cacheKey),
     failedCount: missing.length,
     totalBundles: bundlePaths.length,
-    firstMissing: missing[0]?.split("/").pop(),
+    firstMissing: fileLogLabel(missing[0]),
   });
   return false;
 }
@@ -132,7 +145,7 @@ async function validateCachedBundles(
   if (validation.valid) return true;
 
   logger.debug("Cached HTTP bundle validation failed", {
-    cacheKey: cacheKey.slice(-40),
+    cacheKeyId: cacheKeyLogId(cacheKey),
     manifestId: bundleManifestId?.slice(0, 12),
     failedCount: validation.failedHashes.length,
     reason: validation.reason,
@@ -141,6 +154,7 @@ async function validateCachedBundles(
   return false;
 }
 
+/** Run the configured SSR or browser transform pipeline. */
 export function runPipeline(
   source: string,
   filePath: string,
@@ -148,7 +162,7 @@ export function runPipeline(
   options: TransformOptions,
   config?: PipelineConfig,
 ): Promise<TransformResult> {
-  const fileName = filePath.split("/").pop() || filePath;
+  const fileName = fileLogLabel(filePath);
 
   return withSpan(
     "transform.pipeline",
@@ -163,9 +177,12 @@ export function runPipeline(
         jsxImportSource: ctx.jsxImportSource,
         studioEmbed: ctx.studioEmbed,
         dev: ctx.dev,
+        moduleServerUrl: ctx.moduleServerUrl,
+        vendorBundleHash: ctx.vendorBundleHash,
+        apiBaseUrl: ctx.apiBaseUrl,
       });
 
-      const depsHash = await computeDepsHashSafe(
+      const dependencyHash = await computeDepsHashIfConfigured(
         filePath,
         projectDir,
         options.readFile,
@@ -177,10 +194,14 @@ export function runPipeline(
         ctx.contentHash,
         options.ssr ?? false,
         options.studioEmbed ?? false,
-        { depsHash, configHash, projectId: options.projectId },
+        { depsHash: dependencyHash.value, configHash, projectId: options.projectId },
       );
 
-      const cached = await getCachedTransformAsync(cacheKey);
+      // Custom plugin functions have no stable cross-process identity. Until the
+      // plugin contract exposes one, caching their output can return another
+      // plugin implementation's result for the same source.
+      const transformCacheable = dependencyHash.cacheable && !config?.plugins?.length;
+      const cached = transformCacheable ? await getCachedTransformAsync(cacheKey) : undefined;
       if (cached) {
         // For SSR transforms, validate bundles exist before returning cached code
         if (options.ssr) {
@@ -199,12 +220,12 @@ export function runPipeline(
 
           if (!httpBundlesValid) {
             logger.debug("Cache invalidated due to missing HTTP bundles", {
-              file: filePath.slice(-60),
+              file: fileLogLabel(filePath),
             });
             // Fall through to re-run the pipeline
           } else if (!frameworkBundlesValid) {
             logger.debug("Cache invalidated due to missing framework bundles", {
-              file: filePath.slice(-60),
+              file: fileLogLabel(filePath),
             });
             // Fall through to re-run the pipeline
           } else {
@@ -236,18 +257,19 @@ export function runPipeline(
         if (plugin.condition?.(ctx) === false) continue;
 
         const stageStart = performance.now();
+        const stageLabel = textLogLabel(plugin.name, "unnamed-stage");
 
         try {
           ctx.code = await withSpan(
-            `transform.stage.${plugin.name}`,
+            "transform.stage",
             async () => plugin.transform(ctx),
-            { "transform.stage": plugin.name, "transform.stage_order": plugin.stage },
+            { "transform.stage": stageLabel, "transform.stage_order": plugin.stage },
           );
         } catch (error) {
-          logger.error(`[PIPELINE:${plugin.name}] Stage failed`, {
-            file: filePath.slice(-60),
-            stage: plugin.name,
-            error: error instanceof Error ? error.message : String(error),
+          logger.error("Pipeline stage failed", {
+            file: fileLogLabel(filePath),
+            stage: stageLabel,
+            errorName: errorLogName(error),
           });
           throw error;
         }
@@ -257,12 +279,16 @@ export function runPipeline(
 
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
       const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
-      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
-        .catch(
-          (error) => {
-            logger.debug("Failed to cache transform", { error });
-          },
-        );
+      if (transformCacheable) {
+        setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
+          .catch(
+            (error) => {
+              logger.debug("Failed to cache transform", {
+                errorName: errorLogName(error),
+              });
+            },
+          );
+      }
 
       const totalMs = performance.now() - transformStart;
 
@@ -286,25 +312,50 @@ export function runPipeline(
   );
 }
 
-async function computeDepsHashSafe(
+async function computeDepsHashIfConfigured(
   filePath: string,
   projectDir: string,
   readFile?: (path: string) => Promise<string>,
   dependencyHashCache?: TransformOptions["dependencyHashCache"],
-): Promise<string | undefined> {
-  if (!readFile) return undefined;
+): Promise<{ value?: string; cacheable: boolean }> {
+  if (!readFile) return { cacheable: true };
 
+  const normalizedProjectDir = resolve(projectDir);
+  const normalizedRootPath = normalizeDependencyPath(filePath, normalizedProjectDir);
+  if (!isWithinDirectory(normalizedProjectDir, normalizedRootPath)) {
+    logger.debug("Transform cache disabled for a source outside the project root");
+    return { cacheable: false };
+  }
+
+  const scopedReader = createProjectScopedDependencyReader(
+    readFile,
+    normalizedProjectDir,
+    normalizedRootPath,
+  );
   try {
-    return await computeDepsHash(filePath, readFile, projectDir, dependencyHashCache);
-  } catch (err) {
-    logger.debug("depsHash computation failed, skipping", {
-      file: filePath.slice(-60),
-      error: err instanceof Error ? err.message : String(err),
+    return {
+      value: await computeDepsHash(
+        normalizedRootPath,
+        scopedReader.readFile,
+        normalizedProjectDir,
+        dependencyHashCache,
+      ),
+      cacheable: true,
+    };
+  } catch (error) {
+    if (scopedReader.wasPhysicalBoundaryRejected()) {
+      throw new Error(DEPENDENCY_PATH_REJECTED);
+    }
+
+    logger.debug("Transform cache disabled because dependency hashing was incomplete", {
+      errorName: errorLogName(error),
+      boundaryRejected: scopedReader.wasBoundaryRejected(),
     });
-    return undefined;
+    return { cacheable: false };
   }
 }
 
+/** Transform one source module and return its generated ESM code. */
 export async function transformToESM(
   source: string,
   filePath: string,
@@ -316,7 +367,7 @@ export async function transformToESM(
 
   const enrichedOptions: TransformOptions = options.readFile
     ? options
-    : { ...options, readFile: buildReadFile(adapter, projectDir) };
+    : { ...options, readFile: buildReadFile(adapter) };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
@@ -331,27 +382,128 @@ function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) 
 }
 
 /**
- * Build a readFile helper that avoids routing local framework paths
- * through the remote adapter.
- *
- * This prevents API fetches for file:// or absolute paths outside projectDir
- * (e.g. framework files under /usr/local/lib/node_modules/veryfront).
+ * Build the underlying dependency reader.
+ * Project-boundary validation is applied inside {@link runPipeline} so callers
+ * that supply `TransformOptions.readFile` receive the same protection.
  */
-function buildReadFile(adapter: unknown, projectDir: string): (path: string) => Promise<string> {
+function buildReadFile(adapter: unknown): (path: string) => Promise<string> {
   const adapterRead = extractReadFile(adapter);
   const fs = createFileSystem();
-  const normalizedProjectDir = projectDir.replace(/\/+$/, "");
 
   return async (path: string): Promise<string> => {
-    const normalizedPath = path.startsWith("file://") ? path.slice("file://".length) : path;
+    if (adapterRead) return await adapterRead(path);
+    return await fs.readTextFile(path);
+  };
+}
 
-    const isOutsideProject = normalizedPath.startsWith("/") &&
-      normalizedProjectDir.length > 0 &&
-      !normalizedPath.startsWith(normalizedProjectDir);
+const DEPENDENCY_PATH_REJECTED = "Dependency path is outside the project root";
 
-    if (isOutsideProject) return fs.readTextFile(normalizedPath);
-    if (adapterRead) return adapterRead(normalizedPath);
-    return fs.readTextFile(normalizedPath);
+function isWithinDirectory(baseDir: string, candidate: string): boolean {
+  const relativePath = relative(baseDir, candidate);
+  return relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) &&
+      !isAbsolute(relativePath));
+}
+
+function normalizeDependencyPath(path: string, projectDir: string): string {
+  let filePath = path;
+  if (path.startsWith("file://")) {
+    try {
+      filePath = fromFileUrl(path);
+    } catch {
+      throw new Error(DEPENDENCY_PATH_REJECTED);
+    }
+  }
+
+  return isAbsolute(filePath) ? normalize(filePath) : resolve(projectDir, filePath);
+}
+
+function getDependencyReadCandidates(path: string, rootPath: string): string[] {
+  if (path === rootPath) return [path];
+
+  const candidates: string[] = [];
+  if (path.endsWith(".js")) {
+    const base = path.slice(0, -3);
+    candidates.push(`${base}.tsx`, `${base}.ts`, `${base}.jsx`, path, `${base}.mdx`);
+  } else if (!/\.[^/]+$/.test(path)) {
+    candidates.push(
+      `${path}.ts`,
+      `${path}.tsx`,
+      `${path}.js`,
+      `${path}.jsx`,
+      join(path, "index.ts"),
+      join(path, "index.tsx"),
+      join(path, "index.js"),
+      join(path, "index.jsx"),
+    );
+  } else {
+    candidates.push(path);
+  }
+  return candidates;
+}
+
+/**
+ * Restrict dependency hashing to the declared project root.
+ *
+ * Lexical containment rejects traversal and sibling-prefix paths. When the
+ * project exists on the local filesystem, physical containment also rejects
+ * symlinks that resolve outside the root. Error text intentionally omits paths.
+ */
+function createProjectScopedDependencyReader(
+  readFile: (path: string) => Promise<string>,
+  projectDir: string,
+  rootPath: string,
+): {
+  readFile: (path: string) => Promise<string>;
+  wasBoundaryRejected: () => boolean;
+  wasPhysicalBoundaryRejected: () => boolean;
+} {
+  const fs = createFileSystem();
+  const normalizedProjectDir = resolve(projectDir);
+  const canonicalProjectDir = fs.realPath
+    ? fs.realPath(normalizedProjectDir).catch(() => null)
+    : Promise.resolve(null);
+  let boundaryRejected = false;
+  let physicalBoundaryRejected = false;
+
+  return {
+    readFile: async (path: string): Promise<string> => {
+      const normalizedPath = normalizeDependencyPath(path, normalizedProjectDir);
+      if (!isWithinDirectory(normalizedProjectDir, normalizedPath)) {
+        boundaryRejected = true;
+        throw new Error(DEPENDENCY_PATH_REJECTED);
+      }
+
+      const canonicalRoot = await canonicalProjectDir;
+      let lastReadError: unknown;
+      for (const candidate of getDependencyReadCandidates(normalizedPath, rootPath)) {
+        if (!isWithinDirectory(normalizedProjectDir, candidate)) {
+          boundaryRejected = true;
+          throw new Error(DEPENDENCY_PATH_REJECTED);
+        }
+
+        if (canonicalRoot && fs.realPath) {
+          const canonicalPath = await fs.realPath(candidate).catch(() => null);
+          if (canonicalPath && !isWithinDirectory(canonicalRoot, canonicalPath)) {
+            boundaryRejected = true;
+            physicalBoundaryRejected = true;
+            throw new Error(DEPENDENCY_PATH_REJECTED);
+          }
+        }
+
+        try {
+          return await readFile(candidate);
+        } catch (error) {
+          lastReadError = error;
+        }
+      }
+
+      throw lastReadError instanceof Error
+        ? lastReadError
+        : new Error("Dependency file could not be read");
+    },
+    wasBoundaryRejected: () => boundaryRejected,
+    wasPhysicalBoundaryRejected: () => physicalBoundaryRejected,
   };
 }
 

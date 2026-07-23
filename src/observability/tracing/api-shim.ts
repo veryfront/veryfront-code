@@ -12,12 +12,14 @@
  *   `SpanKind`, `SpanStatusCode`
  *
  * **Metrics types** (re-exported structural shapes for the metrics subsystem;
- * not backed by a live SDK — the metrics subsystem is wired separately):
+ * not backed by a live SDK. The metrics subsystem is wired separately):
  *   `Meter`, `Counter`, `Histogram`, `ObservableGauge`, `UpDownCounter`,
  *   `ObservableResult`
  *
  * @module observability/tracing/api-shim
  */
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // ---------------------------------------------------------------------------
 // Tracing types
@@ -26,27 +28,45 @@
 // OTel SDK types `AttributeValue | undefined` on setAttribute/setAttributes so
 // indexed lookups into partial attribute records don't require null-filtering
 // at every call site. Mirror that loose typing here so callers match the SDK.
+/** Scalar value accepted by OpenTelemetry attributes. */
 export type AttributePrimitive = string | number | boolean;
+
+/** Value accepted by OpenTelemetry attributes. */
 export type AttributeValue = AttributePrimitive | readonly AttributePrimitive[] | undefined;
 
+/** Minimal span contract used by the Veryfront runtime. */
 export interface Span {
+  /** Set one attribute and return this span. */
   setAttribute(key: string, value: AttributeValue): Span;
+  /** Set multiple attributes and return this span. */
   setAttributes(attrs: Record<string, AttributeValue>): Span;
+  /** Set the span status. */
   setStatus(status: { code: number; message?: string }): Span;
+  /** Record a sanitized exception on the span. */
   recordException(err: unknown): void;
+  /** Add an event to the span. */
   addEvent(name: string, attrs?: Record<string, AttributeValue>): Span;
+  /** End the span at an optional timestamp. */
   end(endTime?: number): void;
+  /** Return this span's propagation identifiers. */
   spanContext(): SpanContext;
+  /** Replace the span name. */
   updateName(name: string): void;
 }
 
+/** Propagation identifiers associated with a span. */
 export interface SpanContext {
+  /** Lowercase 32-character hexadecimal trace identifier. */
   traceId: string;
+  /** Lowercase 16-character hexadecimal span identifier. */
   spanId: string;
+  /** W3C trace flags. */
   traceFlags: number;
 }
 
+/** Minimal tracer contract used by the Veryfront runtime. */
 export interface Tracer {
+  /** Start a span without activating it. */
   startSpan(
     name: string,
     options?: {
@@ -55,6 +75,7 @@ export interface Tracer {
     },
     context?: Context,
   ): Span;
+  /** Start a span and invoke a callback while it is active. */
   startActiveSpan<T>(
     name: string,
     fn: (span: Span) => T,
@@ -72,7 +93,9 @@ export interface Tracer {
   ): T;
 }
 
+/** Provider that creates named tracers. */
 export interface TracerProvider {
+  /** Return a tracer for an instrumentation scope. */
   getTracer(name: string, version?: string): Tracer;
 }
 
@@ -80,35 +103,55 @@ export interface TracerProvider {
 // Context types
 // ---------------------------------------------------------------------------
 
+/** Immutable key-value context propagated across asynchronous work. */
 export interface Context {
+  /** Read a value from the context. */
   getValue(key: symbol): unknown;
+  /** Return a context with a value set. */
   setValue(key: symbol, value: unknown): Context;
+  /** Return a context without a value. */
   deleteValue(key: symbol): Context;
 }
 
+/** Accessor used to read values from a propagation carrier. */
 export interface TextMapGetter<C = Record<string, string>> {
+  /** Return the available carrier keys. */
   keys(carrier: C): string[];
+  /** Read a propagation value from the carrier. */
   get(carrier: C, key: string): string | string[] | undefined;
 }
 
+/** Accessor used to write values to a propagation carrier. */
 export interface TextMapSetter<C = Record<string, string>> {
+  /** Write a propagation value to the carrier. */
   set(carrier: C, key: string, value: string): void;
 }
 
+/** Propagator for extracting and injecting distributed trace context. */
 export interface TextMapPropagator {
+  /** Inject context into a carrier. */
   inject(context: Context, carrier: unknown, setter?: TextMapSetter<unknown>): void;
+  /** Extract context from a carrier. */
   extract(context: Context, carrier: unknown, getter?: TextMapGetter<unknown>): Context;
+  /** Return the carrier fields written by this propagator. */
   fields(): string[];
 }
 
+/** Runtime accessor for the active context. */
 export interface ContextAccessor {
+  /** Return the active context. */
   active(): Context;
+  /** Invoke a callback with a context active. */
   with<T>(ctx: Context, fn: () => T): T;
 }
 
+/** Runtime accessor for active spans. */
 export interface ActiveSpanAccessor {
+  /** Return the currently active span. */
   getActiveSpan(): Span | undefined;
+  /** Return the span stored in a context. */
   getSpan(ctx: Context): Span | undefined;
+  /** Return a context containing a span. */
   setSpan?(ctx: Context, span: Span): Context;
 }
 
@@ -116,6 +159,7 @@ export interface ActiveSpanAccessor {
 // Span kind + status constants
 // ---------------------------------------------------------------------------
 
+/** Numeric OpenTelemetry span-kind constants. */
 export const SpanKind = {
   INTERNAL: 0,
   SERVER: 1,
@@ -124,46 +168,63 @@ export const SpanKind = {
   CONSUMER: 4,
 } as const;
 
+/** OpenTelemetry span-kind value. */
 export type SpanKind = typeof SpanKind[keyof typeof SpanKind];
 
+/** Numeric OpenTelemetry span-status constants. */
 export const SpanStatusCode = {
   UNSET: 0,
   OK: 1,
   ERROR: 2,
 } as const;
 
+/** OpenTelemetry span-status value. */
 export type SpanStatusCode = typeof SpanStatusCode[keyof typeof SpanStatusCode];
 
 // ---------------------------------------------------------------------------
 // Metrics types (structural; not backed by a live SDK here)
 // ---------------------------------------------------------------------------
 
+/** Callback result used to report observable measurements. */
 export interface ObservableResult {
+  /** Observe one measurement with optional attributes. */
   observe(value: number, attributes?: Record<string, AttributeValue>): void;
 }
 
+/** Monotonic counter instrument. */
 export interface Counter {
+  /** Add a non-negative value to the counter. */
   add(value: number, attributes?: Record<string, AttributeValue>): void;
 }
 
+/** Counter instrument that accepts positive and negative changes. */
 export interface UpDownCounter {
+  /** Add a value to the counter. */
   add(value: number, attributes?: Record<string, AttributeValue>): void;
 }
 
+/** Histogram instrument. */
 export interface Histogram {
+  /** Record one measurement. */
   record(value: number, attributes?: Record<string, AttributeValue>): void;
 }
 
+/** Observable gauge instrument. */
 export interface ObservableGauge {
+  /** Register a callback that reports gauge measurements. */
   addCallback(callback: (result: ObservableResult) => void): void;
 }
 
+/** Factory for metric instruments in one instrumentation scope. */
 export interface Meter {
+  /** Create a monotonic counter. */
   createCounter(name: string, options?: { description?: string; unit?: string }): Counter;
+  /** Create a counter that accepts positive and negative changes. */
   createUpDownCounter(
     name: string,
     options?: { description?: string; unit?: string },
   ): UpDownCounter;
+  /** Create a histogram. */
   createHistogram(
     name: string,
     options?: {
@@ -172,14 +233,18 @@ export interface Meter {
       advice?: { explicitBucketBoundaries?: number[] };
     },
   ): Histogram;
+  /** Create an observable gauge. */
   createObservableGauge(
     name: string,
     options?: { description?: string; unit?: string },
   ): ObservableGauge;
+  /** Marker that prevents a meter from being used as the metrics API registry. */
   getMeter?: never; // Prevents accidental use of Meter as MetricsAPI
 }
 
+/** Registry that creates named metric meters. */
 export interface MetricsAPI {
+  /** Return a meter for an instrumentation scope. */
   getMeter(name: string | undefined, version?: string): Meter;
 }
 
@@ -187,17 +252,19 @@ export interface MetricsAPI {
 // No-op provider (default when ext-observability-opentelemetry is not installed)
 // ---------------------------------------------------------------------------
 
-function createNoopContext(): Context {
-  const store = new Map<symbol, unknown>();
+function createNoopContext(values: ReadonlyMap<symbol, unknown> = new Map()): Context {
   return {
-    getValue: (key) => store.get(key),
+    getValue: (key) => values.get(key),
     setValue(key, value) {
-      store.set(key, value);
-      return this;
+      const next = new Map(values);
+      next.set(key, value);
+      return createNoopContext(next);
     },
     deleteValue(key) {
-      store.delete(key);
-      return this;
+      if (!values.has(key)) return this;
+      const next = new Map(values);
+      next.delete(key);
+      return createNoopContext(next);
     },
   };
 }
@@ -267,7 +334,7 @@ function createNoopProvider(): TracerProvider {
 
 let _provider: TracerProvider = createNoopProvider();
 let _providerRevision = 0;
-let _activeContext: Context = NOOP_CONTEXT;
+const fallbackContextStorage = new AsyncLocalStorage<Context>();
 let _propagator: TextMapPropagator | null = null;
 let _contextAccessor: ContextAccessor | null = null;
 const ACTIVE_SPAN_CONTEXT_KEY = Symbol.for("veryfront.observability.active_span");
@@ -330,28 +397,13 @@ export function getTracer(name: string, version?: string): Tracer {
 
 export const context = {
   active(): Context {
-    return _contextAccessor?.active() ?? _activeContext;
+    return _contextAccessor?.active() ?? fallbackContextStorage.getStore() ?? NOOP_CONTEXT;
   },
   with<T>(ctx: Context, fn: () => T): T {
     if (_contextAccessor) {
       return _contextAccessor.with(ctx, fn);
     }
-
-    const prev = _activeContext;
-    _activeContext = ctx;
-    try {
-      const result = fn();
-      if (result && typeof (result as { finally?: unknown }).finally === "function") {
-        return (result as unknown as Promise<unknown>).finally(() => {
-          _activeContext = prev;
-        }) as T;
-      }
-      _activeContext = prev;
-      return result;
-    } catch (error) {
-      _activeContext = prev;
-      throw error;
-    }
+    return fallbackContextStorage.run(ctx, fn);
   },
   setGlobalContextManager(_mgr: unknown): void {
     // no-op in shim; real SDK sets this via the real OTel API
@@ -362,6 +414,7 @@ export const context = {
 // Trace API (simplified subset used by core)
 // ---------------------------------------------------------------------------
 
+/** Minimal global trace API backed by the registered provider. */
 export const trace = {
   getTracer(name: string, version?: string): Tracer {
     return _provider.getTracer(name, version);
@@ -429,7 +482,12 @@ export const defaultTextMapGetter: TextMapGetter<Record<string, string>> = {
 
 export const defaultTextMapSetter: TextMapSetter<Record<string, string>> = {
   set(carrier, key, value) {
-    carrier[key] = value;
+    Object.defineProperty(carrier, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
   },
 };
 
@@ -438,6 +496,7 @@ export const defaultTextMapSetter: TextMapSetter<Record<string, string>> = {
 // ---------------------------------------------------------------------------
 
 let _metricsApi: MetricsAPI | null = null;
+let _metricsApiRevision = 0;
 
 /**
  * Register the OTel Metrics API (from the SDK).
@@ -446,10 +505,17 @@ let _metricsApi: MetricsAPI | null = null;
  */
 export function setGlobalMetricsAPI(api: MetricsAPI): void {
   _metricsApi = api;
+  _metricsApiRevision++;
 }
 
+/** Return the metrics API registered by the observability extension. */
 export function getGlobalMetricsAPI(): MetricsAPI | null {
   return _metricsApi;
+}
+
+/** Return a monotonic revision for consumers that cache metric instruments. */
+export function getGlobalMetricsAPIRevision(): number {
+  return _metricsApiRevision;
 }
 
 // ---------------------------------------------------------------------------
@@ -459,9 +525,10 @@ export function getGlobalMetricsAPI(): MetricsAPI | null {
 export function _resetShimForTests(): void {
   _provider = createNoopProvider();
   _providerRevision++;
-  _activeContext = NOOP_CONTEXT;
+  fallbackContextStorage.disable();
   _propagator = null;
   _contextAccessor = null;
   _metricsApi = null;
+  _metricsApiRevision++;
   _activeSpanAccessor = null;
 }

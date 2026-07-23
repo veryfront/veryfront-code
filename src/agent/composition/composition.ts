@@ -48,6 +48,7 @@ async function runAgentAsStreamingTool(
     : execute();
 }
 
+/** Performs the agent as tool operation. */
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
     id: `agent_${agent.id}`,
@@ -83,26 +84,35 @@ export function agentAsTool(agent: Agent, description: string): Tool {
 
 /** Public API contract for workflow step. */
 export interface WorkflowStep {
+  /** Agent used to execute requests. */
   agent: Agent;
+  /** Name. */
   name: string;
+  /** Callback that handles transform. */
   transform?: (output: string) => string | Promise<string>;
+  /** Callback that handles skip. */
   skip?: (context: Record<string, unknown>) => boolean | Promise<boolean>;
 }
 
 /** Configuration used by workflow. */
 export interface WorkflowConfig {
+  /** Steps value. */
   steps: WorkflowStep[];
+  /** Initial context value. */
   initialContext?: Record<string, unknown>;
 }
 
 /** Result returned from workflow. */
 export interface WorkflowResult {
+  /** Output produced by the operation. */
   output: string;
+  /** Steps value. */
   steps: Array<{
     name: string;
     output: string;
     skipped: boolean;
   }>;
+  /** Context supplied to the operation. */
   context: Record<string, unknown>;
 }
 

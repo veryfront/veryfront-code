@@ -8,3 +8,4 @@ export type { CompileOptions, CompileResult, MDXFrontmatter, PluginList } from "
 export { compileMDXFile } from "./compiler.ts";
 export { compileAllMDX } from "./directory-compiler.ts";
 export { watchMDX } from "./watcher.ts";
+export { DEFAULT_MDX_SOURCE_DIRECTORIES } from "./validator.ts";

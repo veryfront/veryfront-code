@@ -1,16 +1,30 @@
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
-import { CONFIG_INVALID } from "#veryfront/errors";
+import { CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
 import { VeryfrontCloudBlobStorage } from "#veryfront/workflow/blob/veryfront-cloud-storage.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { RagDocumentMeta, RagStore } from "./types.ts";
 import { loadUpload } from "./upload-loader.ts";
 import * as nodeBuffer from "node:buffer";
+import {
+  assertPositiveInteger,
+  MAX_CONFIGURED_UPLOAD_BYTES,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_RAG_TEXT_LENGTH,
+  MAX_SOURCE_LENGTH,
+  MAX_UPLOAD_BYTES,
+} from "./validation.ts";
+import { embeddingFailureContext } from "./logging.ts";
+import {
+  isRequestBodyTooLargeError,
+  readBodyBytesWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
 
 const FileCtor = globalThis.File ??
   (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = MAX_UPLOAD_BYTES;
 const MAX_FILE_NAME_LENGTH = 200;
+const MULTIPART_OVERHEAD_ALLOWANCE = 1024 * 1024;
 const CLOUD_UPLOAD_PREFIX = ".veryfront/rag/uploads/";
 
 const MIME_TO_TYPE: Record<string, string> = {
@@ -79,31 +93,72 @@ function sanitizeFileName(raw: string): string {
   const sanitized = raw
     .replace(/[/\\]/g, "_") // strip path separators
     .replace(/[<>"'`&]/g, "") // strip HTML-significant characters (incl. & for entity injection)
-    // deno-lint-ignore no-control-regex
-    .replace(/[\x00-\x1f\x7f]/g, "") // strip control characters
-    .trim()
-    .slice(0, MAX_FILE_NAME_LENGTH);
+    .replace(/[\p{Cc}\p{Cf}]/gu, "")
+    .trim();
 
-  return sanitized || "untitled";
+  return Array.from(sanitized).slice(0, MAX_FILE_NAME_LENGTH).join("") || "untitled";
 }
 
+/** Result accepted from an upload authorization callback. */
 export type UploadAuthorizationResult = boolean | Response | void | undefined;
 
+/** Callback that authorizes one upload-route request. */
 export type UploadAuthorize = (
   request: Request,
 ) => UploadAuthorizationResult | Promise<UploadAuthorizationResult>;
 
+/** Authentication policy for generated upload handlers. */
 export type UploadHandlerAuthConfig =
   | { type: "none"; allowUnauthenticated: true }
   | { authorize: UploadAuthorize };
 
+/** Configuration used by {@link createUploadHandler}. */
 export interface UploadHandlerConfig {
+  /** Maximum binary file size in bytes. Defaults to 10 MB. */
   maxFileSize?: number;
+  /** Authorization policy. Omitting it retains the deprecated compatibility behavior. */
   auth?: UploadHandlerAuthConfig;
+}
+
+/** Route context accepted by the generated delete handler. */
+export interface UploadRouteContext {
+  /** Dynamic route parameters. */
+  params: Record<string, string>;
+}
+
+/** HTTP handlers returned by {@link createUploadHandler}. */
+export interface UploadHandlers {
+  /** Handle a multipart upload request. */
+  POST(request: Request): Promise<Response>;
+  /** List uploaded RAG documents. */
+  GET(request?: Request): Promise<Response>;
+  /** Delete one uploaded RAG document. */
+  DELETE(request: Request, context: UploadRouteContext): Promise<Response>;
 }
 
 const MAX_CONCURRENT_URL_LOOKUPS = 5;
 let missingAuthWarningEmitted = false;
+
+function safePublicUrl(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > MAX_SOURCE_LENGTH ||
+    value !== value.trim() || /\p{C}/u.test(value)
+  ) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username || url.password
+    ) {
+      return undefined;
+    }
+    return value;
+  } catch {
+    return undefined;
+  }
+}
 
 function warnMissingAuthConfig(): void {
   if (missingAuthWarningEmitted) return;
@@ -120,6 +175,12 @@ function resolveUploadAuthorize(
   if (auth === undefined) {
     warnMissingAuthConfig();
     return null;
+  }
+
+  if (typeof auth !== "object" || auth === null || Array.isArray(auth)) {
+    throw CONFIG_INVALID.create({
+      detail: "createUploadHandler auth must be an object.",
+    });
   }
 
   if ("type" in auth) {
@@ -151,6 +212,11 @@ async function authorizeUploadRequest(
   if (result === false) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (result !== true && result !== undefined) {
+    throw CONFIG_INVALID.create({
+      detail: "Upload authorize must return a boolean, Response, or no value.",
+    });
+  }
   return null;
 }
 
@@ -171,12 +237,16 @@ async function enrichUploadsWithSourceUrls(
     const results = await Promise.allSettled(
       batch.map(async (upload) => {
         const blob = await sourceBlobStorage.stat(upload.id);
-        if (blob?.url) urlMap.set(upload.id, blob.url);
+        const url = safePublicUrl(blob?.url);
+        if (url) urlMap.set(upload.id, url);
       }),
     );
     for (const result of results) {
       if (result.status === "rejected") {
-        serverLogger.warn("Upload source URL lookup failed:", result.reason);
+        serverLogger.warn(
+          "Upload source URL lookup failed",
+          embeddingFailureContext(result.reason),
+        );
       }
     }
   }
@@ -202,21 +272,72 @@ interface UploadRegistryItem {
 }
 
 function toUploadRegistryItem(upload: RagDocumentMeta): UploadRegistryItem {
+  const url = safePublicUrl(upload.url);
   return {
     id: upload.id,
     name: upload.title,
     mediaType: typeToMime(upload.type),
     size: 0,
-    ...(upload.url ? { url: upload.url } : {}),
+    ...(url ? { url } : {}),
   };
 }
 
-function resolveDeleteId(request: Request, context: { params: Record<string, string> }): string {
+function resolveDeleteId(request: Request, context: UploadRouteContext): string {
   const fromParams = context.params.id;
   if (fromParams) return fromParams;
 
   const fromQuery = new URL(request.url).searchParams.get("id");
   return fromQuery ?? "";
+}
+
+function hasOversizedDeclaredBody(request: Request, maxFileSize: number): boolean {
+  const rawLength = request.headers.get("content-length");
+  if (rawLength === null) return false;
+  if (!/^\d+$/.test(rawLength)) return true;
+  const length = Number(rawLength);
+  return !Number.isSafeInteger(length) || length > maxFileSize + MULTIPART_OVERHEAD_ALLOWANCE;
+}
+
+async function parseMultipartFormData(
+  request: Request,
+  maxBodySize: number,
+): Promise<FormData | Response> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (
+    !/^multipart\/form-data(?:;|$)/i.test(contentType) ||
+    !/(?:^|;)\s*boundary=(?:"[^"]+"|[^;\s]+)/i.test(contentType)
+  ) {
+    return Response.json({ error: "Invalid multipart form data" }, { status: 400 });
+  }
+  if (!request.body) {
+    return Response.json({ error: "Invalid multipart form data" }, { status: 400 });
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await readBodyBytesWithLimit(request, maxBodySize);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) {
+      return Response.json({ error: "Upload request exceeds the configured size limit" }, {
+        status: 413,
+      });
+    }
+    throw error;
+  }
+
+  try {
+    return await new Response(new Uint8Array(bytes).buffer, {
+      headers: { "content-type": contentType },
+    }).formData();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    return Response.json({ error: "Invalid multipart form data" }, { status: 400 });
+  }
+}
+
+function isValidDeleteId(id: string): boolean {
+  return id.length > 0 && id.length <= MAX_IDENTIFIER_LENGTH && id === id.trim() &&
+    !/[\p{Cc}\p{Cf}]/u.test(id);
 }
 
 /**
@@ -256,8 +377,21 @@ function resolveDeleteId(request: Request, context: { params: Record<string, str
 export function createUploadHandler(
   store: RagStore,
   config?: UploadHandlerConfig,
-) {
+): UploadHandlers {
+  if (
+    typeof store !== "object" || store === null ||
+    typeof store.ingest !== "function" || typeof store.listDocuments !== "function" ||
+    typeof store.removeDocument !== "function"
+  ) {
+    throw CONFIG_INVALID.create({ detail: "createUploadHandler requires a valid RAG store." });
+  }
+  if (
+    config !== undefined && (typeof config !== "object" || config === null || Array.isArray(config))
+  ) {
+    throw CONFIG_INVALID.create({ detail: "createUploadHandler config must be an object." });
+  }
   const maxSize = config?.maxFileSize ?? MAX_FILE_SIZE;
+  assertPositiveInteger(maxSize, "maxFileSize", MAX_CONFIGURED_UPLOAD_BYTES);
   const authorize = resolveUploadAuthorize(config?.auth);
 
   async function POST(request: Request): Promise<Response> {
@@ -265,7 +399,17 @@ export function createUploadHandler(
       const unauthorized = await authorizeUploadRequest(request, authorize);
       if (unauthorized) return unauthorized;
 
-      const formData = await request.formData();
+      if (hasOversizedDeclaredBody(request, maxSize)) {
+        return Response.json({ error: "Upload request exceeds the configured size limit" }, {
+          status: 413,
+        });
+      }
+
+      const formData = await parseMultipartFormData(
+        request,
+        maxSize + MULTIPART_OVERHEAD_ALLOWANCE,
+      );
+      if (formData instanceof Response) return formData;
       const file = formData.get("file");
 
       if (!file || !(file instanceof FileCtor)) {
@@ -274,8 +418,8 @@ export function createUploadHandler(
 
       if (file.size > maxSize) {
         return Response.json(
-          { error: `File exceeds ${Math.round(maxSize / 1024 / 1024)} MB limit` },
-          { status: 400 },
+          { error: "File exceeds the configured size limit" },
+          { status: 413 },
         );
       }
 
@@ -288,7 +432,24 @@ export function createUploadHandler(
       }
 
       const buffer = await file.arrayBuffer();
-      const text = await loadUpload(buffer, typeToMime(fileType));
+      let text: string;
+      try {
+        text = await loadUpload(buffer, typeToMime(fileType), { maxBytes: maxSize });
+      } catch (error) {
+        if (error instanceof VeryfrontError && error.slug === "invalid-argument") {
+          return Response.json(
+            { error: "Uploaded file content is invalid" },
+            { status: error.status },
+          );
+        }
+        throw error;
+      }
+      if (text.length > MAX_RAG_TEXT_LENGTH) {
+        return Response.json(
+          { error: "Extracted text exceeds the supported document size" },
+          { status: 413 },
+        );
+      }
       if (!text.trim()) {
         return Response.json(
           { error: "No text could be extracted from file" },
@@ -299,6 +460,7 @@ export function createUploadHandler(
       // Sanitize file name: strip path components, HTML characters, and
       // control characters to prevent stored XSS via filenames rendered in UI.
       const safeName = sanitizeFileName(file.name);
+      const mediaType = typeToMime(fileType);
 
       const id = await store.ingest(safeName, text, {
         source: `upload:${safeName}`,
@@ -310,7 +472,7 @@ export function createUploadHandler(
         try {
           await sourceBlobStorage.put(file, {
             id,
-            mimeType: file.type || typeToMime(fileType),
+            mimeType: mediaType,
             metadata: {
               originalName: safeName,
               source: `upload:${safeName}`,
@@ -323,8 +485,8 @@ export function createUploadHandler(
             await store.removeDocument(id);
           } catch (cleanupError) {
             serverLogger.warn(
-              "Upload rollback failed after source persistence error:",
-              cleanupError,
+              "Upload rollback failed after source persistence error",
+              embeddingFailureContext(cleanupError),
             );
           }
           throw error;
@@ -334,12 +496,12 @@ export function createUploadHandler(
       return Response.json({
         id,
         name: safeName,
-        mediaType: file.type || typeToMime(fileType),
+        mediaType,
         size: file.size,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Upload failed";
-      return Response.json({ error: message }, { status: 500 });
+      serverLogger.error("Upload failed", embeddingFailureContext(error));
+      return Response.json({ error: "Upload failed" }, { status: 500 });
     }
   }
 
@@ -348,25 +510,33 @@ export function createUploadHandler(
       const unauthorized = await authorizeUploadRequest(request, authorize);
       if (unauthorized) return unauthorized;
 
-      const uploads = await enrichUploadsWithSourceUrls(await store.listDocuments());
+      const documents = await store.listDocuments();
+      const uploads = await enrichUploadsWithSourceUrls(
+        documents.filter((document) => document.source.startsWith("upload:")),
+      );
       return Response.json({ items: uploads.map(toUploadRegistryItem) });
     } catch (error) {
-      serverLogger.error("Upload list failed:", error);
+      serverLogger.error("Upload list failed", embeddingFailureContext(error));
       return Response.json({ error: "Failed to list uploads" }, { status: 500 });
     }
   }
 
   async function DELETE(
     request: Request,
-    context: { params: Record<string, string> },
+    context: UploadRouteContext,
   ): Promise<Response> {
     try {
       const unauthorized = await authorizeUploadRequest(request, authorize);
       if (unauthorized) return unauthorized;
 
       const id = resolveDeleteId(request, context);
-      if (!id) {
-        return Response.json({ error: "Missing upload ID" }, { status: 400 });
+      if (!isValidDeleteId(id)) {
+        return Response.json({ error: "Invalid upload ID" }, { status: 400 });
+      }
+
+      const target = (await store.listDocuments()).find((document) => document.id === id);
+      if (target && !target.source.startsWith("upload:")) {
+        return Response.json({ error: "Upload not found" }, { status: 404 });
       }
 
       await store.removeDocument(id);
@@ -376,13 +546,17 @@ export function createUploadHandler(
         try {
           await sourceBlobStorage.delete(id);
         } catch (error) {
-          serverLogger.warn("Upload source blob cleanup failed:", error);
+          serverLogger.warn(
+            "Upload source blob cleanup failed",
+            embeddingFailureContext(error),
+          );
+          throw error;
         }
       }
 
       return Response.json({ success: true });
     } catch (error) {
-      serverLogger.error("Upload delete failed:", error);
+      serverLogger.error("Upload delete failed", embeddingFailureContext(error));
       return Response.json({ error: "Delete failed" }, { status: 500 });
     }
   }

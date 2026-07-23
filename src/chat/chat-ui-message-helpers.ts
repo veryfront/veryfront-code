@@ -1,18 +1,28 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
 
-type StreamChunkMetadataPart = {
+/** Minimal stream part fields used to derive message metadata. */
+export type StreamChunkMetadataPart = {
+  /** Stream part discriminator. */
   type: string;
+  /** Final provider usage and billing fields, when available. */
   totalUsage?: unknown;
 };
 
 /** Input payload for build chat stream chunk message metadata. */
 export interface BuildChatStreamChunkMessageMetadataInput {
+  /** Stable agent identifier. */
   agentId: string;
+  /** Provider model identifier. */
   modelId: string;
+  /** Durable run identifier. */
   runId?: string;
+  /** Identifier assigned to the streaming assistant message. */
   streamingMessageId?: string;
+  /** Stream part that may carry final usage metadata. */
   part: StreamChunkMetadataPart;
+  /** User-facing agent name. */
   agentName?: string;
+  /** Public HTTP or HTTPS avatar URL. */
   agentAvatarUrl?: string;
 }
 
@@ -23,8 +33,59 @@ type ReplayState = {
   ended: boolean;
 };
 
+const MAX_METADATA_STRING_LENGTH = 2_048;
+const MAX_REPLAY_STATES = 4_096;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function readOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeNonnegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function normalizeNonnegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function normalizeMetadataString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= MAX_METADATA_STRING_LENGTH
+    ? normalized
+    : undefined;
+}
+
+function normalizeHttpUrl(value: unknown): string | undefined {
+  const normalized = normalizeMetadataString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  try {
+    const url = new URL(normalized);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+        url.username.length === 0 && url.password.length === 0
+      ? normalized
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | undefined {
@@ -32,36 +93,42 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
     return undefined;
   }
 
-  const inputTokenDetails = isRecord(value.inputTokenDetails) ? value.inputTokenDetails : undefined;
-  const outputTokenDetails = isRecord(value.outputTokenDetails)
-    ? value.outputTokenDetails
-    : undefined;
-  const cacheCreationInputTokens = typeof value.cacheCreationInputTokens === "number"
-    ? value.cacheCreationInputTokens
-    : typeof inputTokenDetails?.cacheWriteTokens === "number"
-    ? inputTokenDetails.cacheWriteTokens
-    : undefined;
-  const cacheReadInputTokens = typeof value.cacheReadInputTokens === "number"
-    ? value.cacheReadInputTokens
-    : typeof inputTokenDetails?.cacheReadTokens === "number"
-    ? inputTokenDetails.cacheReadTokens
-    : undefined;
-  const cachedInputTokens = typeof value.cachedInputTokens === "number"
-    ? value.cachedInputTokens
-    : cacheReadInputTokens;
-  const reasoningTokens = typeof value.reasoningTokens === "number"
-    ? value.reasoningTokens
-    : typeof outputTokenDetails?.reasoningTokens === "number"
-    ? outputTokenDetails.reasoningTokens
-    : undefined;
+  const rawInputTokenDetails = readOwnDataProperty(value, "inputTokenDetails");
+  const rawOutputTokenDetails = readOwnDataProperty(value, "outputTokenDetails");
+  const inputTokenDetails = isRecord(rawInputTokenDetails) ? rawInputTokenDetails : undefined;
+  const outputTokenDetails = isRecord(rawOutputTokenDetails) ? rawOutputTokenDetails : undefined;
+  const cacheCreationInputTokens = normalizeNonnegativeInteger(
+    readOwnDataProperty(value, "cacheCreationInputTokens"),
+  ) ??
+    normalizeNonnegativeInteger(
+      inputTokenDetails ? readOwnDataProperty(inputTokenDetails, "cacheWriteTokens") : undefined,
+    );
+  const cacheReadInputTokens = normalizeNonnegativeInteger(
+    readOwnDataProperty(value, "cacheReadInputTokens"),
+  ) ??
+    normalizeNonnegativeInteger(
+      inputTokenDetails ? readOwnDataProperty(inputTokenDetails, "cacheReadTokens") : undefined,
+    );
+  const cachedInputTokens = normalizeNonnegativeInteger(
+    readOwnDataProperty(value, "cachedInputTokens"),
+  ) ??
+    cacheReadInputTokens;
+  const reasoningTokens = normalizeNonnegativeInteger(
+    readOwnDataProperty(value, "reasoningTokens"),
+  ) ??
+    normalizeNonnegativeInteger(
+      outputTokenDetails ? readOwnDataProperty(outputTokenDetails, "reasoningTokens") : undefined,
+    );
+  const inputTokens = normalizeNonnegativeInteger(readOwnDataProperty(value, "inputTokens"));
+  const outputTokens = normalizeNonnegativeInteger(readOwnDataProperty(value, "outputTokens"));
 
   const usage = {
-    ...(typeof value.inputTokens === "number" ? { inputTokens: value.inputTokens } : {}),
-    ...(typeof value.outputTokens === "number" ? { outputTokens: value.outputTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-    ...(typeof cachedInputTokens === "number" ? { cachedInputTokens } : {}),
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 
   return Object.keys(usage).length > 0 ? usage : undefined;
@@ -89,46 +156,58 @@ function normalizeBillingMetadata(
     return {};
   }
 
+  const billableInputTokens = normalizeNonnegativeInteger(
+    readOwnDataProperty(value, "billableInputTokens"),
+  );
+  const billableOutputTokens = normalizeNonnegativeInteger(
+    readOwnDataProperty(value, "billableOutputTokens"),
+  );
+  const costUsd = normalizeNonnegativeNumber(readOwnDataProperty(value, "costUsd"));
+  const providerInputCostUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "providerInputCostUsd"),
+  );
+  const providerOutputCostUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "providerOutputCostUsd"),
+  );
+  const providerCostUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "providerCostUsd"),
+  );
+  const veryfrontInputChargeUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "veryfrontInputChargeUsd"),
+  );
+  const veryfrontOutputChargeUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "veryfrontOutputChargeUsd"),
+  );
+  const veryfrontChargeUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "veryfrontChargeUsd"),
+  );
+  const veryfrontBilledUsd = normalizeNonnegativeNumber(
+    readOwnDataProperty(value, "veryfrontBilledUsd"),
+  );
+  const costCredits = normalizeNonnegativeNumber(readOwnDataProperty(value, "costCredits"));
+  const costSource = readOwnDataProperty(value, "costSource");
+  const billingMode = readOwnDataProperty(value, "billingMode");
+  const usageCaptureStatus = readOwnDataProperty(value, "usageCaptureStatus");
+
   return {
-    ...(typeof value.billableInputTokens === "number"
-      ? { billableInputTokens: value.billableInputTokens }
+    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
+    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(providerInputCostUsd !== undefined ? { providerInputCostUsd } : {}),
+    ...(providerOutputCostUsd !== undefined ? { providerOutputCostUsd } : {}),
+    ...(providerCostUsd !== undefined ? { providerCostUsd } : {}),
+    ...(veryfrontInputChargeUsd !== undefined ? { veryfrontInputChargeUsd } : {}),
+    ...(veryfrontOutputChargeUsd !== undefined ? { veryfrontOutputChargeUsd } : {}),
+    ...(veryfrontChargeUsd !== undefined ? { veryfrontChargeUsd } : {}),
+    ...(veryfrontBilledUsd !== undefined ? { veryfrontBilledUsd } : {}),
+    ...(costCredits !== undefined ? { costCredits } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
       : {}),
-    ...(typeof value.billableOutputTokens === "number"
-      ? { billableOutputTokens: value.billableOutputTokens }
-      : {}),
-    ...(typeof value.costUsd === "number" ? { costUsd: value.costUsd } : {}),
-    ...(typeof value.providerInputCostUsd === "number"
-      ? { providerInputCostUsd: value.providerInputCostUsd }
-      : {}),
-    ...(typeof value.providerOutputCostUsd === "number"
-      ? { providerOutputCostUsd: value.providerOutputCostUsd }
-      : {}),
-    ...(typeof value.providerCostUsd === "number"
-      ? { providerCostUsd: value.providerCostUsd }
-      : {}),
-    ...(typeof value.veryfrontInputChargeUsd === "number"
-      ? { veryfrontInputChargeUsd: value.veryfrontInputChargeUsd }
-      : {}),
-    ...(typeof value.veryfrontOutputChargeUsd === "number"
-      ? { veryfrontOutputChargeUsd: value.veryfrontOutputChargeUsd }
-      : {}),
-    ...(typeof value.veryfrontChargeUsd === "number"
-      ? { veryfrontChargeUsd: value.veryfrontChargeUsd }
-      : {}),
-    ...(typeof value.veryfrontBilledUsd === "number"
-      ? { veryfrontBilledUsd: value.veryfrontBilledUsd }
-      : {}),
-    ...(typeof value.costCredits === "number" ? { costCredits: value.costCredits } : {}),
-    ...(value.costSource === "gateway" || value.costSource === "missing" ||
-        value.costSource === "partial"
-      ? { costSource: value.costSource }
-      : {}),
-    ...(value.billingMode === "direct" || value.billingMode === "deferred"
-      ? { billingMode: value.billingMode }
-      : {}),
-    ...(value.usageCaptureStatus === "complete" || value.usageCaptureStatus === "partial" ||
-        value.usageCaptureStatus === "missing"
-      ? { usageCaptureStatus: value.usageCaptureStatus }
+    ...(billingMode === "direct" || billingMode === "deferred" ? { billingMode } : {}),
+    ...(usageCaptureStatus === "complete" || usageCaptureStatus === "partial" ||
+        usageCaptureStatus === "missing"
+      ? { usageCaptureStatus }
       : {}),
   };
 }
@@ -171,6 +250,12 @@ function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayS
     started: false,
     ended: false,
   };
+  if (stateMap.size >= MAX_REPLAY_STATES) {
+    const oldestKey = stateMap.keys().next().value;
+    if (oldestKey !== undefined) {
+      stateMap.delete(oldestKey);
+    }
+  }
   stateMap.set(id, created);
   return created;
 }
@@ -180,9 +265,10 @@ function firstStringField(
   keys: readonly string[],
 ): string | undefined {
   for (const key of keys) {
-    const candidate = value[key];
+    const candidate = readOwnDataProperty(value, key);
     if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate;
+      const normalized = normalizeMetadataString(candidate);
+      if (normalized) return normalized;
     }
   }
   return undefined;
@@ -194,30 +280,40 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
     return {};
   }
 
-  const usage = normalizeUsageMetadata(value.usage);
+  const usage = normalizeUsageMetadata(readOwnDataProperty(value, "usage"));
   const billingMetadata = normalizeBillingMetadata(value);
   const agentName = firstStringField(value, ["agentName", "agent_name"]);
-  const agentAvatarUrl = firstStringField(value, [
+  const agentAvatarUrl = normalizeHttpUrl(firstStringField(value, [
     "agentAvatarUrl",
     "agent_avatar_url",
     "avatar_url",
     "avatarUrl",
-  ]);
+  ]));
+
+  const createdAt = normalizeMetadataString(readOwnDataProperty(value, "createdAt"));
+  const completedAt = normalizeMetadataString(readOwnDataProperty(value, "completedAt"));
+  const agentId = normalizeMetadataString(readOwnDataProperty(value, "agentId"));
+  const conversationId = normalizeMetadataString(readOwnDataProperty(value, "conversationId"));
+  const modelId = normalizeMetadataString(readOwnDataProperty(value, "modelId"));
+  const runId = normalizeMetadataString(readOwnDataProperty(value, "runId"));
+  const streamingMessageId = normalizeMetadataString(
+    readOwnDataProperty(value, "streamingMessageId"),
+  );
+  const isStopped = readOwnDataProperty(value, "isStopped");
+  const isCompleted = readOwnDataProperty(value, "isCompleted");
 
   return {
-    ...(typeof value.createdAt === "string" ? { createdAt: value.createdAt } : {}),
-    ...(typeof value.isStopped === "boolean" ? { isStopped: value.isStopped } : {}),
-    ...(typeof value.isCompleted === "boolean" ? { isCompleted: value.isCompleted } : {}),
-    ...(typeof value.completedAt === "string" ? { completedAt: value.completedAt } : {}),
-    ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(typeof isStopped === "boolean" ? { isStopped } : {}),
+    ...(typeof isCompleted === "boolean" ? { isCompleted } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(agentId ? { agentId } : {}),
     ...(agentName ? { agentName } : {}),
     ...(agentAvatarUrl ? { agentAvatarUrl } : {}),
-    ...(typeof value.conversationId === "string" ? { conversationId: value.conversationId } : {}),
-    ...(typeof value.modelId === "string" ? { modelId: value.modelId } : {}),
-    ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
-    ...(typeof value.streamingMessageId === "string"
-      ? { streamingMessageId: value.streamingMessageId }
-      : {}),
+    ...(conversationId ? { conversationId } : {}),
+    ...(modelId ? { modelId } : {}),
+    ...(runId ? { runId } : {}),
+    ...(streamingMessageId ? { streamingMessageId } : {}),
     ...(usage ? { usage } : {}),
     ...billingMetadata,
   };
@@ -233,14 +329,14 @@ export function extractChatMessageMetadata(value: unknown): ChatMessageMetadata 
 export function buildChatStreamChunkMessageMetadata(
   input: BuildChatStreamChunkMessageMetadataInput,
 ): ChatMessageMetadata {
-  const baseMetadata: ChatMessageMetadata = {
+  const baseMetadata = normalizeChatMessageMetadata({
     agentId: input.agentId,
     ...(input.agentName ? { agentName: input.agentName } : {}),
     ...(input.agentAvatarUrl ? { agentAvatarUrl: input.agentAvatarUrl } : {}),
     modelId: input.modelId,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(input.streamingMessageId ? { streamingMessageId: input.streamingMessageId } : {}),
-  };
+  });
 
   if (input.part.type !== "finish" || !input.part.totalUsage) {
     return baseMetadata;
@@ -297,8 +393,9 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       const state = getReplayState(stateMap, chunk.id);
 
       if (state.started) {
-        state.replayOffset = 0;
-        state.ended = false;
+        if (!state.ended) {
+          state.replayOffset = 0;
+        }
         continue;
       }
 
@@ -311,6 +408,9 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
     if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
       const stateMap = chunk.type === "text-delta" ? textStates : reasoningStates;
       const state = getReplayState(stateMap, chunk.id);
+      if (state.ended) {
+        continue;
+      }
       const { emit, nextReplayOffset } = state.replayOffset === null
         ? { emit: chunk.delta, nextReplayOffset: null as number | null }
         : splitReplayDelta(state.content, state.replayOffset, chunk.delta);

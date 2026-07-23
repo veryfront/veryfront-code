@@ -242,6 +242,39 @@ describe("MultiTierCache - backfill TTL preservation", () => {
 
     assertEquals(cache.getStats().backfills, 1);
   });
+
+  it("does not let an older read backfill over a newer write", async () => {
+    let resolveTtl!: (value: number) => void;
+    let markTtlStarted!: () => void;
+    const ttl = new Promise<number>((resolve) => {
+      resolveTtl = resolve;
+    });
+    const ttlStarted = new Promise<void>((resolve) => {
+      markTtlStarted = resolve;
+    });
+    const l1 = createCapturingTier("l1");
+    const l3 = createCapturingTier("l3");
+    l3.store.set("key", "old");
+    l3.getRemainingTtlSeconds = () => {
+      markTtlStarted();
+      return ttl;
+    };
+    const cache = new MultiTierCache({
+      name: "test",
+      l1,
+      l3,
+      asyncBackfill: false,
+      backfillOnHit: true,
+    });
+
+    const staleRead = cache.get("key");
+    await ttlStarted;
+    await cache.set("key", "new");
+    resolveTtl(60);
+    assertEquals(await staleRead, "old");
+
+    assertEquals(l1.store.get("key"), "new");
+  });
 });
 
 describe("MultiTierCache - set() TTL propagation", () => {

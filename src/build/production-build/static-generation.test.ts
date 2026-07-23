@@ -17,6 +17,7 @@ import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import * as React from "react";
+import { MAX_STYLE_SOURCE_FILE_BYTES } from "#veryfront/html/styles-builder/resource-limits.ts";
 import {
   __injectReactDOMServerForTests,
   __setServerModuleLoaderForTests,
@@ -53,7 +54,8 @@ function createMockRenderer(): VeryfrontRenderer {
   return {
     renderPage: (_slug: string) =>
       Promise.resolve({
-        html: "<html><head></head><body><div>content</div></body></html>",
+        html:
+          '<html><head></head><body><div id="root"><div>content</div></div><div id="veryfront-portals"></div></body></html>',
         frontmatter: { title: "Test" },
         headings: [{ level: 1, text: "Test", id: "test" }],
       }),
@@ -168,6 +170,7 @@ describe(
       });
 
       it("fails the build when an app route cannot be rendered", async () => {
+        const adapter = createMemoryAdapter();
         const error = await assertRejects(() =>
           buildAppRoutes(
             [{
@@ -177,7 +180,7 @@ describe(
               segmentDirs: ["/tmp/project/app/broken"],
             }],
             {
-              adapter: createMockAdapter(),
+              adapter,
               projectDir: "/tmp/project",
               outputDir: "/tmp/output",
               renderer: createMockRenderer(),
@@ -193,6 +196,160 @@ describe(
         assertEquals(error instanceof VeryfrontError, true);
         assertEquals((error as VeryfrontError).slug, "ssg-generation-error");
         assertEquals((error as Error).message, "Failed to build app route /broken");
+      });
+
+      it("fails the build when App Router CSS cannot be compiled", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", "{");
+
+        await assertRejects(
+          () =>
+            buildAppRoutes(
+              [{
+                path: "/broken-css",
+                pageFile: "/tmp/project/app/broken-css/page.tsx",
+                segments: ["broken-css"],
+                segmentDirs: ["/tmp/project/app/broken-css"],
+              }],
+              {
+                adapter,
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: createMockRenderer(),
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+                traceStep: (name, fn) =>
+                  name === "app:/broken-css"
+                    ? Promise.resolve("<html><head></head><body></body></html>" as never)
+                    : fn(),
+              },
+            ),
+          Error,
+          "Failed to generate App Router CSS",
+        );
+      });
+
+      it("rejects an oversized App Router style source before reading it", async () => {
+        const adapter = createMemoryAdapter();
+        const sourcePath = "/tmp/project/app/page.tsx";
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(sourcePath, "small placeholder");
+        const stat = adapter.fs.stat.bind(adapter.fs);
+        adapter.fs.stat = (path: string) =>
+          path === sourcePath
+            ? Promise.resolve({
+              size: MAX_STYLE_SOURCE_FILE_BYTES + 1,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              mtime: new Date(),
+            })
+            : stat(path);
+        const readFile = adapter.fs.readFile.bind(adapter.fs);
+        let sourceRead = false;
+        adapter.fs.readFile = (path: string) => {
+          if (path === sourcePath) sourceRead = true;
+          return readFile(path);
+        };
+
+        await assertRejects(
+          () =>
+            buildAppRoutes(
+              [{
+                path: "/",
+                pageFile: sourcePath,
+                segments: [],
+                segmentDirs: ["/tmp/project/app"],
+              }],
+              {
+                adapter,
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: createMockRenderer(),
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          TypeError,
+          "size limit",
+        );
+        assertEquals(sourceRead, false);
+      });
+
+      it("rejects invalid stylesheet size metadata before reading it", async () => {
+        const adapter = createMemoryAdapter();
+        const stylesheetPath = "/tmp/project/globals.css";
+        adapter.fs.files.set(stylesheetPath, '@import "tailwindcss";');
+        const lstat = adapter.fs.lstat?.bind(adapter.fs);
+        adapter.fs.lstat = (path: string) =>
+          path === stylesheetPath
+            ? Promise.resolve({
+              size: Number.NaN,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              mtime: null,
+            })
+            : lstat
+            ? lstat(path)
+            : adapter.fs.stat(path);
+        const readFile = adapter.fs.readFile.bind(adapter.fs);
+        let stylesheetRead = false;
+        adapter.fs.readFile = (path: string) => {
+          if (path === stylesheetPath) stylesheetRead = true;
+          return readFile(path);
+        };
+
+        await assertRejects(
+          () =>
+            buildAppRoutes(
+              [{
+                path: "/",
+                pageFile: "/tmp/project/app/page.tsx",
+                segments: [],
+                segmentDirs: ["/tmp/project/app"],
+              }],
+              {
+                adapter,
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: createMockRenderer(),
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          TypeError,
+          "invalid size",
+        );
+        assertEquals(stylesheetRead, false);
+      });
+
+      it("rejects app route paths that escape outputDir", async () => {
+        await assertRejects(
+          () =>
+            buildAppRoutes(
+              [{
+                path: "/../../outside",
+                pageFile: "/tmp/project/app/outside/page.tsx",
+                segments: ["..", "..", "outside"],
+                segmentDirs: ["/tmp/project/app/outside"],
+              }],
+              {
+                adapter: createMemoryAdapter(),
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: createMockRenderer(),
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          Error,
+          "safe absolute URL path",
+        );
       });
 
       it("writes and links generated CSS for app router pages", async () => {
@@ -414,7 +571,7 @@ describe(
           renderPage: () =>
             Promise.resolve({
               html:
-                '<html><head><script type="importmap">{"imports":{"react":"/react.js"}}</script></head><body><div>content</div></body></html>',
+                '<html><head><script type="importmap">{"imports":{"react":"/react.js"}}</script></head><body><div id="root"><div>content</div></div><div id="veryfront-portals"></div></body></html>',
               frontmatter: {},
               headings: [],
             }),
@@ -509,7 +666,8 @@ describe(
           ) => {
             assertEquals(options?.releaseAssetManifest, manifest);
             return Promise.resolve({
-              html: "<html><head></head><body><div>content</div></body></html>",
+              html:
+                '<html><head></head><body><div id="root"><div>content</div></div><div id="veryfront-portals"></div></body></html>',
               frontmatter: {},
               headings: [],
             });
@@ -570,11 +728,12 @@ describe(
 
       it("escapes route slug before embedding it in the client bootstrap script", async () => {
         const adapter = createMemoryAdapter();
-        const slug = `bad";globalThis.__xss=1;//`;
+        const slug = `bad";globalThis.__xss=1;`;
         const renderer = {
           renderPage: () =>
             Promise.resolve({
-              html: "<html><head></head><body><div>content</div></body></html>",
+              html:
+                '<html><head></head><body><div id="root"><div>content</div></div><div id="veryfront-portals"></div></body></html>',
               frontmatter: { description: "</script><script>alert(1)</script>" },
               headings: [],
             }),
@@ -630,6 +789,95 @@ describe(
         assertEquals(error instanceof VeryfrontError, true);
         assertEquals((error as VeryfrontError).slug, "ssg-generation-error");
         assertEquals((error as Error).message, "Failed to build page /bad");
+      });
+
+      it("rejects page slugs that escape outputDir before rendering", async () => {
+        let renderCalls = 0;
+        const renderer = {
+          renderPage: () => {
+            renderCalls++;
+            return Promise.resolve({ html: "<html><head></head><body></body></html>" });
+          },
+        } as unknown as VeryfrontRenderer;
+
+        await assertRejects(
+          () =>
+            buildPagesRoutes(
+              [{ slug: "../../outside", path: "/outside", file: "pages/outside.mdx" }],
+              {
+                adapter: createMockAdapter(),
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer,
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          Error,
+          "safe relative path",
+        );
+        assertEquals(renderCalls, 0);
+      });
+
+      it("rejects renderer output without complete head and body elements", async () => {
+        const renderer = {
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html><head></head><body>incomplete",
+              frontmatter: {},
+              headings: [],
+            }),
+        } as unknown as VeryfrontRenderer;
+
+        const error = await assertRejects(
+          () =>
+            buildPagesRoutes(
+              [{ slug: "broken-html", path: "/broken-html", file: "pages/broken.mdx" }],
+              {
+                adapter: createMockAdapter(),
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer,
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          VeryfrontError,
+          "Failed to build page /broken-html",
+        );
+        assertStringIncludes(String(error.cause), "closing </body>");
+      });
+
+      it("rejects a complete document that lacks the client navigation shell", async () => {
+        const renderer = {
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html><head></head><body><main>content</main></body></html>",
+              frontmatter: {},
+              headings: [],
+            }),
+        } as unknown as VeryfrontRenderer;
+
+        const error = await assertRejects(
+          () =>
+            buildPagesRoutes(
+              [{ slug: "missing-root", path: "/missing-root", file: "pages/missing-root.mdx" }],
+              {
+                adapter: createMockAdapter(),
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer,
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          VeryfrontError,
+          "Failed to build page /missing-root",
+        );
+        assertStringIncludes(String(error.cause), "Veryfront root element");
       });
 
       it("should use custom traceStep function", async () => {

@@ -15,6 +15,7 @@ import {
 import {
   bareName,
   PACKAGE_SPEC_RE,
+  resolveApprovedTailwindPluginSpecifier,
   TAILWIND_PLUGIN_ALLOWLIST,
 } from "./tailwind-plugin-allowlist.ts";
 
@@ -42,11 +43,12 @@ describe("styles-builder/plugin-loader", () => {
         Promise.resolve(new Response(`export * from "react";`, { status: 200 }))) as typeof fetch;
 
     try {
-      await assertRejects(
+      const error = await assertRejects(
         () => loadModuleFromEsmSh("@tailwindcss/forms@0.5.11"),
         Error,
         "Could not find bundle path in esm.sh response",
-      );
+      ) as Error;
+      assertEquals(error.message.includes(`export * from "react"`), false);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -196,6 +198,143 @@ describe("styles-builder/plugin-loader", () => {
     }
   });
 
+  it("deduplicates concurrent loads through the caller-provided cache", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCallCount = 0;
+    globalThis.fetch = (() => {
+      fetchCallCount++;
+      if (fetchCallCount === 1) {
+        return Promise.resolve(
+          new Response(`export * from "/v1/concurrent-plugin.bundle.mjs";`, { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(`export default { id: "concurrent-plugin" };`, { status: 200 }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const pluginCache = new Map<string, unknown>();
+      const pluginErrors = new Map<string, Error>();
+      const [first, second] = await Promise.all([
+        loadPlugin("@tailwindcss/typography@0.5.19", pluginCache, pluginErrors),
+        loadPlugin("@tailwindcss/typography@0.5.19", pluginCache, pluginErrors),
+      ]);
+
+      assertEquals(first, second);
+      assertEquals(fetchCallCount, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects oversized esm.sh responses before module import", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response("", {
+          status: 200,
+          headers: { "content-length": String(9 * 1024 * 1024) },
+        }),
+      )) as typeof fetch;
+
+    try {
+      await assertRejects(
+        () => loadModuleFromEsmSh("@tailwindcss/typography@0.5.19"),
+        Error,
+        "size limit",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("cancels an oversized streamed bundle before consuming the remaining body", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCallCount = 0;
+    let bundlePullCount = 0;
+    let bundleCancelled = false;
+
+    globalThis.fetch = (() => {
+      fetchCallCount++;
+      if (fetchCallCount === 1) {
+        return Promise.resolve(
+          new Response(`export * from "/v1/streamed-plugin.bundle.mjs";`, { status: 200 }),
+        );
+      }
+
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          bundlePullCount++;
+          if (bundlePullCount <= 12) {
+            controller.enqueue(new Uint8Array(1024 * 1024));
+          } else {
+            controller.close();
+          }
+        },
+        cancel() {
+          bundleCancelled = true;
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }) as typeof fetch;
+
+    try {
+      await assertRejects(
+        () => loadModuleFromEsmSh("@tailwindcss/typography@0.5.19"),
+        Error,
+        "size limit",
+      );
+      assertEquals(bundleCancelled, true);
+      assert(
+        bundlePullCount < 13,
+        `Expected bounded streaming read, but consumed ${bundlePullCount} chunks`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects excessive version specifiers before network access", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetched = false;
+    globalThis.fetch = (() => {
+      fetched = true;
+      return Promise.reject(new Error("must not fetch"));
+    }) as typeof fetch;
+
+    try {
+      await assertRejects(
+        () => loadModuleFromEsmSh(`@tailwindcss/typography@${"1".repeat(300)}`),
+        Error,
+        "specifier",
+      );
+      assertEquals(fetched, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects unapproved plugin versions before network access", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetched = false;
+    globalThis.fetch = (() => {
+      fetched = true;
+      return Promise.reject(new Error("must not fetch"));
+    }) as typeof fetch;
+
+    try {
+      await assertRejects(
+        () => loadModuleFromEsmSh("@tailwindcss/typography@0.5.18"),
+        Error,
+        "approved Tailwind plugin version",
+      );
+      assertEquals(fetched, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("loads bare bundled plugin names through pinned binary bundle URLs", async () => {
     const originalFetch = globalThis.fetch;
     const fetchedUrls: string[] = [];
@@ -222,6 +361,38 @@ describe("styles-builder/plugin-loader", () => {
       assertEquals(
         fetchedUrls[0],
         "https://esm.sh/@tailwindcss/typography@0.5.19?bundle&external=tailwindcss&target=denonext",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("loads bare remote plugin names through reviewed pinned versions", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchedUrls: string[] = [];
+
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      fetchedUrls.push(url);
+
+      if (url.includes("?bundle")) {
+        return Promise.resolve(
+          new Response(`export * from "/v1/pinned-aspect-ratio.bundle.mjs";`, { status: 200 }),
+        );
+      }
+
+      return Promise.resolve(
+        new Response(`export default { id: "pinned-aspect-ratio" };`, { status: 200 }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const plugin = await loadModuleFromEsmSh("@tailwindcss/aspect-ratio");
+
+      assertEquals((plugin as { default?: { id?: string } }).default?.id, "pinned-aspect-ratio");
+      assertEquals(
+        fetchedUrls[0],
+        "https://esm.sh/@tailwindcss/aspect-ratio@0.4.2?bundle&external=tailwindcss&target=denonext",
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -423,7 +594,7 @@ describe("styles-builder/plugin-loader allowlist positive cases", () => {
       }
     });
 
-    it(`accepts ${pkg}@1.2.3 versioned spec (passes allowlist guard)`, async () => {
+    it(`accepts the reviewed version of ${pkg}`, async () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (() =>
         Promise.resolve(
@@ -431,7 +602,7 @@ describe("styles-builder/plugin-loader allowlist positive cases", () => {
         )) as typeof fetch;
       try {
         const err = await assertRejects(
-          () => loadModuleFromEsmSh(`${pkg}@1.2.3`),
+          () => loadModuleFromEsmSh(resolveApprovedTailwindPluginSpecifier(pkg)!),
           Error,
         ) as Error;
         assertStringIncludes(err.message, "Failed to fetch stub: 503");

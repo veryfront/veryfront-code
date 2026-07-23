@@ -14,6 +14,52 @@ import type {
   EvalToolCall,
   EvalUsage,
 } from "./types.ts";
+import {
+  createRequestTimeoutSignal,
+  formatUrlForPublicMessage,
+  stringifyBoundedJsonRequest,
+} from "./agent-service/http-safety.ts";
+import { createEvalValidationError, formatEvalPublicError } from "./validation.ts";
+
+const MAX_AGENT_SERVICE_TEXT_BYTES = 1024 * 1024;
+const MAX_AGENT_SERVICE_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_AGENT_SERVICE_TOOLS = 1_000;
+const MAX_AGENT_SERVICE_STEPS = 1_000;
+
+/** Default timeout for one agent-service eval request. */
+export const DEFAULT_AGENT_SERVICE_EVAL_TIMEOUT_MS = 240_000;
+
+function assertBoundedText(value: string, label: string): void {
+  if (value.trim().length === 0) {
+    throw createEvalValidationError(`${label} must be a non-empty string`);
+  }
+  if (new TextEncoder().encode(value).byteLength > MAX_AGENT_SERVICE_TEXT_BYTES) {
+    throw createEvalValidationError(
+      `${label} must not exceed ${MAX_AGENT_SERVICE_TEXT_BYTES} UTF-8 bytes`,
+    );
+  }
+}
+
+function assertAllowedTools(value: string[] | undefined): void {
+  if (value === undefined) return;
+  if (value.length > MAX_AGENT_SERVICE_TOOLS) {
+    throw createEvalValidationError(
+      `allowedTools must not contain more than ${MAX_AGENT_SERVICE_TOOLS} entries`,
+    );
+  }
+  for (const tool of value) assertBoundedText(tool, "allowedTools entry");
+}
+
+function assertMaxSteps(value: number | undefined): void {
+  if (
+    value !== undefined &&
+    (!Number.isSafeInteger(value) || value < 1 || value > MAX_AGENT_SERVICE_STEPS)
+  ) {
+    throw createEvalValidationError(
+      `maxSteps must be an integer between 1 and ${MAX_AGENT_SERVICE_STEPS}`,
+    );
+  }
+}
 
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
@@ -90,6 +136,20 @@ export interface AgentServiceEvalRequestBody {
   }>;
 }
 
+function assertSerializableRequestBody(body: AgentServiceEvalRequestBody): void {
+  let json: string;
+  try {
+    json = JSON.stringify(body);
+  } catch {
+    throw createEvalValidationError("Agent-service eval request must be JSON-serializable");
+  }
+  if (new TextEncoder().encode(json).byteLength > MAX_AGENT_SERVICE_REQUEST_BYTES) {
+    throw createEvalValidationError(
+      `Agent-service eval request exceeds the ${MAX_AGENT_SERVICE_REQUEST_BYTES}-byte limit`,
+    );
+  }
+}
+
 /** Configuration for the live agent-service eval adapter. */
 export interface AgentServiceEvalAdapterConfig {
   endpoint?: string;
@@ -153,7 +213,13 @@ function stringifyPromptInput(input: unknown): string {
     const prompt = readString(input.prompt) ?? readString(input.message) ?? readString(input.input);
     if (prompt) return prompt;
   }
-  return JSON.stringify(input);
+  try {
+    const serialized = JSON.stringify(input);
+    if (typeof serialized === "string") return serialized;
+  } catch {
+    // The stable validation error below does not expose input data.
+  }
+  throw createEvalValidationError("Eval example input must be a string or JSON-serializable value");
 }
 
 function getInputMetadata(input: unknown): Record<string, unknown> {
@@ -176,9 +242,8 @@ function getRequestOverrides(input: BuildAgentServiceEvalRequestBodyInput) {
 }
 
 function createVeryfrontForwardedProps(
-  input: BuildAgentServiceEvalRequestBodyInput,
+  overrides: ReturnType<typeof getRequestOverrides>,
 ): AgentServiceEvalForwardedProps | null {
-  const overrides = getRequestOverrides(input);
   const veryfront: AgentServiceEvalForwardedProps = {};
 
   if (overrides.agentId) veryfront.agentId = overrides.agentId;
@@ -204,7 +269,6 @@ function createHeaders(config: AgentServiceEvalAdapterConfig): Record<string, st
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${config.authToken}`,
-    "x-token": config.authToken,
     ...(config.projectId ? { "x-project-id": config.projectId } : {}),
     ...(config.projectSlug ? { "x-project-slug": config.projectSlug } : {}),
     ...(config.releaseId ? { "x-release-id": config.releaseId } : {}),
@@ -223,16 +287,17 @@ function getNow(config: Pick<AgentServiceEvalAdapterConfig, "now">): number {
 }
 
 function stringifyError(value: unknown): string | undefined {
-  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "string" && value.length > 0) return formatEvalPublicError(value);
   if (isRecord(value)) {
     const message = readString(value.message) ?? readString(value.error);
-    if (message) return message;
+    if (message) return formatEvalPublicError(message);
   }
 
   try {
-    return JSON.stringify(value);
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string" ? formatEvalPublicError(serialized) : undefined;
   } catch {
-    return String(value);
+    return undefined;
   }
 }
 
@@ -367,7 +432,7 @@ function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) 
     agUi: {
       responseStatus: run.responseStatus,
       eventTypes: run.eventTypes,
-      runError: run.runError,
+      runError: run.runError ? formatEvalPublicError(run.runError) : null,
     },
   };
 }
@@ -468,8 +533,10 @@ function createRequestInit(
   return {
     method: "POST",
     headers: createHeaders(config),
-    body: JSON.stringify(body),
-    ...(config.requestTimeoutMs ? { signal: AbortSignal.timeout(config.requestTimeoutMs) } : {}),
+    body: stringifyBoundedJsonRequest(body),
+    signal: createRequestTimeoutSignal(
+      config.requestTimeoutMs ?? DEFAULT_AGENT_SERVICE_EVAL_TIMEOUT_MS,
+    ),
   };
 }
 
@@ -503,7 +570,7 @@ export function evaluateAgentServiceEvalEnvironment(
   env: AgentServiceEvalEnvironmentInput = {},
   resolvedApiUrl = parseAgentServiceConfig(env).VERYFRONT_API_URL,
 ): AgentServiceEvalEnvironmentPreflightResult {
-  const messages = [`Resolved VERYFRONT_API_URL: ${resolvedApiUrl}`];
+  const messages = [`Resolved VERYFRONT_API_URL: ${formatUrlForPublicMessage(resolvedApiUrl)}`];
   let hasBlockers = false;
 
   if (typeof env.VERYFRONT_TOKEN !== "string" || env.VERYFRONT_TOKEN.length === 0) {
@@ -523,18 +590,37 @@ export function evaluateAgentServiceEvalEnvironment(
 export function buildAgentServiceEvalRequestBody(
   input: BuildAgentServiceEvalRequestBodyInput,
 ): AgentServiceEvalRequestBody {
-  const veryfront = createVeryfrontForwardedProps(input);
+  if (!isRecord(input)) {
+    throw createEvalValidationError("Agent-service eval request input must be an object");
+  }
+  let requestInput: BuildAgentServiceEvalRequestBodyInput;
+  try {
+    requestInput = structuredClone(input);
+  } catch {
+    throw createEvalValidationError("Agent-service eval request must be JSON-serializable");
+  }
+  if (requestInput.metadata !== undefined && !isRecord(requestInput.metadata)) {
+    throw createEvalValidationError("Agent-service eval metadata must be an object");
+  }
+
+  assertBoundedText(requestInput.exampleId, "exampleId");
+  const overrides = getRequestOverrides(requestInput);
+  const veryfront = createVeryfrontForwardedProps(overrides);
+  const prompt = stringifyPromptInput(requestInput.input);
+  assertBoundedText(prompt, "Eval prompt");
+  assertAllowedTools(overrides.allowedTools);
+  assertMaxSteps(overrides.maxSteps);
   const metadata = {
-    ...getInputMetadata(input.input),
-    ...(input.metadata ?? {}),
+    ...getInputMetadata(requestInput.input),
+    ...(requestInput.metadata ?? {}),
   };
 
-  return {
+  const body: AgentServiceEvalRequestBody = {
     threadId: crypto.randomUUID(),
     runId: `eval-run-${crypto.randomUUID()}`,
     state: {
-      evalCase: input.exampleId,
       ...metadata,
+      evalCase: requestInput.exampleId,
     },
     tools: [],
     context: [],
@@ -543,10 +629,12 @@ export function buildAgentServiceEvalRequestBody(
       {
         id: crypto.randomUUID(),
         role: "user",
-        parts: [{ type: "text", text: stringifyPromptInput(input.input) }],
+        parts: [{ type: "text", text: prompt }],
       },
     ],
   };
+  assertSerializableRequestBody(body);
+  return body;
 }
 
 /** Create an `EvalAgentAdapter` that executes examples against an AG-UI agent-service endpoint. */
@@ -596,10 +684,16 @@ export function createAgentServiceEvalAdapter(
           toolCalls: createToolCalls(run.events),
         },
         ...(usage ? { usage } : {}),
-        durationMs: getNow(config) - started,
+        durationMs: Math.max(0, getNow(config) - started),
         completed,
         ...(!completed
-          ? { error: run.runError ?? `AG-UI response failed with status ${response.status}` }
+          ? {
+            error: run.runError
+              ? formatEvalPublicError(run.runError)
+              : !response.ok
+              ? `AG-UI request failed with HTTP ${response.status}`
+              : "AG-UI run did not emit RUN_FINISHED",
+          }
           : {}),
       };
     } catch (error) {
@@ -610,16 +704,16 @@ export function createAgentServiceEvalAdapter(
           agUi: {
             responseStatus: 0,
             eventTypes: [],
-            runError: error instanceof Error ? error.message : String(error),
+            runError: formatEvalPublicError(error),
           },
         },
         trace: {
           events: [],
           toolCalls: [],
         },
-        durationMs: getNow(config) - started,
+        durationMs: Math.max(0, getNow(config) - started),
         completed: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatEvalPublicError(error),
       };
     }
   };

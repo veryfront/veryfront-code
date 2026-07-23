@@ -11,6 +11,8 @@ export const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;
 export const SSR_MODULE_CACHE_TTL_MS = 30 * MS_PER_MINUTE;
 
 export const SSR_TMP_DIRS_MAX_ENTRIES = 100;
+export const FAILED_COMPONENT_CACHE_MAX_ENTRIES = 2_000;
+export const MAX_PROJECT_TRANSFORM_WAITERS = 100;
 
 export const REDIS_KEY_PREFIX = "veryfront:ssr-module:";
 
@@ -28,10 +30,8 @@ export const CIRCUIT_BREAKER_RESET_MS = 5 * 1000;
 let _maxConcurrentTransforms: number | undefined;
 export function getMaxConcurrentTransforms(): number {
   if (_maxConcurrentTransforms !== undefined) return _maxConcurrentTransforms;
-  _maxConcurrentTransforms = Number.parseInt(
-    String(getSsrMaxConcurrentTransformsEnv(50)),
-    10,
-  );
+  const configured = getSsrMaxConcurrentTransformsEnv(50);
+  _maxConcurrentTransforms = Number.isSafeInteger(configured) && configured >= 0 ? configured : 50;
   return _maxConcurrentTransforms;
 }
 
@@ -45,9 +45,14 @@ let _transformPerProjectLimit: number | undefined;
 export function getTransformPerProjectLimit(): number {
   if (_transformPerProjectLimit !== undefined) return _transformPerProjectLimit;
   const envLimit = getHostEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
-  _transformPerProjectLimit = envLimit !== undefined
-    ? Number.parseInt(String(envLimit), 10)
-    : Math.ceil(getMaxConcurrentTransforms() / 3);
+  const defaultLimit = Math.ceil(getMaxConcurrentTransforms() / 3);
+  if (envLimit === undefined || envLimit.trim() === "") {
+    _transformPerProjectLimit = defaultLimit;
+    return _transformPerProjectLimit;
+  }
+
+  const parsed = Number(envLimit);
+  _transformPerProjectLimit = Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : defaultLimit;
   return _transformPerProjectLimit;
 }
 
@@ -62,3 +67,4 @@ export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;
 
 export const MAX_TRANSFORM_DEPTH = 15;
 export const TRANSFORM_BATCH_SIZE = 10;
+export const MAX_SSR_IMPORTS_PER_MODULE = 5_000;

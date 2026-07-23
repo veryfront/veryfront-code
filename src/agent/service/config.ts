@@ -1,16 +1,58 @@
 import { ensureBuiltinSchemaValidator } from "../../extensions/builtin-extensions.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import type { AgentServiceRegistrationMode } from "./registration.ts";
 
-function parseBooleanFlag(value: string): boolean {
+function parseBooleanFlag(value: "true" | "false"): boolean {
   return value === "true";
 }
 
 function splitAllowedOrigins(value: string): string[] {
-  return value.split(",").map((origin) => origin.trim());
+  const origins = new Set<string>();
+  for (const rawOrigin of value.split(",")) {
+    const origin = rawOrigin.trim();
+    if (origin === "*") {
+      origins.add(origin);
+      continue;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new TypeError("Allowed origins must be HTTP or HTTPS origins");
+    }
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username ||
+      parsed.password || parsed.origin === "null" ||
+      (parsed.pathname !== "/" && parsed.pathname !== "") || parsed.search || parsed.hash
+    ) {
+      throw new TypeError("Allowed origins must be HTTP or HTTPS origins");
+    }
+    origins.add(parsed.origin);
+  }
+  if (origins.size === 0) {
+    throw new TypeError("At least one allowed origin is required");
+  }
+  return [...origins];
 }
 
-export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
+function normalizeHttpBaseUrl(value: string, label: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new TypeError(`${label} must be an absolute HTTP or HTTPS URL`);
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password ||
+    url.search || url.hash
+  ) {
+    throw new TypeError(`${label} must be an absolute HTTP or HTTPS URL without credentials`);
+  }
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${pathname === "" ? "" : pathname}`;
+}
 
 /** Configuration used by agent service. */
 export type AgentServiceConfig = {
@@ -49,7 +91,9 @@ export type AgentServiceConfig = {
 export type AgentServiceConfigInput = Record<string, string | number | undefined>;
 
 const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
-  const booleanFlagSchema = v.string().default("false").transform(parseBooleanFlag);
+  const booleanFlagSchema = v.enum(["true", "false"] as const).default("false").transform(
+    parseBooleanFlag,
+  );
   const agentServiceRegistrationModeInputSchema = v
     .enum(["auto", "enabled", "disabled", "true", "false"] as const)
     .default("auto")
@@ -60,24 +104,33 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     });
 
   return v.object({
-    VERYFRONT_API_URL: v.string().url().default("https://api.veryfront.com"),
+    VERYFRONT_API_URL: v.string().url().default("https://api.veryfront.com").transform((value) =>
+      normalizeHttpBaseUrl(value, "VERYFRONT_API_URL")
+    ),
     VERYFRONT_API_TOKEN: v.string().min(1).optional(),
     VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
-    VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
+    VERYFRONT_AGENT_SERVICE_URL: v.string().url().transform((value) =>
+      normalizeHttpBaseUrl(value, "VERYFRONT_AGENT_SERVICE_URL")
+    ).optional(),
     VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
     VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationModeInputSchema,
-    VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.coerce.number().positive().default(30_000),
+    VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.coerce.number().int().positive().max(
+      2_147_483_647,
+    ).default(30_000),
     VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
     POD_NAME: v.string().min(1).max(128).optional(),
     POD_UID: v.string().min(1).max(128).optional(),
     POD_IP: v.string().min(1).max(128).optional(),
     NODE_ENV: v.enum(["development", "test", "production"] as const).default("development"),
-    PORT: v.coerce.number().default(3001),
-    OAUTH_PUBLIC_KEY: v.string().optional(),
-    VERYFRONT_STUDIO_MCP_URL: v.string().default(""),
+    PORT: v.coerce.number().int().min(0).max(65_535).default(3001),
+    OAUTH_PUBLIC_KEY: v.string().min(1).max(65_536).optional(),
+    VERYFRONT_STUDIO_MCP_URL: v.string().max(2_048).default("").transform((value) =>
+      value === "" ? "" : normalizeHttpBaseUrl(value, "VERYFRONT_STUDIO_MCP_URL")
+    ),
     VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: booleanFlagSchema,
     VERYFRONT_ENABLE_DURABLE_TASK: booleanFlagSchema,
-    VERYFRONT_CONTEXT_COMPACTION_ENABLED: v.string().default("true").transform(parseBooleanFlag),
+    VERYFRONT_CONTEXT_COMPACTION_ENABLED: v.enum(["true", "false"] as const).default("true")
+      .transform(parseBooleanFlag),
     VERYFRONT_CONTEXT_COMPACTION_TOKEN_BUDGET: v.coerce.number().int().positive().default(180_000),
     VERYFRONT_CONTEXT_COMPACTION_RESERVE_TOKENS: v.coerce.number().int().nonnegative().default(
       32_000,
@@ -95,9 +148,13 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
       64_000,
     ),
     VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL: v.string().min(1).optional(),
-    ALLOWED_ORIGINS: v.string().default("http://localhost:3000,http://veryfront.me:3000"),
+    ALLOWED_ORIGINS: v.string().min(1).max(16_384).default(
+      "http://localhost:3000,http://veryfront.me:3000",
+    ),
     OTEL_ENABLED: booleanFlagSchema,
-    OTEL_EXPORTER_OTLP_ENDPOINT: v.string().optional(),
+    OTEL_EXPORTER_OTLP_ENDPOINT: v.string().max(2_048).transform((value) =>
+      normalizeHttpBaseUrl(value, "OTEL_EXPORTER_OTLP_ENDPOINT")
+    ).optional(),
   }).transform((env) => ({
     VERYFRONT_API_URL: env.VERYFRONT_API_URL,
     VERYFRONT_MCP_URL: `${env.VERYFRONT_API_URL}/mcp`,
@@ -137,10 +194,13 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
 });
 
 /** Zod schema for agent service config. */
-export const agentServiceConfigSchema = lazySchema(getAgentServiceConfigSchema);
+export const agentServiceConfigSchema: Schema<AgentServiceConfig> = lazySchema(
+  getAgentServiceConfigSchema,
+);
 
 /** Zod schema for hosted agent service config. */
-export const hostedAgentServiceConfigSchema = agentServiceConfigSchema;
+export const hostedAgentServiceConfigSchema: Schema<HostedAgentServiceConfig> =
+  agentServiceConfigSchema;
 /** Configuration used by hosted agent service. */
 export type HostedAgentServiceConfig = AgentServiceConfig;
 /** Input payload for hosted agent service config. */

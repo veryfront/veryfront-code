@@ -17,6 +17,7 @@ export function executeTool(
   input: unknown,
   context?: ToolExecutionContext,
 ): Promise<unknown> {
+  context?.abortSignal?.throwIfAborted();
   const registeredTool = toolRegistry.get(toolId);
 
   // An owned tool outside its owner's context behaves as if it does not

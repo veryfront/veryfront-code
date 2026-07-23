@@ -30,7 +30,7 @@ export interface StoredOAuthState {
 }
 
 /**
- * TokenStore is keyed by `(serviceId, userId)` — tokens are per-user.
+ * TokenStore is keyed by `(serviceId, userId)`. Tokens are per-user.
  *
  * Using a single-slot-per-service store is a vulnerability: the last OAuth
  * completion overwrites all others, so an attacker who starts and finishes

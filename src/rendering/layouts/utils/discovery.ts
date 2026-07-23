@@ -1,13 +1,14 @@
-import { memoizeHash as simpleHash, rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
-import { dirname, extname, join } from "#veryfront/compat/path";
+import { dirname, extname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path";
 import { LAYOUT_EXTENSIONS } from "../types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { registerProcessStateReset } from "#veryfront/platform/compat/process/state-reset.ts";
 
 const discoveryLog = logger.component("discovery");
-const layoutLog = logger.component("layout");
 
 interface CacheEntry {
   layouts: LayoutItem[];
@@ -42,11 +43,12 @@ export function clearLayoutDiscoveryCache(projectDir?: string): void {
   }
 
   discoveryLog.debug("Cleared layout discovery cache for project", {
-    projectDir,
     cleared,
     remaining: layoutDiscoveryCache.size,
   });
 }
+
+registerProcessStateReset("layout discovery", clearLayoutDiscoveryCache);
 
 export function getLayoutDiscoveryCacheStats(): { size: number; maxSize: number } {
   return { size: layoutDiscoveryCache.size, maxSize: MAX_CACHE_SIZE };
@@ -57,37 +59,33 @@ export async function discoverNestedLayouts(
   rootDir: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  cacheScope = projectDir,
 ): Promise<LayoutItem[]> {
-  const key = simpleHash(projectDir, pageFilePath, rootDir);
+  const key = JSON.stringify([cacheScope, projectDir, pageFilePath, rootDir]);
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();
     discoveryLog.debug("Layout cache HIT", {
-      pageFilePath,
-      rootDir,
       layoutCount: cached.layouts.length,
-      layoutPaths: cached.layouts.map((l) => l.path),
     });
-    return cached.layouts;
+    return cloneLayouts(cached.layouts);
   }
 
-  discoveryLog.debug("Layout cache MISS, discovering layouts", {
-    pageFilePath,
-    rootDir,
-    projectDir,
-  });
+  discoveryLog.debug("Layout cache MISS, discovering layouts");
 
   const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);
 
   discoveryLog.debug("Found layouts", {
-    pageFilePath,
     layoutCount: layouts.length,
-    layoutPaths: layouts.map((l) => l.path),
   });
 
-  layoutDiscoveryCache.set(key, { layouts, accessedAt: Date.now(), projectDir });
+  layoutDiscoveryCache.set(key, {
+    layouts: cloneLayouts(layouts),
+    accessedAt: Date.now(),
+    projectDir,
+  });
 
-  return layouts;
+  return cloneLayouts(layouts);
 }
 
 async function discoverNestedLayoutsImpl(
@@ -95,74 +93,57 @@ async function discoverNestedLayoutsImpl(
   rootDir: string,
   adapter: RuntimeAdapter,
 ): Promise<LayoutItem[]> {
+  if (!isPathWithinRoot(pageFilePath, rootDir)) return [];
+  const candidates = collectLayoutCandidates(pageFilePath, rootDir);
+  const existing = await resolveExistingFiles(candidates, rootDir, adapter);
   const nestedLayouts: LayoutItem[] = [];
-
-  try {
-    const candidates = collectLayoutCandidates(pageFilePath, rootDir);
-    const existing = await resolveExistingFiles(candidates.reverse(), adapter);
-
-    logger.debug("Found layout files:", existing);
-    addLayoutsFromFiles(existing, nestedLayouts);
-
-    await addMissedAncestorLayouts(pageFilePath, rootDir, existing, nestedLayouts, adapter);
-  } catch (e) {
-    logger.warn("Nested layout discovery failed", e);
-  }
-
+  addLayoutsFromFiles(existing, nestedLayouts);
   return nestedLayouts;
 }
 
 function collectLayoutCandidates(pageFilePath: string, rootDir: string): string[] {
-  const candidates: string[] = [];
+  const directories: string[] = [];
   let currentDir = dirname(pageFilePath);
 
-  while (currentDir.startsWith(rootDir)) {
-    for (const ext of LAYOUT_EXTENSIONS) {
-      candidates.push(join(currentDir, `layout.${ext}`));
-    }
-
+  while (isPathWithinRoot(currentDir, rootDir)) {
+    directories.push(currentDir);
     const parent = dirname(currentDir);
     if (parent === currentDir || currentDir === rootDir) break;
     currentDir = parent;
   }
 
-  if (!candidates.includes(join(rootDir, "layout.mdx"))) {
+  const candidates: string[] = [];
+  for (const directory of directories.reverse()) {
     for (const ext of LAYOUT_EXTENSIONS) {
-      candidates.push(join(rootDir, `layout.${ext}`));
+      candidates.push(join(directory, `layout.${ext}`));
     }
   }
-
   return candidates;
 }
 
 async function resolveExistingFiles(
   candidates: string[],
+  rootDir: string,
   adapter: RuntimeAdapter,
 ): Promise<string[]> {
-  const results = await Promise.allSettled(candidates.map((file) => adapter.fs.stat(file)));
-
   const existing: string[] = [];
   const seenDirs = new Set<string>();
 
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (!result) continue;
-
-    if (result.status === "fulfilled" && result.value.isFile) {
-      const candidatePath = candidates[i];
-      if (!candidatePath) continue;
-
-      const dir = dirname(candidatePath);
-      if (seenDirs.has(dir)) continue;
-
-      existing.push(candidatePath);
-      seenDirs.add(dir);
-      continue;
+  for (const candidate of candidates) {
+    const dir = dirname(candidate);
+    if (seenDirs.has(dir)) continue;
+    let stat;
+    try {
+      stat = await adapter.fs.stat(candidate);
+    } catch (error) {
+      if (isNotFoundError(error)) continue;
+      throw error;
     }
+    if (!stat.isFile || stat.isSymlink) continue;
+    if (!await isCanonicalCandidateWithinRoot(candidate, rootDir, adapter)) continue;
 
-    if (result.status === "rejected") {
-      layoutLog.debug("stat layout candidate failed", result.reason as Error);
-    }
+    existing.push(candidate);
+    seenDirs.add(dir);
   }
 
   return existing;
@@ -178,7 +159,6 @@ function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void
     }
 
     if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
-      logger.debug("Adding TSX layout:", file);
       nestedLayouts.push({
         kind: "tsx",
         component: undefined,
@@ -189,55 +169,39 @@ function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void
   }
 }
 
-async function addMissedAncestorLayouts(
-  pageFilePath: string,
+function isPathWithinRoot(path: string, rootDir: string): boolean {
+  const relativePath = relative(normalize(rootDir), normalize(path));
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
+}
+
+async function isCanonicalCandidateWithinRoot(
+  candidate: string,
   rootDir: string,
-  existing: string[],
-  nestedLayouts: LayoutItem[],
   adapter: RuntimeAdapter,
-): Promise<void> {
-  try {
-    const included = new Set(existing);
-    const dirsWithLayouts = new Set(existing.map((p) => dirname(p)));
-
-    const candidates: string[] = [];
-    let dir = dirname(pageFilePath);
-
-    while (dir.startsWith(rootDir)) {
-      if (!dirsWithLayouts.has(dir)) {
-        for (const ext of LAYOUT_EXTENSIONS) {
-          const candidate = join(dir, `layout.${ext}`);
-          if (!included.has(candidate)) candidates.push(candidate);
-        }
-      }
-
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
+): Promise<boolean> {
+  if (adapter.fs.lstat) {
+    try {
+      if ((await adapter.fs.lstat(candidate)).isSymlink) return false;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
     }
-
-    const results = await Promise.allSettled(candidates.map((cand) => adapter.fs.stat(cand)));
-
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const cand = candidates[i];
-      if (!result || !cand) continue;
-
-      if (result.status === "fulfilled" && result.value.isFile) {
-        const candDir = dirname(cand);
-        if (dirsWithLayouts.has(candDir)) continue;
-
-        addLayoutsFromFiles([cand], nestedLayouts);
-        included.add(cand);
-        dirsWithLayouts.add(candDir);
-        continue;
-      }
-
-      if (result.status === "rejected") {
-        layoutLog.debug("stat nested tsx/jsx layout failed", result.reason as Error);
-      }
-    }
-  } catch (e) {
-    layoutLog.debug("nested layout fallback scan failed", e as Error);
   }
+  if (!adapter.fs.realPath) return true;
+
+  try {
+    const [canonicalCandidate, canonicalRoot] = await Promise.all([
+      adapter.fs.realPath(candidate),
+      adapter.fs.realPath(rootDir),
+    ]);
+    return isPathWithinRoot(canonicalCandidate, canonicalRoot);
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+}
+
+function cloneLayouts(layouts: readonly LayoutItem[]): LayoutItem[] {
+  return layouts.map((layout) => ({ ...layout }));
 }

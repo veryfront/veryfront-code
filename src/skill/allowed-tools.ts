@@ -13,10 +13,16 @@ import { createError, toError } from "#veryfront/errors";
 
 /** Active skill file-backed capabilities available to skill infrastructure tools. */
 export type SkillToolAvailability = {
+  /** Whether a skill has been loaded successfully in the current step. */
   hasActiveSkill?: boolean;
+  /** Reference-like paths advertised by the active skill. */
   references?: readonly string[];
+  /** Script paths advertised by the active skill. */
   scripts?: readonly string[];
 };
+
+const MAX_ALLOWED_TOOL_PATTERNS = 256;
+const MAX_ALLOWED_TOOL_PATTERN_LENGTH = 256;
 
 const LOAD_SKILL_TOOL_ID = "load_skill";
 const LOAD_SKILL_REFERENCE_TOOL_ID = "load_skill_reference";
@@ -79,13 +85,13 @@ export function matchesAllowedTool(toolName: string, pattern: string): boolean {
  * @returns Filtered tool definitions
  */
 export function filterToolsForSkill<T extends { name: string }>(
-  tools: T[],
-  allowedTools: string[] | undefined,
+  tools: readonly T[],
+  allowedTools: readonly string[] | undefined,
   skillToolAvailability?: SkillToolAvailability,
 ): T[] {
   if (allowedTools === undefined) {
     if (!skillToolAvailability) {
-      return tools;
+      return [...tools];
     }
 
     return tools.filter((tool) => {
@@ -113,7 +119,7 @@ export function filterToolsForSkill<T extends { name: string }>(
  */
 export function isToolAllowedBySkill(
   toolName: string,
-  allowedTools: string[] | undefined,
+  allowedTools: readonly string[] | undefined,
   skillToolAvailability?: SkillToolAvailability,
 ): boolean {
   const skillToolAllowed = isSkillInfrastructureToolAllowed(toolName, skillToolAvailability);
@@ -129,20 +135,69 @@ export function isToolAllowedBySkill(
  * Rejects unsupported patterns with a descriptive error (fail closed).
  *
  * @param patterns - Array of tool patterns to validate
- * @returns Validated patterns (same array if all valid)
+ * @returns A validated, deduplicated snapshot of the patterns
  * @throws If any pattern is invalid
  */
-export function validateAllowedToolPatterns(patterns: string[]): string[] {
-  for (const pattern of patterns) {
-    if (!SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)) {
+export function validateAllowedToolPatterns(patterns: readonly string[]): string[] {
+  let patternCount: number | undefined;
+  try {
+    if (Array.isArray(patterns)) {
+      const lengthDescriptor = Reflect.getOwnPropertyDescriptor(patterns, "length");
+      const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+        ? lengthDescriptor.value
+        : undefined;
+      if (
+        typeof lengthValue === "number" && Number.isSafeInteger(lengthValue) && lengthValue >= 0
+      ) {
+        patternCount = lengthValue;
+      }
+    }
+  } catch {
+    // The stable validation error below covers unreadable proxy inputs.
+  }
+  if (patternCount === undefined || patternCount > MAX_ALLOWED_TOOL_PATTERNS) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Allowed-tools must contain at most ${MAX_ALLOWED_TOOL_PATTERNS} patterns.`,
+      }),
+    );
+  }
+
+  const validated: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < patternCount; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Reflect.getOwnPropertyDescriptor(patterns, String(index));
+    } catch {
+      // The stable validation error below covers unreadable proxy inputs.
+    }
+    if (!descriptor || !("value" in descriptor)) {
       throw toError(
         createError({
           type: "agent",
-          message: `Invalid allowed-tools pattern "${pattern}". ` +
+          message: "Allowed-tools must be a dense array of strings.",
+        }),
+      );
+    }
+    const pattern = descriptor.value;
+    if (
+      typeof pattern !== "string" || pattern.length > MAX_ALLOWED_TOOL_PATTERN_LENGTH ||
+      !SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)
+    ) {
+      throw toError(
+        createError({
+          type: "agent",
+          message: `Invalid allowed-tools pattern at index ${index}. ` +
             `Only exact tool IDs (e.g. "Read") and prefix wildcards (e.g. "api:*") are supported.`,
         }),
       );
     }
+    if (!seen.has(pattern)) {
+      seen.add(pattern);
+      validated.push(pattern);
+    }
   }
-  return patterns;
+  return validated;
 }

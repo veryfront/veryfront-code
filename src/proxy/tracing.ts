@@ -29,7 +29,6 @@ import {
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability";
-import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   importFirstPartyExtensionModule,
   isMissingFirstPartyExtensionModule,
@@ -40,8 +39,9 @@ const TRACING_EXTENSION_SOURCE_DIRECTORY = "ext-observability-opentelemetry";
 const TRACING_EXTENSION_PACKAGE = "@veryfront/ext-observability-opentelemetry";
 
 let initialized = false;
+let initializationPromise: Promise<void> | null = null;
 let tracer: Tracer | null = null;
-let exporter: TracingExporter | null = null;
+let exporter: ProxyTracingExporter | null = null;
 
 interface OTLPConfig {
   serviceName: string;
@@ -60,7 +60,91 @@ function getConfig(): OTLPConfig {
   };
 }
 
+/** Result of deciding whether OTLP tracing can start. */
 export type OtlpGateResult = { ok: true } | { ok: false; reason: string };
+
+/** Minimal exporter lifecycle required by standalone proxy tracing. */
+export interface ProxyTracingExporter {
+  /** Start the exporter and its provider. */
+  start(config: Record<string, unknown>): Promise<void>;
+  /** Flush pending telemetry and release resources. */
+  shutdown(): Promise<void>;
+  /** Return the initialized tracer provider. */
+  getProvider(): unknown;
+  /** Return the optional metrics API. */
+  getMetricsAPI(): unknown | null;
+  /** Return the optional active-span API. */
+  getTraceAPI?(): unknown | null;
+  /** Return the optional async-context API. */
+  getContextAPI?(): unknown | null;
+}
+
+/** Minimal immutable trace context accepted by proxy lifecycle helpers. */
+export interface ProxyTraceContext {
+  /** Read a context value. */
+  getValue(key: symbol): unknown;
+  /** Return a context containing a value. */
+  setValue(key: symbol, value: unknown): ProxyTraceContext;
+  /** Return a context without a value. */
+  deleteValue(key: symbol): ProxyTraceContext;
+}
+
+/** Scalar value accepted by proxy trace span attributes. */
+export type ProxyTraceAttributePrimitive = string | number | boolean;
+
+/** Value accepted by proxy trace span attributes. */
+export type ProxyTraceAttributeValue =
+  | ProxyTraceAttributePrimitive
+  | readonly ProxyTraceAttributePrimitive[]
+  | undefined;
+
+/** Propagation identifiers returned by a proxy trace span. */
+export interface ProxyTraceSpanContext {
+  /** Lowercase 32-character hexadecimal trace identifier. */
+  traceId: string;
+  /** Lowercase 16-character hexadecimal span identifier. */
+  spanId: string;
+  /** W3C trace flags. */
+  traceFlags: number;
+}
+
+/** Span surface exposed by proxy tracing helpers. */
+export interface ProxyTraceSpan {
+  /** Set one span attribute. */
+  setAttribute(key: string, value: ProxyTraceAttributeValue): ProxyTraceSpan;
+  /** Set several span attributes. */
+  setAttributes(attrs: Record<string, ProxyTraceAttributeValue>): ProxyTraceSpan;
+  /** Set the final span status. */
+  setStatus(status: { code: number; message?: string }): ProxyTraceSpan;
+  /** Record a sanitized exception. */
+  recordException(error: unknown): void;
+  /** Add a bounded event to the span. */
+  addEvent(
+    name: string,
+    attributes?: Record<string, ProxyTraceAttributeValue>,
+  ): ProxyTraceSpan;
+  /** End the span at an optional timestamp. */
+  end(endTime?: number): void;
+  /** Return propagation identifiers for the span. */
+  spanContext(): ProxyTraceSpanContext;
+  /** Replace the span operation name. */
+  updateName(name: string): void;
+}
+
+/** Remove credentials and request-specific values before recording a URL in telemetry. */
+export function sanitizeProxySpanUrl(value: string | URL): string {
+  try {
+    const url = new URL(value.toString());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "[invalid-url]";
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, url.pathname === "/" ? "/" : "");
+  } catch {
+    return "[invalid-url]";
+  }
+}
 
 /**
  * Decide whether OTLP tracing should be initialized for this process.
@@ -83,7 +167,7 @@ export function resolveOtlpGate(
 }
 
 type TracingExporterModule = {
-  OtlpTracingExporter: new () => TracingExporter;
+  OtlpTracingExporter: new () => ProxyTracingExporter;
 };
 
 /**
@@ -91,9 +175,9 @@ type TracingExporterModule = {
  *
  * Resolves the workspace source in repo/binary runs and the npm package in
  * Node installs. Returns `null` (after logging why) when the extension is not
- * installed or fails to load — telemetry must never crash the proxy.
+ * installed or fails to load. Telemetry must never crash the proxy.
  */
-async function loadTracingExporter(): Promise<TracingExporter | null> {
+async function loadTracingExporter(): Promise<ProxyTracingExporter | null> {
   try {
     const mod = await importFirstPartyExtensionModule<TracingExporterModule>(
       TRACING_EXTENSION_SOURCE_DIRECTORY,
@@ -134,62 +218,91 @@ async function loadTracingExporter(): Promise<TracingExporter | null> {
  * @param loadExporter Test seam; production callers use the default loader.
  */
 export async function initializeOTLPWithApis(
-  loadExporter: () => Promise<TracingExporter | null> = loadTracingExporter,
+  loadExporter: () => Promise<ProxyTracingExporter | null> = loadTracingExporter,
 ): Promise<void> {
   if (initialized) return;
-  initialized = true;
+  if (initializationPromise) return await initializationPromise;
 
-  const config = getConfig();
-  const gate = resolveOtlpGate(config);
-  if (!gate.ok) {
-    proxyLogger.info(`[otel] ${gate.reason}`);
-    return;
-  }
+  const initialize = async (): Promise<void> => {
+    const config = getConfig();
+    const gate = resolveOtlpGate(config);
+    if (!gate.ok) {
+      initialized = true;
+      proxyLogger.info(`[otel] ${gate.reason}`);
+      return;
+    }
 
+    let exporterImpl: ProxyTracingExporter | null = null;
+    try {
+      exporterImpl = await loadExporter();
+      if (!exporterImpl) {
+        initialized = true;
+        return;
+      }
+
+      // The exporter reads OTEL_* env itself (endpoint, headers, signal gates)
+      // and creates the SDK tracer provider with a batch OTLP span processor.
+      await exporterImpl.start({});
+      exporter = exporterImpl;
+
+      // Wire the shim globals before getTracer(). The tracer is cached below,
+      // so wiring afterwards would freeze the no-op tracer forever.
+      setGlobalTracerProvider(
+        exporterImpl.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
+      );
+      const metricsApi = exporterImpl.getMetricsAPI();
+      if (metricsApi) {
+        setGlobalMetricsAPI(metricsApi as Parameters<typeof setGlobalMetricsAPI>[0]);
+      }
+      const traceApi = exporterImpl.getTraceAPI?.();
+      if (traceApi) {
+        setGlobalActiveSpanAccessor(
+          traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
+        );
+      }
+      const contextApi = exporterImpl.getContextAPI?.();
+      if (contextApi) {
+        setGlobalContextAccessor(
+          contextApi as Parameters<typeof setGlobalContextAccessor>[0],
+        );
+      }
+
+      tracer = shimTrace.getTracer(config.serviceName);
+      initialized = true;
+
+      proxyLogger.info("[otel] Initialized", {
+        serviceName: config.serviceName,
+        endpointConfigured: true,
+      });
+    } catch (error) {
+      exporter = null;
+      tracer = null;
+      initialized = false;
+      if (exporterImpl) {
+        try {
+          await exporterImpl.shutdown();
+        } catch (shutdownError) {
+          proxyLogger.warn("[otel] Failed exporter cleanup after initialization error", {
+            error: shutdownError instanceof Error ? shutdownError.message : String(shutdownError),
+          });
+        }
+      }
+      proxyLogger.error("[otel] Init failed", error);
+    }
+  };
+
+  const pending = Promise.resolve().then(initialize);
+  initializationPromise = pending;
   try {
-    const exporterImpl = await loadExporter();
-    if (!exporterImpl) return; // loader already logged the reason
-
-    // The exporter reads OTEL_* env itself (endpoint, headers, signal gates)
-    // and creates the SDK tracer provider with a batch OTLP span processor.
-    await exporterImpl.start({});
-    exporter = exporterImpl;
-
-    // Wire the shim globals before getTracer() — the tracer is cached below,
-    // so wiring afterwards would freeze the no-op tracer forever.
-    setGlobalTracerProvider(
-      exporterImpl.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
-    );
-    const metricsApi = exporterImpl.getMetricsAPI();
-    if (metricsApi) {
-      setGlobalMetricsAPI(metricsApi as Parameters<typeof setGlobalMetricsAPI>[0]);
-    }
-    const traceApi = exporterImpl.getTraceAPI?.();
-    if (traceApi) {
-      setGlobalActiveSpanAccessor(
-        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
-      );
-    }
-    const contextApi = exporterImpl.getContextAPI?.();
-    if (contextApi) {
-      setGlobalContextAccessor(
-        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
-      );
-    }
-
-    tracer = shimTrace.getTracer(config.serviceName);
-
-    proxyLogger.info("[otel] Initialized", {
-      serviceName: config.serviceName,
-      endpoint: config.endpoint,
-    });
-  } catch (error) {
-    proxyLogger.error("[otel] Init failed", error);
+    await pending;
+  } finally {
+    if (initializationPromise === pending) initializationPromise = null;
   }
 }
 
 /** Flush pending spans and release the exporter. Safe to call when disabled. */
 export async function shutdownOTLP(): Promise<void> {
+  if (initializationPromise) await initializationPromise;
   const active = exporter;
   exporter = null;
   tracer = null;
@@ -209,73 +322,124 @@ export async function shutdownOTLP(): Promise<void> {
 /** Reset module state between tests. Mirrors api-shim's `_resetShimForTests`. */
 export function _resetOTLPForTests(): void {
   initialized = false;
+  initializationPromise = null;
   tracer = null;
   exporter = null;
 }
 
-export function extractContext(headers: Headers): Context | undefined {
-  const carrier: Record<string, string> = {};
-  headers.forEach((v, k) => {
-    carrier[k.toLowerCase()] = v;
-  });
+/** Extract an inbound trace context without allowing telemetry failures to escape. */
+export function extractContext(headers: Headers): ProxyTraceContext | undefined {
+  try {
+    const carrier: Record<string, string> = {};
+    headers.forEach((v, k) => {
+      carrier[k.toLowerCase()] = v;
+    });
 
-  const extracted = shimPropagation.extract(shimContext.active(), carrier, defaultTextMapGetter);
-  return extracted;
-}
-
-export function injectContext(headers: Headers): void {
-  const carrier: Record<string, string> = {};
-  shimPropagation.inject(shimContext.active(), carrier, defaultTextMapSetter);
-
-  for (const [k, v] of Object.entries(carrier)) {
-    headers.set(k, v);
+    return shimPropagation.extract(shimContext.active(), carrier, defaultTextMapGetter);
+  } catch {
+    return undefined;
   }
 }
 
+/** Inject the active trace context into outbound headers on a best-effort basis. */
+export function injectContext(headers: Headers): void {
+  try {
+    const carrier: Record<string, string> = {};
+    shimPropagation.inject(shimContext.active(), carrier, defaultTextMapSetter);
+
+    for (const [k, v] of Object.entries(carrier)) {
+      headers.set(k, v);
+    }
+  } catch {
+    // Telemetry propagation is best effort and must not fail a proxy request.
+  }
+}
+
+/** Start and activate a server span for one inbound proxy request. */
 export function startServerSpan(
   method: string,
   path: string,
-  parentContext?: Context,
-): { span: Span; context: Context } | null {
+  parentContext?: ProxyTraceContext,
+): { span: ProxyTraceSpan; context: ProxyTraceContext } | null {
   if (!tracer) return null;
 
-  const ctx = parentContext ?? shimContext.active();
-  const span = tracer.startSpan(`${method} ${path}`, { kind: SpanKind.SERVER }, ctx);
-  return { span, context: shimTrace.setSpan(ctx, span) };
+  try {
+    const ctx = parentContext ?? shimContext.active();
+    const span = tracer.startSpan(`${method} ${path}`, { kind: SpanKind.SERVER }, ctx);
+    return { span, context: shimTrace.setSpan(ctx, span) };
+  } catch {
+    return null;
+  }
 }
 
-export function endSpan(span: Span | undefined, statusCode: number, error?: Error): void {
+function safeSpanError(error: Error): Error {
+  const sanitized = new Error("Proxy operation failed");
+  sanitized.name = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(error.name) ? error.name : "Error";
+  sanitized.stack = undefined;
+  return sanitized;
+}
+
+/** Finalize a request span with a status and sanitized exception details. */
+export function endSpan(
+  span: ProxyTraceSpan | undefined,
+  statusCode: number,
+  error?: Error,
+): void {
   if (!span) return;
 
-  span.setAttribute("http.status_code", statusCode);
+  try {
+    span.setAttribute("http.status_code", statusCode);
 
-  if (error) {
-    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
-    span.recordException(error);
-    span.end();
-    return;
+    if (error) {
+      const safeError = safeSpanError(error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: safeError.message });
+      span.recordException(safeError);
+      return;
+    }
+
+    if (statusCode >= 400) {
+      span.setStatus({ code: SpanStatusCode.ERROR });
+    }
+  } catch {
+    // Exporter span implementations are external and must not fail requests.
+  } finally {
+    try {
+      span.end();
+    } catch {
+      // Ending telemetry is best effort.
+    }
   }
-
-  if (statusCode >= 400) {
-    span.setStatus({ code: SpanStatusCode.ERROR });
-  }
-
-  span.end();
 }
 
-export function withContext<T>(spanContext: Context, fn: () => Promise<T>): Promise<T> {
-  return shimContext.with(spanContext, fn);
+/** Run an asynchronous operation inside a trace context with a safe fallback. */
+export function withContext<T>(
+  spanContext: ProxyTraceContext,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return shimContext.with(spanContext, fn);
+  } catch {
+    return fn();
+  }
 }
 
 function getActiveSpanContext(): { traceId: string; spanId: string } | null {
-  const activeSpan = shimTrace.getActiveSpan?.();
-  return activeSpan ? activeSpan.spanContext() : null;
+  try {
+    const activeSpan = shimTrace.getActiveSpan?.();
+    return activeSpan ? activeSpan.spanContext() : null;
+  } catch {
+    return null;
+  }
 }
 
+/** Return validated active trace identifiers for structured log correlation. */
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   const spanContext = getActiveSpanContext();
   if (!spanContext) return {};
-  return { traceId: spanContext.traceId, spanId: spanContext.spanId };
+  if (!/^[0-9a-f]{32}$/i.test(spanContext.traceId) || !/^[0-9a-f]{16}$/i.test(spanContext.spanId)) {
+    return {};
+  }
+  return { traceId: spanContext.traceId.toLowerCase(), spanId: spanContext.spanId.toLowerCase() };
 }
 
 /**
@@ -299,27 +463,54 @@ export async function withSpan<T>(
 ): Promise<T> {
   if (!tracer) return await fn();
 
-  const parentContext = shimContext.active();
-  const span = tracer.startSpan(
-    name,
-    { kind: SpanKind.INTERNAL, attributes },
-    parentContext,
-  );
+  let span: Span;
+  let spanContext: Context;
+  try {
+    const parentContext = shimContext.active();
+    span = tracer.startSpan(
+      name,
+      { kind: SpanKind.INTERNAL, attributes },
+      parentContext,
+    );
+    spanContext = shimTrace.setSpan(parentContext, span);
+  } catch {
+    return await fn();
+  }
 
-  const spanContext = shimTrace.setSpan(parentContext, span);
+  let execution: Promise<T>;
+  try {
+    execution = shimContext.with(spanContext, fn);
+  } catch {
+    execution = fn();
+  }
 
   try {
-    const result = await shimContext.with(spanContext, fn);
-    span.setStatus({ code: SpanStatusCode.OK });
+    const result = await execution;
+    try {
+      span.setStatus({ code: SpanStatusCode.OK });
+    } catch {
+      // Exporter span implementations are external and best effort.
+    }
     return result;
   } catch (error) {
-    span.setStatus({
-      code: SpanStatusCode.ERROR,
-      message: error instanceof Error ? error.message : String(error),
-    });
-    if (error instanceof Error) span.recordException(error);
+    const safeError = safeSpanError(
+      error instanceof Error ? error : new Error("Non-Error exception"),
+    );
+    try {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: safeError.message,
+      });
+      span.recordException(safeError);
+    } catch {
+      // Telemetry failure must not replace the application error.
+    }
     throw error;
   } finally {
-    span.end();
+    try {
+      span.end();
+    } catch {
+      // Ending telemetry is best effort.
+    }
   }
 }

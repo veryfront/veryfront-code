@@ -11,6 +11,8 @@ export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moon
 
 /** Bytes inspected for structured provider error classification. */
 const MAX_ERROR_BODY_BYTES = 8_000;
+const MAX_JSON_RESPONSE_BYTES = 8 * 1_024 * 1_024;
+const MAX_RETRY_AFTER_MS = 2_147_483_647;
 
 /**
  * Base class for typed provider errors. The `retryable` flag is the
@@ -19,11 +21,16 @@ const MAX_ERROR_BODY_BYTES = 8_000;
  * explicit delay hint (Retry-After header, Retry-Info trailer).
  */
 export class ProviderError extends Error {
+  /** Provider runtime that produced the error. */
   readonly provider: ProviderKind;
+  /** HTTP status, or zero when no response was received. */
   readonly status: number;
+  /** Whether retrying the unchanged request can succeed. */
   readonly retryable: boolean;
+  /** Provider-supplied minimum retry delay. */
   readonly retryAfterMs?: number;
 
+  /** Creates a typed provider transport error. */
   constructor(options: {
     provider: ProviderKind;
     status: number;
@@ -48,7 +55,7 @@ export class ProviderOverloadedError extends ProviderError {}
 /** Provider is rate limiting this API key (OpenAI/Google 429 with Retry-After). */
 export class ProviderRateLimitError extends ProviderError {}
 
-/** Provider account quota is exhausted — non-retryable. */
+/** Provider account quota is exhausted - non-retryable. */
 export class ProviderQuotaError extends ProviderError {}
 
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
@@ -57,14 +64,24 @@ export class ProviderRequestError extends ProviderError {}
 /** Parses retry after ms. */
 export function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
-  const asNumber = Number(header);
-  if (Number.isFinite(asNumber) && asNumber >= 0) {
-    return Math.round(asNumber * 1000);
+  const normalized = header.trim();
+  if (!normalized) return undefined;
+  if (/^\d+$/u.test(normalized)) {
+    const milliseconds = Number(normalized) * 1000;
+    return Number.isSafeInteger(milliseconds) && milliseconds <= MAX_RETRY_AFTER_MS
+      ? milliseconds
+      : undefined;
   }
-  // HTTP-date form (rare in practice for LLM providers).
-  const parsed = Date.parse(header);
+  if (!/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/u.test(normalized)) {
+    return undefined;
+  }
+  // IMF-fixdate form defined by HTTP semantics.
+  const parsed = Date.parse(normalized);
   if (!Number.isNaN(parsed)) {
-    return Math.max(0, parsed - Date.now());
+    const milliseconds = Math.max(0, parsed - Date.now());
+    return Number.isSafeInteger(milliseconds) && milliseconds <= MAX_RETRY_AFTER_MS
+      ? milliseconds
+      : undefined;
   }
   return undefined;
 }
@@ -73,7 +90,7 @@ export function parseRetryAfterMs(header: string | null): number | undefined {
  * Inspect a non-2xx response and build the most specific ProviderError
  * subclass we can. Reads the response body as text (it's already dead
  * on the wire by this point). Body classification handles the cases
- * where HTTP status alone is ambiguous — notably OpenAI
+ * where HTTP status alone is ambiguous - notably OpenAI
  * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
  */
 export async function buildProviderError(
@@ -81,10 +98,16 @@ export async function buildProviderError(
   response: Response,
 ): Promise<ProviderError> {
   const status = response.status;
-  const { text: rawBody, truncated } = await readResponseTextPrefix(
-    response,
-    MAX_ERROR_BODY_BYTES,
-  );
+  let rawBody = "";
+  let truncated = true;
+  try {
+    ({ text: rawBody, truncated } = await readResponseTextPrefix(
+      response,
+      MAX_ERROR_BODY_BYTES,
+    ));
+  } catch {
+    // Treat an unreadable error body as untrusted and ambiguous.
+  }
   const message = `Provider request failed with status ${status}`;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
 
@@ -159,6 +182,30 @@ export async function buildProviderError(
         retryable: false,
       });
     }
+    const knownRateLimitCodes = new Set([
+      "rate_limit_exceeded",
+      "rate_limit_error",
+      "requests_per_minute_exceeded",
+      "tokens_per_minute_exceeded",
+    ]);
+    if (
+      truncated || parsedBody === undefined || !errorCode || !knownRateLimitCodes.has(errorCode)
+    ) {
+      return new ProviderRequestError({ provider, status, message, retryable: false });
+    }
+    return new ProviderRateLimitError({
+      provider,
+      status,
+      message,
+      retryable: true,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    });
+  }
+
+  // Google uses RESOURCE_EXHAUSTED for RPM, TPM, capacity, and rolling
+  // spend limits. Its API guidance treats 429 as transient and recommends
+  // bounded exponential backoff, so a parsed 429 is retryable here.
+  if (provider === "google" && status === 429) {
     if (truncated || parsedBody === undefined) {
       return new ProviderRequestError({ provider, status, message, retryable: false });
     }
@@ -171,22 +218,8 @@ export async function buildProviderError(
     });
   }
 
-  // Google 429 RESOURCE_EXHAUSTED is almost always the daily free-tier
-  // quota — surface as a hard quota error so callers don't hot-loop on
-  // retries that can't possibly succeed until midnight UTC.
-  if (provider === "google" && status === 429) {
-    if (errorCode === "RESOURCE_EXHAUSTED") {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    if (truncated || parsedBody === undefined) {
-      return new ProviderRequestError({ provider, status, message, retryable: false });
-    }
-    return new ProviderRateLimitError({
+  if (status === 408 || status === 409 || status === 425) {
+    return new ProviderOverloadedError({
       provider,
       status,
       message,
@@ -216,6 +249,74 @@ export async function buildProviderError(
   });
 }
 
+function createRequestBoundaryError(
+  provider: ProviderKind,
+  status: number,
+  message: string,
+): ProviderRequestError {
+  return new ProviderRequestError({
+    provider,
+    status,
+    message,
+    retryable: false,
+  });
+}
+
+function normalizeProviderLabel(value: string, fallback: ProviderKind): string {
+  return typeof value === "string" && value.length > 0 && value.length <= 64 &&
+      /^[A-Za-z0-9][A-Za-z0-9._ -]*$/u.test(value)
+    ? value
+    : fallback;
+}
+
+function assertSafeProviderUrl(url: string, provider: ProviderKind): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw createRequestBoundaryError(provider, 0, "Provider request URL is invalid");
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username ||
+    parsed.password
+  ) {
+    throw createRequestBoundaryError(provider, 0, "Provider request URL is invalid");
+  }
+}
+
+async function fetchProviderResponse(options: {
+  url: string;
+  fetchImpl: typeof globalThis.fetch;
+  init: RequestInit;
+  providerKind: ProviderKind;
+}): Promise<Response> {
+  assertSafeProviderUrl(options.url, options.providerKind);
+  let response: unknown;
+  try {
+    response = await options.fetchImpl(options.url, { ...options.init, redirect: "error" });
+  } catch (error) {
+    if (
+      options.init.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")
+    ) {
+      throw new DOMException("The provider request was aborted", "AbortError");
+    }
+    throw new ProviderOverloadedError({
+      provider: options.providerKind,
+      status: 0,
+      message: "Provider request failed before receiving a response",
+      retryable: true,
+    });
+  }
+  if (!(response instanceof Response)) {
+    throw createRequestBoundaryError(
+      options.providerKind,
+      0,
+      "Provider transport returned an invalid response",
+    );
+  }
+  return response;
+}
+
 /** Request and parse a JSON response. */
 export async function requestJson(options: {
   url: string;
@@ -224,14 +325,42 @@ export async function requestJson(options: {
   providerLabel: string;
   providerKind: ProviderKind;
 }): Promise<unknown> {
-  const response = await options.fetchImpl(options.url, options.init);
+  const response = await fetchProviderResponse(options);
   if (!response.ok) {
     const err = await buildProviderError(options.providerKind, response);
-    err.message = `${options.providerLabel} request failed: ${err.message}`;
+    err.message = `${
+      normalizeProviderLabel(options.providerLabel, options.providerKind)
+    }: ${err.message}`;
     throw err;
   }
 
-  return response.json();
+  let body: string;
+  let truncated: boolean;
+  try {
+    ({ text: body, truncated } = await readResponseTextPrefix(response, MAX_JSON_RESPONSE_BYTES));
+  } catch {
+    throw createRequestBoundaryError(
+      options.providerKind,
+      response.status,
+      "Provider response body could not be read",
+    );
+  }
+  if (truncated) {
+    throw createRequestBoundaryError(
+      options.providerKind,
+      response.status,
+      "Provider response exceeded the supported size",
+    );
+  }
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    throw createRequestBoundaryError(
+      options.providerKind,
+      response.status,
+      "Provider response was not valid JSON",
+    );
+  }
 }
 
 /** Request a streaming response. */
@@ -242,10 +371,12 @@ export async function requestStream(options: {
   providerLabel: string;
   providerKind: ProviderKind;
 }): Promise<ReadableStream<Uint8Array>> {
-  const response = await options.fetchImpl(options.url, options.init);
+  const response = await fetchProviderResponse(options);
   if (!response.ok) {
     const err = await buildProviderError(options.providerKind, response);
-    err.message = `${options.providerLabel} request failed: ${err.message}`;
+    err.message = `${
+      normalizeProviderLabel(options.providerLabel, options.providerKind)
+    }: ${err.message}`;
     throw err;
   }
 
@@ -253,7 +384,9 @@ export async function requestStream(options: {
     throw new ProviderRequestError({
       provider: options.providerKind,
       status: response.status,
-      message: `${options.providerLabel} request failed: stream body missing`,
+      message: `${
+        normalizeProviderLabel(options.providerLabel, options.providerKind)
+      }: stream body missing`,
       retryable: false,
     });
   }

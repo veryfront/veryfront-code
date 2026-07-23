@@ -102,6 +102,30 @@ describe("observability/tracing/context-propagation", () => {
       const result = badCtx.extractContext(new Headers());
       assertEquals(result, undefined);
     });
+
+    it("exposes only bounded propagation headers to the propagator", () => {
+      let extractedCarrier: Record<string, string> = {};
+      const boundedApi: OpenTelemetryAPI = {
+        ...api,
+        propagation: {
+          ...api.propagation,
+          extract: (context, carrier) => {
+            extractedCarrier = carrier;
+            return context;
+          },
+        },
+      };
+      const boundedCtx = new ContextPropagation(boundedApi, propagator);
+      boundedCtx.extractContext(
+        new Headers({
+          authorization: "Bearer private-value",
+          traceparent: "00-trace-span-01",
+          "x-customer-data": "private-value",
+        }),
+      );
+
+      assertEquals(Object.entries(extractedCarrier), [["traceparent", "00-trace-span-01"]]);
+    });
   });
 
   describe("injectContext", () => {
@@ -131,6 +155,30 @@ describe("observability/tracing/context-propagation", () => {
       };
       const badCtx = new ContextPropagation(badApi, propagator);
       badCtx.injectContext({} as Context, new Headers());
+    });
+
+    it("rejects sensitive, oversized, and excessive injected headers", () => {
+      const boundedApi: OpenTelemetryAPI = {
+        ...api,
+        propagation: {
+          ...api.propagation,
+          inject: (_context, carrier) => {
+            carrier.authorization = "Bearer private-value";
+            carrier.traceparent = "x".repeat(8_193);
+            for (let index = 0; index < 40; index++) {
+              carrier[`x-trace-${index}`] = String(index);
+            }
+          },
+        },
+      };
+      const boundedCtx = new ContextPropagation(boundedApi, propagator);
+      const headers = new Headers();
+
+      boundedCtx.injectContext({} as Context, headers);
+
+      assertEquals(headers.has("authorization"), false);
+      assertEquals(headers.has("traceparent"), false);
+      assertEquals([...headers].length, 32);
     });
   });
 
@@ -196,6 +244,30 @@ describe("observability/tracing/context-propagation", () => {
         Error,
         "test error",
       );
+    });
+
+    it("preserves one callback result when the context hook throws afterward", async () => {
+      const span = createMockSpan();
+      let calls = 0;
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            fn();
+            throw new Error("context-after-callback-failure");
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+
+      const result = await badCtx.withActiveSpan(span, async () => {
+        calls++;
+        return "application-result";
+      });
+
+      assertEquals(result, "application-result");
+      assertEquals(calls, 1);
     });
   });
 
@@ -272,7 +344,7 @@ describe("observability/tracing/context-propagation", () => {
 
     it("should end span with error when function throws", () => {
       const mockSpan = createMockSpan();
-      let endError: Error | undefined;
+      let endError: unknown;
 
       assertThrows(
         () =>
@@ -292,6 +364,35 @@ describe("observability/tracing/context-propagation", () => {
 
       assert(endError instanceof Error);
       assertEquals(endError.message, "sync error");
+    });
+
+    it("preserves one callback result when the context hook throws afterward", () => {
+      const mockSpan = createMockSpan();
+      let calls = 0;
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            fn();
+            throw new Error("context-after-callback-failure");
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+
+      const result = badCtx.withSpan(
+        "test",
+        () => {
+          calls++;
+          return "application-result";
+        },
+        () => mockSpan,
+        () => {},
+      );
+
+      assertEquals(result, "application-result");
+      assertEquals(calls, 1);
     });
   });
 
@@ -351,7 +452,7 @@ describe("observability/tracing/context-propagation", () => {
 
     it("should end span with error when async function rejects", async () => {
       const mockSpan = createMockSpan();
-      let endError: Error | undefined;
+      let endError: unknown;
 
       await assertRejects(
         () =>
@@ -369,6 +470,35 @@ describe("observability/tracing/context-propagation", () => {
 
       assert(endError instanceof Error);
       assertEquals(endError.message, "async error");
+    });
+
+    it("preserves one callback result when the context hook throws afterward", async () => {
+      const mockSpan = createMockSpan();
+      let calls = 0;
+      const badApi: OpenTelemetryAPI = {
+        ...api,
+        context: {
+          ...api.context,
+          with: (_context, fn) => {
+            fn();
+            throw new Error("context-after-callback-failure");
+          },
+        },
+      };
+      const badCtx = new ContextPropagation(badApi, propagator);
+
+      const result = await badCtx.withSpanAsync(
+        "test",
+        async () => {
+          calls++;
+          return "application-result";
+        },
+        () => mockSpan,
+        () => {},
+      );
+
+      assertEquals(result, "application-result");
+      assertEquals(calls, 1);
     });
   });
 });

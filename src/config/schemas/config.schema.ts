@@ -1,28 +1,115 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { InferInput, InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
 import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
+import type { ExtensionConfigEntry } from "#veryfront/extensions/types.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
+const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const CSP_DIRECTIVE_PATTERN = /^[A-Za-z][A-Za-z0-9-]*$/;
+
+type CorsOriginValidator = (origin: string) => boolean | string;
+
+function isSafeHeaderValue(value: string): boolean {
+  if (value.length === 0) return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return true;
+}
+
+function isSafeHttpQuotedString(value: string): boolean {
+  return isSafeHeaderValue(value) && !value.includes('"') && !value.includes("\\");
+}
+
+function isSafeCspSource(value: string): boolean {
+  return isSafeHeaderValue(value) && !value.includes(";");
+}
+
+function isHttpOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function hasInvalidCorsOrigin(input: unknown): boolean {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const security = (input as Record<string, unknown>).security;
+  if (!security || typeof security !== "object" || Array.isArray(security)) return false;
+  const cors = (security as Record<string, unknown>).cors;
+  if (!cors || typeof cors !== "object" || Array.isArray(cors)) return false;
+  const origin = (cors as Record<string, unknown>).origin;
+  return origin !== undefined && typeof origin !== "string" && typeof origin !== "function" &&
+    !Array.isArray(origin);
+}
 
 // Sub-schemas
-const getCorsSchema = defineSchema((v) =>
-  v.union([v.boolean(), v.object({ origin: v.string().optional() }).strict()])
+const getHttpTokenSchema = defineSchema((v) =>
+  v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP token")
 );
+
+const getCorsOriginEntrySchema = defineSchema((v) =>
+  v.string().min(1).refine(isSafeHeaderValue, "CORS origins must not contain control characters")
+);
+
+const getCorsSchema = defineSchema((v) => {
+  const corsObject = v
+    .object({
+      origin: v
+        .union([
+          getCorsOriginEntrySchema(),
+          v.array(getCorsOriginEntrySchema()).min(1),
+          v.custom<CorsOriginValidator>(
+            (value) => typeof value === "function",
+            "Expected a CORS origin validator function",
+          ),
+        ])
+        .optional(),
+      credentials: v.boolean().optional(),
+      methods: v.array(getHttpTokenSchema()).min(1).optional(),
+      allowedHeaders: v.array(getHttpTokenSchema()).min(1).optional(),
+      exposedHeaders: v.array(getHttpTokenSchema()).min(1).optional(),
+      maxAge: v.number().int().nonnegative().optional(),
+    })
+    .strict()
+    .superRefine((cors, ctx) => {
+      if (cors.origin === "*" && cors.credentials === true) {
+        ctx.addIssue({
+          code: "custom",
+          message: "CORS wildcard origin cannot be combined with credentials",
+          path: ["origin"],
+        });
+      }
+    });
+
+  return v.union([v.boolean(), corsObject]);
+});
 
 const getBasicAuthSchema = defineSchema((v) =>
   v.object({
-    username: v.string(),
-    password: v.string(),
-    realm: v.string().optional(),
-  })
+    username: v.string().min(1),
+    password: v.string().min(1),
+    realm: v.string().min(1).refine(
+      isSafeHttpQuotedString,
+      "Basic authentication realm must be a safe HTTP quoted string",
+    ).optional(),
+  }).strict()
 );
 
 const getBearerAuthSchema = defineSchema((v) =>
   v.object({
-    token: v.string(),
-  })
+    token: v.string().min(1),
+  }).strict()
 );
 
 const getEmbeddingDimensionSchema = defineSchema((v) =>
@@ -102,8 +189,8 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           render: v
             .object({
               type: v.enum(["memory", "filesystem", "kv", "redis"]).optional(),
-              ttl: v.number().optional(),
-              maxEntries: v.number().optional(),
+              ttl: v.number().int().positive().optional(),
+              maxEntries: v.number().int().positive().optional(),
               kvPath: v.string().optional(),
               redisUrl: v.string().optional(),
               redisKeyPrefix: v.string().optional(),
@@ -141,11 +228,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .optional(),
       dev: v
         .object({
-          port: v.number().int().positive().optional(),
+          port: v.number().int().min(1).max(65_535).optional(),
           host: v.string().optional(),
           open: v.boolean().optional(),
           hmr: v.boolean().optional(),
-          hmrPort: v.number().optional(),
+          hmrPort: v.number().int().min(1).max(65_535).optional(),
           components: v.array(v.string()).optional(),
           moduleServerUrl: v.string().optional(),
         })
@@ -172,8 +259,28 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             })
             .partial()
             .optional(),
-          csp: v.record(v.string(), v.array(v.string())).optional(),
-          remoteHosts: v.array(v.string().url()).optional(),
+          csp: v
+            .record(
+              v.string().regex(CSP_DIRECTIVE_PATTERN, "Expected a valid CSP directive name"),
+              v.union([
+                v.string().min(1).refine(
+                  isSafeCspSource,
+                  "CSP sources must not contain control characters or semicolons",
+                ),
+                v.array(
+                  v.string().min(1).refine(
+                    isSafeCspSource,
+                    "CSP sources must not contain control characters or semicolons",
+                  ),
+                ),
+              ]),
+            )
+            .optional(),
+          remoteHosts: v
+            .array(
+              v.string().url().refine(isHttpOrigin, "Expected an HTTP or HTTPS origin"),
+            )
+            .optional(),
           cors: getCorsSchema().optional(),
           /**
            * CSRF protection using the double-submit cookie pattern.
@@ -189,15 +296,37 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           csrf: v.union([
             v.boolean(),
             v.object({
-              cookieName: v.string().optional(),
-              headerName: v.string().optional(),
-              excludePaths: v.array(v.string()).optional(),
+              cookieName: getHttpTokenSchema().optional(),
+              headerName: getHttpTokenSchema().optional(),
+              excludePaths: v
+                .array(
+                  v.string().refine(
+                    (path) => path.startsWith("/"),
+                    "CSRF excluded paths must start with a slash",
+                  ),
+                )
+                .optional(),
               ttlSec: v.number().int().positive().optional(),
             }).strict(),
           ]).optional(),
           coop: v.enum(["same-origin", "same-origin-allow-popups", "unsafe-none"]).optional(),
           corp: v.enum(["same-origin", "same-site", "cross-origin"]).optional(),
           coep: v.enum(["require-corp", "unsafe-none"]).optional(),
+          hsts: v
+            .object({
+              maxAge: v.number().int().nonnegative(),
+              includeSubDomains: v.boolean().optional(),
+              preload: v.boolean().optional(),
+            })
+            .strict()
+            .optional(),
+          headers: v.record(
+            getHttpTokenSchema(),
+            v.string().min(1).refine(
+              isSafeHeaderValue,
+              "HTTP header values must not contain control characters",
+            ),
+          ).optional(),
           /**
            * Restrict module imports to specific directories (opt-in security).
            * When not set, users can import from any directory in the project.
@@ -346,8 +475,8 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               retry: v
                 .object({
                   maxRetries: v.number().int().min(0).optional(),
-                  initialDelay: v.number().int().positive().optional(),
-                  maxDelay: v.number().int().positive().optional(),
+                  initialDelay: v.number().int().min(0).optional(),
+                  maxDelay: v.number().int().min(0).optional(),
                 })
                 .partial()
                 .optional(),
@@ -364,13 +493,13 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           github: v
             .object({
               /** GitHub Personal Access Token */
-              token: v.string(),
+              token: v.string().min(1).max(4_096).optional(),
               /** Repository owner (user or organization) */
-              owner: v.string(),
+              owner: v.string().min(1).max(1_024).optional(),
               /** Repository name */
-              repo: v.string(),
+              repo: v.string().min(1).max(1_024).optional(),
               /** Branch, tag, or commit SHA (default: "main") */
-              ref: v.string().optional(),
+              ref: v.string().min(1).max(1_024).optional(),
               cache: v
                 .object({
                   enabled: v.boolean().optional(),
@@ -383,8 +512,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               retry: v
                 .object({
                   maxRetries: v.number().int().min(0).optional(),
-                  initialDelay: v.number().int().positive().optional(),
-                  maxDelay: v.number().int().positive().optional(),
+                  initialDelay: v.number().int().min(0).optional(),
+                  maxDelay: v.number().int().min(0).optional(),
+                  requestTimeout: v.number().int().positive().optional(),
+                  totalTimeout: v.number().int().positive().optional(),
+                  maxResponseBytes: v.number().int().positive().optional(),
                 })
                 .partial()
                 .optional(),
@@ -392,6 +524,15 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             .optional(),
         })
         .partial()
+        .superRefine((fs, ctx) => {
+          if (fs.type === "github" && !fs.github) {
+            ctx.addIssue({
+              code: "custom",
+              message: "GitHub configuration is required when fs.type is github",
+              path: ["github"],
+            });
+          }
+        })
         .optional(),
       ai: v
         .object({
@@ -540,7 +681,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           mcp: v
             .object({
               enabled: v.boolean().optional(),
-              port: v.number().optional(),
+              port: v.number().int().min(1).max(65_535).optional(),
               expose: v.array(v.string()).optional(),
             })
             .partial()
@@ -636,7 +777,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
        * Each entry is either a fully-materialized `Extension` object or a
        * disable directive `{ name, enabled: false }` that vetoes an extension
        * discovered from a lower-priority source. The runtime type is
-       * tightened at the `veryfront/extensions` barrel — we keep this as
+       * tightened at the `veryfront/extensions` barrel. Keep this as
        * `v.unknown()` here to avoid pulling the extensions module into the
        * config layer (would introduce a circular import).
        */
@@ -684,85 +825,124 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
     })
     .partial()
 );
-export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
-
-// Inferred types
 type InferredVeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
 type InferredVeryfrontConfigInput = InferInput<ReturnType<typeof getVeryfrontConfigSchema>>;
 
-/** Validated project configuration with catalog-backed integration authoring. */
-export type VeryfrontConfig = Omit<InferredVeryfrontConfig, "integrations"> & {
-  integrations?: SourceIntegrationPolicyConfig;
-};
-/** User-authored configuration accepted before schema transforms run. */
-export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrations"> & {
-  integrations?: SourceIntegrationPolicyConfig;
-};
+/** Runtime schema for Veryfront project configuration. */
+export const veryfrontConfigSchema: Schema<InferredVeryfrontConfig> = lazySchema(
+  getVeryfrontConfigSchema,
+);
 
-// Validation function
+/** Validated project configuration with catalog-backed integration authoring. */
+export type VeryfrontConfig =
+  & Omit<
+    InferredVeryfrontConfig,
+    "extensions" | "integrations"
+  >
+  & {
+    extensions?: ExtensionConfigEntry[];
+    integrations?: SourceIntegrationPolicyConfig;
+  };
+/** User-authored configuration accepted before schema transforms run. */
+export type VeryfrontConfigInput =
+  & Omit<
+    InferredVeryfrontConfigInput,
+    "extensions" | "integrations"
+  >
+  & {
+    extensions?: ExtensionConfigEntry[];
+    integrations?: SourceIntegrationPolicyConfig;
+  };
+
+/** Validate and normalize a user-authored project configuration. */
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const unknownKeys = findUnknownTopLevelKeys(input as Record<string, unknown>);
+    if (unknownKeys.length > 0) {
+      const displayedKeys = unknownKeys.slice(0, 10).map((key) => {
+        const boundedKey = key.length > 128 ? `${key.slice(0, 125)}...` : key;
+        return /^[A-Za-z_$][A-Za-z0-9_$.-]*$/.test(boundedKey)
+          ? boundedKey
+          : JSON.stringify(boundedKey);
+      });
+      const omittedCount = unknownKeys.length - displayedKeys.length;
+      const suffix = omittedCount > 0 ? ` and ${omittedCount} more` : "";
+      throw CONFIG_VALIDATION_FAILED.create({
+        message: `Invalid veryfront.config: Unknown config keys: ${
+          displayedKeys.join(", ")
+        }${suffix}.`,
+        context: {
+          field: "<root>",
+          expected: "Only documented top-level configuration fields are allowed.",
+        },
+      });
+    }
+  }
+
   const result = veryfrontConfigSchema.safeParse(input);
   if (result.success) return result.data as VeryfrontConfig;
 
   const issues = result.issues ?? [];
   const first = issues[0];
-  const path = first?.path?.length ? first.path.join(".") : "<root>";
+  const issuePath = first?.path?.length ? first.path.join(".") : "<root>";
+  const invalidCorsOrigin = issuePath === "security.cors" && hasInvalidCorsOrigin(input);
+  const path = invalidCorsOrigin ? "security.cors.origin" : issuePath;
   const expected = first?.message ?? String(first);
-  const corsHint = path.includes("security.cors")
-    ? " Expected boolean or { origin?: string }."
+  const corsHint = !invalidCorsOrigin && path.includes("security.cors")
+    ? " Expected a boolean or a CORS policy object."
     : "";
-  const expectedWithHint = expected + corsHint;
+  const expectedWithHint = invalidCorsOrigin
+    ? "security.cors.origin must be a string, string array, or validator function."
+    : expected + corsHint;
 
-  const context: ConfigContext = {
+  const context = {
     field: path,
     expected: expectedWithHint,
-    value: input,
   };
 
-  throw toError(
-    createError({
-      type: "config",
-      message: `Invalid veryfront.config at ${path}: ${expectedWithHint}.`,
-      context,
-    }),
-  );
+  throw CONFIG_VALIDATION_FAILED.create({
+    message: invalidCorsOrigin
+      ? `Invalid veryfront.config: ${expectedWithHint}`
+      : `Invalid veryfront.config at ${path}: ${expectedWithHint}${
+        /[.!?]$/.test(expectedWithHint) ? "" : "."
+      }`,
+    context,
+  });
 }
 
-/**
- * Known top-level keys from the config schema definition.
- * Maintained in sync with the `getVeryfrontConfigSchema` shape above.
- */
-const knownConfigKeys = new Set([
-  "projectSlug",
-  "title",
-  "description",
-  "react",
-  "directories",
-  "experimental",
-  "router",
-  "layout",
-  "app",
-  "theme",
-  "build",
-  "cache",
-  "dev",
-  "resolve",
-  "security",
-  "middleware",
-  "theming",
-  "assetPipeline",
-  "observability",
-  "search",
-  "fs",
-  "ai",
-  "client",
-  "generate",
-  "tailwind",
-  "integrations",
-  "extensions",
-  "openapi",
-]);
+/** Known top-level keys, checked by TypeScript against the inferred schema. */
+const knownConfigKeys = {
+  projectSlug: true,
+  title: true,
+  description: true,
+  react: true,
+  directories: true,
+  experimental: true,
+  router: true,
+  layout: true,
+  app: true,
+  theme: true,
+  build: true,
+  cache: true,
+  dev: true,
+  resolve: true,
+  security: true,
+  middleware: true,
+  theming: true,
+  assetPipeline: true,
+  observability: true,
+  search: true,
+  fs: true,
+  ai: true,
+  client: true,
+  generate: true,
+  tailwind: true,
+  integrations: true,
+  extensions: true,
+  openapi: true,
+} as const satisfies Readonly<Record<keyof InferredVeryfrontConfig, true>>;
 
+/** Return unsupported top-level keys from a project configuration object. */
 export function findUnknownTopLevelKeys(input: Record<string, unknown>): string[] {
-  return Object.keys(input).filter((key) => !knownConfigKeys.has(key));
+  return Object.keys(input).filter((key) => !Object.hasOwn(knownConfigKeys, key));
 }

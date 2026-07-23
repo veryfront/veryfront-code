@@ -122,6 +122,13 @@ interface FunctionParam {
   tsType?: TsType;
 }
 
+function renderParamName(param: FunctionParam): string {
+  const restArgument = param.kind === "rest" ? asRecord(param).arg : undefined;
+  const name = param.name ||
+    (typeof restArgument?.name === "string" ? restArgument.name : "");
+  return param.kind === "rest" && name ? `...${name}` : name;
+}
+
 interface FunctionDef {
   params: FunctionParam[];
   returnType?: TsType;
@@ -352,7 +359,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     sanitizeData:
       "Sanitize data to prevent XSS and prototype pollution attacks",
     createValidationError: "Create an input validation error.",
-    CommonSchemas: "Built-in Zod schemas (email, URL, etc.)",
+    CommonSchemas: "Shared validation schemas for common input formats",
     INPUT_VALIDATION_FAILED:
       "HTTP request input validation failures (replaces ValidationError)",
     APIContext: "API route handler context",
@@ -450,7 +457,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   },
 
   "veryfront/markdown": {
-    Markdown: "Render markdown with highlighting + diagrams",
+    Markdown: "Render Markdown with syntax highlighting and Mermaid diagrams",
     MarkdownProps: "`<Markdown>` props",
     CodeBlockProps: "Code block rendering props",
   },
@@ -634,7 +641,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     RateLimitOptions: "Rate limit config",
     RateLimitStore: "Rate limit storage interface",
     RedisRateLimitOptions: "Redis rate limit config",
-    LogFormat: "Log format (combined, common, dev, short)",
+    LogFormat: "Log format (combined, common, dev, short, tiny, json)",
     LoggerOptions: "Logger config",
     TimeoutOptions: "Timeout config",
     MiddlewarePipelineOptions: "Pipeline config",
@@ -725,6 +732,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     EnvVarSchema: "Validates environment variable configuration metadata",
     IntegrationConfigSchema:
       "Validates complete integration connector configuration spec",
+    IntegrationEndpointHistoricalSummarySchema:
+      "Validates compact historical summaries for integration tool results",
     IntegrationNameSchema:
       "Validates integration name against allowed enum values",
     IntegrationPromptSchema:
@@ -747,11 +756,11 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     EnvVarConfig: "Environment variable requirement with metadata",
     IntegrationConfig: "Complete connector spec: name, auth, tools, prompts",
     IntegrationConnector:
-      "Runtime connector with tools and endpoint definitions",
+      "Connector in the snake_case control plane API response format",
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
-    IntegrationTool: "Integration tool with endpoint execution spec",
+    IntegrationTool: "Tool in the snake_case control plane API response format",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
     OAuthField: "Form field for OAuth configuration with mapping",
@@ -814,7 +823,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/server": "Server runtime helpers.",
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
-  "veryfront/ui": "UI primitives - the base layer for veryfront/chat components.",
+  "veryfront/ui":
+    "UI primitives - the base layer for veryfront/chat components.",
   "veryfront/utils": "Runtime utilities.",
   "veryfront/workflow": "Workflows.",
 };
@@ -1271,8 +1281,19 @@ function normalizeParams(params: unknown): FunctionParam[] {
   if (!Array.isArray(params)) return [];
   return params.map((param) => {
     const record = asRecord(param) ?? {};
+    const restArgument = record.kind === "rest"
+      ? asRecord(record.arg)
+      : undefined;
     return {
       ...record,
+      name: typeof record.name === "string"
+        ? record.name
+        : typeof restArgument?.name === "string"
+        ? restArgument.name
+        : "",
+      optional: typeof record.optional === "boolean"
+        ? record.optional
+        : restArgument?.optional === true,
       tsType: normalizeTsType(record.tsType),
     } as FunctionParam;
   });
@@ -1653,6 +1674,7 @@ const API_DOCS: Record<string, APIDocs> = {
     expandTypes: [
       "CorsOptions",
       "RateLimitOptions",
+      "RedisRateLimitOptions",
       "LoggerOptions",
       "TimeoutOptions",
     ],
@@ -1781,11 +1803,15 @@ const METHOD_DESCRIPTIONS: Record<
     },
     useFor: {
       desc:
-        "Add a middleware handler that only runs for matching URL patterns.",
-      params: { pattern: "URL pattern to match", "": "Middleware handler" },
+        "Add one or more middleware handlers that only run for matching URL pathnames.",
+      params: {
+        pattern: "URL pathname pattern to match",
+        handlers: "Middleware handler functions",
+      },
     },
     onTeardown: {
-      desc: "Register a cleanup callback that runs after the response is sent.",
+      desc:
+        "Register a cleanup callback that runs when `teardown()` is called.",
       params: { cb: "Cleanup callback" },
     },
     compose: {
@@ -1958,7 +1984,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     skip: "Predicate: skip if returns true",
   },
   CorsOptions: {
-    origin: "Allowed origins (string, regex, array, or function)",
+    origin: "Allowed origin, origin list, or validation function",
     methods: "Allowed HTTP methods",
     allowedHeaders: "Allowed request headers",
     exposedHeaders: "Headers exposed to client",
@@ -1966,22 +1992,29 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     maxAge: "Preflight cache duration (seconds)",
   },
   RateLimitOptions: {
-    maxRequests: "Max requests per window",
-    windowMs: "Time window (ms)",
+    maxRequests: "Maximum requests per window",
+    windowMs: "Window duration in milliseconds",
     max: "Max requests per window",
-    store: "Storage backend",
-    keyGenerator: "Function to derive rate limit key from request",
+    store: "Counter storage backend",
+    keyGenerator: "Function that derives a stable, non-sensitive request key",
     handler: "Custom response when limit exceeded",
     skip: "Skip rate limiting for matching requests",
   },
+  RedisRateLimitOptions: {
+    url: "Redis connection URL",
+    keyPrefix: "Prefix added to rate-limit keys",
+    connectTimeoutMs: "Redis connection deadline in milliseconds",
+    operationTimeoutMs: "Redis command and disconnect deadline in milliseconds",
+  },
   LoggerOptions: {
-    format: "Log format (combined, common, dev, short)",
+    format: "Log format (combined, common, dev, short, tiny, json)",
     skip: "Skip logging for matching requests",
     log: "Custom log output function",
   },
   TimeoutOptions: {
-    timeout: "Request timeout (ms)",
-    message: "Timeout error message",
+    timeoutMs: "Timeout in milliseconds (default: 60000)",
+    message: "Timeout response message",
+    exclude: "Absolute URL paths excluded from timeout handling",
   },
   MCPServerConfig: {
     name: "Server name",
@@ -2115,7 +2148,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
       }
 
       const fd = node.functionDef;
-      const paramStr = fd.params.map((p) => p.name).join(", ");
+      const paramStr = fd.params.map(renderParamName).join(", ");
       lines.push(`### \`${fnName}(${paramStr})\``);
       lines.push("");
 
@@ -2170,7 +2203,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
             hasContent = true;
           }
 
-          const paramNames = method.params.map((p) => p.name).join(", ");
+          const paramNames = method.params.map(renderParamName).join(", ");
           lines.push(
             `### \`${
               typeName.charAt(0).toLowerCase() + typeName.slice(1)
@@ -2241,7 +2274,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           }
 
           const fd = method.functionDef;
-          const paramNames = fd.params.map((p) => p.name).join(", ");
+          const paramNames = fd.params.map(renderParamName).join(", ");
           const instanceName = typeName.charAt(0).toLowerCase() +
             typeName.slice(1);
           const callTarget = method.isStatic ? typeName : instanceName;

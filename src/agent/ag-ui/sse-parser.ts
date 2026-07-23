@@ -28,27 +28,41 @@ export type AgUiSseEventType = (typeof agUiSseEventTypes)[keyof typeof agUiSseEv
 
 /** Parsed AG-UI SSE response summary for evals, canaries, and host tests. */
 export interface ParsedAgUiSseRun {
+  /** Response status value. */
   responseStatus: number;
+  /** Events value. */
   events: Array<Record<string, unknown>>;
+  /** Event types value. */
   eventTypes: string[];
+  /** Tool starts value. */
   toolStarts: string[];
+  /** Tool args value. */
   toolArgs: string[];
+  /** Text value. */
   text: string;
+  /** Run error value. */
   runError: string | null;
 }
 
 /** Progress snapshot emitted while parsing an AG-UI SSE response. */
 export interface AgUiSseProgressSnapshot {
+  /** Event count value. */
   eventCount: number;
+  /** Last event type value. */
   lastEventType: string | null;
+  /** Last tool call name value. */
   lastToolCallName: string | null;
+  /** Tool starts value. */
   toolStarts: string[];
+  /** Text length value. */
   textLength: number;
 }
 
 /** Options for `parseAgUiSseResponse()`. */
 export interface ParseAgUiSseResponseOptions {
+  /** Callback invoked when progress. */
   onProgress?: (snapshot: AgUiSseProgressSnapshot) => void;
+  /** Progress throttle ms value. */
   progressThrottleMs?: number;
 }
 

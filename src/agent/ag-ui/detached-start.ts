@@ -1,9 +1,9 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { CONFIG_INVALID, INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import { agentLogger } from "#veryfront/utils";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
-import { getAgUiRequestSchema, normalizeAgUiMessages } from "./host-support.ts";
+import { type AgUiRequest, getAgUiRequestSchema, normalizeAgUiMessages } from "./host-support.ts";
 import {
   createAgUiBodyLimitErrorResponse,
   extractRequest,
@@ -23,11 +23,32 @@ const getAgUiDetachedRunIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(AGENT_ID_PATTERN)
 );
 
-type AgUiContextValue =
+/** Static or request-derived context for detached AG-UI executions. */
+export type AgUiContextValue =
   | Record<string, unknown>
   | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
+
+/** Validated request used to start a detached AG-UI run. */
+export type AgUiDetachedStartRequest = AgUiRequest & {
+  /** Conversation thread identifier. */
+  threadId: string;
+  /** Runtime run identifier. */
+  runId: string;
+};
+
+/** Acceptance response for a detached AG-UI run. */
+export interface AgUiDetachedStartAccepted {
+  /** Indicates that the run was accepted. */
+  accepted: true;
+  /** Whether this request repeated an existing run. */
+  duplicate: boolean;
+  /** Runtime run identifier. */
+  runId: string;
+  /** Conversation thread identifier. */
+  threadId: string;
+}
 
 function buildStreamContext(
   request: AgUiDetachedStartRequest,
@@ -76,39 +97,38 @@ async function drainRuntimeStream(
   }
 }
 
-export const getAgUiDetachedStartRequestSchema = defineSchema((v) =>
-  getAgUiRequestSchema().extend({
-    threadId: v.string().uuid(),
-    runId: getAgUiDetachedRunIdSchema(),
-  })
-);
+/** Returns the detached AG-UI start request schema. */
+export const getAgUiDetachedStartRequestSchema: () => Schema<AgUiDetachedStartRequest> =
+  defineSchema((v) =>
+    getAgUiRequestSchema().extend({
+      threadId: v.string().uuid(),
+      runId: getAgUiDetachedRunIdSchema(),
+    })
+  );
 
-export const getAgUiDetachedStartAcceptedSchema = defineSchema((v) =>
-  v.object({
-    accepted: v.literal(true),
-    duplicate: v.boolean(),
-    runId: getAgUiDetachedRunIdSchema(),
-    threadId: v.string().uuid(),
-  })
-);
+/** Returns the detached AG-UI acceptance response schema. */
+export const getAgUiDetachedStartAcceptedSchema: () => Schema<AgUiDetachedStartAccepted> =
+  defineSchema((v) =>
+    v.object({
+      accepted: v.literal(true),
+      duplicate: v.boolean(),
+      runId: getAgUiDetachedRunIdSchema(),
+      threadId: v.string().uuid(),
+    })
+  );
 
 /** Schema for AG-UI detached start request.
  * @deprecated Use getAgUiDetachedStartRequestSchema()
  */
-export const AgUiDetachedStartRequestSchema = lazySchema(getAgUiDetachedStartRequestSchema);
+export const AgUiDetachedStartRequestSchema: Schema<AgUiDetachedStartRequest> = lazySchema(
+  getAgUiDetachedStartRequestSchema,
+);
 /** Schema for AG-UI detached start accepted.
  * @deprecated Use getAgUiDetachedStartAcceptedSchema()
  */
-export const AgUiDetachedStartAcceptedSchema = lazySchema(getAgUiDetachedStartAcceptedSchema);
-
-/** Request payload for AG-UI detached start. */
-export type AgUiDetachedStartRequest = InferSchema<
-  ReturnType<typeof getAgUiDetachedStartRequestSchema>
->;
-/** Public API contract for AG-UI detached start accepted. */
-export type AgUiDetachedStartAccepted = InferSchema<
-  ReturnType<typeof getAgUiDetachedStartAcceptedSchema>
->;
+export const AgUiDetachedStartAcceptedSchema: Schema<AgUiDetachedStartAccepted> = lazySchema(
+  getAgUiDetachedStartAcceptedSchema,
+);
 
 function toDetachedAgUiMessageMetadata(
   metadata: MessageMetadata | undefined,
@@ -185,39 +205,58 @@ export function buildDetachedAgUiStartRequest(input: {
 
 /** Input payload for execute AG-UI detached start. */
 export interface ExecuteAgUiDetachedStartInput {
+  /** Request value. */
   request: AgUiDetachedStartRequest;
+  /** Raw request value. */
   rawRequest?: Request;
+  /** Request or ctx value. */
   requestOrCtx?: unknown;
+  /** Context supplied to the operation. */
   context?: Record<string, unknown>;
 }
 
-interface AgUiDetachedStartExecutionInput {
+/** Input passed to a detached AG-UI execution starter. */
+export interface AgUiDetachedStartExecutionInput {
+  /** Validated detached-start request. */
   request: AgUiDetachedStartRequest;
+  /** Original framework request context. */
   requestOrCtx: unknown;
+  /** Extracted web request. */
   rawRequest: Request;
+  /** Runtime context forwarded to the agent. */
   context: Record<string, unknown>;
+  /** Signal aborted when the detached run is cancelled. */
   abortSignal: AbortSignal;
 }
 
-type AgUiDetachedExecutionStarter = (
+/** Starts a detached AG-UI execution. */
+export type AgUiDetachedExecutionStarter = (
   input: AgUiDetachedStartExecutionInput,
 ) => Promise<void> | void;
 
-interface AgUiDetachedStartHandlerOptionsBase {
+/** Shared options for detached AG-UI start handlers. */
+export interface AgUiDetachedStartHandlerOptionsBase {
+  /** Session manager used to track and resume detached runs. */
   sessionManager: RunResumeSessionManager<AgUiResumeValue>;
+  /** Context merged into each detached execution. */
   context?: AgUiContextValue;
+  /** Custom detached execution starter. */
   startDetachedExecution?: AgUiDetachedExecutionStarter;
+  /** Called after a run is accepted. */
   onAccepted?: (input: {
     request: AgUiDetachedStartRequest;
     runId: string;
     threadId: string;
   }) => Promise<void> | void;
+  /** Called when the same detached run is submitted again. */
   onDuplicate?: (input: {
     request: AgUiDetachedStartRequest;
     runId: string;
     threadId: string;
   }) => Promise<void> | void;
+  /** Called when detached execution finishes. */
   onFinish?: (input: { runId: string; threadId: string }) => Promise<void> | void;
+  /** Called when detached execution fails. */
   onError?: (input: { runId: string; threadId: string; error: unknown }) => Promise<void> | void;
 }
 

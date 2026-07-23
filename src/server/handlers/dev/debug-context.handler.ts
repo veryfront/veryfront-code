@@ -1,24 +1,39 @@
 /**
  * Debug Context Handler
  *
- * Shows the current request context for debugging token/context propagation issues.
- * Available in all modes - endpoint is internal-only (not publicly routable).
+ * Shows bounded runtime diagnostics for authorized local development requests.
  *
  * Endpoint: /_vf_debug/context
  */
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
+import {
+  HTTP_METHOD_NOT_ALLOWED,
+  HTTP_OK,
+  HTTP_UNAUTHORIZED,
+  PRIORITY_HIGH_DEV,
+} from "#veryfront/utils/constants/index.ts";
 import { getSSRModuleCacheStats } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
-import type { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { isAuthorizedDevControlRequest } from "./access-policy.ts";
+
+function hasSameBrowserOrigin(req: Request): boolean {
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
+  const origin = req.headers.get("origin");
+  return origin === null || origin === new URL(req.url).origin;
+}
+
+function toSafeCount(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
 
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DebugContextHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_vf_debug/context", exact: true }],
-    // Only enable in local development - debug endpoints should not be exposed in production
     enabled: (ctx) => !!ctx.isLocalProject,
   };
 
@@ -26,81 +41,75 @@ export class DebugContextHandler extends BaseHandler {
     if (!this.shouldHandle(req, ctx)) {
       return Promise.resolve(this.continue());
     }
-    if (!ctx.isLocalProject) {
-      return Promise.resolve(this.continue());
+    if (!isAuthorizedDevControlRequest(req, ctx) || !hasSameBrowserOrigin(req)) {
+      return Promise.resolve(
+        this.respond(
+          this.createPrivateResponseBuilder(ctx).text("Unauthorized", HTTP_UNAUTHORIZED),
+        ),
+      );
     }
 
-    const token = req.headers.get("x-token");
-    const url = new URL(req.url);
+    if (req.method.toUpperCase() !== "GET") {
+      return Promise.resolve(
+        this.respond(
+          this.createPrivateResponseBuilder(ctx)
+            .withAllow("GET")
+            .text("Method Not Allowed", HTTP_METHOD_NOT_ALLOWED),
+        ),
+      );
+    }
 
     const debugInfo = {
-      timestamp: new Date().toISOString(),
-      request: {
-        url: req.url,
-        host: url.host,
-        headers: {
-          "x-project-slug": req.headers.get("x-project-slug"),
-          "x-token": token ? `[${token.length} chars]` : null,
-          "x-environment": req.headers.get("x-environment"),
-          "x-release-id": req.headers.get("x-release-id"),
-          "x-project-id": req.headers.get("x-project-id"),
-        },
+      runtime: {
+        adapterAvailable: Boolean(ctx.adapter),
+        localProject: ctx.isLocalProject === true,
+        multiProjectMode: this.checkMultiProjectMode(ctx),
+        requestContextAvailable: Boolean(ctx.requestContext),
       },
-      context: {
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        projectDir: ctx.projectDir,
-        proxyToken: ctx.proxyToken ? `[${ctx.proxyToken.length} chars]` : null,
-        requestContext: ctx.requestContext
-          ? {
-            mode: ctx.requestContext.mode,
-            slug: ctx.requestContext.slug,
-            branch: ctx.requestContext.branch,
-            hasToken: Boolean(ctx.requestContext.token),
-          }
-          : null,
-        releaseId: ctx.releaseId,
-        parsedDomain: ctx.parsedDomain,
-      },
-      adapter: {
-        type: ctx.adapter?.fs?.constructor?.name ?? "unknown",
-        isMultiProjectMode: this.checkMultiProjectMode(ctx),
-        managerStats: this.getManagerStats(ctx),
-      },
-      ssrModuleCache: getSSRModuleCacheStats(),
+      caches: this.getSafeCacheStats(),
     };
 
-    const response = this.createResponseBuilder(ctx).withCache("no-cache").json(debugInfo, HTTP_OK);
+    const response = this.createPrivateResponseBuilder(ctx).json(debugInfo, HTTP_OK);
     return Promise.resolve(this.respond(response));
+  }
+
+  private createPrivateResponseBuilder(ctx: HandlerContext) {
+    return this.createResponseBuilder(ctx)
+      .withCache("no-store")
+      .withHeaders({ "X-Content-Type-Options": "nosniff" });
   }
 
   private checkMultiProjectMode(ctx: HandlerContext): boolean {
     try {
       const fs = ctx.adapter?.fs as { isMultiProjectMode?: () => boolean } | undefined;
-      return fs?.isMultiProjectMode?.() ?? false;
+      return fs?.isMultiProjectMode?.() === true;
     } catch (_) {
       /* expected: adapter may not support multi-project mode */
       return false;
     }
   }
 
-  private getManagerStats(
-    ctx: HandlerContext,
-  ): { adapters: number; stats: Record<string, unknown> } | null {
+  private getSafeCacheStats(): {
+    distributed: boolean;
+    moduleEntries: number;
+    moduleLimit: number;
+    temporaryDirectories: number;
+  } {
     try {
-      const fs = ctx.adapter?.fs as
-        | { getUnderlyingAdapter?: () => { getManagerStats?: () => unknown } }
-        | undefined;
-
-      const underlying = fs?.getUnderlyingAdapter?.() as MultiProjectFSAdapter | undefined;
-      if (typeof underlying?.getManagerStats !== "function") {
-        return null;
-      }
-
-      return underlying.getManagerStats();
-    } catch (_) {
-      /* expected: adapter may not support getManagerStats */
-      return null;
+      const stats = getSSRModuleCacheStats();
+      return {
+        distributed: stats.distributedCacheEnabled === true,
+        moduleEntries: toSafeCount(stats.memoryEntries),
+        moduleLimit: toSafeCount(stats.maxEntries),
+        temporaryDirectories: toSafeCount(stats.tmpDirs),
+      };
+    } catch {
+      return {
+        distributed: false,
+        moduleEntries: 0,
+        moduleLimit: 0,
+        temporaryDirectories: 0,
+      };
     }
   }
 }

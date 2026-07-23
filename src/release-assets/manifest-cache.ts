@@ -25,7 +25,7 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "#veryfront/cache";
+import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
@@ -88,6 +88,12 @@ export interface ReleaseAssetManifestFetcher {
 
 /** Per-releaseId fetcher registry (keyed by releaseId). */
 const fetcherRegistry = new Map<string, ReleaseAssetManifestFetcher>();
+/** Registration revision closes ABA races when the same fetcher function is reused. */
+const fetcherRevisions = new Map<string, number>();
+
+function bumpFetcherRevision(registryKey: string): void {
+  fetcherRevisions.set(registryKey, (fetcherRevisions.get(registryKey) ?? 0) + 1);
+}
 
 /**
  * Register a project-scoped manifest fetcher for the given releaseId.
@@ -100,7 +106,10 @@ export function registerManifestFetcherForRelease(
   releaseId: string,
   fetcher: ReleaseAssetManifestFetcher,
 ): void {
+  if (fetcherRegistry.get(releaseId) === fetcher) return;
+  bumpFetcherRevision(releaseId);
   fetcherRegistry.set(releaseId, fetcher);
+  invalidateReleaseManifestState(releaseId);
 }
 
 /**
@@ -108,8 +117,15 @@ export function registerManifestFetcherForRelease(
  *
  * Called when an adapter transitions away from a release context.
  */
-export function unregisterManifestFetcherForRelease(releaseId: string): void {
-  fetcherRegistry.delete(releaseId);
+export function unregisterManifestFetcherForRelease(
+  releaseId: string,
+  expectedFetcher?: ReleaseAssetManifestFetcher,
+): void {
+  if (expectedFetcher && fetcherRegistry.get(releaseId) !== expectedFetcher) return;
+  if (fetcherRegistry.delete(releaseId)) {
+    bumpFetcherRevision(releaseId);
+    invalidateReleaseManifestState(releaseId);
+  }
 }
 
 /**
@@ -121,18 +137,55 @@ export function unregisterManifestFetcherForRelease(releaseId: string): void {
 export function configureReleaseAssetManifestFetcher(
   fetcher: ReleaseAssetManifestFetcher | undefined,
 ): void {
+  const previous = fetcherRegistry.get("*");
+  if (previous === fetcher) return;
+  bumpFetcherRevision("*");
   if (fetcher) {
     fetcherRegistry.set("*", fetcher);
   } else {
     fetcherRegistry.delete("*");
   }
+  clearCachedReleaseAssetManifests();
 }
 
 /** Resolve the fetcher for a releaseId: prefer per-releaseId, then global fallback. */
-function resolveFetcher(
+interface FetcherRegistration {
+  fetcher: ReleaseAssetManifestFetcher;
+  registryKey: string;
+  revision: number;
+}
+
+function resolveFetcherRegistration(
   releaseId: string,
-): ReleaseAssetManifestFetcher | undefined {
-  return fetcherRegistry.get(releaseId) ?? fetcherRegistry.get("*");
+): FetcherRegistration | undefined {
+  const releaseFetcher = fetcherRegistry.get(releaseId);
+  if (releaseFetcher) {
+    return {
+      fetcher: releaseFetcher,
+      registryKey: releaseId,
+      revision: fetcherRevisions.get(releaseId) ?? 0,
+    };
+  }
+
+  const fallbackFetcher = fetcherRegistry.get("*");
+  return fallbackFetcher
+    ? {
+      fetcher: fallbackFetcher,
+      registryKey: "*",
+      revision: fetcherRevisions.get("*") ?? 0,
+    }
+    : undefined;
+}
+
+function resolveFetcher(releaseId: string): ReleaseAssetManifestFetcher | undefined {
+  return resolveFetcherRegistration(releaseId)?.fetcher;
+}
+
+function invalidateReleaseManifestState(releaseId: string): void {
+  for (const [key] of manifestCache.entries()) {
+    if (key === releaseId || key.startsWith(`${releaseId}:`)) manifestCache.delete(key);
+  }
+  inFlight.delete(releaseId);
 }
 
 /** True when production manifest consumption is enabled via env flag. */
@@ -274,18 +327,26 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
     markManifestDecision("await_inflight");
     return existing.promise;
   }
-  const active = resolveFetcher(releaseId);
-  if (!active) {
+  const registration = resolveFetcherRegistration(releaseId);
+  if (!registration) {
     markManifestDecision("no_fetcher");
     return Promise.resolve(null);
   }
+  const { fetcher: active } = registration;
   const fetchGeneration = cacheGeneration;
   const token = Symbol(releaseId);
+  const registrationIsCurrent = (): boolean => {
+    const currentRegistration = resolveFetcherRegistration(releaseId);
+    return fetchGeneration === cacheGeneration &&
+      currentRegistration?.fetcher === active &&
+      currentRegistration.registryKey === registration.registryKey &&
+      currentRegistration.revision === registration.revision;
+  };
 
   const promise = profilePhase("release_manifest.fetch", async () => {
     try {
       const result = await active(releaseId);
-      if (fetchGeneration !== cacheGeneration) return null;
+      if (!registrationIsCurrent()) return null;
 
       if (!result) {
         markManifestDecision("fetch_missing");
@@ -299,6 +360,15 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         : null;
 
       if (manifest) {
+        if (manifest.releaseId !== releaseId) {
+          markManifestDecision("fetch_identity_mismatch");
+          cacheNonReadyManifest(releaseId);
+          logger.warn("Rejected manifest with mismatched release identity", {
+            requestedReleaseId: releaseId,
+            manifestReleaseId: manifest.releaseId,
+          });
+          return null;
+        }
         markManifestDecision(manifestState === "partial" ? "fetch_partial" : "fetch_ready");
         const key = cacheKey(releaseId, manifest.manifestVersion);
         manifestCache.set(key, {
@@ -321,11 +391,11 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         return null;
       }
     } catch (error) {
+      if (!registrationIsCurrent()) return null;
       logger.debug("Manifest fetch failed", {
         releaseId,
         error: error instanceof Error ? error.message : String(error),
       });
-      if (fetchGeneration !== cacheGeneration) return null;
       markManifestDecision("fetch_failed");
       cacheNonReadyManifest(releaseId);
       return null;
@@ -369,4 +439,5 @@ export function clearCachedReleaseAssetManifests(): void {
 export function clearReleaseAssetManifestCache(): void {
   clearCachedReleaseAssetManifests();
   fetcherRegistry.clear();
+  fetcherRevisions.clear();
 }

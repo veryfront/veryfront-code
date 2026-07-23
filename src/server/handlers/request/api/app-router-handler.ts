@@ -11,6 +11,8 @@ import { applySecurityHeaders } from "./security-headers.ts";
 import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
+import { createProjectCodeUnavailableResponse } from "../../../utils/project-code-isolation.ts";
+import { getSafeErrorName } from "../../../utils/error-name.ts";
 
 const logger = serverLogger.component("app-router-api-handler");
 
@@ -37,6 +39,12 @@ export async function handleAppRouter(
   pathname: string,
   ctx: HandlerContext,
 ): Promise<Response | null> {
+  // This compatibility dispatcher has no worker boundary. Explicitly remote
+  // routes must use the isolated canonical API dispatcher instead.
+  if (ctx.isLocalProject === false) {
+    return createProjectCodeUnavailableResponse(req);
+  }
+
   try {
     const match = await resolveAppRouteFile(pathname, ctx);
     if (!match) return null;
@@ -62,7 +70,9 @@ export async function handleAppRouter(
 
     return new Response(res.body, { status: res.status, headers });
   } catch (error) {
-    logger.error("Failed to handle request", error);
+    logger.error("Failed to handle request", {
+      errorName: getSafeErrorName(error),
+    });
     return null;
   }
 }

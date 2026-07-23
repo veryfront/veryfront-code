@@ -48,6 +48,15 @@ flowchart TD
 4. Public schemas validate run and event response shapes.
 5. Cloud execution is delegated to the configured runtime adapter.
 
+The runs client snapshots static configuration at construction. A shared
+client captures request-varying auth and project routing as one identity before
+each operation. Request timeouts, response limits, and cancellation flow through
+the shared API request policy.
+
+Task and workflow contexts reject malformed injected environment payloads.
+Veryfront and tenant control variables never enter developer task contexts,
+including case variants on platforms with case-insensitive environment names.
+
 ## Canonical run model
 
 Execution is represented through canonical runs:

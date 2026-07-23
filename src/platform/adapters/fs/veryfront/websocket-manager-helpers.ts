@@ -7,16 +7,30 @@ const logger = baseLogger.component("ws-helpers");
 export const INVALIDATION_DEBOUNCE_MS = 100;
 export const WS_RECONNECT_DELAY_MS = 5000;
 export const WS_RECONNECT_MAX_DELAY_MS = 120000;
-export const WS_RECONNECT_MAX_FAILURES = 10;
 export const WS_HEARTBEAT_INTERVAL_MS = 60000;
 export const WS_HEARTBEAT_TIMEOUT_MS = 300000;
 
 export function getConnectionLogContext(
-  projectSlug: string | undefined,
+  _projectSlug: string | undefined,
   context: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  if (!projectSlug) return context;
-  return { projectSlug, ...context };
+  const allowedKeys = [
+    "closeCode",
+    "consecutiveFailures",
+    "delayMs",
+    "errorClass",
+    "readyState",
+    "sourceType",
+    "timeSinceLastPong",
+    "totalPokesReceived",
+    "type",
+    "wasClean",
+  ] as const;
+  const safeContext: Record<string, unknown> = {};
+  for (const key of allowedKeys) {
+    if (context[key] !== undefined) safeContext[key] = context[key];
+  }
+  return safeContext;
 }
 
 export function getPreviewInvalidationPrefixes(
@@ -63,10 +77,10 @@ export function buildReloadProjectContext(
 export function buildContentSourceLabel(
   getContentSource: () => ContentSource,
   getContentContext: () => ResolvedContentContext | null,
-): { contentSource: ContentSource; branch: string | null } {
+): { sourceType: ContentSource["type"] } {
+  const contentContext = getContentContext();
   return {
-    contentSource: getContentSource(),
-    branch: getContentContext()?.branch ?? null,
+    sourceType: contentContext?.sourceType ?? getContentSource().type,
   };
 }
 
@@ -81,7 +95,7 @@ export function parsePokeWebSocketMessage(data: string): PokeWebSocketMessage | 
     raw = JSON.parse(data);
   } catch {
     logger.warn("parsePokeWebSocketMessage: malformed JSON in WebSocket message", {
-      preview: data.slice(0, 200),
+      frameLength: data.length,
     });
     return null;
   }

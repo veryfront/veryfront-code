@@ -12,13 +12,19 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/executor/dag/index.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import type {
   Checkpoint,
   LoopExecutionContext,
   WorkflowContext,
+  WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
 } from "../../types.ts";
@@ -26,6 +32,7 @@ import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { parallel } from "../../dsl/parallel.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -569,6 +576,147 @@ describe("DAGExecutor", () => {
       assertExists(result.error);
       assertEquals(result.error!.includes("cycles"), true);
     });
+
+    it("should reject duplicate node IDs before execution", async () => {
+      await assertRejects(
+        () =>
+          executor.execute(
+            [
+              { id: "duplicate", config: { type: "step" } as any },
+              { id: "duplicate", config: { type: "step" } as any },
+            ],
+            createTestRun(),
+          ),
+        Error,
+        'Duplicate workflow node ID: "duplicate"',
+      );
+    });
+
+    it("should reject dependencies on missing nodes", async () => {
+      await assertRejects(
+        () =>
+          executor.execute(
+            [{ id: "dependent", dependsOn: ["missing"], config: { type: "step" } as any }],
+            createTestRun(),
+          ),
+        Error,
+        'depends on unknown node "missing"',
+      );
+    });
+
+    it("executes node IDs that are inherited by ordinary objects", async () => {
+      const executions: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executions.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const ids = ["constructor", "toString", "hasOwnProperty", "__proto__"];
+      const nodes = ids.map((id) => ({
+        id,
+        dependsOn: [],
+        config: { type: "step" } as const,
+      }));
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(executions, ids);
+      for (const id of ids) {
+        assertEquals(Object.hasOwn(result.nodeStates, id), true);
+        assertEquals(result.nodeStates[id]?.status, "completed");
+        assertEquals(Object.hasOwn(result.context, id), true);
+        assertEquals(result.context[id], id);
+      }
+    });
+
+    it("rejects node IDs that alias framework-owned context keys", async () => {
+      let executions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () => {
+          executions++;
+          return { success: true, output: "must not run", executionTime: 1 };
+        }),
+      });
+
+      for (const id of ["input", "env", "_tenant", "_loop"]) {
+        await assertRejects(
+          () => exec.execute([{ id, config: { type: "step" } as any }], createTestRun()),
+          Error,
+          "framework-owned workflow context key",
+        );
+      }
+      assertEquals(executions, 0);
+    });
+
+    it("rejects node IDs that alias a loop's persisted state key", async () => {
+      let executions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), () => {
+          executions++;
+          return { success: true, output: "must not run", executionTime: 1 };
+        }),
+      });
+
+      await assertRejects(
+        () =>
+          exec.execute(
+            [
+              {
+                id: "batch",
+                config: {
+                  type: "loop",
+                  while: () => false,
+                  maxIterations: 1,
+                  steps: [],
+                },
+              },
+              { id: "batch_loop_state", config: { type: "step" } as any },
+            ],
+            createTestRun(),
+          ),
+        Error,
+        "reserved for internal workflow state",
+      );
+      assertEquals(executions, 0);
+    });
+
+    it("rejects recursive sub-workflow definitions before execution", async () => {
+      const recursive: WorkflowDefinition = { id: "recursive", steps: [] };
+      recursive.steps = [{
+        id: "self",
+        config: { type: "subWorkflow", workflow: recursive },
+      }];
+
+      await assertRejects(
+        () =>
+          executor.execute(
+            [{ id: "outer", config: { type: "subWorkflow", workflow: recursive } }],
+            createTestRun(),
+          ),
+        Error,
+        'Workflow definition cycle detected at "recursive"',
+      );
+    });
+
+    it("rejects a recursive dynamic sub-workflow before its child executes", async () => {
+      const recursive: WorkflowDefinition = {
+        id: "dynamic-recursive",
+        steps: () => [{
+          id: "self",
+          config: { type: "subWorkflow", workflow: recursive },
+        }],
+      };
+
+      const result = await executor.execute(
+        [{ id: "outer", config: { type: "subWorkflow", workflow: recursive } }],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes('cycle detected at "dynamic-recursive"'), true);
+    });
   });
 
   describe("skip conditions", () => {
@@ -731,6 +879,120 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, true);
       assertEquals(result.nodeStates["par1"]!.status, "completed");
     });
+
+    it("should run dependency-free parallel() children concurrently", async () => {
+      const allStarted = Promise.withResolvers<void>();
+      let started = 0;
+      let active = 0;
+      let maxActive = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), async (node) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        started++;
+        if (started === 3) allStarted.resolve();
+
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            allStarted.promise,
+            new Promise<void>((resolve) => {
+              timeoutId = setTimeout(resolve, 25);
+            }),
+          ]);
+        } finally {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+          active--;
+        }
+
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const group = parallel("group", [
+        { id: "a", config: { type: "step" } as any },
+        { id: "b", config: { type: "step" } as any },
+        { id: "c", config: { type: "step" } as any },
+      ]);
+
+      const result = await exec.execute([{ ...group, dependsOn: [] }], createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(maxActive, 3);
+    });
+
+    it("rejects a top-level ID that collides with a parallel child before execution", async () => {
+      let executions = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), () => {
+        executions++;
+        return {
+          success: true,
+          output: executions === 1 ? "root-output" : "parallel-output",
+          executionTime: 1,
+        };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const group = parallel("group", [
+        { id: "child", config: { type: "step" } as any },
+      ]);
+      const run = createTestRun();
+
+      await assertRejects(
+        () =>
+          exec.execute(
+            [
+              { id: "group/child", config: { type: "step" } as any },
+              group,
+            ],
+            run,
+          ),
+        Error,
+        "reused across execution scopes",
+      );
+
+      assertEquals(executions, 0);
+      assertEquals(run.nodeStates, {});
+      assertEquals(run.context, { input: { topic: "test" } });
+    });
+
+    it("rejects an ID reused across sibling and nested composite scopes", async () => {
+      let executions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executions++;
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "left",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [{ id: "shared", config: { type: "step" } as any }],
+          },
+        },
+        {
+          id: "right",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [{
+              id: "nested",
+              config: {
+                type: "parallel",
+                nodes: [{ id: "shared", config: { type: "step" } as any }],
+              },
+            }],
+          },
+        },
+      ];
+
+      await assertRejects(
+        () => exec.execute(nodes, createTestRun()),
+        Error,
+        "reused across execution scopes",
+      );
+      assertEquals(executions, 0);
+    });
   });
 
   describe("composite resume (H8)", () => {
@@ -796,6 +1058,7 @@ describe("DAGExecutor", () => {
       // p-step must NOT have run a second time.
       assertEquals(stepARuns, 1);
       assertEquals(Object.hasOwn(second.context, "removed"), false);
+      assertEquals(second.nodeStates["p-step"]?.status, "completed");
     });
   });
 
@@ -846,6 +1109,130 @@ describe("DAGExecutor", () => {
       assertEquals(seenInputs, items);
       assertEquals(result.nodeStates["map-inputs"]!.output, expected);
       assertEquals(result.context["map-inputs"], expected);
+    });
+
+    it("should process map items concurrently up to the configured limit", async () => {
+      const firstBatchStarted = Promise.withResolvers<void>();
+      let started = 0;
+      let active = 0;
+      let maxActive = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), async (node) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        started++;
+        if (started === 2) firstBatchStarted.resolve();
+
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            firstBatchStarted.promise,
+            new Promise<void>((resolve) => {
+              timeoutId = setTimeout(resolve, 25);
+            }),
+          ]);
+        } finally {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+          active--;
+        }
+
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "map-concurrency",
+        dependsOn: [],
+        config: {
+          type: "map",
+          items: ["a", "b", "c", "d"],
+          processor: { id: "processor", config: { type: "step" } as any },
+          concurrency: 2,
+        },
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(maxActive, 2);
+    });
+
+    it("rejects a top-level ID that collides with a map child before execution", async () => {
+      let executions = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), () => {
+        executions++;
+        return {
+          success: true,
+          output: executions === 1 ? "root-output" : "mapped-output",
+          executionTime: 1,
+        };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [
+        { id: "map_0", config: { type: "step" } as any },
+        {
+          id: "map",
+          config: {
+            type: "map",
+            items: ["value"],
+            processor: { id: "processor", config: { type: "step" } as any },
+          },
+        },
+      ];
+      const run = createTestRun();
+
+      await assertRejects(
+        () => exec.execute(nodes, run),
+        Error,
+        "reused across execution scopes",
+      );
+
+      assertEquals(executions, 0);
+      assertEquals(run.nodeStates, {});
+      assertEquals(run.context, { input: { topic: "test" } });
+    });
+
+    it("rejects a dynamically generated map collision before the child executes", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "dynamic-map_0", config: { type: "step" } as any },
+        {
+          id: "dynamic-map",
+          config: {
+            type: "map",
+            items: () => ["value"],
+            processor: { id: "processor", config: { type: "step" } as any },
+          },
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes("reused across execution scopes"), true);
+      assertEquals(executed, ["dynamic-map_0"]);
+    });
+
+    it("rejects invalid raw concurrency even when items are empty", async () => {
+      const result = await executor.execute(
+        [{
+          id: "empty-invalid-concurrency",
+          config: {
+            type: "map",
+            items: [],
+            processor: { id: "processor", config: { type: "step" } as any },
+            concurrency: 0,
+          },
+        }],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes("positive safe integer"), true);
     });
 
     it("should handle empty items array", async () => {
@@ -960,6 +1347,34 @@ describe("DAGExecutor", () => {
       assertEquals(output.iterations, 0);
       assertEquals(result.context["loop-error"], undefined);
     });
+
+    it("rejects a dynamically generated loop collision before the child executes", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "dynamic-loop-child", config: { type: "step" } as any },
+        {
+          id: "dynamic-loop",
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: () => true,
+            steps: () => [{ id: "dynamic-loop-child", config: { type: "step" } as any }],
+          },
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes("reused across execution scopes"), true);
+      assertEquals(executed, ["dynamic-loop-child"]);
+    });
   });
 
   describe("loop resume (H9)", () => {
@@ -1045,6 +1460,63 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       assertEquals(result.nodeStates["sub1"]!.status, "completed");
+    });
+
+    it("allows sibling nodes to execute the same sub-workflow definition concurrently", async () => {
+      let innerExecutions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          innerExecutions++;
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const sharedDefinition: WorkflowDefinition = {
+        id: "shared-sub-workflow",
+        steps: [{ id: "inner", config: { type: "step" } as any }],
+      };
+      const nodes: WorkflowNode[] = [
+        {
+          id: "first",
+          dependsOn: [],
+          config: { type: "subWorkflow", workflow: sharedDefinition },
+        },
+        {
+          id: "second",
+          dependsOn: [],
+          config: { type: "subWorkflow", workflow: sharedDefinition },
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(innerExecutions, 2);
+    });
+
+    it("rejects collisions from dynamic sub-workflow steps before a child executes", async () => {
+      let innerExecutions = 0;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          innerExecutions++;
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const dynamicDefinition: WorkflowDefinition = {
+        id: "dynamic-sub-workflow",
+        steps: () => [
+          { id: "group/child", config: { type: "step" } as any },
+          parallel("group", [{ id: "child", config: { type: "step" } as any }]),
+        ],
+      };
+
+      const result = await exec.execute(
+        [{ id: "outer", config: { type: "subWorkflow", workflow: dynamicDefinition } }],
+        createTestRun(),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error?.includes("reused across execution scopes"), true);
+      assertEquals(innerExecutions, 0);
     });
 
     it("should throw for string workflow reference", async () => {
@@ -1187,6 +1659,25 @@ describe("DAGExecutor", () => {
 
       const result = await exec.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
+    });
+
+    it("should reject invalid maxConcurrency values", () => {
+      for (
+        const maxConcurrency of [
+          null as unknown as number,
+          0,
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+        ]
+      ) {
+        assertThrows(
+          () => new DAGExecutor({ stepExecutor, maxConcurrency }),
+          Error,
+          "positive safe integer",
+        );
+      }
     });
   });
 

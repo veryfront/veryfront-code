@@ -2,17 +2,24 @@ import { agentLogger } from "#veryfront/utils";
 
 /** Input payload for child run execution buffer cleanup. */
 export interface ChildRunExecutionBufferCleanupInput {
+  /** Callback that handles close reasoning buffer. */
   closeReasoningBuffer: () => Promise<void>;
+  /** Callback that handles close text buffer. */
   closeTextBuffer: () => Promise<void>;
 }
 
 /** Input payload for child run execution resource finalize. */
 export interface ChildRunExecutionResourceFinalizeInput
   extends ChildRunExecutionBufferCleanupInput {
+  /** Whether durable step started. */
   durableStepStarted: boolean;
+  /** Callback that handles append finish step chunk. */
   appendFinishStepChunk: () => Promise<void>;
+  /** Callback that handles flush mirror. */
   flushMirror?: () => Promise<void>;
+  /** Callback that handles close tooling. */
   closeTooling?: () => Promise<void>;
+  /** Callback that handles close runtime. */
   closeRuntime?: () => Promise<void>;
 }
 

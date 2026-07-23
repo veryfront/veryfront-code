@@ -13,10 +13,12 @@ import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
 function createStubCache(): HandlerCache<RSCDevServerHandler> & {
   entries: Map<string, RSCDevServerHandler>;
+  deleteCalls: number;
 } {
   const entries = new Map<string, RSCDevServerHandler>();
-  return {
+  const cache = {
     entries,
+    deleteCalls: 0,
     get(key: string) {
       return entries.get(key);
     },
@@ -24,6 +26,7 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
       entries.set(key, value);
     },
     delete(key: string) {
+      cache.deleteCalls++;
       return entries.delete(key);
     },
     clear() {
@@ -32,7 +35,11 @@ function createStubCache(): HandlerCache<RSCDevServerHandler> & {
     get size() {
       return entries.size;
     },
+    keys() {
+      return entries.keys();
+    },
   };
+  return cache;
 }
 
 describe("server/services/rsc/endpoints/handler-registry", () => {
@@ -61,6 +68,31 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
         true,
       );
       assertEquals(getRSCHandler("/project/b", "project-b"), otherProject);
+    });
+
+    it("invalidates only live cache keys after older variants are evicted", () => {
+      const cache = createStubCache();
+      cache.set = (key, value) => {
+        if (cache.entries.size === 1 && !cache.entries.has(key)) {
+          const oldest = cache.entries.keys().next().value;
+          if (oldest) cache.entries.delete(oldest);
+        }
+        cache.entries.set(key, value);
+      };
+      __injectCacheForTests(cache);
+
+      for (let index = 0; index < 100; index++) {
+        getRSCHandler("/project/a", "project-a", {
+          releaseId: `release-${index}`,
+          contentSourceId: `source-${index}`,
+        });
+      }
+      assertEquals(cache.size, 1);
+
+      invalidateRSCHandlersForProject("/project/a", "project-a");
+
+      assertEquals(cache.deleteCalls, 1);
+      assertEquals(cache.size, 0);
     });
   });
 

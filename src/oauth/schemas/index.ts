@@ -15,6 +15,7 @@ export {
   OAuthStateSchema,
   type OAuthTokens,
   OAuthTokensSchema,
+  StoredOAuthStateSchema,
   type TokenExchangeOptions,
   TokenExchangeOptionsSchema,
   type TokenExchangeResult,

@@ -8,7 +8,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#std/path.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { createSkill } from "./create.ts";
+import { createSkill, isValidSkillName } from "./create.ts";
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -94,38 +94,45 @@ describe("Skills Create", () => {
   });
 
   describe("skill name validation", () => {
-    const valid = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-
     it("accepts valid names: lowercase, numbers, hyphens", () => {
-      assertEquals(valid.test("my-skill"), true);
-      assertEquals(valid.test("deploy-safely"), true);
-      assertEquals(valid.test("a1"), true);
-      assertEquals(valid.test("a"), true);
-      assertEquals(valid.test("abc"), true);
+      assertEquals(isValidSkillName("my-skill"), true);
+      assertEquals(isValidSkillName("deploy-safely"), true);
+      assertEquals(isValidSkillName("a1"), true);
+      assertEquals(isValidSkillName("a"), true);
+      assertEquals(isValidSkillName("abc"), true);
+      assertEquals(isValidSkillName("a".repeat(64)), true);
     });
 
     it("rejects uppercase", () => {
-      assertEquals(valid.test("My-Skill"), false);
+      assertEquals(isValidSkillName("My-Skill"), false);
     });
 
     it("rejects leading dash", () => {
-      assertEquals(valid.test("-starts-with-dash"), false);
+      assertEquals(isValidSkillName("-starts-with-dash"), false);
     });
 
     it("rejects trailing dash", () => {
-      assertEquals(valid.test("ends-with-"), false);
+      assertEquals(isValidSkillName("ends-with-"), false);
+    });
+
+    it("rejects consecutive hyphens", () => {
+      assertEquals(isValidSkillName("has--gap"), false);
+    });
+
+    it("rejects names longer than 64 characters", () => {
+      assertEquals(isValidSkillName("a".repeat(65)), false);
     });
 
     it("rejects spaces", () => {
-      assertEquals(valid.test("has spaces"), false);
+      assertEquals(isValidSkillName("has spaces"), false);
     });
 
     it("rejects path traversal", () => {
-      assertEquals(valid.test("../../path-traversal"), false);
+      assertEquals(isValidSkillName("../../path-traversal"), false);
     });
 
     it("rejects empty string", () => {
-      assertEquals(valid.test(""), false);
+      assertEquals(isValidSkillName(""), false);
     });
   });
 });

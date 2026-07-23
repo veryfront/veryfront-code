@@ -8,17 +8,26 @@ import {
 } from "#veryfront/testing/assert";
 import {
   buildConfigCacheKey,
+  buildGitHubContentCacheKey,
+  buildModuleResolveCacheKey,
+  buildModuleTransformCacheKey,
   buildProxyManagerCacheKey,
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
+  buildSSRModuleCacheKey,
+  buildSSRModuleProjectKey,
   CacheKeyPrefix,
   computeContentSourceId,
+  createCacheKeyFilter,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
   filterQueryParams,
+  isModuleResolveCacheKeyForSpecifier,
+  parseModuleResolveCacheKey,
   parseRenderCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
+import { hashPathWithName } from "./keys/utils.ts";
 import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
@@ -38,6 +47,10 @@ describe("cache/keys", () => {
 
     it("should have FILE prefix", () => {
       assertEquals(CacheKeyPrefix.FILE, "file");
+    });
+
+    it("is immutable at runtime", () => {
+      assertEquals(Object.isFrozen(CacheKeyPrefix), true);
     });
   });
 
@@ -63,6 +76,15 @@ describe("cache/keys", () => {
       const withUndefined = buildRenderCachePrefix("proj_123", "production", "rel_456", undefined);
       const withoutArg = buildRenderCachePrefix("proj_123", "production", "rel_456");
       assertEquals(withUndefined, withoutArg);
+    });
+
+    it("encodes delimiter-bearing render identities without losing parseability", () => {
+      const prefix = buildRenderCachePrefix("tenant:blue", "production", "release:42");
+      const parsed = parseRenderCacheKey(`${prefix}:page:index`);
+
+      assertEquals(prefix.includes("tenant%3Ablue:production:release%3A42:"), true);
+      assertEquals(parsed?.projectId, "tenant:blue");
+      assertEquals(parsed?.releaseKey, "release:42");
     });
   });
 
@@ -173,6 +195,16 @@ describe("cache/keys", () => {
         "prefix:here:page:blog/post",
       );
     });
+
+    it("does not let content impersonate a manifest-version prefix", () => {
+      const basePrefix = buildRenderCachePrefix("project", "production", "release");
+      const manifestPrefix = buildRenderCachePrefix("project", "production", "release", 1);
+
+      assertNotEquals(
+        buildRenderCacheKey(basePrefix, "m1:/home"),
+        buildRenderCacheKey(manifestPrefix, "/home"),
+      );
+    });
   });
 
   describe("parseRenderCacheKey", () => {
@@ -192,6 +224,15 @@ describe("cache/keys", () => {
 
     it("should handle content key with colons", () => {
       assertEquals(parseRenderCacheKey("proj:prod:rel:1.0:a:b:c")?.contentKey, "a:b:c");
+    });
+  });
+
+  describe("createCacheKeyFilter", () => {
+    it("does not match a project identity in an unrelated deep segment", () => {
+      const filter = createCacheKeyFilter({ projectId: "project123" });
+
+      assertEquals(filter("unrelated:a:b:project123"), false);
+      assertEquals(filter("layout:project123:release-1:component"), true);
     });
   });
 
@@ -255,12 +296,32 @@ describe("cache/keys", () => {
       assertNotEquals(left, right);
     });
 
+    it("does not let a project identity impersonate source-key structure", () => {
+      const identityContainingSource = buildConfigCacheKey(
+        "tenant:source:branch:main",
+        true,
+      );
+      const tenantWithSource = buildConfigCacheKey("tenant", true, {
+        productionMode: false,
+        branch: "main",
+      });
+
+      assertNotEquals(identityContainingSource, tenantWithSource);
+    });
+
     it("should build key for local filesystem", () => {
       // Should use hashed path with folder name, not absolute path
       // Format: config:local-{hash}-{folderName}:{version}
       assertMatch(
         buildConfigCacheKey("/path/to/project", false),
         /^config:local-[a-f0-9]+-project:.+$/,
+      );
+    });
+
+    it("does not collapse distinct malformed path identities", () => {
+      assertNotEquals(
+        hashPathWithName("/workspace/\ud800/project"),
+        hashPathWithName("/workspace/\ud801/project"),
       );
     });
   });
@@ -270,7 +331,7 @@ describe("cache/keys", () => {
       assertThrows(
         () => buildProxyManagerCacheKey("example-project", true, null, null, "Production"),
         Error,
-        "Missing releaseId in production",
+        "Missing releaseId for production proxy cache identity",
       );
     });
 
@@ -292,6 +353,75 @@ describe("cache/keys", () => {
       assertNotEquals(environment, release);
       assertEquals(environment.includes("environment:Production:release-1"), true);
       assertEquals(release.includes("release:release-1"), true);
+    });
+
+    it("encodes delimiter-bearing project slugs as one key segment", () => {
+      const key = buildProxyManagerCacheKey(
+        "tenant:preview",
+        false,
+        null,
+        "main",
+      );
+
+      assertEquals(key.startsWith("proxy:tenant%3Apreview:preview:"), true);
+      assertEquals(key.includes("proxy:tenant:preview:preview:"), false);
+    });
+  });
+
+  describe("module and adapter key isolation", () => {
+    it("keeps module resolver field boundaries injective", () => {
+      assertNotEquals(
+        buildModuleResolveCacheKey("package:subpath", "referrer"),
+        buildModuleResolveCacheKey("package", "subpath:referrer"),
+      );
+      assertNotEquals(
+        buildModuleResolveCacheKey("package"),
+        buildModuleResolveCacheKey("package", "root"),
+      );
+    });
+
+    it("parses canonical module resolver identities for exact invalidation", () => {
+      const key = buildModuleResolveCacheKey("virtual:part/one", "pages:home.tsx");
+
+      assertEquals(parseModuleResolveCacheKey(key), {
+        specifier: "virtual:part/one",
+        referrer: "pages:home.tsx",
+      });
+      assertEquals(isModuleResolveCacheKeyForSpecifier(key, "virtual:part/one"), true);
+      assertEquals(isModuleResolveCacheKeyForSpecifier(key, "virtual:part"), false);
+      assertEquals(parseModuleResolveCacheKey("resolve:virtual%3apart%2fone:root"), null);
+    });
+
+    it("parses every bounded identity emitted by the module resolver key builder", () => {
+      const boundedIdentity = "\uffff".repeat(4096);
+      const key = buildModuleResolveCacheKey(boundedIdentity, boundedIdentity);
+
+      assertEquals(parseModuleResolveCacheKey(key), {
+        specifier: boundedIdentity,
+        referrer: boundedIdentity,
+      });
+    });
+
+    it("keeps module transform and project field boundaries injective", () => {
+      assertNotEquals(
+        buildSSRModuleProjectKey("/workspace:tenant", "project"),
+        buildSSRModuleProjectKey("/workspace", "tenant:project"),
+      );
+      assertNotEquals(
+        buildModuleTransformCacheKey("tenant:project", "module.ts", true),
+        buildModuleTransformCacheKey("tenant", "project:module.ts", true),
+      );
+      assertNotEquals(
+        buildSSRModuleCacheKey(1, "tenant:project", "module.ts"),
+        buildSSRModuleCacheKey(1, "tenant", "project:module.ts"),
+      );
+    });
+
+    it("keeps GitHub adapter field boundaries injective", () => {
+      assertNotEquals(
+        buildGitHubContentCacheKey("release:one", "pages/index.ts"),
+        buildGitHubContentCacheKey("release", "one:pages/index.ts"),
+      );
     });
   });
 
@@ -387,6 +517,39 @@ describe("cache/keys", () => {
       const result = filterQueryParams(params);
       assertEquals(result, [["page", "1"]]);
     });
+
+    it("rejects unsupported policies instead of silently changing cache semantics", () => {
+      assertThrows(
+        () =>
+          filterQueryParams(
+            new URLSearchParams("a=1"),
+            { policy: "unsupported" } as never,
+          ),
+        Error,
+        "Query parameter cache policy is invalid",
+      );
+    });
+
+    it("rejects malformed or unreadable options", () => {
+      assertThrows(
+        () => filterQueryParams(new URLSearchParams("a=1"), { params: "a" } as never),
+        Error,
+        "Query parameter cache options are invalid",
+      );
+      assertThrows(
+        () =>
+          filterQueryParams(
+            new URLSearchParams("a=1"),
+            new Proxy({}, {
+              get: () => {
+                throw new Error("secret getter failure");
+              },
+            }) as never,
+          ),
+        Error,
+        "Query parameter cache options are unreadable",
+      );
+    });
   });
 
   describe("sanitizeQueryParamsForCacheKey", () => {
@@ -412,6 +575,24 @@ describe("cache/keys", () => {
       const left = sanitizeQueryParamsForCacheKey(new URL("https://example.com/page?q=a/b"));
       const right = sanitizeQueryParamsForCacheKey(new URL("https://example.com/page?q=a:b"));
       assertNotEquals(left, right);
+    });
+
+    it("keeps query field boundaries distinct when data contains separators", () => {
+      const delimiterInName = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a-b=c"),
+      );
+      const delimiterInValue = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a=b-c"),
+      );
+      const entryDelimiterInValue = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a=b_c-d"),
+      );
+      const twoEntries = sanitizeQueryParamsForCacheKey(
+        new URL("https://example.com/page?a=b&c=d"),
+      );
+
+      assertNotEquals(delimiterInName, delimiterInValue);
+      assertNotEquals(entryDelimiterInValue, twoEntries);
     });
 
     it("should respect ignore-all policy", () => {
@@ -441,6 +622,12 @@ describe("cache/keys", () => {
       );
       assertNotEquals(left, right);
     });
+
+    it("sorts non-ASCII parameter names by code point for portable keys", () => {
+      const url = new URL("https://example.com/page?%C3%A4=1&z=2");
+
+      assertEquals(sanitizeQueryParamsForCacheKey(url), "z-2_*C3*A4-1");
+    });
   });
 
   describe("buildQueryAwareCacheKey", () => {
@@ -464,6 +651,16 @@ describe("cache/keys", () => {
       assertEquals(result, "/blog:q:page-2_sort-desc");
     });
 
+    it("keeps literal query separators in slugs distinct from query keys", () => {
+      const literalSlug = buildQueryAwareCacheKey("/blog:q:page-2");
+      const queryKey = buildQueryAwareCacheKey(
+        "/blog",
+        new URL("https://example.com/blog?page=2"),
+      );
+
+      assertNotEquals(literalSlug, queryKey);
+    });
+
     it("should ignore tracking params by default (exclude-list is default)", () => {
       const url = new URL("https://example.com/blog?page=1&utm_campaign=test");
       const result = buildQueryAwareCacheKey("/blog", url);
@@ -484,6 +681,10 @@ describe("cache/keys", () => {
   });
 
   describe("DEFAULT_EXCLUDED_QUERY_PARAMS", () => {
+    it("is immutable at runtime", () => {
+      assertEquals(Object.isFrozen(DEFAULT_EXCLUDED_QUERY_PARAMS), true);
+    });
+
     it("should include common UTM parameters", () => {
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("utm_source"), true);
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("utm_campaign"), true);

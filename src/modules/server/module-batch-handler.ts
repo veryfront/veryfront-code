@@ -1,8 +1,7 @@
 /**
  * Module Batch Handler
  *
- * Coalesces multiple module requests into a single HTTP response.
- * This dramatically reduces HTTP overhead from 232 requests to ~5-10 batch requests.
+ * Resolves multiple module requests and returns one ESM manifest module.
  *
  * Endpoint: /_vf_modules/_batch
  *
@@ -11,7 +10,7 @@
  * - project: Project slug (optional, inferred from host)
  *
  * Response format:
- * A JavaScript module that re-exports all requested modules.
+ * A JavaScript module that imports and indexes all requested modules.
  *
  * @module module-system/server/module-batch-handler
  */
@@ -23,6 +22,7 @@ import {
   MAX_BATCH_SIZE,
   serverLogger,
 } from "#veryfront/utils";
+import { HTTP_METHOD_NOT_ALLOWED } from "#veryfront/utils/constants/http.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
@@ -46,6 +46,7 @@ import {
   hasSourceMiss,
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -57,12 +58,21 @@ const SLOW_TRANSFORM_THRESHOLD_MS = 100;
 
 /** Max entries in the per-project transform LRU cache */
 const TRANSFORM_CACHE_MAX_ENTRIES = 1_000;
+const TRANSFORM_BATCH_CONCURRENCY = 10;
+const MAX_BATCH_PATH_LENGTH = 2_048;
+const MAX_PATHS_PARAMETER_LENGTH = 64 * 1024;
+const MAX_MODULE_SOURCE_BYTES = 5 * 1024 * 1024;
 
 /** Immutable cache max-age in seconds (1 year) */
 const IMMUTABLE_CACHE_MAX_AGE_SECONDS = 31_536_000;
 
-/** Cache for transformed modules (path -> code) */
-const transformCache = new LRUCache<string, string>({
+interface CachedTransform {
+  code: string;
+  version: string;
+}
+
+/** Cache for transformed immutable release modules. */
+const transformCache = new LRUCache<string, CachedTransform>({
   maxEntries: TRANSFORM_CACHE_MAX_ENTRIES,
 });
 
@@ -87,32 +97,45 @@ async function findFirstSecureFile(
   secureFs: ReturnType<typeof createSecureFs>,
   paths: string[],
 ): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
+  for (const path of paths) {
     try {
       const stat = await secureFs.stat(path);
-      return stat.isFile ? path : null;
+      if (stat.isFile) return path;
     } catch {
-      return null;
+      // Try the next supported source extension.
     }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
+  }
+  return null;
 }
 
 async function findFirstPlatformFile(
   platformFs: ReturnType<typeof createFileSystem>,
   paths: string[],
 ): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
+  for (const path of paths) {
     try {
       const stat = await platformFs.stat(path);
-      return stat.isFile ? path : null;
+      if (stat.isFile) return path;
     } catch {
-      return null;
+      // Try the next supported source extension.
     }
-  }));
+  }
+  return null;
+}
 
-  return results.find((path): path is string => path !== null) ?? null;
+async function readBoundedSource(
+  stat: () => Promise<{ isFile: boolean; size: number }>,
+  read: () => Promise<string>,
+): Promise<string> {
+  const info = await stat();
+  if (!info.isFile || info.size < 0 || info.size > MAX_MODULE_SOURCE_BYTES) {
+    throw new Error("Module source exceeds the supported size");
+  }
+  const source = await read();
+  if (new TextEncoder().encode(source).byteLength > MAX_MODULE_SOURCE_BYTES) {
+    throw new Error("Module source exceeds the supported size");
+  }
+  return source;
 }
 
 export interface BatchHandlerOptions {
@@ -132,39 +155,99 @@ export interface BatchHandlerOptions {
   reactVersion?: string;
 }
 
+function isValidBatchModulePath(path: string): boolean {
+  if (
+    path.length === 0 || path.length > MAX_BATCH_PATH_LENGTH ||
+    path.startsWith("/") || path.startsWith("\\") ||
+    path.includes("\\") || path.includes("?") || path.includes("#") ||
+    hasUnsafeControlCharacters(path) || /[\u2028\u2029]/.test(path)
+  ) {
+    return false;
+  }
+
+  const segments = path.split("/");
+  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+async function mapInBatches<T, R>(
+  items: readonly T[],
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < items.length; offset += TRANSFORM_BATCH_CONCURRENCY) {
+    const batch = items.slice(offset, offset + TRANSFORM_BATCH_CONCURRENCY);
+    results.push(...await Promise.all(batch.map((item, index) => mapper(item, offset + index))));
+  }
+  return results;
+}
+
+function createBatchResponse(
+  method: string,
+  body: BodyInit | null,
+  init: ResponseInit,
+): Response {
+  return new Response(method === "HEAD" ? null : body, init);
+}
+
 /**
  * Handle a batch module request
  */
 export function handleModuleBatch(req: Request, options: BatchHandlerOptions): Promise<Response> {
   const url = new URL(req.url);
   const pathsParam = url.searchParams.get("paths");
+  const method = req.method.toUpperCase();
 
   return withSpan(
     "module.batch.handleModuleBatch",
     async () => {
       const startTime = performance.now();
 
+      if (method !== "GET" && method !== "HEAD") {
+        return createBatchResponse(method, "Method not allowed", {
+          status: HTTP_METHOD_NOT_ALLOWED,
+          headers: {
+            "Allow": "GET, HEAD",
+            "Content-Type": "text/plain",
+          },
+        });
+      }
+
       if (!pathsParam) {
-        return new Response("Missing 'paths' parameter", {
+        return createBatchResponse(method, "Missing 'paths' parameter", {
           status: HTTP_BAD_REQUEST,
           headers: { "Content-Type": "text/plain" },
         });
       }
 
-      const paths = pathsParam
+      if (pathsParam.length > MAX_PATHS_PARAMETER_LENGTH) {
+        return createBatchResponse(method, "Paths parameter is too large", {
+          status: HTTP_BAD_REQUEST,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+
+      const parsedPaths = pathsParam
         .split(",")
         .map((p) => p.trim())
         .filter(Boolean);
+      const paths = [...new Set(parsedPaths)];
 
       if (paths.length === 0) {
-        return new Response("No valid paths provided", {
+        return createBatchResponse(method, "No valid paths provided", {
           status: HTTP_BAD_REQUEST,
           headers: { "Content-Type": "text/plain" },
         });
       }
 
       if (paths.length > MAX_BATCH_SIZE) {
-        return new Response(`Too many modules (max: ${MAX_BATCH_SIZE})`, {
+        return createBatchResponse(method, `Too many modules (max: ${MAX_BATCH_SIZE})`, {
+          status: HTTP_BAD_REQUEST,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+
+      if (paths.some((path) => !isValidBatchModulePath(path))) {
+        return createBatchResponse(method, "Invalid module path", {
           status: HTTP_BAD_REQUEST,
           headers: { "Content-Type": "text/plain" },
         });
@@ -182,7 +265,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         reactVersion,
       } = options;
 
-      const projectKey = projectId || projectSlug || "default";
+      const projectKey = projectId || projectSlug || projectDir;
 
       const userAgent = req.headers.get("user-agent") ?? "";
       const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
@@ -198,20 +281,23 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       logger.debug("Processing batch request", {
         moduleCount: paths.length,
         isSSR,
-        projectSlug,
       });
 
-      const results = await Promise.all(
-        paths.map(async (modulePath) => {
+      const canCacheTransforms = !dev && typeof releaseId === "string" && releaseId.length > 0;
+      const results = await mapInBatches(
+        paths,
+        async (modulePath, moduleIndex) => {
           const moduleStart = performance.now();
-          const cacheKey = buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
+          const moduleIdentity = JSON.stringify([releaseId, reactVersion, modulePath]);
+          const cacheKey = buildModuleTransformCacheKey(projectKey, moduleIdentity, isSSR);
 
-          if (!dev) {
-            const cachedCode = transformCache.get(cacheKey);
-            if (cachedCode != null) {
+          if (canCacheTransforms) {
+            const cachedTransform = transformCache.get(cacheKey);
+            if (cachedTransform != null) {
               return {
                 path: modulePath,
-                code: cachedCode,
+                code: cachedTransform.code,
+                version: cachedTransform.version,
                 cached: true,
                 transformDurationMs: 0,
               };
@@ -235,35 +321,44 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               return { path: modulePath, code: null, error: "Not found", transformDurationMs };
             }
 
-            if (!dev) transformCache.set(cacheKey, code);
+            const version = await sha256Short(code);
+            if (canCacheTransforms) transformCache.set(cacheKey, { code, version });
 
-            return { path: modulePath, code, cached: false, transformDurationMs };
+            return { path: modulePath, code, version, cached: false, transformDurationMs };
           } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
             const transformDurationMs = performance.now() - moduleStart;
 
             logger.warn("Module transform failed", {
-              path: modulePath,
-              error: errorMsg,
+              moduleIndex,
+              errorName: error instanceof Error ? error.name : "UnknownError",
               durationMs: Math.round(transformDurationMs),
             });
 
-            return { path: modulePath, code: null, error: errorMsg, transformDurationMs };
+            return {
+              path: modulePath,
+              code: null,
+              error: "Transform failed",
+              transformDurationMs,
+            };
           }
-        }),
+        },
       );
 
       const successes = results.filter((r): r is typeof r & { code: string } => r.code !== null);
       const failures = results.filter((r) => r.code === null);
 
       if (successes.length === 0) {
-        return new Response("No modules could be loaded", {
+        return createBatchResponse(method, "No modules could be loaded", {
           status: HTTP_NOT_FOUND,
           headers: { "Content-Type": "text/plain" },
         });
       }
 
-      const bundleStream = createBatchBundleStream(successes, failures);
+      const bundleStream = method === "HEAD" ? null : createBatchBundleStream(successes, failures, {
+        isSSR,
+        projectSlug,
+        branch,
+      });
 
       const duration = performance.now() - startTime;
       const isSlow = duration > SLOW_REQUEST_THRESHOLD_MS;
@@ -276,7 +371,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         cached: successes.filter((r) => r.cached).length,
         durationMs: Math.round(duration),
         slow: isSlow,
-        projectSlug,
       });
 
       const slowModules = results.filter((r) =>
@@ -285,18 +379,19 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       if (slowModules.length > 0) {
         logger.warn("Slow module transforms detected", {
           count: slowModules.length,
-          modules: slowModules.map((m) => ({
-            path: m.path,
-            durationMs: m.transformDurationMs,
-          })),
+          durationsMs: slowModules.map((module) => Math.round(module.transformDurationMs)),
         });
       }
 
-      return new Response(bundleStream, {
+      return createBatchResponse(method, bundleStream, {
         status: HTTP_OK,
         headers: {
           "Content-Type": "application/javascript; charset=utf-8",
-          "Cache-Control": `public, max-age=${IMMUTABLE_CACHE_MAX_AGE_SECONDS}, immutable`,
+          "Cache-Control": dev
+            ? "no-store"
+            : releaseId
+            ? `public, max-age=${IMMUTABLE_CACHE_MAX_AGE_SECONDS}, immutable`
+            : "no-cache",
           "X-Batch-Modules": String(successes.length),
           "X-Batch-Duration": String(Math.round(duration)),
           "X-Batch-Slow": isSlow ? "true" : "false",
@@ -305,7 +400,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
     },
     {
       "module.batch.moduleCount": pathsParam?.split(",").length ?? 0,
-      "module.batch.projectSlug": options.projectSlug || "unknown",
     },
   );
 }
@@ -346,7 +440,10 @@ async function loadAndTransformModule(
     EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
   );
   if (sourcePath) {
-    const source = await secureFs.readFile(sourcePath);
+    const source = await readBoundedSource(
+      () => secureFs.stat(sourcePath),
+      () => secureFs.readFile(sourcePath),
+    );
     return transformModule(source, sourcePath, modulePath, projectDir, adapter, secureFs, options);
   }
 
@@ -364,7 +461,10 @@ async function loadAndTransformModule(
       FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
     );
     if (frameworkPath) {
-      const source = await platformFs.readTextFile(frameworkPath);
+      const source = await readBoundedSource(
+        () => platformFs.stat(frameworkPath),
+        () => platformFs.readTextFile(frameworkPath),
+      );
       return transformModule(
         source,
         frameworkPath,
@@ -428,17 +528,22 @@ async function readBatchTargetSource(
 
   for (const ext of EXTENSIONS) {
     const fullPath = join(projectDir, basePath + ext);
+    let stat: Awaited<ReturnType<typeof secureFs.stat>>;
     try {
-      const stat = await secureFs.stat(fullPath);
-      if (!stat.isFile) continue;
-
-      return {
-        path: fullPath,
-        source: await secureFs.readFile(fullPath),
-      };
+      stat = await secureFs.stat(fullPath);
     } catch (_) {
       /* expected: file may not exist at this extension */
+      continue;
     }
+    if (!stat.isFile) continue;
+
+    return {
+      path: fullPath,
+      source: await readBoundedSource(
+        () => secureFs.stat(fullPath),
+        () => secureFs.readFile(fullPath),
+      ),
+    };
   }
 
   if (!basePath.startsWith("lib/")) return null;
@@ -448,17 +553,22 @@ async function readBatchTargetSource(
   for (const lookupDir of frameworkLookupDirs) {
     for (const ext of FRAMEWORK_EXTENSIONS) {
       const frameworkPath = join(lookupDir, basePath + ext);
+      let stat: Awaited<ReturnType<typeof platformFs.stat>>;
       try {
-        const stat = await platformFs.stat(frameworkPath);
-        if (!stat.isFile) continue;
-
-        return {
-          path: frameworkPath,
-          source: await platformFs.readTextFile(frameworkPath),
-        };
+        stat = await platformFs.stat(frameworkPath);
       } catch (_) {
         /* expected: framework file may not exist at this extension */
+        continue;
       }
+      if (!stat.isFile) continue;
+
+      return {
+        path: frameworkPath,
+        source: await readBoundedSource(
+          () => platformFs.stat(frameworkPath),
+          () => platformFs.readTextFile(frameworkPath),
+        ),
+      };
     }
   }
 
@@ -492,8 +602,9 @@ function createBatchSSRTargetCacheBusterResolver(options: {
 }
 
 function createBatchBundleStream(
-  successes: Array<{ path: string; code: string; cached: boolean }>,
+  successes: Array<{ path: string; code: string; version: string; cached: boolean }>,
   failures: Array<{ path: string; error: string }>,
+  options: { isSSR: boolean; projectSlug?: string; branch?: string | null },
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
 
@@ -501,7 +612,7 @@ function createBatchBundleStream(
     start(controller) {
       let isFirstChunk = true;
 
-      for (const chunk of generateBatchBundleChunks(successes, failures)) {
+      for (const chunk of generateBatchBundleChunks(successes, failures, options)) {
         if (!isFirstChunk) controller.enqueue(encoder.encode("\n"));
         controller.enqueue(encoder.encode(chunk));
         isFirstChunk = false;
@@ -517,12 +628,26 @@ function createBatchBundleStream(
  * Creates a module that exports all loaded modules by path.
  */
 function* generateBatchBundleChunks(
-  successes: Array<{ path: string; code: string; cached: boolean }>,
+  successes: Array<{ path: string; code: string; version: string; cached: boolean }>,
   failures: Array<{ path: string; error: string }>,
+  options: { isSSR: boolean; projectSlug?: string; branch?: string | null },
 ): IterableIterator<string> {
   yield "// Veryfront Module Batch Bundle";
-  yield "// Generated: " + new Date().toISOString();
   yield `// Modules: ${successes.length} loaded, ${failures.length} failed`;
+  yield "";
+
+  for (let i = 0; i < successes.length; i++) {
+    const item = successes[i];
+    if (!item) continue;
+    const encodedPath = item.path.split("/").map(encodeURIComponent).join("/");
+    const search = new URLSearchParams();
+    if (options.isSSR) search.set("ssr", "true");
+    if (options.projectSlug) search.set("project", options.projectSlug);
+    if (options.branch) search.set("branch", options.branch);
+    search.set("v", item.version);
+    yield `import * as __mod_${i} from ${JSON.stringify(`/_vf_modules/${encodedPath}?${search}`)};`;
+  }
+
   yield "";
   yield "const __vf_batch_modules = new Map();";
   yield "";
@@ -530,25 +655,12 @@ function* generateBatchBundleChunks(
   for (let i = 0; i < successes.length; i++) {
     const item = successes[i];
     if (!item) continue;
-    const { path, code } = item;
-    const varName = `__mod_${i}`;
-
-    yield `// Module: ${path}`;
-    yield `const ${varName} = await (async () => {`;
-    yield "  const exports = {};";
-    yield "  const module = { exports };";
-    yield "  // --- Module code start ---";
-    yield transformExportsForBundle(code);
-    yield "  // --- Module code end ---";
-    yield "  return exports;";
-    yield "})();";
-    yield `__vf_batch_modules.set("${path}", ${varName});`;
-    yield "";
+    yield `__vf_batch_modules.set(${JSON.stringify(item.path)}, __mod_${i});`;
   }
 
-  for (const { path, error } of failures) {
-    yield `// Failed: ${path} - ${error}`;
-    yield `__vf_batch_modules.set("${path}", { __vf_error: "${error}" });`;
+  for (const { path } of failures) {
+    yield `// Failed: ${path}`;
+    yield `__vf_batch_modules.set(${JSON.stringify(path)}, { __vf_error: "Module unavailable" });`;
   }
 
   yield "";
@@ -559,16 +671,6 @@ function* generateBatchBundleChunks(
   yield "}";
   yield "";
   yield "export default { batchModules, getModule };";
-}
-
-/**
- * Transform module code for inclusion in batch bundle
- * Converts ES module syntax to work within the bundle wrapper
- */
-function transformExportsForBundle(code: string): string {
-  // Indent every line by two spaces. A single regex avoids allocating an
-  // intermediate array of lines per module on the batch hot path.
-  return code.replace(/^/gm, "  ");
 }
 
 /**
@@ -583,11 +685,12 @@ export function clearBatchCache(projectSlug?: string): void {
     return;
   }
 
-  const prefix = `${projectSlug}:`;
+  const sampleKey = buildModuleTransformCacheKey(projectSlug, "_", false);
+  const prefix = sampleKey.slice(0, sampleKey.indexOf(":") + 1);
   for (const key of [...transformCache.keys()]) {
     if (key.startsWith(prefix)) transformCache.delete(key);
   }
-  logger.debug("Cleared cache for project", { projectSlug });
+  logger.debug("Cleared cache for project");
 }
 
 /**

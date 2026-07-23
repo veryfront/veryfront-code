@@ -1,4 +1,5 @@
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
 
 /** Public API contract for Veryfront Cloud provider ID. */
 export type VeryfrontCloudProviderId =
@@ -10,26 +11,26 @@ export type VeryfrontCloudProviderId =
 
 /** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {
-  enabled: boolean;
-  effort?: "low" | "medium" | "high" | "max";
-  budgetTokens?: number;
+  readonly enabled: boolean;
+  readonly effort?: "low" | "medium" | "high" | "max";
+  readonly budgetTokens?: number;
 };
 
 /** Public API contract for Veryfront Cloud chat model. */
 export type VeryfrontCloudChatModel = {
-  id: string;
-  modelId: string;
-  provider: VeryfrontCloudProviderId;
-  name: string;
-  description: string;
-  thinking?: boolean;
-  thinkingBudgetTokens?: number;
+  readonly id: string;
+  readonly modelId: string;
+  readonly provider: VeryfrontCloudProviderId;
+  readonly name: string;
+  readonly description: string;
+  readonly thinking?: boolean;
+  readonly thinkingBudgetTokens?: number;
 };
 
 /**
  * Default Veryfront Cloud model ID used when no model is configured.
- * Update this when the current default is deprecated — otherwise the default
- * path silently breaks for users who have not set an explicit model.
+ * Update this when the current default is deprecated. Otherwise, users without
+ * an explicit model cannot resolve the default.
  */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "gpt-5.4-nano";
 /** Shared Veryfront Cloud model prefix value. */
@@ -42,7 +43,7 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "google-ai-studio/",
   "mistral/",
   "moonshotai/",
-];
+] as const;
 /**
  * Anthropic models that use the adaptive thinking API (type: "adaptive").
  * New Opus/Sonnet versions supporting adaptive thinking must be added here,
@@ -53,6 +54,15 @@ const ANTHROPIC_ADAPTIVE_THINKING_ONLY_MODELS = new Set([
   "anthropic/claude-opus-4-8",
 ]);
 
+function assertModelId(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > 4_096 ||
+    /\s/u.test(value) || hasUnsafeControlCharacters(value)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "Veryfront Cloud model ID is invalid" });
+  }
+}
+
 /** Returns true if the given model ID is a Mistral model in the catalog. */
 export function isSupportedMistralModelId(modelId: string): boolean {
   return VERYFRONT_CLOUD_CHAT_MODELS.some(
@@ -61,7 +71,14 @@ export function isSupportedMistralModelId(modelId: string): boolean {
 }
 
 /** Shared Veryfront Cloud chat models value. */
-export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
+function freezeChatModels(
+  models: VeryfrontCloudChatModel[],
+): readonly VeryfrontCloudChatModel[] {
+  return Object.freeze(models.map((model) => Object.freeze(model)));
+}
+
+/** Immutable catalog of chat models exposed through Veryfront Cloud. */
+export const VERYFRONT_CLOUD_CHAT_MODELS: readonly VeryfrontCloudChatModel[] = freezeChatModels([
   {
     id: "opus",
     modelId: "anthropic/claude-opus-4-8",
@@ -187,7 +204,7 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
     description: "Previous Kimi generation",
     thinking: true,
   },
-];
+]);
 
 /** Find Veryfront Cloud model. */
 export function findVeryfrontCloudModel(id: string): VeryfrontCloudChatModel | undefined {
@@ -196,9 +213,12 @@ export function findVeryfrontCloudModel(id: string): VeryfrontCloudChatModel | u
 
 /** Normalizes Veryfront Cloud model ID. */
 export function normalizeVeryfrontCloudModelId(modelId: string): string {
-  return modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)
+  assertModelId(modelId);
+  const normalizedModelId = modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)
     ? modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length)
     : modelId;
+  assertModelId(normalizedModelId);
+  return normalizedModelId;
 }
 
 /** Find Veryfront Cloud model by model ID. */
@@ -227,7 +247,7 @@ export function getVeryfrontCloudProviderFromModelId(
   }
 
   throw INVALID_ARGUMENT.create({
-    detail: `Unknown model provider prefix "${prefix}" in model ID "${modelId}"`,
+    detail: "Model ID has an unknown provider prefix",
   });
 }
 
@@ -244,7 +264,8 @@ export function tryGetVeryfrontCloudProviderFromModelId(
 
 /** Resolves Veryfront Cloud model ID. */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
-  const requestedModel = alias || DEFAULT_VERYFRONT_CLOUD_MODEL_ID;
+  const requestedModel = alias === undefined ? DEFAULT_VERYFRONT_CLOUD_MODEL_ID : alias;
+  assertModelId(requestedModel);
   const catalogModel = VERYFRONT_CLOUD_CHAT_MODELS.find((model) =>
     model.modelId === requestedModel
   );
@@ -256,14 +277,14 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
     // Mistral models are gated by the catalog whitelist; reject ids we don't
     // list so callers get a clear error rather than a gateway-side failure.
     if (requestedModel.startsWith("mistral/") && !isSupportedMistralModelId(requestedModel)) {
-      throw NOT_SUPPORTED.create({ detail: `Unsupported Mistral model "${requestedModel}"` });
+      throw NOT_SUPPORTED.create({ detail: "The requested Mistral model is not supported" });
     }
     return requestedModel;
   }
 
   const model = findVeryfrontCloudModel(requestedModel);
   if (!model) {
-    throw INVALID_ARGUMENT.create({ detail: `Unknown model alias "${requestedModel}"` });
+    throw INVALID_ARGUMENT.create({ detail: "Veryfront Cloud model alias is unknown" });
   }
   return model.modelId;
 }
@@ -272,12 +293,13 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
 export function resolveVeryfrontCloudGatewayModelId(
   modelId: string | undefined,
 ): string | undefined {
-  if (!modelId) {
-    return modelId;
+  if (modelId === undefined) {
+    return undefined;
   }
+  assertModelId(modelId);
 
   if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
-    // Already prefixed for the gateway — pass through as-is.
+    // Already prefixed for the gateway - pass through as-is.
     return modelId;
   }
 
@@ -338,12 +360,20 @@ export function resolveVeryfrontCloudReasoningOption(
     return undefined;
   }
 
+  const validEffort = thinking.effort === "low" || thinking.effort === "medium" ||
+      thinking.effort === "high" || thinking.effort === "max"
+    ? thinking.effort
+    : undefined;
+  const validBudget = typeof thinking.budgetTokens === "number" &&
+      Number.isFinite(thinking.budgetTokens) && thinking.budgetTokens > 0 &&
+      thinking.budgetTokens <= 1_000_000
+    ? Math.floor(thinking.budgetTokens)
+    : undefined;
+
   return {
     enabled: true,
-    ...(thinking.effort ? { effort: thinking.effort } : {}),
-    ...(typeof thinking.budgetTokens === "number" && thinking.budgetTokens > 0
-      ? { budgetTokens: Math.floor(thinking.budgetTokens) }
-      : {}),
+    ...(validEffort ? { effort: validEffort } : {}),
+    ...(validBudget !== undefined ? { budgetTokens: validBudget } : {}),
   };
 }
 
@@ -376,7 +406,10 @@ export function resolveVeryfrontCloudThinkingProviderOptions(
     };
   }
 
-  if (typeof thinking.budgetTokens !== "number" || thinking.budgetTokens <= 0) {
+  if (
+    typeof thinking.budgetTokens !== "number" || !Number.isFinite(thinking.budgetTokens) ||
+    thinking.budgetTokens <= 0 || thinking.budgetTokens > 1_000_000
+  ) {
     return undefined;
   }
 
@@ -420,5 +453,6 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
   })).filter((group) => group.models.length > 0);
 }
 
-/** Resolves hosted Veryfront Cloud model ID. */
-export const resolveHostedVeryfrontCloudModelId = resolveVeryfrontCloudGatewayModelId;
+/** Resolves a hosted model ID to the gateway provider/model representation. */
+export const resolveHostedVeryfrontCloudModelId: typeof resolveVeryfrontCloudGatewayModelId =
+  resolveVeryfrontCloudGatewayModelId;

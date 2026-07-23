@@ -103,6 +103,32 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       assertEquals((result as { html: string }).html, "");
     });
 
+    it("preserves zero returned by a server component", async () => {
+      function ZeroComponent() {
+        return 0;
+      }
+
+      const result = await renderTree(ZeroComponent, {}, new Map(), new Map());
+      assertEquals(result, { type: "html", html: "0" });
+    });
+
+    it("renders class components without recursively recreating the same element", async () => {
+      class ClassComponent extends React.Component<{ value: string }> {
+        override render() {
+          return React.createElement("span", null, this.props.value);
+        }
+      }
+
+      const result = await renderTree(
+        ClassComponent,
+        { value: "class output" },
+        new Map(),
+        new Map(),
+      );
+      assertEquals(result.type, "html");
+      assertEquals((result as { html: string }).html.includes("class output"), true);
+    });
+
     it("should detect client components via manifest", async () => {
       function ClientComp() {
         return React.createElement("div", null, "client");
@@ -168,6 +194,11 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       const result = await renderChildren(42, new Map(), new Map());
       assertEquals(result.length, 1);
       assertEquals((result[0] as { html: string }).html, "42");
+    });
+
+    it("preserves zero children", async () => {
+      const result = await renderChildren(0, new Map(), new Map());
+      assertEquals(result, [{ type: "html", html: "0" }]);
     });
 
     it("should handle React element children", async () => {

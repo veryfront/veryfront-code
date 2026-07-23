@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
@@ -41,7 +41,7 @@ describe("module-loader/dependency-resolver", () => {
     await withDependencyFixture(
       {
         "app/page.tsx": [
-          `import { Button } from "@/Button";`,
+          `import { Button } from "@/components/Button";`,
           `import { value } from "../lib/value";`,
           `import { cached } from "file:///tmp/cached.js";`,
           `export const page = Button + value + cached;`,
@@ -101,8 +101,8 @@ describe("module-loader/dependency-resolver", () => {
     await withDependencyFixture(
       {
         "app/page.tsx": [
-          `// Previous example: from "@/Button"`,
-          `import { Button } from "@/Button";`,
+          `// Previous example: from "@/components/Button"`,
+          `import { Button } from "@/components/Button";`,
           `export const page = Button;`,
         ].join("\n"),
         "components/Button.tsx": `export const Button = "button";`,
@@ -123,10 +123,53 @@ describe("module-loader/dependency-resolver", () => {
 
         const rewritten = rewriteResolvedDependencyImports(fileContent, transformedDeps);
 
-        assertStringIncludes(rewritten, `// Previous example: from "@/Button"`);
+        assertStringIncludes(rewritten, `// Previous example: from "@/components/Button"`);
         assertStringIncludes(
           rewritten,
           `import { Button } from "file:///tmp/components/Button.abc.js";`,
+        );
+      },
+    );
+  });
+
+  it("does not resolve an alias through an implicit components fallback", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": `import { Button } from "@/Button";`,
+        "components/Button.tsx": `export const Button = "button";`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent: await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps[0]?.depFilePath, null);
+      },
+    );
+  });
+
+  it("rejects relative imports that escape the project", async () => {
+    await withDependencyFixture(
+      { "app/page.tsx": `import value from "../../outside.ts";` },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+
+        await assertRejects(
+          () =>
+            resolveModuleDependencies({
+              adapter,
+              fileContent: `import value from "../../outside.ts";`,
+              filePath,
+              projectDir,
+            }),
+          TypeError,
+          "must stay inside the project",
         );
       },
     );

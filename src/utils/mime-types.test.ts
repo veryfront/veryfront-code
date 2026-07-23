@@ -59,6 +59,10 @@ describe("mime-types.charset", () => {
   it("returns false for non-text types", () => {
     assertEquals(charset("image/png"), false);
   });
+  it("normalizes case and ignores MIME parameters", () => {
+    assertEquals(charset(" Text/HTML; charset=iso-8859-1 "), "UTF-8");
+    assertEquals(charset("APPLICATION/JSON; profile=test"), "UTF-8");
+  });
 });
 
 describe("mime-types.extension", () => {
@@ -68,6 +72,9 @@ describe("mime-types.extension", () => {
   });
   it("returns false for unknown mime types", () => {
     assertEquals(extension("application/x-unknown-custom"), false);
+  });
+  it("normalizes case and ignores MIME parameters", () => {
+    assertEquals(extension(" Text/HTML; charset=UTF-8 "), "html");
   });
   it("does not leak Object.prototype values (own-property guard)", () => {
     assertEquals(extension("toString"), false);

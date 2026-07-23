@@ -7,8 +7,10 @@
 
 export const DEFAULT_PORT = 3000;
 
-export const LOCALHOST = {
-  IPV4: "127.0.0.1",
-  IPV6: "::1",
-  HOSTNAME: "localhost",
-} as const;
+export const LOCALHOST = Object.freeze(
+  {
+    IPV4: "127.0.0.1",
+    IPV6: "::1",
+    HOSTNAME: "localhost",
+  } as const,
+);

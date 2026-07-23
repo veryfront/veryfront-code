@@ -14,13 +14,24 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
 import { dirname, join, relative, resolve } from "@std/path";
-import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
+import {
+  INITIALIZATION_ERROR,
+  INVALID_ARGUMENT,
+  isVeryfrontError,
+  SECURITY_VIOLATION,
+  UNKNOWN_ERROR,
+} from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
+import { runWithWorkflowTenant } from "../executor/step-executor.ts";
 
 const logger = baseLogger.component("workspace-sync");
 
 /** Maximum file size for workspace sync (10 MB) */
 const MAX_WORKSPACE_FILE_SIZE = 10 * 1024 * 1024;
+const DEFAULT_MAX_WORKSPACE_FILES = 10_000;
+const DEFAULT_MAX_WORKSPACE_BYTES = 512 * 1024 * 1024;
+const DEFAULT_MAX_WORKSPACE_DEPTH = 64;
+const DEFAULT_MAX_WORKSPACE_PAGES = 200;
 
 /**
  * Workspace configuration
@@ -43,6 +54,18 @@ export interface WorkspaceConfig {
 
   /** Maximum file size to sync (bytes, default: 10MB) */
   maxFileSize?: number;
+
+  /** Maximum number of files in one workspace (default: 10,000) */
+  maxFiles?: number;
+
+  /** Maximum aggregate workspace size in bytes (default: 512MB) */
+  maxTotalBytes?: number;
+
+  /** Maximum directory nesting depth (default: 64) */
+  maxDepth?: number;
+
+  /** Maximum API pages fetched while listing files (default: 200) */
+  maxPages?: number;
 
   /** Enable debug logging */
   debug?: boolean;
@@ -103,6 +126,21 @@ export interface UploadResult {
 
   /** Duration in ms */
   duration: number;
+}
+
+export interface WorkspaceFileApi {
+  listAll(options: { maxFiles: number; maxPages: number }): Promise<Array<{ path: string }>>;
+  read(path: string): Promise<string>;
+}
+
+/** Dependencies captured by a WorkspaceSync instance. */
+export interface WorkspaceSyncDependencies {
+  files?: WorkspaceFileApi;
+}
+
+interface WorkspaceWalkState {
+  files: number;
+  bytes: number;
 }
 
 /**
@@ -173,20 +211,47 @@ export class WorkspaceSync {
   };
   private fileChecksums = new Map<string, string>();
   private initialized = false;
+  private readonly files: WorkspaceFileApi;
 
-  constructor(config: WorkspaceConfig) {
+  constructor(config: WorkspaceConfig, dependencies: WorkspaceSyncDependencies = {}) {
     // SECURITY: Validate runId to prevent path traversal
-    if (!/^[a-zA-Z0-9_-]+$/.test(config.runId)) {
+    if (config.runId.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(config.runId)) {
       throw INVALID_ARGUMENT.create({
-        detail: `Invalid runId: must contain only alphanumeric, underscore, or hyphen characters`,
+        detail: "Invalid runId: use 1 to 128 alphanumeric, underscore, or hyphen characters",
       });
+    }
+
+    for (
+      const [name, value] of [
+        ["maxFileSize", config.maxFileSize ?? MAX_WORKSPACE_FILE_SIZE],
+        ["maxFiles", config.maxFiles ?? DEFAULT_MAX_WORKSPACE_FILES],
+        ["maxTotalBytes", config.maxTotalBytes ?? DEFAULT_MAX_WORKSPACE_BYTES],
+        ["maxDepth", config.maxDepth ?? DEFAULT_MAX_WORKSPACE_DEPTH],
+        ["maxPages", config.maxPages ?? DEFAULT_MAX_WORKSPACE_PAGES],
+      ] as const
+    ) {
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw INVALID_ARGUMENT.create({ detail: `${name} must be a positive safe integer` });
+      }
     }
 
     this.config = {
       baseDir: "/tmp/veryfront-workspaces",
       maxFileSize: MAX_WORKSPACE_FILE_SIZE,
+      maxFiles: DEFAULT_MAX_WORKSPACE_FILES,
+      maxTotalBytes: DEFAULT_MAX_WORKSPACE_BYTES,
+      maxDepth: DEFAULT_MAX_WORKSPACE_DEPTH,
+      maxPages: DEFAULT_MAX_WORKSPACE_PAGES,
       debug: false,
       ...config,
+      tenant: Object.freeze({ ...config.tenant }),
+      include: config.include ? [...config.include] : undefined,
+      exclude: config.exclude ? [...config.exclude] : undefined,
+    };
+    const files = dependencies.files ?? api.files;
+    this.files = {
+      listAll: (options) => files.listAll(options),
+      read: (path) => files.read(path),
     };
   }
 
@@ -194,122 +259,169 @@ export class WorkspaceSync {
    * Get the workspace directory path
    */
   get workspaceDir(): string {
-    return `${this.config.baseDir}/${this.config.runId}`;
+    return join(this.config.baseDir, this.config.runId);
   }
 
   /**
    * Initialize workspace by downloading project files
    */
   async initialize(): Promise<WorkspaceSyncResult> {
+    return await runWithWorkflowTenant(
+      this.config.tenant,
+      () => this.initializeForTenant(),
+    );
+  }
+
+  private async initializeForTenant(): Promise<WorkspaceSyncResult> {
     const startTime = Date.now();
     const skippedFiles: string[] = [];
     const downloadErrors: Array<{ path: string; error: string }> = [];
     let filesDownloaded = 0;
     let bytesDownloaded = 0;
+    let ownsWorkspace = false;
 
     if (this.config.debug) {
-      logger.info("Initializing workspace", { workspaceDir: this.workspaceDir });
+      logger.info("Initializing workspace");
     }
 
-    // Create workspace directory
-    await Deno.mkdir(this.workspaceDir, { recursive: true });
+    this.initialized = false;
+    this.fileChecksums.clear();
 
-    // List all files from project
-    const files = await api.files.listAll();
-
-    if (this.config.debug) {
-      logger.info("Found files in project", { count: files.length });
-    }
-
-    // Download each file
-    for (const file of files) {
-      const path = file.path.startsWith("/") ? file.path : `/${file.path}`;
-
-      // Check include patterns
-      if (this.config.include && !matchesPattern(path, this.config.include)) {
-        skippedFiles.push(path);
-        continue;
-      }
-
-      // Check exclude patterns
-      if (this.config.exclude && matchesPattern(path, this.config.exclude)) {
-        skippedFiles.push(path);
-        continue;
-      }
-
-      // Check file size (if available in metadata)
-      // Note: We might not have size info until we fetch the file
-
+    try {
+      await Deno.mkdir(this.config.baseDir, { recursive: true });
       try {
-        const content = await api.files.read(path);
+        await Deno.mkdir(this.workspaceDir);
+        ownsWorkspace = true;
+      } catch (cause) {
+        if (cause instanceof Deno.errors.AlreadyExists) {
+          throw INITIALIZATION_ERROR.create({
+            detail: "Workspace directory already exists for this run",
+          });
+        }
+        throw cause;
+      }
 
-        // Check size after fetching
-        if (content.length > this.config.maxFileSize) {
+      // The API client enforces both bounds during pagination. Re-check the
+      // returned count so injected and future adapters honor the same contract.
+      let projectFiles: Array<{ path: string }>;
+      try {
+        projectFiles = await this.files.listAll({
+          maxFiles: this.config.maxFiles,
+          maxPages: this.config.maxPages,
+        });
+      } catch (cause) {
+        throw INITIALIZATION_ERROR.create({
+          detail: "Failed to list project files for workspace initialization",
+          cause: cause instanceof Error ? cause : undefined,
+        });
+      }
+      if (projectFiles.length > this.config.maxFiles) {
+        throw INITIALIZATION_ERROR.create({
+          detail: `Workspace exceeds the maximum file count of ${this.config.maxFiles}`,
+        });
+      }
+
+      if (this.config.debug) logger.info("Found files in project", { count: projectFiles.length });
+
+      const seenPaths = new Set<string>();
+      for (const file of projectFiles) {
+        if (!file || typeof file.path !== "string" || file.path.length === 0) {
+          throw INITIALIZATION_ERROR.create({ detail: "Project file listing is invalid" });
+        }
+        const path = file.path.startsWith("/") ? file.path : `/${file.path}`;
+        if (seenPaths.has(path)) {
+          throw INITIALIZATION_ERROR.create({ detail: "Project file listing contains duplicates" });
+        }
+        seenPaths.add(path);
+
+        if (this.config.include && !matchesPattern(path, this.config.include)) {
           skippedFiles.push(path);
-          if (this.config.debug) {
-            logger.info("Skipping large file", { path, size: content.length });
-          }
           continue;
         }
 
-        // Calculate checksum for change detection
-        const hash = await checksum(content);
-        this.fileChecksums.set(path, hash);
+        if (this.config.exclude && matchesPattern(path, this.config.exclude)) {
+          skippedFiles.push(path);
+          continue;
+        }
 
-        // Write to local filesystem (use safe path resolution)
+        let content: string;
+        try {
+          content = await this.files.read(path);
+        } catch (cause) {
+          downloadErrors.push({ path, error: "File download failed" });
+          throw INITIALIZATION_ERROR.create({
+            detail: "Failed to initialize a complete workspace",
+            cause: cause instanceof Error ? cause : undefined,
+          });
+        }
+        if (typeof content !== "string") {
+          throw INITIALIZATION_ERROR.create({ detail: "Project file content is invalid" });
+        }
+
+        const byteLength = new TextEncoder().encode(content).length;
+        if (byteLength > this.config.maxFileSize) {
+          throw INVALID_ARGUMENT.create({
+            detail: `Workspace file exceeds the configured maximum file size`,
+          });
+        }
+        if (bytesDownloaded + byteLength > this.config.maxTotalBytes) {
+          throw INVALID_ARGUMENT.create({
+            detail: `Workspace exceeds the configured maximum aggregate size`,
+          });
+        }
+
+        const hash = await checksum(content);
         const localPath = await this.resolveSafePath(path);
         const dir = dirname(localPath);
         await Deno.mkdir(dir, { recursive: true });
         await Deno.writeTextFile(localPath, content);
+        this.fileChecksums.set(path, hash);
 
         filesDownloaded++;
-        bytesDownloaded += content.length;
-
-        if (this.config.debug) {
-          logger.info("Downloaded file", { path });
-        }
-      } catch (error) {
-        // A read failure is an error, not a benign skip — record it separately.
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error("Failed to download workspace file", { path, error: message });
-        downloadErrors.push({ path, error: message });
+        bytesDownloaded += byteLength;
       }
-    }
 
-    this.initialized = true;
+      this.initialized = true;
 
-    // Surface a systemic download problem: if a meaningful fraction of files
-    // failed, the workspace is likely incomplete and callers should not treat
-    // it as a faithful copy of the project.
-    const consideredFiles = filesDownloaded + downloadErrors.length;
-    if (downloadErrors.length > 0 && consideredFiles > 0) {
-      const failureRate = downloadErrors.length / consideredFiles;
-      logger.warn("Workspace initialized with download errors", {
-        failed: downloadErrors.length,
-        downloaded: filesDownloaded,
-        failureRatePct: Math.round(failureRate * 100),
-      });
-    }
-
-    const result: WorkspaceSyncResult = {
-      workspaceDir: this.workspaceDir,
-      filesDownloaded,
-      bytesDownloaded,
-      skippedFiles,
-      downloadErrors,
-      duration: Date.now() - startTime,
-    };
-
-    if (this.config.debug) {
-      logger.info("Workspace initialized", {
-        duration: result.duration,
+      const result: WorkspaceSyncResult = {
+        workspaceDir: this.workspaceDir,
         filesDownloaded,
         bytesDownloaded,
-        skipped: skippedFiles.length,
+        skippedFiles,
+        downloadErrors,
+        duration: Date.now() - startTime,
+      };
+
+      if (this.config.debug) {
+        logger.info("Workspace initialized", {
+          duration: result.duration,
+          filesDownloaded,
+          bytesDownloaded,
+          skipped: skippedFiles.length,
+        });
+      }
+
+      return result;
+    } catch (cause) {
+      this.initialized = false;
+      this.fileChecksums.clear();
+      if (ownsWorkspace) {
+        try {
+          await Deno.remove(this.workspaceDir, { recursive: true });
+        } catch (cleanupError) {
+          if (!(cleanupError instanceof Deno.errors.NotFound)) {
+            logger.warn("Failed to remove an incomplete workspace", {
+              errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+            });
+          }
+        }
+      }
+      if (isVeryfrontError(cause)) throw cause;
+      throw INITIALIZATION_ERROR.create({
+        detail: "Failed to initialize workspace",
+        cause: cause instanceof Error ? cause : undefined,
       });
     }
-
-    return result;
   }
 
   /**
@@ -317,6 +429,7 @@ export class WorkspaceSync {
    */
   async detectChanges(): Promise<FileChange[]> {
     const changes: FileChange[] = [];
+    const walkState: WorkspaceWalkState = { files: 0, bytes: 0 };
 
     if (!this.initialized) {
       throw INITIALIZATION_ERROR.create({
@@ -330,6 +443,8 @@ export class WorkspaceSync {
         `${this.workspaceDir}/${entry.name}`,
         `/${entry.name}`,
         changes,
+        walkState,
+        1,
       );
     }
 
@@ -338,13 +453,16 @@ export class WorkspaceSync {
       try {
         const localPath = await this.resolveSafePath(path);
         await Deno.stat(localPath);
-      } catch (_) {
-        // File was deleted
-        changes.push({
-          path,
-          type: "deleted",
-          originalChecksum: originalHash,
-        });
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) {
+          changes.push({
+            path,
+            type: "deleted",
+            originalChecksum: originalHash,
+          });
+          continue;
+        }
+        throw error;
       }
     }
 
@@ -366,29 +484,50 @@ export class WorkspaceSync {
     localPath: string,
     relativePath: string,
     changes: FileChange[],
+    walkState: WorkspaceWalkState,
+    depth: number,
   ): Promise<void> {
     const stat = await Deno.lstat(localPath);
 
     // Ignore symlinks outright — we never treat them as real files here.
     if (stat.isSymlink) {
       if (this.config.debug) {
-        logger.info("Skipping symlink during change detection", { localPath });
+        logger.info("Skipping symlink during change detection");
       }
       return;
     }
 
     if (stat.isDirectory) {
+      if (depth >= this.config.maxDepth) {
+        throw INVALID_ARGUMENT.create({ detail: "Workspace exceeds the maximum directory depth" });
+      }
       for await (const entry of Deno.readDir(localPath)) {
         await this.walkAndDetect(
           `${localPath}/${entry.name}`,
           `${relativePath}/${entry.name}`,
           changes,
+          walkState,
+          depth + 1,
         );
       }
       return;
     }
 
-    // It's a regular file - check for changes
+    if (!stat.isFile) {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace contains an unsupported entry" });
+    }
+    walkState.files++;
+    if (walkState.files > this.config.maxFiles) {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace exceeds the maximum file count" });
+    }
+    if (stat.size > this.config.maxFileSize) {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace file exceeds the maximum file size" });
+    }
+    walkState.bytes += stat.size;
+    if (walkState.bytes > this.config.maxTotalBytes) {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace exceeds the maximum aggregate size" });
+    }
+
     const content = await Deno.readTextFile(localPath);
     const newHash = await checksum(content);
     const originalHash = this.fileChecksums.get(relativePath);
@@ -428,12 +567,35 @@ export class WorkspaceSync {
       ) => Promise<void>;
     } = {},
   ): Promise<UploadResult> {
+    if (!this.initialized) {
+      throw INITIALIZATION_ERROR.create({
+        detail: "Workspace not initialized. Call initialize() first.",
+      });
+    }
     const startTime = Date.now();
     const uploaded: FileChange[] = [];
     const skipped: FileChange[] = [];
     const failed: Array<{ path: string; error: string }> = [];
+    const prepared: Array<{ change: FileChange; content: string }> = [];
+    const seenPaths = new Set<string>();
+    let uploadedBytes = 0;
+
+    if (changes.length > this.config.maxFiles) {
+      throw INVALID_ARGUMENT.create({ detail: "Upload exceeds the maximum file count" });
+    }
 
     for (const change of changes) {
+      if (
+        !change || typeof change.path !== "string" || change.path.length === 0 ||
+        !["created", "modified", "deleted"].includes(change.type)
+      ) {
+        throw INVALID_ARGUMENT.create({ detail: "Upload change entry is invalid" });
+      }
+      if (seenPaths.has(change.path)) {
+        throw INVALID_ARGUMENT.create({ detail: "Upload contains duplicate file paths" });
+      }
+      seenPaths.add(change.path);
+
       if (change.type === "deleted") {
         // NOTE(#veryfront-api-write): Implement delete via API when available
         failed.push({
@@ -444,29 +606,36 @@ export class WorkspaceSync {
       }
 
       try {
-        const localPath = await this.resolveSafePath(change.path);
-        const content = await Deno.readTextFile(localPath);
-
-        if (options.onUpload) {
-          await options.onUpload(change.path, content, change.type);
-          uploaded.push(change);
-        } else {
-          // No upload handler: this is a dry run. Record as skipped (NOT
-          // uploaded) so the caller can tell nothing was persisted.
-          if (this.config.debug) {
-            logger.info("Would upload file (no onUpload handler)", {
-              path: change.path,
-              type: change.type,
-            });
-          }
-          skipped.push(change);
+        const content = await this.readFile(change.path);
+        uploadedBytes += new TextEncoder().encode(content).length;
+        if (uploadedBytes > this.config.maxTotalBytes) {
+          throw INVALID_ARGUMENT.create({ detail: "Upload exceeds the maximum aggregate size" });
         }
+        prepared.push({ change, content });
       } catch (error) {
+        if (isVeryfrontError(error) && error.slug === "invalid-argument") throw error;
         failed.push({
           path: change.path,
-          error: error instanceof Error ? error.message : String(error),
+          error: "Failed to upload workspace file",
         });
       }
+    }
+
+    for (const { change, content } of prepared) {
+      if (options.onUpload) {
+        try {
+          await options.onUpload(change.path, content, change.type);
+          uploaded.push(change);
+        } catch {
+          failed.push({ path: change.path, error: "Failed to upload workspace file" });
+        }
+        continue;
+      }
+
+      if (this.config.debug) {
+        logger.info("Would upload file (no onUpload handler)", { type: change.type });
+      }
+      skipped.push(change);
     }
 
     return {
@@ -508,10 +677,10 @@ export class WorkspaceSync {
     //   workspace-relative, but any component that tries to escape the
     //   workspace is still caught by the traversal / realpath checks below.
     if (/^[A-Za-z]:[\\/]/.test(path)) {
-      throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
+      throw SECURITY_VIOLATION.create({ detail: "Absolute path not allowed" });
     }
     if (path.startsWith("//")) {
-      throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
+      throw SECURITY_VIOLATION.create({ detail: "Absolute path not allowed" });
     }
 
     // Normalize the input path (treat leading "/" as workspace-relative).
@@ -527,7 +696,7 @@ export class WorkspaceSync {
     const fullPath = resolve(join(this.workspaceDir, normalizedPath));
     const relativePath = relative(this.workspaceDir, fullPath);
     if (!relativePath || relativePath.startsWith("..") || relativePath === "..") {
-      throw SECURITY_VIOLATION.create({ detail: `Path traversal detected: ${path}` });
+      throw SECURITY_VIOLATION.create({ detail: "Path traversal detected" });
     }
 
     // Walk each segment and reject any existing symlink along the way.
@@ -540,7 +709,7 @@ export class WorkspaceSync {
         const info = await Deno.lstat(cursor);
         if (info.isSymlink) {
           throw SECURITY_VIOLATION.create({
-            detail: `Refusing to traverse symlink: ${cursor}`,
+            detail: "Refusing to traverse symlink",
           });
         }
       } catch (e) {
@@ -562,7 +731,7 @@ export class WorkspaceSync {
       const workspaceReal = await Deno.realPath(this.workspaceDir);
       if (!isWithinDirectory(workspaceReal, parentReal)) {
         throw SECURITY_VIOLATION.create({
-          detail: `Resolved parent outside workspace: ${parentReal}`,
+          detail: "Resolved parent outside workspace",
         });
       }
     } catch (e) {
@@ -577,6 +746,10 @@ export class WorkspaceSync {
    */
   async readFile(path: string): Promise<string> {
     const localPath = await this.resolveSafePath(path);
+    const info = await Deno.lstat(localPath);
+    if (!info.isFile || info.size > this.config.maxFileSize) {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace file exceeds the maximum file size" });
+    }
     return await Deno.readTextFile(localPath);
   }
 
@@ -584,6 +757,12 @@ export class WorkspaceSync {
    * Write a file to the workspace
    */
   async writeFile(path: string, content: string): Promise<void> {
+    if (typeof content !== "string") {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace file content must be a string" });
+    }
+    if (new TextEncoder().encode(content).length > this.config.maxFileSize) {
+      throw INVALID_ARGUMENT.create({ detail: "Workspace file exceeds the maximum file size" });
+    }
     const localPath = await this.resolveSafePath(path);
 
     // Ensure directory exists
@@ -609,9 +788,10 @@ export class WorkspaceSync {
       const localPath = await this.resolveSafePath(path);
       await Deno.stat(localPath);
       return true;
-    } catch (_) {
-      /* expected: file may not exist */
-      return false;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return false;
+      if ((error as { slug?: unknown })?.slug === "security-violation") return false;
+      throw error;
     }
   }
 
@@ -620,19 +800,25 @@ export class WorkspaceSync {
    */
   async cleanup(): Promise<void> {
     if (this.config.debug) {
-      logger.info("Cleaning up workspace", { workspaceDir: this.workspaceDir });
+      logger.info("Cleaning up workspace");
     }
 
     try {
       await Deno.remove(this.workspaceDir, { recursive: true });
-    } catch (error) {
-      if (this.config.debug) {
-        logger.error("Cleanup failed", error);
+    } catch (cause) {
+      if (!(cause instanceof Deno.errors.NotFound)) {
+        logger.warn("Workspace cleanup failed", {
+          errorName: cause instanceof Error ? cause.name : typeof cause,
+        });
+        throw UNKNOWN_ERROR.create({
+          detail: "Failed to clean up workspace",
+          cause: cause instanceof Error ? cause : undefined,
+        });
       }
+    } finally {
+      this.initialized = false;
+      this.fileChecksums.clear();
     }
-
-    this.initialized = false;
-    this.fileChecksums.clear();
   }
 }
 
@@ -673,6 +859,11 @@ export async function withWorkspace<T>(
   syncResult: WorkspaceSyncResult;
 }> {
   const workspace = createWorkspaceSync(config);
+  let value: {
+    result: T;
+    changes: FileChange[];
+    syncResult: WorkspaceSyncResult;
+  };
 
   try {
     // Initialize workspace
@@ -684,9 +875,18 @@ export async function withWorkspace<T>(
     // Detect changes
     const changes = await workspace.detectChanges();
 
-    return { result, changes, syncResult };
-  } finally {
-    // Always cleanup
-    await workspace.cleanup();
+    value = { result, changes, syncResult };
+  } catch (error) {
+    try {
+      await workspace.cleanup();
+    } catch (cleanupError) {
+      logger.warn("Workspace cleanup also failed after an operation error", {
+        errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+      });
+    }
+    throw error;
   }
+
+  await workspace.cleanup();
+  return value;
 }

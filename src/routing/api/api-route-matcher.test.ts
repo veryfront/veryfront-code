@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ApiRouteMatcher } from "./api-route-matcher.ts";
 
@@ -78,6 +78,14 @@ describe("ApiRouteMatcher", () => {
         assertEquals(router.match(`/api/${marker}`)?.route.page, `pages/api/${marker}.ts`);
         assertEquals(router.match("/api/unrelated"), null);
       }
+    });
+
+    it("prioritizes unsupported bracket syntax as a literal route", () => {
+      const router = new ApiRouteMatcher();
+      router.addRoute("/api/[id]", "dynamic.ts");
+      router.addRoute("/api/[user.id]", "literal.ts");
+
+      assertEquals(router.match("/api/[user.id]")?.route.page, "literal.ts");
     });
 
     it("handles root route", () => {
@@ -218,7 +226,7 @@ describe("ApiRouteMatcher", () => {
 
       assertExists(match1);
       assertExists(match2);
-      assertStrictEquals(match1.route, match2.route);
+      assertEquals(match1.route, match2.route);
     });
 
     it("handles special characters in segments", () => {
@@ -239,14 +247,19 @@ describe("ApiRouteMatcher", () => {
       assertEquals(match.params, { filename: "document.pdf" });
     });
 
-    it("caches route matches", () => {
+    it("does not expose mutable cached matches", () => {
       const router = createRouter();
       router.addRoute("/blog/[slug]", "pages/blog/[slug].tsx");
 
       const match1 = router.match("/blog/test");
+      assertExists(match1);
+      match1.params.slug = "poisoned";
+      match1.route.page = "poisoned.tsx";
       const match2 = router.match("/blog/test");
 
-      assertStrictEquals(match1, match2);
+      assertExists(match2);
+      assertEquals(match2.params.slug, "test");
+      assertEquals(match2.route.page, "pages/blog/[slug].tsx");
     });
   });
 
@@ -288,12 +301,35 @@ describe("ApiRouteMatcher", () => {
       assertEquals(firstMatch.route.page, "pages/dynamic50/[id].tsx");
       assertEquals(firstMatch.params, { id: "test" });
 
-      router.routes.clear();
+      const exposedRoutes = router.routes;
+      exposedRoutes.clear();
 
       const cachedMatch = router.match("/dynamic50/test");
       assertExists(cachedMatch);
       assertEquals(cachedMatch.route.page, "pages/dynamic50/[id].tsx");
       assertEquals(cachedMatch.params, { id: "test" });
+
+      router.clearCache();
+      assertExists(router.match("/dynamic50/test"));
+    });
+
+    it("returns defensive route snapshots", () => {
+      const router = createRouter();
+      router.addRoute("/api/[id]", "pages/api/[id].tsx");
+
+      const entries = router.routes;
+      const entry = entries.get("/api/[id]");
+      assertExists(entry);
+      entry.route.page = "poisoned.tsx";
+      entry.paramNames[0] = "poisoned";
+
+      const listed = router.listRoutes();
+      listed[0]!.page = "also-poisoned.tsx";
+
+      const match = router.match("/api/123");
+      assertExists(match);
+      assertEquals(match.route.page, "pages/api/[id].tsx");
+      assertEquals(match.params, { id: "123" });
     });
   });
 
@@ -310,6 +346,9 @@ describe("ApiRouteMatcher", () => {
 
       assertEquals(router.match("/api/users"), null);
       assertEquals(router.match("/api/123"), null);
+
+      router.addRoute("/api/new", "pages/api/new.tsx");
+      assertEquals(router.match("/api/new")?.route.page, "pages/api/new.tsx");
     });
 
     it("clears only cache with clearCache()", () => {

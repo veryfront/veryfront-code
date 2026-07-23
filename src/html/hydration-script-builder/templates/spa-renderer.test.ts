@@ -27,7 +27,10 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
     });
 
     it("should parse hydration data as JSON", () => {
-      assertIncludes(getSpaRendererScript(), "JSON.parse(dataScript.textContent");
+      assertIncludes(
+        getSpaRendererScript(),
+        "assertValidPageData(JSON.parse(serializedData))",
+      );
     });
 
     it("should handle missing hydration data", () => {
@@ -64,12 +67,25 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertIncludes(getSpaRendererScript(), "initialData.layouts");
     });
 
+    it("should preload the app wrapper before hydration", () => {
+      assertIncludes(getSpaRendererScript(), "loadComponent(initialData.appPath)");
+    });
+
     it("should import ClientApp", () => {
       assertIncludes(getSpaRendererScript(), "_veryfront/client/spa/ClientApp.js");
     });
 
     it("should look for root container", () => {
-      assertIncludes(getSpaRendererScript(), "getElementById('root')");
+      const result = getSpaRendererScript();
+      assertIncludes(result, "getElementById('root')");
+      assertIncludes(result, "throw new Error('Content container not found')");
+    });
+
+    it("enforces the hydration-data byte limit before parsing", () => {
+      assertIncludes(
+        getSpaRendererScript(),
+        "new TextEncoder().encode(serializedData).byteLength",
+      );
     });
 
     it("should handle hydration when container has content", () => {
@@ -82,8 +98,28 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertIncludes(getSpaRendererScript(), "createRoot(container)");
     });
 
+    it("retains the React root for subsequent SPA navigation", () => {
+      const result = getSpaRendererScript();
+      assertIncludes(result, "container.__reactRoot = hydrateRoot(container, tree");
+      assertIncludes(result, "container.__reactRoot = createRoot(container)");
+      assertIncludes(result, "container.__reactRoot.render(tree)");
+      assertIncludes(result, "window.__veryfrontHydrationComplete()");
+    });
+
     it("should use identifierPrefix 'vf'", () => {
       assertIncludes(getSpaRendererScript(), "identifierPrefix: 'vf'");
+    });
+
+    it("reports recoverable hydration errors without a silent callback", () => {
+      const result = getSpaRendererScript();
+      assertIncludes(result, "Hydration recovery failed (");
+      assertEquals(result.includes("onRecoverableError: () => {}"), false);
+    });
+
+    it("does not log raw hydration data or parse errors", () => {
+      const result = getSpaRendererScript();
+      assertEquals(result.includes("Initial page data:', initialData"), false);
+      assertEquals(result.includes("Failed to parse hydration data:', parseError"), false);
     });
 
     it("should set __VERYFRONT_SPA_MODE__ on window", () => {
@@ -106,12 +142,6 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertEquals(result.length > 0, true);
     });
 
-    it("should define componentCache and loadingPromises maps", () => {
-      const result = getSpaLoaderScript();
-      assertIncludes(result, "const componentCache = new Map()");
-      assertIncludes(result, "const loadingPromises = new Map()");
-    });
-
     it("should define async loadComponent function", () => {
       assertIncludes(getSpaLoaderScript(), "async function loadComponent(path)");
     });
@@ -120,24 +150,12 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
       assertIncludes(getSpaLoaderScript(), "if (!path) return null");
     });
 
-    it("should check cache before loading", () => {
-      assertIncludes(getSpaLoaderScript(), "componentCache.get(path)");
-    });
-
-    it("should deduplicate in-flight requests", () => {
-      assertIncludes(getSpaLoaderScript(), "loadingPromises.get(path)");
-    });
-
-    it("should use pathToModuleUrl for URL generation", () => {
-      assertIncludes(getSpaLoaderScript(), "pathToModuleUrl(path)");
-    });
-
-    it("should get component from default export or module", () => {
-      assertIncludes(getSpaLoaderScript(), "module.default || module");
-    });
-
-    it("should store loaded component in cache", () => {
-      assertIncludes(getSpaLoaderScript(), "componentCache.set(path, Component)");
+    it("should delegate to the canonical shared component loader", () => {
+      const result = getSpaLoaderScript();
+      assertIncludes(result, "_veryfront/client/spa/component-loader.js");
+      assertIncludes(result, "loader.loadComponent(path)");
+      assertEquals(result.includes("module.default || module"), false);
+      assertEquals(result.includes("const componentCache = new Map()"), false);
     });
 
     it("should expose loadComponent on window", () => {
@@ -149,12 +167,14 @@ describe("hydration-script-builder/templates/spa-renderer", () => {
 
     it("should handle load errors gracefully", () => {
       const result = getSpaLoaderScript();
-      assertIncludes(result, "Failed to load component");
+      assertIncludes(result, "Component loader is unavailable");
       assertIncludes(result, "return null");
     });
 
-    it("should clean up loadingPromises in finally block", () => {
-      assertIncludes(getSpaLoaderScript(), "loadingPromises.delete(path)");
+    it("allows the shared loader import to recover after a transient failure", () => {
+      const result = getSpaLoaderScript();
+      assertIncludes(result, "componentLoaderPromise = null");
+      assertIncludes(result, ".catch((error) =>");
     });
   });
 });

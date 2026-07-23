@@ -1,4 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { BrowserTargets } from "../css-optimizer/types/index.ts";
 
 export interface TailwindProcessorOptions {
   projectDir: string;
@@ -8,7 +9,7 @@ export interface TailwindProcessorOptions {
   content?: string[];
   minify?: boolean;
   sourceMap?: boolean;
-  browserslist?: string[];
+  browserslist?: string[] | BrowserTargets;
 }
 
 export interface TailwindProcessResult {
@@ -22,5 +23,5 @@ export interface LightningCSSOptions {
   filename: string;
   minify?: boolean;
   sourceMap?: boolean;
-  browserslist?: string[];
+  browserslist?: string[] | BrowserTargets;
 }

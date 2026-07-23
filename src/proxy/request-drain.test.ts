@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   closeProxyServerWithin,
@@ -105,6 +105,26 @@ describe("proxy request drain", () => {
     assertEquals(parseProxyDrainTimeoutMs("290000", 25_000), 290_000);
     assertEquals(parseProxyDrainTimeoutMs("invalid", 25_000), 25_000);
     assertEquals(parseProxyDrainTimeoutMs("-1", 25_000), 25_000);
+    assertEquals(parseProxyDrainTimeoutMs("100ms", 25_000), 25_000);
+    assertEquals(parseProxyDrainTimeoutMs("Infinity", 25_000), 25_000);
+  });
+
+  it("rejects duplicate request identifiers", () => {
+    const tracker = new ProxyRequestDrainTracker();
+    tracker.start("request-1", "GET", "/first");
+    assertThrows(
+      () => tracker.start("request-1", "POST", "/second"),
+      Error,
+      "already tracked",
+    );
+  });
+
+  it("fails a drain immediately for non-finite timeout inputs", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    tracker.start("request-1", "GET", "/stream");
+    const drain = tracker.waitForDrain(Number.NaN, Number.NaN);
+    setTimeout(() => tracker.complete("request-1"), 5);
+    assertEquals(await drain, false);
   });
 
   it("returns a retryable connection-closing response while draining", () => {

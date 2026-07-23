@@ -63,4 +63,40 @@ describe("css-strip plugin", () => {
     assertEquals(result, code);
     assertEquals(ctx.metadata.has("cssImports"), false);
   });
+
+  it("strips CSS imports that include query or fragment suffixes", async () => {
+    const ctx = createContext(
+      `import styles from "./Button.module.css?inline"; import "./theme.css#layer"; export const c = styles.container;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(result.includes("import styles"), false);
+    assertStringIncludes(result, '"Button_" + String(p)');
+    assertEquals(ctx.metadata.get("cssImports"), [
+      "./Button.module.css?inline",
+      "./theme.css#layer",
+    ]);
+  });
+
+  it("does not copy CSS specifiers into generated comments", async () => {
+    const ctx = createContext(
+      `import "./theme.css?x=*/;globalThis.compromised=true;/*";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(result.includes("globalThis.compromised"), false);
+    assertEquals(result, "/* css import stripped */;");
+  });
+
+  it("records each CSS import once", async () => {
+    const ctx = createContext(
+      `import "./theme.css"; import "./theme.css";`,
+    );
+
+    await cssStripPlugin.transform(ctx);
+
+    assertEquals(ctx.metadata.get("cssImports"), ["./theme.css"]);
+  });
 });

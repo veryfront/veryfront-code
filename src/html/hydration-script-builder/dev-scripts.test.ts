@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getDevScripts } from "./dev-scripts.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -68,6 +68,74 @@ describe("hydration-script-builder/dev-scripts", () => {
     it("should join scripts with newlines", () => {
       const result = getDevScripts("page", baseConfig);
       assertEquals(result.includes("\n"), true);
+    });
+
+    it("does not execute configuration accessors", () => {
+      let accessorCalls = 0;
+      const config: Record<string, unknown> = {};
+      Object.defineProperty(config, "dev", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return { hmr: true };
+        },
+      });
+
+      assertThrows(
+        () => getDevScripts("page", config as never),
+        TypeError,
+        "Development configuration must not contain accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("does not execute nested HMR configuration accessors", () => {
+      let accessorCalls = 0;
+      const dev: Record<string, unknown> = {};
+      Object.defineProperty(dev, "hmr", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      });
+
+      assertThrows(
+        () => getDevScripts("page", { dev } as never),
+        TypeError,
+        "Development server configuration must not contain accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("does not execute script-option accessors", () => {
+      let accessorCalls = 0;
+      const options: Record<string, unknown> = {};
+      Object.defineProperty(options, "skipDevHMR", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      });
+
+      assertThrows(
+        () => getDevScripts("page", baseConfig, undefined, undefined, undefined, options as never),
+        TypeError,
+        "Development script options must not contain accessor properties",
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("rejects non-boolean script options", () => {
+      assertThrows(
+        () =>
+          getDevScripts("page", baseConfig, undefined, undefined, undefined, {
+            skipDevHMR: "yes",
+          } as never),
+        TypeError,
+        "skipDevHMR must be a boolean",
+      );
     });
   });
 });

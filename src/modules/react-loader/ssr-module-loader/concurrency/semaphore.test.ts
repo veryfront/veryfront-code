@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Semaphore } from "./semaphore.ts";
 
@@ -128,19 +128,42 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
       assertEquals(await p2, true);
     });
 
-    it("should have unbounded queue by default", async () => {
+    it("bounds the queue by default", async () => {
       const sem = new Semaphore(1);
 
       await sem.tryAcquire();
 
-      // Queue many waiters — should all be accepted
-      const promises = Array.from({ length: 50 }, () => sem.tryAcquire(500));
-      assertEquals(sem.waiting, 50);
+      const promises = Array.from({ length: 256 }, () => sem.tryAcquire(500));
+      assertEquals(sem.waiting, 256);
+      assertEquals(await sem.tryAcquire(500), false);
 
-      // Release all
-      for (let i = 0; i < 50; i++) sem.release();
+      for (let i = 0; i < promises.length; i++) sem.release();
       const results = await Promise.all(promises);
       assertEquals(results.every((r) => r === true), true);
+    });
+
+    it("does not inflate capacity when release is called too many times", async () => {
+      const sem = new Semaphore(1);
+
+      sem.release();
+      sem.release();
+
+      assertEquals(sem.available, 1);
+      assertEquals(await sem.tryAcquire(), true);
+      assertEquals(await sem.tryAcquire(0), false);
+    });
+
+    it("rejects invalid constructor options and timeouts", () => {
+      for (const permits of [-1, 1.5, Number.NaN]) {
+        assertThrows(() => new Semaphore(permits), RangeError);
+      }
+      for (const maxQueueSize of [-1, 1.5, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => new Semaphore(1, { maxQueueSize }), RangeError);
+      }
+
+      const sem = new Semaphore(1);
+      assertThrows(() => sem.tryAcquire(Number.NaN), RangeError);
+      assertThrows(() => sem.tryAcquire(-1), RangeError);
     });
   });
 });

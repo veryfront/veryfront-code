@@ -10,6 +10,7 @@ import {
 } from "./permission-system.ts";
 
 const denoOnlyIt = isDeno ? it : it.skip;
+const expectedAvailableState = isDeno ? "granted" : "denied";
 
 function assertValidState(state: string): void {
   assertEquals(["granted", "denied", "prompt"].includes(state), true);
@@ -17,7 +18,7 @@ function assertValidState(state: string): void {
 
 async function expectGranted(request: PermissionRequest): Promise<void> {
   const result = await requestPermission(request);
-  assertEquals(result.state, "granted");
+  assertEquals(result.state, expectedAvailableState);
 }
 
 describe("Permission System", () => {
@@ -71,7 +72,7 @@ describe("Permission System", () => {
       await expectGranted({ name: "net", host: "example.com:8080" });
     });
 
-    // Deno validates wildcard domains and returns "denied"; Node.js just returns "granted"
+    // Deno validates wildcard domains directly.
     denoOnlyIt("should handle net permission with wildcard domain", async () => {
       const result = await requestPermission({ name: "net", host: "*.example.com" });
       assertEquals(result.state, "denied");
@@ -116,12 +117,12 @@ describe("Permission System", () => {
       assertEquals(typeof result.state, "string");
     });
 
-    it("should return granted state for all permissions in current implementation", async () => {
+    it("should reflect whether the runtime can enforce permissions", async () => {
       const permissions: Permission[] = ["net", "fs", "env", "run", "read", "write"];
 
       for (const permission of permissions) {
         const result = await requestPermission({ name: permission });
-        assertEquals(result.state, "granted", `Permission ${permission} should be granted`);
+        assertEquals(result.state, expectedAvailableState);
       }
     });
 
@@ -149,7 +150,7 @@ describe("Permission System", () => {
 
       assertEquals(results.length, 4);
       for (const result of results) {
-        assertEquals(result.state, "granted");
+        assertEquals(result.state, expectedAvailableState);
       }
     });
   });
@@ -159,7 +160,7 @@ describe("Permission System", () => {
       const result = await requestPermission({ name: "net" });
 
       assertExists(result);
-      assertEquals(result.state, "granted");
+      assertEquals(result.state, expectedAvailableState);
     });
 
     it("should handle permission request with undefined host", async () => {
@@ -199,7 +200,7 @@ describe("Permission System", () => {
       await expectGranted({ name: "read", path: longPath });
     });
 
-    // Deno-specific validation tests - Node.js just returns "granted"
+    // Deno-specific descriptor validation tests.
     denoOnlyIt("should handle special characters in host", async () => {
       const result = await requestPermission({ name: "net", host: "evil.com;malicious.com" });
       assertEquals(result.state, "denied");
@@ -255,7 +256,7 @@ describe("Permission System", () => {
       assertEquals(results.length, 100);
 
       for (const result of results) {
-        assertEquals(result.state, "granted");
+        assertEquals(result.state, expectedAvailableState);
       }
     });
 
@@ -304,12 +305,12 @@ describe("Permission System", () => {
       };
 
       const result = await requestPermission(request);
-      assertEquals(result.state, "granted");
+      assertEquals(result.state, expectedAvailableState);
     });
   });
 
-  describe("Sandbox Enforcement Documentation", () => {
-    it("should document current permission model as facade", async () => {
+  describe("Sandbox enforcement", () => {
+    it("should fail closed when permission enforcement is unavailable", async () => {
       await expectGranted({ name: "net" });
     });
 

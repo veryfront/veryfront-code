@@ -9,9 +9,29 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 import { createMockAdapter } from "./mock.ts";
-import type { RuntimeId } from "./base.ts";
+import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 
 const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function loadExpectedRuntimeAdapter(): Promise<RuntimeAdapter> {
+  if (expectedRuntime === "bun") return (await import("./bun.ts")).bunAdapter;
+  if (expectedRuntime === "node") return (await import("./node.ts")).nodeAdapter;
+  return (await import("./deno.ts")).denoAdapter;
+}
 
 describe("registry.ts", () => {
   describe("runtime registry", () => {
@@ -78,6 +98,104 @@ describe("registry.ts", () => {
       await assertRejects(() => runtime.set({} as any), Error, "Invalid adapter");
     });
 
+    it("rejects structurally incomplete adapters without changing state", async () => {
+      const incomplete = createMockAdapter() as RuntimeAdapter & {
+        serve?: RuntimeAdapter["serve"];
+      };
+      Reflect.deleteProperty(incomplete, "serve");
+
+      await assertRejects(() => runtime.set(incomplete), Error, "Invalid adapter");
+
+      assertEquals(runtime.isInitialized(), false);
+    });
+
+    it("initializes the same adapter instance only once", async () => {
+      const adapter = createMockAdapter();
+      let initializeCalls = 0;
+      adapter.initialize = () => {
+        initializeCalls++;
+        return Promise.resolve();
+      };
+
+      await runtime.set(adapter);
+      await runtime.set(adapter);
+
+      assertEquals(initializeCalls, 1);
+    });
+
+    it("coalesces concurrent initialization of the same adapter", async () => {
+      const adapter = createMockAdapter();
+      const releaseInitialization = createDeferred<void>();
+      let initializeCalls = 0;
+      adapter.initialize = async () => {
+        initializeCalls++;
+        await releaseInitialization.promise;
+      };
+
+      const first = runtime.set(adapter);
+      const second = runtime.set(adapter);
+      releaseInitialization.resolve();
+      await Promise.all([first, second]);
+
+      assertEquals(initializeCalls, 1);
+    });
+
+    it("lets a later set restore the active adapter while replacement initializes", async () => {
+      const activeAdapter = createMockAdapter();
+      const replacement = createMockAdapter();
+      const initializationStarted = createDeferred<void>();
+      const releaseInitialization = createDeferred<void>();
+      replacement.initialize = async () => {
+        initializationStarted.resolve();
+        await releaseInitialization.promise;
+      };
+
+      await runtime.set(activeAdapter);
+      const pendingReplacement = runtime.set(replacement);
+      await initializationStarted.promise;
+
+      try {
+        const restoreActive = runtime.set(activeAdapter);
+        releaseInitialization.resolve();
+        await Promise.all([pendingReplacement, restoreActive]);
+
+        assertEquals(runtime.getSync(), activeAdapter);
+      } finally {
+        releaseInitialization.resolve();
+        await pendingReplacement.catch(() => {});
+      }
+    });
+
+    it("does not coalesce a set with the same adapter from before reset", async () => {
+      const adapter = createMockAdapter();
+      const initializationStarted = createDeferred<void>();
+      const releaseInitialization = createDeferred<void>();
+      let initializeCalls = 0;
+      adapter.initialize = async () => {
+        initializeCalls++;
+        if (initializeCalls === 1) {
+          initializationStarted.resolve();
+          await releaseInitialization.promise;
+        }
+      };
+
+      const staleSet = runtime.set(adapter);
+      await initializationStarted.promise;
+      const pendingReset = runtime.reset();
+      const currentSet = runtime.set(adapter);
+
+      try {
+        releaseInitialization.resolve();
+        await Promise.all([staleSet, pendingReset, currentSet]);
+
+        assertEquals(runtime.getSync(), adapter);
+        assertEquals(initializeCalls, 2);
+      } finally {
+        releaseInitialization.resolve();
+        await Promise.allSettled([staleSet, pendingReset, currentSet]);
+      }
+    });
+
     it("should replace existing adapter", async () => {
       await runtime.get();
       assertEquals((await runtime.get()).id, expectedRuntime);
@@ -110,6 +228,7 @@ describe("registry.ts", () => {
   describe("getLocalAdapter", () => {
     afterEach(async () => {
       await resetLocalAdapter();
+      await runtime.reset();
     });
 
     it("should return local runtime adapter", async () => {
@@ -134,6 +253,30 @@ describe("registry.ts", () => {
       assertEquals((await runtime.get()).id, "memory");
       assertEquals(localAdapter.id, expectedRuntime);
     });
+
+    it("owns a different adapter instance from the global registry", async () => {
+      const globalAdapter = await runtime.get();
+      const localAdapter = await getLocalAdapter();
+
+      assertEquals(globalAdapter === localAdapter, false);
+    });
+
+    it("keeps a local server running when the global registry resets", async () => {
+      const localAdapter = await getLocalAdapter();
+      await runtime.get();
+      const server = await localAdapter.serve(() => new Response("local"), {
+        hostname: "127.0.0.1",
+        port: 0,
+      });
+
+      try {
+        await runtime.reset();
+        const response = await fetch(`http://${server.addr.hostname}:${server.addr.port}/`);
+        assertEquals(await response.text(), "local");
+      } finally {
+        await server.stop();
+      }
+    });
   });
 
   describe("resetLocalAdapter", () => {
@@ -150,6 +293,7 @@ describe("registry.ts", () => {
   describe("registerLoader", () => {
     afterEach(async () => {
       await runtime.reset();
+      runtime.registerLoader(expectedRuntime, loadExpectedRuntimeAdapter, { overwrite: true });
     });
 
     it("should throw when registering duplicate loader without overwrite", () => {
@@ -161,15 +305,7 @@ describe("registry.ts", () => {
     });
 
     it("should succeed with overwrite: true", () => {
-      const originalLoader = async () => {
-        const { denoAdapter } = await import("./deno.ts");
-        return denoAdapter;
-      };
-
       runtime.registerLoader(expectedRuntime, async () => createMockAdapter(), { overwrite: true });
-
-      // Restore original loader
-      runtime.registerLoader(expectedRuntime, originalLoader, { overwrite: true });
     });
 
     it("should register a new custom runtime loader and use it", async () => {
@@ -239,6 +375,60 @@ describe("registry.ts", () => {
 
       assertEquals(runtime.isInitialized(), false);
     });
+
+    it("does not expose an adapter while reset waits for shutdown", async () => {
+      const shutdownStarted = createDeferred<void>();
+      const releaseShutdown = createDeferred<void>();
+      const adapter = createMockAdapter();
+      adapter.shutdown = async () => {
+        shutdownStarted.resolve();
+        await releaseShutdown.promise;
+      };
+
+      await runtime.set(adapter);
+      const pendingReset = runtime.reset();
+      await shutdownStarted.promise;
+
+      try {
+        assertEquals(runtime.isInitialized(), false);
+        assertThrows(() => runtime.getSync(), Error, "RuntimeAdapter not initialized");
+      } finally {
+        releaseShutdown.resolve();
+        await pendingReset;
+      }
+    });
+
+    it("finishes an old shutdown before reinstalling the same adapter", async () => {
+      const shutdownStarted = createDeferred<void>();
+      const releaseShutdown = createDeferred<void>();
+      const adapter = createMockAdapter();
+      let alive = false;
+      adapter.initialize = () => {
+        alive = true;
+        return Promise.resolve();
+      };
+      adapter.shutdown = async () => {
+        shutdownStarted.resolve();
+        await releaseShutdown.promise;
+        alive = false;
+      };
+
+      await runtime.set(adapter);
+      const pendingReset = runtime.reset();
+      await shutdownStarted.promise;
+      const reinstall = runtime.set(adapter);
+
+      try {
+        releaseShutdown.resolve();
+        await Promise.all([pendingReset, reinstall]);
+
+        assertEquals(runtime.getSync(), adapter);
+        assertEquals(alive, true);
+      } finally {
+        releaseShutdown.resolve();
+        await Promise.allSettled([pendingReset, reinstall]);
+      }
+    });
   });
 
   describe("resetLocalAdapter - edge cases", () => {
@@ -251,6 +441,7 @@ describe("registry.ts", () => {
   describe("concurrent access", () => {
     afterEach(async () => {
       await runtime.reset();
+      runtime.registerLoader(expectedRuntime, loadExpectedRuntimeAdapter, { overwrite: true });
     });
 
     it("should handle concurrent get calls", async () => {
@@ -258,6 +449,71 @@ describe("registry.ts", () => {
 
       assertEquals(a, b);
       assertEquals(b, c);
+    });
+
+    it("keeps a manually set adapter when auto-initialization finishes later", async () => {
+      const loaderStarted = createDeferred<void>();
+      const releaseLoader = createDeferred<void>();
+      const detectedAdapter = createMockAdapter();
+      const manualAdapter = createMockAdapter();
+
+      runtime.registerLoader(
+        expectedRuntime,
+        async () => {
+          loaderStarted.resolve();
+          await releaseLoader.promise;
+          return detectedAdapter;
+        },
+        { overwrite: true },
+      );
+
+      const pendingGet = runtime.get();
+      await loaderStarted.promise;
+      await runtime.set(manualAdapter);
+      releaseLoader.resolve();
+
+      assertEquals(await pendingGet, manualAdapter);
+      assertEquals(runtime.getSync(), manualAdapter);
+    });
+
+    it("keeps the registry reset when auto-initialization finishes later", async () => {
+      const loaderStarted = createDeferred<void>();
+      const releaseLoader = createDeferred<void>();
+
+      runtime.registerLoader(
+        expectedRuntime,
+        async () => {
+          loaderStarted.resolve();
+          await releaseLoader.promise;
+          return createMockAdapter();
+        },
+        { overwrite: true },
+      );
+
+      const pendingGet = runtime.get();
+      await loaderStarted.promise;
+      await runtime.reset();
+      releaseLoader.resolve();
+
+      await assertRejects(
+        () => pendingGet,
+        Error,
+        "initialization was superseded by a registry change",
+      );
+      assertEquals(runtime.isInitialized(), false);
+      assertThrows(() => runtime.getSync(), Error, "RuntimeAdapter not initialized");
+    });
+
+    it("rejects malformed adapters returned by loaders", async () => {
+      const malformed = createMockAdapter() as RuntimeAdapter & {
+        capabilities?: RuntimeAdapter["capabilities"];
+      };
+      Reflect.deleteProperty(malformed, "capabilities");
+      runtime.registerLoader(expectedRuntime, async () => malformed, { overwrite: true });
+
+      await assertRejects(() => runtime.get(), Error, "Invalid adapter");
+
+      assertEquals(runtime.isInitialized(), false);
     });
   });
 });

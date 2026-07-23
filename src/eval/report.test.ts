@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { EvalDataset, EvalRecord } from "veryfront/eval";
 import { datasets } from "./datasets.ts";
@@ -101,6 +101,20 @@ describe("eval/report", () => {
     assertEquals(pathMetadata.path, "datasets/support.json");
     assertEquals(aliasPathMetadata.path, "./datasets/support.json");
     assertEquals(aliasPathMetadata.hash, pathMetadata.hash);
+  });
+
+  it("includes JSON date values in dataset fingerprints", async () => {
+    const dataset = datasets.inline([{ id: "date", input: "placeholder" }]);
+    const first = await createEvalDatasetMetadata(dataset, [{
+      id: "date",
+      input: new Date("2026-01-01T00:00:00.000Z"),
+    }]);
+    const second = await createEvalDatasetMetadata(dataset, [{
+      id: "date",
+      input: new Date("2026-01-02T00:00:00.000Z"),
+    }]);
+
+    assertEquals(first.hash === second.hash, false);
   });
 
   it("summarizes duration, usage, failures, and flaky examples", () => {
@@ -328,5 +342,64 @@ describe("eval/report", () => {
 
     assertEquals(summary.usage?.veryfrontBilledUsd, undefined);
     assertEquals(summary.usage?.costCredits, 20);
+  });
+
+  it("rejects malformed numeric record data before aggregating it", () => {
+    const baseRecord = createRecord({ id: "bad", exampleId: "bad" });
+    assertThrows(
+      () => summarizeEvalRecords([{ ...baseRecord, durationMs: Number.NaN }]),
+      Error,
+      "durationMs",
+    );
+    assertThrows(
+      () =>
+        summarizeEvalRecords([{
+          ...baseRecord,
+          usage: { totalTokens: Number.POSITIVE_INFINITY },
+        }]),
+      Error,
+      "usage.totalTokens",
+    );
+    assertThrows(
+      () => summarizeEvalRecords([{ ...baseRecord, completed: "yes" } as unknown as EvalRecord]),
+      Error,
+      "completed",
+    );
+    assertThrows(
+      () =>
+        summarizeEvalRecords([{
+          ...baseRecord,
+          trace: { events: "invalid", toolCalls: [] },
+        } as unknown as EvalRecord]),
+      Error,
+      "trace",
+    );
+    assertThrows(
+      () =>
+        summarizeEvalRecords([{
+          ...baseRecord,
+          usage: { costSource: "vendor" },
+        } as unknown as EvalRecord]),
+      Error,
+      "costSource",
+    );
+    assertThrows(
+      () =>
+        summarizeEvalRecords([{
+          ...baseRecord,
+          metrics: [{ name: "metric", family: "unknown", severity: "gate" }],
+        } as unknown as EvalRecord]),
+      Error,
+      "metric result",
+    );
+    assertThrows(
+      () =>
+        summarizeEvalRecords([
+          createRecord({ usage: { totalTokens: Number.MAX_SAFE_INTEGER } }),
+          createRecord({ id: "q2:1", exampleId: "q2", usage: { totalTokens: 1 } }),
+        ]),
+      Error,
+      "numeric limit",
+    );
   });
 });

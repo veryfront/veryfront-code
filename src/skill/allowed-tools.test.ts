@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   filterToolsForSkill,
@@ -7,6 +7,7 @@ import {
   matchesAllowedTool,
   validateAllowedToolPatterns,
 } from "./allowed-tools.ts";
+import { SKILL_TOOL_IDS } from "./types.ts";
 
 describe("src/skill/allowed-tools", () => {
   describe("matchesAllowedTool", () => {
@@ -56,6 +57,7 @@ describe("src/skill/allowed-tools", () => {
     it("should return all tools when allowedTools is undefined", () => {
       const result = filterToolsForSkill(tools, undefined);
       assertEquals(result.length, 6);
+      assertEquals(result === tools, false);
     });
 
     it("should constrain skill infrastructure tools when allowedTools is undefined", () => {
@@ -219,6 +221,49 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(result, ["Read", "api:*", "Write"]);
     });
 
+    it("should return a deduplicated snapshot", () => {
+      const patterns = ["Read", "Read", "api:*"];
+      const result = validateAllowedToolPatterns(patterns);
+
+      patterns[0] = "Write";
+      assertEquals(result, ["Read", "api:*"]);
+    });
+
+    it("should reject accessor-backed entries without invoking them", () => {
+      let invoked = false;
+      const patterns = Object.defineProperty(["Read"], "0", {
+        enumerable: true,
+        get() {
+          invoked = true;
+          return "Write";
+        },
+      });
+
+      assertThrows(
+        () => validateAllowedToolPatterns(patterns),
+        Error,
+        "dense array",
+      );
+      assertEquals(invoked, false);
+    });
+
+    it("should reject sparse or excessive pattern lists", () => {
+      const sparse = Array<string>(1);
+      try {
+        validateAllowedToolPatterns(sparse);
+        throw new Error("expected sparse patterns to be rejected");
+      } catch (error) {
+        assertEquals(String(error).includes("dense array"), true);
+      }
+
+      try {
+        validateAllowedToolPatterns(Array.from({ length: 257 }, () => "Read"));
+        throw new Error("expected excessive patterns to be rejected");
+      } catch (error) {
+        assertEquals(String(error).includes("at most 256"), true);
+      }
+    });
+
     it("should reject invalid patterns", () => {
       try {
         validateAllowedToolPatterns(["Bash(git:*)"]);
@@ -231,5 +276,49 @@ describe("src/skill/allowed-tools", () => {
     it("should accept empty array", () => {
       assertEquals(validateAllowedToolPatterns([]), []);
     });
+  });
+
+  it("should expose skill infrastructure IDs through an immutable set view", () => {
+    assertEquals(SKILL_TOOL_IDS.has("load_skill"), true);
+    assertEquals(SKILL_TOOL_IDS.size, 3);
+    assertEquals([...SKILL_TOOL_IDS.keys()], [...SKILL_TOOL_IDS.values()]);
+    assertEquals([...SKILL_TOOL_IDS.entries()][0], ["load_skill", "load_skill"]);
+    assertEquals([...SKILL_TOOL_IDS][0], "load_skill");
+    const visited: string[] = [];
+    SKILL_TOOL_IDS.forEach((value, duplicate, set) => {
+      assertEquals(value, duplicate);
+      assertEquals(set, SKILL_TOOL_IDS);
+      visited.push(value);
+    });
+    assertEquals(visited.length, 3);
+    assertEquals("add" in SKILL_TOOL_IDS, false);
+    assertEquals(
+      (() => {
+        try {
+          Set.prototype.add.call(SKILL_TOOL_IDS, "attacker_tool");
+          return false;
+        } catch {
+          return true;
+        }
+      })(),
+      true,
+    );
+    assertEquals(SKILL_TOOL_IDS.has("attacker_tool"), false);
+    assertEquals(
+      [...SKILL_TOOL_IDS.union(new Set(["custom_tool"]))].includes("custom_tool"),
+      true,
+    );
+    assertEquals([...SKILL_TOOL_IDS.intersection(new Set(["load_skill"]))], ["load_skill"]);
+    assertEquals(SKILL_TOOL_IDS.difference(new Set(["load_skill"])).size, 2);
+    assertEquals(
+      [...SKILL_TOOL_IDS.symmetricDifference(new Set(["load_skill", "custom_tool"]))].sort(),
+      ["custom_tool", "execute_skill_script", "load_skill_reference"],
+    );
+    assertEquals(SKILL_TOOL_IDS.isSubsetOf(new Set(SKILL_TOOL_IDS)), true);
+    assertEquals(SKILL_TOOL_IDS.isSubsetOf(new Set(["load_skill"])), false);
+    assertEquals(SKILL_TOOL_IDS.isSupersetOf(new Set(["load_skill"])), true);
+    assertEquals(SKILL_TOOL_IDS.isSupersetOf(new Set(["custom_tool"])), false);
+    assertEquals(SKILL_TOOL_IDS.isDisjointFrom(new Set(["custom_tool"])), true);
+    assertEquals(SKILL_TOOL_IDS.isDisjointFrom(new Set(["load_skill"])), false);
   });
 });

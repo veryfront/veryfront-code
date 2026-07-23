@@ -5,8 +5,9 @@ import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import * as React from "react";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { LayoutItem } from "#veryfront/types";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { createLayoutComponentCache } from "./component-loader.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import {
   __setServerModuleLoaderForTests,
   resetReactCache,
@@ -110,29 +111,53 @@ describe(
     });
 
     describe("applyLayoutsFunctionBody", () => {
-      it("uses the requested project React version", async () => {
-        const loadedUrls: string[] = [];
-        __setServerModuleLoaderForTests((url) => {
-          loadedUrls.push(url);
-          return Promise.resolve({ default: React });
-        });
+      it("loads MDX layouts through the secure ESM module flow", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const originalRender = mdxRenderer.render;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+          render: typeof mdxRenderer.render;
+        };
+        let loadedCode: string | undefined;
 
-        await applyLayoutsFunctionBody(
-          React.createElement("div"),
-          undefined,
-          [],
-          {},
-          createLayoutComponentCache(),
-          "/project",
-          createMockAdapter(),
-          undefined,
-          "project-id",
-          "project-slug",
-          "content-source-id",
-          "18.3.1",
-        );
+        mutableRenderer.loadModuleESM = ((code: string) => {
+          loadedCode = code;
+          return Promise.resolve({
+            default: ({ children }: { children?: React.ReactNode }) =>
+              React.createElement("section", { "data-layout": "mdx" }, children),
+          });
+        }) as typeof mdxRenderer.loadModuleESM;
+        mutableRenderer.render = (() => {
+          throw new Error("The disabled synchronous renderer must not be called");
+        }) as typeof mdxRenderer.render;
 
-        assertEquals(loadedUrls.some((url) => url.includes("react@18.3.1")), true);
+        try {
+          const compiledCode = "export default function Layout() { return null; }";
+          const result = await applyLayoutsFunctionBody(
+            React.createElement("p", null, "content"),
+            { compiledCode } as MdxBundle,
+            [],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            createMockAdapter(),
+            undefined,
+            "project-id",
+            "project-slug",
+            "content-source-id",
+            undefined,
+            { imports: {} },
+          );
+
+          assertEquals(loadedCode, compiledCode);
+          assertEquals(
+            await renderToStringAdapter(result),
+            '<section data-layout="mdx"><p>content</p></section>',
+          );
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+          mutableRenderer.render = originalRender;
+        }
       });
 
       it("should preserve App Router document layouts for server rendering", async () => {

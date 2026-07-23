@@ -1,3 +1,4 @@
+import { extname } from "#veryfront/compat/path/basic-operations.ts";
 import { isAbsolute, normalize } from "#veryfront/compat/path/resolution.ts";
 import { base64urlEncode } from "./base64url.ts";
 import { logger } from "./logger/logger.ts";
@@ -10,7 +11,7 @@ function stripTrailingSlash(pathname: string): string {
 /** Normalizes path. */
 export function normalizePath(pathname: string): string {
   if (!pathname) return pathname;
-  return stripTrailingSlash(normalize(pathname.replace(/\\+/g, "/")));
+  return stripTrailingSlash(normalize(pathname.replace(/\\/g, "/")));
 }
 
 export function joinPath(a: string, b: string): string {
@@ -20,8 +21,19 @@ export function joinPath(a: string, b: string): string {
 }
 
 export function isWithinDirectory(root: string, target: string): boolean {
-  const normalizedRoot = stripTrailingSlash(normalizePath(root));
-  const normalizedTarget = stripTrailingSlash(normalizePath(target));
+  let normalizedRoot = stripTrailingSlash(normalizePath(root));
+  let normalizedTarget = stripTrailingSlash(normalizePath(target));
+
+  if (normalizedRoot === "") return false;
+
+  const rootIsWindowsLike = /^[A-Za-z]:\//.test(normalizedRoot) ||
+    normalizedRoot.startsWith("//");
+  const targetIsWindowsLike = /^[A-Za-z]:\//.test(normalizedTarget) ||
+    normalizedTarget.startsWith("//");
+  if (rootIsWindowsLike && targetIsWindowsLike) {
+    normalizedRoot = normalizedRoot.toLowerCase();
+    normalizedTarget = normalizedTarget.toLowerCase();
+  }
 
   if (normalizedRoot === "/") return normalizedTarget.startsWith("/");
   return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
@@ -32,9 +44,8 @@ export function isWithinDirectory(root: string, target: string): boolean {
  * Returns empty string if no extension found.
  */
 export function getExtension(path: string): string {
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) return "";
-  return path.slice(lastDot);
+  const extension = extname(path);
+  return extension === "." ? "" : extension;
 }
 
 /**
@@ -42,9 +53,7 @@ export function getExtension(path: string): string {
  * Returns empty string if no extension found.
  */
 export function getExtensionName(path: string): string {
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) return "";
-  return path.slice(lastDot + 1).toLowerCase();
+  return getExtension(path).slice(1).toLowerCase();
 }
 
 export function getDirectory(path: string): string {
@@ -87,66 +96,52 @@ function getRequiredBase64Padding(length: number): string | undefined {
 }
 
 export function fromBase64Url(encoded: string): string {
+  if (!/^[A-Za-z0-9_-]*$/.test(encoded)) {
+    logger.debug("Failed to decode base64url string", {
+      encodedLength: encoded.length,
+      reason: "invalid-characters",
+    });
+    return "";
+  }
+
   const b64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
   const padding = getRequiredBase64Padding(b64.length);
 
   if (padding === undefined) {
-    logger.debug(`Failed to decode base64url string "${encoded}": invalid length`);
+    logger.debug("Failed to decode base64url string", {
+      encodedLength: encoded.length,
+      reason: "invalid-length",
+    });
     return "";
   }
 
   try {
-    return atob(b64 + padding);
+    const binary = atob(b64 + padding);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      // Preserve compatibility with paths emitted by older releases, which
+      // encoded JavaScript strings as Latin-1 instead of UTF-8.
+      return binary;
+    }
   } catch (error) {
-    logger.debug(`Failed to decode base64url string "${encoded}":`, error);
+    logger.debug("Failed to decode base64url string", {
+      encodedLength: encoded.length,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
     return "";
   }
 }
 
 /**
- * Framework source directories that should never be fetched from the API.
- * These are framework-internal modules that must be resolved from local filesystem.
- */
-const FRAMEWORK_SOURCE_DIRS = [
-  "react",
-  "platform",
-  "client",
-  "lib",
-  "html",
-  "utils",
-  "transforms",
-  "modules",
-  "server",
-  "config",
-  "errors",
-  "observability",
-  "rendering",
-  "security",
-  "data",
-  "cache",
-  "build",
-  "repositories",
-  "cli",
-] as const;
-
-const FRAMEWORK_SOURCE_PATH_RE = new RegExp(
-  `^src/(${FRAMEWORK_SOURCE_DIRS.join("|")})/`,
-);
-
-/**
  * Check if a normalized path is a framework path that should not be fetched from API.
  *
- * Framework paths can appear in two forms:
- * 1. "_veryfront/..." - original framework module path prefix
- * 2. "src/react/...", "src/platform/...", etc. - framework source paths
- *    (after FSAdapter normalizes absolute paths like /Users/.../veryfront-server/src/...)
+ * Framework paths use the explicit `_veryfront/` namespace. A relative
+ * `src/<name>/...` path is always ambiguous because user projects can use the
+ * same directory names as framework modules, so it must remain a project path.
  */
 export function isFrameworkSourcePath(normalizedPath: string): boolean {
-  // Check for _veryfront/ prefix (with or without embedded: prefix)
-  if (
-    normalizedPath.startsWith("_veryfront/") || normalizedPath.startsWith("embedded:_veryfront/")
-  ) {
-    return true;
-  }
-  return FRAMEWORK_SOURCE_PATH_RE.test(normalizedPath);
+  return normalizedPath.startsWith("_veryfront/") ||
+    normalizedPath.startsWith("embedded:_veryfront/");
 }

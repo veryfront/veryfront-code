@@ -1,33 +1,79 @@
 import { extract } from "#std/front-matter/yaml.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
 
+/** Controls extended reasoning for a runtime agent. */
+export interface RuntimeAgentThinkingConfig {
+  /** Whether extended reasoning is enabled. */
+  enabled: boolean;
+  /** Optional reasoning-token budget. */
+  budgetTokens?: number;
+}
+
+/** Agent definition loaded from a Markdown frontmatter document. */
+export interface RuntimeAgentMarkdownDefinition {
+  /** Stable agent identifier. */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Short agent description. */
+  description: string;
+  /** Optional avatar URL. */
+  avatarUrl?: string;
+  /** System instructions for the agent. */
+  instructions: string;
+  /** Extended reasoning configuration. */
+  thinking?: RuntimeAgentThinkingConfig;
+  /** Optional model override. */
+  model?: string;
+  /** Optional sampling temperature. */
+  temperature?: number;
+  /** Optional execution step limit. */
+  maxSteps?: number;
+  /** Provider-native tools requested by the agent. */
+  providerTools?: string[];
+  /** Skill selector or flag enabling all visible skills. */
+  skills?: true | string[];
+  /** Tool selector or flag enabling all visible tools. */
+  tools?: true | string[];
+  /** Agent identifiers available for delegation. */
+  delegates?: string[];
+}
+
+/** Input used to parse one Markdown agent definition. */
+export interface ParseRuntimeAgentMarkdownDefinitionInput {
+  /** Agent identifier associated with the document. */
+  id: string;
+  /** Raw Markdown document content. */
+  content: string;
+}
+
 /** Zod schema for get runtime agent thinking config. */
-export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
-  v.object({
-    enabled: v.boolean(),
-    budgetTokens: v.number().positive().optional(),
-  })
-);
+export const getRuntimeAgentThinkingConfigSchema: () => Schema<RuntimeAgentThinkingConfig> =
+  defineSchema((v) =>
+    v.object({
+      enabled: v.boolean(),
+      budgetTokens: v.number().positive().optional(),
+    })
+  );
 
 /** Schema for runtime agent thinking config.
  * @deprecated Use getRuntimeAgentThinkingConfigSchema()
  */
-export const runtimeAgentThinkingConfigSchema = lazySchema(getRuntimeAgentThinkingConfigSchema);
-
-/** Configuration used by runtime agent thinking. */
-export type RuntimeAgentThinkingConfig = InferSchema<
-  ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
->;
+export const runtimeAgentThinkingConfigSchema: Schema<RuntimeAgentThinkingConfig> = lazySchema(
+  getRuntimeAgentThinkingConfigSchema,
+);
 
 /** Zod schema for get runtime agent markdown definition. */
-export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
+export const getRuntimeAgentMarkdownDefinitionSchema: () => Schema<
+  RuntimeAgentMarkdownDefinition
+> = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     name: v.string().min(1),
@@ -51,17 +97,15 @@ export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-cont
 /** Schema for runtime agent markdown definition.
  * @deprecated Use getRuntimeAgentMarkdownDefinitionSchema()
  */
-export const runtimeAgentMarkdownDefinitionSchema = lazySchema(
-  getRuntimeAgentMarkdownDefinitionSchema,
-);
-
-/** Definition for runtime agent markdown. */
-export type RuntimeAgentMarkdownDefinition = InferSchema<
-  ReturnType<typeof getRuntimeAgentMarkdownDefinitionSchema>
->;
+export const runtimeAgentMarkdownDefinitionSchema: Schema<RuntimeAgentMarkdownDefinition> =
+  lazySchema(
+    getRuntimeAgentMarkdownDefinitionSchema,
+  );
 
 /** Zod schema for get parse runtime agent markdown definition input. */
-export const getParseRuntimeAgentMarkdownDefinitionInputSchema = defineSchema((v) =>
+export const getParseRuntimeAgentMarkdownDefinitionInputSchema: () => Schema<
+  ParseRuntimeAgentMarkdownDefinitionInput
+> = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     content: v.string(),
@@ -71,14 +115,11 @@ export const getParseRuntimeAgentMarkdownDefinitionInputSchema = defineSchema((v
 /** Schema for parse runtime agent markdown definition input.
  * @deprecated Use getParseRuntimeAgentMarkdownDefinitionInputSchema()
  */
-export const parseRuntimeAgentMarkdownDefinitionInputSchema = lazySchema(
+export const parseRuntimeAgentMarkdownDefinitionInputSchema: Schema<
+  ParseRuntimeAgentMarkdownDefinitionInput
+> = lazySchema(
   getParseRuntimeAgentMarkdownDefinitionInputSchema,
 );
-
-/** Input payload for parse runtime agent markdown definition. */
-export type ParseRuntimeAgentMarkdownDefinitionInput = InferSchema<
-  ReturnType<typeof getParseRuntimeAgentMarkdownDefinitionInputSchema>
->;
 
 /** Input payload for create runtime agent system messages. */
 export type CreateRuntimeAgentSystemMessagesInput = {

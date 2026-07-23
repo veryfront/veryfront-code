@@ -1,51 +1,40 @@
-import { isDeno, nodePath } from "./runtime.ts";
-
-function hasWindowsLikePath(path: string): boolean {
-  return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
-}
-
-/** Normalize backslashes to forward slashes (for Deno on Windows). */
-function normSep(p: string): string {
-  return p.includes("\\") ? p.replace(/\\/g, "/") : p;
-}
+import { canonicalizeSeparators, normalizeCanonicalPath, parsePathRoot } from "./internals.ts";
 
 /** Join path segments. */
 export function join(...paths: string[]): string {
-  const joined = paths
-    .map(normSep)
-    .filter((p) => p.length > 0)
-    .join("/")
-    .replace(/\/+/g, "/")
-    .replace(/\/$/, "");
-
-  return joined || "/";
+  const joined = paths.map(canonicalizeSeparators).filter(Boolean).join("/");
+  return normalizeCanonicalPath(joined);
 }
 
 /** Return the parent directory path. */
 export function dirname(path: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.dirname(path);
+  let normalized = canonicalizeSeparators(path);
+  const root = parsePathRoot(normalized);
 
-  const p = normSep(path);
-  const lastSlash = p.lastIndexOf("/");
-  if (lastSlash === -1) return ".";
-  if (lastSlash === 0) return "/";
-  return p.slice(0, lastSlash);
+  while (normalized.length > root.root.length && normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (normalized === root.root) return root.root || ".";
+
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash === -1) return root.root || ".";
+  if (lastSlash < root.root.length) return root.root || ".";
+  return normalized.slice(0, lastSlash) || "/";
 }
 
 /** Return the last path segment. */
 export function basename(path: string, ext?: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) {
-    // Only pass ext if defined - Bun is strict about this parameter
-    return ext === undefined ? nodePath.basename(path) : nodePath.basename(path, ext);
-  }
-
-  let normalizedPath = normSep(path);
-  while (normalizedPath.length > 1 && normalizedPath.endsWith("/")) {
+  let normalizedPath = canonicalizeSeparators(path);
+  const root = parsePathRoot(normalizedPath);
+  while (normalizedPath.length > root.root.length && normalizedPath.endsWith("/")) {
     normalizedPath = normalizedPath.slice(0, -1);
   }
 
+  if (normalizedPath === root.root) return "";
   const lastSlash = normalizedPath.lastIndexOf("/");
-  let base = lastSlash === -1 ? normalizedPath : normalizedPath.slice(lastSlash + 1);
+  let base = lastSlash === -1
+    ? normalizedPath.slice(root.root.length)
+    : normalizedPath.slice(lastSlash + 1);
 
   if (ext && base.endsWith(ext)) base = base.slice(0, -ext.length);
 
@@ -54,9 +43,8 @@ export function basename(path: string, ext?: string): string {
 
 /** Return the file extension for a path. */
 export function extname(path: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.extname(path);
-
   const base = basename(path);
+  if (base === "." || base === "..") return "";
   const lastDot = base.lastIndexOf(".");
   if (lastDot <= 0) return "";
   return base.slice(lastDot);

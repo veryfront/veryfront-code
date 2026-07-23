@@ -1,18 +1,18 @@
 import type {
   DirEntry,
-  FileChangeEvent,
   FileInfo,
   FileSystemAdapter,
   FileWatcher,
   WatchOptions,
 } from "../../base.ts";
 import {
-  createFileWatcher,
-  createWatcherIterator,
+  createManagedFileWatcher,
+  normalizeWatchPaths,
   setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
+import { getSystemErrorCode, isFileNotFoundError } from "../shared/filesystem-errors.ts";
 import { makeNodeTempDir } from "../shared/temp-dir.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export class NodeFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {
@@ -38,8 +38,8 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
       await fs.access(path);
       return true;
     } catch (error) {
-      serverLogger.debug(`File access check failed for ${path}:`, error);
-      return false;
+      if (isFileNotFoundError(error)) return false;
+      throw error;
     }
   }
 
@@ -95,7 +95,7 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     const fs = await import("node:fs/promises");
-    await fs.rm(path, { recursive: options?.recursive, force: true });
+    await fs.rm(path, { recursive: options?.recursive, force: false });
   }
 
   async makeTempDir(prefix: string): Promise<string> {
@@ -103,63 +103,49 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
-    const pathArray = Array.isArray(paths) ? paths : [paths];
+    const pathArray = normalizeWatchPaths(paths);
     const recursive = options?.recursive ?? true;
     const signal = options?.signal;
 
-    let closed = false;
     const watchers: Array<import("node:fs").FSWatcher> = [];
-    const eventQueue: FileChangeEvent[] = [];
-    let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
 
-    const setResolver = (r: ((value: IteratorResult<FileChangeEvent>) => void) | null): void => {
-      resolver = r;
-    };
-
-    void Promise.all(
-      pathArray.map((path) =>
-        setupNodeFsWatcher(path, {
-          recursive,
-          closed: () => closed,
-          signal,
-          eventQueue,
-          getResolver: () => resolver,
-          setResolver,
-          watchers,
-          onError: (error, watchPath) =>
-            serverLogger.error(`File watcher error for ${watchPath}:`, error),
-        })
-      ),
-    ).catch((error) => {
-      serverLogger.error("Failed to setup file watchers:", error);
-    });
-
-    const iterator = createWatcherIterator(
-      eventQueue,
-      (r) => {
-        resolver = r;
-      },
-      () => closed,
-      () => signal?.aborted ?? false,
-    );
-
-    const cleanup = (): void => {
-      closed = true;
-
-      for (const watcher of watchers) {
+    const closeNativeWatchers = (): void => {
+      for (const watcher of watchers.splice(0)) {
         try {
           watcher.close();
-        } catch (error) {
-          serverLogger.debug("Error closing file watcher during cleanup:", error);
+        } catch {
+          serverLogger.debug("File watcher cleanup failed");
         }
       }
-
-      resolver?.({ done: true, value: undefined });
-      resolver = null;
     };
 
-    signal?.addEventListener("abort", cleanup, { once: true });
-
-    return createFileWatcher(iterator, cleanup);
+    return createManagedFileWatcher({
+      signal,
+      overflowPaths: pathArray,
+      setup: async ({ queue, isClosed }) => {
+        await Promise.all(
+          pathArray.map((path) =>
+            setupNodeFsWatcher(path, {
+              recursive,
+              closed: isClosed,
+              signal,
+              queue,
+              watchers,
+              onError: (error) => {
+                serverLogger.error("File watcher setup failed", {
+                  code: getSystemErrorCode(error),
+                });
+              },
+            })
+          ),
+        );
+      },
+      closeResources: closeNativeWatchers,
+      onError: (error) => {
+        serverLogger.error("File watcher setup failed", {
+          code: getSystemErrorCode(error),
+        });
+      },
+    });
   }
 }

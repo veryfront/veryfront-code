@@ -50,7 +50,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
       assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
       assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)");
-      assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
+      assertIncludes(result, "if (shouldRenderRscClientPage)");
     });
 
     it("uses the configured App Router root for pages and layouts", () => {
@@ -60,8 +60,28 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "function isRootAppLayoutPath");
     });
 
-    it("should use pathToModuleUrl for non-RSC page loading", () => {
-      assertIncludes(getRendererScript(), "pathToModuleUrl(data.pagePath");
+    it("uses the bounded shared loader for non-RSC page loading", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "await loadComponent(data.pagePath)");
+      assertEquals(result.includes("pathToModuleUrl(data.pagePath"), false);
+    });
+
+    it("selects validated RSC component exports without namespace fallback", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "selectComponentExport(module, path)");
+      assertIncludes(result, "selectComponentExport(pageModule, data.pagePath)");
+      assertEquals(result.includes("pageModule.default || pageModule"), false);
+      assertEquals(result.includes("module.default || module"), false);
+    });
+
+    it("does not log raw hydration data or module URLs", () => {
+      const result = getRendererScript();
+      assertEquals(result.includes("Hydration data:', data"), false);
+      assertEquals(
+        result.includes("Loading App Router component from RSC module:', moduleUrl"),
+        false,
+      );
+      assertEquals(result.includes("Loading page from hydration data:', moduleUrl"), false);
     });
 
     it("should fallback to Pages Router pattern", () => {
@@ -75,8 +95,8 @@ describe("hydration-script-builder/templates/renderer", () => {
       );
     });
 
-    it("should get PageComponent from default export", () => {
-      assertIncludes(getRendererScript(), "pageModule.default || pageModule");
+    it("should validate the selected page component export", () => {
+      assertIncludes(getRendererScript(), "PageComponent = selectComponentExport");
     });
 
     it("should merge props with normalized params", () => {
@@ -101,7 +121,10 @@ describe("hydration-script-builder/templates/renderer", () => {
 
     it("should recreate initial layouts with their serialized props", () => {
       const result = getRendererScript();
-      assertIncludes(result, "data.layoutProps?.[layouts[i].path] || {}");
+      assertIncludes(
+        result,
+        "Object.prototype.hasOwnProperty.call(data.layoutProps, layouts[i].path)",
+      );
       assertIncludes(result, "{ ...layoutProps, children: tree }");
     });
 
@@ -165,6 +188,12 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(getRendererScript(), "identifierPrefix: 'vf'");
     });
 
+    it("reports recoverable hydration failures without suppressing them", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "Hydration recovery failed (");
+      assertEquals(result.includes("Hydration mismatch (suppressed)"), false);
+    });
+
     it("should expose renderPage on window for HMR", () => {
       assertIncludes(getRendererScript(), "window.__veryfrontRenderPage = renderPage");
     });
@@ -183,6 +212,21 @@ describe("hydration-script-builder/templates/renderer", () => {
 
     it("should look for root container", () => {
       assertIncludes(getRendererScript(), "getElementById('root')");
+    });
+
+    it("signals terminal hydration failures instead of leaving navigation waiting", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "if (data.pagePath && !PageComponent)");
+      assertIncludes(result, "throw new Error('Page module failed to load')");
+      assertIncludes(result, "throw new Error('Hydration root not found')");
+      assertIncludes(result, "window.__veryfrontHydrationFailed(parseError)");
+    });
+
+    it("enforces the hydration-data byte limit before parsing", () => {
+      assertIncludes(
+        getRendererScript(),
+        "new TextEncoder().encode(serializedData).byteLength > MAX_PAGE_DATA_BYTES",
+      );
     });
 
     it("should support re-rendering via __reactRoot", () => {

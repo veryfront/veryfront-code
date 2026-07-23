@@ -10,6 +10,29 @@ import {
   SECONDS_PER_MINUTE,
 } from "./cache.ts";
 
+async function readCacheConstant(
+  exportName: string,
+  environment: Record<string, string>,
+): Promise<number> {
+  const moduleUrl = new URL("./cache.ts", import.meta.url).href;
+  const script = `import * as cache from ${JSON.stringify(moduleUrl)};
+const value = cache[${JSON.stringify(exportName)}];
+if (typeof value !== "number") throw new Error("Expected numeric cache constant");
+console.log(String(value));`;
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: ["eval", script],
+    clearEnv: true,
+    env: environment,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+
+  if (!output.success) {
+    throw new Error(new TextDecoder().decode(output.stderr));
+  }
+  return Number(new TextDecoder().decode(output.stdout).trim());
+}
+
 describe("constants/cache", () => {
   describe("time constants", () => {
     it("should have correct MS_PER_SECOND", () => {
@@ -65,6 +88,64 @@ describe("constants/cache", () => {
         const previewTtl = getDistributedCacheTTL(type, false);
 
         assertEquals(prodTtl >= previewTtl, true);
+      }
+    });
+  });
+
+  describe("environment overrides", () => {
+    it("accepts trimmed decimal integers", async () => {
+      assertEquals(
+        await readCacheConstant("DEFAULT_LRU_MAX_ENTRIES", {
+          LRU_DEFAULT_MAX_ENTRIES: " 250 ",
+        }),
+        250,
+      );
+    });
+
+    it("rejects partial, fractional, negative, and unsafe entry limits", async () => {
+      for (const value of ["12junk", "1.5", "-2", "9007199254740992", "1000001"]) {
+        assertEquals(
+          await readCacheConstant("DEFAULT_LRU_MAX_ENTRIES", {
+            LRU_DEFAULT_MAX_ENTRIES: value,
+          }),
+          100,
+        );
+      }
+    });
+
+    it("rejects excessive memory and TTL limits", async () => {
+      assertEquals(
+        await readCacheConstant("LRU_DEFAULT_MAX_SIZE_BYTES", {
+          LRU_MAX_SIZE_MB: "4097",
+        }),
+        200 * 1024 * 1024,
+      );
+      assertEquals(
+        await readCacheConstant("HTTP_MODULE_DISTRIBUTED_TTL_SEC", {
+          HTTP_MODULE_DISTRIBUTED_TTL_SEC: "31536001",
+        }),
+        24 * 60 * 60,
+      );
+    });
+
+    it("preserves zero as the documented per-project disable value", async () => {
+      assertEquals(
+        await readCacheConstant("REVALIDATION_PER_PROJECT_LIMIT", {
+          REVALIDATION_PER_PROJECT_LIMIT: "0",
+        }),
+        0,
+      );
+    });
+
+    it("rejects negative or above-global per-project limits", async () => {
+      for (const value of ["-1", "33"]) {
+        assertEquals(
+          await readCacheConstant("REVALIDATION_PER_PROJECT_LIMIT", {
+            MAX_CONCURRENT_REVALIDATIONS: "32",
+            REVALIDATION_PER_PROJECT_LIMIT: value,
+          }),
+          11,
+        );
       }
     });
   });

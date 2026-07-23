@@ -1,5 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   createAgUiBodyLimitErrorResponse,
   extractRequest,
@@ -15,7 +15,20 @@ import {
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
 
-export const getAgUiResumeSignalSchema = defineSchema((v) =>
+/** Signal submitted to resume a waiting AG-UI tool call. */
+export interface AgUiResumeSignal {
+  /** Signal discriminator. */
+  type: "tool_result";
+  /** Waiting tool call identifier. */
+  toolCallId: string;
+  /** Tool result supplied by the client. */
+  result?: unknown;
+  /** Whether the result represents a tool error. */
+  isError: boolean;
+}
+
+/** Returns the AG-UI resume signal schema. */
+export const getAgUiResumeSignalSchema: () => Schema<AgUiResumeSignal> = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
       type: v.literal("tool_result"),
@@ -29,13 +42,15 @@ export const getAgUiResumeSignalSchema = defineSchema((v) =>
 /** Schema for AG-UI resume signal.
  * @deprecated Use getAgUiResumeSignalSchema()
  */
-export const AgUiResumeSignalSchema = lazySchema(getAgUiResumeSignalSchema);
+export const AgUiResumeSignalSchema: Schema<AgUiResumeSignal> = lazySchema(
+  getAgUiResumeSignalSchema,
+);
 
-/** Public API contract for AG-UI resume signal. */
-export type AgUiResumeSignal = InferSchema<ReturnType<typeof getAgUiResumeSignalSchema>>;
-
-type ResumeValue = {
+/** Value submitted when an AG-UI tool wait resumes. */
+export type ResumeValue = {
+  /** Tool result supplied by the client. */
   result: unknown;
+  /** Whether the submitted result represents a tool error. */
   isError: boolean;
 };
 
@@ -43,7 +58,9 @@ function getRunId(pathname: string, regex: RegExp): string | null {
   return regex.exec(pathname)?.[1] ?? null;
 }
 
+/** Shared options for AG-UI run-control handlers. */
 export interface AgUiRunControlHandlerOptions {
+  /** Resolves the durable run identifier for a request. */
   resolveRunId?:
     | ((input: { request: Request; requestOrCtx: unknown }) => string | null)
     | ((input: { request: Request; requestOrCtx: unknown }) => Promise<string | null>);
@@ -51,11 +68,13 @@ export interface AgUiRunControlHandlerOptions {
 
 /** Options accepted by AG-UI resume handler. */
 export interface AgUiResumeHandlerOptions extends AgUiRunControlHandlerOptions {
+  /** Session manager value. */
   sessionManager: RunResumeSessionManager<ResumeValue>;
 }
 
 /** Options accepted by AG-UI cancel handler. */
 export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHandlerOptions {
+  /** Session manager value. */
   sessionManager: RunResumeSessionManager<T>;
 }
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getTimeoutFromEnv, timeout } from "./timeout.ts";
 
@@ -83,6 +83,78 @@ describe("middleware/builtin/timeout", () => {
         () => Promise.resolve(new Response("ok")),
       );
       assertEquals(await res?.text(), "ok");
+    });
+
+    it("does not exclude paths that only share a prefix", async () => {
+      const mw = timeout({ timeoutMs: 1, exclude: ["/custom"] });
+      const slow = makeSlowNext(50);
+      const res = await mw(makeCtx("http://localhost/customized"), slow.next);
+
+      assertEquals(res?.status, 504);
+      slow.clear();
+    });
+
+    it("rejects invalid timeout configuration", () => {
+      for (
+        const timeoutMs of [
+          0,
+          -1,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          1.5,
+          2_147_483_648,
+        ]
+      ) {
+        assertThrows(
+          () => timeout({ timeoutMs }),
+          TypeError,
+          "timeoutMs",
+        );
+      }
+    });
+
+    it("rejects malformed messages and exclusion paths during configuration", () => {
+      assertThrows(
+        () => timeout({ message: 42 as unknown as string }),
+        TypeError,
+        "message",
+      );
+      assertThrows(
+        () => timeout({ message: "x".repeat(1_025) }),
+        TypeError,
+        "message",
+      );
+      for (
+        const exclude of [
+          ["relative"],
+          ["/path?query=secret"],
+          ["/path#fragment"],
+          ["/path\nnext"],
+        ]
+      ) {
+        assertThrows(
+          () => timeout({ exclude }),
+          TypeError,
+          "exclude",
+        );
+      }
+      assertThrows(
+        () => timeout({ exclude: new Array(129).fill("/safe") }),
+        TypeError,
+        "exclude",
+      );
+    });
+
+    it("snapshots exclusion paths at construction", async () => {
+      const exclude = ["/safe"];
+      const mw = timeout({ timeoutMs: 1, exclude });
+      exclude[0] = "/changed";
+      const response = await mw(
+        makeCtx("http://localhost/safe"),
+        () => Promise.resolve(new Response("ok")),
+      );
+
+      assertEquals(await response?.text(), "ok");
     });
 
     it("should propagate non-timeout errors", async () => {

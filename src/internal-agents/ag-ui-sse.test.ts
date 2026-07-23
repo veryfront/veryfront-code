@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStreamTransformState,
@@ -29,18 +29,24 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(parsed.remainder, 'data: {"type":"message-start"');
   });
 
-  it("skips malformed SSE payloads and continues parsing", () => {
-    const parsed = parseSseJsonEvents(
-      'data: {"type":"text-delta","id":"text-1","delta":"hello"}\n\n' +
-        'data: {"type":"broken"\n\n' +
-        'data: {"type":"step-end"}\n\n',
+  it("accepts standard CRLF-delimited runtime SSE frames", () => {
+    assertEquals(
+      parseSseJsonEvents('data: {"type":"step-end"}\r\n\r\n'),
+      { events: [{ type: "step-end" }], remainder: "" },
     );
+  });
 
-    assertEquals(parsed.events, [
-      { type: "text-delta", id: "text-1", delta: "hello" },
-      { type: "step-end" },
-    ]);
-    assertEquals(parsed.remainder, "");
+  it("rejects malformed SSE payloads instead of dropping runtime events", () => {
+    assertThrows(
+      () =>
+        parseSseJsonEvents(
+          'data: {"type":"text-delta","id":"text-1","delta":"hello"}\n\n' +
+            'data: {"type":"broken"\n\n' +
+            'data: {"type":"step-end"}\n\n',
+        ),
+      SyntaxError,
+      "valid JSON",
+    );
   });
 
   it("maps runtime tool and text events to AG-UI wire events", () => {
@@ -89,12 +95,16 @@ describe("internal-agents/ag-ui-sse", () => {
       }),
       [{
         event: "ToolCallResult",
-        payload: { toolCallId: "tool-1", result: { error: "boom" }, isError: true },
+        payload: {
+          toolCallId: "tool-1",
+          result: { error: "Tool execution failed" },
+          isError: true,
+        },
       }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "error", error: "Runtime failed" }),
-      [{ event: "RunError", payload: { message: "Runtime failed" } }],
+      [{ event: "RunError", payload: { message: "Internal agent runtime failed" } }],
     );
   });
 
@@ -170,7 +180,7 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(mapRuntimeEventToAgUi(state, { type: "unknown-event" }), []);
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "error", error: 123 }),
-      [{ event: "RunError", payload: { message: "Agent run failed" } }],
+      [{ event: "RunError", payload: { message: "Internal agent runtime failed" } }],
     );
     assertEquals(finalizeRunEvents(state, null), []);
   });
@@ -194,6 +204,11 @@ describe("internal-agents/ag-ui-sse", () => {
           },
         },
       }],
+    );
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, { type: "data-empty", data: undefined }),
+      [{ event: "Custom", payload: { name: "empty", value: null } }],
     );
 
     assertEquals(
@@ -236,7 +251,7 @@ describe("internal-agents/ag-ui-sse", () => {
           event: "ToolCallResult",
           payload: {
             toolCallId: "tool-4",
-            result: { error: "invalid url" },
+            result: { error: "Tool execution failed" },
             isError: true,
           },
         },
@@ -255,6 +270,18 @@ describe("internal-agents/ag-ui-sse", () => {
           result: { error: "Tool output denied" },
           isError: true,
         },
+      }],
+    );
+
+    assertEquals(
+      mapRuntimeEventToAgUi(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-void",
+        output: undefined,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: { toolCallId: "tool-void", result: null },
       }],
     );
   });
@@ -376,27 +403,85 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("rejects unsupported event names before constructing an SSE frame", () => {
+    assertThrows(
+      () => formatAgUiEvent("RunStarted\ndata: injected", {}),
+      TypeError,
+      "Unsupported AG-UI event",
+    );
+  });
+
+  it("rejects required event values that JSON serialization would omit", () => {
+    assertThrows(
+      () =>
+        formatAgUiEvent("ToolCallResult", {
+          toolCallId: "tool-1",
+          result: undefined,
+        }),
+      Error,
+    );
+    assertThrows(
+      () => formatAgUiEvent("Custom", { name: "empty", value: undefined }),
+      Error,
+    );
+  });
+
+  it("rejects AG-UI frames and parser buffers above the wire budget", () => {
+    const oversized = "x".repeat(4 * 1024 * 1024 + 1);
+
+    assertThrows(
+      () =>
+        formatAgUiEvent("TextMessageContent", {
+          messageId: "assistant-1",
+          contentId: "block-1",
+          delta: oversized,
+        }),
+      Error,
+      "AG-UI event exceeds",
+    );
+    assertThrows(
+      () => parseSseJsonEvents(oversized),
+      Error,
+      "runtime SSE buffer exceeds",
+    );
+  });
+
   it("preserves extended usage metadata in RunFinished frames", () => {
+    const metadata = {
+      provider: "veryfront-cloud",
+      model: "anthropic/claude-sonnet-4-6",
+      inputTokens: 12,
+      outputTokens: 8,
+      totalTokens: 20,
+      cachedInputTokens: 4,
+      cacheCreationInputTokens: 6,
+      cacheReadInputTokens: 4,
+      reasoningTokens: 2,
+      billableInputTokens: 10,
+      billableOutputTokens: 7,
+      costUsd: 0.002,
+      providerInputCostUsd: 0.001,
+      providerOutputCostUsd: 0.002,
+      providerCostUsd: 0.003,
+      veryfrontInputChargeUsd: 0.004,
+      veryfrontOutputChargeUsd: 0.005,
+      veryfrontChargeUsd: 0.009,
+      veryfrontBilledUsd: 0.01,
+      costCredits: 2,
+      costSource: "gateway",
+      billingMode: "deferred",
+      usageCaptureStatus: "complete",
+      finishReason: "stop",
+    } as const;
     const payload = formatAgUiEvent("RunFinished", {
-      metadata: {
-        provider: "veryfront-cloud",
-        model: "anthropic/claude-sonnet-4-6",
-        inputTokens: 12,
-        outputTokens: 8,
-        totalTokens: 20,
-        cachedInputTokens: 4,
-        cacheCreationInputTokens: 6,
-        cacheReadInputTokens: 4,
-        reasoningTokens: 2,
-        costUsd: 0.002,
-        usageCaptureStatus: "complete",
-        finishReason: "stop",
-      },
+      metadata,
     });
 
+    const dataLine = new TextDecoder().decode(payload).split("\n")
+      .find((line) => line.startsWith("data: "));
     assertEquals(
-      new TextDecoder().decode(payload),
-      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"costUsd":0.002,"usageCaptureStatus":"complete","finishReason":"stop"}}\n\n',
+      dataLine ? JSON.parse(dataLine.slice("data: ".length)) : null,
+      { metadata },
     );
   });
 

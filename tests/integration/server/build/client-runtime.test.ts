@@ -6,6 +6,7 @@ import {
   generateImportMap,
 } from "../../../../src/build/production-build/index.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { VERSION } from "../../../../src/utils/version.ts";
 
 describe(
   "Client Runtime Generation",
@@ -27,21 +28,21 @@ describe(
       it("should include Veryfront version", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "version = '2.0.0'");
+        assertStringIncludes(code, `version = ${JSON.stringify(VERSION)}`);
       });
 
       it("should initialize window.__veryfront object", () => {
         const code = generateAppModule();
 
         assertStringIncludes(code, "window.__veryfront = window.__veryfront || {}");
-        assertStringIncludes(code, "window.__veryfront.version = '2.0.0'");
+        assertStringIncludes(code, "window.__veryfront.version = version");
         assertStringIncludes(code, "window.__veryfront.initialized = true");
       });
 
       it("should define hydrate function", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "window.hydrate = async function");
+        assertStringIncludes(code, "export const hydrate = async function");
         assertStringIncludes(code, "slug, options = {}");
       });
 
@@ -52,37 +53,34 @@ describe(
         assertStringIncludes(code, "export const hydrate");
       });
 
-      it("should include console logging", () => {
+      it("should not ship a duplicate logging runtime", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "[Veryfront] App module loaded");
-        assertStringIncludes(code, "[Veryfront] Hydrating page:");
+        assert(!code.includes("console."));
       });
 
-      it("should set data-hydrated attribute", () => {
+      it("should delegate hydration to the canonical client runtime", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "document.getElementById('root')");
-        assertStringIncludes(code, "setAttribute('data-hydrated', 'true')");
+        assertStringIncludes(code, 'import { boot } from "./client.js"');
+        assert(!code.includes("data-hydrated"));
       });
 
       it("should check for window object", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "typeof window !== 'undefined'");
+        assertStringIncludes(code, 'typeof window !== "undefined"');
       });
 
-      it("should be wrapped in IIFE", () => {
+      it("should not be wrapped in a duplicate IIFE runtime", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "(() => {");
-        assertStringIncludes(code, "})();");
+        assert(!code.includes("(() => {"));
       });
 
       it("should handle hydration with slug parameter", () => {
         const code = generateAppModule();
 
-        assertStringIncludes(code, "Hydrating page:");
         assertStringIncludes(code, "slug");
       });
     });
@@ -185,12 +183,12 @@ describe(
         assertStringIncludes(importMap, "react/jsx-runtime");
       });
 
-      it("should use consistent React version references", async () => {
+      it("should use canonical dependency and runtime versions", async () => {
         const importMap = await generateImportMap();
         const appCode = generateAppModule();
 
         assert(importMap.includes("19.2.4"));
-        assertStringIncludes(appCode, "2.0.0");
+        assertStringIncludes(appCode, `version = ${JSON.stringify(VERSION)}`);
       });
     });
   },

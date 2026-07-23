@@ -1,10 +1,10 @@
-import { logger } from "#veryfront/utils";
-import { CONFIG_INVALID } from "#veryfront/errors";
+import { logger } from "#veryfront/utils/logger/logger.ts";
+import { CONFIG_INVALID } from "#veryfront/errors/error-registry/config.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { ResolveFileOptions } from "../../base.ts";
 import { FileCache } from "../cache/file-cache.ts";
-import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
-import { GitHubApiClient } from "./github-api-client.ts";
+import { FS_ADAPTER_KIND, type FSAdapter, type FSAdapterConfig } from "../veryfront/types.ts";
+import { GitHubApiClient, type GitHubRateLimitInfo } from "./github-api-client.ts";
 import { GitHubDirectoryOperations } from "./directory-operations.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
 import { GitHubStatOperations } from "./stat-operations.ts";
@@ -15,10 +15,87 @@ import {
   type GitHubConfig,
   type ResolvedGitHubConfig,
 } from "./types.ts";
+import { normalizeGitHubProjectDir } from "./path-utils.ts";
 
 const LOG_PREFIX = "[GitHubFSAdapter]";
 
+function invalidAdapterConfig(detail: string): never {
+  throw CONFIG_INVALID.create({ detail });
+}
+
+function assertReadableObject(value: unknown, label: string): asserts value is object {
+  if (typeof value !== "object" || value === null) {
+    invalidAdapterConfig(`${label} must be an object`);
+  }
+
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
+    invalidAdapterConfig(`${label} is not readable`);
+  }
+  if (isArray) invalidAdapterConfig(`${label} must be an object`);
+}
+
+function readProperty(value: object, property: PropertyKey, label: string): unknown {
+  try {
+    return Reflect.get(value, property);
+  } catch {
+    invalidAdapterConfig(`${label} is not readable`);
+  }
+}
+
+function readEnvironmentValue(key: string): string | undefined {
+  try {
+    return getEnv(key);
+  } catch {
+    invalidAdapterConfig("GitHub environment configuration could not be read");
+  }
+}
+
+function snapshotAdapterConfig(input: unknown): {
+  readonly github: GitHubConfig;
+  readonly projectDir: string;
+} {
+  assertReadableObject(input, "GitHub adapter configuration");
+  const github = readProperty(input, "github", "GitHub adapter configuration");
+  if (github === undefined || github === null) {
+    invalidAdapterConfig("GitHub adapter requires github configuration");
+  }
+  assertReadableObject(github, "GitHub configuration");
+
+  const projectDirInput = readProperty(input, "projectDir", "GitHub adapter configuration");
+  if (
+    projectDirInput !== undefined &&
+    (typeof projectDirInput !== "string" || projectDirInput.length > 4_096)
+  ) {
+    invalidAdapterConfig("GitHub adapter projectDir must be a string of at most 4096 characters");
+  }
+
+  const token = readProperty(github, "token", "GitHub configuration") ??
+    readEnvironmentValue("GITHUB_TOKEN") ?? "";
+  const owner = readProperty(github, "owner", "GitHub configuration") ??
+    readEnvironmentValue("GITHUB_OWNER") ?? "";
+  const repo = readProperty(github, "repo", "GitHub configuration") ??
+    readEnvironmentValue("GITHUB_REPO") ?? "";
+  const ref = readProperty(github, "ref", "GitHub configuration") ??
+    readEnvironmentValue("GITHUB_REF") ?? "main";
+
+  return Object.freeze({
+    github: {
+      token: token as string,
+      owner: owner as string,
+      repo: repo as string,
+      ref: ref as string,
+      cache: readProperty(github, "cache", "GitHub configuration") as GitHubConfig["cache"],
+      retry: readProperty(github, "retry", "GitHub configuration") as GitHubConfig["retry"],
+    },
+    projectDir: normalizeGitHubProjectDir(projectDirInput as string | undefined ?? ""),
+  });
+}
+
 export class GitHubFSAdapter implements FSAdapter {
+  readonly [FS_ADAPTER_KIND] = "github" as const;
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubApiClient;
   private readonly cache: FileCache;
@@ -28,31 +105,14 @@ export class GitHubFSAdapter implements FSAdapter {
   private readonly projectDir: string;
 
   private initialized = false;
+  private lifecycleGeneration = 0;
+  private initializationPromise: Promise<void> | null = null;
+  private refreshPromise: Promise<void> | null = null;
 
   constructor(adapterConfig: FSAdapterConfig) {
-    const githubConfig = adapterConfig.github;
-    if (!githubConfig) {
-      throw CONFIG_INVALID.create({ detail: "GitHub adapter requires github configuration" });
-    }
-
-    this.projectDir = adapterConfig.projectDir ?? "";
-
-    const rawConfig: GitHubConfig = {
-      token: githubConfig.token ?? getEnv("GITHUB_TOKEN") ?? "",
-      owner: githubConfig.owner ?? getEnv("GITHUB_OWNER") ?? "",
-      repo: githubConfig.repo ?? getEnv("GITHUB_REPO") ?? "",
-      ref: githubConfig.ref ?? getEnv("GITHUB_REF") ?? "main",
-      cache: githubConfig.cache,
-      retry: githubConfig.retry,
-    };
-
-    if (!rawConfig.token) {
-      throw CONFIG_INVALID.create({
-        detail: "GitHub adapter requires a token; set GITHUB_TOKEN or pass config.github.token",
-      });
-    }
-
-    this.config = createGitHubConfig(rawConfig);
+    const snapshot = snapshotAdapterConfig(adapterConfig);
+    this.projectDir = snapshot.projectDir;
+    this.config = createGitHubConfig(snapshot.github);
     this.client = new GitHubApiClient(this.config);
 
     this.cache = new FileCache(this.config.cache);
@@ -72,24 +132,31 @@ export class GitHubFSAdapter implements FSAdapter {
       this.projectDir,
     );
 
-    logger.debug(`${LOG_PREFIX} Created adapter`, {
-      repo: this.client.repoId,
-      ref: this.config.ref,
-    });
+    logger.debug(`${LOG_PREFIX} Created adapter`);
   }
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      if (this.initialized) return;
+    }
 
-    logger.debug(`${LOG_PREFIX} Initializing`, {
-      repo: this.client.repoId,
-      ref: this.config.ref,
-    });
+    logger.debug(`${LOG_PREFIX} Initializing`);
 
-    await this.statOps.buildIndex();
-    this.initialized = true;
+    const generation = this.lifecycleGeneration;
+    const pending = (async () => {
+      await this.statOps.buildIndex();
+      if (generation === this.lifecycleGeneration) this.initialized = true;
+    })();
+    this.initializationPromise = pending;
 
-    logger.debug(`${LOG_PREFIX} Initialized successfully`);
+    try {
+      await pending;
+      if (this.initialized) logger.debug(`${LOG_PREFIX} Initialized successfully`);
+    } finally {
+      if (this.initializationPromise === pending) this.initializationPromise = null;
+    }
   }
 
   async readFile(path: string): Promise<Uint8Array | string> {
@@ -139,11 +206,44 @@ export class GitHubFSAdapter implements FSAdapter {
     return { cache: this.cache.stats() };
   }
 
-  getRateLimitInfo(): { limit: number; remaining: number; reset: Date } | null {
+  getRateLimitInfo(): GitHubRateLimitInfo | null {
     return this.client.getRateLimitInfo();
   }
 
+  async refreshSourceSnapshot(_reason = "manual-refresh"): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise;
+
+    const pending = this.performRefresh();
+    this.refreshPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.refreshPromise === pending) this.refreshPromise = null;
+    }
+  }
+
+  private async performRefresh(): Promise<void> {
+    const previousInitialization = this.initializationPromise;
+    this.lifecycleGeneration++;
+    this.initialized = false;
+    this.readOps.invalidate();
+    this.cache.clear();
+    this.statOps.clearIndex();
+
+    if (previousInitialization) {
+      try {
+        await previousInitialization;
+      } catch {
+        // A fresh snapshot can recover from a failed previous initialization.
+      }
+    }
+
+    await this.initialize();
+  }
+
   dispose(): void {
+    this.lifecycleGeneration++;
+    this.readOps.invalidate();
     this.cache.clear();
     this.statOps.clearIndex();
     this.initialized = false;

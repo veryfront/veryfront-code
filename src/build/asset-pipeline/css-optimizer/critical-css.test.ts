@@ -102,8 +102,48 @@ h1 { font-size: 32px; }`,
       try {
         const html = `<div class="crit">test</div>`;
         const result = await extractCriticalCSS(cssPath, html, { minify: false });
-        assertEquals(result.criticalSize > 0, true);
-        assertEquals(result.remainingSize > 0, true);
+        assertEquals(result.criticalSize, new TextEncoder().encode(result.critical).length);
+        assertEquals(result.remainingSize, new TextEncoder().encode(result.remaining).length);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("matches complete selector tokens instead of substrings", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const cssPath = `${tmpDir}/style.css`;
+      await Deno.writeTextFile(cssPath, `.head { color: red; } .header { color: blue; }`);
+
+      try {
+        const result = await extractCriticalCSS(cssPath, '<div class="head"></div>', {
+          minify: false,
+        });
+        assertEquals(result.critical.includes(".head "), true);
+        assertEquals(result.critical.includes(".header"), false);
+        assertEquals(result.remaining.includes(".header"), true);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("preserves nested at-rules in their critical and remaining partitions", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const cssPath = `${tmpDir}/style.css`;
+      await Deno.writeTextFile(
+        cssPath,
+        `@media (min-width: 40rem) { .used { color: red; } .unused { color: blue; } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(1turn); } }`,
+      );
+
+      try {
+        const result = await extractCriticalCSS(cssPath, '<div class="used"></div>', {
+          minify: false,
+        });
+        assertEquals(result.critical.includes("@media"), true);
+        assertEquals(result.critical.includes(".used"), true);
+        assertEquals(result.remaining.includes("@media"), true);
+        assertEquals(result.remaining.includes(".unused"), true);
+        assertEquals(result.critical.includes("@keyframes spin"), true);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

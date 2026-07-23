@@ -1,7 +1,7 @@
 ---
 title: "veryfront/trigger"
 description: "Shared source-trigger discovery and local execution primitives."
-order: 34
+order: 35
 ---
 
 ## Import
@@ -37,19 +37,20 @@ if (dailyTriage) {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `discoverSourceTriggers` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L113) |
-| `runTriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L134) |
+| `discoverSourceTriggers` | Discover validated source-trigger definitions from one project directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L354) |
+| `runTriggerTarget` | Run a validated task or workflow target through project runtime discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L260) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `RunTriggerTargetOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L19) |
-| `SourceTriggerDiscoveryError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L26) |
-| `SourceTriggerDiscoveryErrorCode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L18) |
-| `SourceTriggerDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L36) |
-| `SourceTriggerKind` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L16) |
-| `TriggerDefinitionWithId` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L49) |
-| `TriggerDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L41) |
-| `TriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/target.ts#L3) |
-| `TriggerTargetRunResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L30) |
+| `RunTriggerTargetOptions` | Options for running one discovered trigger target in the local runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L23) |
+| `SourceTriggerDiscoveryError` | Sanitized failure reported while discovering one source-defined trigger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L36) |
+| `SourceTriggerDiscoveryErrorCode` | Stable classification for a source-trigger discovery failure. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L26) |
+| `SourceTriggerDiscoveryResult` | Definitions and contained failures returned by source-trigger discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L54) |
+| `SourceTriggerKind` | Source-defined trigger categories supported by discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L23) |
+| `TriggerDefinitionWithId` | Minimum contract required from a discovered trigger definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L78) |
+| `TriggerDiscoveryOptions` | Shared options for discovering source-defined schedules or webhooks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L62) |
+| `TriggerTarget` | Identifies the runtime primitive that a trigger starts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/target.ts#L7) |
+| `TriggerTargetKind` | Trigger target categories supported by source-defined schedules and webhooks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/target.ts#L4) |
+| `TriggerTargetRunResult` | Result returned after a local task or workflow target completes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L43) |

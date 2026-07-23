@@ -1,11 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
+import { validateOpenAPISpec } from "#veryfront/routing/api/openapi/spec-validation.ts";
 
 const testSuite = isDeno ? describe : describe.skip;
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -93,6 +100,14 @@ testSuite("ProjectWorker", () => {
     assertEquals(worker.status, "terminated");
   });
 
+  it("cannot restart an explicitly terminated worker", () => {
+    const worker = createTestWorker();
+    worker.terminate();
+
+    assertEquals(worker.status, "terminated");
+    assertThrows(() => worker.start(), Error, "cannot be restarted");
+  });
+
   it("responds to health check", async () => {
     const worker = createTestWorker();
     worker.start();
@@ -110,6 +125,20 @@ testSuite("ProjectWorker", () => {
     worker.terminate();
     const healthy = await worker.isHealthy(1_000);
     assertEquals(healthy, false);
+  });
+
+  it("rejects invalid health-check timeouts", async () => {
+    const worker = createTestWorker();
+    worker.start();
+    try {
+      await assertRejects(
+        () => worker.isHealthy(0),
+        TypeError,
+        "positive safe integer",
+      );
+    } finally {
+      worker.terminate();
+    }
   });
 
   it("tracks request count", async () => {
@@ -157,6 +186,58 @@ testSuite("ProjectWorker", () => {
 });
 
 testSuite("ProjectWorker - error handling", () => {
+  it("ignores malformed messages before a valid worker response", async () => {
+    const workerScriptUrl = `data:application/typescript,${
+      encodeURIComponent(`
+        self.onmessage = (event) => {
+          const msg = event.data;
+          if (msg.type === "ping") {
+            self.postMessage({ type: "pong", id: msg.id });
+            return;
+          }
+          self.postMessage(null);
+          self.postMessage({ type: "error", id: msg.id, error: {
+            name: "Error",
+            message: "valid response",
+          } });
+        };
+      `)
+    }`;
+    const worker = new ProjectWorker({
+      projectId: "test-malformed-worker-response",
+      permissions: TEST_PERMISSIONS,
+      requestTimeoutMs: 5_000,
+      workerScriptUrl,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-app-route",
+        id: "malformed-response",
+        modulePath: "/nonexistent.ts",
+        method: "GET",
+        request: {
+          url: "http://localhost/api/test",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir: Deno.cwd(),
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+
+      assertEquals(response.type, "error");
+      if (response.type !== "error") throw new Error("expected error response");
+      assertEquals(response.error.message, "valid response");
+      assertEquals(worker.hasPendingRequests, false);
+    } finally {
+      worker.terminate();
+    }
+  });
+
   it("rejects execute when worker is not started", async () => {
     const worker = createTestWorker();
 
@@ -179,6 +260,113 @@ testSuite("ProjectWorker - error handling", () => {
       assertEquals(true, false, "Should have thrown");
     } catch (error) {
       assertExists(error);
+    }
+  });
+
+  it("rejects duplicate in-flight request IDs without orphaning the first request", async () => {
+    const worker = new ProjectWorker({
+      projectId: "test-duplicate-id",
+      permissions: TEST_PERMISSIONS,
+      requestTimeoutMs: 100,
+      workerScriptUrl: TEST_WORKER_SCRIPT_URL,
+    });
+    const request = {
+      type: "execute-app-route" as const,
+      id: "duplicate-id",
+      modulePath: "/nonexistent.ts",
+      method: "GET",
+      request: {
+        url: "http://localhost/api/test",
+        method: "GET",
+        headers: [] as [string, string][],
+        body: null,
+      },
+      params: {},
+      projectDir: Deno.cwd(),
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+    };
+
+    worker.start();
+    try {
+      const first = worker.execute(request);
+      await assertRejects(
+        () => worker.execute(request),
+        Error,
+        "already in flight",
+      );
+      assertEquals((await first).type, "error");
+      assertEquals(worker.hasPendingRequests, false);
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("cleans pending state when postMessage cannot clone a request", async () => {
+    const worker = createTestWorker("test-clone-failure");
+    worker.start();
+    try {
+      await assertRejects(
+        () =>
+          worker.execute({
+            type: "execute-app-route",
+            id: "clone-failure",
+            modulePath: "/nonexistent.ts",
+            method: "GET",
+            request: {
+              url: "http://localhost/api/test",
+              method: "GET",
+              headers: [],
+              body: null,
+            },
+            params: { invalid: (() => {}) as unknown as string },
+            projectDir: Deno.cwd(),
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          }),
+        DOMException,
+      );
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(worker.status, "idle");
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("terminates the worker when a request times out", async () => {
+    const silentScript = `data:application/typescript,${
+      encodeURIComponent("self.onmessage = () => {};")
+    }`;
+    const worker = new ProjectWorker({
+      projectId: "test-timeout",
+      permissions: TEST_PERMISSIONS,
+      requestTimeoutMs: 10,
+      workerScriptUrl: silentScript,
+    });
+    worker.start();
+    try {
+      await assertRejects(
+        () =>
+          worker.execute({
+            type: "execute-app-route",
+            id: "timeout",
+            modulePath: "/nonexistent.ts",
+            method: "GET",
+            request: {
+              url: "http://localhost/api/test",
+              method: "GET",
+              headers: [],
+              body: null,
+            },
+            params: {},
+            projectDir: Deno.cwd(),
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          }),
+        Error,
+        "timed out",
+      );
+      assertEquals(worker.status, "terminated");
+      assertEquals(worker.hasPendingRequests, false);
+    } finally {
+      worker.terminate();
     }
   });
 });
@@ -299,6 +487,324 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       assertEquals(response.error.message, "Unknown request type: unknown-request");
     } finally {
       worker.terminate();
+    }
+  });
+
+  it("returns a validated OpenAPI result from module code evaluated in the real worker", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const worker = new ProjectWorker({
+      projectId: "test-openapi-worker",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "generate-openapi-spec",
+        id: "openapi-worker-request",
+        projectDir,
+        routes: [{
+          pattern: "/api/health",
+          moduleCode: `
+            const metadata = Symbol.for("veryfront.openapi.metadata");
+            function health() { return Response.json({ ok: true }); }
+            Object.defineProperty(health, metadata, {
+              value: { summary: "Health status", tags: ["System"] },
+            });
+            export { health as GET };
+          `,
+        }],
+        info: {
+          title: "Isolated API",
+          version: "1.0.0",
+          servers: [{ url: "https://example.com" }],
+        },
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+
+      assertEquals(response.type, "openapi-result");
+      if (response.type !== "openapi-result") throw new Error("expected OpenAPI result");
+      const spec = validateOpenAPISpec(response.spec);
+      assertEquals(spec.paths["/api/health"]?.get?.summary, "Health status");
+      assertEquals(spec.paths["/api/health"]?.post, undefined);
+      assertEquals(spec.tags, [{ name: "System" }]);
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("streams framework responses over the private worker channel", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const pageModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    await Deno.writeTextFile(
+      pageModulePath,
+      `export default function Page() { return "private-channel-stream"; }`,
+    );
+    const worker = new ProjectWorker({
+      projectId: "test-private-stream-channel",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const stream = worker.executeStream({
+        type: "render-ssr",
+        id: "private-stream-channel",
+        pageModulePath,
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "stream",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      const html = await new Response(stream).text();
+
+      assert(html.includes("private-channel-stream"));
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(worker.status, "idle");
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("executes a project task module through the real worker protocol", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const worker = new ProjectWorker({
+      projectId: "test-project-run-worker",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-project-run",
+        id: "project-task-worker-request",
+        projectDir,
+        kind: "task",
+        targetId: "sync-calendar",
+        modules: [{
+          file: "file://tasks/sync-calendar.ts",
+          dir: "tasks",
+          moduleCode: `
+            export default {
+              run: async (ctx) => ({
+                projectId: ctx.projectId,
+                configured: ctx.config.enabled,
+              }),
+            };
+          `,
+        }],
+        config: { enabled: true },
+        projectId: "project-1",
+        debug: false,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        datasetFiles: [],
+      });
+
+      if (response.type === "error") {
+        throw new Error(`${response.error.name}: ${response.error.message}`);
+      }
+      assertEquals(response.type, "project-run-result");
+      if (response.type !== "project-run-result") {
+        throw new Error("expected project run result");
+      }
+      assertEquals(response.result.success, true);
+      assertEquals(response.result.result, {
+        projectId: "project-1",
+        configured: true,
+      });
+      assertEquals(typeof response.result.durationMs, "number");
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("executes a project eval module through the real worker protocol", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const worker = new ProjectWorker({
+      projectId: "test-project-eval-worker",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-project-run",
+        id: "project-eval-worker-request",
+        projectDir,
+        kind: "eval",
+        targetId: "eval:worker-smoke",
+        modules: [{
+          file: "file://evals/worker-smoke.eval.ts",
+          dir: "evals",
+          moduleCode: `
+            import { datasets, evalAgent } from "veryfront/eval";
+            export default evalAgent({
+              id: "eval:worker-smoke",
+              target: "agent:unused",
+              dataset: datasets.inline([]),
+            });
+          `,
+        }],
+        config: {},
+        runId: "run_worker_eval",
+        evalAgentAdapter: {
+          endpoint: "https://project.example/api/ag-ui",
+          authToken: "runtime-token",
+          projectId: "project-1",
+        },
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        datasetFiles: [],
+      });
+
+      if (response.type === "error") {
+        throw new Error(`${response.error.name}: ${response.error.message}`);
+      }
+      assertEquals(response.type, "project-run-result");
+      if (response.type !== "project-run-result") {
+        throw new Error("expected project run result");
+      }
+      assertEquals(response.result.success, true);
+      assertEquals(
+        (response.result.result as { definitionId?: string }).definitionId,
+        "eval:worker-smoke",
+      );
+      assertEquals((response.result.result as { runId?: string }).runId, "run_worker_eval");
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects synthetic project-run responses sent by project modules", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const requestId = "project-run-response-spoof";
+    const worker = new ProjectWorker({
+      projectId: "test-project-run-response-spoof",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-project-run",
+        id: requestId,
+        projectDir,
+        kind: "task",
+        targetId: "response-spoof",
+        modules: [{
+          file: "file://tasks/response-spoof.ts",
+          dir: "tasks",
+          moduleCode: `
+            export default {
+              run: async () => {
+                try {
+                  self.postMessage({
+                    type: "project-run-result",
+                    id: ${JSON.stringify(requestId)},
+                    result: {
+                      success: true,
+                      result: { spoofed: true },
+                      durationMs: 0,
+                    },
+                  });
+                } catch {
+                  // Project code must not have access to the worker transport.
+                }
+                return { spoofed: false };
+              },
+            };
+          `,
+        }],
+        config: {},
+        projectId: "project-1",
+        debug: false,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        datasetFiles: [],
+      });
+
+      if (response.type === "error") {
+        throw new Error(`${response.error.name}: ${response.error.message}`);
+      }
+      assertEquals(response.type, "project-run-result");
+      if (response.type !== "project-run-result") {
+        throw new Error("expected project run result");
+      }
+      assertEquals(response.result.result, { spoofed: false });
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps result validation intact when project code replaces JSON globals", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const worker = new ProjectWorker({
+      projectId: "test-project-run-json-tampering",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const response = await worker.execute({
+        type: "execute-project-run",
+        id: "project-run-json-tampering",
+        projectDir,
+        kind: "task",
+        targetId: "json-tampering",
+        modules: [{
+          file: "file://tasks/json-tampering.ts",
+          dir: "tasks",
+          moduleCode: `
+            export default {
+              run: async () => {
+                JSON.stringify = () => '{"success":true,"durationMs":0}';
+                JSON.parse = () => ({ success: true, durationMs: 0 });
+                Object.prototype.toJSON = () => ({
+                  success: true,
+                  durationMs: 0,
+                  result: { spoofed: true },
+                });
+                throw new Error("intentional task failure");
+              },
+            };
+          `,
+        }],
+        config: {},
+        projectId: "project-1",
+        debug: false,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        datasetFiles: [],
+      });
+
+      if (response.type === "error") {
+        throw new Error(`${response.error.name}: ${response.error.message}`);
+      }
+      assertEquals(response.type, "project-run-result");
+      if (response.type !== "project-run-result") {
+        throw new Error("expected project run result");
+      }
+      assertEquals(response.result.success, false);
+      assertEquals(response.result.error, "intentional task failure");
+      assertEquals(response.result.result, undefined);
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
     }
   });
 
@@ -437,6 +943,9 @@ testSuite("ProjectWorker - real worker request isolation", () => {
   it("does not leak projectEnv overlays across requests in the same worker", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const projectKey = "VERYFRONT_TEST_TENANT_SECRET";
+    const previousHostValue = Deno.env.get(projectKey);
+    Deno.env.set(projectKey, "host-secret-must-not-leak");
     await Deno.writeTextFile(
       modulePath,
       `
@@ -506,6 +1015,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       );
     } finally {
       worker.terminate();
+      if (previousHostValue === undefined) Deno.env.delete(projectKey);
+      else Deno.env.set(projectKey, previousHostValue);
       await Deno.remove(projectDir, { recursive: true });
     }
   });
@@ -1349,7 +1860,7 @@ testSuite("ProjectWorker - executeStream", () => {
     assert(threw, "should throw when worker is not available");
   });
 
-  it("returns a ReadableStream when worker is started", () => {
+  it("returns a ReadableStream when worker is started", async () => {
     const worker = createTestWorker("test-stream");
     worker.start();
     try {
@@ -1365,7 +1876,37 @@ testSuite("ProjectWorker - executeStream", () => {
       });
       assert(stream instanceof ReadableStream, "should return a ReadableStream");
       // Cancel the stream to clean up
-      stream.cancel();
+      await stream.cancel();
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(worker.status, "terminated");
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("does not increment request state for a duplicate stream ID", async () => {
+    const worker = createTestWorker("test-duplicate-stream");
+    const request = {
+      type: "render-ssr" as const,
+      id: "duplicate-stream",
+      pageModulePath: "/nonexistent.ts",
+      layoutModulePaths: [],
+      pageProps: {},
+      layoutProps: [],
+      delivery: "stream" as const,
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+    };
+
+    worker.start();
+    try {
+      const stream = worker.executeStream(request);
+      assertThrows(
+        () => worker.executeStream(request),
+        Error,
+        "already in flight",
+      );
+      assertEquals(worker.requestCount, 1);
+      await stream.cancel();
     } finally {
       worker.terminate();
     }

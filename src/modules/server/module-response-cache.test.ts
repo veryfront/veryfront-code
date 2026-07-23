@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import {
@@ -108,6 +108,26 @@ describe("release module response cache", () => {
     assertEquals(a === b, false);
   });
 
+  it("rejects empty required cache identities", () => {
+    for (
+      const field of [
+        "projectIdentity",
+        "projectDir",
+        "releaseId",
+        "runtimeVersion",
+        "modulePath",
+      ] as const
+    ) {
+      const options = { ...baseKeyOptions("module.js"), [field]: "" };
+      try {
+        buildReleaseModuleResponseCacheKey(options);
+        throw new Error(`Expected ${field} to be rejected`);
+      } catch (error) {
+        assertEquals(error instanceof RangeError, true);
+      }
+    }
+  });
+
   it("does not use disk cache backends for release module responses", async () => {
     const diskCache = new FakeDistributedCache();
     Object.defineProperty(diskCache, "type", { value: "disk" });
@@ -127,5 +147,67 @@ describe("release module response cache", () => {
 
     assertEquals(recovered, undefined);
     assertEquals(diskCache.values.size, 0);
+  });
+
+  it("returns defensive copies of memory entries", async () => {
+    const cacheKey = "release-module-response:defensive";
+    const entry: ReleaseModuleResponseCacheEntry = {
+      body: "export const value = 1;",
+      status: 200,
+      headers: [["cache-control", "no-cache"]],
+    };
+    await rememberReleaseModuleResponse(cacheKey, entry);
+
+    const first = await getReleaseModuleResponse(cacheKey);
+    first?.entry.headers.push(["set-cookie", "unsafe=true"]);
+    first!.entry.body = "mutated";
+
+    const second = await getReleaseModuleResponse(cacheKey);
+    assertEquals(second?.entry, entry);
+  });
+
+  it("rejects invalid response entries before caching", async () => {
+    await assertRejects(
+      () =>
+        rememberReleaseModuleResponse("release-module-response:invalid", {
+          body: "export default 1;",
+          status: 99,
+          headers: [["set-cookie", "unsafe=true"]],
+        }),
+      TypeError,
+      "Invalid release module response cache entry",
+    );
+  });
+
+  it("rejects ambiguous or response-controlled headers", async () => {
+    for (
+      const headers of [
+        [["content-length", "1"]],
+        [["x-test", "one"], ["X-Test", "two"]],
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          rememberReleaseModuleResponse("release-module-response:headers", {
+            body: "export default 1;",
+            status: 200,
+            headers: headers as Array<[string, string]>,
+          }),
+        TypeError,
+        "Invalid release module response cache entry",
+      );
+    }
+  });
+
+  it("ignores malformed distributed response entries", async () => {
+    const distributedCache = new FakeDistributedCache();
+    const cacheKey = "release-module-response:malformed";
+    distributedCache.values.set(
+      cacheKey,
+      JSON.stringify({ body: "ok", status: 200, headers: [["x-test", "bad\r\nvalue"]] }),
+    );
+    __setReleaseModuleResponseDistributedCacheForTests(distributedCache);
+
+    assertEquals(await getReleaseModuleResponse(cacheKey), undefined);
   });
 });

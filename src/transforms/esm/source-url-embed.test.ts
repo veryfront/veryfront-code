@@ -8,7 +8,10 @@ describe("transforms/esm/source-url-embed", () => {
     it("embeds source URL as a preserved comment at the start", () => {
       const code = "export default 42;";
       const result = embedSourceUrl(code, "https://esm.sh/react@18");
-      assertEquals(result.startsWith("/*! @vf-source: https://esm.sh/react@18 */"), true);
+      assertEquals(
+        result.startsWith("/*! @vf-source-v2: https%3A%2F%2Fesm.sh%2Freact%4018 */"),
+        true,
+      );
       assertEquals(result.includes("export default 42;"), true);
     });
 
@@ -22,6 +25,14 @@ describe("transforms/esm/source-url-embed", () => {
       const code = "/*! @vf-source: https://esm.sh/react@18 */\nexport default 42;";
       const result = embedSourceUrl(code, "https://esm.sh/lodash@4");
       assertEquals(result, code);
+    });
+
+    it("encodes comment delimiters in source URLs", () => {
+      const sourceUrl = "https://example.com/module.js?value=*/globalThis.compromised=true/*";
+      const result = embedSourceUrl("export default 42;", sourceUrl);
+
+      assertEquals(result.includes("*/globalThis.compromised"), false);
+      assertEquals(extractSourceUrl(result), sourceUrl);
     });
   });
 

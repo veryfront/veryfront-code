@@ -6,12 +6,13 @@ export function createOpenAPIResource(
   getSpec: () => Promise<OpenAPISpec>,
 ): ReturnType<typeof resource> {
   return resource({
+    id: "openapi_spec",
     pattern: "openapi://spec",
     description:
       "OpenAPI specification for this project's API routes. Use this to understand available endpoints, their parameters, request/response schemas, and authentication requirements.",
     paramsSchema: lazySchema(defineSchema((v) => v.object({}))),
     load: async () => {
-      const spec = await getSpec();
+      const spec = structuredClone(await getSpec());
 
       return {
         spec,

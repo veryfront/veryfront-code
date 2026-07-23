@@ -3,17 +3,34 @@ import type {
   ObservableGauge,
   ObservableResult,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import { getV8FlagsEnv } from "#veryfront/config/env.ts";
+import { getHeapStatistics } from "node:v8";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-let _v8HeapLimitMB: number | undefined;
-function getV8HeapLimitMB(): number {
-  if (_v8HeapLimitMB !== undefined) return _v8HeapLimitMB;
-  const match = getV8FlagsEnv().match(/--max-old-space-size=(\d+)/);
-  const value = match?.[1];
-  _v8HeapLimitMB = value ? parseInt(value, 10) : 5120; // Default from values.yaml
-  return _v8HeapLimitMB;
+function readV8HeapLimitBytes(): number | null {
+  try {
+    const limit = getHeapStatistics().heap_size_limit;
+    return Number.isFinite(limit) && limit > 0 ? limit : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Calculate bounded heap utilization from runtime-reported values. */
+export function calculateHeapUtilizationPercent(
+  heapUsed: number,
+  heapTotal: number,
+  heapLimit: number | null = readV8HeapLimitBytes(),
+): number | null {
+  if (!Number.isFinite(heapUsed) || heapUsed < 0) return null;
+  const denominator = heapLimit !== null && Number.isFinite(heapLimit) && heapLimit > 0
+    ? heapLimit
+    : Number.isFinite(heapTotal) && heapTotal > 0
+    ? heapTotal
+    : null;
+  if (denominator === null) return null;
+  const percent = Math.min(100, (heapUsed / denominator) * 100);
+  return Math.round(percent * 100) / 100;
 }
 
 export interface MemoryInstruments {
@@ -31,9 +48,13 @@ function addMemoryCallback(
   ) => void,
 ): void {
   gauge.addCallback((result: ObservableResult) => {
-    const memoryUsage = getMemoryUsage();
-    if (!memoryUsage) return;
-    observe(result, memoryUsage);
+    try {
+      const memoryUsage = getMemoryUsage();
+      if (!memoryUsage) return;
+      observe(result, memoryUsage);
+    } catch {
+      // Observable callbacks must not disrupt metric collection.
+    }
   });
 }
 
@@ -56,16 +77,16 @@ export function createMemoryInstruments(meter: Meter, config: MetricsConfig): Me
   });
   addMemoryCallback(heapTotalGauge, (result, memoryUsage) => result.observe(memoryUsage.heapTotal));
 
-  // Heap utilization as percentage of configured limit
-  // This is the key metric for autoscaling decisions
   const heapPercentGauge = meter.createObservableGauge(`${config.prefix}.memory.heap_percent`, {
-    description: "V8 heap usage as percentage of configured limit",
+    description: "V8 heap usage as percentage of the runtime heap limit",
     unit: "percent",
   });
   addMemoryCallback(heapPercentGauge, (result, memoryUsage) => {
-    const heapUsedMB = memoryUsage.heapUsed / (1024 * 1024);
-    const percent = (heapUsedMB / getV8HeapLimitMB()) * 100;
-    result.observe(Math.round(percent * 100) / 100);
+    const percent = calculateHeapUtilizationPercent(
+      memoryUsage.heapUsed,
+      memoryUsage.heapTotal,
+    );
+    if (percent !== null) result.observe(percent);
   });
 
   return { memoryUsageGauge, heapUsageGauge, heapTotalGauge, heapPercentGauge };

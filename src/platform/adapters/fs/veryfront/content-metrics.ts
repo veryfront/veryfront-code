@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   recordContentCacheHit,
   recordContentNetworkFetch,
@@ -108,7 +108,11 @@ export function endRequestMetrics(
   recordContentNetworkFetch(req.networkMs, req.isPreviewMode ?? false);
 
   logger.debug("REQUEST_SUMMARY", {
-    ...requestContext,
+    mode: requestContext?.mode === "preview" || requestContext?.mode === "production"
+      ? requestContext.mode
+      : requestContext?.mode
+      ? "other"
+      : undefined,
     durationMs,
     networkMs: req.networkMs,
     networkTimeRatio: `${networkTimeRatio}%`,
@@ -184,7 +188,16 @@ export function logContentMetric(
     }
   }
 
-  logger.debug(`${event}`, details);
+  logger.debug(`${event}`, {
+    mode: details.mode === "preview" || details.mode === "production"
+      ? details.mode
+      : details.mode
+      ? "other"
+      : undefined,
+    isPreviewMode: details.isPreviewMode,
+    durationMs: details.durationMs,
+    missReason: details.missReason,
+  });
 }
 
 export function getContentMetricsSnapshot(): CumulativeMetrics & {

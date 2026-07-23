@@ -11,12 +11,14 @@ function assertExport(value: unknown, type: string): void {
 describe("runtime/cloudflare/index.ts exports", () => {
   const cases: Array<[string, unknown]> = [
     ["CloudflareAdapter", exports.CloudflareAdapter],
+    ["CloudflareKVStoreAdapter", exports.CloudflareKVStoreAdapter],
     ["CloudflareEnvironmentAdapter", exports.CloudflareEnvironmentAdapter],
     ["CloudflareFileSystemAdapter", exports.CloudflareFileSystemAdapter],
     ["CloudflareServer", exports.CloudflareServer],
     ["CloudflareServerAdapter", exports.CloudflareServerAdapter],
     ["CloudflareShellAdapter", exports.CloudflareShellAdapter],
     ["createWorker", exports.createWorker],
+    ["createCloudflareAdapter", exports.createCloudflareAdapter],
   ];
 
   for (const [name, value] of cases) {

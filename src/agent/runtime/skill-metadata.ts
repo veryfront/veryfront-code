@@ -1,64 +1,91 @@
 import { extract } from "#std/front-matter/yaml.ts";
+import { validateAllowedToolPatterns } from "#veryfront/skill/allowed-tools.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
-function normalizeAllowedTools(value: string | string[] | undefined): string[] {
+function normalizeAllowedTools(value: string | string[] | undefined): string[] | undefined {
   if (value === undefined) {
-    return [];
+    return undefined;
   }
 
   const values = Array.isArray(value)
-    ? value
-    : value.includes(",")
-    ? value.split(",")
-    : value.split(/\s+/);
+    ? value.map((entry) => entry.trim())
+    : value.split(/[,\s]+/).map((entry) => entry.trim()).filter(Boolean);
 
-  return values.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  return validateAllowedToolPatterns(values);
 }
 
 // Hand-written transform output type. The contract DSL erases the parameter
 // type through `.transform()`, so we annotate explicitly.
 /** Public API contract for runtime skill frontmatter. */
 export interface RuntimeSkillFrontmatter {
+  /** Name. */
   name: string | undefined;
+  /** Description value. */
   description: string | undefined;
-  allowedTools: string[];
+  /** Tool names allowed by the skill, or undefined when unrestricted. */
+  allowedTools: string[] | undefined;
+  /** Model value. */
   model: string | undefined;
+  /** Thinking value. */
   thinking: false | number | undefined;
+  /** Max steps value. */
   maxSteps: number | undefined;
 }
 
-export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
-  v
+export const getRuntimeSkillFrontmatterSchema = defineSchema((v) => {
+  const allowedToolsValueSchema = v.union([v.string(), v.array(v.string())]).refine(
+    (value) => {
+      try {
+        normalizeAllowedTools(value);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Invalid allowed-tools policy" },
+  );
+
+  return v
     .object({
       name: v.string().optional(),
       description: v.string().optional(),
-      "allowed-tools": v.union([v.string(), v.array(v.string())]).optional(),
-      allowed_tools: v.union([v.string(), v.array(v.string())]).optional(),
+      "allowed-tools": allowedToolsValueSchema.optional(),
+      allowed_tools: allowedToolsValueSchema.optional(),
       model: v.string().optional(),
       thinking: v.union([v.literal(false), v.coerce.number().int().positive()]).optional(),
       "max-steps": v.coerce.number().int().positive().optional(),
     })
     .passthrough()
+    .refine(
+      (data) => !(Object.hasOwn(data, "allowed-tools") && Object.hasOwn(data, "allowed_tools")),
+      { message: 'Skill frontmatter must not define both "allowed-tools" and "allowed_tools"' },
+    )
     .transform((data): RuntimeSkillFrontmatter => {
       const d = data as Record<string, unknown>;
+      const rawAllowedTools = Object.hasOwn(d, "allowed-tools")
+        ? d["allowed-tools"]
+        : d.allowed_tools;
       return {
         name: (typeof d.name === "string" ? d.name.trim() : undefined) || undefined,
         description: (typeof d.description === "string" ? d.description.trim() : undefined) ||
           undefined,
         allowedTools: normalizeAllowedTools(
-          (d["allowed-tools"] ?? d.allowed_tools) as string | string[] | undefined,
+          rawAllowedTools as string | string[] | undefined,
         ),
         model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
         thinking: d.thinking as false | number | undefined,
         maxSteps: d["max-steps"] as number | undefined,
       };
-    })
-);
+    });
+});
 
 /** Schema for runtime skill frontmatter.
  * @deprecated Use getRuntimeSkillFrontmatterSchema()
  */
-export const RuntimeSkillFrontmatterSchema = lazySchema(getRuntimeSkillFrontmatterSchema);
+export const RuntimeSkillFrontmatterSchema: Schema<RuntimeSkillFrontmatter> = lazySchema(
+  getRuntimeSkillFrontmatterSchema,
+);
 
 /** Definition for runtime skill. */
 export type RuntimeSkillDefinition = {
@@ -66,7 +93,7 @@ export type RuntimeSkillDefinition = {
   name: string;
   description: string;
   instructions: string;
-  allowedTools: string[];
+  allowedTools?: string[];
   model?: string;
   thinking?: false | number;
   maxSteps?: number;
@@ -215,7 +242,7 @@ export function buildRuntimeSkillDefinition(input: {
     name: metadata.name ?? input.id,
     description: metadata.description ?? extractDescriptionFromMarkdown(body, input.id),
     instructions: input.content,
-    allowedTools: metadata.allowedTools,
+    ...(metadata.allowedTools === undefined ? {} : { allowedTools: metadata.allowedTools }),
     ...(metadata.model ? { model: metadata.model } : {}),
     ...(metadata.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
@@ -255,19 +282,21 @@ export function buildRuntimeLoadedSkillResponse(input: {
   logger?: RuntimeSkillMetadataLogger;
 }): RuntimeLoadedSkillResponse {
   const metadata = parseRuntimeSkillMetadata(input.instructions, { logger: input.logger });
-  const declaredAllowedTools = metadata?.allowedTools ?? [];
-  const availableToolNameSet = input.availableToolNames && input.availableToolNames.length > 0
-    ? new Set(input.availableToolNames)
-    : null;
-  const currentRunAllowedTools = availableToolNameSet
+  const declaredAllowedTools = metadata === null ? [] : metadata.allowedTools;
+  const availableToolNameSet = input.availableToolNames === undefined
+    ? null
+    : new Set(input.availableToolNames);
+  const currentRunAllowedTools = declaredAllowedTools === undefined
+    ? []
+    : availableToolNameSet
     ? declaredAllowedTools.filter((toolName) => availableToolNameSet.has(toolName))
     : declaredAllowedTools;
-  const unavailableCurrentRunTools = availableToolNameSet && declaredAllowedTools.length > 0
+  const unavailableCurrentRunTools = availableToolNameSet && declaredAllowedTools !== undefined
     ? declaredAllowedTools.filter((toolName) => !availableToolNameSet.has(toolName))
     : [];
   const hasOverrides = metadata?.model !== undefined || metadata?.thinking !== undefined ||
     metadata?.maxSteps !== undefined;
-  const hasDeclaredAllowedTools = declaredAllowedTools.length > 0;
+  const hasDeclaredAllowedTools = declaredAllowedTools !== undefined;
 
   return {
     skillId: input.skillId,

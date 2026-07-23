@@ -5,6 +5,9 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
+import { assertValidCrossProjectImportParts } from "#veryfront/transforms/shared/cross-project-import.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+
 /**
  * Default React version - used when not specified.
  *
@@ -27,6 +30,52 @@ type EsmShOptions = {
   deps?: Record<string, string>;
 };
 
+const ESM_TARGET_PATTERN = /^[A-Za-z0-9._-]{1,32}$/;
+
+function isExactPackageName(value: string): boolean {
+  const parsed = parseBarePackageSpecifier(value);
+  return parsed?.packageName === value && parsed.version === null && parsed.subpath === null;
+}
+
+function assertValidEsmShParts(
+  pkg: string,
+  version: string | undefined,
+  subpath: string | undefined,
+  options: EsmShOptions | undefined,
+): void {
+  const candidate = `${pkg}${version ? `@${version}` : ""}${
+    subpath && subpath !== "/" ? subpath : ""
+  }`;
+  const parsed = parseBarePackageSpecifier(candidate);
+  if (
+    !parsed ||
+    parsed.packageName !== pkg ||
+    parsed.version !== (version ?? null) ||
+    parsed.subpath !== (subpath && subpath !== "/" ? subpath : null)
+  ) {
+    throw new TypeError("Invalid esm.sh module specifier");
+  }
+
+  if (options?.target !== undefined && !ESM_TARGET_PATTERN.test(options.target)) {
+    throw new TypeError("Invalid esm.sh target");
+  }
+  if (options?.external?.some((external) => !isExactPackageName(external))) {
+    throw new TypeError("Invalid esm.sh external package");
+  }
+  if (
+    options?.deps && Object.entries(options.deps).some(([dependency, dependencyVersion]) => {
+      const dependencySpecifier = `${dependency}@${dependencyVersion}`;
+      const dependencyParts = parseBarePackageSpecifier(dependencySpecifier);
+      return !dependencyParts ||
+        dependencyParts.packageName !== dependency ||
+        dependencyParts.version !== dependencyVersion ||
+        dependencyParts.subpath !== null;
+    })
+  ) {
+    throw new TypeError("Invalid esm.sh dependency");
+  }
+}
+
 /**
  * Build esm.sh URL with proper configuration.
  *
@@ -41,6 +90,7 @@ export function buildEsmShUrl(
   subpath?: string,
   options?: EsmShOptions,
 ): string {
+  assertValidEsmShParts(pkg, version, subpath, options);
   const params: string[] = [];
 
   if (options?.external?.length) {
@@ -112,6 +162,7 @@ export function buildCrossProjectUrl(
   version: string | null,
   path: string,
 ): string {
+  assertValidCrossProjectImportParts(projectSlug, version, path);
   const modulePath = /\.(js|mjs|jsx|ts|tsx|mdx)$/.test(path) ? path : `${path}.tsx`;
   const projectRef = version && version !== "latest" ? `${projectSlug}@${version}` : projectSlug;
   return `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;

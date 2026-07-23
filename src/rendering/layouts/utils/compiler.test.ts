@@ -51,7 +51,7 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "tsx", path: "/layout.tsx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      assertEquals(layouts[0].bundle, undefined);
+      assertEquals(layouts[0]!.bundle, undefined);
     });
 
     it("should skip mdx layouts that already have a bundle", async () => {
@@ -68,7 +68,7 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "mdx", path: "/layout.mdx", bundle: existingBundle } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      assertEquals(layouts[0].bundle?.compiledCode, "already compiled");
+      assertEquals(layouts[0]!.bundle?.compiledCode, "already compiled");
     });
 
     it("should skip mdx layouts without a path", async () => {
@@ -78,7 +78,7 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "mdx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      assertEquals(layouts[0].bundle, undefined);
+      assertEquals(layouts[0]!.bundle, undefined);
     });
 
     it("should compile mdx layouts and assign bundles", async () => {
@@ -88,7 +88,7 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "mdx", path: "/layout.mdx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      assertEquals(layouts[0].bundle?.compiledCode, "compiled:# Title\n\nContent");
+      assertEquals(layouts[0]!.bundle?.compiledCode, "compiled:# Title\n\nContent");
     });
 
     it("should compile multiple mdx layouts in parallel", async () => {
@@ -102,8 +102,8 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "mdx", path: "/b.mdx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      assertEquals(layouts[0].bundle?.compiledCode, "compiled:layout a");
-      assertEquals(layouts[1].bundle?.compiledCode, "compiled:layout b");
+      assertEquals(layouts[0]!.bundle?.compiledCode, "compiled:layout a");
+      assertEquals(layouts[1]!.bundle?.compiledCode, "compiled:layout b");
     });
 
     it("should only compile mdx layouts, leaving tsx untouched", async () => {
@@ -116,8 +116,8 @@ describe("rendering/layouts/utils/compiler", () => {
         { kind: "mdx", path: "/a.mdx" } as unknown as LayoutItem,
       ];
       await compileMDXLayouts(layouts, compile, adapter);
-      assertEquals(layouts[0].bundle, undefined);
-      assertEquals(layouts[1].bundle?.compiledCode, "compiled:mdx content");
+      assertEquals(layouts[0]!.bundle, undefined);
+      assertEquals(layouts[1]!.bundle?.compiledCode, "compiled:mdx content");
     });
   });
 });

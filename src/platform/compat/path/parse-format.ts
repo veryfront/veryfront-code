@@ -1,19 +1,15 @@
-import { isDeno, nodePath } from "./runtime.ts";
 import { basename, dirname, extname, join } from "./basic-operations.ts";
-import { isAbsolute } from "./resolution.ts";
+import { canonicalizeSeparators, parsePathRoot } from "./internals.ts";
 import type { PathObject } from "./types.ts";
 
 export function parse(path: string): PathObject {
-  if (!isDeno && nodePath) {
-    return nodePath.parse(path);
-  }
-
-  const dir = dirname(path);
-  const base = basename(path);
-  const ext = extname(path);
+  const canonicalPath = canonicalizeSeparators(path);
+  const dir = dirname(canonicalPath);
+  const base = basename(canonicalPath);
+  const ext = extname(canonicalPath);
 
   return {
-    root: isAbsolute(path) ? "/" : "",
+    root: parsePathRoot(canonicalPath).root,
     dir,
     base,
     ext,
@@ -22,12 +18,11 @@ export function parse(path: string): PathObject {
 }
 
 export function format(pathObject: PathObject): string {
-  if (!isDeno && nodePath) {
-    return nodePath.format(pathObject);
-  }
-
-  const { dir = "", base = "", name = "", ext = "" } = pathObject;
+  const { root = "", dir = "", base = "", name = "", ext = "" } = pathObject;
 
   const fileName = base || name + ext;
-  return dir ? join(dir, fileName) : fileName;
+  const directory = canonicalizeSeparators(dir || root);
+  if (!directory) return fileName;
+  if (!fileName) return directory;
+  return directory.endsWith("/") ? `${directory}${fileName}` : join(directory, fileName);
 }

@@ -15,6 +15,7 @@ import {
   applyRecordPatch,
   createRecordPatch,
   createSetContextPatch,
+  getOwnRecordValue,
   mergeContextPatches,
 } from "./context-patch.ts";
 
@@ -48,7 +49,10 @@ export async function executeLoopNodeStrategy(
   // "maxIterations" below.
   let exitedViaCondition = false;
 
-  const existingLoopState = context[`${node.id}_loop_state`] as PersistedLoopState | undefined;
+  const existingLoopState = getOwnRecordValue(
+    context,
+    `${node.id}_loop_state`,
+  ) as PersistedLoopState | undefined;
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).

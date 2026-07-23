@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import {
   buildEmbeddedPreset,
   isPageFile,
@@ -87,7 +87,83 @@ describe("build/embedded/preset", () => {
     }
   });
 
-  it("stops the bundler when the embedded app bundle fails", async () => {
+  it("fails when any discovered route cannot be compiled", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-invalid-route-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "app", "page.md"), "# Home");
+      await Deno.writeTextFile(
+        join(projectDir, "pages", "broken.mdx"),
+        "---\ntitle: [broken\n---\n# Broken",
+      );
+      await Deno.mkdir(join(outDir, "embedded"), { recursive: true });
+      await Deno.writeTextFile(join(outDir, "embedded", "previous.txt"), "previous output");
+
+      await assertRejects(
+        () => buildEmbeddedPreset({ projectDir, outDir, runtime: "deno", config: {} }),
+        Error,
+        "Failed to compile embedded route",
+      );
+
+      assertEquals(
+        await Deno.readTextFile(join(outDir, "embedded", "previous.txt")),
+        "previous output",
+      );
+      const outputEntries = [];
+      for await (const entry of Deno.readDir(join(outDir, "embedded"))) {
+        outputEntries.push(entry.name);
+      }
+      assertEquals(outputEntries, ["previous.txt"]);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects configured source directories outside projectDir", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-outside-source-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.mkdir(join(root, "outside"), { recursive: true });
+      await Deno.writeTextFile(join(root, "outside", "page.md"), "# Outside");
+
+      await assertRejects(
+        () =>
+          buildEmbeddedPreset({
+            projectDir,
+            outDir,
+            runtime: "deno",
+            config: { directories: { app: "../outside" } },
+          }),
+        TypeError,
+        "outside projectDir",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("fails instead of generating a placeholder when no entry route exists", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-no-entry-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await assertRejects(
+        () => buildEmbeddedPreset({ projectDir, outDir, runtime: "deno", config: {} }),
+        Error,
+        "No embedded entry route found",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("stops the bundler when embedded route compilation fails", async () => {
     const root = await Deno.makeTempDir({ prefix: "vf-embedded-failed-bundle-" });
     const projectDir = join(root, "project");
     const outDir = join(root, "dist");
@@ -97,8 +173,12 @@ describe("build/embedded/preset", () => {
 
     try {
       await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
       await Deno.writeTextFile(join(projectDir, "app/page.md"), "# Home");
-      await Deno.mkdir(join(outDir, "embedded", "manifest.json"), { recursive: true });
+      await Deno.writeTextFile(
+        join(projectDir, "pages/broken.mdx"),
+        "---\ntitle: [broken\n---\n# Broken",
+      );
 
       try {
         await buildEmbeddedPreset({

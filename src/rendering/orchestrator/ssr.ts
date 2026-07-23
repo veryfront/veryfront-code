@@ -227,8 +227,9 @@ export class VeryfrontRenderer {
     return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 
-  destroy(): Promise<void> {
-    return this.lifecycle.destroy();
+  async destroy(): Promise<void> {
+    this.renderPipeline.destroy();
+    await this.lifecycle.destroy();
   }
 }
 

@@ -1,5 +1,5 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import type { Message } from "../types.ts";
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "./request-shared.ts";
@@ -14,9 +14,61 @@ const MAX_MESSAGES_PER_REQUEST = 100;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/** Client-defined tool declaration supplied in an AG-UI request. */
+export interface AgUiInjectedTool {
+  /** Tool name. */
+  name: string;
+  /** Optional tool description. */
+  description?: string;
+  /** Optional JSON Schema parameters. */
+  parameters?: Record<string, unknown>;
+}
+
+/** Context item supplied in an AG-UI request. */
+export type AgUiContextItem =
+  | { type: "text"; title?: string; text: string }
+  | { type: "json"; title?: string; data: Record<string, unknown> }
+  | { type: "resource"; title?: string; uri: string; mimeType?: string; text?: string };
+
+/** Message accepted by the AG-UI request schema. */
+export interface AgUiRequestMessage {
+  /** Message identifier. */
+  id: string;
+  /** Message author role. */
+  role: "user" | "assistant" | "system" | "tool";
+  /** Provider-neutral message parts. */
+  parts: Array<Record<string, unknown> & { type: string }>;
+  /** Optional message metadata. */
+  metadata?: Record<string, unknown>;
+  /** Optional ISO timestamp supplied by the client. */
+  createdAt?: string;
+}
+
+/** Validated AG-UI request payload. */
+export interface AgUiRequest {
+  /** Conversation thread identifier. */
+  threadId?: string;
+  /** Runtime run identifier. */
+  runId?: string;
+  /** Ordered conversation messages. */
+  messages: AgUiRequestMessage[];
+  /** Client-defined tools. */
+  tools: AgUiInjectedTool[];
+  /** Request context items. */
+  context: AgUiContextItem[];
+  /** Opaque properties forwarded to the runtime. */
+  forwardedProps?: Record<string, unknown>;
+  /** Optional model override. */
+  model?: string;
+  /** Optional output token limit. */
+  maxOutputTokens?: number;
+}
+
 /** Event emitted for AG-UI sse. */
 export interface AgUiSseEvent {
+  /** Event value. */
   event: string;
+  /** Payload value. */
   payload: Record<string, unknown>;
 }
 
@@ -34,7 +86,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const getAgUiRunIdSchema = defineSchema((v) => v.string().min(1).max(128).regex(AGENT_ID_PATTERN));
 
-export const getAgUiInjectedToolSchema = defineSchema((v) =>
+/** Returns the AG-UI injected tool schema. */
+export const getAgUiInjectedToolSchema: () => Schema<AgUiInjectedTool> = defineSchema((v) =>
   v.object({
     name: v.string().min(1).max(128),
     description: v.string().max(1024).optional(),
@@ -45,7 +98,8 @@ export const getAgUiInjectedToolSchema = defineSchema((v) =>
   })
 );
 
-export const getAgUiContextItemSchema = defineSchema((v) =>
+/** Returns the AG-UI context item schema. */
+export const getAgUiContextItemSchema: () => Schema<AgUiContextItem> = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
       type: v.literal("text"),
@@ -84,14 +138,15 @@ const getAgUiMessagePartSchema = defineSchema((v) =>
 const getAgUiMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
-    role: v.enum(["user", "assistant", "system", "tool"]),
+    role: v.enum(["user", "assistant", "system", "tool"] as const),
     parts: v.array(getAgUiMessagePartSchema()).default([]),
     metadata: v.record(v.string(), v.unknown()).optional(),
     createdAt: v.string().optional(),
   })
 );
 
-export const getAgUiRequestSchema = defineSchema((v) =>
+/** Returns the AG-UI request schema. */
+export const getAgUiRequestSchema: () => Schema<AgUiRequest> = defineSchema((v) =>
   v.object({
     threadId: v.string().uuid().optional(),
     runId: getAgUiRunIdSchema().optional(),
@@ -117,16 +172,11 @@ export const AgUiContextItemSchema = lazySchema(getAgUiContextItemSchema);
 /** Schema for AG-UI request.
  * @deprecated Use getAgUiRequestSchema()
  */
-export const AgUiRequestSchema = lazySchema(getAgUiRequestSchema);
+export const AgUiRequestSchema: Schema<AgUiRequest> = lazySchema(getAgUiRequestSchema);
 
-/** Public API contract for AG-UI injected tool. */
-export type AgUiInjectedTool = InferSchema<ReturnType<typeof getAgUiInjectedToolSchema>>;
-/** Public API contract for AG-UI context item. */
-export type AgUiContextItem = InferSchema<ReturnType<typeof getAgUiContextItemSchema>>;
-/** Request payload for AG-UI. */
-export type AgUiRequest = InferSchema<ReturnType<typeof getAgUiRequestSchema>>;
-
+/** Options for normalizing AG-UI messages into agent messages. */
 export interface NormalizeAgUiMessagesOptions {
+  /** Tool names whose calls and results are owned by the provider. */
   providerOwnedToolNames?: readonly string[];
 }
 

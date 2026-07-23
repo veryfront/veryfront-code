@@ -63,6 +63,17 @@ export const imageFileTypes = [
 const INLINE_TEXT_MEDIA_TYPE = "text/plain";
 const INLINE_BINARY_MEDIA_TYPE = "application/octet-stream";
 const INLINE_PDF_MEDIA_TYPE = "application/pdf";
+const SAFE_INLINE_DATA_MEDIA_TYPES = new Set([
+  INLINE_BINARY_MEDIA_TYPE,
+  INLINE_PDF_MEDIA_TYPE,
+  "application/json",
+  "image/bmp",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/tiff",
+  "image/webp",
+]);
 
 /** Public API contract for chat UI message role. */
 export type ChatUiMessageRole = "system" | "user" | "assistant" | "tool";
@@ -124,14 +135,15 @@ export type ChatToolPartState =
   | "input-available"
   | "approval-requested"
   | "approval-responded"
+  | "output-streaming"
   | "output-available"
   | "output-error"
   | "output-denied"
   | "error"
   | "completed";
 
-/** Public API contract for chat tool part base. */
-type ChatToolPartBase = {
+/** Shared fields for canonical chat tool UI parts. */
+export type ChatToolPartBase = {
   toolCallId: string;
   input: unknown;
   state: ChatToolPartState;
@@ -143,6 +155,7 @@ type ChatToolPartBase = {
   approval?: {
     id: string;
   };
+  renderMode?: "tool_call" | "tool_result";
 };
 
 /** Tool UI part for a runtime-selected tool name. */
@@ -153,8 +166,38 @@ export type ChatDynamicToolUiPart = ChatToolPartBase & {
 
 /** Tool UI part keyed by a static tool type. */
 export type ChatNamedToolUiPart = ChatToolPartBase & {
-  type: `tool-${string}` | "tool_call";
+  type: `tool-${string}`;
   toolName?: string;
+};
+
+/** Persisted legacy tool call accepted while replaying stored chat messages. */
+export type ChatLegacyToolCallUiPart = {
+  type: "tool_call";
+  id?: string;
+  name?: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  toolCallId?: string;
+  toolName?: string;
+  input?: unknown;
+  args?: unknown;
+  state?: string;
+  renderMode?: "tool_call" | "tool_result";
+};
+
+/** Persisted legacy tool result accepted while replaying stored chat messages. */
+export type ChatLegacyToolResultUiPart = {
+  type: "tool_result";
+  id?: string;
+  name?: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  toolCallId?: string;
+  toolName?: string;
+  output?: unknown;
+  result?: unknown;
+  is_error?: boolean;
+  isError?: boolean;
 };
 
 /** Chat UI part that carries custom data chunks. */
@@ -173,6 +216,8 @@ export type ChatUiMessagePart =
   | FileUIPartWithUpload
   | ChatDynamicToolUiPart
   | ChatNamedToolUiPart
+  | ChatLegacyToolCallUiPart
+  | ChatLegacyToolResultUiPart
   | ChatDataUiPart;
 
 /** Message shape for chat UI. */
@@ -184,7 +229,13 @@ export interface ChatUiMessage<TMessageMetadata = ChatMessageMetadata> {
 }
 
 /** JSON-compatible value used in chat tool output. */
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 /** Provider model message part that carries text. */
 export type ChatModelTextPart = {
@@ -349,6 +400,53 @@ export type ChatRequestContext = InferSchema<ReturnType<typeof getChatRequestCon
 
 // Helper that returns a nonEmptyString schema for reuse within defineSchema callbacks.
 const nonEmptyString = (v: SchemaValidator) => v.string().min(1);
+const nonnegativeInteger = (v: SchemaValidator) =>
+  v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const nonnegativeNumber = (v: SchemaValidator) => v.number().nonnegative();
+const httpUrl = (v: SchemaValidator) =>
+  v.string().url().refine((value) => {
+    try {
+      const url = new URL(value);
+      return (url.protocol === "http:" || url.protocol === "https:") &&
+        url.username.length === 0 && url.password.length === 0;
+    } catch {
+      return false;
+    }
+  }, "Must be an HTTP or HTTPS URL without credentials");
+
+function isSafeChatFileUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.username.length === 0 && url.password.length === 0;
+    }
+  } catch {
+    return false;
+  }
+
+  const separatorIndex = value.indexOf(",");
+  if (separatorIndex < 0) return false;
+  const header = value.slice(0, separatorIndex);
+  const match = /^data:([^;,]+);base64$/iu.exec(header);
+  if (!match) return false;
+  const mediaType = match[1]?.toLowerCase();
+  if (
+    !mediaType ||
+    !(SAFE_INLINE_DATA_MEDIA_TYPES.has(mediaType) ||
+      (mediaType.startsWith("text/") && mediaType !== "text/html" && mediaType !== "text/xml"))
+  ) {
+    return false;
+  }
+
+  const payload = value.slice(separatorIndex + 1);
+  return payload.length % 4 === 0 && /^[a-z0-9+/]*={0,2}$/iu.test(payload);
+}
+
+const chatFileUrl = (v: SchemaValidator) =>
+  v.string().min(1).refine(
+    isSafeChatFileUrl,
+    "Must be a safe HTTP, HTTPS, or base64 data URL",
+  );
 
 const getChildRunAuditStatusSchema = defineSchema((v) =>
   v.enum(["completed", "failed", "cancelled", "stopped"])
@@ -356,16 +454,16 @@ const getChildRunAuditStatusSchema = defineSchema((v) =>
 
 const getChildRunAuditToolCallSchema = defineSchema((v) =>
   v.object({
-    toolName: v.string(),
-    toolCallId: v.string(),
+    toolName: nonEmptyString(v),
+    toolCallId: nonEmptyString(v),
     input: v.unknown().optional(),
   }).strict()
 );
 
 const getChildRunAuditToolResultSchema = defineSchema((v) =>
   v.object({
-    toolName: v.string(),
-    toolCallId: v.string(),
+    toolName: nonEmptyString(v),
+    toolCallId: nonEmptyString(v),
     input: v.unknown(),
     output: v.unknown(),
   }).strict()
@@ -375,8 +473,8 @@ const getChildRunAuditSchema = defineSchema((v) =>
   v.object({
     status: getChildRunAuditStatusSchema(),
     description: v.string().optional(),
-    steps: v.number().optional(),
-    durationMs: v.number().optional(),
+    steps: nonnegativeInteger(v).optional(),
+    durationMs: nonnegativeNumber(v).optional(),
     toolCalls: v.array(getChildRunAuditToolCallSchema()).optional(),
     toolResults: v.array(getChildRunAuditToolResultSchema()).optional(),
     terminalErrorCode: v.string().nullable().optional(),
@@ -386,12 +484,12 @@ const getChildRunAuditSchema = defineSchema((v) =>
 
 const getMessageMetadataUsageSchema = defineSchema((v) =>
   v.object({
-    inputTokens: v.number().optional(),
-    outputTokens: v.number().optional(),
-    reasoningTokens: v.number().optional(),
-    cachedInputTokens: v.number().optional(),
-    cacheCreationInputTokens: v.number().optional(),
-    cacheReadInputTokens: v.number().optional(),
+    inputTokens: nonnegativeInteger(v).optional(),
+    outputTokens: nonnegativeInteger(v).optional(),
+    reasoningTokens: nonnegativeInteger(v).optional(),
+    cachedInputTokens: nonnegativeInteger(v).optional(),
+    cacheCreationInputTokens: nonnegativeInteger(v).optional(),
+    cacheReadInputTokens: nonnegativeInteger(v).optional(),
   }).strict()
 );
 
@@ -404,24 +502,24 @@ export const getMessageMetadataSchema = defineSchema((v) =>
     completedAt: v.string().optional(),
     agentId: v.string().optional(),
     agentName: v.string().optional(),
-    agentAvatarUrl: v.string().url().optional(),
+    agentAvatarUrl: httpUrl(v).optional(),
     conversationId: v.string().optional(),
     modelId: v.string().optional(),
     runId: v.string().optional(),
     streamingMessageId: v.string().optional(),
     childRunAudit: getChildRunAuditSchema().optional(),
     usage: getMessageMetadataUsageSchema().optional(),
-    billableInputTokens: v.number().optional(),
-    billableOutputTokens: v.number().optional(),
-    costUsd: v.number().optional(),
-    providerInputCostUsd: v.number().optional(),
-    providerOutputCostUsd: v.number().optional(),
-    providerCostUsd: v.number().optional(),
-    veryfrontInputChargeUsd: v.number().optional(),
-    veryfrontOutputChargeUsd: v.number().optional(),
-    veryfrontChargeUsd: v.number().optional(),
-    veryfrontBilledUsd: v.number().optional(),
-    costCredits: v.number().optional(),
+    billableInputTokens: nonnegativeInteger(v).optional(),
+    billableOutputTokens: nonnegativeInteger(v).optional(),
+    costUsd: nonnegativeNumber(v).optional(),
+    providerInputCostUsd: nonnegativeNumber(v).optional(),
+    providerOutputCostUsd: nonnegativeNumber(v).optional(),
+    providerCostUsd: nonnegativeNumber(v).optional(),
+    veryfrontInputChargeUsd: nonnegativeNumber(v).optional(),
+    veryfrontOutputChargeUsd: nonnegativeNumber(v).optional(),
+    veryfrontChargeUsd: nonnegativeNumber(v).optional(),
+    veryfrontBilledUsd: nonnegativeNumber(v).optional(),
+    costCredits: nonnegativeNumber(v).optional(),
     costSource: v.enum(["gateway", "missing", "partial"] as const).optional(),
     billingMode: v.enum(["direct", "deferred"] as const).optional(),
     usageCaptureStatus: v.enum(["complete", "partial", "missing"] as const).optional(),
@@ -441,6 +539,7 @@ export const getChatToolPartStateSchema = defineSchema((v) =>
     "input-available",
     "approval-requested",
     "approval-responded",
+    "output-streaming",
     "output-available",
     "output-error",
     "output-denied",
@@ -466,6 +565,7 @@ const getToolPartBaseSchema = defineSchema((v) =>
     output: v.unknown().optional(),
     errorText: nonEmptyString(v).optional(),
     approval: getToolApprovalSchema().optional(),
+    renderMode: v.enum(["tool_call", "tool_result"]).optional(),
   }).strip()
 );
 
@@ -495,7 +595,7 @@ const getChatSourceUrlUiPartSchema = defineSchema((v) =>
   v.object({
     type: v.literal("source-url"),
     sourceId: nonEmptyString(v),
-    url: nonEmptyString(v),
+    url: httpUrl(v),
     title: v.string().optional(),
   }).strip()
 );
@@ -514,7 +614,7 @@ const getFileUiPartWithUploadSchema = defineSchema((v) =>
   v.object({
     type: v.literal("file"),
     mediaType: nonEmptyString(v),
-    url: nonEmptyString(v),
+    url: chatFileUrl(v),
     filename: nonEmptyString(v).optional(),
     uploadId: nonEmptyString(v).optional(),
     uploadPath: nonEmptyString(v).optional(),
@@ -530,7 +630,7 @@ const getChatDynamicToolUiPartSchema = defineSchema((v) =>
 
 const getChatNamedToolTypeSchema = defineSchema((v) =>
   v.custom<ChatNamedToolUiPart["type"]>(
-    (value) => typeof value === "string" && (value === "tool_call" || /^tool-.+$/u.test(value)),
+    (value) => typeof value === "string" && /^tool-.+$/u.test(value),
   )
 );
 
@@ -539,6 +639,38 @@ const getChatNamedToolUiPartSchema = defineSchema((v) =>
     type: getChatNamedToolTypeSchema(),
     toolName: nonEmptyString(v).optional(),
   })
+);
+
+const getChatLegacyToolCallUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool_call"),
+    id: v.string().optional(),
+    name: v.string().optional(),
+    tool_call_id: v.string().optional(),
+    tool_name: v.string().optional(),
+    toolCallId: v.string().optional(),
+    toolName: v.string().optional(),
+    input: v.unknown().optional(),
+    args: v.unknown().optional(),
+    state: v.string().optional(),
+    renderMode: v.enum(["tool_call", "tool_result"]).optional(),
+  }).strip()
+);
+
+const getChatLegacyToolResultUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool_result"),
+    id: v.string().optional(),
+    name: v.string().optional(),
+    tool_call_id: v.string().optional(),
+    tool_name: v.string().optional(),
+    toolCallId: v.string().optional(),
+    toolName: v.string().optional(),
+    output: v.unknown().optional(),
+    result: v.unknown().optional(),
+    is_error: v.boolean().optional(),
+    isError: v.boolean().optional(),
+  }).strip()
 );
 
 const getChatDataUiPartTypeSchema = defineSchema((v) =>
@@ -565,6 +697,8 @@ export const getChatUiMessagePartSchema = defineSchema((v) =>
     getFileUiPartWithUploadSchema(),
     getChatDynamicToolUiPartSchema(),
     getChatNamedToolUiPartSchema(),
+    getChatLegacyToolCallUiPartSchema(),
+    getChatLegacyToolResultUiPartSchema(),
     getChatDataUiPartSchema(),
   ])
 );
@@ -598,8 +732,19 @@ function preferNativeTextAttachmentMediaType(
   return isNativeTextAttachmentFile(filename) ? INLINE_TEXT_MEDIA_TYPE : fallbackMediaType;
 }
 
+function normalizeMediaTypeToken(type: string | undefined): string | undefined {
+  const normalized = type?.trim().toLowerCase().split(";", 1)[0]?.trim();
+  if (
+    !normalized || normalized.length > 255 ||
+    !/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)
+  ) {
+    return undefined;
+  }
+  return normalized;
+}
+
 function isTextMediaType(type: string | undefined) {
-  return type?.startsWith("text/") ?? false;
+  return normalizeMediaTypeToken(type)?.startsWith("text/") ?? false;
 }
 
 function isInlinePreviewMediaType(mediaType: string) {
@@ -609,16 +754,17 @@ function isInlinePreviewMediaType(mediaType: string) {
 
 /** Check whether a file is an image. */
 export function isImageFile(type: string | undefined) {
-  return type?.startsWith("image/") ?? false;
+  return normalizeMediaTypeToken(type)?.startsWith("image/") ?? false;
 }
 
 /** Check whether a file is a supported image upload. */
 export function isValidImageFile(type: string) {
-  if (type.length === 0) {
+  const normalized = normalizeMediaTypeToken(type);
+  if (!normalized) {
     return false;
   }
 
-  return imageFileTypes.some((imageFileType) => imageFileType === type);
+  return imageFileTypes.some((imageFileType) => imageFileType === normalized);
 }
 
 /** Check whether a file supports text preview. */
@@ -631,22 +777,30 @@ export function normalizeInlineAttachmentMediaType(
   filename: string | undefined,
   mediaType: string | undefined,
 ) {
-  if (!mediaType) {
+  const normalizedMediaType = normalizeMediaTypeToken(mediaType);
+  if (!normalizedMediaType) {
     return preferNativeTextAttachmentMediaType(filename, INLINE_BINARY_MEDIA_TYPE);
   }
 
-  if (isInlinePreviewMediaType(mediaType)) {
-    return mediaType;
+  if (isInlinePreviewMediaType(normalizedMediaType)) {
+    return normalizedMediaType;
   }
 
-  return preferNativeTextAttachmentMediaType(filename, mediaType);
+  return preferNativeTextAttachmentMediaType(filename, normalizedMediaType);
 }
 
 function escapeXmlAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(
-    />/g,
-    "&gt;",
-  );
+  let withoutControls = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    withoutControls += codePoint <= 31 || codePoint === 127 ? " " : character;
+  }
+
+  return withoutControls.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;")
+    .replace(
+      />/g,
+      "&gt;",
+    );
 }
 
 /** Builds data file annotation. */
@@ -659,7 +813,9 @@ export function buildDataFileAnnotation(refs: UploadedFileReference[]): string {
 
       if (ref.uploadId) attrs.push(`upload_id="${escapeXmlAttr(ref.uploadId)}"`);
       if (ref.path) attrs.push(`path="${escapeXmlAttr(ref.path)}"`);
-      if (typeof ref.size === "number") attrs.push(`size="${ref.size}"`);
+      if (typeof ref.size === "number" && Number.isSafeInteger(ref.size) && ref.size >= 0) {
+        attrs.push(`size="${ref.size}"`);
+      }
       if (ref.url) attrs.push(`url="${escapeXmlAttr(ref.url)}"`);
 
       attrs.push(`type="${escapeXmlAttr(ref.mediaType)}"`);

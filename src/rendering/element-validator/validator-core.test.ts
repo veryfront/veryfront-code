@@ -90,7 +90,7 @@ describe("rendering/element-validator/validator-core", () => {
       it("should throw during inspection for invalid children", () => {
         const validator = new ElementValidator();
         const invalid = { not: "a react child" };
-        const el = React.createElement("div", null, invalid as React.ReactNode);
+        const el = React.createElement("div", null, invalid as unknown as React.ReactNode);
         assertThrows(
           () => validator.ensureValidReactElement(el, true),
           Error,

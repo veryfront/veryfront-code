@@ -7,6 +7,7 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -505,7 +506,7 @@ describe("CSSOptimizer", () => {
           inputDir: TEST_DIR,
           outputDir: OUTPUT_DIR,
           autoprefixer: true,
-          browsers: ["last 2 versions"],
+          browsers: { chrome: 120, safari: 17 },
         });
 
         const manifest = await optimizer.optimize();
@@ -531,7 +532,7 @@ describe("CSSOptimizer", () => {
           inputDir: TEST_DIR,
           outputDir: OUTPUT_DIR,
           autoprefixer: true,
-          browsers: ["last 2 Chrome versions"],
+          browsers: { chrome: 120 },
         });
 
         const manifest = await optimizer.optimize();
@@ -555,7 +556,7 @@ describe("CSSOptimizer", () => {
           inputDir: TEST_DIR,
           outputDir: OUTPUT_DIR,
           autoprefixer: true,
-          browsers: ["> 1%", "last 2 versions"],
+          browsers: { chrome: 90, safari: 14 },
         });
 
         const manifest = await optimizer.optimize();
@@ -566,6 +567,37 @@ describe("CSSOptimizer", () => {
   });
 
   describe("edge cases", () => {
+    it("does not write partial outputs when any input fails validation", async () => {
+      await withCleanDirs(async () => {
+        await setupTestCSS("a-valid.css", ".valid { color: blue; }");
+        await setupTestCSS("z-invalid.css", ".invalid { color: red");
+
+        const optimizer = new CSSOptimizer({ inputDir: TEST_DIR, outputDir: OUTPUT_DIR });
+        await assertRejects(() => optimizer.optimize(), Error);
+
+        await assertRejects(
+          () => readTextFile(join(OUTPUT_DIR, "a-valid.min.css")),
+          Deno.errors.NotFound,
+        );
+        await assertRejects(
+          () => readTextFile(join(OUTPUT_DIR, "css-manifest.json")),
+          Deno.errors.NotFound,
+        );
+      });
+    });
+
+    it("does not retain stale cache entries across optimization runs", async () => {
+      await withCleanDirs(async () => {
+        await setupTestCSS("stale.css", ".stale { color: blue; }");
+        const optimizer = new CSSOptimizer({ inputDir: TEST_DIR, outputDir: OUTPUT_DIR });
+        assertEquals((await optimizer.optimize()).size, 1);
+
+        await remove(join(TEST_DIR, "stale.css"));
+        assertEquals((await optimizer.optimize()).size, 0);
+        assertEquals((await loadCSSManifest(OUTPUT_DIR)).size, 0);
+      });
+    });
+
     it("should handle empty CSS file", async () => {
       await withCleanDirs(async () => {
         await setupTestCSS("empty.css", "");
@@ -582,19 +614,16 @@ describe("CSSOptimizer", () => {
       });
     });
 
-    it("should handle invalid CSS", async () => {
+    it("should reject invalid CSS", async () => {
       await withCleanDirs(async () => {
-        await setupTestCSS("invalid.css", ".broken { color: }");
+        await setupTestCSS("invalid.css", ".broken { color: red");
 
         const optimizer = new CSSOptimizer({
           inputDir: TEST_DIR,
           outputDir: OUTPUT_DIR,
         });
 
-        // Should not throw, should log error
-        const manifest = await optimizer.optimize();
-
-        assertEquals(typeof manifest.size, "number");
+        await assertRejects(() => optimizer.optimize(), Error);
       });
     });
 
@@ -618,7 +647,7 @@ describe("CSSOptimizer", () => {
     it("should handle missing input directory", async () => {
       await withCleanDirs(async () => {
         const optimizer = new CSSOptimizer({
-          inputDir: "/nonexistent/directory",
+          inputDir: ".veryfront/nonexistent-css-directory",
           outputDir: OUTPUT_DIR,
         });
 
@@ -629,7 +658,7 @@ describe("CSSOptimizer", () => {
       });
     });
 
-    it("should handle malformed @media queries", async () => {
+    it("should reject malformed @media queries", async () => {
       await withCleanDirs(async () => {
         const malformedCSS = `
 @media (min-width: 768px {
@@ -646,10 +675,7 @@ describe("CSSOptimizer", () => {
           outputDir: OUTPUT_DIR,
         });
 
-        // Should handle gracefully
-        const manifest = await optimizer.optimize();
-
-        assertEquals(typeof manifest.size, "number");
+        await assertRejects(() => optimizer.optimize(), Error);
       });
     });
   });
@@ -924,8 +950,8 @@ describe("loadCSSManifest", () => {
         "test.css": {
           file: "test.css",
           size: 1000,
-          minifiedSize: 500,
-          savings: 50,
+          minifiedSize: 16,
+          savings: 98,
         },
       };
 
@@ -933,6 +959,7 @@ describe("loadCSSManifest", () => {
         join(OUTPUT_DIR, "css-manifest.json"),
         JSON.stringify(testManifest, null, 2),
       );
+      await writeTextFile(join(OUTPUT_DIR, "test.min.css"), ".test{color:red}");
 
       const manifest = await loadCSSManifest(OUTPUT_DIR);
 
@@ -941,16 +968,13 @@ describe("loadCSSManifest", () => {
     });
   });
 
-  it("should return empty manifest for corrupted file", async () => {
+  it("should reject a corrupted manifest", async () => {
     await withCleanDirs(async () => {
       await ensureDir(OUTPUT_DIR);
 
       await writeTextFile(join(OUTPUT_DIR, "css-manifest.json"), "invalid{json}");
 
-      const manifest = await loadCSSManifest(OUTPUT_DIR);
-
-      // Should return empty map on error
-      assertEquals(manifest.size, 0);
+      await assertRejects(() => loadCSSManifest(OUTPUT_DIR), SyntaxError, "Invalid CSS manifest");
     });
   });
 });

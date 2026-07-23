@@ -9,6 +9,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import type { SplitOptions } from "./types.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 /** Veryfront client modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_CLIENT_MODULES = [
@@ -36,12 +37,17 @@ export function getExternalDependencies(
   }
 
   external.push(...customExternal);
-  return external;
+  return [...new Set(external)];
 }
 
 /** Creates a browser shim file for global compatibility */
 export async function createShimFile(outDir: string): Promise<string> {
-  const shimPath = join(outDir, ".veryfront-shim.js");
+  if (typeof outDir !== "string" || outDir.trim() === "") {
+    throw new TypeError("Code-splitter shim outDir must not be blank");
+  }
+  const fs = createFileSystem();
+  await fs.mkdir(outDir, { recursive: true });
+  const shimPath = join(outDir, `.veryfront-shim.${crypto.randomUUID()}.js`);
   const reactImports = JSON.stringify(getReactImportMap(REACT_DEFAULT_VERSION));
   const shimContent = `
 if (typeof global === 'undefined') {
@@ -56,7 +62,7 @@ if (typeof window !== 'undefined' && !window.__veryfront_react_imports) {
 }
 `;
 
-  await createFileSystem().writeTextFile(shimPath, shimContent);
+  await fs.writeTextFile(shimPath, shimContent);
   return shimPath;
 }
 
@@ -65,6 +71,7 @@ export async function createBuildContext(
   options: SplitOptions,
   entryPoints: Record<string, string>,
 ): Promise<BuildContext> {
+  const fs = createFileSystem();
   const moduleResolution = options.moduleResolution ?? "cdn";
   const external = getExternalDependencies(options.external, moduleResolution);
   const shimFile = await createShimFile(options.outDir);
@@ -72,27 +79,66 @@ export async function createBuildContext(
   const isProduction = options.mode === "production";
   const isDevelopment = options.mode === "development";
 
-  return context({
-    entryPoints,
-    bundle: true,
-    splitting: true,
-    format: "esm",
-    target: ["es2022"],
-    platform: "browser",
-    outdir: options.outDir,
-    metafile: true,
-    minify: isProduction,
-    sourcemap: isDevelopment,
-    treeShaking: isProduction,
-    chunkNames: "chunks/[name]-[hash]",
-    entryNames: "[name]",
-    assetNames: "assets/[name]-[hash]",
-    external,
-    inject: [shimFile],
-    define: {
-      "process.env.NODE_ENV": JSON.stringify(options.mode),
-      __DEV__: JSON.stringify(isDevelopment),
+  let buildContext: BuildContext;
+  try {
+    buildContext = await context({
+      entryPoints,
+      bundle: true,
+      splitting: true,
+      format: "esm",
+      target: ["es2022"],
+      platform: "browser",
+      outdir: options.outDir,
+      metafile: true,
+      minify: isProduction,
+      sourcemap: isDevelopment,
+      treeShaking: isProduction,
+      chunkNames: "chunks/[name]-[hash]",
+      entryNames: "[name]",
+      assetNames: "assets/[name]-[hash]",
+      external,
+      inject: [shimFile],
+      define: {
+        "process.env.NODE_ENV": JSON.stringify(options.mode),
+        __DEV__: JSON.stringify(isDevelopment),
+      },
+      plugins: [createSplitterPlugin(options.projectDir, options.mode)],
+    });
+  } catch (error) {
+    try {
+      await fs.remove(shimFile);
+    } catch (cleanupError) {
+      if (!isNotFoundError(cleanupError)) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Code-splitter context creation and shim cleanup both failed",
+        );
+      }
+    }
+    throw error;
+  }
+
+  let disposed = false;
+  return {
+    rebuild: () => buildContext.rebuild(),
+    async dispose(): Promise<void> {
+      if (disposed) return;
+      disposed = true;
+      const errors: unknown[] = [];
+      try {
+        await buildContext.dispose();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await fs.remove(shimFile);
+      } catch (error) {
+        if (!isNotFoundError(error)) errors.push(error);
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, "Code-splitter context and shim cleanup failed");
+      }
     },
-    plugins: [createSplitterPlugin(options.projectDir)],
-  });
+  };
 }

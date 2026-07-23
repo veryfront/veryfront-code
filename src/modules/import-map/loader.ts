@@ -5,9 +5,31 @@ import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
-import { mergeImportMaps } from "./merger.ts";
+import { mergeImportMaps, sanitizeImportMap } from "./merger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
+import { IMPORT_MAP_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
+import { hasUnsafeControlCharacters } from "#veryfront/errors/text-validation.ts";
+
+const MAX_IMPORT_MAP_CONFIG_BYTES = 1024 * 1024;
+const MAX_IMPORT_MAP_START_PATH_LENGTH = 4_096;
+
+function parseImportMapConfig(content: string): ImportMapConfig {
+  if (new TextEncoder().encode(content).byteLength > MAX_IMPORT_MAP_CONFIG_BYTES) {
+    throw IMPORT_MAP_INVALID.create({ detail: "Import-map configuration exceeds size limit" });
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw IMPORT_MAP_INVALID.create({ detail: "Import-map configuration is not valid JSON" });
+  }
+  const sanitized = sanitizeImportMap(parsed);
+  if (!sanitized) {
+    throw IMPORT_MAP_INVALID.create({ detail: "Import-map configuration has an invalid shape" });
+  }
+  return sanitized;
+}
 
 function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
   const normalizeValue = (value: string): string => {
@@ -15,7 +37,9 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
 
     // Convert npm: specifiers to esm.sh URLs (should not happen with new code)
     const spec = value.slice(4);
-    const [base, query] = spec.split("?");
+    const queryStart = spec.indexOf("?");
+    const base = queryStart === -1 ? spec : spec.slice(0, queryStart);
+    const query = queryStart === -1 ? "" : spec.slice(queryStart + 1);
     const url = `https://esm.sh/${base}`;
 
     return query ? `${url}?${query}` : `${url}?target=es2022`;
@@ -25,7 +49,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     ? Object.fromEntries(Object.entries(importMap.imports).map(([k, v]) => [k, normalizeValue(v)]))
     : undefined;
 
-  const scopes = importMap.scopes
+  let scopes = importMap.scopes
     ? Object.fromEntries(
       Object.entries(importMap.scopes).map(([scope, mappings]) => [
         scope,
@@ -36,15 +60,25 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
 
   // Override React mappings AFTER all other processing to ensure single instance.
   // Remove any "react/" prefix match since we have explicit mappings.
-  if (imports) {
-    const veryfrontSsrMap = Object.fromEntries(
-      Object.entries(getDefaultImportMap().imports ?? {}).filter(([key]) =>
-        key.startsWith("veryfront/")
-      ),
+  const veryfrontSsrMap = Object.fromEntries(
+    Object.entries(getDefaultImportMap().imports ?? {}).filter(([key]) =>
+      key.startsWith("veryfront/")
+    ),
+  );
+  const reactMap = getReactImportMap();
+  const enforceRuntimeMappings = (mappings: Record<string, string>) => {
+    const normalized = { ...mappings };
+    delete normalized["react/"];
+    return { ...normalized, ...veryfrontSsrMap, ...reactMap };
+  };
+  imports = enforceRuntimeMappings(imports ?? {});
+  if (scopes) {
+    scopes = Object.fromEntries(
+      Object.entries(scopes).map(([scope, mappings]) => [
+        scope,
+        enforceRuntimeMappings(mappings),
+      ]),
     );
-    const reactMap = getReactImportMap();
-    delete imports["react/"];
-    imports = { ...imports, ...veryfrontSsrMap, ...reactMap };
   }
 
   return { imports, scopes };
@@ -79,26 +113,19 @@ async function loadDenoJsonImportMap(
   // For virtual filesystems (API-backed), only check project root
   // Virtual filesystems use relative paths, not absolute local paths
   if (isVirtualFilesystem(adapter.fs)) {
-    try {
-      const content = await adapter.fs.readFile("deno.json");
-      const config = JSON.parse(content);
-
-      if (config.imports || config.scopes) {
-        logger.debug("Loaded import map from deno.json (virtual filesystem)");
-        const imports = config.imports ? filterRelativePaths(config.imports) : {};
-        const scopes = config.scopes
-          ? Object.fromEntries(
-            Object.entries(config.scopes as Record<string, Record<string, string>>).map(
-              ([scope, mappings]) => [scope, filterRelativePaths(mappings)],
-            ),
-          )
-          : {};
-        return { imports, scopes };
-      }
-    } catch (_) {
-      /* expected: deno.json not found in virtual filesystem */
-    }
-    return null;
+    if (!await adapter.fs.exists("deno.json")) return null;
+    const content = await adapter.fs.readFile("deno.json");
+    const config = parseImportMapConfig(content);
+    logger.debug("Loaded import map from deno.json (virtual filesystem)");
+    const imports = config.imports ? filterRelativePaths(config.imports) : {};
+    const scopes = config.scopes
+      ? Object.fromEntries(
+        Object.entries(config.scopes).map(
+          ([scope, mappings]) => [scope, filterRelativePaths(mappings)],
+        ),
+      )
+      : {};
+    return { imports, scopes };
   }
 
   // For local filesystems, walk up directory tree
@@ -107,24 +134,19 @@ async function loadDenoJsonImportMap(
   while (currentPath !== "/" && currentPath !== "") {
     const denoJsonPath = join(currentPath, "deno.json");
 
-    try {
+    if (await adapter.fs.exists(denoJsonPath)) {
       const content = await adapter.fs.readFile(denoJsonPath);
-      const config = JSON.parse(content);
-
-      if (config.imports || config.scopes) {
-        logger.debug(`Loaded import map from ${denoJsonPath}`);
-        const imports = config.imports ? filterRelativePaths(config.imports) : {};
-        const scopes = config.scopes
-          ? Object.fromEntries(
-            Object.entries(config.scopes as Record<string, Record<string, string>>).map(
-              ([scope, mappings]) => [scope, filterRelativePaths(mappings)],
-            ),
-          )
-          : {};
-        return { imports, scopes };
-      }
-    } catch (_) {
-      /* expected: deno.json not found in this directory, continue searching */
+      const config = parseImportMapConfig(content);
+      logger.debug("Loaded import map from deno.json");
+      const imports = config.imports ? filterRelativePaths(config.imports) : {};
+      const scopes = config.scopes
+        ? Object.fromEntries(
+          Object.entries(config.scopes).map(
+            ([scope, mappings]) => [scope, filterRelativePaths(mappings)],
+          ),
+        )
+        : {};
+      return { imports, scopes };
     }
 
     const parent = dirname(currentPath);
@@ -139,6 +161,12 @@ export function loadImportMap(
   startPath: string,
   adapter?: RuntimeAdapter,
 ): Promise<ImportMapConfig> {
+  if (
+    startPath.length === 0 || startPath.length > MAX_IMPORT_MAP_START_PATH_LENGTH ||
+    hasUnsafeControlCharacters(startPath)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "Import-map start path is invalid" });
+  }
   return withSpan(
     "modules.importMap.load",
     async () => {
@@ -149,17 +177,15 @@ export function loadImportMap(
 
       // Then, try to get config's import map
       let configMap: ImportMapConfig | null = null;
-      try {
-        const cfg = await getConfig(startPath, runtimeAdapter);
-        const importMap = cfg?.resolve?.importMap;
-        if (importMap && typeof importMap === "object") {
-          configMap = {
-            imports: importMap.imports ?? {},
-            scopes: importMap.scopes ?? {},
-          };
+      const cfg = await getConfig(startPath, runtimeAdapter);
+      const importMap = cfg?.resolve?.importMap;
+      if (importMap !== undefined) {
+        configMap = sanitizeImportMap(importMap);
+        if (!configMap) {
+          throw IMPORT_MAP_INVALID.create({
+            detail: "Veryfront import-map configuration has an invalid shape",
+          });
         }
-      } catch (_) {
-        /* expected: config not found or invalid, continue without it */
       }
 
       // Merge: defaults < deno.json < config
@@ -173,6 +199,6 @@ export function loadImportMap(
 
       return normalizeImportMapForRuntime(merged);
     },
-    { "importMap.startPath": startPath },
+    {},
   );
 }

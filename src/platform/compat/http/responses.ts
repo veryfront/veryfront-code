@@ -73,19 +73,25 @@ export function jsonResponse<T>(
     h.set("Content-Type", "application/json; charset=utf-8");
   });
 
+  let body: string;
   try {
-    return new Response(JSON.stringify(data), {
-      ...options,
-      status,
-      headers,
-    });
+    const serialized = JSON.stringify(data);
+    if (serialized === undefined) throw new TypeError("JSON value has no representation");
+    body = serialized;
   } catch (_) {
     /* expected: JSON.stringify may fail on circular or non-serializable data */
     return errorResponse(
       HttpStatus.INTERNAL_SERVER_ERROR,
       "Failed to serialize response data",
+      options,
     );
   }
+
+  return new Response(body, {
+    ...options,
+    status,
+    headers,
+  });
 }
 
 /** Create an HTTP redirect response. */
@@ -95,7 +101,7 @@ export function redirectResponse(
   options?: ResponseOptions,
 ): Response {
   if (!isValidRedirectUrl(url)) {
-    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid redirect URL");
+    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid redirect URL", options);
   }
 
   const status = permanent ? HttpStatus.MOVED_PERMANENTLY : HttpStatus.FOUND;
@@ -157,7 +163,10 @@ export function methodNotAllowed(allowed: string[], options?: ResponseOptions): 
 }
 
 export function ok<T>(data?: T, options?: ResponseOptions): Response {
-  if (data === undefined) return new Response(null, { status: HttpStatus.OK, ...options });
+  if (data === undefined) {
+    const headers = createHeaders(options);
+    return new Response(null, { ...options, status: HttpStatus.OK, headers });
+  }
   return jsonResponse(data, HttpStatus.OK, options);
 }
 
@@ -167,14 +176,15 @@ export function created<T>(data?: T, location?: string, options?: ResponseOption
   });
 
   if (data === undefined) {
-    return new Response(null, { status: HttpStatus.CREATED, headers, ...options });
+    return new Response(null, { ...options, status: HttpStatus.CREATED, headers });
   }
 
   return jsonResponse(data, HttpStatus.CREATED, { ...options, headers });
 }
 
 export function noContent(options?: ResponseOptions): Response {
-  return new Response(null, { status: HttpStatus.NO_CONTENT, ...options });
+  const headers = createHeaders(options);
+  return new Response(null, { ...options, status: HttpStatus.NO_CONTENT, headers });
 }
 
 export function jsonErrorResponse(

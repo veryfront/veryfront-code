@@ -1,7 +1,22 @@
 import { serverLogger } from "#veryfront/utils";
 import type { Context, OpenTelemetryAPI, Span, SpanKind, SpanOptions, Tracer } from "./types.ts";
+import {
+  classifyTelemetryError,
+  normalizeTelemetryName,
+  runSpanHook,
+  sanitizeTelemetryAttributes,
+  setSanitizedSpanError,
+} from "../telemetry-safety.ts";
 
 const logger = serverLogger.component("tracing");
+
+function logTracingFailure(message: string, error: unknown): void {
+  try {
+    logger.debug(message, { failure_category: classifyTelemetryError(error) });
+  } catch {
+    // Logging must not affect application behavior.
+  }
+}
 
 export class SpanOperations {
   constructor(
@@ -12,46 +27,37 @@ export class SpanOperations {
   startSpan(name: string, options: SpanOptions = {}): Span | null {
     try {
       return this.tracer.startSpan(
-        name,
+        normalizeTelemetryName(name),
         {
           kind: this.mapSpanKind(options.kind),
-          attributes: options.attributes ?? {},
+          attributes: sanitizeTelemetryAttributes(options.attributes),
         },
-        options.parent as Context | undefined,
+        this.resolveParent(options.parent),
       );
     } catch (error) {
-      logger.debug("Failed to start span", { name, error });
+      logTracingFailure("Failed to start span", error);
       return null;
     }
   }
 
-  endSpan(span: Span | null, error?: Error): void {
+  endSpan(span: Span | null, error?: unknown): void {
     if (!span) return;
 
-    try {
-      if (error) {
-        span.recordException(error);
-        span.setStatus({
-          code: this.api.SpanStatusCode.ERROR,
-          message: error.message,
-        });
-      } else {
-        span.setStatus({ code: this.api.SpanStatusCode.OK });
-      }
-
-      span.end();
-    } catch (error) {
-      logger.debug("Failed to end span", error);
+    if (error !== undefined) {
+      setSanitizedSpanError(span, this.api.SpanStatusCode.ERROR, error);
+    } else {
+      runSpanHook(() => span.setStatus({ code: this.api.SpanStatusCode.OK }));
     }
+    runSpanHook(() => span.end());
   }
 
   setAttributes(span: Span | null, attributes: Record<string, string | number | boolean>): void {
     if (!span) return;
 
     try {
-      span.setAttributes(attributes);
+      span.setAttributes(sanitizeTelemetryAttributes(attributes));
     } catch (error) {
-      logger.debug("Failed to set span attributes", error);
+      logTracingFailure("Failed to set span attributes", error);
     }
   }
 
@@ -63,9 +69,12 @@ export class SpanOperations {
     if (!span) return;
 
     try {
-      span.addEvent(name, attributes);
+      span.addEvent(
+        normalizeTelemetryName(name),
+        attributes ? sanitizeTelemetryAttributes(attributes) : undefined,
+      );
     } catch (error) {
-      logger.debug("Failed to add span event", error);
+      logTracingFailure("Failed to add span event", error);
     }
   }
 
@@ -76,7 +85,7 @@ export class SpanOperations {
       const parentContext = this.api.trace.setSpan(this.api.context.active(), parentSpan);
       return this.startSpan(name, { ...options, parent: parentContext });
     } catch (error) {
-      logger.debug("Failed to create child span", error);
+      logTracingFailure("Failed to create child span", error);
       return null;
     }
   }
@@ -98,5 +107,20 @@ export class SpanOperations {
       default:
         return this.api.SpanKind.INTERNAL;
     }
+  }
+
+  private resolveParent(parent: SpanOptions["parent"]): Context | undefined {
+    if (!parent) return undefined;
+    try {
+      if (
+        typeof (parent as Span).setAttribute === "function" &&
+        typeof (parent as Span).spanContext === "function"
+      ) {
+        return this.api.trace.setSpan(this.api.context.active(), parent as Span);
+      }
+    } catch {
+      return undefined;
+    }
+    return parent as Context;
   }
 }

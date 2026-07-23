@@ -1,5 +1,4 @@
 import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
-import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type {
@@ -12,6 +11,8 @@ import {
   buildDirCacheKeyPrefix,
   buildFileCacheKeyPrefix,
   buildFileListCacheKey,
+  buildProjectCachePrefix,
+  buildProjectCachePrefixes,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
 import {
@@ -29,17 +30,12 @@ import {
   parsePokeWebSocketMessage,
   WS_HEARTBEAT_INTERVAL_MS,
   WS_HEARTBEAT_TIMEOUT_MS,
-  WS_RECONNECT_MAX_DELAY_MS,
-  WS_RECONNECT_MAX_FAILURES,
 } from "./websocket-manager-helpers.ts";
+import { classifyFilesystemError } from "./telemetry.ts";
 
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
-
-function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
-  return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
-}
 
 interface WebSocketDeps {
   apiBaseUrl: string;
@@ -91,14 +87,10 @@ export class WebSocketManager {
     lastPokeTime: 0,
   };
 
-  private apiToken: string;
+  private readonly apiToken: string;
 
   constructor(private readonly deps: WebSocketDeps) {
     this.apiToken = deps.apiToken;
-  }
-
-  setApiToken(token: string): void {
-    this.apiToken = token;
   }
 
   private getConnectionLogContext(context: Record<string, unknown> = {}): Record<string, unknown> {
@@ -134,6 +126,14 @@ export class WebSocketManager {
     }
   }
 
+  private releasePreviewInvalidations(): void {
+    this.previewInvalidationVersion++;
+    for (const prefix of this.activePreviewInvalidationPrefixes) {
+      removePendingInvalidation(prefix);
+    }
+    this.activePreviewInvalidationPrefixes.clear();
+  }
+
   getPokeMetrics(): {
     received: number;
     invalidationsTriggered: number;
@@ -147,22 +147,6 @@ export class WebSocketManager {
     if (this.disposed) return;
 
     this.cleanupTimers();
-
-    if (this.wsConsecutiveFailures >= WS_RECONNECT_MAX_FAILURES) {
-      // Intentional infinite-retry: once the failure cap is hit the counter
-      // resets so reconnection continues at the maximum back-off delay rather
-      // than stopping permanently. This is the desired long-running-server behavior.
-      logger.warn(
-        "WebSocket reconnect failure cap reached — resetting counter for continued retry at max delay",
-        {
-          consecutiveFailures: this.wsConsecutiveFailures,
-          maxFailures: WS_RECONNECT_MAX_FAILURES,
-          cappedDelayMs: WS_RECONNECT_MAX_DELAY_MS,
-          projectId,
-        },
-      );
-      this.wsConsecutiveFailures = 0;
-    }
 
     const wsUrl = this.deps.apiBaseUrl
       .replace(/^http:/, "ws:")
@@ -178,7 +162,6 @@ export class WebSocketManager {
     logger.debug(
       "Connecting to WebSocket",
       this.getConnectionLogContext({
-        url: sanitizeWebSocketLogUrl(url),
         consecutiveFailures: this.wsConsecutiveFailures,
       }),
     );
@@ -197,8 +180,6 @@ export class WebSocketManager {
         logger.debug(
           "WebSocket connected to events channel",
           this.getConnectionLogContext({
-            projectId,
-            connectionId: this.wsConnectionId,
             ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
           }),
         );
@@ -206,9 +187,6 @@ export class WebSocketManager {
           logger.info(
             "WebSocket reconnect recovered",
             this.getConnectionLogContext({
-              projectId,
-              project_id: projectId,
-              connectionId: this.wsConnectionId,
               consecutiveFailures: recoveredFailures,
               ...buildContentSourceLabel(this.deps.getContentSource, this.deps.getContentContext),
             }),
@@ -220,13 +198,10 @@ export class WebSocketManager {
 
       this.ws.onmessage = (event) => {
         this.wsLastPong = Date.now();
-        logger.debug("WebSocket message received:", { data: event.data });
         this.handlePokeMessage(event);
       };
 
       this.ws.onclose = (event) => {
-        const connectionId = this.wsConnectionId;
-        const url = this.ws?.url;
         this.wsConnectionId = null;
         this.cleanupTimers();
 
@@ -237,15 +212,10 @@ export class WebSocketManager {
         logger.warn(
           "WebSocket reconnect scheduled after close",
           this.getConnectionLogContext({
-            projectId,
-            project_id: projectId,
-            connectionId,
-            url: sanitizeWebSocketLogUrl(url),
             delayMs: delay,
             totalPokesReceived: this.pokeMetrics.received,
             consecutiveFailures: this.wsConsecutiveFailures,
             closeCode: event.code,
-            closeReason: event.reason,
             wasClean: event.wasClean,
           }),
         );
@@ -260,7 +230,6 @@ export class WebSocketManager {
             "WebSocket error",
             this.getConnectionLogContext({
               type: event.type,
-              url: sanitizeWebSocketLogUrl((event.target as WebSocket)?.url),
               readyState: (event.target as WebSocket)?.readyState,
               consecutiveFailures: this.wsConsecutiveFailures,
             }),
@@ -273,7 +242,7 @@ export class WebSocketManager {
       logger.warn(
         "Failed to connect WebSocket",
         this.getConnectionLogContext({
-          error,
+          errorClass: classifyFilesystemError(error),
           consecutiveFailures: this.wsConsecutiveFailures,
         }),
       );
@@ -289,6 +258,7 @@ export class WebSocketManager {
   dispose(): void {
     this.disposed = true;
     this.cleanupTimers();
+    this.releasePreviewInvalidations();
 
     if (this.invalidationTimer) {
       clearTimeout(this.invalidationTimer);
@@ -299,6 +269,7 @@ export class WebSocketManager {
       clearTimeout(this.selectiveInvalidationTimer);
       this.selectiveInvalidationTimer = null;
     }
+    this.pendingChangedPaths.clear();
 
     if (!this.ws) return;
 
@@ -310,7 +281,9 @@ export class WebSocketManager {
     try {
       this.ws.close();
     } catch (error) {
-      logger.warn("Error closing WebSocket", { error });
+      logger.warn("Error closing WebSocket", {
+        errorClass: classifyFilesystemError(error),
+      });
     } finally {
       this.ws = null;
     }
@@ -318,7 +291,14 @@ export class WebSocketManager {
 
   private handlePokeMessage(event: MessageEvent): void {
     try {
-      const message = parsePokeWebSocketMessage(event.data as string);
+      if (typeof event.data !== "string") {
+        logger.warn("Ignoring non-text WebSocket message", {
+          frameType: event.data instanceof Blob ? "blob" : typeof event.data,
+        });
+        return;
+      }
+
+      const message = parsePokeWebSocketMessage(event.data);
       if (!message) return;
       const payload = message.payload;
 
@@ -373,15 +353,9 @@ export class WebSocketManager {
 
       logger.debug("POKE RECEIVED - checking environment scope", {
         type: message.type,
-        pokeBranchId: normalizedBranchId,
-        pokeBranchName: normalizedBranchName,
+        branchScope: normalizedBranchName ? "name" : normalizedBranchId ? "id" : "none",
         isProductionPoke,
         isProductionMode,
-        currentBranch,
-        entityId: payload.entityId,
-        entityType: payload.entityType,
-        action: payload.action,
-        connectionId: this.wsConnectionId,
         totalPokesReceived: this.pokeMetrics.received,
         timeSinceLastPokeMs: timeSinceLastPoke,
       });
@@ -393,8 +367,6 @@ export class WebSocketManager {
         logger.debug(
           "[WebSocketManager] POKE ACCEPTED - branch-scoped poke in production mode",
           {
-            pokeBranchId: normalizedBranchId,
-            pokeBranchName: normalizedBranchName,
             sourceType: contentContext?.sourceType,
           },
         );
@@ -404,10 +376,7 @@ export class WebSocketManager {
         if (normalizedBranchName && normalizedBranchName !== currentBranch) {
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
-            {
-              pokeBranchName: normalizedBranchName,
-              currentBranch,
-            },
+            { branchScope: "name" },
           );
           return;
         }
@@ -416,14 +385,14 @@ export class WebSocketManager {
           if (currentBranch === null) {
             logger.debug(
               "[WebSocketManager] POKE SKIPPED - branchId-only poke for main preview",
-              { pokeBranchId: normalizedBranchId },
+              { branchScope: "id" },
             );
             return;
           }
 
           logger.debug(
             "[WebSocketManager] POKE ACCEPTED - branchId-only fallback in preview mode",
-            { pokeBranchId: normalizedBranchId, currentBranch },
+            { branchScope: "id" },
           );
         }
 
@@ -437,7 +406,7 @@ export class WebSocketManager {
           // using a different default branch (e.g., "master", "develop").
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - unscoped poke for named branch preview",
-            { currentBranch, defaultBranchName: this.deps.defaultBranchName ?? "main" },
+            { branchScope: "none" },
           );
           return;
         }
@@ -470,13 +439,9 @@ export class WebSocketManager {
 
       logger.info("POKE ACCEPTED - triggering cache invalidation", {
         changedPathsCount: changedPaths?.length || 0,
-        changedPaths: changedPaths || [],
-        projectSlug: this.deps.projectSlug,
-        branch: contentContext?.branch,
+        sourceType: contentContext?.sourceType,
         isDeploymentPoke,
         isPublishPoke,
-        pokeReleaseId: normalizedPokeReleaseId,
-        pokeEnvironmentName: normalizedPokeEnvironment,
       });
 
       this.beginPreviewInvalidation(contentContext);
@@ -496,7 +461,9 @@ export class WebSocketManager {
       logger.debug("No changedPaths provided - using full invalidation");
       this.scheduleInvalidation();
     } catch (error) {
-      logger.debug("WebSocket message parse error", { error });
+      logger.debug("WebSocket message handling failed", {
+        errorClass: classifyFilesystemError(error),
+      });
     }
   }
 
@@ -552,11 +519,9 @@ export class WebSocketManager {
     for (const prefix of pendingPrefixes) addPendingInvalidation(prefix);
 
     logger.info("PUBLISH POKE - clearing persistent cache", {
-      projectSlug: this.deps.projectSlug,
-      releaseId,
-      environmentName,
-      deletionPrefixes: Array.from(deletionPrefixes),
-      pendingPrefixes: Array.from(pendingPrefixes),
+      deletionPrefixCount: deletionPrefixes.size,
+      hasReleaseId: !!releaseId,
+      hasEnvironmentName: !!environmentName,
       pendingInvalidations: getPendingInvalidationsCount(),
     });
 
@@ -570,18 +535,11 @@ export class WebSocketManager {
         succeeded = true;
 
         logger.info("PUBLISH POKE - persistent cache cleared", {
-          projectSlug: this.deps.projectSlug,
-          releaseId,
-          environmentName,
           totalDeleted,
         });
       } catch (error) {
         logger.error("PUBLISH POKE - failed to clear persistent cache (stale data may be served)", {
-          projectSlug: this.deps.projectSlug,
-          releaseId,
-          environmentName,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
+          errorClass: classifyFilesystemError(error),
         });
       } finally {
         if (succeeded) {
@@ -591,14 +549,12 @@ export class WebSocketManager {
           logger.error(
             "PUBLISH POKE - keeping pending invalidations active due to deletion failure",
             {
-              projectSlug: this.deps.projectSlug,
-              pendingPrefixes: Array.from(pendingPrefixes),
+              pendingPrefixCount: pendingPrefixes.size,
             },
           );
         }
 
         logger.info("PUBLISH POKE - cache invalidation complete", {
-          projectSlug: this.deps.projectSlug,
           succeeded,
           pendingInvalidations: getPendingInvalidationsCount(),
         });
@@ -649,12 +605,11 @@ export class WebSocketManager {
 
     try {
       logger.debug("Performing selective invalidation", {
-        changedPaths,
         count: changedPaths.length,
       });
 
-      const sourceTypes = ["branch:", "release:", "env:"] as const;
-      const fileTypes = ["file:", "stat:"] as const;
+      const sourceTypes = ["branch", "release", "env"] as const;
+      const fileTypes = ["file", "stat"] as const;
 
       const parentDirs = new Set<string>();
       const deletionPromises: Promise<number>[] = [];
@@ -666,7 +621,10 @@ export class WebSocketManager {
         for (const fileType of fileTypes) {
           for (const sourceType of sourceTypes) {
             deletionPromises.push(
-              this.deps.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
+              this.deps.cache.deleteByPrefixAndSuffixAsync(
+                buildProjectCachePrefix(fileType, sourceType, this.deps.projectSlug),
+                path,
+              ),
             );
           }
         }
@@ -675,7 +633,10 @@ export class WebSocketManager {
       for (const parentDir of parentDirs) {
         for (const sourceType of sourceTypes) {
           deletionPromises.push(
-            this.deps.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
+            this.deps.cache.deleteByPrefixAndSuffixAsync(
+              buildProjectCachePrefix("dir", sourceType, this.deps.projectSlug),
+              parentDir,
+            ),
           );
         }
       }
@@ -683,8 +644,8 @@ export class WebSocketManager {
       await Promise.all(deletionPromises);
 
       logger.debug("Cache entries deleted for changed paths", {
-        changedPaths,
-        parentDirs: Array.from(parentDirs),
+        changedPathCount: changedPaths.length,
+        parentDirectoryCount: parentDirs.size,
         prefixes: ["file:", "stat:", "dir:"],
       });
 
@@ -692,8 +653,8 @@ export class WebSocketManager {
 
       const projectId = this.deps.client.getProjectId();
       logger.debug("Clearing SSR module cache for HMR", {
-        changedPaths,
-        projectId,
+        changedPathCount: changedPaths.length,
+        hasProjectId: !!projectId,
         usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
       });
 
@@ -712,7 +673,9 @@ export class WebSocketManager {
       }
 
       if (contentContext?.sourceType === "branch") {
-        await this.deps.cache.deleteByPrefixAsync("files:branch:");
+        await this.deps.cache.deleteByPrefixAsync(
+          buildProjectCachePrefix("files", "branch", this.deps.projectSlug),
+        );
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
@@ -721,13 +684,12 @@ export class WebSocketManager {
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("Fresh files cached (memory + Redis)", {
-            cacheKey,
             fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
+            hasStyleArtifact: !!preparedStyleArtifact,
           });
         } catch (error) {
           logger.warn("Failed to fetch files during selective invalidation", {
-            error,
+            errorClass: classifyFilesystemError(error),
           });
         }
       }
@@ -737,9 +699,7 @@ export class WebSocketManager {
       logger.info(
         "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
         {
-          changedPaths,
-          projectSlug: this.deps.projectSlug,
-          projectId: this.deps.client.getProjectId(),
+          changedPathCount: changedPaths.length,
           hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
         },
       );
@@ -754,7 +714,7 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
 
       logger.info("Selective invalidation complete - HMR triggered", {
-        changedPaths,
+        changedPathCount: changedPaths.length,
         durationMs: Date.now() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
       });
@@ -783,33 +743,10 @@ export class WebSocketManager {
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
 
-      const [
-        fileBranchCount,
-        fileReleaseCount,
-        fileEnvCount,
-        statBranchCount,
-        statReleaseCount,
-        statEnvCount,
-        dirBranchCount,
-        dirReleaseCount,
-        dirEnvCount,
-        filesBranchCount,
-        filesReleaseCount,
-        filesEnvCount,
-      ] = await Promise.all([
-        this.deps.cache.deleteByPrefixAsync("file:branch:"),
-        this.deps.cache.deleteByPrefixAsync("file:release:"),
-        this.deps.cache.deleteByPrefixAsync("file:env:"),
-        this.deps.cache.deleteByPrefixAsync("stat:branch:"),
-        this.deps.cache.deleteByPrefixAsync("stat:release:"),
-        this.deps.cache.deleteByPrefixAsync("stat:env:"),
-        this.deps.cache.deleteByPrefixAsync("dir:branch:"),
-        this.deps.cache.deleteByPrefixAsync("dir:release:"),
-        this.deps.cache.deleteByPrefixAsync("dir:env:"),
-        this.deps.cache.deleteByPrefixAsync("files:branch:"),
-        this.deps.cache.deleteByPrefixAsync("files:release:"),
-        this.deps.cache.deleteByPrefixAsync("files:env:"),
-      ]);
+      const deletionPrefixes = buildProjectCachePrefixes(this.deps.projectSlug);
+      const deletionCounts = await Promise.all(
+        deletionPrefixes.map((prefix) => this.deps.cache.deleteByPrefixAsync(prefix)),
+      );
 
       // These caches are also cleared immediately on POKE receipt (before debounce).
       // These calls are redundant safety nets for the full invalidation flow.
@@ -842,10 +779,16 @@ export class WebSocketManager {
         this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
       }
 
-      const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
-      const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
-      const totalDirCount = dirBranchCount + dirReleaseCount + dirEnvCount;
-      const totalFilesListCount = filesBranchCount + filesReleaseCount + filesEnvCount;
+      const deletedByEntryKind = (entryKind: "file" | "stat" | "dir" | "files"): number =>
+        deletionCounts.reduce(
+          (total, count, index) =>
+            deletionPrefixes[index]?.startsWith(`${entryKind}:`) ? total + count : total,
+          0,
+        );
+      const totalFileCount = deletedByEntryKind("file");
+      const totalStatCount = deletedByEntryKind("stat");
+      const totalDirCount = deletedByEntryKind("dir");
+      const totalFilesListCount = deletedByEntryKind("files");
 
       logger.debug("CACHES CLEARED (memory + Redis)", {
         fileCacheCleared: totalFileCount,
@@ -863,20 +806,19 @@ export class WebSocketManager {
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("FRESH FILES FETCHED", {
-            cacheKey,
             fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
+            hasStyleArtifact: !!preparedStyleArtifact,
           });
         } catch (error) {
-          logger.warn("Failed to fetch files during invalidation", { error });
+          logger.warn("Failed to fetch files during invalidation", {
+            errorClass: classifyFilesystemError(error),
+          });
         }
       }
 
       this.pokeMetrics.invalidationsTriggered++;
 
       logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
-        projectSlug: this.deps.projectSlug,
-        projectId: this.deps.client.getProjectId(),
         hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
       });
 
@@ -932,7 +874,7 @@ export class WebSocketManager {
           this.ws.close();
         } catch (error) {
           logger.error("WebSocket close failed during heartbeat timeout", {
-            error: error instanceof Error ? error.message : String(error),
+            errorClass: classifyFilesystemError(error),
           });
         }
       }
@@ -976,7 +918,9 @@ export class WebSocketManager {
         changedPathsCount: changedPaths?.length ?? 0,
       });
     } catch (error) {
-      logger.warn("Failed to send poke acknowledgment", { error });
+      logger.warn("Failed to send poke acknowledgment", {
+        errorClass: classifyFilesystemError(error),
+      });
     }
   }
 }

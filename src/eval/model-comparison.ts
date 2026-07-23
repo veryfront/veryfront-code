@@ -12,6 +12,8 @@ import type {
 
 const DEFAULT_MIN_GROUNDEDNESS = 0.8;
 const DEFAULT_MIN_EFFICIENCY_IMPROVEMENT = 0.1;
+const MAX_MODEL_REPORTS = 1_000;
+const MAX_MODEL_NAME_LENGTH = 4_096;
 
 type NormalizedEvalModelComparisonOptions =
   & Required<
@@ -45,6 +47,115 @@ const LOWER_IS_BETTER = new Set<EvalModelComparisonMetricName>([
   "costCredits",
   "p95Ms",
 ]);
+const MODEL_COMPARISON_METRICS = new Set<EvalModelComparisonMetricName>([
+  "passRate",
+  "groundednessScore",
+  ...LOWER_IS_BETTER,
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertFiniteNumber(
+  value: unknown,
+  label: string,
+  minimum?: number,
+): asserts value is number {
+  if (
+    typeof value !== "number" || !Number.isFinite(value) ||
+    (minimum !== undefined && value < minimum)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a finite number${
+        minimum !== undefined ? ` greater than or equal to ${minimum}` : ""
+      }.`,
+    });
+  }
+}
+
+function assertModelComparisonOptions(options: EvalModelComparisonOptions): void {
+  if (
+    !isRecord(options) || typeof options.baselineModel !== "string" ||
+    options.baselineModel.trim().length === 0 ||
+    options.baselineModel.length > MAX_MODEL_NAME_LENGTH
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "baselineModel must be a non-empty model name." });
+  }
+
+  if (options.minGroundedness !== undefined) {
+    assertFiniteNumber(options.minGroundedness, "minGroundedness", 0);
+    if (options.minGroundedness > 1) {
+      throw INVALID_ARGUMENT.create({ detail: "minGroundedness must not exceed 1." });
+    }
+  }
+  for (
+    const [name, value] of [
+      ["minCostImprovementPct", options.minCostImprovementPct],
+      ["minTokenImprovementPct", options.minTokenImprovementPct],
+      ["minLatencyImprovementPct", options.minLatencyImprovementPct],
+    ] as const
+  ) {
+    if (value !== undefined) assertFiniteNumber(value, name, 0);
+  }
+
+  for (const [metric, constraint] of Object.entries(options.constraints ?? {})) {
+    if (!MODEL_COMPARISON_METRICS.has(metric as EvalModelComparisonMetricName)) {
+      throw INVALID_ARGUMENT.create({ detail: `Unknown model comparison metric "${metric}".` });
+    }
+    if (!isRecord(constraint)) {
+      throw INVALID_ARGUMENT.create({ detail: `${metric} constraint must be an object.` });
+    }
+    for (const field of ["min", "max"] as const) {
+      if (constraint[field] !== undefined) {
+        assertFiniteNumber(constraint[field], `${metric}.${field}`);
+      }
+    }
+    if (constraint.maxRegressionPct !== undefined) {
+      assertFiniteNumber(constraint.maxRegressionPct, `${metric}.maxRegressionPct`, 0);
+    }
+    if (
+      typeof constraint.min === "number" && typeof constraint.max === "number" &&
+      constraint.min > constraint.max
+    ) {
+      throw INVALID_ARGUMENT.create({ detail: `${metric} constraint min must not exceed max.` });
+    }
+  }
+
+  for (const [metric, objective] of Object.entries(options.objectives ?? {})) {
+    if (!MODEL_COMPARISON_METRICS.has(metric as EvalModelComparisonMetricName)) {
+      throw INVALID_ARGUMENT.create({ detail: `Unknown model comparison metric "${metric}".` });
+    }
+    if (!isRecord(objective)) {
+      throw INVALID_ARGUMENT.create({ detail: `${metric} objective must be an object.` });
+    }
+    assertFiniteNumber(objective.weight, `${metric}.weight`, Number.MIN_VALUE);
+    if (objective.direction !== "minimize" && objective.direction !== "maximize") {
+      throw INVALID_ARGUMENT.create({
+        detail: `${metric}.direction must be "minimize" or "maximize".`,
+      });
+    }
+  }
+}
+
+function assertUniqueReportModels(reports: EvalReport[]): void {
+  if (!Array.isArray(reports) || reports.length > MAX_MODEL_REPORTS) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Model comparison accepts at most ${MAX_MODEL_REPORTS} reports.`,
+    });
+  }
+  const models = new Set<string>();
+  for (const report of reports) {
+    const model = reportModel(report);
+    if (model.trim().length === 0 || model.length > MAX_MODEL_NAME_LENGTH) {
+      throw INVALID_ARGUMENT.create({ detail: "Each eval report must have a valid model name." });
+    }
+    if (models.has(model)) {
+      throw INVALID_ARGUMENT.create({ detail: `Duplicate model report "${model}".` });
+    }
+    models.add(model);
+  }
+}
 
 function reportModel(report: EvalReport): string {
   return report.metadata?.model ?? report.runId;
@@ -614,6 +725,8 @@ export function compareEvalModelReports(
   reports: EvalReport[],
   options: EvalModelComparisonOptions,
 ): EvalModelComparison {
+  assertModelComparisonOptions(options);
+  assertUniqueReportModels(reports);
   const normalized = normalizeOptions(options);
   const baseline = reports.find((report) => reportModel(report) === normalized.baselineModel);
   if (!baseline) {
@@ -657,7 +770,19 @@ function costCell(
 }
 
 function markdownCell(value: string): string {
-  return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+  let output = "";
+  let replacingControlRun = false;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      if (!replacingControlRun) output += " ";
+      replacingControlRun = true;
+      continue;
+    }
+    output += character === "|" ? "\\|" : character;
+    replacingControlRun = false;
+  }
+  return output;
 }
 
 /** Render a human-reviewable markdown summary for a model comparison report. */
@@ -665,10 +790,10 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
   const lines = [
     "# Eval Model Comparison",
     "",
-    `Baseline: ${comparison.baselineModel}`,
-    `Candidates: ${comparison.candidateModels.join(", ") || "-"}`,
+    `Baseline: ${markdownCell(comparison.baselineModel)}`,
+    `Candidates: ${comparison.candidateModels.map(markdownCell).join(", ") || "-"}`,
     `Recommendation: ${comparison.recommendation.decision}${
-      comparison.recommendation.model ? ` (${comparison.recommendation.model})` : ""
+      comparison.recommendation.model ? ` (${markdownCell(comparison.recommendation.model)})` : ""
     }`,
     "",
     "## Models",
@@ -679,7 +804,7 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
 
   for (const model of comparison.models) {
     lines.push(
-      `| ${model.model} | ${model.role} | ${model.passed} | ${model.failed} | ${
+      `| ${markdownCell(model.model)} | ${model.role} | ${model.passed} | ${model.failed} | ${
         Math.round(model.passRate * 100)
       }% | ${decimalCell(model.groundednessScore)} | ${numberCell(model.inputTokens)} | ${
         numberCell(model.outputTokens)
@@ -724,7 +849,7 @@ export function createEvalModelComparisonMarkdown(comparison: EvalModelCompariso
 
   lines.push("", "## Decision", "");
   for (const reason of comparison.recommendation.reasons) {
-    lines.push(`- ${reason}`);
+    lines.push(`- ${markdownCell(reason)}`);
   }
   lines.push("");
   return `${lines.join("\n")}`;

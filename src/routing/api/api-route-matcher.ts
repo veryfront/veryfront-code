@@ -3,6 +3,7 @@ import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { safeDecodeParam } from "#veryfront/routing/matchers/decode-param.ts";
 import { parseRoute } from "#veryfront/routing/matchers/route-parser.ts";
+import { cloneRoute, cloneRouteMatch } from "#veryfront/routing/matchers/route-matcher.ts";
 
 /** Max entries in the route-match LRU cache */
 const ROUTE_CACHE_MAX_ENTRIES = 500;
@@ -40,7 +41,17 @@ export class ApiRouteMatcher {
 
   /** Public accessor for route entries */
   get routes(): Map<string, RouteEntry> {
-    return this._routes;
+    return new Map(
+      Array.from(this._routes, ([pattern, entry]) => [
+        pattern,
+        {
+          ...entry,
+          regex: new RegExp(entry.regex.source, entry.regex.flags),
+          route: cloneRoute(entry.route),
+          paramNames: [...entry.paramNames],
+        },
+      ]),
+    );
   }
 
   addRoute(pattern: string, page: string): void {
@@ -70,18 +81,18 @@ export class ApiRouteMatcher {
   }
 
   private sortRoutesByPriority(): Array<[string, RouteEntry]> {
-    return Array.from(this._routes.entries()).sort(([patternA], [patternB]) => {
-      const hasParamsA = patternA.includes("[");
-      const hasParamsB = patternB.includes("[");
-      const isCatchAllA = patternA.includes("[...");
-      const isCatchAllB = patternB.includes("[...");
+    return Array.from(this._routes.entries()).sort(([, routeA], [, routeB]) => {
+      const hasParamsA = routeA.paramNames.length > 0;
+      const hasParamsB = routeB.paramNames.length > 0;
+      const isCatchAllA = routeA.isCatchAll;
+      const isCatchAllB = routeB.isCatchAll;
 
       if (!hasParamsA && hasParamsB) return -1;
       if (hasParamsA && !hasParamsB) return 1;
       if (!isCatchAllA && isCatchAllB) return -1;
       if (isCatchAllA && !isCatchAllB) return 1;
 
-      return patternB.split("/").length - patternA.split("/").length;
+      return routeB.route.pattern.split("/").length - routeA.route.pattern.split("/").length;
     });
   }
 
@@ -89,7 +100,7 @@ export class ApiRouteMatcher {
     const normalizedPath = this.normalizePathname(path);
 
     const cached = this.routeCache.get(normalizedPath);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return cached ? cloneRouteMatch(cached) : null;
 
     for (const [, routeData] of this.sortRoutesByPriority()) {
       const match = normalizedPath.match(routeData.regex);
@@ -98,7 +109,7 @@ export class ApiRouteMatcher {
       const params = this.extractParams(match, routeData.paramNames, routeData.route);
       const result = { params, route: routeData.route };
       this.routeCache.set(normalizedPath, result);
-      return result;
+      return cloneRouteMatch(result);
     }
 
     this.routeCache.set(normalizedPath, null);
@@ -128,23 +139,23 @@ export class ApiRouteMatcher {
 
       if (catchAllParamNames.has(paramName)) {
         const segments = value ? value.split("/").filter((segment) => segment.length > 0) : [];
-        params[paramName] = segments.map((segment) => safeDecodeParam(segment));
+        setParam(params, paramName, segments.map((segment) => safeDecodeParam(segment)));
         continue;
       }
 
-      params[paramName] = safeDecodeParam(value ?? "");
+      setParam(params, paramName, safeDecodeParam(value ?? ""));
     }
 
     return params;
   }
 
   listRoutes(): Route[] {
-    return Array.from(this._routes.values()).map(({ route }) => route);
+    return Array.from(this._routes.values(), ({ route }) => cloneRoute(route));
   }
 
   clear(): void {
     this._routes.clear();
-    this.routeCache.destroy();
+    this.routeCache.clear();
   }
 
   clearCache(): void {
@@ -152,8 +163,22 @@ export class ApiRouteMatcher {
   }
 
   destroy(): void {
-    this.clear();
+    this._routes.clear();
+    this.routeCache.destroy();
   }
+}
+
+function setParam(
+  params: Record<string, string | string[]>,
+  name: string,
+  value: string | string[],
+): void {
+  Object.defineProperty(params, name, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
 }
 
 function shouldDisableLruInterval(): boolean {

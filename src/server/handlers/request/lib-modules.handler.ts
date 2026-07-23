@@ -1,23 +1,24 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { createSecureFs } from "#veryfront/security";
 import { computeEtag, hasMatchingEtag } from "../utils/etag.ts";
 import {
+  HTTP_INTERNAL_SERVER_ERROR,
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_MEDIUM_LIB_MODULES,
 } from "#veryfront/utils/constants/index.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { getSafeErrorName } from "../../utils/error-name.ts";
+import {
+  isLibModuleName,
+  LIB_MODULE_PATHS,
+  resolveLibModulePath,
+} from "./lib-module-catalog.ts";
 
-export const LIB_MODULE_PATHS = {
-  "chat.js": "esm/src/chat/index.js",
-  "markdown.js": "esm/src/markdown/index.js",
-  "mdx.js": "esm/src/mdx/index.js",
-  "workflow.js": "esm/src/workflow/react/index.js",
-} as const;
-
-const ALLOWED_MODULES = new Set(Object.keys(LIB_MODULE_PATHS));
+export { LIB_MODULE_PATHS };
 const LIB_PREFIX = "/_veryfront/lib/";
+const MAX_SELF_HOSTED_MODULE_BYTES = 16 * 1024 * 1024;
 
 export class LibModulesHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -47,32 +48,42 @@ export class LibModulesHandler extends BaseHandler {
     }
 
     const modulePath = pathname.slice(LIB_PREFIX.length);
-    if (!ALLOWED_MODULES.has(modulePath)) {
+    if (!isLibModuleName(modulePath)) {
       this.logDebug(
-        `LibModulesHandler: module not allowed: ${modulePath}`,
-        { allowed: Array.from(ALLOWED_MODULES) },
+        "LibModulesHandler: requested module is not allowed",
+        { requestedNameLength: modulePath.length },
         ctx,
       );
       return this.respondNotFound(req, ctx, method);
     }
 
-    const filePath = this.resolveModulePath(modulePath, ctx.projectDir);
-    if (!filePath) return this.continue();
+    const filePath = resolveLibModulePath(modulePath, ctx.projectDir);
 
     try {
       const secureFs = createSecureFs({
         baseDir: ctx.projectDir,
         adapter: ctx.adapter,
         context: "internal",
-        throwOnError: false,
+        throwOnError: true,
         validationOptions: {
           allowedDirs: ["node_modules"],
           allowAbsolute: true,
         },
       });
 
+      const info = await secureFs.stat(filePath);
+      if (
+        !info.isFile || !Number.isSafeInteger(info.size) || info.size < 0 ||
+        info.size > MAX_SELF_HOSTED_MODULE_BYTES
+      ) {
+        throw new TypeError("Self-hosted module metadata is invalid or exceeds the size limit");
+      }
+
       const content = await secureFs.readFile(filePath);
-      const etag = computeEtag(content);
+      if (new TextEncoder().encode(content).byteLength > MAX_SELF_HOSTED_MODULE_BYTES) {
+        throw new TypeError("Self-hosted module content exceeds the size limit");
+      }
+      const etag = await computeEtag(content);
 
       const builder = this.createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
 
@@ -86,8 +97,8 @@ export class LibModulesHandler extends BaseHandler {
       const body = method === "HEAD" ? null : content;
 
       this.logDebug(
-        `LibModulesHandler: served ${modulePath}`,
-        { size: content.length, filePath },
+        "LibModulesHandler: served module",
+        { module: modulePath, size: content.length },
         ctx,
       );
 
@@ -100,11 +111,13 @@ export class LibModulesHandler extends BaseHandler {
       );
     } catch (error) {
       this.logDebug(
-        `LibModulesHandler: failed to serve ${modulePath}: ${this.getErrorMessage(error)}`,
-        { filePath },
+        "LibModulesHandler: module read failed",
+        { module: modulePath, errorName: getSafeErrorName(error) },
         ctx,
       );
-      return this.respondNotFound(req, ctx, method);
+      return isNotFoundError(error)
+        ? this.respondNotFound(req, ctx, method)
+        : this.respondUnavailable(req, ctx, method);
     }
   }
 
@@ -113,6 +126,7 @@ export class LibModulesHandler extends BaseHandler {
     return this.respond(
       builder
         .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
         .withCache("no-cache")
         .withContentType(
           "text/plain; charset=utf-8",
@@ -122,11 +136,18 @@ export class LibModulesHandler extends BaseHandler {
     );
   }
 
-  private resolveModulePath(module: string, projectDir: string): string | null {
-    const relativePath = LIB_MODULE_PATHS[module as keyof typeof LIB_MODULE_PATHS];
-    if (!relativePath) return null;
-
-    const packageDir = joinPath(joinPath(projectDir, "node_modules"), "veryfront");
-    return normalizePath(joinPath(packageDir, relativePath)) ?? null;
+  private respondUnavailable(req: Request, ctx: HandlerContext, method: string): HandlerResult {
+    const builder = this.createResponseBuilder(ctx);
+    return this.respond(
+      builder
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withContentType(
+          "text/plain; charset=utf-8",
+          method === "HEAD" ? null : "Module unavailable",
+          HTTP_INTERNAL_SERVER_ERROR,
+        ),
+    );
   }
 }

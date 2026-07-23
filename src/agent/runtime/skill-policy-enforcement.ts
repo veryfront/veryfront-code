@@ -19,10 +19,18 @@ export const FORM_INPUT_TOOL_ID = "form_input";
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
 
-export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = {
+export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = Object.freeze({
   hasActiveSkill: false,
-  references: [],
-  scripts: [],
+  references: Object.freeze([] as string[]),
+  scripts: Object.freeze([] as string[]),
+});
+
+/** Runtime-owned capability state for the Skill active in one invocation. */
+export type ActiveSkillState = {
+  activeSkillId: string | undefined;
+  activeSkillPolicy: string[] | undefined;
+  activeSkillToolAvailability: SkillToolAvailability;
+  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
 };
 
 const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS = new Set([
@@ -31,39 +39,28 @@ const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS = new Set([
 ]);
 
 function getSkillActivationRequiredError(toolName: string): string {
-  return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
+  return `Tool "${toolName}" cannot run before load_skill succeeds in the current invocation. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
 }
 
-export function hydrateActiveSkillStateFromMessages(
-  messages: readonly Message[],
-): {
-  activeSkillId: string | undefined;
-  activeSkillPolicy: string[] | undefined;
-  activeSkillToolAvailability: SkillToolAvailability | undefined;
-  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
-} {
-  let activeSkillId: string | undefined;
-  let activeSkillPolicy: string[] | undefined;
-  let activeSkillToolAvailability: SkillToolAvailability = INACTIVE_SKILL_TOOL_AVAILABILITY;
-  let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
-
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
-      activeSkillId = extractSkillId(part.result);
-      activeSkillPolicy = extractSkillPolicy(part.result);
-      activeSkillToolAvailability = extractSkillToolAvailability(part.result) ??
-        INACTIVE_SKILL_TOOL_AVAILABILITY;
-      activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
-    }
-  }
-
+/** Create fail-closed Skill state at the start of an invocation. */
+export function createInactiveSkillState(): ActiveSkillState {
   return {
-    activeSkillId,
-    activeSkillPolicy,
-    activeSkillToolAvailability,
-    activeSkillDelegationOverrides,
+    activeSkillId: undefined,
+    activeSkillPolicy: undefined,
+    activeSkillToolAvailability: INACTIVE_SKILL_TOOL_AVAILABILITY,
+    activeSkillDelegationOverrides: undefined,
+  };
+}
+
+/** Derive active state only from a successful load_skill result executed by this runtime. */
+export function createRuntimeLoadedSkillState(result: unknown): ActiveSkillState {
+  return {
+    activeSkillId: extractSkillId(result),
+    activeSkillPolicy: extractSkillPolicy(result),
+    activeSkillToolAvailability: extractSkillToolAvailability(result) ??
+      INACTIVE_SKILL_TOOL_AVAILABILITY,
+    activeSkillDelegationOverrides: extractSkillDelegationOverrides(result),
   };
 }
 
@@ -206,43 +203,11 @@ export function removeFormInputAfterSubmission(
 }
 
 export function narrowPolicyAfterSubmittedForm(
-  activeSkillId: string | undefined,
+  // Retained for API compatibility. Generic policy must not branch on Skill IDs.
+  _activeSkillId: string | undefined,
   activeSkillPolicy: string[] | undefined,
 ): string[] | undefined {
   if (!activeSkillPolicy) return activeSkillPolicy;
-
-  if (activeSkillId === "research") {
-    return activeSkillPolicy.filter((allowedToolName) =>
-      [
-        "studio_suggestions",
-        "web_search",
-        "web_fetch",
-        "create_file",
-        "update_file",
-      ].includes(allowedToolName)
-    );
-  }
-
-  if (
-    activeSkillId === "create-agent" ||
-    activeSkillId === "create-agentic-workflow"
-  ) {
-    return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);
-  }
-
-  if (activeSkillId === "plan") {
-    return activeSkillPolicy.filter((allowedToolName) =>
-      [
-        "studio_suggestions",
-        "list_files",
-        "get_file",
-        "search_files",
-        "create_file",
-        "update_file",
-      ].includes(allowedToolName)
-    );
-  }
-
   return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);
 }
 

@@ -1,5 +1,5 @@
 /**
- * Auth category barrel — AuthProvider contract and token shapes.
+ * Auth category barrel for the AuthProvider contract and token shapes.
  *
  * @module extensions/auth
  */

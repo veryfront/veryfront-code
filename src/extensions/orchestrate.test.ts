@@ -1,12 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 /**
- * Orchestrator tests — pipeline wiring with injectable discovery and factory.
+ * Orchestrator tests: pipeline wiring with injectable discovery and factory.
  *
  * @module extensions/orchestrate.test
  */
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
@@ -53,6 +54,116 @@ describe("orchestrateExtensions()", () => {
 
     // teardownAll is a no-op on an empty loader.
     await loader.teardownAll();
+  });
+
+  it("rejects malformed config extension entries before discovery", async () => {
+    let discoveryCalls = 0;
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: { extensions: [null as unknown as Extension] },
+          logger: noopLogger,
+          discovery: {
+            ...emptyDiscovery(),
+            discoverPackageExtensions: () => {
+              discoveryCalls++;
+              return Promise.resolve([]);
+            },
+          },
+        }),
+      Error,
+      "Config extension is invalid",
+    );
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("rejects relative project directories before discovery", async () => {
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "relative/project",
+          config: {},
+          logger: noopLogger,
+          discovery: emptyDiscovery(),
+        }),
+      Error,
+      "projectDir is invalid",
+    );
+  });
+
+  it("rejects malformed options and discovery results before loading factories", async () => {
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: { extensions: {} as unknown as Extension[] },
+          logger: noopLogger,
+          discovery: emptyDiscovery(),
+        }),
+      Error,
+      "config.extensions must be an array",
+    );
+
+    let loadCalls = 0;
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: {},
+          logger: noopLogger,
+          discovery: {
+            ...emptyDiscovery(),
+            discoverProjectExtensions: () => Promise.resolve([null as unknown as string]),
+          },
+          loadFactory: () => {
+            loadCalls++;
+            return Promise.reject(new Error("must not load"));
+          },
+        }),
+      Error,
+      "discovery result",
+    );
+    assertEquals(loadCalls, 0);
+  });
+
+  it("contains revoked orchestration boundary objects", async () => {
+    const revokedOptions = Proxy.revocable({}, {});
+    revokedOptions.revoke();
+    const optionsError = await assertRejects(() =>
+      orchestrateExtensions(revokedOptions.proxy as never)
+    );
+    assertEquals(optionsError instanceof VeryfrontError, true);
+    assertEquals(String(optionsError).includes("revoked"), false);
+
+    const revokedExtensions = Proxy.revocable([], {});
+    revokedExtensions.revoke();
+    const configError = await assertRejects(() =>
+      orchestrateExtensions({
+        projectDir: "/fake",
+        config: { extensions: revokedExtensions.proxy as Extension[] },
+        logger: noopLogger,
+        discovery: emptyDiscovery(),
+      })
+    );
+    assertEquals(configError instanceof VeryfrontError, true);
+    assertEquals(String(configError).includes("revoked"), false);
+  });
+
+  it("rejects unsafe disable directive names", async () => {
+    await assertRejects(
+      () =>
+        orchestrateExtensions({
+          projectDir: "/fake",
+          config: {
+            extensions: [{ name: "unsafe\nname", enabled: false }],
+          },
+          logger: noopLogger,
+          discovery: emptyDiscovery(),
+        }),
+      Error,
+      "Disable directive name",
+    );
   });
 
   it("runs setup() on config extensions", async () => {

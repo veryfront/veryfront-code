@@ -8,11 +8,12 @@ export const DEFAULT_OPTIONS: Required<ImageOptimizationOptions> = {
   quality: IMAGE_OPTIMIZATION.DEFAULT_QUALITY,
   inputDir: "./public",
   outputDir: "./.veryfront/optimized-images",
+  publicPath: "/.veryfront/optimized-images",
   preserveOriginal: false,
 };
 
 export const SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".avif"];
 
-export const SHARP_CDN_URL = "https://esm.sh/sharp@0.33.0";
+export const SHARP_MODULE_SPECIFIER = "npm:sharp@0.34.5";
 
 export const MANIFEST_FILENAME = "image-manifest.json";

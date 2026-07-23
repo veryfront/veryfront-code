@@ -1,9 +1,63 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAnthropicRequestHeaders } from "./provider-request-init.ts";
+import {
+  createAnthropicRequestHeaders,
+  createAnthropicRequestInit,
+  createGoogleRequestInit,
+  createOpenAIRequestInit,
+} from "./provider-request-init.ts";
 
 describe("provider/runtime-loader/provider-request-init", () => {
+  it("rejects missing OpenAI and Google credentials", () => {
+    assertThrows(
+      () => createOpenAIRequestInit({ apiKey: "", body: "{}" }),
+      TypeError,
+      "Provider credential is invalid",
+    );
+    assertThrows(
+      () => createGoogleRequestInit({ apiKey: "", body: "{}" }),
+      TypeError,
+      "Provider credential is invalid",
+    );
+    assertThrows(
+      () => createOpenAIRequestInit({ apiKey: "   ", body: "{}" }),
+      TypeError,
+      "Provider credential is invalid",
+    );
+  });
+
+  it("rejects missing and malformed Anthropic credentials", () => {
+    assertThrows(() => createAnthropicRequestHeaders({}), TypeError, "credential");
+    assertThrows(
+      () => createAnthropicRequestHeaders({ apiKey: "key\nprivate" }),
+      TypeError,
+      "credential",
+    );
+  });
+
+  it("removes the inactive Anthropic credential header", () => {
+    const tokenHeaders = new Headers(
+      createAnthropicRequestInit({
+        authToken: "oauth-token",
+        extraHeaders: { "x-api-key": "caller-key" },
+        body: "{}",
+      }).headers,
+    );
+    assertEquals(tokenHeaders.get("authorization"), "Bearer oauth-token");
+    assertEquals(tokenHeaders.has("x-api-key"), false);
+
+    const apiKeyHeaders = new Headers(
+      createAnthropicRequestInit({
+        apiKey: "provider-key",
+        extraHeaders: { authorization: "Bearer caller-token" },
+        body: "{}",
+      }).headers,
+    );
+    assertEquals(apiKeyHeaders.get("x-api-key"), "provider-key");
+    assertEquals(apiKeyHeaders.has("authorization"), false);
+  });
+
   it("enables Anthropic fine-grained tool streaming on streaming requests", () => {
     const headers = createAnthropicRequestHeaders({
       apiKey: "test-anthropic-key",

@@ -154,7 +154,7 @@ function SettingsSection({ data }: { data: ConfigData | null }): React.JSX.Eleme
         </Card>
 
         <Card className="p-4">
-          <div className="text-xs text-gray-500 uppercase mb-1">Project Directory</div>
+          <div className="text-xs text-gray-500 uppercase mb-1">Project root</div>
           <code className="text-sm text-sky-600 break-all">{data?.projectDir}</code>
         </Card>
       </div>

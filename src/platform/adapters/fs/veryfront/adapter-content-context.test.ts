@@ -160,7 +160,7 @@ describe("veryfront/adapter-content-context", () => {
           "demo",
         ),
       Error,
-      "Domain lookup failed for: missing.example.com",
+      "Domain lookup failed",
     );
 
     await assertRejects(

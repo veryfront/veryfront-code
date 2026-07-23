@@ -1,4 +1,6 @@
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
+import type { FSAdapterConfig } from "#veryfront/platform/adapters/fs/index.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
@@ -59,6 +61,41 @@ export function getTenantFromEnv(): CapturedTenantContext | undefined {
     releaseId: getEnv("TENANT_RELEASE_ID"),
     ...(branch ? { branch } : {}),
     ...(environmentName ? { environmentName } : {}),
+  };
+}
+
+/** Build the filesystem configuration for an isolated tenant workflow run. */
+export function createTenantFSConfig(
+  tenant: CapturedTenantContext,
+  apiBaseUrl: string,
+): { fs: FSAdapterConfig } {
+  const contentSource: NonNullable<FSAdapterConfig["veryfront"]>["contentSource"] =
+    tenant.productionMode
+      ? tenant.releaseId
+        ? { type: "release", releaseId: tenant.releaseId }
+        : tenant.environmentName
+        ? { type: "environment", name: tenant.environmentName }
+        : undefined
+      : { type: "branch", branch: tenant.branch ?? "main" };
+
+  if (!contentSource) {
+    throw CONFIG_INVALID.create({
+      detail: "A production workflow run requires a release ID or environment name",
+    });
+  }
+
+  return {
+    fs: {
+      type: "veryfront-api",
+      veryfront: {
+        apiBaseUrl,
+        apiToken: tenant.token,
+        projectId: tenant.projectId,
+        projectSlug: tenant.projectSlug,
+        proxyMode: false,
+        contentSource,
+      },
+    },
   };
 }
 

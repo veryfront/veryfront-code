@@ -2,69 +2,101 @@ import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 
 /** Error shape for hosted terminal. */
 export interface HostedTerminalError {
+  /** Code value. */
   code: string;
+  /** Message associated with the operation. */
   message: string;
 }
 
 /** State for hosted response finalization. */
 export interface HostedResponseFinalizationState<TMessage, TChunk> {
+  /** Persisted message value. */
   persistedMessage: TMessage;
+  /** Finalized message value. */
   finalizedMessage: TMessage;
+  /** Fallback chunks value. */
   fallbackChunks: readonly TChunk[];
+  /** Whether incomplete tool parts. */
   hasIncompleteToolParts: boolean;
+  /** Additional structured metadata. */
   metadata?: HostedLifecycleTerminalState["metadata"];
 }
 
 /** State for hosted detached finalization. */
 export interface HostedDetachedFinalizationState<TChunk> {
+  /** Whether content. */
   hasContent: boolean;
+  /** Fallback chunks value. */
   fallbackChunks: readonly TChunk[];
+  /** Whether incomplete tool parts. */
   hasIncompleteToolParts: boolean;
 }
 
 /** Options accepted by finalize hosted response. */
 export interface FinalizeHostedResponseOptions<TMessage, TChunk> {
+  /** Whether aborted. */
   isAborted: boolean;
+  /** Callback that handles get final step. */
   getFinalStep: () => Promise<unknown>;
+  /** Callback that handles build state. */
   buildState: (finalStep: unknown) =>
     | Promise<HostedResponseFinalizationState<TMessage, TChunk>>
     | HostedResponseFinalizationState<TMessage, TChunk>;
+  /** Callback that handles should fail empty message. */
   shouldFailEmptyMessage: (input: { isAborted: boolean; message: TMessage }) => boolean;
+  /** Resolve empty terminal error value. */
   resolveEmptyTerminalError: (input: {
     finalStep: unknown;
     streamError?: unknown | null;
   }) => HostedTerminalError | Promise<HostedTerminalError>;
+  /** Callback that handles append fallback chunk. */
   appendFallbackChunk: (chunk: TChunk) => Promise<void> | void;
+  /** Callback that handles flush mirror. */
   flushMirror: () => Promise<void> | void;
+  /** Callback that handles dispatch terminal state. */
   dispatchTerminalState: (state: HostedLifecycleTerminalState) => Promise<void> | void;
+  /** Resolve terminal state value. */
   resolveTerminalState: (input: {
     isAborted: boolean;
     hasIncompleteToolParts: boolean;
   }) => HostedLifecycleTerminalState;
+  /** Releases resources held by the execution. */
   cleanup: () => Promise<void> | void;
+  /** Stream error value. */
   streamError?: unknown | null;
 }
 
 /** Options accepted by finalize hosted detached. */
 export interface FinalizeHostedDetachedOptions<TChunk> {
+  /** Whether aborted. */
   isAborted: boolean;
+  /** Whether mirrored durable output. */
   mirroredDurableOutput: boolean;
+  /** Callback that handles get final step. */
   getFinalStep: () => Promise<unknown>;
+  /** Callback that handles build state. */
   buildState: (finalStep: unknown) =>
     | Promise<HostedDetachedFinalizationState<TChunk>>
     | HostedDetachedFinalizationState<TChunk>;
+  /** Resolve empty terminal error value. */
   resolveEmptyTerminalError: (input: {
     finalStep: unknown;
     streamError?: unknown | null;
   }) => HostedTerminalError | Promise<HostedTerminalError>;
+  /** Callback that handles append fallback chunk. */
   appendFallbackChunk: (chunk: TChunk) => Promise<void> | void;
+  /** Callback that handles flush mirror. */
   flushMirror: () => Promise<void> | void;
+  /** Callback that handles dispatch terminal state. */
   dispatchTerminalState: (state: HostedLifecycleTerminalState) => Promise<void> | void;
+  /** Resolve terminal state value. */
   resolveTerminalState: (input: {
     isAborted: boolean;
     hasIncompleteToolParts: boolean;
   }) => HostedLifecycleTerminalState;
+  /** Releases resources held by the execution. */
   cleanup: () => Promise<void> | void;
+  /** Stream error value. */
   streamError?: unknown | null;
 }
 

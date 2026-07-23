@@ -3,6 +3,7 @@ import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/ass
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
+  bundleHandlerModuleForIsolation,
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   loadHandlerModule,
@@ -104,6 +105,152 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("bundles an isolated module without executing its top-level code in the host", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "isolated-handler.ts");
+    const globalKey = `__vf_openapi_host_execution_${crypto.randomUUID().replaceAll("-", "_")}`;
+    const globals = globalThis as Record<string, unknown>;
+    await fs.writeTextFile(
+      modulePath,
+      `globalThis[${JSON.stringify(globalKey)}] = "executed";\n` +
+        `export const GET = () => new Response("ok");`,
+    );
+
+    try {
+      const code = await bundleHandlerModuleForIsolation({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+      });
+
+      assertEquals(typeof code, "string");
+      assertEquals(code.includes(globalKey), true);
+      assertEquals(globals[globalKey], undefined);
+    } finally {
+      delete globals[globalKey];
+      await fs.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("reloads changed JavaScript handlers without returning a cached module", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.js");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("first");`);
+    const first = await loadHandlerModule({ projectDir: tmpDir, modulePath, adapter });
+    assertEquals(typeof first?.GET, "function");
+
+    await fs.writeTextFile(modulePath, `export const POST = () => new Response("second");`);
+    const second = await loadHandlerModule({ projectDir: tmpDir, modulePath, adapter });
+
+    assertEquals(second?.GET, undefined);
+    assertEquals(typeof second?.POST, "function");
+  });
+
+  it("returns null for an empty virtual route module", async () => {
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${crypto.randomUUID()}`);
+    const virtualPath = join(virtualBase, "handler.ts");
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) =>
+          path === virtualPath
+            ? Promise.resolve("")
+            : Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" })),
+        exists: () => Promise.resolve(false),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: virtualPath,
+      adapter: virtualAdapter,
+    });
+
+    assertEquals(route, null);
+  });
+
+  it("propagates adapter read failures instead of reporting them as missing files", async () => {
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${crypto.randomUUID()}`);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: () => Promise.reject(new Error("permission denied by adapter")),
+        exists: () => Promise.resolve(false),
+      },
+    };
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir: virtualBase,
+          modulePath: join(virtualBase, "handler.ts"),
+          adapter: virtualAdapter,
+        }),
+      Error,
+      "permission denied by adapter",
+    );
+  });
+
+  it("rejects remote imports in nested direct-import dependencies", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import "./nested.ts"; export const GET = () => new Response("ok");`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "nested.ts"),
+      `export { value } from "https://blocked.invalid/module.ts";`,
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter }),
+      Error,
+      "Remote import blocked by allow-list",
+    );
+  });
+
+  it("rejects direct-import module paths that escape through a symlink", async () => {
+    const projectDir = await makeTempDir();
+    const outsideDir = await makeTempDir();
+    const outsideModule = join(outsideDir, "handler.ts");
+    const linkedModule = join(projectDir, "handler.ts");
+    await fs.writeTextFile(outsideModule, `export const GET = () => new Response("secret");`);
+
+    try {
+      await Deno.symlink(outsideModule, linkedModule);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/permission|not supported/i.test(message)) return;
+      throw error;
+    }
+
+    const canonicalAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        realPath: fs.realPath?.bind(fs),
+        lstat: fs.lstat?.bind(fs),
+      },
+    };
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir,
+          modulePath: linkedModule,
+          adapter: canonicalAdapter,
+        }),
+      Error,
+      "module path escapes project directory",
+    );
+  });
+
   it("resolves relative imports through adapter when file is not local", async () => {
     const realDir = await makeTempDir();
     await fs.mkdir(join(realDir, "lib"), { recursive: true });
@@ -184,6 +331,29 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  it("rejects malformed project dependency metadata", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.ts");
+    await fs.writeTextFile(join(tmpDir, "package.json"), "{not-json");
+    await fs.writeTextFile(join(tmpDir, "helper.ts"), `export const value = "ok";`);
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "@app/helper"; export const GET = () => new Response(value);`,
+    );
+
+    await assertRejects(
+      () =>
+        loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: { resolve: { importMap: { imports: { "@app/helper": "./helper.ts" } } } },
+        }),
+      Error,
+      "Failed to load API handler",
+    );
   });
 
   it("loads handler when project has no package.json", async () => {
@@ -350,6 +520,23 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js"/);
   });
 
+  it("does not rewrite dependency subpaths that traverse outside the package", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(join(depDir, "package.json"), JSON.stringify({ main: "index.js" }));
+    const source = `import secret from "my-lib/../../../../etc/passwd";`;
+
+    const rewritten = await rewriteNodeExternalImports(
+      source,
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertEquals(rewritten, source);
+  });
+
   it("rewrites only parsed Node import specifiers", async () => {
     const tmpDir = await makeTempDir();
     const depDir = join(tmpDir, "node_modules", "my-lib");
@@ -389,8 +576,8 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertMatch(rewritten, /from "\.\/_vf_runtime\.mjs"/);
     assertMatch(rewritten, /import\("\.\/_vf_runtime\.mjs"\)/);
-    assertMatch(rewritten, /from "\.\/_vf_agent\.mjs"/);
-    assertMatch(rewritten, /import\("\.\/_vf_tool\.mjs"\)/);
+    assertMatch(rewritten, /from "\.\/_vf_6167656e74\.mjs"/);
+    assertMatch(rewritten, /import\("\.\/_vf_746f6f6c\.mjs"\)/);
   });
 
   it("rewrites compiled-binary user dependency imports to require-based shims", () => {
@@ -834,7 +1021,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
           });
         },
         Error,
-        "No such file or directory",
+        "Unable to write the import lockfile",
       );
     } finally {
       globalThis.fetch = originalFetch;

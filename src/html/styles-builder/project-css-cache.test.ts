@@ -10,7 +10,7 @@ import {
   invalidateProjectCSS,
 } from "./tailwind-compiler.ts";
 
-// Simple stylesheet without plugins — avoids loading @tailwindcss/typography from esm.sh in tests
+// Simple stylesheet without plugins. This avoids loading @tailwindcss/typography from esm.sh.
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 
 describe("styles-builder/project-css-cache", () => {

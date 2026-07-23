@@ -9,8 +9,11 @@ import { relative } from "#std/path.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { logSuccess } from "#cli/utils";
 import { scaffoldProjectFile } from "../../scaffold/engine.ts";
+import { SKILL_NAME_REGEX } from "veryfront/skill";
 
-const VALID_SKILL_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+export function isValidSkillName(name: string): boolean {
+  return SKILL_NAME_REGEX.test(name);
+}
 
 export async function createSkill(args: ParsedArgs, projectDir = Deno.cwd()): Promise<void> {
   const name = args._[2] as string | undefined;
@@ -19,9 +22,9 @@ export async function createSkill(args: ParsedArgs, projectDir = Deno.cwd()): Pr
     Deno.exit(1);
   }
 
-  if (!VALID_SKILL_NAME.test(name)) {
+  if (!isValidSkillName(name)) {
     console.error(
-      `Invalid skill name "${name}". Use lowercase letters, numbers, and hyphens (e.g. "my-skill").`,
+      `Invalid skill name "${name}". Use 1-64 lowercase letters or numbers separated by single hyphens, for example "my-skill".`,
     );
     Deno.exit(1);
   }

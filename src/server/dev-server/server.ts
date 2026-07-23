@@ -2,15 +2,18 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
 import { basename } from "#veryfront/compat/path";
-import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
+import type {
+  RuntimeAdapter,
+  RuntimeRequestHandler,
+  Server,
+} from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
-import { bootstrapDev } from "../bootstrap.ts";
+import { RuntimeMiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
+import { bootstrapDev, type BootstrapResult } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
-import { broadcastUpdate } from "../handlers/preview/hmr-message-router.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import type { DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
@@ -25,9 +28,12 @@ import {
 import { setEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
-import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
+import { assertPrimitiveDiscoverySucceeded } from "../primitive-discovery.ts";
+import { getSafeErrorName } from "../utils/error-name.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 const rscLog = logger.component("rsc");
 const fsAdapterLog = logger.component("fs-adapter");
@@ -51,30 +57,47 @@ function deriveProjectSlug(projectDir: string): string {
   return slug || "local-project";
 }
 
+/** Initialize whichever cache backend the environment selected before serving requests. */
+export async function initializeDevCaches(
+  initialize: () => Promise<unknown> = () =>
+    initializeDistributedCaches(defaultDistributedCacheInitializers),
+): Promise<void> {
+  await initialize();
+}
+
+async function discoverCompletePrimitiveGeneration(config: DiscoveryConfig) {
+  return await runWithRegistryTransaction(async () => {
+    const result = await discoverAll(config);
+    assertPrimitiveDiscoverySucceeded(result);
+    return result;
+  });
+}
+
 /** Implement dev server. */
 export class DevServer {
   private router: ApiRouteMatcher;
   private componentRegistry!: ComponentRegistry;
   private fileWatchSetup?: FileWatchSetup;
-  private pipeline: MiddlewarePipeline;
+  private pipeline: RuntimeMiddlewarePipeline;
   private adapter!: RuntimeAdapter;
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
   private requestHandler?: RequestHandler;
-  private _handler?: (req: Request) => Promise<Response>;
+  private _handler?: RuntimeRequestHandler;
   readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
-  private reloadUnsubscribe?: () => void;
   private invalidateUnsubscribe?: () => void;
-  private releaseExternalBroadcastSource?: () => void;
+  private releaseHMRRuntime?: () => void;
+  private bootstrapDispose?: BootstrapResult["dispose"];
+  private stopPromise?: Promise<void>;
 
   constructor(private options: DevServerOptions) {
     this.ready = new Promise<void>((resolve) => {
       this._resolveReady = resolve;
     });
     this.router = new ApiRouteMatcher();
-    this.pipeline = new MiddlewarePipeline();
+    this.pipeline = new RuntimeMiddlewarePipeline();
   }
 
   private isDebug(): boolean {
@@ -87,16 +110,32 @@ export class DevServer {
       const rsc = isRSCEnabled(this.appConfig);
       const stub = this.adapter.env.get("VERYFRONT_FORCE_FLIGHT_STUB") === "1" ? " (stub)" : "";
       rscLog.debug(`${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
-    } catch (_) {
-      /* expected: optional feature detection for RSC */
+    } catch (error) {
+      rscLog.warn("RSC status detection failed", { errorName: getSafeErrorName(error) });
     }
   }
 
   async start(): Promise<void> {
+    try {
+      await this.startInternal();
+    } catch (error) {
+      try {
+        await this.stop();
+      } catch (cleanupError) {
+        devServerLog.warn("Dev server cleanup failed after startup failure", {
+          errorName: getSafeErrorName(cleanupError),
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async startInternal(): Promise<void> {
     const baseAdapter = await runtime.get();
     logger.debug(`Using ${baseAdapter.name} runtime adapter`);
 
     const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);
+    this.bootstrapDispose = bootstrap.dispose;
     this.adapter = bootstrap.adapter;
     this.appConfig = bootstrap.config;
 
@@ -117,8 +156,7 @@ export class DevServer {
 
     logger.debug("Starting dev server", {
       port: this.options.port,
-      bindAddress: this.options.bindAddress ?? LOCALHOST.IPV4,
-      projectDir: this.options.projectDir,
+      customBindAddress: this.options.bindAddress !== undefined,
       hmr: this.options.enableHMR,
       fastRefresh: this.options.enableFastRefresh,
     });
@@ -138,50 +176,24 @@ export class DevServer {
 
     await this.logRSCStatus();
 
-    // Initialize disk cache in dev mode when explicitly configured
-    if (isDiskCacheConfigured()) {
-      void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
-        (error: unknown) => {
-          // Warn (not debug): the cache was explicitly configured, so a failure likely
-          // indicates a misconfiguration (wrong Redis host/password). Developers need
-          // to see this — a debug log is too easy to miss.
-          logger.warn(
-            "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
-            { error },
-          );
-        },
-      );
-    }
+    // Resolve API, Redis, disk, or memory cache selection before requests can
+    // observe a partially initialized backend.
+    await initializeDevCaches();
 
     // Auto-discover runtime primitives (tools, agents, workflows, prompts, resources)
     await this.runPrimitiveDiscovery();
 
     if (this.options.enableHMR) {
+      this.releaseHMRRuntime = HMRHandler.acquireRuntime();
       await this.setupFileWatchers();
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
-      this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
+      this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate((project) => {
+        if (project?.projectDir && project.projectDir !== this.options.projectDir) return;
         devServerLog.debug("INVALIDATE callback triggered - clearing runtime handler");
-        this.requestHandler?.invalidateRuntimeHandler();
+        return this.requestHandler?.invalidateRuntimeHandler();
       });
-
-      // Subscribe to debounced reload for broadcasting updates to connected HMR clients.
-      // This subscription must be eagerly registered here rather than lazily inside
-      // HMRHandler.initialize(), because HMRHandler.initialize() only runs when the
-      // first /_ws WebSocket request arrives. If that connection fails or hasn't
-      // happened yet, file changes are silently lost.
-      this.releaseExternalBroadcastSource = HMRHandler.registerExternalBroadcastSource();
-      this.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
-        hmrLog.debug("RELOAD callback triggered - broadcasting to HMR clients", {
-          changedPaths,
-          projectSlug: project?.projectSlug,
-        });
-        // Broadcast without projectSlug filter so that connectHMR() clients
-        // (which are registered without a projectSlug) also receive updates.
-        broadcastUpdate(changedPaths);
-      });
-
-      hmrLog.debug("ReloadNotifier subscriptions registered (invalidate + reload broadcast)");
+      hmrLog.debug("ReloadNotifier invalidation subscription registered");
     }
 
     const moduleServerUrl = buildLocalhostUrl(this.options.port);
@@ -261,21 +273,21 @@ export class DevServer {
         logger.info(`Dev server running at ${url}`);
 
         try {
-          // _isReady must be set inside onListen — the server is only truly ready
+          // _isReady must be set inside onListen. The server is only truly ready
           // to accept connections once this callback fires. Setting it after
           // adapter.serve() returns races with onListen on Deno (where serve is
           // non-blocking) and would mark the server ready before it can accept.
           this._isReady = true;
           this._resolveReady();
         } catch (error) {
-          devLog.debug("mark ready failed", error);
+          devLog.debug("mark ready failed", { errorName: getSafeErrorName(error) });
         }
       },
     });
   }
 
   /** Return the request handler for use with external HTTP servers. */
-  get handler(): (req: Request) => Promise<Response> {
+  get handler(): RuntimeRequestHandler {
     if (!this._handler) {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }
@@ -301,21 +313,17 @@ export class DevServer {
   }
 
   private async runPrimitiveDiscovery(): Promise<void> {
-    try {
-      const config = this.buildDiscoveryConfig();
-      const result = await discoverAll(config);
-      const total = result.tools.size + result.agents.size + result.skills.size +
-        result.workflows.size + result.prompts.size +
-        result.resources.size;
-      if (total > 0) {
-        logger.debug(
-          `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
-            `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
-            `${result.prompts.size} prompts, ${result.resources.size} resources`,
-        );
-      }
-    } catch (error) {
-      devServerLog.debug("Primitive discovery skipped:", error);
+    const config = this.buildDiscoveryConfig();
+    const result = await discoverCompletePrimitiveGeneration(config);
+    const total = result.tools.size + result.agents.size + result.skills.size +
+      result.workflows.size + result.prompts.size +
+      result.resources.size;
+    if (total > 0) {
+      logger.debug(
+        `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
+          `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
+          `${result.prompts.size} prompts, ${result.resources.size} resources`,
+      );
     }
   }
 
@@ -380,9 +388,9 @@ export class DevServer {
         }
       }
       return false;
-    } catch (_) {
-      /* expected: directory may not exist */
-      return false;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
     }
   }
 
@@ -413,14 +421,17 @@ export class DevServer {
     try {
       clearTranspileCache();
       const config = this.buildDiscoveryConfig();
-      const result = await discoverAll(config);
+      const result = await discoverCompletePrimitiveGeneration(config);
       logger.info(
         `[HMR] Re-discovered: ${result.tools.size} tools, ${result.agents.size} agents, ` +
           `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
           `${result.prompts.size} prompts, ${result.resources.size} resources`,
       );
     } catch (error) {
-      hmrLog.warn("Primitive re-discovery failed:", error);
+      hmrLog.warn("Primitive re-discovery failed", {
+        errorName: getSafeErrorName(error),
+      });
+      throw error;
     }
   }
 
@@ -454,7 +465,6 @@ export class DevServer {
       this.adapter,
       routeDiscovery,
       debounceMs,
-      () => this.requestHandler?.invalidateRuntimeHandler(),
       () => this.rediscoverPrimitives(),
       primitiveDirNames,
     );
@@ -467,32 +477,58 @@ export class DevServer {
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopPromise = this.stopInternal();
+    return this.stopPromise;
+  }
+
+  private async stopInternal(): Promise<void> {
     logger.info("Shutting down dev server...");
+    this._isReady = false;
+    this._handler = undefined;
+    const failures: unknown[] = [];
 
-    this.reloadUnsubscribe?.();
-    this.invalidateUnsubscribe?.();
-    this.releaseExternalBroadcastSource?.();
-
-    if (this.fileWatchSetup) {
-      const metrics = this.fileWatchSetup.getMetrics();
-      if (metrics) {
-        hmrLog.debug("Final performance metrics", metrics);
-      }
-      this.fileWatchSetup.cleanup();
-    }
-
-    if (this.server) {
+    const run = async (action: (() => void | Promise<void>) | undefined): Promise<void> => {
+      if (!action) return;
       try {
-        await this.server.stop();
+        await action();
       } catch (error) {
-        logger.warn("Error stopping server:", error);
+        failures.push(error);
       }
+    };
+
+    const invalidateUnsubscribe = this.invalidateUnsubscribe;
+    this.invalidateUnsubscribe = undefined;
+    await run(invalidateUnsubscribe);
+
+    const fileWatchSetup = this.fileWatchSetup;
+    this.fileWatchSetup = undefined;
+    if (fileWatchSetup) {
+      const metrics = fileWatchSetup.getMetrics();
+      if (metrics) hmrLog.debug("Final performance metrics", metrics);
+      await run(() => fileWatchSetup.cleanup());
     }
 
-    try {
-      await this.pipeline.teardown();
-    } catch (error) {
-      devServerLog.debug("Pipeline teardown error (non-critical)", error);
+    const requestHandler = this.requestHandler;
+    this.requestHandler = undefined;
+    await run(requestHandler ? () => requestHandler.invalidateRuntimeHandler() : undefined);
+
+    const server = this.server;
+    this.server = undefined;
+    await run(server ? () => server.stop() : undefined);
+
+    const releaseHMRRuntime = this.releaseHMRRuntime;
+    this.releaseHMRRuntime = undefined;
+    await run(releaseHMRRuntime);
+
+    await run(() => this.pipeline.teardown());
+
+    const bootstrapDispose = this.bootstrapDispose;
+    this.bootstrapDispose = undefined;
+    await run(bootstrapDispose);
+
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Dev server cleanup failed");
     }
   }
 }

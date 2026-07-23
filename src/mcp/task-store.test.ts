@@ -90,7 +90,7 @@ describe("mcp/task-store", () => {
     assertEquals(store.getResult(task.taskId), undefined);
   });
 
-  it("evicts terminal tasks after their post-terminal TTL", () => {
+  it("expires terminal tasks when their creation-based TTL elapses", () => {
     using time = new FakeTime();
     const store = new TaskStore();
     const task = store.create(1);
@@ -101,32 +101,26 @@ describe("mcp/task-store", () => {
     assertEquals(store.get(task.taskId), undefined);
   });
 
-  it("keeps an active task visible past its TTL", () => {
+  it("expires active tasks when their creation-based TTL elapses", () => {
     using time = new FakeTime();
     const store = new TaskStore();
     const task = store.create(1);
 
     time.tick(2);
 
-    assertExists(store.get(task.taskId));
+    assertEquals(store.get(task.taskId), undefined);
   });
 
-  it("retains an overdue task result for one TTL after completion", () => {
+  it("does not extend the TTL when a task completes", () => {
     using time = new FakeTime();
     const store = new TaskStore();
-    const task = store.create(60_000);
+    const task = store.create(100);
 
-    time.tick(90_000);
-    assertExists(store.get(task.taskId));
-
+    time.tick(90);
     store.complete(task.taskId, { ok: true });
     assertEquals(store.getResult(task.taskId), { ok: true });
 
-    time.tick(60_000);
-    assertExists(store.get(task.taskId));
-    assertEquals(store.getResult(task.taskId), { ok: true });
-
-    time.tick(1);
+    time.tick(10);
     assertEquals(store.get(task.taskId), undefined);
     assertEquals(store.getResult(task.taskId), undefined);
   });
@@ -152,46 +146,152 @@ describe("mcp/task-store", () => {
   });
 
   it("rejects new live tasks when the store reaches capacity", () => {
-    const store = new TaskStore();
-    for (let i = 0; i < 1000; i++) {
-      store.create(60_000);
-    }
+    const store = new TaskStore({ maxTasks: 2 });
+    store.create(60_000);
+    store.create(60_000);
 
     assertThrows(
       () => store.create(60_000),
       Error,
       "Task store capacity reached",
     );
-    assertEquals(store.list().length, 1000);
+    assertEquals(store.list().length, 2);
   });
 
-  it("does not reclaim active tasks at capacity just because their TTL elapsed", () => {
-    const store = new TaskStore();
-    for (let i = 0; i < 1000; i++) {
-      store.create(1);
-    }
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
-
-    assertThrows(
-      () => store.create(60_000),
-      Error,
-      "Task store capacity reached",
-    );
-    assertEquals(store.list().length, 1000);
-  });
-
-  it("evicts a terminal task at capacity before accepting new work", () => {
-    const store = new TaskStore();
-    const oldest = store.create(60_000);
-    store.complete(oldest.taskId, { ok: true });
-    for (let i = 1; i < 1000; i++) {
-      store.create(60_000);
-    }
+  it("reclaims expired active tasks at capacity", () => {
+    using time = new FakeTime();
+    const store = new TaskStore({ maxTasks: 2 });
+    store.create(1);
+    store.create(1);
+    time.tick(1);
 
     store.create(60_000);
 
-    assertEquals(store.get(oldest.taskId), undefined);
-    assertEquals(store.list().length, 1000);
+    assertEquals(store.list().length, 1);
+  });
+
+  it("does not evict an unexpired terminal result at capacity", () => {
+    const store = new TaskStore({ maxTasks: 2 });
+    const oldest = store.create(60_000);
+    store.complete(oldest.taskId, { ok: true });
+    store.create(60_000);
+
+    assertThrows(
+      () => store.create(60_000),
+      Error,
+      "Task store capacity reached",
+    );
+
+    assertEquals(store.getResult(oldest.taskId), { ok: true });
+    assertEquals(store.list().length, 2);
+  });
+
+  it("rejects invalid TTL and capacity values", () => {
+    const store = new TaskStore();
+    for (const ttl of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => store.create(ttl), TypeError, "task TTL");
+    }
+    for (const maxTasks of [0, -1, 1.5, Number.NaN]) {
+      assertThrows(
+        () => new TaskStore({ maxTasks }),
+        TypeError,
+        "maximum task count",
+      );
+    }
+    for (const maxWaiters of [0, -1, 1.5, Number.NaN]) {
+      assertThrows(
+        () => new TaskStore({ maxWaiters }),
+        TypeError,
+        "maximum task waiter count",
+      );
+    }
+  });
+
+  it("returns snapshots rather than mutable store state", () => {
+    const store = new TaskStore();
+    const created = store.create(60_000);
+    created.status = "failed";
+    assertEquals(store.get(created.taskId)!.status, "working");
+
+    const result = { content: { type: "text", text: "original" } };
+    store.complete(created.taskId, result);
+    result.content.text = "mutated input";
+    const first = store.getResult(created.taskId) as typeof result;
+    assertEquals(first.content.text, "original");
+    first.content.text = "mutated output";
+    assertEquals(
+      (store.getResult(created.taskId) as typeof result).content.text,
+      "original",
+    );
+  });
+
+  it("waits for an active task result", async () => {
+    const store = new TaskStore();
+    const task = store.create(60_000);
+    let settled = false;
+    const pending = store.waitForResult(task.taskId).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    assertEquals(settled, false);
+    store.complete(task.taskId, { ok: true });
+    assertEquals(await pending, { ok: true });
+  });
+
+  it("bounds and reclaims concurrent result waiters", async () => {
+    const store = new TaskStore({ maxWaiters: 1 });
+    const firstTask = store.create(60_000);
+    const firstWait = store.waitForResult(firstTask.taskId);
+
+    assertThrows(
+      () => store.waitForResult(firstTask.taskId),
+      Error,
+      "waiter capacity reached",
+    );
+
+    store.complete(firstTask.taskId, { ok: true });
+    assertEquals(await firstWait, { ok: true });
+
+    const secondTask = store.create(60_000);
+    const secondWait = store.waitForResult(secondTask.taskId);
+    store.complete(secondTask.taskId, { ok: "again" });
+    assertEquals(await secondWait, { ok: "again" });
+  });
+
+  it("stores terminal failure and cancellation results", () => {
+    const store = new TaskStore();
+    const failed = store.create(60_000);
+    const cancelled = store.create(60_000);
+    store.fail(failed.taskId, "Failed", { isError: true, reason: "failed" });
+    store.cancel(cancelled.taskId, { isError: true, reason: "cancelled" });
+
+    assertEquals(store.getResult(failed.taskId), {
+      isError: true,
+      reason: "failed",
+    });
+    assertEquals(store.getResult(cancelled.taskId), {
+      isError: true,
+      reason: "cancelled",
+    });
+  });
+
+  it("notifies cleanup when a task expires or is deleted", () => {
+    using time = new FakeTime();
+    const deleted: Array<[string, string]> = [];
+    const store = new TaskStore({
+      onDelete: (id, reason) => deleted.push([id, reason]),
+    });
+    const expired = store.create(1);
+    const removed = store.create(60_000);
+    time.tick(1);
+    store.list();
+    store.delete(removed.taskId);
+
+    assertEquals(deleted, [
+      [expired.taskId, "expired"],
+      [removed.taskId, "deleted"],
+    ]);
   });
 });

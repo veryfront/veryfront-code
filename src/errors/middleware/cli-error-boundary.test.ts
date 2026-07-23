@@ -4,12 +4,128 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertMatch } from "#veryfront/testing/assert";
-import { formatCLIError } from "./cli-error-boundary.ts";
+import { assertEquals, assertExists, assertMatch, assertRejects } from "#veryfront/testing/assert";
+import { cliErrorBoundary, formatCLIError } from "./cli-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
 import { CONFIG_NOT_FOUND, UNKNOWN_ERROR } from "../error-registry.ts";
 
 describe("cli-error-boundary", () => {
+  it("bounds oversized unknown failures before reporting and exiting", async () => {
+    const originalDenoExit = Deno.exit;
+    const originalConsoleError = console.error;
+    const output: string[] = [];
+    let exitCode: number | undefined;
+    Deno.exit = ((code?: number): never => {
+      exitCode = code;
+      throw new Error("exit called");
+    }) as typeof Deno.exit;
+    console.error = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+    try {
+      await assertRejects(
+        () =>
+          cliErrorBoundary(async () => {
+            throw "x".repeat(100_000);
+          }),
+        Error,
+        "exit called",
+      );
+      assertEquals(exitCode, 1);
+      assertEquals(output.length, 1);
+      assertEquals(output[0]?.length !== undefined && output[0].length < 20_000, true);
+    } finally {
+      Deno.exit = originalDenoExit;
+      console.error = originalConsoleError;
+    }
+  });
+
+  it("snapshots callbacks and rejects success exit codes", async () => {
+    const originalExit = Deno.exit;
+    const exitCodes: number[] = [];
+    const callbacks: string[] = [];
+    Object.defineProperty(Deno, "exit", {
+      configurable: true,
+      value: (code = 0): never => {
+        exitCodes.push(code);
+        throw new Error("exit intercepted");
+      },
+    });
+    try {
+      const options = {
+        onError: () => {
+          callbacks.push("original");
+        },
+        getExitCode: () => 7,
+      };
+      await assertRejects(
+        () =>
+          cliErrorBoundary(async () => {
+            options.onError = () => callbacks.push("mutated");
+            options.getExitCode = () => 0;
+            throw new Error("failed");
+          }, options),
+        Error,
+        "exit intercepted",
+      );
+
+      assertEquals(callbacks, ["original"]);
+      assertEquals(exitCodes, [7]);
+
+      await assertRejects(
+        () =>
+          cliErrorBoundary(
+            async () => {
+              throw new Error("failed");
+            },
+            { onError: () => {}, getExitCode: () => 0 },
+          ),
+        Error,
+        "exit intercepted",
+      );
+      assertEquals(exitCodes, [7, 1]);
+
+      const errorOutput: string[] = [];
+      const standardOutput: string[] = [];
+      const originalConsoleError = console.error;
+      const originalConsoleLog = console.log;
+      console.error = (...args: unknown[]) => errorOutput.push(args.map(String).join(" "));
+      console.log = (...args: unknown[]) => standardOutput.push(args.map(String).join(" "));
+      try {
+        await assertRejects(
+          () =>
+            cliErrorBoundary(async () => {
+              throw new Error("failed");
+            }),
+          Error,
+          "exit intercepted",
+        );
+        assertEquals(errorOutput.length, 1);
+        assertEquals(standardOutput, []);
+      } finally {
+        console.error = originalConsoleError;
+        console.log = originalConsoleLog;
+      }
+    } finally {
+      Object.defineProperty(Deno, "exit", {
+        configurable: true,
+        value: originalExit,
+      });
+    }
+  });
+
+  it("rejects malformed boundary inputs before treating them as command failures", async () => {
+    await assertRejects(
+      () => cliErrorBoundary(null as never),
+      TypeError,
+      "handler must be a function",
+    );
+    await assertRejects(
+      () => cliErrorBoundary(async () => {}, { onError: 42 as never }),
+      TypeError,
+      "Invalid CLI error boundary options",
+    );
+  });
+
   describe("formatCLIError", () => {
     it("should format VeryfrontError with slug and title", () => {
       const error = CONFIG_NOT_FOUND.create({
@@ -42,7 +158,7 @@ describe("cli-error-boundary", () => {
 
       // CONFIG_NOT_FOUND has a suggestion
       assertMatch(output, /Suggestion:/);
-      assertMatch(output, /vf init/);
+      assertMatch(output, /veryfront init/);
     });
 
     it("should include docs URL", () => {
@@ -96,8 +212,10 @@ describe("cli-error-boundary", () => {
       assertEquals(lines[0], "");
 
       // Should have slug and title on second line (with ANSI codes stripped for testing)
+      const rawHeaderLine = lines[1];
+      assertExists(rawHeaderLine);
       // deno-lint-ignore no-control-regex
-      const headerLine = lines[1].replace(/\x1b\[\d+m/g, ""); // Strip ANSI codes
+      const headerLine = rawHeaderLine.replace(/\x1b\[\d+m/g, ""); // Strip ANSI codes
       assertMatch(headerLine, /\[test-error\]/);
       assertMatch(headerLine, /Test Error Title/);
 
@@ -172,6 +290,29 @@ describe("cli-error-boundary", () => {
       assertEquals(output1.endsWith("\n"), true);
       assertEquals(output2.startsWith("\n"), true);
       assertEquals(output2.endsWith("\n"), true);
+    });
+
+    it("does not expose credentials or local paths", () => {
+      const output = formatCLIError(
+        new Error("password=<TOKEN> at /private/project/config.ts"),
+      );
+
+      assertEquals(output.includes("<TOKEN>"), false);
+      assertEquals(output.includes("/private/project"), false);
+    });
+
+    it("fails closed for mutable hostile error properties", () => {
+      const error = CONFIG_NOT_FOUND.create();
+      Object.defineProperty(error, "title", {
+        get() {
+          throw new Error("getter leaked password=<TOKEN>");
+        },
+      });
+
+      const output = formatCLIError(error);
+
+      assertMatch(output, /\[unknown-error\]/);
+      assertEquals(output.includes("<TOKEN>"), false);
     });
   });
 });

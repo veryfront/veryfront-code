@@ -9,7 +9,6 @@ import type {
 import type { AuthConfig } from "./middleware/types.ts";
 import { Buffer } from "node:buffer";
 import { constantTimeEqual } from "../utils/constant-time.ts";
-import { isProduction } from "#veryfront/platform/environment.ts";
 
 function encodeBase64(value: string): string {
   if (typeof globalThis.btoa === "function") {
@@ -53,18 +52,28 @@ export class AuthHandler extends BaseHandler {
   private basicRealm = "Secure Area";
   private bearerToken: string | null = null;
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     this.loadAuthConfig(ctx);
 
-    if (req.method.toUpperCase() === "OPTIONS") return Promise.resolve(this.continue());
+    if (req.method.toUpperCase() === "OPTIONS") return this.continue();
 
-    const basicResult = this.shouldUseBasic() ? this.checkBasicAuth(req) : null;
-    if (basicResult) return Promise.resolve(basicResult);
+    if (!this.shouldUseBasic() && !this.shouldUseBearer()) {
+      return this.continue();
+    }
 
-    const bearerResult = this.shouldUseBearer() ? this.checkBearerAuth(req) : null;
-    if (bearerResult) return Promise.resolve(bearerResult);
+    const authorization = req.headers.get("authorization") ?? "";
+    const separator = authorization.indexOf(" ");
+    const scheme = separator === -1 ? "" : authorization.slice(0, separator).toLowerCase();
+    const credentials = separator === -1 ? "" : authorization.slice(separator + 1);
 
-    return Promise.resolve(this.continue());
+    if (scheme === "basic" && this.isValidBasicCredentials(credentials)) {
+      return this.continue();
+    }
+    if (scheme === "bearer" && this.isValidBearerCredentials(credentials)) {
+      return this.continue();
+    }
+
+    return this.unauthorized();
   }
 
   private loadAuthConfig(ctx: HandlerContext): void {
@@ -77,26 +86,42 @@ export class AuthHandler extends BaseHandler {
     const authConfig = ctx.securityConfig?.auth as AuthConfig | undefined;
 
     if (authConfig?.basic) {
+      if (!authConfig.basic.username || !authConfig.basic.password) {
+        throw new TypeError("Basic authentication username and password must be non-empty");
+      }
       this.basicUser = authConfig.basic.username;
       this.basicPass = authConfig.basic.password;
       this.basicRealm = sanitizeRealm(authConfig.basic.realm || "Secure Area");
-      return;
     }
 
     if (authConfig?.bearer) {
+      if (!authConfig.bearer.token) {
+        throw new TypeError("Bearer authentication token must be non-empty");
+      }
       this.bearerToken = authConfig.bearer.token;
-      return;
     }
 
-    // `__vfTestEnv` lets the test harness skip env-var credential loading so
-    // tests run without auth. It must NEVER short-circuit auth in production:
-    // guard it behind the environment check so a stray/injected global can't
-    // silently disable authentication on a live deployment.
-    if (!isProduction() && (globalThis as Record<string, unknown>).__vfTestEnv === true) return;
+    if (authConfig?.basic || authConfig?.bearer) return;
 
-    this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") ?? "";
-    this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") ?? "";
-    this.bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") ?? "";
+    const basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER");
+    const basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS");
+    if (basicUser !== undefined || basicPass !== undefined) {
+      if (!basicUser || !basicPass) {
+        throw new TypeError(
+          "Basic authentication environment username and password must be non-empty",
+        );
+      }
+      this.basicUser = basicUser;
+      this.basicPass = basicPass;
+    }
+
+    const bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN");
+    if (bearerToken !== undefined) {
+      if (!bearerToken) {
+        throw new TypeError("Bearer authentication environment token must be non-empty");
+      }
+      this.bearerToken = bearerToken;
+    }
   }
 
   private shouldUseBasic(): boolean {
@@ -107,27 +132,22 @@ export class AuthHandler extends BaseHandler {
     return Boolean(this.bearerToken);
   }
 
-  private checkBasicAuth(req: Request): HandlerResult | null {
-    const expected = `Basic ${encodeBase64(`${this.basicUser}:${this.basicPass}`)}`;
-    const auth = req.headers.get("authorization") ?? "";
-
-    if (constantTimeEqual(auth, expected)) return null;
-
-    return this.respond(
-      new Response("Unauthorized", {
-        status: 401,
-        headers: { "WWW-Authenticate": `Basic realm="${this.basicRealm}"` },
-      }),
-    );
+  private isValidBasicCredentials(credentials: string): boolean {
+    if (!this.shouldUseBasic()) return false;
+    const expected = encodeBase64(`${this.basicUser}:${this.basicPass}`);
+    return constantTimeEqual(credentials, expected);
   }
 
-  private checkBearerAuth(req: Request): HandlerResult | null {
-    const auth = req.headers.get("authorization") ?? "";
+  private isValidBearerCredentials(credentials: string): boolean {
+    return this.shouldUseBearer() && constantTimeEqual(credentials, this.bearerToken ?? "");
+  }
 
-    if (auth.startsWith("Bearer ") && constantTimeEqual(auth.slice(7), this.bearerToken ?? "")) {
-      return null;
+  private unauthorized(): HandlerResult {
+    const headers = new Headers();
+    if (this.shouldUseBasic()) {
+      headers.set("WWW-Authenticate", `Basic realm="${this.basicRealm}"`);
     }
-
-    return this.respond(new Response("Unauthorized", { status: 401 }));
+    if (this.shouldUseBearer()) headers.append("WWW-Authenticate", "Bearer");
+    return this.respond(new Response("Unauthorized", { status: 401, headers }));
   }
 }

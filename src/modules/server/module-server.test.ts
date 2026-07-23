@@ -35,6 +35,10 @@ import {
   configureReleaseAssetManifestFetcher,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  clearSnippetCache,
+  rememberCompiledSnippet,
+} from "#veryfront/rendering/snippet-renderer.ts";
 
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
@@ -87,6 +91,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     clearReleaseModuleResponseCache();
+    clearSnippetCache();
     resetRequestProfiles();
   });
 
@@ -119,11 +124,14 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     return match?.[1] ?? "";
   }
 
-  function manifest(dependencies: ReleaseAssetManifest["dependencies"]): ReleaseAssetManifest {
+  function manifest(
+    dependencies: ReleaseAssetManifest["dependencies"],
+    releaseId = "release-id",
+  ): ReleaseAssetManifest {
     return {
       schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
       projectId: "project-id",
-      releaseId: "release-id",
+      releaseId,
       releaseVersion: 1,
       manifestVersion: 1,
       builderVersion: "test",
@@ -189,16 +197,89 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 404);
   });
 
+  it("returns the same transform status for GET and HEAD module requests", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-head-status-" });
+    try {
+      await Deno.writeTextFile(`${projectDir}/broken.ts`, "export const = ;");
+
+      const getResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/broken.js"),
+        projectDir,
+      );
+      const headResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/broken.js", { method: "HEAD" }),
+        projectDir,
+      );
+
+      assertEquals(getResponse.status, 500);
+      assertEquals(headResponse.status, getResponse.status);
+      assertEquals(await headResponse.text(), "");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects unsupported methods for module routes", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/page.js", { method: "POST" }),
+    );
+
+    assertEquals(response.status, 405);
+    assertEquals(response.headers.get("allow"), "GET, HEAD");
+  });
+
+  it("rejects encoded traversal and control characters before source lookup", async () => {
+    for (const path of ["%252e%252e/secret.js", "bad%00name.js", "bad%5cname.js"]) {
+      const response = await serve(
+        new Request(`http://localhost:3000/_vf_modules/${path}`),
+      );
+      assertEquals(response.status, 400);
+      assertEquals(await response.text(), "Invalid module path");
+    }
+  });
+
   it("should return 404 for snippet with missing hash", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_snippets/.js"));
 
     assertEquals(response.status === 404 || response.status === 500, true);
   });
 
-  it("should return 404 for invalid cross-project import path", async () => {
+  it("does not serve a cached executable snippet to another project", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-scoped-snippet-" });
+    const projectScope = "project-a";
+    const hash = "a".repeat(64);
+    try {
+      rememberCompiledSnippet({
+        hash,
+        code: `export default function ScopedSnippet() { return null; }`,
+        projectScope,
+      });
+      const request = new Request(`http://localhost:3000/_vf_modules/_snippets/${hash}.js`);
+      const { serveModule } = await import("./module-server.ts");
+
+      const sameProject = await serveModule(request, {
+        projectId: projectScope,
+        projectDir,
+        adapter: denoAdapter,
+      });
+      assertEquals(sameProject.status, 200);
+
+      const otherProject = await serveModule(request, {
+        projectId: "project-b",
+        projectDir,
+        adapter: denoAdapter,
+      });
+      assertEquals(otherProject.status, 404);
+      assertEquals(await otherProject.text(), "Snippet not found");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("should return 400 for invalid cross-project import path", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_cross//@/"));
 
-    assertEquals(response.status === 404 || response.status === 500, true);
+    assertEquals(response.status, 400);
   });
 
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {
@@ -857,13 +938,16 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       configureReleaseAssetManifestFetcher(() =>
         Promise.resolve({
           state: "partial",
-          manifest: manifest({
-            [sourceUrl]: {
-              contentHash: hash,
-              size: 100,
-              contentType: "text/javascript",
+          manifest: manifest(
+            {
+              [sourceUrl]: {
+                contentHash: hash,
+                size: 100,
+                contentType: "text/javascript",
+              },
             },
-          }),
+            releaseId,
+          ),
         })
       );
 
@@ -912,7 +996,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
       configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: manifest({}) })
+        Promise.resolve({ state: "ready", manifest: manifest({}, releaseId) })
       );
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
@@ -1030,13 +1114,16 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
           ready
             ? {
               state: "ready",
-              manifest: manifest({
-                [sourceUrl]: {
-                  contentHash: hash,
-                  size: 100,
-                  contentType: "text/javascript",
+              manifest: manifest(
+                {
+                  [sourceUrl]: {
+                    contentHash: hash,
+                    size: 100,
+                    contentType: "text/javascript",
+                  },
                 },
-              }),
+                releaseId,
+              ),
             }
             : { state: "building", manifest: null },
         )

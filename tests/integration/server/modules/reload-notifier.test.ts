@@ -67,16 +67,15 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
   });
 
   describe("ReloadNotifier - Invalidate Events", () => {
-    it("triggers invalidate listeners immediately", (): void => {
+    it("completes invalidate listeners before resolving", async (): Promise<void> => {
       let invalidateCalled = false;
 
       const unsubscribe = ReloadNotifier.subscribeInvalidate((): void => {
         invalidateCalled = true;
       });
 
-      ReloadNotifier.triggerReload();
+      await ReloadNotifier.triggerReload();
 
-      // Invalidate should be called immediately (not debounced)
       assertEquals(invalidateCalled, true);
 
       unsubscribe();
@@ -91,7 +90,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
         receivedPaths = paths;
       });
 
-      ReloadNotifier.triggerReload(["pages/index.mdx", "components/Button.tsx"]);
+      await ReloadNotifier.triggerReload(["pages/index.mdx", "components/Button.tsx"]);
 
       await delay(400);
 
@@ -109,11 +108,11 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
         receivedPaths = paths;
       });
 
-      ReloadNotifier.triggerReload(["pages/index.mdx"]);
+      await ReloadNotifier.triggerReload(["pages/index.mdx"]);
       await delay(100);
-      ReloadNotifier.triggerReload(["components/Button.tsx"]);
+      await ReloadNotifier.triggerReload(["components/Button.tsx"]);
       await delay(100);
-      ReloadNotifier.triggerReload(["lib/utils.ts"]);
+      await ReloadNotifier.triggerReload(["lib/utils.ts"]);
 
       await delay(500);
 
@@ -132,11 +131,11 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
         receivedPaths = paths;
       });
 
-      ReloadNotifier.triggerReload(["pages/index.mdx"]);
+      await ReloadNotifier.triggerReload(["pages/index.mdx"]);
       await delay(50);
-      ReloadNotifier.triggerReload(["pages/index.mdx"]);
+      await ReloadNotifier.triggerReload(["pages/index.mdx"]);
       await delay(50);
-      ReloadNotifier.triggerReload(["pages/index.mdx"]);
+      await ReloadNotifier.triggerReload(["pages/index.mdx"]);
 
       await delay(400);
 
@@ -153,7 +152,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
         receivedPaths = paths;
       });
 
-      ReloadNotifier.triggerReload([]);
+      await ReloadNotifier.triggerReload([]);
 
       await delay(400);
 
@@ -169,7 +168,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
         receivedPaths = paths;
       });
 
-      ReloadNotifier.triggerReload();
+      await ReloadNotifier.triggerReload();
 
       await delay(400);
 
@@ -191,7 +190,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
         secondListenerCalled = true;
       });
 
-      ReloadNotifier.triggerReload();
+      await ReloadNotifier.triggerReload();
 
       await delay(400);
 

@@ -16,21 +16,13 @@ import type { OnResolveArgs, Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
+import { CLIENT_PREFETCH_BUNDLE, CLIENT_ROUTER_BUNDLE } from "./templates.ts";
 
-// Try to import pre-bundled client scripts (available in npm builds)
-let CLIENT_ROUTER_BUNDLE: string | undefined;
-let CLIENT_PREFETCH_BUNDLE: string | undefined;
-
-try {
-  const templates = await import("./templates.ts");
-  CLIENT_ROUTER_BUNDLE = (templates as { CLIENT_ROUTER_BUNDLE?: string }).CLIENT_ROUTER_BUNDLE;
-  CLIENT_PREFETCH_BUNDLE =
-    (templates as { CLIENT_PREFETCH_BUNDLE?: string }).CLIENT_PREFETCH_BUNDLE;
-} catch (_) {
-  /* expected: pre-bundled scripts not available in Deno development mode */
-}
-
-interface ClientScriptGenerationOptions {
+/** Controls checked-in versus source-generated browser runtime output. */
+export interface ClientScriptGenerationOptions {
+  /** Rebuild from source even when a checked-in bundle is available. */
   forceSourceBundle?: boolean;
 }
 
@@ -43,9 +35,9 @@ async function statFile(path: string): Promise<FileStatResult | null> {
   try {
     const stat = await fs.stat(path);
     return { isFile: stat.isFile };
-  } catch (_) {
-    /* expected: file may not exist */
-    return null;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
 }
 
@@ -70,56 +62,37 @@ const clientAliasPaths = new Map([
 ]);
 
 /**
- * Generate app.js module
+ * Generate the small browser entry module that boots the client runtime.
  */
 export function generateAppModule(): string {
-  return `
-// Veryfront App Module
-(() => {
-  console.log('[Veryfront] App module loaded');
+  return `import { boot } from "./client.js";
 
-  // Export for ES modules
-  if (typeof window !== 'undefined') {
-    window.__veryfront = window.__veryfront || {};
-    window.__veryfront.version = '2.0.0';
-    window.__veryfront.initialized = true;
-  }
+export const version = ${JSON.stringify(VERSION)};
+export const hydrate = async function(slug, options = {}) {
+  return boot({ ...options, slug });
+};
 
-  // Basic hydration support
-  window.hydrate = async function(slug, options = {}) {
-    console.log('[Veryfront] Hydrating page:', slug, options);
-
-    // Mark as hydrated
-    const root = document.getElementById('root');
-    if (root) {
-      root.setAttribute('data-hydrated', 'true');
-    }
-  };
-})();
-
-export const version = '2.0.0';
-export const hydrate = window.hydrate;
+if (typeof window !== "undefined") {
+  window.__veryfront = window.__veryfront || {};
+  window.__veryfront.version = version;
+  window.__veryfront.initialized = true;
+  window.hydrate = hydrate;
+}
 `;
 }
 
 /**
- * Generate client.js module for hydration
- * Uses pre-bundled version for npm builds, or bundles from source for Deno
+ * Generate the client hydration and navigation runtime.
  */
 export async function generateClientModule(
   options?: ClientScriptGenerationOptions,
 ): Promise<string> {
-  try {
-    return await loadClientScript(
-      CLIENT_ROUTER_BUNDLE,
-      "router",
-      "../../rendering/client/router.ts",
-      options,
-    );
-  } catch (error) {
-    logger.error("Failed to generate client runtime bundle", error);
-    throw error;
-  }
+  return await loadClientScript(
+    CLIENT_ROUTER_BUNDLE,
+    "router",
+    "../../rendering/client/router.ts",
+    options,
+  );
 }
 
 function loadClientScript(
@@ -141,8 +114,7 @@ function loadClientScript(
 }
 
 /**
- * Load and transform router script from source
- * Uses pre-bundled version for npm builds, or bundles from source for Deno
+ * Generate the standalone router runtime.
  */
 export async function generateRouterScript(
   _adapter: RuntimeAdapter,
@@ -157,8 +129,7 @@ export async function generateRouterScript(
 }
 
 /**
- * Generate prefetch script
- * Uses pre-bundled version for npm builds, or bundles from source for Deno
+ * Generate the standalone prefetch runtime.
  */
 export async function generatePrefetchScript(
   _adapter: RuntimeAdapter,
@@ -173,9 +144,7 @@ export async function generatePrefetchScript(
 }
 
 /**
- * Generate import map for React dependencies
- *
- * Uses centralized React version configuration from cdn.ts
+ * Generate the default React import-map script element.
  */
 export async function generateImportMap(): Promise<string> {
   const { getReactImportMap, REACT_DEFAULT_VERSION } = await import(
@@ -186,7 +155,7 @@ export async function generateImportMap(): Promise<string> {
   return `
   <!-- Import map for React dependencies -->
   <script type="importmap">
-  ${JSON.stringify({ imports }, null, 2)}
+  ${JSON.stringify({ imports }, null, 2).replaceAll("<", "\\u003c")}
   </script>
   `;
 }
@@ -315,22 +284,17 @@ function createFsLoaderPlugin(): Plugin {
     name: "veryfront-fs-loader",
     setup(build) {
       build.onLoad({ filter: /.*/ }, async (args) => {
-        try {
-          const contents = await readTextFile(args.path);
-          const ext = extname(args.path).toLowerCase();
-          const loader = extensionToLoader[ext] ?? "js";
-          return { contents, loader };
-        } catch (error) {
-          logger.debug("fs-loader: failed to read file", { path: args.path, error });
-          return null;
-        }
+        const contents = await readTextFile(args.path);
+        const ext = extname(args.path).toLowerCase();
+        const loader = extensionToLoader[ext] ?? "js";
+        return { contents, loader };
       });
     },
   };
 }
 
 async function bundleClientEntry(entryRelative: string): Promise<string> {
-  const { build, stop } = await import("veryfront/extensions/bundler");
+  const { build } = await import("veryfront/extensions/bundler");
   const entryUrl = new URL(entryRelative, import.meta.url);
   const shimUrl = new URL("../../rendering/client/browser-stubs/logger.ts", import.meta.url);
 
@@ -340,57 +304,48 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
   const source = await readTextFile(entryPath);
   const loader = entryPath.endsWith(".tsx") ? "tsx" : "ts";
 
-  let result;
-  try {
-    result = await build({
-      absWorkingDir: packageRoot,
-      stdin: {
-        contents: source,
-        loader,
-        resolveDir: entryDir,
-        sourcefile: entryPath,
-      },
-      bundle: true,
-      format: "esm",
-      platform: "browser",
-      target: "es2020",
-      write: false,
-      sourcemap: false,
-      packages: "external",
-      mainFields: ["module", "browser", "main"],
-      resolveExtensions: [...moduleExtensions],
-      loader: {
-        ".ts": "ts",
-        ".tsx": "tsx",
-        ".js": "js",
-      },
-      external: [
-        "react",
-        "react-dom",
-        "react-dom/client",
-        "react/jsx-runtime",
-        "react/jsx-dev-runtime",
-      ],
-      plugins: [
-        createClientShimPlugin(shimPath),
-        createPathResolverPlugin(),
-        createFsLoaderPlugin(),
-      ],
-    });
-  } finally {
-    try {
-      await stop();
-    } catch (error) {
-      logger.warn("Failed to stop esbuild service cleanly", error);
-    }
-  }
+  const result = await build({
+    absWorkingDir: packageRoot,
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir: entryDir,
+      sourcefile: entryPath,
+    },
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    write: false,
+    sourcemap: false,
+    packages: "external",
+    mainFields: ["module", "browser", "main"],
+    resolveExtensions: [...moduleExtensions],
+    loader: {
+      ".ts": "ts",
+      ".tsx": "tsx",
+      ".js": "js",
+    },
+    external: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
+    plugins: [
+      createClientShimPlugin(shimPath),
+      createPathResolverPlugin(),
+      createFsLoaderPlugin(),
+    ],
+  });
 
   const output = result.outputFiles?.[0]?.text;
   if (!output) {
     throw toError(
       createError({
         type: "build",
-        message: `Failed to bundle client entry: ${entryRelative}`,
+        message: "Failed to bundle the client runtime entry",
       }),
     );
   }

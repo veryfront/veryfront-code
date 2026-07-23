@@ -1,343 +1,133 @@
-# Security Module
+# Security API reference
 
-## Purpose
+The `veryfront/security` entry point provides request validation, HTTP security,
+CSRF protection, response construction, path validation, secure filesystem
+access, and Deno permission profiles.
 
-The security module provides core security primitives and policies for Veryfront applications, including CSP (Content Security Policy), CORS, authentication utilities, and input validation.
-
-## Scope
-
-### What this module does:
-
-- Content Security Policy (CSP) configuration and enforcement
-- CORS (Cross-Origin Resource Sharing) policies
-- CSRF (Cross-Site Request Forgery) protection
-- Authentication helpers and session management
-- Input validation and sanitization
-- Path traversal protection
-- Security headers management
-- Rate limiting
-- Secure filesystem operations
-- Deno permission management
-- Sandbox for untrusted code execution
-
-### What this module does NOT do:
-
-- Middleware execution (see `middleware/builtin/security/`)
-- Agent sandbox execution (see `src/sandbox/`)
-
-## Architecture
-
-```
-security/
-├── http/                   # HTTP security
-│   ├── auth.ts            # Authentication utilities
-│   ├── config.ts          # Security configuration
-│   ├── cors.ts            # CORS policies
-│   └── csp.ts             # Content Security Policy
-├── csrf/                   # CSRF protection
-├── input-validation/       # Input sanitization
-│   ├── validators.ts      # Validation rules
-│   └── sanitizers.ts      # Input cleaning
-├── path-validation/        # Path traversal protection
-├── rate-limit/            # Rate limiting [has README]
-├── sandbox/               # Sandboxed code execution
-├── client/                # Client-side security utilities
-├── utils/                 # Security utility functions
-├── secure-fs.ts           # Secure filesystem operations
-├── path-validation.ts     # Path validation utilities
-└── deno-permissions.ts    # Deno permission management
+```ts
+import {
+  applyCORSHeaders,
+  createResponseBuilder,
+  createValidatedHandler,
+  generateCsrfToken,
+  validatePath,
+} from "veryfront/security";
 ```
 
-## Key Exports
+The sandbox, client HTML validation, and `security/rate-limit` directories are
+framework internals. They are not public package subpaths. Application rate
+limiting is exported from `veryfront/middleware`.
 
-### CSP (Content Security Policy)
+## Input validation
 
-- `createCSPPolicy(options)` - Generate CSP header
-- `CSPBuilder` - Fluent CSP builder
-- `defaultCSP` - Secure default policy
+| Export                   | Contract                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `validateRequestLimits`  | Validates URL, declared body, and header byte limits. Malformed `Content-Length` values are rejected.  |
+| `readBodyWithLimit`      | Reads a streamed body and stops once the byte limit is exceeded.                                       |
+| `parseJsonBody`          | Reads bounded JSON, optionally sanitizes it, and validates it with a schema.                           |
+| `parseFormData`          | Reads bounded form data and enforces file-size limits.                                                 |
+| `parseQueryParams`       | Validates URL search parameters with a schema.                                                         |
+| `sanitizeData`           | Recursively removes prototype-pollution keys and rejects cyclic or excessively deep input.             |
+| `createValidatedHandler` | Wraps an HTTP handler with body and query validation. Validation failures return JSON with status 400. |
+| `DEFAULT_LIMITS`         | Default request and file byte limits.                                                                  |
+| `CommonSchemas`          | Shared schemas for common request values.                                                              |
 
-### CORS
+Configured limits must be non-negative safe integers. Body and file limits are
+enforced while data is read, including requests without `Content-Length`.
 
-- `createCORSPolicy(options)` - CORS configuration
-- `isAllowedOrigin(origin, policy)` - Origin validation
-- `CORSPreflightHandler` - Handle OPTIONS requests
+## Security configuration
 
-### Authentication
+`SecurityConfig` supports these fields:
 
-- `validateAuthToken(token)` - JWT/session validation
-- `hashPassword(password)` - Secure password hashing
-- `comparePasswords(plain, hashed)` - Password verification
+| Field         | Value                                                                                    |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| `auth`        | Basic and bearer credentials. Configured credentials must be non-empty.                  |
+| `cors`        | `boolean` or a `CORSConfig` object. Wildcard origin cannot be combined with credentials. |
+| `csrf`        | `boolean` or `CsrfConfig`.                                                               |
+| `csp`         | CSP directive names mapped to a string or string array.                                  |
+| `coop`        | `same-origin`, `same-origin-allow-popups`, or `unsafe-none`.                             |
+| `corp`        | `same-origin`, `same-site`, or `cross-origin`.                                           |
+| `coep`        | `require-corp` or `unsafe-none`.                                                         |
+| `hsts`        | HSTS `maxAge` and optional `includeSubDomains` and `preload` flags.                      |
+| `headers`     | Additional HTTP header names and values.                                                 |
+| `remoteHosts` | URL strings used by runtime integrations.                                                |
 
-### Input Validation
+`isValidSecurityConfig` performs runtime validation. `SecurityConfigLoader`
+loads and caches project configuration, defaults CSRF protection on in
+production, and fails the current request when loading or validation fails.
 
-- `validateInput(value, rules)` - Multi-rule validation
-- `sanitizeHTML(html)` - XSS protection
-- `escapeSQL(query)` - SQL injection protection
+## CORS
 
-## Dependencies
+The public CORS surface includes middleware, preflight handling, header
+application, origin validation, and constants:
 
-### Internal
+- `cors` and `corsSimple`
+- `handleCORSPreflight` and `isPreflightRequest`
+- `applyCORSHeaders` and `applyCORSHeadersSync`
+- `validateOrigin`, `validateOriginSync`, and `validateCORSConfig`
+- `DEFAULT_CORS_METHODS`, `DEFAULT_CORS_HEADERS`, and `CORS_MAX_AGE`
 
-- `shared/` - Utilities and constants
-- `server/` - HTTP integration
+Origin callbacks may return a boolean or a response origin string. Async
+callbacks require the asynchronous APIs. Invalid configuration and callback
+errors deny the origin. Preflight handling rejects request methods and headers
+outside their configured allowlists. CORS middleware leaves WebSocket upgrade
+responses unchanged.
 
-### External
+## CSRF
 
-- `bcrypt` (optional) - Password hashing
-- `jsonwebtoken` (optional) - JWT handling
+`generateCsrfToken` creates a 32-byte random token encoded as unpadded
+base64url and returns its `Set-Cookie` value. `validateCsrf` implements the
+double-submit cookie comparison. `applyCsrfCookie` issues a readable token
+cookie for eligible HTML `GET` and `HEAD` responses.
 
-## Usage Examples
+The default cookie name is `__Host-vf_csrf`, the default request header is
+`x-csrf-token`, and the default lifetime is 24 hours. Custom cookie and header
+names must be valid HTTP tokens. `__Host-` and `__Secure-` cookie names always
+receive the `Secure` attribute.
 
-### Content Security Policy
+`CsrfHandler` enforces configured CSRF protection on unsafe HTTP methods.
 
-```typescript
-import { CSPBuilder } from "./security/http";
+## Responses and security headers
 
-const csp = new CSPBuilder()
-  .defaultSrc(["self"])
-  .scriptSrc(["self", "https://cdn.example.com"])
-  .styleSrc(["self", "unsafe-inline"])
-  .imgSrc(["self", "data:", "https:"])
-  .build();
+`ResponseBuilder` and `createResponseBuilder` build JSON, text, HTML,
+JavaScript, streaming, and preflight responses. Fluent methods apply CORS,
+security headers, cache policy, ETags, status, and custom headers.
 
-// Apply to response
-response.headers.set("Content-Security-Policy", csp);
+`applySecurityHeaders` applies CSP and standard response protections.
+`generateNonce` creates a CSP nonce. `buildCacheControl` accepts a named
+`CacheStrategy` or an explicit duration object. Unknown presets and invalid
+durations are rejected.
+
+## Path and filesystem safety
+
+`validatePath` performs asynchronous lexical and physical containment checks.
+Use it when symlinks or file existence matter. `validatePathSync` performs
+lexical validation only. Both return a `ValidationResult`; they do not throw for
+ordinary invalid-path results.
+
+`ValidationPresets`, `createValidator`, `PathValidationError`, and
+`sanitizePathForDisplay` support consistent policy and safe reporting.
+
+`SecureFs` validates paths before filesystem operations. `createSecureFs`
+constructs an instance and `wrapAdapterWithSecurity` installs it on a runtime
+adapter. Temporary directories are created inside the configured base. The
+unsafe adapter escape hatch is available only when `NODE_ENV` is exactly
+`development` or `test`.
+
+## Permission profiles
+
+The public constants `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS`, and
+`BUILD_HELPER_PERMISSIONS` define Deno CLI flags for their named execution
+contexts. Workflow permissions are intended for trusted local code and are not
+a secret-isolation boundary.
+
+## Verification
+
+Run the complete module tests from the repository root:
+
+```sh
+VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 \
+  REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text \
+  deno test --no-check --allow-all --unstable-worker-options --unstable-net \
+  src/security
 ```
-
-### CORS Configuration
-
-```typescript
-import { createCORSPolicy } from "./security/http";
-
-const cors = createCORSPolicy({
-  origin: ["https://app.example.com", "https://admin.example.com"],
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true,
-  maxAge: 86400, // 24 hours
-});
-
-// Check origin
-if (cors.isAllowed(request.headers.get("origin"))) {
-  // Add CORS headers
-}
-```
-
-### Authentication
-
-```typescript
-import { hashPassword, validateAuthToken } from "./security/http";
-
-// Hash password
-const hashedPassword = await hashPassword("user-password");
-
-// Validate token
-const payload = await validateAuthToken(token, {
-  secret: process.env.JWT_SECRET,
-  algorithms: ["HS256"],
-});
-
-console.log(payload.userId);
-```
-
-### Input Validation
-
-```typescript
-import { sanitizeHTML, validateInput } from "./security/input-validation";
-
-// Validate email
-const emailResult = validateInput(userInput.email, {
-  type: "email",
-  required: true,
-  maxLength: 255,
-});
-
-if (!emailResult.valid) {
-  throw new Error(emailResult.errors.join(", "));
-}
-
-// Sanitize HTML content
-const safeHTML = sanitizeHTML(userInput.bio, {
-  allowedTags: ["p", "br", "strong", "em"],
-  allowedAttributes: {},
-});
-```
-
-## Security Best Practices
-
-### 1. CSP Configuration
-
-```typescript
-// Production CSP - Strict
-const strictCSP = new CSPBuilder()
-  .defaultSrc(["none"])
-  .scriptSrc(["self"])
-  .styleSrc(["self"])
-  .imgSrc(["self"])
-  .connectSrc(["self"])
-  .fontSrc(["self"])
-  .objectSrc(["none"])
-  .mediaSrc(["self"])
-  .frameSrc(["none"])
-  .build();
-
-// Development CSP - Relaxed for HMR
-const devCSP = new CSPBuilder()
-  .defaultSrc(["self"])
-  .scriptSrc(["self", "unsafe-eval"]) // For HMR
-  .connectSrc(["self", "ws:", "wss:"]) // For WebSocket
-  .build();
-```
-
-### 2. CORS Policies
-
-```typescript
-// Public API - Open CORS
-const publicCORS = createCORSPolicy({
-  origin: "*",
-  methods: ["GET"],
-  credentials: false,
-});
-
-// Private API - Restricted CORS
-const privateCORS = createCORSPolicy({
-  origin: (origin) => {
-    return origin?.endsWith(".example.com") ?? false;
-  },
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true,
-  exposedHeaders: ["X-Request-ID"],
-});
-```
-
-### 3. Password Security
-
-```typescript
-import { comparePasswords, hashPassword } from "./security/http";
-
-// Registration
-const user = {
-  email: input.email,
-  passwordHash: await hashPassword(input.password, {
-    rounds: 12, // bcrypt cost factor
-  }),
-};
-
-// Login
-const valid = await comparePasswords(
-  input.password,
-  user.passwordHash,
-);
-```
-
-### 4. Input Validation
-
-```typescript
-// Define validation schema
-const userSchema = {
-  email: {
-    type: "email",
-    required: true,
-    maxLength: 255,
-  },
-  age: {
-    type: "number",
-    min: 18,
-    max: 120,
-  },
-  bio: {
-    type: "string",
-    maxLength: 1000,
-    sanitize: true,
-  },
-};
-
-// Validate and sanitize
-const result = validateInput(userInput, userSchema);
-if (!result.valid) {
-  return new Response(JSON.stringify({ errors: result.errors }), {
-    status: 400,
-  });
-}
-```
-
-## Security Headers
-
-### Recommended Headers
-
-```typescript
-const securityHeaders = {
-  "Content-Security-Policy": csp,
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-  "X-XSS-Protection": "1; mode=block",
-  "Referrer-Policy": "strict-origin-when-cross-origin",
-  "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
-  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-};
-```
-
-## Testing
-
-```bash
-# Run security tests
-deno task test src/security/
-
-# Test CSP generation
-deno task test src/security/http/csp.test.ts
-
-# Test input validation
-deno task test src/security/input-validation/
-```
-
-## Maintainer
-
-**Team:** Security Team
-**Primary Contact:** security@example.com
-**Code Owners:** See CODEOWNERS file
-
-## Related Modules
-
-- [`server/`](../server/README.md) - Request handlers with security enforcement
-- [`middleware/`](../middleware/README.md) - Security middleware
-
-## Common Vulnerabilities
-
-### XSS (Cross-Site Scripting)
-
-**Prevention:**
-
-- Use `sanitizeHTML()` for user content
-- Set strict CSP
-- Escape output in templates
-
-### CSRF (Cross-Site Request Forgery)
-
-**Prevention:**
-
-- Use SameSite cookies
-- Validate CORS origin
-- Implement CSRF tokens
-
-### SQL Injection
-
-**Prevention:**
-
-- Use parameterized queries
-- Never concatenate user input
-- Use `escapeSQL()` as last resort
-
-### Authentication Issues
-
-**Prevention:**
-
-- Use secure password hashing (bcrypt, cost ≥12)
-- Implement rate limiting
-- Use HTTPS only
-- Set secure session cookies
-
-## References
-
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [CSP Reference](https://content-security-policy.com/)
-- [CORS Specification](https://fetch.spec.whatwg.org/#http-cors-protocol)
-- [Veryfront Security Guide](https://veryfront.com/docs/security)

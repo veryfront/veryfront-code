@@ -12,10 +12,27 @@ interface FrontmatterContextLike {
   collectedMetadata?: Record<string, unknown>;
 }
 
-export function buildHeadElements(head?: CollectedHead): { scripts: string; other: string } {
-  if (!head) return { scripts: "", other: "" };
+export const DEFAULT_DOCUMENT_TITLE = "Veryfront App";
+
+export interface ResolvedDocumentMetadata {
+  title: string;
+  description: string;
+  frontmatter: MDXFrontmatter;
+}
+
+export interface BuiltHeadElements {
+  /** Classic blocking scripts, safe to place before the import map. */
+  scripts: string;
+  /** Module scripts, which must follow the import map they consume. */
+  moduleScripts: string;
+  other: string;
+}
+
+export function buildHeadElements(head?: CollectedHead): BuiltHeadElements {
+  if (!head) return { scripts: "", moduleScripts: "", other: "" };
 
   const scriptParts: string[] = [];
+  const moduleScriptParts: string[] = [];
   const otherParts: string[] = [];
 
   for (const script of head.scripts ?? []) {
@@ -35,10 +52,13 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
     }
 
     const attrStr = buildAttributes(Object.fromEntries(attrPairs));
+    const destination = attrs.type?.trim().toLowerCase() === "module"
+      ? moduleScriptParts
+      : scriptParts;
     if (content) {
-      scriptParts.push(`<script ${attrStr}>${escapeInlineScriptContent(content)}</script>`);
+      destination.push(`<script ${attrStr}>${escapeInlineScriptContent(content)}</script>`);
     } else if (attrs.src) {
-      scriptParts.push(`<script ${attrStr}></script>`);
+      destination.push(`<script ${attrStr}></script>`);
     }
   }
 
@@ -68,6 +88,7 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
 
   return {
     scripts: scriptParts.join("\n  "),
+    moduleScripts: moduleScriptParts.join("\n  "),
     other: otherParts.join("\n  "),
   };
 }
@@ -78,4 +99,31 @@ export function mergeFrontmatter(context: FrontmatterContextLike): MDXFrontmatte
     ...context.pageBundle.frontmatter,
     ...(context.collectedMetadata ?? {}),
   } as MDXFrontmatter;
+}
+
+/**
+ * Resolve the document fields shared by initial HTML and SPA navigation.
+ * Including both fields in frontmatter lets navigation clear metadata from the
+ * previous route instead of retaining stale title or description values.
+ */
+export function resolveDocumentMetadata(
+  frontmatter: MDXFrontmatter,
+  overrides?: Pick<CollectedHead, "title" | "description">,
+): ResolvedDocumentMetadata {
+  const frontmatterTitle = typeof frontmatter.title === "string" ? frontmatter.title : "";
+  const frontmatterDescription = typeof frontmatter.description === "string"
+    ? frontmatter.description
+    : "";
+  const title = overrides?.title || frontmatterTitle || DEFAULT_DOCUMENT_TITLE;
+  const description = overrides?.description || frontmatterDescription;
+
+  return {
+    title,
+    description,
+    frontmatter: {
+      ...frontmatter,
+      title,
+      description,
+    },
+  };
 }

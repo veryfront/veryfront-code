@@ -6,6 +6,7 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { errorLogName } from "../shared/log-context.ts";
 
 const LOG_PREFIX = "[BundleManifest]";
 
@@ -52,7 +53,7 @@ export async function refreshManifestTTL(manifestId: string): Promise<void> {
   } catch (error) {
     logger.debug(`${LOG_PREFIX} Failed to refresh manifest TTL`, {
       manifestId: manifestId.slice(0, 12),
-      error,
+      errorName: errorLogName(error),
     });
   }
 }

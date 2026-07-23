@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 
@@ -69,6 +69,70 @@ describe("hydration-script-builder/dev-component-manifest", () => {
 
       assertEquals(result.includes("</script><script>"), false);
       assertEquals(result.includes("\\u003c/script"), true);
+    });
+
+    it("rejects component manifests that exceed the entry limit", () => {
+      assertThrows(
+        () =>
+          generateDevComponentManifestScript({
+            dev: {
+              components: Array.from({ length: 1_001 }, (_, index) => `Component${index}`),
+            },
+          } as never),
+        TypeError,
+        "entry limit",
+      );
+    });
+
+    it("does not execute config or component accessors", () => {
+      let configAccessorCalls = 0;
+      const config: Record<string, unknown> = {};
+      Object.defineProperty(config, "dev", {
+        enumerable: true,
+        get() {
+          configAccessorCalls++;
+          return { components: [] };
+        },
+      });
+      assertThrows(
+        () => generateDevComponentManifestScript(config as never),
+        TypeError,
+        "config must not contain accessor properties",
+      );
+      assertEquals(configAccessorCalls, 0);
+
+      let componentAccessorCalls = 0;
+      const component: Record<string, unknown> = {};
+      Object.defineProperty(component, "name", {
+        enumerable: true,
+        get() {
+          componentAccessorCalls++;
+          return "Private";
+        },
+      });
+      assertThrows(
+        () =>
+          generateDevComponentManifestScript({
+            dev: { components: [component] },
+          } as never),
+        TypeError,
+        "accessor properties",
+      );
+      assertEquals(componentAccessorCalls, 0);
+    });
+
+    it("rejects cyclic component metadata", () => {
+      const component: Record<string, unknown> = {};
+      component.self = component;
+
+      assertThrows(
+        () =>
+          generateDevComponentManifestScript({
+            dev: { components: [component] },
+          } as never),
+        TypeError,
+        "cycles",
+      );
     });
   });
 });

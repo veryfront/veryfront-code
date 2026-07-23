@@ -80,10 +80,10 @@ describe("build/bundler/code-splitter/build-context", () => {
       assertIncludesAll(result, REACT_EXTERNALS, "Missing React external");
     });
 
-    it("should not duplicate entries", () => {
+    it("deduplicates custom entries already present in the defaults", () => {
       const result = getExternalDependencies(["react"]);
       const reactCount = result.filter((r) => r === "react").length;
-      assertEquals(reactCount, 2); // one from base, one from custom - dedup is caller's job
+      assertEquals(reactCount, 1);
     });
   });
 
@@ -100,7 +100,7 @@ describe("build/bundler/code-splitter/build-context", () => {
 
     it("should create a shim file in the specified directory", async () => {
       const shimPath = await createShimFile(tmpDir);
-      assertEquals(shimPath.includes(".veryfront-shim.js"), true);
+      assertEquals(shimPath.includes(".veryfront-shim."), true);
     });
 
     it("should write global polyfills", async () => {
@@ -116,6 +116,17 @@ describe("build/bundler/code-splitter/build-context", () => {
       const fs = createFileSystem();
       const content = await fs.readTextFile(shimPath);
       assertEquals(content.includes("__veryfront_react_imports"), true);
+    });
+
+    it("creates a missing output directory", async () => {
+      const nestedOutput = `${tmpDir}/nested/output`;
+      const shimPath = await createShimFile(nestedOutput);
+      assertEquals((await Deno.stat(shimPath)).isFile, true);
+    });
+
+    it("uses a unique path for each concurrent build context", async () => {
+      const [first, second] = await Promise.all([createShimFile(tmpDir), createShimFile(tmpDir)]);
+      assertEquals(first === second, false);
     });
   });
 });

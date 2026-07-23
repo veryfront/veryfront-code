@@ -1,4 +1,4 @@
-import { parseSseChunk, readGatewayBillingMode, readRecord } from "veryfront/provider/shared";
+import { extractOpenAIUsage, parseSseChunk, readRecord } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
 
 type OpenAICompatibleChoice = {
@@ -30,72 +30,6 @@ function normalizeOpenAIFinishReason(
   }
 
   return raw;
-}
-
-function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
-  const promptTokensDetails = readRecord(usage.prompt_tokens_details);
-  const cachedTokens = promptTokensDetails?.cached_tokens;
-  const completionTokensDetails = readRecord(usage.completion_tokens_details);
-  const reasoningTokens = completionTokensDetails?.reasoning_tokens;
-  const veryfront = readRecord(usage.veryfront);
-  const costSource = veryfront?.cost_source;
-  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
-  const usageCaptureStatus = veryfront?.usage_capture_status;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-    ...(typeof veryfront?.billable_input_tokens === "number"
-      ? { billableInputTokens: veryfront.billable_input_tokens }
-      : {}),
-    ...(typeof veryfront?.billable_output_tokens === "number"
-      ? { billableOutputTokens: veryfront.billable_output_tokens }
-      : {}),
-    ...(typeof veryfront?.cost_usd === "number" ? { costUsd: veryfront.cost_usd } : {}),
-    ...(typeof veryfront?.provider_input_cost_usd === "number"
-      ? { providerInputCostUsd: veryfront.provider_input_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_output_cost_usd === "number"
-      ? { providerOutputCostUsd: veryfront.provider_output_cost_usd }
-      : {}),
-    ...(typeof veryfront?.provider_cost_usd === "number"
-      ? { providerCostUsd: veryfront.provider_cost_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_input_charge_usd === "number"
-      ? { veryfrontInputChargeUsd: veryfront.veryfront_input_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_output_charge_usd === "number"
-      ? { veryfrontOutputChargeUsd: veryfront.veryfront_output_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_charge_usd === "number"
-      ? { veryfrontChargeUsd: veryfront.veryfront_charge_usd }
-      : {}),
-    ...(typeof veryfront?.veryfront_billed_usd === "number"
-      ? { veryfrontBilledUsd: veryfront.veryfront_billed_usd }
-      : {}),
-    ...(typeof veryfront?.cost_credits === "number" ? { costCredits: veryfront.cost_credits } : {}),
-    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
-      ? { costSource }
-      : {}),
-    ...(billingMode !== undefined ? { billingMode } : {}),
-    ...(usageCaptureStatus === "complete" ||
-        usageCaptureStatus === "missing" ||
-        usageCaptureStatus === "partial"
-      ? { usageCaptureStatus }
-      : {}),
-  };
 }
 
 function extractOpenAIContentText(content: unknown): string {
@@ -147,7 +81,7 @@ export async function* streamOpenAICompatibleParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
+    const parsed = parseSseChunk(buffer, { invalidEventPolicy: "ignore" });
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {
@@ -248,7 +182,7 @@ export async function* streamOpenAICompatibleParts(
   }
 
   if (buffer.trim().length > 0) {
-    const parsed = parseSseChunk(`${buffer}\n\n`);
+    const parsed = parseSseChunk(`${buffer}\n\n`, { invalidEventPolicy: "ignore" });
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;

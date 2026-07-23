@@ -111,8 +111,17 @@ For skills, directories containing `SKILL.md` are registered.
 | `tools/`     | Tool definitions with Zod schemas | `veryfront/tool`                     |
 | `prompts/`   | Prompt templates                  | `veryfront/prompt`                   |
 | `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`                 |
+| `schedules/` | Recurring source-defined triggers | `veryfront/schedule`                 |
+| `webhooks/`  | Event-driven source triggers      | `veryfront/webhook`                  |
 | `resources/` | MCP-exposable resources           | `veryfront/resource`                 |
 | `skills/`    | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
+
+Schedule and webhook files define when a task, workflow, or agent starts. Keep
+the work in the target definition. Use an API route when you need to own a
+custom HTTP request handler.
+
+Schedule and webhook files can export multiple definitions. Veryfront reads the
+default export first, then named exports in sorted order.
 
 TypeScript primitives are registered from their exported definitions. Agents can
 use the filename as the ID when no explicit ID is provided.

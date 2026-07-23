@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_ALLOWED_CDN_HOSTS } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -48,6 +48,24 @@ describe("routing/api/module-loader/security-config", () => {
     it("should return a non-empty list of allowed hosts", async () => {
       const result = await loadSecurityConfig("/tmp/nonexistent-project", makeAdapter());
       assertEquals(result.length > 0, true);
+    });
+
+    it("should not mutate the shared default host list", async () => {
+      const result = await loadSecurityConfig("/tmp/nonexistent-project", makeAdapter());
+      result.push("https://cdn.example.test");
+
+      assertEquals(DEFAULT_ALLOWED_CDN_HOSTS.includes("https://cdn.example.test"), false);
+    });
+
+    it("should propagate configuration storage failures", async () => {
+      const adapter = makeAdapter();
+      adapter.fs.exists = () => Promise.reject(new Error("configuration storage unavailable"));
+
+      await assertRejects(
+        () => loadSecurityConfig("/tmp/project", adapter),
+        Error,
+        "configuration storage unavailable",
+      );
     });
   });
 });

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertThrows } from "#std/assert";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
@@ -31,6 +31,10 @@ function makeRequest(): Request {
   return new Request("http://localhost:3000/api/auth/test-provider/status");
 }
 
+function makeDisconnectRequest(method = "POST"): Request {
+  return new Request("http://localhost:3000/api/auth/test-provider/disconnect", { method });
+}
+
 function makeEnv(appUrl = "http://localhost:3000"): EnvironmentConfig {
   return { ...getEnvironmentConfig(), appUrl };
 }
@@ -56,12 +60,26 @@ Deno.test("init handler: returns 401 when getUserId is not provided (fail-closed
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
     envReader: (key: string) => ENV[key],
-    // intentionally omit getUserId to simulate caller who forgets — but TS requires it,
+    // Intentionally omit getUserId to simulate a caller who forgets. TS requires it,
     // so we cast to `any` only to check runtime fail-closed behavior.
   } as any);
 
   const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
   assertEquals(response.status, 401);
+});
+
+Deno.test("init handler: rejects a reusable configured state", () => {
+  assertThrows(
+    () =>
+      createOAuthInitHandler(TEST_CONFIG, {
+        env: makeEnv(),
+        envReader: (key: string) => ENV[key],
+        authOptions: { state: "static-state" },
+        getUserId: () => "alice",
+      }),
+    Error,
+    "unique state",
+  );
 });
 
 Deno.test("init handler: returns 401 when isAuthenticated returns false", async () => {
@@ -71,6 +89,18 @@ Deno.test("init handler: returns 401 when isAuthenticated returns false", async 
     env: makeEnv(),
     envReader: (key: string) => ENV[key],
     isAuthenticated: () => false,
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
+  assertEquals(response.status, 401);
+});
+
+Deno.test("init handler: rejects non-boolean authentication results", async () => {
+  const handler = createOAuthInitHandler(TEST_CONFIG, {
+    env: makeEnv(),
+    envReader: (key: string) => ENV[key],
+    isAuthenticated: (() => "truthy-but-invalid") as unknown as () => boolean,
     getUserId: () => "alice",
   });
 
@@ -102,6 +132,34 @@ Deno.test("init handler: returns 401 when getUserId returns empty string", async
 
   const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
   assertEquals(response.status, 401);
+});
+
+Deno.test("init handler: rejects an unbounded user ID before persistence", async () => {
+  let writes = 0;
+  const tokenStore: TokenStore = {
+    async getTokens() {
+      return null;
+    },
+    async setTokens() {},
+    async clearTokens() {},
+    async setState() {
+      writes++;
+    },
+    async consumeState() {
+      return null;
+    },
+  };
+  const handler = createOAuthInitHandler(TEST_CONFIG, {
+    tokenStore,
+    env: makeEnv(),
+    envReader: (key) => ENV[key],
+    getUserId: () => "x".repeat(5_000),
+  });
+
+  const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
+
+  assertEquals(response.status, 401);
+  assertEquals(writes, 0);
 });
 
 Deno.test("init handler: returns 503 when oauth is not configured", async () => {
@@ -155,6 +213,7 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
   const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
 
   assertEquals(response.status, 302);
+  assertEquals(response.headers.get("cache-control"), "no-store");
 
   const location = new URL(response.headers.get("location")!);
   assertEquals(location.origin + location.pathname, "https://provider.test/auth");
@@ -171,7 +230,7 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
     throw new Error("expected redirect state parameter to be present");
   }
 
-  // Peek without consuming — use a separate method for test assertion by consuming a clone.
+  // Peek by consuming a clone so the test can inspect the stored state.
   const storedState = await store.consumeState(state);
   assertEquals(storedState?.userId, "alice");
   assertEquals(storedState?.serviceId, "test-provider");
@@ -311,6 +370,23 @@ Deno.test("status handler: treats expired access as connected when refresh token
   assertEquals(body.hasRefreshToken, true);
 });
 
+Deno.test("status handler: treats an expiresAt value of zero as expired", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens(TEST_CONFIG.serviceId, "alice", {
+    accessToken: "expired-access-token",
+    expiresAt: 0,
+  });
+  const handler = createOAuthStatusHandler(TEST_CONFIG, {
+    tokenStore: store,
+    envReader: (key: string) => ENV[key],
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(makeRequest());
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).connected, false);
+});
+
 Deno.test("status handler: supports async isAuthenticated and getUserId", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {
@@ -331,7 +407,7 @@ Deno.test("disconnect handler: returns 401 when getUserId is not provided (fail-
     // deno-lint-ignore no-explicit-any
   } as any);
 
-  const res = await handler(makeRequest());
+  const res = await handler(makeDisconnectRequest());
   assertEquals(res.status, 401);
 });
 
@@ -345,7 +421,7 @@ Deno.test("disconnect handler: clears only the calling user's tokens", async () 
     getUserId: () => "alice",
   });
 
-  const res = await handler(makeRequest());
+  const res = await handler(makeDisconnectRequest());
   assertEquals(res.status, 200);
   const body = await res.json();
   assertEquals(body.success, true);
@@ -366,7 +442,7 @@ Deno.test("disconnect handler: returns 401 when isAuthenticated returns false", 
     getUserId: () => "alice",
   });
 
-  const res = await handler(makeRequest());
+  const res = await handler(makeDisconnectRequest());
   assertEquals(res.status, 401);
   const body = await res.json();
   assertEquals(body.error, "Unauthorized");
@@ -380,6 +456,113 @@ Deno.test("disconnect handler: supports async isAuthenticated and getUserId", as
     getUserId: async () => "alice",
   });
 
-  const res = await handler(makeRequest());
+  const res = await handler(makeDisconnectRequest());
   assertEquals(res.status, 401);
+});
+
+Deno.test("init handler: converts authentication resolver failures to a safe response", async () => {
+  const originalError = console.error;
+  const logs: string[] = [];
+  console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+  try {
+    const handler = createOAuthInitHandler(TEST_CONFIG, {
+      env: makeEnv(),
+      envReader: (key: string) => ENV[key],
+      getUserId: () => {
+        throw new Error("private-session-detail");
+      },
+    });
+    const response = await handler(
+      new Request("http://localhost:3000/api/auth/test-provider"),
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(await response.json(), { error: "Failed to initiate OAuth flow" });
+    assertEquals(response.headers.get("cache-control"), "no-store");
+  } finally {
+    console.error = originalError;
+  }
+  assertEquals(logs.join("\n").includes("private-session-detail"), false);
+});
+
+Deno.test("disconnect handler: revokes provider tokens before clearing local state", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens(TEST_CONFIG.serviceId, "alice", {
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+  });
+  const config: OAuthServiceConfig = {
+    ...TEST_CONFIG,
+    revocationUrl: "https://provider.test/revoke",
+  };
+  const original = globalThis.fetch;
+  let requestBody = "";
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    requestBody = String(init?.body ?? "");
+    return Promise.resolve(new Response(null, { status: 200 }));
+  }) as typeof fetch;
+  try {
+    const handler = createOAuthDisconnectHandler(config, {
+      tokenStore: store,
+      getUserId: () => "alice",
+      envReader: (key) => ENV[key],
+    });
+    const response = await handler(makeDisconnectRequest());
+
+    assertEquals(response.status, 200);
+    assertEquals(new URLSearchParams(requestBody).get("token"), "refresh-token");
+    assertEquals(await store.getTokens(TEST_CONFIG.serviceId, "alice"), null);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("disconnect handler: retains local tokens when provider revocation fails", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens(TEST_CONFIG.serviceId, "alice", {
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+  });
+  const config: OAuthServiceConfig = {
+    ...TEST_CONFIG,
+    revocationUrl: "https://provider.test/revoke",
+  };
+  const original = globalThis.fetch;
+  globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 503 }))) as typeof fetch;
+  try {
+    const handler = createOAuthDisconnectHandler(config, {
+      tokenStore: store,
+      getUserId: () => "alice",
+      envReader: (key) => ENV[key],
+    });
+    const response = await handler(makeDisconnectRequest());
+
+    assertEquals(response.status, 502);
+    assertEquals(await response.json(), { error: "OAuth token revocation failed" });
+    assertEquals(
+      (await store.getTokens(TEST_CONFIG.serviceId, "alice"))?.accessToken,
+      "access-token",
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("disconnect handler: rejects safe-method requests", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens(TEST_CONFIG.serviceId, "alice", { accessToken: "access-token" });
+  const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
+    tokenStore: store,
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(makeDisconnectRequest("GET"));
+
+  assertEquals(response.status, 405);
+  assertEquals(response.headers.get("allow"), "POST");
+  assertEquals(response.headers.get("cache-control"), "no-store");
+  assertEquals(
+    (await store.getTokens(TEST_CONFIG.serviceId, "alice"))?.accessToken,
+    "access-token",
+  );
 });

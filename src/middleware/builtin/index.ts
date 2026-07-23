@@ -6,13 +6,11 @@
 
 export {
   type AnyMiddlewareContext,
-  type CorsOptions,
   type CorsValidationResult,
   getRequest,
+  type LegacyMiddlewareContext,
   type Middleware,
-  type MiddlewareContext,
   type Next,
-  type OriginValidator,
 } from "./types.ts";
 
 export { cors } from "#veryfront/security";

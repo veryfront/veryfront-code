@@ -17,7 +17,7 @@ export { escapeHtml };
  * These indicate potential server compromise or misconfiguration.
  */
 const SUSPICIOUS_PATTERN_SPECS = [
-  { source: String.raw`<script[^>]*>[\s\S]*?<\/script>`, flags: "gi", name: "inline script" },
+  { source: String.raw`<script\b[^>]*>`, flags: "gi", name: "inline script" },
   { source: String.raw`javascript:`, flags: "gi", name: "javascript: URL" },
   { source: String.raw`\bon\w+\s*=`, flags: "gi", name: "event handler attribute" },
   { source: String.raw`data:\s*text\/html`, flags: "gi", name: "data: HTML URL" },
@@ -40,7 +40,7 @@ export function escapeInlineJsonText(value: string): string {
 }
 
 export function jsonForInlineScript(value: unknown, space?: string | number): string {
-  return escapeInlineJsonText(JSON.stringify(value, null, space));
+  return escapeInlineJsonText(JSON.stringify(value, null, space) ?? "null");
 }
 
 export function buildTrustedHtmlValidatorScript(): string {

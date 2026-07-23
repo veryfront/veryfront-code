@@ -18,7 +18,7 @@ const REACT_PACKAGES = new Set([
 
 export class VendorStrategy implements ImportRewriteStrategy {
   readonly name = "vendor";
-  readonly priority = 6;
+  readonly priority = -1;
 
   matches(specifier: string, ctx: RewriteContext): boolean {
     if (ctx.target !== "browser") return false;

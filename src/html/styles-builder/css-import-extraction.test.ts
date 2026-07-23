@@ -1,10 +1,15 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectCssImportPaths,
   extractCssImportSpecifiers,
   resolveCssImportPath,
 } from "./css-import-extraction.ts";
+import {
+  MAX_CSS_IMPORTS,
+  MAX_STYLE_SOURCE_FILE_BYTES,
+  MAX_STYLE_SOURCE_FILES,
+} from "./resource-limits.ts";
 
 describe("html/styles-builder/css-import-extraction", () => {
   describe("extractCssImportSpecifiers", () => {
@@ -31,6 +36,41 @@ describe("html/styles-builder/css-import-extraction", () => {
     it("matches multiline import statements", () => {
       const source = 'import\n  "./styles.css";';
       assertEquals(extractCssImportSpecifiers(source), ["./styles.css"]);
+    });
+
+    it("ignores imports in comments, values, regular expressions, and dynamic calls", () => {
+      const source = [
+        '// import "./line-comment.css";',
+        '/* import "./block-comment.css"; */',
+        "const text = 'import \"./string-value.css\";';",
+        'const pattern = /import "\\.\\/regex-value.css"/;',
+        'const lazy = import("./dynamic.css");',
+        "const metadata = import.meta.url;",
+        'import "./static.css";',
+      ].join("\n");
+
+      assertEquals(extractCssImportSpecifiers(source), ["./static.css"]);
+    });
+
+    it("rejects source content above the per-file byte limit", () => {
+      assertThrows(
+        () => extractCssImportSpecifiers("a".repeat(MAX_STYLE_SOURCE_FILE_BYTES + 1)),
+        TypeError,
+        "source content exceeds",
+      );
+    });
+
+    it("rejects excessive CSS import statements", () => {
+      const source = Array.from(
+        { length: MAX_CSS_IMPORTS + 1 },
+        (_, index) => `import "./style-${index}.css";`,
+      ).join("\n");
+
+      assertThrows(
+        () => extractCssImportSpecifiers(source),
+        TypeError,
+        "CSS import count exceeds",
+      );
     });
   });
 
@@ -84,6 +124,19 @@ describe("html/styles-builder/css-import-extraction", () => {
         "/project/app/b.css",
         "/project/app/styles.css",
       ]);
+    });
+
+    it("rejects source lists above the file-count limit", () => {
+      const files = Array.from(
+        { length: MAX_STYLE_SOURCE_FILES + 1 },
+        (_, index) => ({ path: `/project/source-${index}.ts`, content: "" }),
+      );
+
+      assertThrows(
+        () => collectCssImportPaths(files, "/project"),
+        TypeError,
+        "source file count exceeds",
+      );
     });
   });
 });

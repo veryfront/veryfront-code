@@ -449,7 +449,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },
@@ -497,7 +496,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },
@@ -544,11 +542,33 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         type: "finish",
         finishReason: { unified: "tool-calls", raw: "tool_use" },
         usage: {
-          inputTokens: undefined,
           outputTokens: 4,
           totalTokens: 4,
         },
       },
     ]);
+  });
+
+  it("cancels the upstream response when the consumer stops early", async () => {
+    let cancelCount = 0;
+    const stream = streamFromChunksWithCancelSpy([
+      data({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "partial" },
+      }),
+    ], {
+      onCancel: () => cancelCount++,
+    });
+    const iterator = streamAnthropicCompatibleParts(stream)[Symbol.asyncIterator]();
+
+    assertEquals(await iterator.next(), {
+      value: { type: "text-delta", delta: "partial" },
+      done: false,
+    });
+    await iterator.return?.();
+
+    assertEquals(cancelCount, 1);
+    assertEquals(stream.locked, false);
   });
 });

@@ -30,6 +30,14 @@ describe("transforms/shared/cross-project-import", () => {
       ["empty string", ""],
       ["uppercase slug", "MyProject/@/foo"],
       ["no path after /@/", "my-project@1.0.0/@/"],
+      ["parent traversal", "my-project/@/../../secret"],
+      ["encoded traversal", "my-project/@/%2e%2e/secret"],
+      ["backslash path", "my-project/@/components\\Button"],
+      ["query string", "my-project/@/components/Button?token=secret"],
+      ["fragment", "my-project/@/components/Button#private"],
+      ["leading hyphen slug", "-my-project/@/components/Button"],
+      ["trailing hyphen slug", "my-project-/@/components/Button"],
+      ["empty path segment", "my-project/@/components//Button"],
     ];
 
     for (const [label, specifier] of negativeTable) {
@@ -100,5 +108,21 @@ describe("transforms/shared/cross-project-import", () => {
         path: "a/b/c/d.ts",
       });
     });
+
+    for (
+      const specifier of [
+        "my-project/@/../secret",
+        "my-project/@/%2e%2e/secret",
+        "my-project/@/components\\Button",
+        "my-project/@/components/Button?token=secret",
+        "my-project/@/components/Button#private",
+        "-my-project/@/components/Button",
+        "my-project-/@/components/Button",
+      ]
+    ) {
+      it(`rejects unsafe import: ${specifier}`, () => {
+        assertEquals(parseCrossProjectImport(specifier), null);
+      });
+    }
   });
 });

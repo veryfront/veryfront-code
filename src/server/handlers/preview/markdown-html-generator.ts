@@ -10,6 +10,7 @@
 
 import { escapeHtml } from "veryfront/utils/html-escape";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+import { getStudioScripts } from "#veryfront/html/dev-scripts.ts";
 
 /** Options for generating markdown preview HTML. */
 interface MarkdownHtmlOptions {
@@ -65,25 +66,19 @@ function buildStudioScript(
 ): string {
   const studioEmbed = url.searchParams.get("studio_embed") === "true";
   if (!studioEmbed) return "";
-  const nonceAttr = buildNonceAttribute(nonce);
 
   const rawQueryProjectId = url.searchParams.get("vf_project_id")?.trim() || "";
   // Validate query param before using it in bridge config.
   const queryProjectId = /^[a-zA-Z0-9_-]+$/.test(rawQueryProjectId) ? rawQueryProjectId : "";
   const queryFileId = url.searchParams.get("vf_file_id")?.trim() || "";
   const canonicalProjectId = queryProjectId || projectId;
-  const canonicalPageId = queryFileId || filePath;
 
-  const bridgeConfig: Record<string, unknown> = {
+  return getStudioScripts({
     projectId: canonicalProjectId,
-    pageId: canonicalPageId,
+    pageId: queryFileId || undefined,
     pagePath: filePath,
-  };
-
-  // Escape </script> sequences to prevent XSS breakout from inline JSON
-  const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");
-  return `<script${nonceAttr}>window.__VF_BRIDGE_CONFIG__=${safeJson};</script>
-  <script type="module" src="/_veryfront/studio-bridge.js"${nonceAttr}></script>`;
+    nonce,
+  });
 }
 
 /**

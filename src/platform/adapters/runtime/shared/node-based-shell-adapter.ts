@@ -1,6 +1,6 @@
 import type { ShellAdapter } from "../../base.ts";
-import { createError, toError } from "#veryfront/errors";
 import * as fs from "node:fs";
+import { createFileOperationError } from "./filesystem-errors.ts";
 
 export class NodeBasedShellAdapter implements ShellAdapter {
   statSync(path: string): { isFile: boolean; isDirectory: boolean } {
@@ -8,12 +8,7 @@ export class NodeBasedShellAdapter implements ShellAdapter {
       const stat = fs.statSync(path);
       return { isFile: stat.isFile(), isDirectory: stat.isDirectory() };
     } catch (error) {
-      throw toError(
-        createError({
-          type: "file",
-          message: `Failed to stat file: ${error}`,
-        }),
-      );
+      throw createFileOperationError(error, "stat");
     }
   }
 
@@ -21,12 +16,7 @@ export class NodeBasedShellAdapter implements ShellAdapter {
     try {
       return fs.readFileSync(path, "utf-8");
     } catch (error) {
-      throw toError(
-        createError({
-          type: "file",
-          message: `Failed to read file: ${error}`,
-        }),
-      );
+      throw createFileOperationError(error, "read");
     }
   }
 }

@@ -24,25 +24,65 @@ export interface GlobalWithBun {
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function getOwnDescriptor(value: unknown, key: PropertyKey): PropertyDescriptor | undefined {
+  if (!isObject(value)) return undefined;
+  try {
+    return Reflect.getOwnPropertyDescriptor(value, key);
+  } catch {
+    // Revoked proxies and invalid proxy descriptors fail closed.
+  }
+  return undefined;
+}
+
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  const descriptor = getOwnDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+// Node exposes globalThis.process through a native accessor. Only the runtime
+// root property on exact globalThis uses this reader; nested values remain
+// data-only so a replaced runtime object cannot widen the trust boundary.
+function readTrustedRuntimeProperty(value: unknown, key: PropertyKey): unknown {
+  const descriptor = getOwnDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if ("value" in descriptor) return descriptor.value;
+  if (typeof descriptor.get !== "function") return undefined;
+  try {
+    return Reflect.apply(descriptor.get, value, []);
+  } catch {
+    return undefined;
+  }
+}
+
+function readRuntimeRootProperty(global: unknown, key: PropertyKey): unknown {
+  return global === globalThis
+    ? readTrustedRuntimeProperty(global, key)
+    : readOwnDataProperty(global, key);
 }
 
 /** Check whether Deno runtime is present. */
 export function hasDenoRuntime(global: unknown): global is GlobalWithDeno {
-  if (!isObject(global) || !("Deno" in global)) return false;
-  const denoObj = global.Deno as GlobalWithDeno["Deno"];
-  return typeof denoObj?.env?.get === "function";
+  const deno = readRuntimeRootProperty(global, "Deno");
+  const env = readOwnDataProperty(deno, "env");
+  return typeof readOwnDataProperty(env, "get") === "function";
 }
 
 /** Check whether node process is present. */
 export function hasNodeProcess(global: unknown): global is GlobalWithProcess {
-  if (!isObject(global) || !("process" in global)) return false;
-  const processObj = global.process as GlobalWithProcess["process"];
-  return typeof processObj?.env === "object";
+  const process = readRuntimeRootProperty(global, "process");
+  return isObject(readOwnDataProperty(process, "env"));
 }
 
 /** Check whether Bun runtime is present. */
 export function hasBunRuntime(global: unknown): global is GlobalWithBun {
-  if (!isObject(global) || !("Bun" in global)) return false;
-  return global.Bun !== undefined;
+  const bun = readRuntimeRootProperty(global, "Bun");
+  return typeof readOwnDataProperty(bun, "version") === "string";
 }

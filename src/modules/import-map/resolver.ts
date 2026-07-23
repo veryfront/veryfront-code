@@ -1,105 +1,123 @@
 import type { ImportMapConfig } from "./types.ts";
 
-/** Check if URL is an esm.sh URL */
+interface ESMShPackageSpecifier {
+  packageName: string;
+  subpath: string;
+}
+
+function getOwnMapping(
+  imports: Record<string, string> | undefined,
+  specifier: string,
+): string | undefined {
+  if (!imports || !Object.prototype.hasOwnProperty.call(imports, specifier)) return undefined;
+  const value: unknown = imports[specifier];
+  return typeof value === "string" ? value : undefined;
+}
+
 function isEsmShUrl(url: string): boolean {
   return url.startsWith("https://esm.sh/") || url.startsWith("http://esm.sh/");
 }
 
-function extractEsmShPackage(url: string): string | null {
+function parseEsmShPackage(url: string): ESMShPackageSpecifier | null {
   if (!isEsmShUrl(url)) return null;
 
   try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
-
-    if (pathname.startsWith("@")) {
-      const packageName = pathname
-        .split("/")
-        .slice(0, 2)
-        .join("/")
-        .replace(/@[\d.]+.*$/, "");
-      return packageName || null;
-    }
-
-    const packageName = pathname.split("@")[0]?.split("/")[0] ?? "";
-    return packageName || null;
-  } catch (_) {
-    /* expected: URL may be malformed */
+    const pathname = new URL(url).pathname.slice(1).replace(/^v\d+\//, "");
+    const match = pathname.startsWith("@")
+      ? pathname.match(/^(@[^/]+\/[^/@]+)(?:@[^/]+)?(\/.*)?$/)
+      : pathname.match(/^([^/@]+)(?:@[^/]+)?(\/.*)?$/);
+    const packageName = match?.[1];
+    if (!packageName) return null;
+    return { packageName, subpath: match?.[2] ?? "" };
+  } catch {
     return null;
   }
 }
 
-function extractEsmShSubpath(url: string): string {
-  const parsed = new URL(url);
-  const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
+function getScopedImports(
+  scopes: ImportMapConfig["scopes"],
+  scope: string | undefined,
+): Record<string, string> | undefined {
+  if (!scope || !scopes) return undefined;
 
-  if (pathname.startsWith("@")) {
-    const parts = pathname.split("/");
-    if (parts.length <= 2) return "";
-
-    const packageParts = parts.slice(0, 2).join("/");
-    const afterPackage = pathname.slice(packageParts.length);
-    const versionMatch = afterPackage.match(/^@[^/]+(.*)$/);
-
-    return versionMatch?.[1] ?? "";
+  let bestKey: string | undefined;
+  for (const key of Object.keys(scopes)) {
+    if (scope !== key && !scope.startsWith(key)) continue;
+    if (bestKey === undefined || key.length > bestKey.length) bestKey = key;
   }
-
-  const firstSlash = pathname.indexOf("/");
-  if (firstSlash === -1) return "";
-
-  const restPath = pathname.slice(firstSlash);
-  return restPath.startsWith("/") ? restPath : "";
+  if (bestKey === undefined) return undefined;
+  const mappings: unknown = scopes[bestKey];
+  return typeof mappings === "object" && mappings !== null && !Array.isArray(mappings)
+    ? mappings as Record<string, string>
+    : undefined;
 }
 
+function resolveMappedSpecifier(
+  specifier: string,
+  imports: Record<string, string> | undefined,
+): string | undefined {
+  if (!imports) return undefined;
+
+  const exact = getOwnMapping(imports, specifier);
+  if (exact !== undefined) return exact;
+
+  let bestPrefix: string | undefined;
+  for (const key of Object.keys(imports)) {
+    if (!key.endsWith("/") || !specifier.startsWith(key)) continue;
+    if (bestPrefix === undefined || key.length > bestPrefix.length) bestPrefix = key;
+  }
+  if (bestPrefix === undefined) return undefined;
+  const target: unknown = imports[bestPrefix];
+  if (typeof target !== "string" || !target.endsWith("/")) return undefined;
+  return target + specifier.slice(bestPrefix.length);
+}
+
+function resolveFromLayers(
+  specifier: string,
+  scopedImports: Record<string, string> | undefined,
+  globalImports: Record<string, string> | undefined,
+): string | undefined {
+  return resolveMappedSpecifier(specifier, scopedImports) ??
+    resolveMappedSpecifier(specifier, globalImports);
+}
+
+/** Resolve a module specifier using global and longest-prefix scoped import-map entries. */
 export function resolveImport(
   specifier: string,
   importMap: ImportMapConfig,
   scope?: string,
 ): string {
-  const scopedImports = scope ? importMap.scopes?.[scope] : undefined;
+  const scopedImports = getScopedImports(importMap.scopes, scope);
+  const direct = resolveFromLayers(specifier, scopedImports, importMap.imports);
+  if (direct !== undefined) return direct;
 
-  const scopedExact = scopedImports?.[specifier];
-  if (scopedExact) return scopedExact;
+  const esmShSpecifier = parseEsmShPackage(specifier);
+  if (esmShSpecifier) {
+    const { packageName, subpath } = esmShSpecifier;
+    if (subpath) {
+      const subpathMapping = resolveFromLayers(
+        packageName + subpath,
+        scopedImports,
+        importMap.imports,
+      );
+      if (subpathMapping !== undefined) return subpathMapping;
+    }
 
-  const globalExact = importMap.imports?.[specifier];
-  if (globalExact) return globalExact;
-
-  if (isEsmShUrl(specifier)) {
-    const esmShPackage = extractEsmShPackage(specifier);
-    if (esmShPackage) {
-      const subpath = extractEsmShSubpath(specifier);
-
-      // Always check for explicit subpath mapping first (e.g., "react/jsx-runtime")
-      // This takes priority over appending subpath to base package mapping
-      if (subpath) {
-        const fullKey = esmShPackage + subpath;
-        const subpathMapping = scopedImports?.[fullKey] ?? importMap.imports?.[fullKey];
-        if (subpathMapping) return subpathMapping;
-      }
-
-      const mapping = scopedImports?.[esmShPackage] ?? importMap.imports?.[esmShPackage];
-      if (mapping) {
-        if (!subpath) return mapping;
-
-        const isFilePath = !mapping.startsWith("http://") && !mapping.startsWith("https://") &&
-          !mapping.startsWith("npm:");
-        if (isFilePath) return mapping;
-
-        return mapping + subpath;
-      }
+    const packageMapping = getOwnMapping(scopedImports, packageName) ??
+      getOwnMapping(importMap.imports, packageName);
+    if (packageMapping !== undefined) {
+      if (!subpath) return packageMapping;
+      const isRemote = packageMapping.startsWith("http://") ||
+        packageMapping.startsWith("https://") ||
+        packageMapping.startsWith("npm:");
+      return isRemote ? packageMapping + subpath : packageMapping;
     }
   }
 
-  if (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs")) {
-    const base = specifier.replace(/\.(m|c)?js$/, "");
-    const mapped = importMap.imports?.[base];
-    if (mapped) return mapped;
-  }
-
-  for (const [key, value] of Object.entries(importMap.imports ?? {})) {
-    if (key.endsWith("/") && specifier.startsWith(key)) {
-      return value + specifier.slice(key.length);
-    }
+  if (/\.(?:m|c)?js$/.test(specifier)) {
+    const base = specifier.replace(/\.(?:m|c)?js$/, "");
+    const mapped = resolveFromLayers(base, scopedImports, importMap.imports);
+    if (mapped !== undefined) return mapped;
   }
 
   return specifier;

@@ -6,6 +6,8 @@
  */
 
 import { rendererLogger } from "#veryfront/utils";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { CONFIG_PARSE_ERROR, VeryfrontError } from "#veryfront/errors";
 
 const logger = rendererLogger.component("package-registry");
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -27,6 +29,36 @@ interface CachedDependencyVersions {
 }
 
 const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
+const MAX_DEPENDENCY_VERSION_CACHE_ENTRIES = 1_000;
+const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
+
+function setCachedDependencyVersions(path: string, value: CachedDependencyVersions): void {
+  if (
+    !dependencyVersionCache.has(path) &&
+    dependencyVersionCache.size >= MAX_DEPENDENCY_VERSION_CACHE_ENTRIES
+  ) {
+    const oldestPath = dependencyVersionCache.keys().next().value;
+    if (oldestPath !== undefined) dependencyVersionCache.delete(oldestPath);
+  }
+  dependencyVersionCache.set(path, value);
+}
+
+function parseDependencyRecord(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw CONFIG_PARSE_ERROR.create({
+      detail: "Project package.json dependency fields must be JSON objects.",
+    });
+  }
+
+  const entries = Object.entries(value);
+  if (entries.some(([, version]) => typeof version !== "string")) {
+    throw CONFIG_PARSE_ERROR.create({
+      detail: "Project package.json dependency versions must be strings.",
+    });
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
+}
 
 /**
  * Validate React version format (semver: X.Y.Z).
@@ -43,7 +75,7 @@ export function normalizeReactVersion(version: string | undefined): string {
   if (isValidReactVersion(version)) return version;
 
   rendererLogger.warn(
-    `Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
+    `Invalid React version format. Using default version ${DEFAULT_REACT_VERSION}.`,
   );
   return DEFAULT_REACT_VERSION;
 }
@@ -115,9 +147,13 @@ export async function readProjectDependencyVersions(
   const packageJsonPath = getPackageJsonPath(projectDir);
 
   try {
-    const { createFileSystem } = await import("../../platform/compat/fs.ts");
     const fs = createFileSystem();
     const stat = await fs.stat(packageJsonPath);
+    if (!stat.isFile || stat.size > MAX_PACKAGE_JSON_BYTES) {
+      throw CONFIG_PARSE_ERROR.create({
+        detail: "Project package.json is not a regular file or exceeds the size limit.",
+      });
+    }
     const mtimeMs = getMtimeMs(stat.mtime);
     const cached = dependencyVersionCache.get(packageJsonPath);
 
@@ -126,32 +162,33 @@ export async function readProjectDependencyVersions(
     }
 
     const content = await fs.readTextFile(packageJsonPath);
-    const pkg = JSON.parse(content) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
+    const parsed = JSON.parse(content) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw CONFIG_PARSE_ERROR.create({
+        detail: "Project package.json must contain a JSON object.",
+      });
+    }
+    const pkg = parsed as Record<string, unknown>;
+    const deps = {
+      ...parseDependencyRecord(pkg.dependencies),
+      ...parseDependencyRecord(pkg.devDependencies),
     };
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
     const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
-    dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront });
+    setCachedDependencyVersions(packageJsonPath, { mtimeMs, react, veryfront });
 
     return { react, veryfront };
   } catch (error) {
-    // ENOENT means there is no package.json in the project dir — expected for
-    // framework-only environments.  Any other error (permission denied, malformed
-    // JSON, etc.) is logged at warn so it is visible without crashing the server.
-    const isNotFound = error !== null &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code: unknown }).code === "ENOENT";
-    if (!isNotFound) {
-      logger.warn("Failed to read project dependency versions", {
-        packageJsonPath,
-        error: String(error),
-      });
-    }
-    return {};
+    if (isNotFoundError(error)) return {};
+    if (error instanceof VeryfrontError) throw error;
+
+    logger.warn("Failed to read project dependency versions", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    throw CONFIG_PARSE_ERROR.create({
+      detail: "Veryfront could not read or parse project package.json.",
+    });
   }
 }
 

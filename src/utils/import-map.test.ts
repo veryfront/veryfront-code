@@ -16,12 +16,22 @@ describe("utils/import-map", () => {
 
   it("treats prefix entries as owned", () => {
     assertEquals(importMapOwnsSpecifier("@/components/Button", { "@/": "/src/" }), true);
+    assertEquals(importMapOwnsSpecifier("@/components/Button", { "@/": "/src" }), false);
   });
 
   it("merges default browser imports with project imports", () => {
     const merged = mergeBrowserImportMapImports({ "@/": "/src/" });
     assertEquals(merged.react, DEFAULT_BROWSER_IMPORT_MAP_IMPORTS.react);
     assertEquals(merged["@/"], "/src/");
+  });
+
+  it("does not let malformed runtime values replace default imports", () => {
+    const merged = mergeBrowserImportMapImports({ react: 42 } as unknown as Record<string, string>);
+    assertEquals(merged.react, "");
+    assertEquals(
+      importMapOwnsSpecifier("react", { react: 42 } as unknown as Record<string, string>),
+      false,
+    );
   });
 
   it("parses import maps and tolerates invalid JSON without logging its contents", () => {
@@ -46,6 +56,27 @@ describe("utils/import-map", () => {
       errorName: "SyntaxError",
       inputLength: invalidImportMap.length,
     });
+  });
+
+  it("rejects invalid import dictionaries instead of returning a mistyped value", () => {
+    assertEquals(parseImportMapImports('{"imports":["react"]}'), {});
+    assertEquals(parseImportMapImports('{"imports":{"react":42}}'), {});
+    assertEquals(parseImportMapImports('{"imports":{"react":"/react.js","bad":null}}'), {});
+  });
+
+  it("rejects import-map JSON above the parser resource limit", () => {
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      assertEquals(parseImportMapImports(" ".repeat(1_048_577)), {});
+    } finally {
+      console.warn = originalWarn;
+    }
+    assertEquals(warnings, [[
+      "Import map JSON is invalid or too large; treating as empty",
+      { inputLength: 1_048_577 },
+    ]]);
   });
 
   it("reads the page import map from the document", () => {

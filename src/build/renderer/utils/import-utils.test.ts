@@ -1,53 +1,67 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { extractImports, processImports, resolveImportPath } from "./import-utils.ts";
+import {
+  extractImports,
+  findComponent,
+  processImports,
+  resolveImportPath,
+} from "./import-utils.ts";
 
 describe("build/renderer/utils/import-utils", () => {
   describe("extractImports", () => {
-    it("should extract named imports", () => {
-      assertEquals(extractImports('import { useState } from "react";'), ["react"]);
+    it("should extract named imports", async () => {
+      assertEquals(await extractImports('import { useState } from "react";'), ["react"]);
     });
 
-    it("should extract default imports", () => {
-      assertEquals(extractImports('import React from "react";'), ["react"]);
+    it("should extract default imports", async () => {
+      assertEquals(await extractImports('import React from "react";'), ["react"]);
     });
 
-    it("should extract namespace imports", () => {
-      assertEquals(extractImports('import * as path from "path";'), ["path"]);
+    it("should extract namespace imports", async () => {
+      assertEquals(await extractImports('import * as path from "path";'), ["path"]);
     });
 
-    it("should extract side-effect imports", () => {
-      assertEquals(extractImports('import "./styles.css";'), ["./styles.css"]);
+    it("should extract side-effect imports", async () => {
+      assertEquals(await extractImports('import "./styles.css";'), ["./styles.css"]);
     });
 
-    it("should extract dynamic imports", () => {
-      assertEquals(extractImports('const mod = import("./lazy.ts");'), ["./lazy.ts"]);
+    it("should extract dynamic imports", async () => {
+      assertEquals(await extractImports('const mod = import("./lazy.ts");'), ["./lazy.ts"]);
     });
 
-    it("should deduplicate imports", () => {
+    it("should deduplicate imports", async () => {
       const code = ['import { a } from "react";', 'import { b } from "react";'].join(
         "\n",
       );
-      assertEquals(extractImports(code), ["react"]);
+      assertEquals(await extractImports(code), ["react"]);
     });
 
-    it("should extract multiple different imports", () => {
+    it("should extract multiple different imports", async () => {
       const code = [
         'import React from "react";',
         'import { render } from "react-dom";',
         'import "./global.css";',
       ].join("\n");
 
-      const imports = extractImports(code);
+      const imports = await extractImports(code);
 
       assertEquals(imports.includes("react"), true);
       assertEquals(imports.includes("react-dom"), true);
       assertEquals(imports.includes("./global.css"), true);
     });
 
-    it("should return empty for no imports", () => {
-      assertEquals(extractImports("const x = 1;"), []);
+    it("should return empty for no imports", async () => {
+      assertEquals(await extractImports("const x = 1;"), []);
+    });
+
+    it("does not treat comments or strings as imports", async () => {
+      const code = `
+        // import fake from "commented";
+        const text = 'import value from "string-value"';
+        import type { Real } from "real-module";
+      `;
+      assertEquals(await extractImports(code), ["real-module"]);
     });
   });
 
@@ -71,10 +85,10 @@ describe("build/renderer/utils/import-utils", () => {
       assertEquals(resolveImportPath("lodash/get", "/a/b.ts", "/a"), "lodash/get");
     });
 
-    it("should return absolute paths unchanged", () => {
+    it("resolves root-relative imports inside the project", () => {
       assertEquals(
         resolveImportPath("/absolute/path", "/a/b.ts", "/a"),
-        "/absolute/path",
+        "/a/absolute/path",
       );
     });
 
@@ -83,6 +97,39 @@ describe("build/renderer/utils/import-utils", () => {
         resolveImportPath("https://cdn.example.com/lib.js", "/a/b.ts", "/a"),
         "https://cdn.example.com/lib.js",
       );
+    });
+
+    it("rejects relative imports that escape the project directory", () => {
+      assertThrows(
+        () => resolveImportPath("../../secret", "/project/src/app.ts", "/project"),
+        TypeError,
+        "outside projectDir",
+      );
+    });
+  });
+
+  describe("findComponent", () => {
+    it("retains direct-file and directory-index resolution inside the project", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-find-component-" });
+      try {
+        await Deno.writeTextFile(`${projectDir}/Button.tsx`, "export const Button = 1;");
+        await Deno.mkdir(`${projectDir}/Card`);
+        await Deno.writeTextFile(`${projectDir}/Card/index.ts`, "export const Card = 1;");
+
+        assertEquals(findComponent(`${projectDir}/Button`, projectDir), `${projectDir}/Button.tsx`);
+        assertEquals(
+          findComponent(`${projectDir}/Card`, projectDir),
+          `${projectDir}/Card/index.ts`,
+        );
+        assertEquals(findComponent(`${projectDir}/Missing`, projectDir), null);
+        assertThrows(
+          () => findComponent(`${projectDir}/../Outside`, projectDir),
+          TypeError,
+          "outside projectDir",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 
@@ -150,6 +197,30 @@ describe("build/renderer/utils/import-utils", () => {
       );
       assertEquals(result.includes("./new-mod-a"), true);
       assertEquals(result.includes("./mod-b"), true);
+    });
+
+    it("replaces specifiers containing regular-expression characters", async () => {
+      const code = 'import value from "./module[1]";';
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async () => "./module.js",
+      );
+
+      assertEquals(result, 'import value from "./module.js";');
+    });
+
+    it("does not rewrite matching text outside import specifiers", async () => {
+      const code = 'import value from "./value"; const text = "./value";';
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async () => "./value.js",
+      );
+
+      assertEquals(result, 'import value from "./value.js"; const text = "./value";');
     });
   });
 });

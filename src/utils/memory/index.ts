@@ -5,6 +5,7 @@
  */
 
 export {
+  acquireConfiguredMemoryMonitoring,
   type CacheStats,
   checkMemoryPressure,
   DEFAULT_MEMORY_MONITORING_INTERVAL_MS,
@@ -20,6 +21,7 @@ export {
   type HeapStats,
   type MemoryMonitoringConfig,
   type MemoryMonitoringEnv,
+  type MemoryMonitoringLease,
   type MemoryMonitoringLogContext,
   type MemoryMonitoringState,
   type MemorySnapshot,

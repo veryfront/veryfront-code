@@ -1,6 +1,7 @@
-import { defineError } from "../types.ts";
+import { defineError, type ErrorRegistryFragment, type RegisteredError } from "../types.ts";
 
-export const PORT_IN_USE = defineError({
+/** Registered error definition for the port-in-use slug. */
+export const PORT_IN_USE: RegisteredError = defineError({
   slug: "port-in-use",
   category: "SERVER",
   status: 409,
@@ -8,7 +9,8 @@ export const PORT_IN_USE = defineError({
   suggestion: "Use a different port or stop the process using this port",
 });
 
-export const SERVER_START_ERROR = defineError({
+/** Registered error definition for the server-start-error slug. */
+export const SERVER_START_ERROR: RegisteredError = defineError({
   slug: "server-start-error",
   category: "SERVER",
   status: 500,
@@ -16,7 +18,8 @@ export const SERVER_START_ERROR = defineError({
   suggestion: "Check server configuration and port availability",
 });
 
-export const CACHE_ERROR = defineError({
+/** Registered error definition for the cache-error slug. */
+export const CACHE_ERROR: RegisteredError = defineError({
   slug: "cache-error",
   category: "SERVER",
   status: 500,
@@ -24,7 +27,8 @@ export const CACHE_ERROR = defineError({
   suggestion: "Clear the cache and try again",
 });
 
-export const FILE_WATCH_ERROR = defineError({
+/** Registered error definition for the file-watch-error slug. */
+export const FILE_WATCH_ERROR: RegisteredError = defineError({
   slug: "file-watch-error",
   category: "SERVER",
   status: 500,
@@ -32,7 +36,8 @@ export const FILE_WATCH_ERROR = defineError({
   suggestion: "Restart the development server",
 });
 
-export const REQUEST_ERROR = defineError({
+/** Registered error definition for the request-error slug. */
+export const REQUEST_ERROR: RegisteredError = defineError({
   slug: "request-error",
   category: "SERVER",
   status: 500,
@@ -40,7 +45,8 @@ export const REQUEST_ERROR = defineError({
   suggestion: "Check request handler and middleware",
 });
 
-export const SERVICE_OVERLOADED = defineError({
+/** Registered error definition for the service-overloaded slug. */
+export const SERVICE_OVERLOADED: RegisteredError = defineError({
   slug: "service-overloaded",
   category: "SERVER",
   status: 503,
@@ -48,7 +54,8 @@ export const SERVICE_OVERLOADED = defineError({
   suggestion: "Reduce load or scale up resources",
 });
 
-export const SEMAPHORE_TIMEOUT = defineError({
+/** Registered error definition for the semaphore-timeout slug. */
+export const SEMAPHORE_TIMEOUT: RegisteredError = defineError({
   slug: "semaphore-timeout",
   category: "SERVER",
   status: 503,
@@ -56,7 +63,8 @@ export const SEMAPHORE_TIMEOUT = defineError({
   suggestion: "Reduce concurrency or increase the semaphore acquire timeout",
 });
 
-export const CIRCUIT_BREAKER_OPEN = defineError({
+/** Registered error definition for the circuit-breaker-open slug. */
+export const CIRCUIT_BREAKER_OPEN: RegisteredError = defineError({
   slug: "circuit-breaker-open",
   category: "SERVER",
   status: 503,
@@ -64,7 +72,8 @@ export const CIRCUIT_BREAKER_OPEN = defineError({
   suggestion: "Wait for the breaker reset timeout before retrying",
 });
 
-export const CACHE_PATH_MISMATCH = defineError({
+/** Registered error definition for the cache-path-mismatch slug. */
+export const CACHE_PATH_MISMATCH: RegisteredError = defineError({
   slug: "cache-path-mismatch",
   category: "SERVER",
   status: 500,
@@ -72,7 +81,8 @@ export const CACHE_PATH_MISMATCH = defineError({
   suggestion: "Clear the cache directory and rebuild",
 });
 
-export const NETWORK_ERROR = defineError({
+/** Registered error definition for the network-error slug. */
+export const NETWORK_ERROR: RegisteredError = defineError({
   slug: "network-error",
   category: "SERVER",
   status: 502,
@@ -81,7 +91,8 @@ export const NETWORK_ERROR = defineError({
 });
 
 /** API client request/response errors (replaces VeryfrontAPIError) */
-export const API_CLIENT_ERROR = defineError({
+/** Registered error definition for the api-client-error slug. */
+export const API_CLIENT_ERROR: RegisteredError = defineError({
   slug: "api-client-error",
   category: "SERVER",
   status: 500,
@@ -90,7 +101,8 @@ export const API_CLIENT_ERROR = defineError({
 });
 
 /** Token storage adapter failures (replaces TokenStorageError) */
-export const TOKEN_STORAGE_ERROR = defineError({
+/** Registered error definition for the token-storage-error slug. */
+export const TOKEN_STORAGE_ERROR: RegisteredError = defineError({
   slug: "token-storage-error",
   category: "SERVER",
   status: 500,
@@ -99,7 +111,8 @@ export const TOKEN_STORAGE_ERROR = defineError({
 });
 
 /** Cache path invariant violations (replaces CacheInvariantError) */
-export const CACHE_INVARIANT_VIOLATION = defineError({
+/** Registered error definition for the cache-invariant-violation slug. */
+export const CACHE_INVARIANT_VIOLATION: RegisteredError = defineError({
   slug: "cache-invariant-violation",
   category: "SERVER",
   status: 500,
@@ -108,7 +121,8 @@ export const CACHE_INVARIANT_VIOLATION = defineError({
 });
 
 /** Production domain resolved but no active release found */
-export const RELEASE_NOT_FOUND = defineError({
+/** Registered error definition for the release-not-found slug. */
+export const RELEASE_NOT_FOUND: RegisteredError = defineError({
   slug: "release-not-found",
   category: "SERVER",
   status: 404,
@@ -117,7 +131,8 @@ export const RELEASE_NOT_FOUND = defineError({
 });
 
 /** Both primary and fallback operations failed (replaces FallbackExecutionError) */
-export const FALLBACK_EXHAUSTED = defineError({
+/** Registered error definition for the fallback-exhausted slug. */
+export const FALLBACK_EXHAUSTED: RegisteredError = defineError({
   slug: "fallback-exhausted",
   category: "SERVER",
   status: 500,
@@ -126,20 +141,38 @@ export const FALLBACK_EXHAUSTED = defineError({
 });
 
 /** Registry fragment for SERVER errors (slug → definition). */
-export const SERVER_REGISTRY = {
-  "port-in-use": PORT_IN_USE,
-  "server-start-error": SERVER_START_ERROR,
-  "cache-error": CACHE_ERROR,
-  "file-watch-error": FILE_WATCH_ERROR,
-  "request-error": REQUEST_ERROR,
-  "service-overloaded": SERVICE_OVERLOADED,
-  "semaphore-timeout": SEMAPHORE_TIMEOUT,
-  "circuit-breaker-open": CIRCUIT_BREAKER_OPEN,
-  "cache-path-mismatch": CACHE_PATH_MISMATCH,
-  "network-error": NETWORK_ERROR,
-  "api-client-error": API_CLIENT_ERROR,
-  "token-storage-error": TOKEN_STORAGE_ERROR,
-  "cache-invariant-violation": CACHE_INVARIANT_VIOLATION,
-  "release-not-found": RELEASE_NOT_FOUND,
-  "fallback-exhausted": FALLBACK_EXHAUSTED,
-} as const;
+export const SERVER_REGISTRY: ErrorRegistryFragment<
+  | "port-in-use"
+  | "server-start-error"
+  | "cache-error"
+  | "file-watch-error"
+  | "request-error"
+  | "service-overloaded"
+  | "semaphore-timeout"
+  | "circuit-breaker-open"
+  | "cache-path-mismatch"
+  | "network-error"
+  | "api-client-error"
+  | "token-storage-error"
+  | "cache-invariant-violation"
+  | "release-not-found"
+  | "fallback-exhausted"
+> = Object.freeze(
+  {
+    "port-in-use": PORT_IN_USE,
+    "server-start-error": SERVER_START_ERROR,
+    "cache-error": CACHE_ERROR,
+    "file-watch-error": FILE_WATCH_ERROR,
+    "request-error": REQUEST_ERROR,
+    "service-overloaded": SERVICE_OVERLOADED,
+    "semaphore-timeout": SEMAPHORE_TIMEOUT,
+    "circuit-breaker-open": CIRCUIT_BREAKER_OPEN,
+    "cache-path-mismatch": CACHE_PATH_MISMATCH,
+    "network-error": NETWORK_ERROR,
+    "api-client-error": API_CLIENT_ERROR,
+    "token-storage-error": TOKEN_STORAGE_ERROR,
+    "cache-invariant-violation": CACHE_INVARIANT_VIOLATION,
+    "release-not-found": RELEASE_NOT_FOUND,
+    "fallback-exhausted": FALLBACK_EXHAUSTED,
+  } as const,
+);

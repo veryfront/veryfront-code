@@ -1,12 +1,42 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { containsUnsafeCacheStringCharacter } from "#veryfront/cache/validation.ts";
+import {
+  MAX_REPOSITORY_CACHE_ENTRIES,
+  MAX_REPOSITORY_CACHE_NAME_LENGTH,
+  MAX_REPOSITORY_CACHE_TTL_SECONDS,
+  MAX_REPOSITORY_IDENTITY_LENGTH,
+} from "../limits.ts";
+import { snapshotRepositoryContext } from "../context.ts";
+
+function isSafeIdentity(value: string): boolean {
+  return !containsUnsafeCacheStringCharacter(value);
+}
+
+function isUsableRepositoryContext(value: unknown): boolean {
+  try {
+    snapshotRepositoryContext(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export const getRepositoryContextSchema = defineSchema((v) =>
   v.object({
-    projectId: v.string(),
+    projectId: v.string().min(1).max(MAX_REPOSITORY_IDENTITY_LENGTH).refine(
+      isSafeIdentity,
+      "projectId must not contain control characters or unpaired UTF-16 surrogates",
+    ),
     environment: v.enum(["production", "preview"]),
-    versionId: v.string(),
-  })
+    versionId: v.string().min(1).max(MAX_REPOSITORY_IDENTITY_LENGTH).refine(
+      isSafeIdentity,
+      "versionId must not contain control characters or unpaired UTF-16 surrogates",
+    ),
+  }).refine(
+    isUsableRepositoryContext,
+    "Repository context must leave capacity for scoped cache keys",
+  )
 );
 
 export const getCacheStatsSchema = defineSchema((v) =>
@@ -22,9 +52,12 @@ export const getCacheStatsSchema = defineSchema((v) =>
 
 export const getCacheRepositoryOptionsSchema = defineSchema((v) =>
   v.object({
-    name: v.string().optional(),
-    defaultTtlSeconds: v.number().int().positive().optional(),
-    maxEntries: v.number().int().positive().optional(),
+    name: v.string().min(1).max(MAX_REPOSITORY_CACHE_NAME_LENGTH).refine(
+      isSafeIdentity,
+      "Cache name must not contain control characters or unpaired UTF-16 surrogates",
+    ).optional(),
+    defaultTtlSeconds: v.number().positive().max(MAX_REPOSITORY_CACHE_TTL_SECONDS).optional(),
+    maxEntries: v.number().int().positive().max(MAX_REPOSITORY_CACHE_ENTRIES).optional(),
   })
 );
 

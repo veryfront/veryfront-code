@@ -204,7 +204,7 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${workflowId}` });
     }
 
-    workflow.inputSchema?.parse(input);
+    const parsedInput = workflow.inputSchema ? workflow.inputSchema.parse(input) : input;
 
     // Capture current tenant context for multi-tenant run execution.
     // When a workflow is started from an API route, the request context
@@ -232,11 +232,11 @@ export class WorkflowExecutor {
       workflowId,
       version: workflow.version,
       status: "pending",
-      input,
+      input: parsedInput,
       nodeStates: {},
       currentNodes: [],
       context: {
-        input,
+        input: parsedInput,
         ...(injectedProjectEnv ? { env: injectedProjectEnv } : {}),
       },
       checkpoints: [],
@@ -389,6 +389,8 @@ export class WorkflowExecutor {
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
     let heartbeatPromise: Promise<void> | undefined;
     let pausedForWaiting = false;
+    let latestExecutionContext: WorkflowContext | undefined;
+    let latestExecutionNodeStates: Record<string, NodeState> | undefined;
 
     // If the heartbeat can no longer extend our lock, another worker may claim
     // this run as stalled and execute it concurrently. Abort the DAG as soon as
@@ -553,6 +555,8 @@ export class WorkflowExecutor {
           workflow.timeout,
           executionController,
         ));
+      latestExecutionContext = result.context;
+      latestExecutionNodeStates = result.nodeStates;
 
       if (executionController.signal.aborted) {
         await this.waitForCancellationUpdate(runId);
@@ -562,17 +566,18 @@ export class WorkflowExecutor {
       }
 
       if (result.completed) {
+        const rawOutput = this.determineOutput(this.toPublicContext(result.context));
+        const output = workflow.outputSchema ? workflow.outputSchema.parse(rawOutput) : rawOutput;
         const finalRun = await this.completeRun(
           runId,
           result.context,
           result.nodeStates,
+          output,
           executionController,
           expectedWorkerId,
         );
         if (!finalRun) return;
         if (finalRun.status === "cancelled") return;
-
-        workflow.outputSchema?.parse(finalRun.output);
 
         await workflow.onComplete?.(finalRun.output, finalRun.context);
         this.config.onComplete?.(finalRun);
@@ -654,8 +659,9 @@ export class WorkflowExecutor {
       await this.waitForCancellationUpdate(runId);
       const latestRun = await this.config.backend.getRun(runId);
       if (latestRun?.status === "cancelled") return;
-      const failureContext = latestRun?.context ?? run.context;
-      const failureNodeStates = latestRun?.nodeStates ?? run.nodeStates;
+      const failureContext = latestExecutionContext ?? latestRun?.context ?? run.context;
+      const failureNodeStates = latestExecutionNodeStates ?? latestRun?.nodeStates ??
+        run.nodeStates;
 
       if (
         !(await this.failRun(
@@ -847,6 +853,7 @@ export class WorkflowExecutor {
     runId: string,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    output: unknown,
     executionController: AbortController,
     expectedWorkerId?: string,
   ): Promise<WorkflowRun | null> {
@@ -860,8 +867,6 @@ export class WorkflowExecutor {
     ) return null;
 
     const publicContext = this.toPublicContext(context);
-    const output = this.determineOutput(publicContext);
-
     const completed = await updateRunIfStatus(
       this.config.backend,
       runId,
@@ -1023,6 +1028,14 @@ export class WorkflowExecutor {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
+    const cancellationError = () =>
+      ORCHESTRATION_ERROR.create({ detail: `Workflow run "${runId}" was cancelled` });
+
+    if (run.status === "cancelled") {
+      this.activeRunControllers.get(runId)?.abort(cancellationError());
+      return;
+    }
+
     if (run.status === "completed" || run.status === "failed") {
       throw ORCHESTRATION_ERROR.create({
         detail: `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
@@ -1030,20 +1043,46 @@ export class WorkflowExecutor {
       });
     }
 
-    const cancellationUpdate = Promise.resolve().then(() =>
-      this.config.backend.updateRun(runId, {
-        status: "cancelled",
-        completedAt: new Date(),
-      })
-    );
-    this.cancellationUpdates.set(runId, cancellationUpdate);
+    if (typeof this.config.backend.updateRunIfStatus !== "function") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Cannot cancel workflow run "${runId}": the configured backend does not support ` +
+          "atomic conditional updates.",
+      });
+    }
 
-    this.activeRunControllers.get(runId)?.abort(
-      ORCHESTRATION_ERROR.create({ detail: `Workflow run "${runId}" was cancelled` }),
-    );
+    const cancellationUpdate = Promise.resolve().then(async () => {
+      const cancelled = await this.config.backend.updateRunIfStatus!(
+        runId,
+        ["pending", "running", "waiting"],
+        {
+          status: "cancelled",
+          completedAt: new Date(),
+        },
+      );
+      if (cancelled) return;
+
+      const latestRun = await this.config.backend.getRun(runId);
+      if (!latestRun) {
+        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+      }
+      if (latestRun.status === "cancelled") return;
+      if (latestRun.status === "completed" || latestRun.status === "failed") {
+        throw ORCHESTRATION_ERROR.create({
+          detail: `Cannot cancel workflow run "${runId}": run has already ${latestRun.status}. ` +
+            `Only active runs (pending, running, waiting) can be cancelled.`,
+        });
+      }
+
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Cannot cancel workflow run "${runId}": run status changed to ` +
+          `"${latestRun.status}" before cancellation could be persisted.`,
+      });
+    });
+    this.cancellationUpdates.set(runId, cancellationUpdate);
 
     try {
       await cancellationUpdate;
+      this.activeRunControllers.get(runId)?.abort(cancellationError());
     } finally {
       if (this.cancellationUpdates.get(runId) === cancellationUpdate) {
         this.cancellationUpdates.delete(runId);

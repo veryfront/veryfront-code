@@ -6,7 +6,10 @@ import { VeryfrontError } from "#veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
-function createMockAdapter(existingFiles: Set<string> = new Set()): RuntimeAdapter {
+function createMockAdapter(
+  existingFiles: Set<string> = new Set(),
+  symlinks: Set<string> = new Set(),
+): RuntimeAdapter {
   return {
     fs: {
       readFile: async () => "",
@@ -14,6 +17,11 @@ function createMockAdapter(existingFiles: Set<string> = new Set()): RuntimeAdapt
       readDir: async function* () {},
       writeFile: async () => {},
       mkdir: async () => {},
+      stat: async (path: string) => ({
+        isFile: existingFiles.has(path),
+        isDirectory: false,
+        isSymlink: symlinks.has(path),
+      }),
     },
     env: { get: () => undefined },
   } as unknown as RuntimeAdapter;
@@ -73,12 +81,35 @@ describe("rendering/layouts/utils/app-resolver", () => {
       assertEquals(result, "/project/src/app.tsx");
     });
 
-    it("should use absolute config.app path", async () => {
-      const files = new Set(["/absolute/app.tsx"]);
+    it("should use an absolute config.app path inside the project", async () => {
+      const files = new Set(["/project/src/app.tsx"]);
       const adapter = createMockAdapter(files);
-      const config = { app: "/absolute/app.tsx" } as unknown as VeryfrontConfig;
+      const config = { app: "/project/src/app.tsx" } as unknown as VeryfrontConfig;
       const result = await resolveAppComponentPath("/project", adapter, config);
-      assertEquals(result, "/absolute/app.tsx");
+      assertEquals(result, "/project/src/app.tsx");
+    });
+
+    it("rejects absolute and relative paths outside the project", async () => {
+      for (const app of ["/absolute/app.tsx", "../outside/app.tsx"]) {
+        const adapter = createMockAdapter(new Set([app]));
+        const config = { app } as unknown as VeryfrontConfig;
+        await assertRejects(
+          () => resolveAppComponentPath("/project", adapter, config),
+          VeryfrontError,
+          "must stay inside the project",
+        );
+      }
+    });
+
+    it("rejects symlink app components", async () => {
+      const app = "/project/app.tsx";
+      const adapter = createMockAdapter(new Set([app]), new Set([app]));
+      const config = { app: "app.tsx" } as unknown as VeryfrontConfig;
+      await assertRejects(
+        () => resolveAppComponentPath("/project", adapter, config),
+        VeryfrontError,
+        "must be a regular file",
+      );
     });
 
     it("should throw when config.app path does not exist", async () => {

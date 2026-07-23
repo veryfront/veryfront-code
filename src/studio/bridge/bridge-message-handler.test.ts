@@ -7,10 +7,13 @@ import { assertEquals } from "@std/assert";
 import { setConfigForTest } from "./bridge-config.ts";
 import {
   handleStudioMessage,
+  invalidateStudioMessageOperations,
   isSafeNavigationUrl,
+  parseStudioMessage,
+  runExclusiveScreenshotCapture,
   sanitizeNavigationUrl,
 } from "./bridge-message-handler.ts";
-import { _resetForTest } from "./bridge-messaging.ts";
+import { _flushPendingForTest, _resetForTest } from "./bridge-messaging.ts";
 import { state } from "./bridge-state.ts";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +75,11 @@ Deno.test("isSafeNavigationUrl: allows same-origin https URLs", () => {
 Deno.test("isSafeNavigationUrl: allows veryfront.com URLs", () => {
   assertEquals(isSafeNavigationUrl("https://veryfront.com/page"), true);
   assertEquals(isSafeNavigationUrl("https://slug.preview.veryfront.com/page"), true);
+});
+
+Deno.test("isSafeNavigationUrl: allows hosted veryfront.org URLs", () => {
+  assertEquals(isSafeNavigationUrl("https://veryfront.org/page"), true);
+  assertEquals(isSafeNavigationUrl("https://slug.preview.veryfront.org/page"), true);
 });
 
 Deno.test("isSafeNavigationUrl: blocks protocol-relative URLs", () => {
@@ -193,7 +201,7 @@ Deno.test("routeChange: assigns normalized URL, not raw input", () => {
     configurable: true,
   });
 
-  // Path traversal gets normalized by new URL().href — proves the handler uses
+  // Path traversal gets normalized by new URL().href, which proves the handler uses
   // the sanitized value rather than the raw postMessage input.
   handleStudioMessage(
     makeEvent({ action: "routeChange", url: "https://test.veryfront.com/a/../b" }),
@@ -301,6 +309,7 @@ Deno.test("sanitizeNavigationUrl: blocks non-veryfront domains", () => {
 Deno.test("sanitizeNavigationUrl: blocks protocol-relative URLs", () => {
   assertEquals(sanitizeNavigationUrl("//evil.com/path"), null);
   assertEquals(sanitizeNavigationUrl("//evil.com"), null);
+  assertEquals(sanitizeNavigationUrl("//test.veryfront.com/path"), null);
 });
 
 Deno.test("sanitizeNavigationUrl: blocks javascript: protocol", () => {
@@ -315,8 +324,309 @@ Deno.test("sanitizeNavigationUrl: blocks data: protocol", () => {
   );
 });
 
+Deno.test("sanitizeNavigationUrl: blocks credentials, downgrade, and control characters", () => {
+  assertEquals(sanitizeNavigationUrl("https://user:secret@veryfront.com/page"), null);
+  assertEquals(sanitizeNavigationUrl("http://veryfront.com/page"), null);
+  assertEquals(sanitizeNavigationUrl("/page\nnext"), null);
+});
+
 Deno.test("sanitizeNavigationUrl: blocks empty and invalid input", () => {
   assertEquals(sanitizeNavigationUrl(""), null);
   assertEquals(sanitizeNavigationUrl(null as unknown as string), null);
   assertEquals(sanitizeNavigationUrl(123 as unknown as string), null);
+});
+
+Deno.test("sanitizeNavigationUrl: rejects normalized URLs beyond the protocol bound", () => {
+  const raw = `/${" ".repeat(2_000)}`;
+  assertEquals(raw.length <= 2_048, true);
+  assertEquals(sanitizeNavigationUrl(raw), null);
+});
+
+Deno.test("parseStudioMessage: snapshots a bounded screenshot request", () => {
+  const message = {
+    action: "screenshot",
+    requestId: "request-1",
+    options: { scrollTo: 120, fullPage: false },
+  };
+
+  const parsed = parseStudioMessage(message);
+  message.options.scrollTo = 999;
+
+  assertEquals(parsed, {
+    action: "screenshot",
+    requestId: "request-1",
+    options: { scrollTo: 120, fullPage: false },
+  });
+});
+
+Deno.test("parseStudioMessage: ignores bounded forward-compatible message fields", () => {
+  assertEquals(parseStudioMessage({ action: "reload", protocolVersion: 2 }), {
+    action: "reload",
+  });
+  assertEquals(
+    parseStudioMessage({
+      action: "screenshot",
+      options: { fullPage: true },
+      responseFormat: "png",
+    }),
+    { action: "screenshot", options: { fullPage: true } },
+  );
+});
+
+Deno.test("parseStudioMessage: rejects unsupported or incompatible screenshot fields", () => {
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", options: { quality: 0.8 } }),
+    null,
+  );
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", options: { captureTarget: "viewport" } }),
+    null,
+  );
+  assertEquals(parseStudioMessage({ action: "screenshot", sectionCount: 3 }), null);
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", multipleSections: false, sectionCount: 3 }),
+    null,
+  );
+  assertEquals(
+    parseStudioMessage({
+      action: "screenshot",
+      multipleSections: true,
+      options: { scrollTo: 120 },
+    }),
+    null,
+  );
+  assertEquals(
+    parseStudioMessage({
+      action: "screenshot",
+      multipleSections: true,
+      options: { fullPage: false },
+    }),
+    null,
+  );
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", multipleSections: true, options: {} }),
+    null,
+  );
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", multipleSections: true, sectionCount: 3 }),
+    { action: "screenshot", multipleSections: true, sectionCount: 3 },
+  );
+});
+
+Deno.test("parseStudioMessage: rejects messages beyond the property budget", () => {
+  assertEquals(
+    parseStudioMessage({
+      action: "reload",
+      field1: 1,
+      field2: 2,
+      field3: 3,
+      field4: 4,
+      field5: 5,
+      field6: 6,
+      field7: 7,
+      field8: 8,
+    }),
+    null,
+  );
+});
+
+Deno.test("parseStudioMessage: treats an empty hovered node id as clear", () => {
+  assertEquals(parseStudioMessage({ action: "setHoveredNode", id: "" }), {
+    action: "setHoveredNode",
+    id: null,
+  });
+});
+
+Deno.test("setHoveredNode: updates and clears hover state outside inspect mode", () => {
+  resetState();
+  state.inspectMode = false;
+  state.hoveredNodeId = null;
+  state.hoverOverlay = makeOverlay();
+
+  const previousDocument = globalThis.document;
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      querySelector: () => null,
+      querySelectorAll: () => [],
+    },
+  });
+  try {
+    handleStudioMessage(makeEvent({ action: "setHoveredNode", id: "node-456" }));
+    assertEquals(state.hoveredNodeId, "node-456");
+    assertEquals(state.hoverOverlay.style.display, "none");
+
+    state.hoverOverlay.style.display = "block";
+    handleStudioMessage(makeEvent({ action: "setHoveredNode", id: "" }));
+    assertEquals(state.hoveredNodeId, null);
+    assertEquals(state.hoverOverlay.style.display, "none");
+  } finally {
+    if (previousDocument === undefined) {
+      delete (globalThis as { document?: Document }).document;
+    } else {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: previousDocument,
+      });
+    }
+  }
+});
+
+Deno.test("setHoveredNode: leaves inspect-owned hover state unchanged", () => {
+  resetState();
+  state.inspectMode = true;
+  state.hoveredNodeId = "inspected-node";
+  state.hoverOverlay = makeOverlay();
+
+  handleStudioMessage(makeEvent({ action: "setHoveredNode", id: "" }));
+
+  assertEquals(state.hoveredNodeId, "inspected-node");
+  assertEquals(state.hoverOverlay.style.display, "block");
+
+  state.inspectMode = false;
+  state.hoveredNodeId = null;
+  state.hoverOverlay = null;
+});
+
+Deno.test("parseStudioMessage: rejects accessors without executing them", () => {
+  let getterCalls = 0;
+  const message = Object.defineProperty({}, "action", {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      return "reload";
+    },
+  });
+
+  assertEquals(parseStudioMessage(message), null);
+  assertEquals(getterCalls, 0);
+});
+
+Deno.test("parseStudioMessage: rejects malformed and unbounded fields", () => {
+  assertEquals(parseStudioMessage({ action: "toggleInspectMode", value: "false" }), null);
+  assertEquals(parseStudioMessage({ action: "colorMode", value: "sepia" }), null);
+  assertEquals(parseStudioMessage({ action: "setSelectedNode", id: "x".repeat(513) }), null);
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", multipleSections: true, sectionCount: Infinity }),
+    null,
+  );
+  assertEquals(
+    parseStudioMessage({ action: "screenshot", multipleSections: true, sectionCount: 21 }),
+    null,
+  );
+});
+
+Deno.test("parseStudioMessage: rejects retired no-op actions", () => {
+  assertEquals(parseStudioMessage({ action: "toggleLayout", value: true }), null);
+  assertEquals(parseStudioMessage({ action: "providerId", id: "provider-1" }), null);
+  assertEquals(parseStudioMessage({ action: "layoutId", id: "layout-1" }), null);
+});
+
+Deno.test("parseStudioMessage: contains revoked proxies", () => {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+
+  assertEquals(parseStudioMessage(proxy), null);
+});
+
+Deno.test("runExclusiveScreenshotCapture: rejects overlap and releases ownership", async () => {
+  let release: (() => void) | undefined;
+  const first = runExclusiveScreenshotCapture(
+    () => new Promise<string>((resolve) => (release = () => resolve("first"))),
+  );
+  await Promise.resolve();
+
+  assertEquals(await runExclusiveScreenshotCapture(() => Promise.resolve("second")), {
+    accepted: false,
+  });
+  release?.();
+  assertEquals(await first, { accepted: true, current: true, value: "first" });
+  assertEquals(await runExclusiveScreenshotCapture(() => Promise.resolve("third")), {
+    accepted: true,
+    current: true,
+    value: "third",
+  });
+});
+
+Deno.test("runExclusiveScreenshotCapture: marks work invalidated by lifecycle teardown", async () => {
+  let release: (() => void) | undefined;
+  let operationSignal: AbortSignal | undefined;
+  const capture = runExclusiveScreenshotCapture(
+    (signal) => {
+      operationSignal = signal;
+      return new Promise<string>((resolve) => (release = () => resolve("stale")));
+    },
+  );
+  await Promise.resolve();
+  assertEquals(operationSignal?.aborted, false);
+
+  invalidateStudioMessageOperations();
+  assertEquals(operationSignal?.aborted, true);
+  release?.();
+
+  assertEquals(await capture, { accepted: true, current: false, value: "stale" });
+  assertEquals(await runExclusiveScreenshotCapture(() => Promise.resolve("current")), {
+    accepted: true,
+    current: true,
+    value: "current",
+  });
+});
+
+Deno.test("runExclusiveScreenshotCapture: contains unexpected capture failures", async () => {
+  assertEquals(
+    await runExclusiveScreenshotCapture(() => Promise.reject(new Error("private failure"))),
+    { accepted: true, current: true, failed: true },
+  );
+  assertEquals(await runExclusiveScreenshotCapture(() => Promise.resolve("next")), {
+    accepted: true,
+    current: true,
+    value: "next",
+  });
+});
+
+Deno.test("screenshot: correlates unexpected multi-section failures", async () => {
+  resetState();
+  const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const parent = fakeParentWindow as unknown as {
+    postMessage(message: Record<string, unknown>, targetOrigin: string): void;
+  };
+  const originalPostMessage = parent.postMessage;
+  const messages: Record<string, unknown>[] = [];
+  parent.postMessage = (message) => messages.push(message);
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      documentElement: {
+        get scrollHeight() {
+          throw new Error("private geometry failure");
+        },
+      },
+    },
+  });
+
+  try {
+    handleStudioMessage(makeEvent({
+      action: "screenshot",
+      requestId: "capture-1",
+      multipleSections: true,
+      sectionCount: 1,
+    }));
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+    _flushPendingForTest();
+
+    assertEquals(messages, [{
+      action: "screenshotResult",
+      requestId: "capture-1",
+      multiple: true,
+      results: [{ success: false, error: "Screenshot capture failed" }],
+    }]);
+  } finally {
+    parent.postMessage = originalPostMessage;
+    if (originalDocumentDescriptor) {
+      Object.defineProperty(globalThis, "document", originalDocumentDescriptor);
+    } else {
+      delete (globalThis as { document?: Document }).document;
+    }
+    _resetForTest();
+  }
 });

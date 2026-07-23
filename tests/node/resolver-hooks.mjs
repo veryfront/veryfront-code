@@ -4,16 +4,23 @@
  * This hook handles:
  * 1. TypeScript extension resolution (.ts, .tsx, index.ts)
  * 2. npm: protocol stripping (for Deno compat)
- * 3. Import aliasing from deno.json (#veryfront/*, #std/*, #deno-config)
+ * 3. Import aliasing from the nearest deno.json (#veryfront/*, #std/*, #deno-config)
  * 4. React package fallbacks from ./npm/node_modules for Node tests
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve as pathResolve } from "node:path";
+import {
+  dirname,
+  isAbsolute as pathIsAbsolute,
+  relative as pathRelative,
+  resolve as pathResolve,
+  sep as pathSeparator,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = pathResolve(__dirname, "../..");
+const generatedJsrRoot = pathResolve(projectRoot, "npm/esm/deps/jsr.io");
 
 const importMap = {};
 
@@ -87,14 +94,17 @@ function resolveStdCompatTarget(specifier) {
   return null;
 }
 
-function resolveFromImportMap(specifier) {
+function resolveFromImportMap(specifier, imports = importMap) {
   // 1. Direct match (highest priority)
-  if (importMap[specifier]) {
-    return importMap[specifier];
+  if (imports[specifier]) {
+    return imports[specifier];
   }
 
-  // 2. Prefix match with wildcard (e.g., #veryfront/testing/* -> ./src/testing/*.ts)
-  for (const [prefix, target] of Object.entries(importMap)) {
+  // 2. Longest prefix match, including the harness's legacy wildcard form.
+  const prefixEntries = Object.entries(imports).sort(([left], [right]) =>
+    right.length - left.length
+  );
+  for (const [prefix, target] of prefixEntries) {
     if (prefix.endsWith("/*") && specifier.startsWith(prefix.slice(0, -1))) {
       let suffix = specifier.slice(prefix.length - 1);
       // If target ends with *.ts and suffix also ends with .ts, strip .ts from suffix
@@ -103,10 +113,6 @@ function resolveFromImportMap(specifier) {
       }
       return target.replaceAll("*", suffix);
     }
-  }
-
-  // 3. Prefix match without wildcard (e.g., #veryfront/ -> ./src/)
-  for (const [prefix, target] of Object.entries(importMap)) {
     if (prefix.endsWith("/") && !prefix.endsWith("/*") && specifier.startsWith(prefix)) {
       const suffix = specifier.slice(prefix.length);
       return target + suffix;
@@ -116,8 +122,9 @@ function resolveFromImportMap(specifier) {
   return null;
 }
 
-function findActualFile(relativePath) {
-  const fullPath = pathResolve(projectRoot, relativePath);
+function findActualFile(relativePath, baseDir = projectRoot) {
+  const fullPath = pathResolve(baseDir, relativePath);
+  if (!isWithinPath(projectRoot, fullPath)) return null;
 
   const tryPaths = [
     fullPath,
@@ -143,35 +150,170 @@ function findActualFile(relativePath) {
   return null;
 }
 
-function resolveAliasSpecifier(specifier) {
+function isWithinPath(root, candidate) {
+  const relative = pathRelative(root, candidate);
+  return relative === "" || (!pathIsAbsolute(relative) && relative !== ".." &&
+    !relative.startsWith(`..${pathSeparator}`));
+}
+
+const denoImportMapCache = new Map();
+const nearestDenoImportMapCache = new Map();
+
+function readDenoImportMap(configPath) {
+  if (denoImportMapCache.has(configPath)) return denoImportMapCache.get(configPath);
+
+  let result = null;
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+    const imports = {};
+    if (parsed.imports && typeof parsed.imports === "object") {
+      for (const [key, value] of Object.entries(parsed.imports)) {
+        if (typeof value === "string") imports[key] = value;
+      }
+    }
+    result = { baseDir: dirname(configPath), imports };
+  } catch {
+    // Invalid or unreadable local configs are left to Node's normal resolution.
+  }
+
+  denoImportMapCache.set(configPath, result);
+  return result;
+}
+
+function findNearestDenoImportMap(parentURL) {
+  if (typeof parentURL !== "string" || !parentURL.startsWith("file:")) return null;
+
+  let startDir;
+  try {
+    startDir = dirname(fileURLToPath(parentURL));
+  } catch {
+    return null;
+  }
+  if (!isWithinPath(projectRoot, startDir)) return null;
+
+  const visited = [];
+  let currentDir = startDir;
+  while (isWithinPath(projectRoot, currentDir)) {
+    if (nearestDenoImportMapCache.has(currentDir)) {
+      const cached = nearestDenoImportMapCache.get(currentDir);
+      for (const directory of visited) nearestDenoImportMapCache.set(directory, cached);
+      return cached;
+    }
+
+    visited.push(currentDir);
+    const configPath = pathResolve(currentDir, "deno.json");
+    if (existsSync(configPath) && statSync(configPath).isFile()) {
+      const found = readDenoImportMap(configPath);
+      if (found) {
+        for (const directory of visited) nearestDenoImportMapCache.set(directory, found);
+        return found;
+      }
+    }
+
+    if (currentDir === projectRoot) break;
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) break;
+    currentDir = parentDir;
+  }
+
+  for (const directory of visited) nearestDenoImportMapCache.set(directory, null);
+  return null;
+}
+
+function resolveGeneratedJsrTarget(specifier) {
+  const match =
+    /^jsr:(@[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)@([A-Za-z0-9.+_-]+)(?:\/([A-Za-z0-9._/-]+))?$/.exec(
+      specifier,
+    );
+  if (!match) return null;
+
+  const [, packageName, version, rawSubpath] = match;
+  const subpath = rawSubpath ?? "mod";
+  const segments = [...packageName.split("/"), version, ...subpath.split("/")];
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    return null;
+  }
+
+  const target = pathResolve(generatedJsrRoot, packageName, version, subpath);
+  if (!isWithinPath(generatedJsrRoot, target)) return null;
+  return findActualFile(pathRelative(projectRoot, target));
+}
+
+function stripNpmVersion(packageSpecifier) {
+  const versionIndex = packageSpecifier.startsWith("@")
+    ? packageSpecifier.indexOf("@", packageSpecifier.indexOf("/") + 1)
+    : packageSpecifier.indexOf("@");
+  if (versionIndex < 0) return packageSpecifier;
+
+  const subpathIndex = packageSpecifier.indexOf("/", versionIndex);
+  return packageSpecifier.slice(0, versionIndex) +
+    (subpathIndex < 0 ? "" : packageSpecifier.slice(subpathIndex));
+}
+
+function esmShPackageSpecifier(target) {
+  let url;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" || (url.hostname !== "esm.sh" && url.hostname !== "esm.veryfront.com")
+  ) {
+    return null;
+  }
+
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname).replace(/^\/(?:v\d+|stable)\//, "/");
+  } catch {
+    return null;
+  }
+  const match = pathname.startsWith("/@")
+    ? /^\/(@[^/]+\/[^/@]+)@[^/]+(\/.*)?$/.exec(pathname)
+    : /^\/([^/@]+)@[^/]+(\/.*)?$/.exec(pathname);
+  if (!match?.[1]) return null;
+  return `${match[1]}${match[2] ?? ""}`;
+}
+
+function mappedImportTarget(specifier, parentURL) {
   const stdNormalized = normalizeStdSpecifier(specifier);
+  const nearest = findNearestDenoImportMap(parentURL);
+  const localTarget = nearest
+    ? resolveFromImportMap(specifier, nearest.imports) ??
+      resolveFromImportMap(stdNormalized, nearest.imports)
+    : null;
+  if (localTarget) return { target: localTarget, baseDir: nearest.baseDir };
+
   const mapped = resolveFromImportMap(specifier) ?? resolveFromImportMap(stdNormalized);
+  if (mapped) return { target: mapped, baseDir: projectRoot };
+
   const fallback = fallbackAliasMap[specifier] ?? fallbackAliasMap[stdNormalized];
-  const target = mapped ?? fallback;
+  return fallback ? { target: fallback, baseDir: projectRoot } : null;
+}
 
-  if (!target) return null;
+function resolveAliasSpecifier(specifier, parentURL) {
+  const mapped = mappedImportTarget(specifier, parentURL);
+  if (!mapped) return null;
+  const { target, baseDir } = mapped;
 
-  if (target.startsWith("./") || target.startsWith("../")) {
-    return findActualFile(target.replace(/^\.\//, ""));
+  if (target.startsWith("./") || target.startsWith("../") || target.startsWith("/")) {
+    return findActualFile(target, baseDir);
   }
 
   if (target.startsWith("jsr:@std/")) {
     const stdTarget = resolveStdCompatTarget(specifier);
-    if (!stdTarget) return null;
-    return findActualFile(stdTarget.replace(/^\.\//, ""));
+    const localTarget = stdTarget ? findActualFile(stdTarget.replace(/^\.\//, "")) : null;
+    return localTarget ?? resolveGeneratedJsrTarget(target);
   }
 
-  if (target.startsWith("https://esm.sh/react") || target.startsWith("npm:react")) {
-    const reactTarget = reactImportMap[specifier] ?? reactImportMap[stdNormalized];
-    if (!reactTarget) return null;
-    return findActualFile(reactTarget.replace(/^\.\//, ""));
+  const esmShSpecifier = esmShPackageSpecifier(target);
+  if (esmShSpecifier) {
+    return { packageName: esmShSpecifier };
   }
 
   if (target.startsWith("npm:")) {
-    const npmSpecifier = target.slice(4);
-    const atIndex = npmSpecifier.indexOf("@", 1);
-    const packageName = atIndex > 0 ? npmSpecifier.slice(0, atIndex) : npmSpecifier;
-    return { packageName };
+    return { packageName: stripNpmVersion(target.slice(4)) };
   }
 
   return null;
@@ -183,8 +325,8 @@ function resolveJsrStdSpecifier(specifier) {
   const normalizedSubpath = jsrSubpath.replace(/@[^/]+/, "");
   const stdSpecifier = `#std/${normalizedSubpath}`;
   const stdTarget = resolveStdCompatTarget(stdSpecifier);
-  if (!stdTarget) return null;
-  return findActualFile(stdTarget.replace(/^\.\//, ""));
+  const localTarget = stdTarget ? findActualFile(stdTarget.replace(/^\.\//, "")) : null;
+  return localTarget ?? resolveGeneratedJsrTarget(specifier);
 }
 
 export async function resolve(specifier, context, nextResolve) {
@@ -207,13 +349,10 @@ export async function resolve(specifier, context, nextResolve) {
 
   // Handle npm: protocol (Deno-specific) -> strip npm: prefix
   if (cleanSpecifier.startsWith("npm:")) {
-    const packageSpec = cleanSpecifier.slice(4);
-    const atIndex = packageSpec.indexOf("@", 1);
-    const packageName = atIndex > 0 ? packageSpec.slice(0, atIndex) : packageSpec;
-    return nextResolve(packageName, context);
+    return nextResolve(stripNpmVersion(cleanSpecifier.slice(4)), context);
   }
 
-  const resolvedAlias = resolveAliasSpecifier(cleanSpecifier);
+  const resolvedAlias = resolveAliasSpecifier(cleanSpecifier, context.parentURL);
   if (resolvedAlias) {
     if (typeof resolvedAlias === "object" && "packageName" in resolvedAlias) {
       return nextResolve(resolvedAlias.packageName, context);

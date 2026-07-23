@@ -9,21 +9,33 @@ import { mergeToolInputDelta, parseToolInputObject } from "./data-stream.ts";
 import { getParsedStreamedToolInput } from "./fork-runtime-part-mapper.ts";
 import type { ForkPart } from "./fork-runtime-types.ts";
 
-type StreamedToolCallState = {
+/** Tool-call state accumulated while a fork step streams. */
+export type StreamedToolCallState = {
+  /** Tool call identifier. */
   toolCallId: string;
+  /** Tool name. */
   toolName: string;
+  /** Serialized input accumulated from deltas. */
   inputText: string;
+  /** Parsed tool input. */
   input: unknown;
+  /** Current tool-call state. */
   status: "pending" | "completed" | "error";
+  /** Tool output, when completed. */
   output?: unknown;
+  /** Tool error text, when failed. */
   errorText?: string;
 };
 
-type StreamedMessage = {
+/** Message reconstructed from a streamed fork step. */
+export type StreamedMessage = {
+  /** Message author role. */
   role: "assistant" | "tool";
+  /** Reconstructed message parts. */
   parts: AgentMessage["parts"];
 };
 
+/** State reconstructed while a fork runtime step streams. */
 export type StreamedStepState = {
   text: string;
   toolCalls: Map<string, StreamedToolCallState>;

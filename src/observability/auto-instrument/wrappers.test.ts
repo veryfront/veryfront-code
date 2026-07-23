@@ -7,7 +7,7 @@ describe("observability/auto-instrument/wrappers", () => {
   describe("instrument (async wrapper)", () => {
     it("should wrap an async function and preserve its result", async () => {
       const fn = (x: number): Promise<number> => Promise.resolve(x * 2);
-      const wrapped = instrument(fn, "test.double");
+      const wrapped: (x: number) => Promise<number> = instrument(fn, "test.double");
       const result = await wrapped(5);
       assertEquals(result, 10);
     });
@@ -34,13 +34,18 @@ describe("observability/auto-instrument/wrappers", () => {
       assertEquals(result, "ok");
     });
 
-    it("should accept instrument options with attributes factory", async () => {
+    it("does not evaluate argument-derived compatibility attributes", async () => {
       const fn = (userId: string): Promise<string> => Promise.resolve(userId);
+      let attributeFactoryCalls = 0;
       const wrapped = instrument(fn, "test.user", {
-        attributes: (args) => ({ userId: args[0] as string }),
+        attributes: (args) => {
+          attributeFactoryCalls++;
+          return { userId: args[0] as string };
+        },
       });
       const result = await wrapped("u-123");
       assertEquals(result, "u-123");
+      assertEquals(attributeFactoryCalls, 0);
     });
 
     it("should handle functions that return resolved promises", async () => {
@@ -61,7 +66,7 @@ describe("observability/auto-instrument/wrappers", () => {
   describe("instrumentSync (sync wrapper)", () => {
     it("should wrap a sync function and preserve its result", () => {
       const fn = (x: number): number => x * 3;
-      const wrapped = instrumentSync(fn, "test.triple");
+      const wrapped: (x: number) => number = instrumentSync(fn, "test.triple");
       assertEquals(wrapped(4), 12);
     });
 
@@ -85,12 +90,17 @@ describe("observability/auto-instrument/wrappers", () => {
       assertEquals(wrapped(), "ok");
     });
 
-    it("should accept instrument options with attributes factory", () => {
+    it("does not evaluate sync argument-derived compatibility attributes", () => {
       const fn = (name: string): string => `Hello ${name}`;
+      let attributeFactoryCalls = 0;
       const wrapped = instrumentSync(fn, "test.greet", {
-        attributes: (args) => ({ name: args[0] as string }),
+        attributes: (args) => {
+          attributeFactoryCalls++;
+          return { name: args[0] as string };
+        },
       });
       assertEquals(wrapped("World"), "Hello World");
+      assertEquals(attributeFactoryCalls, 0);
     });
 
     it("should handle functions returning various types", () => {
@@ -104,6 +114,60 @@ describe("observability/auto-instrument/wrappers", () => {
   });
 
   describe("instrumentBatch", () => {
+    it("rejects invalid batch sizes before processing", async () => {
+      let calls = 0;
+
+      await assertRejects(
+        () =>
+          instrumentBatch("test.invalid", [1], async () => {
+            calls++;
+          }, { batchSize: -1 }),
+        TypeError,
+        "batchSize must be a positive safe integer",
+      );
+      assertEquals(calls, 0);
+    });
+
+    it("rejects batch concurrency that can exhaust runtime resources", async () => {
+      let calls = 0;
+      await assertRejects(
+        () =>
+          instrumentBatch("test.too-wide", [1], async () => {
+            calls++;
+          }, { batchSize: 1_001 }),
+        TypeError,
+        "batchSize must be at most 1000",
+      );
+      assertEquals(calls, 0);
+    });
+
+    it("uses a stable item snapshot while processors run", async () => {
+      const items = [1, 2, 3];
+      const processed: number[] = [];
+
+      await instrumentBatch("test.snapshot", items, async (item, index) => {
+        processed.push(item);
+        if (index === 0) items.splice(1);
+      }, { batchSize: 1 });
+
+      assertEquals(processed, [1, 2, 3]);
+    });
+
+    it("does not inspect compatibility batch attributes", async () => {
+      let calls = 0;
+      const attributes = new Proxy<Record<string, string>>({}, {
+        ownKeys() {
+          throw new Error("private-batch-attribute-canary");
+        },
+      });
+
+      await instrumentBatch("test.attributes", [1], async () => {
+        calls++;
+      }, { attributes });
+
+      assertEquals(calls, 1);
+    });
+
     it("should process all items", async () => {
       const results: number[] = [];
       // deno-lint-ignore require-await

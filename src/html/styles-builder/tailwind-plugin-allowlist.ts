@@ -10,27 +10,45 @@
  * @module html/styles-builder/tailwind-plugin-allowlist
  */
 
-export const TAILWIND_PLUGIN_ALLOWLIST: ReadonlySet<string> = new Set([
-  // Bundled into the compiled binary (see src/build/binary-plugin-includes.ts).
-  // Must stay in sync with BINARY_TAILWIND_PLUGIN_PACKAGES — an invariant
-  // enforced by tailwind-plugin-allowlist.test.ts.
-  "@tailwindcss/typography",
-  "@tailwindcss/forms",
-  "tailwindcss-animate",
-  "tailwind-scrollbar-hide",
-  "daisyui",
-  // Allowlisted but NOT bundled: loaded from esm.sh on first use. Adding an
-  // entry here is arbitrary-code-exec surface; review each one explicitly.
-  "@tailwindcss/aspect-ratio",
-  "@tailwindcss/container-queries",
-]);
+const APPROVED_TAILWIND_PLUGIN_SPECIFIERS = Object.freeze(
+  {
+    // Bundled into the compiled binary (see src/build/binary-plugin-includes.ts).
+    // Must stay in sync with BINARY_TAILWIND_PLUGIN_PACKAGES. This invariant is
+    // enforced by tailwind-plugin-allowlist.test.ts.
+    "@tailwindcss/typography": "@tailwindcss/typography@0.5.19",
+    "@tailwindcss/forms": "@tailwindcss/forms@0.5.11",
+    "tailwindcss-animate": "tailwindcss-animate@1.0.7",
+    "tailwind-scrollbar-hide": "tailwind-scrollbar-hide@2.0.0",
+    "daisyui": "daisyui@5.5.14",
+    // Approved but not bundled. These are fetched from esm.sh on first use.
+    // Changing a version changes executable code and requires security review.
+    "@tailwindcss/aspect-ratio": "@tailwindcss/aspect-ratio@0.4.2",
+    "@tailwindcss/container-queries": "@tailwindcss/container-queries@0.1.1",
+  } satisfies Readonly<Record<string, string>>,
+);
+
+const ALLOWED_TAILWIND_PLUGINS = new Set(
+  Object.keys(APPROVED_TAILWIND_PLUGIN_SPECIFIERS),
+);
+
+export const TAILWIND_PLUGIN_ALLOWLIST: ReadonlySet<string> = new Proxy(
+  ALLOWED_TAILWIND_PLUGINS,
+  {
+    get(target, property) {
+      if (property === "add" || property === "delete" || property === "clear") return undefined;
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  },
+) as ReadonlySet<string>;
 
 /**
  * Matches npm package specifiers, optionally scoped and optionally suffixed
  * with an `@version` range. Deliberately restrictive: ASCII only, no path
  * separators, no whitespace, no control characters.
  */
-export const PACKAGE_SPEC_RE = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:@[\w.+-]+)?$/i;
+export const PACKAGE_SPEC_RE =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:@[a-z0-9][a-z0-9._+-]*)?$/i;
 
 /**
  * Return the bare package name (without any `@version` suffix) for a spec.
@@ -48,4 +66,17 @@ export function bareName(spec: string): string {
   }
   const idx = spec.indexOf("@");
   return idx === -1 ? spec : spec.slice(0, idx);
+}
+
+/**
+ * Resolve a bare or exactly approved plugin specifier to its reviewed,
+ * version-pinned package. Returns undefined for unapproved version overrides.
+ */
+export function resolveApprovedTailwindPluginSpecifier(spec: string): string | undefined {
+  const name = bareName(spec);
+  const approved = APPROVED_TAILWIND_PLUGIN_SPECIFIERS[
+    name as keyof typeof APPROVED_TAILWIND_PLUGIN_SPECIFIERS
+  ];
+  if (!approved) return undefined;
+  return spec === name || spec === approved ? approved : undefined;
 }

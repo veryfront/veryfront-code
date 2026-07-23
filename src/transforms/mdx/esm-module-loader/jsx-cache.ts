@@ -9,6 +9,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { errorLogName, fileLogLabel } from "../../shared/log-context.ts";
 
 /**
  * Validate and patch a cached JSX module in-place.
@@ -27,18 +29,19 @@ export async function ensureCachedJsxModulePatched(
 
     if (rewritten === cachedCode) return true;
 
-    await fs.writeTextFile(transformedPath, rewritten);
+    const written = await writeCacheFile(fs, transformedPath, rewritten, "MDX-JSX-CACHE");
+    if (!written) return false;
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Rewrote cached JSX dnt imports`, {
-      sourceFilePath,
-      transformedPath,
+      sourceFile: fileLogLabel(sourceFilePath),
+      cacheFile: fileLogLabel(transformedPath),
     });
 
     return true;
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to read cached JSX module`, {
-      sourceFilePath,
-      transformedPath,
-      error: error instanceof Error ? error.message : String(error),
+      sourceFile: fileLogLabel(sourceFilePath),
+      cacheFile: fileLogLabel(transformedPath),
+      errorName: errorLogName(error),
     });
     return false;
   }

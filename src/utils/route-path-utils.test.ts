@@ -48,6 +48,11 @@ describe("route-path-utils", () => {
       }
     });
 
+    it("rejects file-style segments with unsupported page extensions", () => {
+      assertEquals(isDynamicSegment("[id].exe"), false);
+      assertEquals(isDynamicSegment("[...slug].json"), false);
+    });
+
     it("should return false for static segments", () => {
       const segments = ["about", "users", "page.tsx"] as const;
 
@@ -80,6 +85,11 @@ describe("route-path-utils", () => {
       for (const route of routes) {
         assertEquals(isDynamicRoute(route), false);
       }
+    });
+
+    it("recognizes hyphenated parameter names", () => {
+      assertEquals(isDynamicRoute("users/[user-id]"), true);
+      assertEquals(isDynamicSegment("[user-id]"), true);
     });
   });
 
@@ -148,6 +158,12 @@ describe("route-path-utils", () => {
       assertEquals(extractParamName("[[...slug]]"), "slug");
       assertEquals(extractParamName("[[...params]]"), "params");
     });
+
+    it("extracts names from file-style dynamic segments", () => {
+      assertEquals(extractParamName("[id].tsx"), "id");
+      assertEquals(extractParamName("[...slug].ts"), "slug");
+      assertEquals(extractParamName("[[...parts]].mdx"), "parts");
+    });
   });
 
   describe("extractRouterBasePath", () => {
@@ -177,6 +193,11 @@ describe("route-path-utils", () => {
 
       assertEquals(result.type, "app");
       assertEquals(result.relativePath, "users/[id]/page.tsx");
+    });
+
+    it("detects an absolute Windows router root case-insensitively", () => {
+      const result = extractRouterBasePath("C:\\Project\\App\\users\\page.tsx");
+      assertEquals(result, { type: "app", relativePath: "users/page.tsx" });
     });
 
     it("should return null for paths without router prefix", () => {
@@ -228,6 +249,30 @@ describe("route-path-utils", () => {
       assertEquals(result.matched, false);
       assertEquals(Object.keys(result.params).length, 0);
     });
+
+    it("does not report a match when static route segments differ", () => {
+      assertEquals(
+        extractRouteParams("/app/users/[id]/page.tsx", "accounts/123"),
+        { params: {}, matched: false },
+      );
+    });
+
+    it("requires complete route consumption", () => {
+      assertEquals(
+        extractRouteParams("/app/users/[id]/page.tsx", "users/123/extra"),
+        { params: {}, matched: false },
+      );
+    });
+
+    it("omits app route groups and parallel slots from URL matching", () => {
+      assertEquals(
+        extractRouteParams(
+          "/app/(marketing)/@main/products/[id]/page.tsx",
+          "products/123",
+        ),
+        { params: { id: "123" }, matched: true },
+      );
+    });
   });
 
   describe("extractRelativePath", () => {
@@ -245,6 +290,27 @@ describe("route-path-utils", () => {
     it("should remove leading slash from result", () => {
       const result = extractRelativePath("/project/file.ts", "/project");
       assertEquals(result.startsWith("/"), false);
+    });
+
+    it("does not strip a project directory that is only a string prefix", () => {
+      assertEquals(
+        extractRelativePath("/project-other/file.ts", "/project"),
+        "project-other/file.ts",
+      );
+    });
+
+    it("matches Windows project roots case-insensitively", () => {
+      assertEquals(
+        extractRelativePath("C:\\Project\\src\\file.ts", "c:\\project"),
+        "src/file.ts",
+      );
+      assertEquals(
+        extractRelativePath(
+          "\\\\Server\\Share\\Project\\src\\file.ts",
+          "\\\\server\\share\\project",
+        ),
+        "src/file.ts",
+      );
     });
   });
 
@@ -282,6 +348,27 @@ describe("route-path-utils", () => {
 
     it("should handle empty slug parts", () => {
       assertEquals(extractParamsFromPattern("[id]", "123"), { id: "123" });
+    });
+
+    it("requires a non-optional catch-all to consume at least one segment", () => {
+      assertEquals(extractParamsFromPattern("docs/[...slug]", "docs"), null);
+      assertEquals(extractParamsFromPattern("docs/[[...slug]]", "docs"), { slug: [] });
+    });
+
+    it("stores prototype-shaped parameter names as own properties", () => {
+      const params = extractParamsFromPattern("[__proto__]", "safe");
+
+      assertEquals(params === null, false);
+      assertEquals(Object.hasOwn(params!, "__proto__"), true);
+      assertEquals(params?.__proto__, "safe");
+    });
+
+    it("extracts standard and catch-all params from file-style patterns", () => {
+      assertEquals(extractParamsFromPattern("[id].tsx", "123"), { id: "123" });
+      assertEquals(extractParamsFromPattern("[...slug].ts", "a/b"), {
+        slug: ["a", "b"],
+      });
+      assertEquals(extractParamsFromPattern("[[...slug]].mdx", ""), { slug: [] });
     });
   });
 

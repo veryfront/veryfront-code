@@ -21,6 +21,22 @@
 export { defineSchema } from "./define.ts";
 export { lazySchema } from "./lazy.ts";
 
+export type {
+  InferInput,
+  InferSchema,
+  InferShape,
+  JsonSchemaTypeName,
+  RefinementCtx,
+  Schema,
+  SchemaFactory,
+  SchemaValidator,
+  SchemaValidatorCoerce,
+  ValidationFailure,
+  ValidationIssue,
+  ValidationResult,
+  ValidationSuccess,
+} from "#veryfront/extensions/schema/index.ts";
+
 export {
   isOptionalSchema as schemaIsOptional,
   type JsonSchema,
@@ -28,6 +44,7 @@ export {
 } from "./json-schema.ts";
 
 export {
+  type CommonSchemaRegistry,
   CommonSchemas,
   type DateRange,
   type Email,

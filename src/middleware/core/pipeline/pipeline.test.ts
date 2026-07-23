@@ -1,10 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { MiddlewarePipeline } from "./pipeline.ts";
+import { MiddlewarePipeline, RuntimeMiddlewarePipeline } from "./pipeline.ts";
 import type { MiddlewareHandler } from "../types.ts";
+import { createWebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
+import { cors } from "#veryfront/security";
+import { securityHeaders } from "../../builtin/security/security-headers.ts";
+import { corsSimple } from "../../builtin/security/cors-simple.ts";
+import { contentSecurityPolicy } from "../../builtin/security/csp.ts";
 
 describe("middleware/core/pipeline/MiddlewarePipeline", () => {
+  describe("constructor", () => {
+    it("rejects unsupported runtime options instead of silently ignoring them", () => {
+      assertThrows(
+        () => new MiddlewarePipeline({ ignored: true } as never),
+        TypeError,
+        "does not accept options",
+      );
+    });
+  });
+
   describe("use", () => {
     it("should add middleware and return this for chaining", () => {
       const pipeline = new MiddlewarePipeline();
@@ -23,6 +38,16 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.use(mw1).use(mw2);
 
       assertEquals(pipeline.getMiddleware().length, 2);
+    });
+
+    it("rejects non-function middleware during registration", () => {
+      const pipeline = new MiddlewarePipeline();
+
+      assertThrows(
+        () => pipeline.use(null as unknown as MiddlewareHandler),
+        TypeError,
+        "middleware must be a function",
+      );
     });
   });
 
@@ -61,6 +86,27 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       await pipeline.execute(new Request("http://localhost/home"));
       assertEquals(order, ["global"]);
     });
+
+    it("rejects invalid scoped registrations", () => {
+      const pipeline = new MiddlewarePipeline();
+      const middleware: MiddlewareHandler = (_ctx, next) => next();
+
+      assertThrows(
+        () => pipeline.useFor("/api" as unknown as RegExp, middleware),
+        TypeError,
+        "pattern must be a RegExp",
+      );
+      assertThrows(
+        () => pipeline.useFor(/^\/api/),
+        TypeError,
+        "at least one middleware",
+      );
+      assertThrows(
+        () => pipeline.useFor(/^\/api/, null as unknown as MiddlewareHandler),
+        TypeError,
+        "middleware must be a function",
+      );
+    });
   });
 
   describe("compose", () => {
@@ -82,6 +128,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       const res = await pipeline.execute(new Request("http://localhost/"));
 
       assertEquals(res.status, 200);
+      assert(res instanceof Response);
       assertEquals(await res.text(), "Hello");
     });
 
@@ -141,6 +188,59 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       await pipeline.execute(new Request("http://localhost/"));
 
       assertEquals(order, [1, 2, 3, 4]);
+    });
+
+    it("preserves WebSocket upgrade responses through response middleware", async () => {
+      const pipeline = new RuntimeMiddlewarePipeline();
+      pipeline.use(cors({ origin: "*" }));
+      const request = new Request("http://localhost/_ws", {
+        headers: {
+          origin: "https://example.com",
+          upgrade: "websocket",
+        },
+      });
+      const upgradeResponse = createWebSocketUpgradeResponse();
+
+      const response = await pipeline.handle(request, () => upgradeResponse);
+
+      assertEquals(Object.is(response, upgradeResponse), true);
+    });
+
+    it("preserves native WebSocket upgrade responses through response middleware", async () => {
+      const pipeline = new RuntimeMiddlewarePipeline();
+      pipeline.use(cors({ origin: "*" }));
+      pipeline.use(securityHeaders());
+      pipeline.use(corsSimple("*"));
+      pipeline.use(contentSecurityPolicy({ "default-src": "'self'" }));
+      const request = new Request("http://localhost/_ws", {
+        headers: {
+          origin: "https://example.com",
+          upgrade: "websocket",
+        },
+      });
+      const nativeUpgradeResponse = {
+        status: 101,
+        statusText: "Switching Protocols",
+        headers: new Headers({ upgrade: "websocket" }),
+        body: null,
+        webSocket: {},
+      } as unknown as Response;
+
+      const response = await pipeline.handle(request, () => nativeUpgradeResponse);
+
+      assertEquals(Object.is(response, nativeUpgradeResponse), true);
+    });
+  });
+
+  describe("handle", () => {
+    it("rejects a non-function final handler before execution", () => {
+      const pipeline = new MiddlewarePipeline();
+
+      assertThrows(
+        () => pipeline.handle(new Request("http://localhost/"), null as never),
+        TypeError,
+        "handler must be a function",
+      );
     });
   });
 

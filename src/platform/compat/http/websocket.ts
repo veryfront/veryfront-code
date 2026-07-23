@@ -1,7 +1,7 @@
 import { isDeno } from "../runtime.ts";
 import type { WebSocketUpgradeOptions, WebSocketUpgradeResult } from "./types.ts";
 import { getNativeDeno } from "./native-response.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 
 export function upgradeWebSocket(
   request: Request,

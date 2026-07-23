@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisRateLimitStore } from "./redis-rate-limit.ts";
 
 function createMockRedisClient(): {
@@ -17,6 +18,7 @@ function createMockRedisClient(): {
   on: (event: string, listener: (...args: unknown[]) => void) => void;
   _emit: (event: string, ...args: unknown[]) => void;
   _evalCalls: number;
+  _disconnectCalls: number;
   _incrCalls: number;
   _pExpireCalls: number;
   _store: Map<string, { count: number; ttl: number }>;
@@ -24,12 +26,16 @@ function createMockRedisClient(): {
   const store = new Map<string, { count: number; ttl: number }>();
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   let evalCalls = 0;
+  let disconnectCalls = 0;
   let incrCalls = 0;
   let pExpireCalls = 0;
 
   return {
     connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
+    disconnect: () => {
+      disconnectCalls += 1;
+      return Promise.resolve();
+    },
     eval: (_script: string, options: { keys: string[]; arguments: string[] }) => {
       evalCalls += 1;
       const key = options.keys[0];
@@ -74,6 +80,9 @@ function createMockRedisClient(): {
     get _evalCalls() {
       return evalCalls;
     },
+    get _disconnectCalls() {
+      return disconnectCalls;
+    },
     get _incrCalls() {
       return incrCalls;
     },
@@ -85,7 +94,7 @@ function createMockRedisClient(): {
 }
 
 function createStoreWithMock(
-  options?: { keyPrefix?: string },
+  options?: { keyPrefix?: string; operationTimeoutMs?: number },
 ): {
   rateStore: RedisRateLimitStore;
   mockClient: ReturnType<typeof createMockRedisClient>;
@@ -104,6 +113,11 @@ function assert_reset_at_is_future(resetAt: number): void {
 }
 
 describe("middleware/builtin/security/redis-rate-limit", () => {
+  beforeEach(() => {
+    setEnv("NODE_ENV", "test");
+    deleteEnv("REDIS_URL");
+  });
+
   describe("RedisRateLimitStore", () => {
     describe("constructor", () => {
       it("should use default key prefix", () => {
@@ -116,6 +130,67 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const store = new RedisRateLimitStore({ keyPrefix: "custom:" });
         // deno-lint-ignore no-explicit-any
         assertEquals((store as any).keyPrefix, "custom:");
+      });
+
+      it("uses REDIS_URL when the URL option is omitted", () => {
+        setEnv("REDIS_URL", "rediss://cache.example.test:6380");
+
+        const store = new RedisRateLimitStore();
+
+        // deno-lint-ignore no-explicit-any
+        assertEquals((store as any).url, "rediss://cache.example.test:6380");
+      });
+
+      it("requires an explicit Redis URL in production", () => {
+        setEnv("NODE_ENV", "production");
+
+        assertThrows(
+          () => new RedisRateLimitStore(),
+          TypeError,
+          "url or REDIS_URL is required in production",
+        );
+      });
+
+      it("rejects unsafe key prefixes", () => {
+        for (const keyPrefix of ["", "line\nbreak", "x".repeat(257)]) {
+          assertThrows(
+            () => new RedisRateLimitStore({ keyPrefix }),
+            TypeError,
+            "keyPrefix",
+          );
+        }
+      });
+
+      it("rejects malformed options and Redis URLs", () => {
+        assertThrows(
+          () => new RedisRateLimitStore(null as never),
+          TypeError,
+          "options",
+        );
+        assertThrows(
+          () => new RedisRateLimitStore({ keyPrefix: 42 as never }),
+          TypeError,
+          "keyPrefix",
+        );
+        for (const url of ["", "https://example.com", "redis://host\nname"]) {
+          assertThrows(
+            () => new RedisRateLimitStore({ url }),
+            TypeError,
+            "url",
+          );
+        }
+        for (const value of [0, 1.5, 120_001]) {
+          assertThrows(
+            () => new RedisRateLimitStore({ connectTimeoutMs: value }),
+            TypeError,
+            "connectTimeoutMs",
+          );
+          assertThrows(
+            () => new RedisRateLimitStore({ operationTimeoutMs: value }),
+            TypeError,
+            "operationTimeoutMs",
+          );
+        }
       });
     });
 
@@ -182,6 +257,44 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const diff = entry.resetAt - before;
         assertEquals(diff >= 59000 && diff <= 61000, true);
       });
+
+      it("keeps far-future reset timestamps within the safe integer range", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+        mockClient.eval = () => Promise.resolve([1, Number.MAX_SAFE_INTEGER]);
+
+        const entry = await rateStore.increment("key1", Number.MAX_SAFE_INTEGER);
+
+        assertEquals(entry.resetAt, Number.MAX_SAFE_INTEGER);
+      });
+
+      it("rejects invalid windows and malformed Redis results", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+        await assertRejects(
+          () => rateStore.increment("key", 0),
+          TypeError,
+          "windowMs",
+        );
+        mockClient.eval = () => Promise.resolve([1.5, 1000]);
+        await assertRejects(
+          () => rateStore.increment("key", 1000),
+          Error,
+          "invalid result",
+        );
+      });
+
+      it("bounds stalled operations and releases the cached client", async () => {
+        const { rateStore, mockClient } = createStoreWithMock({ operationTimeoutMs: 5 });
+        mockClient.eval = () => new Promise(() => {});
+
+        await assertRejects(
+          () => rateStore.increment("key", 1000),
+          Error,
+          "timed out",
+        );
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, null);
+        assertEquals(mockClient._disconnectCalls, 1);
+      });
     });
 
     describe("reset", () => {
@@ -220,6 +333,28 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, null);
       });
+
+      it("disconnects a connection that is still pending", async () => {
+        const store = new RedisRateLimitStore();
+        const client = createMockRedisClient();
+        // deno-lint-ignore no-explicit-any
+        (store as any).clientPromise = Promise.resolve(client);
+
+        await store.destroy();
+
+        assertEquals(client._disconnectCalls, 1);
+      });
+
+      it("does not reconnect after destruction", async () => {
+        const { rateStore } = createStoreWithMock();
+        await rateStore.destroy();
+
+        await assertRejects(
+          () => rateStore.increment("key", 1000),
+          Error,
+          "destroyed",
+        );
+      });
     });
 
     describe("ensureClient", () => {
@@ -254,6 +389,20 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         assertEquals((rateStore as any).client, null);
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).clientPromise, null);
+      });
+
+      it("ignores lifecycle events from a replaced client", () => {
+        const { rateStore, mockClient: previousClient } = createStoreWithMock();
+        const currentClient = createMockRedisClient();
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).attachClientLifecycleHandlers(previousClient);
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).client = currentClient;
+
+        previousClient._emit("end");
+
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, currentClient);
       });
     });
   });

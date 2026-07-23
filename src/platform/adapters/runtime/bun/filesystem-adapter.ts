@@ -1,7 +1,6 @@
-import { FILE_NOT_FOUND } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import type {
   DirEntry,
-  FileChangeEvent,
   FileChangeKind,
   FileInfo,
   FileSystemAdapter,
@@ -9,14 +8,14 @@ import type {
   WatchOptions,
 } from "../../base.ts";
 import {
-  createFileWatcher,
-  createWatcherIterator,
-  enqueueWatchEvent,
+  createManagedFileWatcher,
+  normalizeWatchPaths,
   setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
 import { makeNodeTempDir } from "../shared/temp-dir.ts";
+import { getSystemErrorCode, isFileNotFoundError } from "../shared/filesystem-errors.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export class BunFileSystemAdapter implements FileSystemAdapter {
   readFile(path: string): Promise<string> {
@@ -39,9 +38,9 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     try {
       await stat(path);
       return true;
-    } catch (_) {
-      /* expected: stat throws when file does not exist */
-      return false;
+    } catch (error) {
+      if (isFileNotFoundError(error)) return false;
+      throw error;
     }
   }
 
@@ -71,10 +70,28 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
         isSymlink: stats.isSymbolicLink(),
         mtime: stats.mtime,
       };
-    } catch (_) {
-      /* expected: stat fails when file does not exist */
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
       throw FILE_NOT_FOUND.create({ detail: `File not found: ${path}`, context: { path } });
     }
+  }
+
+  async lstat(path: string): Promise<FileInfo> {
+    const { lstat } = await import("node:fs/promises");
+    const stats = await lstat(path);
+
+    return {
+      size: stats.size,
+      isFile: stats.isFile(),
+      isDirectory: stats.isDirectory(),
+      isSymlink: stats.isSymbolicLink(),
+      mtime: stats.mtime,
+    };
+  }
+
+  async realPath(path: string): Promise<string> {
+    const { realpath } = await import("node:fs/promises");
+    return await realpath(path);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
@@ -84,7 +101,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     const { rm } = await import("node:fs/promises");
-    await rm(path, { recursive: options?.recursive, force: true });
+    await rm(path, { recursive: options?.recursive, force: false });
   }
 
   async makeTempDir(prefix: string): Promise<string> {
@@ -92,14 +109,11 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
-    const pathArray = Array.isArray(paths) ? paths : [paths];
+    const pathArray = normalizeWatchPaths(paths);
     const recursive = options?.recursive ?? true;
     const signal = options?.signal;
 
-    let closed = false;
     const watchers: Array<BunFSWatcher | import("node:fs").FSWatcher> = [];
-    const eventQueue: FileChangeEvent[] = [];
-    let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
 
     function mapBunEventKind(type: string): FileChangeKind {
       switch (type) {
@@ -114,71 +128,28 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
       }
     }
 
-    function setupBunWatcher(path: string): void {
+    function setupBunWatcher(
+      path: string,
+      queue: { enqueue(event: { kind: FileChangeKind; paths: string[] }): void },
+      isClosed: () => boolean,
+    ): void {
       const watcher = Bun.watch(path, {
         recursive,
         onChange: (event: BunWatchEvent) => {
-          if (closed || signal?.aborted) return;
-
-          enqueueWatchEvent(
-            { kind: mapBunEventKind(event.type), paths: [event.path] },
-            eventQueue,
-            () => resolver,
-            (r) => {
-              resolver = r;
-            },
-          );
+          if (isClosed()) return;
+          queue.enqueue({ kind: mapBunEventKind(event.type), paths: [event.path] });
         },
       });
 
+      if (isClosed()) {
+        watcher.stop();
+        return;
+      }
       watchers.push(watcher);
     }
 
-    const setResolver = (r: ((value: IteratorResult<FileChangeEvent>) => void) | null): void => {
-      resolver = r;
-    };
-
-    if (typeof Bun !== "undefined" && typeof Bun.watch === "function") {
-      for (const path of pathArray) {
-        try {
-          setupBunWatcher(path);
-        } catch (error) {
-          serverLogger.error(`Failed to watch ${path}:`, error);
-        }
-      }
-    } else {
-      // Fall back to Node.js fs.watch (Bun supports Node APIs)
-      serverLogger.debug("Bun.watch not available, falling back to Node.js fs.watch");
-      for (const path of pathArray) {
-        setupNodeFsWatcher(path, {
-          recursive,
-          closed: () => closed,
-          signal,
-          eventQueue,
-          getResolver: () => resolver,
-          setResolver,
-          watchers: watchers as Array<import("node:fs").FSWatcher>,
-          onError: (error, watchPath) =>
-            serverLogger.error(`File watcher error for ${watchPath}:`, error),
-        }).catch((error) => {
-          serverLogger.error(`Failed to setup file watcher for ${path}:`, error);
-        });
-      }
-    }
-
-    const iterator = createWatcherIterator(
-      eventQueue,
-      (r) => {
-        resolver = r;
-      },
-      () => closed,
-      () => signal?.aborted ?? false,
-    );
-
-    function cleanup(): void {
-      closed = true;
-
-      for (const watcher of watchers) {
+    function closeNativeWatchers(): void {
+      for (const watcher of watchers.splice(0)) {
         try {
           if ("stop" in watcher && typeof watcher.stop === "function") {
             watcher.stop();
@@ -187,17 +158,54 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
           if ("close" in watcher && typeof watcher.close === "function") {
             watcher.close();
           }
-        } catch (error) {
-          serverLogger.debug("Error closing Bun file watcher during cleanup:", error);
+        } catch {
+          serverLogger.debug("Bun file watcher cleanup failed");
         }
       }
-
-      resolver?.({ done: true, value: undefined });
-      resolver = null;
     }
 
-    if (signal) signal.addEventListener("abort", cleanup, { once: true });
+    return createManagedFileWatcher({
+      signal,
+      overflowPaths: pathArray,
+      setup: async ({ queue, isClosed }) => {
+        if (typeof Bun !== "undefined" && typeof Bun.watch === "function") {
+          for (const path of pathArray) {
+            if (isClosed()) return;
+            try {
+              setupBunWatcher(path, queue, isClosed);
+            } catch (error) {
+              serverLogger.error("Bun file watcher setup failed", {
+                code: getSystemErrorCode(error),
+              });
+            }
+          }
+          return;
+        }
 
-    return createFileWatcher(iterator, cleanup);
+        serverLogger.debug("Bun.watch is unavailable, using Node.js fs.watch");
+        await Promise.all(
+          pathArray.map((path) =>
+            setupNodeFsWatcher(path, {
+              recursive,
+              closed: isClosed,
+              signal,
+              queue,
+              watchers: watchers as Array<import("node:fs").FSWatcher>,
+              onError: (error) => {
+                serverLogger.error("File watcher setup failed", {
+                  code: getSystemErrorCode(error),
+                });
+              },
+            })
+          ),
+        );
+      },
+      closeResources: closeNativeWatchers,
+      onError: (error) => {
+        serverLogger.error("Bun file watcher setup failed", {
+          code: getSystemErrorCode(error),
+        });
+      },
+    });
   }
 }

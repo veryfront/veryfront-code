@@ -36,8 +36,45 @@ const AI_PROVIDER_BILLING_ERROR = {
   status: 502,
 } as const;
 
+const MAX_PROVIDER_ERROR_JSON_CHARS = 1_048_576;
+const MAX_PROVIDER_BODY_DEPTH = 32;
+const MAX_LAST_ERROR_DEPTH = 64;
+const MAX_PUBLIC_PROVIDER_ERROR_MESSAGE_CHARS = 2_048;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function readOwnDataProperty(
+  value: Record<string, unknown>,
+  key: string,
+): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizePublicProviderErrorMessage(value: string, fallback: string): string {
+  let withoutControls = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    withoutControls += codePoint <= 31 || codePoint === 127 ? " " : character;
+  }
+  const normalized = withoutControls.replace(/\s+/gu, " ").trim();
+  const resolved = normalized || fallback;
+  return resolved.length <= MAX_PUBLIC_PROVIDER_ERROR_MESSAGE_CHARS
+    ? resolved
+    : `${resolved.slice(0, MAX_PUBLIC_PROVIDER_ERROR_MESSAGE_CHARS - 1)}\u2026`;
 }
 
 /** Result returned from safe JSON parse. */
@@ -53,11 +90,17 @@ export function safeJsonParse(value: string): SafeJsonParseResult {
 }
 
 function parseErrorJson(value: string): unknown | null {
+  if (value.length > MAX_PROVIDER_ERROR_JSON_CHARS) {
+    return null;
+  }
   const parsed = safeJsonParse(value);
   return parsed.ok ? parsed.value : null;
 }
 
 function parseEmbeddedErrorJson(value: string): unknown | null {
+  if (value.length > MAX_PROVIDER_ERROR_JSON_CHARS) {
+    return null;
+  }
   const jsonStart = value.indexOf("{");
   if (jsonStart < 0) {
     return null;
@@ -72,9 +115,12 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
     return null;
   }
 
-  const slug = typeof body.slug === "string" ? body.slug : null;
-  const error = typeof body.error === "string" ? body.error : null;
-  const suggestion = typeof body.suggestion === "string" ? body.suggestion : null;
+  const rawSlug = readOwnDataProperty(body, "slug");
+  const rawError = readOwnDataProperty(body, "error");
+  const rawSuggestion = readOwnDataProperty(body, "suggestion");
+  const slug = typeof rawSlug === "string" ? rawSlug : null;
+  const error = typeof rawError === "string" ? rawError : null;
+  const suggestion = typeof rawSuggestion === "string" ? rawSuggestion : null;
   const normalizedProblemText = `${error ?? ""} ${suggestion ?? ""}`.toLowerCase();
 
   if (normalizedProblemText.includes("ai provider spend limit")) {
@@ -84,7 +130,10 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: suggestion ?? error ?? "Insufficient AI credits",
+      message: normalizePublicProviderErrorMessage(
+        suggestion ?? error ?? "Insufficient AI credits",
+        "Insufficient AI credits",
+      ),
       status: 402,
     };
   }
@@ -92,7 +141,10 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "resource-limit-exceeded") {
     return {
       code: "RESOURCE_LIMIT_EXCEEDED",
-      message: suggestion ?? error ?? "Resource limit exceeded",
+      message: normalizePublicProviderErrorMessage(
+        suggestion ?? error ?? "Resource limit exceeded",
+        "Resource limit exceeded",
+      ),
       status: 402,
     };
   }
@@ -104,7 +156,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
 // The functions below classify provider errors by matching natural-language
 // substrings in error messages. This is intentional: providers often do not
 // include structured error codes in all response shapes, so text matching is
-// the only reliable signal. Keep these as the fallback path — wherever the
+// the only reliable signal. Keep these as the fallback path wherever the
 // provider DOES return a structured `type` field (e.g. Anthropic's `body.type`)
 // the structured code is preferred (handled above in parseKnownProviderBody).
 //
@@ -139,7 +191,7 @@ function isAssistantPrefillUnsupportedMessage(message: string): boolean {
 // Detects provider-side billing errors reported via invalid_request_error messages.
 // Requires three independent signals to reduce false positives: the message must
 // mention (a) a known provider API, (b) billing/account, and (c) low credit balance.
-// If any provider stops including all three signals, this silently returns false —
+// If any provider stops including all three signals, this silently returns false,
 // the call site falls through to EXTERNAL_SERVICE_ERROR, which is the safe default.
 function isProviderBillingMessage(normalizedMessage: string): boolean {
   const mentionsProviderApi = normalizedMessage.includes("anthropic api") ||
@@ -155,10 +207,22 @@ function isProviderBillingMessage(normalizedMessage: string): boolean {
   return mentionsProviderApi && mentionsProviderCredits && mentionsProviderBilling;
 }
 
+function isProviderCapacityMessage(normalizedMessage: string): boolean {
+  return normalizedMessage.includes("at capacity") ||
+    normalizedMessage.includes("capacity exceeded") ||
+    normalizedMessage.includes("capacity unavailable") ||
+    normalizedMessage.includes("no capacity") ||
+    normalizedMessage.includes("capacity is temporarily");
+}
+
 function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
+  depth = 0,
 ): ParsedProviderError | null {
+  if (depth > MAX_PROVIDER_BODY_DEPTH) {
+    return null;
+  }
   const problemMatch = parseKnownProblemBody(body);
   if (problemMatch) {
     return problemMatch;
@@ -173,47 +237,45 @@ function parseKnownProviderBody(
   }
   seen.add(body);
 
-  if (isErrorRecord(body.error)) {
-    const nestedError = parseKnownProviderBody(body.error, seen);
+  const nestedBodyError = readOwnDataProperty(body, "error");
+  if (isErrorRecord(nestedBodyError)) {
+    const nestedError = parseKnownProviderBody(nestedBodyError, seen, depth + 1);
     if (nestedError) {
       return nestedError;
     }
   }
 
-  if (body.type === "overloaded_error") {
+  const bodyType = readOwnDataProperty(body, "type");
+  const bodyMessage = readOwnDataProperty(body, "message");
+
+  if (bodyType === "overloaded_error") {
     return {
       code: "OVERLOADED_ERROR",
-      message: typeof body.message === "string"
-        ? body.message
-        : "The LLM provider is currently overloaded",
+      message: "The LLM provider is currently overloaded",
     };
   }
 
-  if (body.type === "rate_limit_error") {
+  if (bodyType === "rate_limit_error") {
     return {
       code: "RATE_LIMITED",
-      message: typeof body.message === "string"
-        ? body.message
-        : "Too many requests. Please wait a moment and try again.",
+      message: "Too many requests. Please wait a moment and try again.",
       status: 429,
     };
   }
 
-  if (body.type === "api_error") {
+  if (bodyType === "api_error") {
     return {
       code: "EXTERNAL_SERVICE_ERROR",
-      message: typeof body.message === "string"
-        ? body.message
-        : DEFAULT_EXTERNAL_SERVICE_ERROR.message,
+      message: DEFAULT_EXTERNAL_SERVICE_ERROR.message,
     };
   }
 
-  if (body.type === "invalid_request_error" && typeof body.message === "string") {
-    const normalizedMessage = body.message.toLowerCase();
+  if (bodyType === "invalid_request_error" && typeof bodyMessage === "string") {
+    const normalizedMessage = bodyMessage.toLowerCase();
     if (isProviderBillingMessage(normalizedMessage)) {
       return AI_PROVIDER_BILLING_ERROR;
     }
-    if (isAssistantPrefillUnsupportedMessage(body.message)) {
+    if (isAssistantPrefillUnsupportedMessage(bodyMessage)) {
       return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
     }
     if (normalizedMessage.includes("too long")) {
@@ -229,12 +291,11 @@ function getErrorMessage(error: unknown): string | null {
     return error;
   }
 
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (isErrorRecord(error) && typeof error.message === "string") {
-    return error.message;
+  if (isErrorRecord(error)) {
+    const message = readOwnDataProperty(error, "message");
+    if (typeof message === "string") {
+      return message;
+    }
   }
 
   return null;
@@ -245,28 +306,44 @@ function extractResponseBody(error: unknown): string | undefined {
     return undefined;
   }
 
-  if (typeof error.responseBody === "string") return error.responseBody;
-
-  if (isErrorRecord(error.lastError)) {
-    if (typeof error.lastError.responseBody === "string") return error.lastError.responseBody;
-  }
+  const responseBody = readOwnDataProperty(error, "responseBody");
+  if (typeof responseBody === "string") return responseBody;
 
   return undefined;
 }
 
 /** Error shape for parse provider. */
 export function parseProviderError(error: unknown): ParsedProviderError {
-  return parseProviderErrorInner(error, new WeakSet());
-}
+  const seen = new WeakSet<object>();
+  let current = error;
 
-function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedProviderError {
-  if (isErrorRecord(error)) {
-    if (seen.has(error)) {
+  for (let depth = 0; depth < MAX_LAST_ERROR_DEPTH; depth += 1) {
+    if (isErrorRecord(current)) {
+      if (seen.has(current)) {
+        return DEFAULT_EXTERNAL_SERVICE_ERROR;
+      }
+      seen.add(current);
+    }
+
+    const parsed = parseSingleProviderError(current);
+    if (parsed) {
+      return parsed;
+    }
+
+    if (!isErrorRecord(current)) {
       return DEFAULT_EXTERNAL_SERVICE_ERROR;
     }
-    seen.add(error);
+    const lastError = readOwnDataProperty(current, "lastError");
+    if (lastError === undefined) {
+      return DEFAULT_EXTERNAL_SERVICE_ERROR;
+    }
+    current = lastError;
   }
 
+  return DEFAULT_EXTERNAL_SERVICE_ERROR;
+}
+
+function parseSingleProviderError(error: unknown): ParsedProviderError | null {
   const responseBody = extractResponseBody(error);
   if (responseBody) {
     const normalizedResponseBody = responseBody.toLowerCase();
@@ -278,16 +355,6 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
     const parsedError = parseKnownProviderBody(parsedBody);
     if (parsedError) {
       return parsedError;
-    }
-  }
-
-  if (isErrorRecord(error) && "lastError" in error) {
-    const nested = parseProviderErrorInner(error.lastError, seen);
-    if (
-      nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
-      nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
-    ) {
-      return nested;
     }
   }
 
@@ -320,13 +387,16 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
     if (isCreditLimitMessage(normalizedMessage)) {
       return { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits", status: 402 };
     }
-    if (normalizedMessage.includes("overload") || normalizedMessage.includes("capacity")) {
+    if (
+      normalizedMessage.includes("overloaded") || normalizedMessage.includes("overload error") ||
+      isProviderCapacityMessage(normalizedMessage)
+    ) {
       return { code: "OVERLOADED_ERROR", message: "The LLM provider is currently overloaded" };
     }
     if (
       normalizedMessage.includes("rate limit") ||
       normalizedMessage.includes("too many requests") ||
-      normalizedMessage.includes("429")
+      /\b429\b/u.test(normalizedMessage)
     ) {
       return {
         code: "RATE_LIMITED",
@@ -345,5 +415,5 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
     }
   }
 
-  return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  return null;
 }

@@ -209,7 +209,7 @@ export type { AgentCardProps } from "./agent-card.tsx";
 // Markdown
 // ---------------------------------------------------------------------------
 export { Markdown } from "./markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "./markdown.tsx";
+export type { CodeBlockProps, Components, MarkdownProps, PluggableList } from "./markdown.tsx";
 
 // ---------------------------------------------------------------------------
 // Error Boundary

@@ -67,7 +67,7 @@ async function mintTrustedDispatchJws(projectId: string): Promise<string> {
     sub: "rsc-proxy-hydration-test",
     project_id: projectId,
     platform: "browser",
-    body_sha256: "n/a",
+    body_sha256: "a".repeat(43),
     iat: now,
     exp: now + 60,
   };

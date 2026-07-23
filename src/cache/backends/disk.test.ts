@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
@@ -62,10 +62,101 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("nonexistent"), null);
   });
 
+  await t.step("validates constructor paths, keys, values, and TTLs", async () => {
+    assertThrows(() => new DiskCacheBackend("bad\0path"));
+
+    const baseDir = Deno.makeTempDirSync();
+    const backend = new DiskCacheBackend(baseDir, "../../outside");
+    const internalDir = (backend as unknown as { dir: string }).dir;
+    assertEquals(internalDir.startsWith(join(baseDir, "veryfront-files")), true);
+    assertEquals(internalDir.includes(".."), false);
+
+    await assertRejects(() => backend.set("key", "value", -1));
+    await assertRejects(() => backend.set("bad\nkey", "value"));
+  });
+
   await t.step("set and get round-trip", async () => {
     const backend = makeBackend();
     await backend.set("hello", "world");
     assertEquals(await backend.get("hello"), "world");
+  });
+
+  await t.step("set repairs an existing cache directory's permissions", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const baseDir = Deno.makeTempDirSync();
+    const cacheDir = join(baseDir, "veryfront-files");
+    await Deno.mkdir(cacheDir, { recursive: true });
+    await Deno.chmod(cacheDir, 0o777);
+
+    const backend = new DiskCacheBackend(baseDir);
+    await backend.set("permission-test", "value");
+
+    const mode = (await Deno.stat(cacheDir)).mode;
+    assertEquals(mode === null ? null : mode & 0o077, 0);
+  });
+
+  await t.step("refuses generated cache directories that are symbolic links", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const baseDir = Deno.makeTempDirSync();
+    const targetDir = Deno.makeTempDirSync();
+    await Deno.symlink(targetDir, join(baseDir, "veryfront-files"));
+    const backend = new DiskCacheBackend(baseDir);
+
+    await assertRejects(() => backend.set("symlink-test", "value"));
+    assertEquals(Array.from(Deno.readDirSync(targetDir)).length, 0);
+  });
+
+  await t.step("does not follow a cache-directory symlink during reads or deletes", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const baseDir = Deno.makeTempDirSync();
+    const backend = new DiskCacheBackend(baseDir);
+    await backend.set("symlinked-entry", "value");
+    const rootDir = join(baseDir, "veryfront-files");
+    const relocatedDir = join(baseDir, "relocated-cache");
+    await Deno.rename(rootDir, relocatedDir);
+    await Deno.symlink(relocatedDir, rootDir);
+
+    assertEquals(await backend.get("symlinked-entry"), null);
+    await assertRejects(() => backend.del("symlinked-entry"));
+    assertEquals(Array.from(Deno.readDirSync(relocatedDir)).length, 1);
+  });
+
+  await t.step("does not follow symbolic links for cache entry files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const baseDir = Deno.makeTempDirSync();
+    const backend = new DiskCacheBackend(baseDir);
+    const key = "symlinked-file";
+    await backend.set(key, "original");
+    const filePath = (backend as unknown as { filePath: (entryKey: string) => string }).filePath(
+      key,
+    );
+    const externalFile = join(baseDir, "external.json");
+    await Deno.writeTextFile(externalFile, JSON.stringify({ key, value: "poisoned" }));
+    await Deno.remove(filePath);
+    await Deno.symlink(externalFile, filePath);
+
+    assertEquals(await backend.get(key), null);
+  });
+
+  await t.step("restricts both root and namespaced cache directories", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const baseDir = Deno.makeTempDirSync();
+    const backend = new DiskCacheBackend(baseDir, "private-namespace");
+    await backend.set("permission-test", "value");
+
+    const rootDir = join(baseDir, "veryfront-files");
+    const rootMode = (await Deno.stat(rootDir)).mode;
+    assertEquals(rootMode === null ? null : rootMode & 0o077, 0);
+    for await (const entry of Deno.readDir(rootDir)) {
+      if (!entry.isDirectory) continue;
+      const namespaceMode = (await Deno.stat(join(rootDir, entry.name))).mode;
+      assertEquals(namespaceMode === null ? null : namespaceMode & 0o077, 0);
+    }
   });
 
   await t.step("get returns null for invalid cache envelope fields", async () => {
@@ -131,7 +222,7 @@ Deno.test("DiskCacheBackend", async (t) => {
       assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
       assertEquals(
         (debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined)?.key,
-        key,
+        undefined,
       );
     } finally {
       debugCapture.restore();
@@ -284,6 +375,26 @@ Deno.test("DiskCacheBackend", async (t) => {
     const backend = new DiskCacheBackend(emptyDir);
     const deleted = await backend.delByPattern("*");
     assertEquals(deleted, 0);
+  });
+
+  await t.step("keeps the compiled glob cache bounded after an empty pattern", async () => {
+    const backend = makeBackend();
+    await backend.delByPattern("");
+    for (let index = 0; index < 150; index++) {
+      await backend.delByPattern(`pattern-${index}`);
+    }
+
+    const globCache = (backend as unknown as { globCache: Map<string, unknown> }).globCache;
+    assertEquals(globCache.size, 100);
+  });
+
+  await t.step("delete operations propagate non-missing filesystem failures", async () => {
+    const baseFile = join(Deno.makeTempDirSync(), "not-a-directory");
+    await Deno.writeTextFile(baseFile, "file");
+    const backend = new DiskCacheBackend(baseFile);
+
+    await assertRejects(() => backend.del("key"));
+    await assertRejects(() => backend.delByPattern("*"));
   });
 
   await t.step("type property is 'disk'", () => {

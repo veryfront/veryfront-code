@@ -7,38 +7,45 @@
 
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
-import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
-import { VeryfrontError } from "./types.ts";
+import { sanitizeErrorContext, sanitizeErrorText } from "./sanitization.ts";
+import type { ErrorCategory, VeryfrontError } from "./types.ts";
+import { snapshotVeryfrontError } from "./error-snapshot.ts";
 
+/** Sanitized structured error record emitted in production. */
 export interface ErrorLogEntry {
+  /** Fixed error severity. */
   level: "error";
+  /** Stable registered error slug. */
   slug: string;
-  category: string;
+  /** Error category. */
+  category: ErrorCategory;
+  /** Stable error title. */
   title: string;
+  /** Sanitized occurrence detail. */
   detail?: string;
+  /** Sanitized corrective action. */
   suggestion?: string;
+  /** Associated HTTP status. */
   status: number;
+  /** Error documentation URL. */
   docs: string;
+  /** ISO timestamp for the log entry. */
   timestamp: string;
+  /** Sanitized structured context. */
   context?: Record<string, unknown>;
-}
-
-function toContextRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
 }
 
 function mergeContext(
   errorContext: unknown,
   extraContext?: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
-  const baseContext = toContextRecord(errorContext);
+  const baseContext = sanitizeErrorContext(errorContext);
+  const safeExtraContext = sanitizeErrorContext(extraContext);
 
-  if (!baseContext) return extraContext;
-  if (!extraContext) return baseContext;
+  if (!baseContext) return safeExtraContext;
+  if (!safeExtraContext) return baseContext;
 
-  return { ...baseContext, ...extraContext };
+  return { ...baseContext, ...safeExtraContext };
 }
 
 /**
@@ -54,39 +61,64 @@ export function logError(
   error: VeryfrontError,
   context?: Record<string, unknown>,
 ): void {
-  const mergedContext = mergeContext(error.context, context);
+  const snapshot = snapshotVeryfrontError(error);
+  const mergedContext = mergeContext(snapshot.context, context);
   // Redact once and reuse for both the production JSON entry and the dev-mode
   // human-readable dump, so neither path can emit unredacted credentials.
-  const safeContext = redactSensitive(mergedContext);
+  const safeContext = sanitizeErrorContext(mergedContext);
   const entry: ErrorLogEntry = {
     level: "error",
-    slug: error.slug,
-    category: error.category,
-    title: error.title,
-    detail: error.detail,
-    suggestion: error.suggestion,
-    status: error.status,
-    docs: error.getDocsUrl(),
+    slug: snapshot.slug,
+    category: snapshot.category,
+    title: snapshot.title,
+    detail: snapshot.detail,
+    suggestion: snapshot.suggestion,
+    status: snapshot.status,
+    docs: `https://veryfront.com/docs/errors/${snapshot.slug}`,
     timestamp: new Date().toISOString(),
     context: safeContext,
   };
 
   if (isProduction()) {
-    // Direct JSON output — this module owns its own structured format
+    // Direct JSON output. This module owns its own structured format
     // (slug, category, status, docs) which differs from the logger envelope.
-    console.error(JSON.stringify(entry));
+    try {
+      console.error(JSON.stringify(entry));
+    } catch {
+      try {
+        console.error(JSON.stringify({
+          level: "error",
+          slug: snapshot.slug,
+          category: snapshot.category,
+          status: snapshot.status,
+        }));
+      } catch {
+        // Logging failures must not replace the application flow.
+      }
+    }
   } else {
     // Human-readable format for development
-    serverLogger.error(`[ERROR] ${error.slug} (${error.category}) — ${error.title}`);
-    if (error.detail) {
-      serverLogger.error(`  Detail: ${error.detail}`);
+    const safelyEmit = (message: string): void => {
+      try {
+        serverLogger.error(message);
+      } catch {
+        // Logging failures must not replace the application flow.
+      }
+    };
+    safelyEmit(`[ERROR] ${snapshot.slug} (${snapshot.category}): ${entry.title}`);
+    if (entry.detail) {
+      safelyEmit(`  Detail: ${entry.detail}`);
     }
-    if (error.suggestion) {
-      serverLogger.error(`  💡 Suggestion: ${error.suggestion}`);
+    if (entry.suggestion) {
+      safelyEmit(`  💡 Suggestion: ${entry.suggestion}`);
     }
-    serverLogger.error(`  📚 Docs: ${entry.docs}`);
+    safelyEmit(`  📚 Docs: ${entry.docs}`);
     if (safeContext) {
-      serverLogger.error(`  Context: ${JSON.stringify(safeContext, null, 2)}`);
+      try {
+        safelyEmit(`  Context: ${JSON.stringify(safeContext, null, 2)}`);
+      } catch {
+        // Sanitization already fails closed; this covers a hostile runtime serializer.
+      }
     }
   }
 }
@@ -105,9 +137,10 @@ export function logErrorWithMessage(
   error: VeryfrontError,
   context?: Record<string, unknown>,
 ): void {
+  const safeContext = sanitizeErrorContext(context);
   const extendedContext = {
-    ...context,
-    operation: message,
+    ...(safeContext ?? {}),
+    operation: sanitizeErrorText(message, 512),
   };
   logError(error, extendedContext);
 }

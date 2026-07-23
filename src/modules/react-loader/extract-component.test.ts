@@ -27,4 +27,30 @@ describe("modules/react-loader/extract-component", () => {
       "No component exported from empty.tsx",
     );
   });
+
+  it("skips non-component exports when selecting a named export", () => {
+    const Named = () => null;
+    assertEquals(extractComponent({ count: 1, Named }, "test.tsx"), Named);
+  });
+
+  it("rejects truthy values that are not React components", () => {
+    assertThrows(
+      () => extractComponent({ default: { value: true }, count: 1 }, "invalid.tsx"),
+      Error,
+      "No component exported from invalid.tsx",
+    );
+  });
+
+  it("accepts React wrapper component types", () => {
+    const MemoLike = { $$typeof: Symbol.for("react.memo") };
+    assertEquals(extractComponent({ default: MemoLike }, "memo.tsx"), MemoLike);
+  });
+
+  it("does not expose an absolute path in export errors", () => {
+    assertThrows(
+      () => extractComponent({}, "/private/project/components/empty.tsx"),
+      Error,
+      "No component exported from empty.tsx",
+    );
+  });
 });

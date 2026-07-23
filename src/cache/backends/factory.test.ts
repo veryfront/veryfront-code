@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
-import { createCacheBackend, isDiskCacheConfigured, isDistributedBackend } from "./factory.ts";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  createCacheBackend,
+  createDistributedCacheAccessor,
+  isDiskCacheConfigured,
+  isDistributedBackend,
+} from "./factory.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { MemoryCacheBackend } from "./memory.ts";
 
@@ -20,6 +25,45 @@ Deno.test("factory: createCacheBackend with preferredBackend=disk", async () => 
 Deno.test("factory: createCacheBackend with preferredBackend=memory", async () => {
   const backend = await createCacheBackend({ preferredBackend: "memory" });
   assertEquals(backend.type, "memory");
+});
+
+Deno.test("factory: explicit Redis selection does not silently downgrade", async () => {
+  const originalRedisUrl = Deno.env.get("REDIS_URL");
+  Deno.env.delete("REDIS_URL");
+  try {
+    await assertRejects(() => createCacheBackend({ preferredBackend: "redis" }));
+  } finally {
+    if (originalRedisUrl === undefined) Deno.env.delete("REDIS_URL");
+    else Deno.env.set("REDIS_URL", originalRedisUrl);
+  }
+});
+
+Deno.test("factory: rejects malformed and unreadable configuration", async () => {
+  await assertRejects(() =>
+    createCacheBackend(
+      { preferredBackend: "unknown" } as unknown as Parameters<
+        typeof createCacheBackend
+      >[0],
+    )
+  );
+
+  const canary = "PRIVATE_FACTORY_GETTER_CANARY";
+  const hostile = Object.defineProperty({}, "keyPrefix", {
+    get() {
+      throw new Error(canary);
+    },
+  });
+  const error = await assertRejects(() => createCacheBackend(hostile));
+  assertEquals(error instanceof Error && error.message.includes(canary), false);
+});
+
+Deno.test("factory: rejects an invalid distributed accessor name", () => {
+  assertThrows(() =>
+    createDistributedCacheAccessor(
+      async () => new MemoryCacheBackend(),
+      "" as string,
+    )
+  );
 });
 
 Deno.test("factory: isDistributedBackend", async (t) => {

@@ -14,28 +14,33 @@ import type {
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
+import { isCrossProjectImport } from "../../shared/cross-project-import.ts";
 
 const logger = rendererLogger.component("esm");
 
 const unversionedImportsWarned = new Set<string>();
+const MAX_UNVERSIONED_IMPORT_WARNINGS = 10_000;
 
 function hasVersionSpecifier(specifier: string): boolean {
   return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
 }
 
-function warnUnversionedImport(specifier: string, projectId: string): void {
+function warnUnversionedImport(
+  specifier: string,
+  packageName: string,
+  projectId: string,
+): void {
   const key = `${projectId}:${specifier}`;
   if (unversionedImportsWarned.has(key)) return;
 
+  if (unversionedImportsWarned.size >= MAX_UNVERSIONED_IMPORT_WARNINGS) {
+    const oldestKey = unversionedImportsWarned.values().next().value;
+    if (oldestKey !== undefined) unversionedImportsWarned.delete(oldestKey);
+  }
   unversionedImportsWarned.add(key);
 
-  const isScoped = specifier.startsWith("@");
-  const parts = specifier.split("/");
-  const packageName = isScoped ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
-
   logger.warn("Unversioned import may cause reproducibility issues", {
-    import: specifier,
-    projectId,
+    package: packageName,
     suggestion: `Pin version: import '${packageName}@x.y.z'`,
     help: `Run 'npm info ${packageName} version' to find current version`,
   });
@@ -64,7 +69,7 @@ export class BareStrategy implements ImportRewriteStrategy {
       return false;
     }
 
-    return true;
+    return !isCrossProjectImport(specifier) && parseBarePackageSpecifier(specifier) !== null;
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
@@ -82,7 +87,7 @@ export class BareStrategy implements ImportRewriteStrategy {
     if (packageName === "tailwindcss") {
       version = TAILWIND_VERSION;
     } else if (!hasVersionSpecifier(info.specifier)) {
-      warnUnversionedImport(info.specifier, ctx.projectId);
+      warnUnversionedImport(info.specifier, packageName, ctx.projectId);
     }
 
     const url = buildEsmShUrl(packageName, version, subpath, {

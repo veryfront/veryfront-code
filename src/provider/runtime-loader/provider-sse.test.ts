@@ -1,39 +1,56 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { parseSseChunk } from "./provider-sse.ts";
 
 describe("provider/runtime-loader/provider-sse", () => {
-  it("drops malformed events without logging provider payload content", () => {
-    const originalDebug = console.debug;
+  it("rejects an unbounded incomplete event", () => {
+    assertThrows(
+      () => parseSseChunk(`data: ${"x".repeat(4 * 1_024 * 1_024 + 1)}`),
+      RangeError,
+      "SSE event",
+    );
+  });
+
+  it("rejects malformed events without exposing provider payload content", () => {
     const secret = "private-model-output";
     const payload = `{"text":"${secret}"`;
-    let output = "";
-    console.debug = (message: string) => {
-      output = message;
-    };
-    const originalFormat = Deno.env.get("LOG_FORMAT");
-    const originalLevel = Deno.env.get("LOG_LEVEL");
-    Deno.env.set("LOG_FORMAT", "json");
-    Deno.env.set("LOG_LEVEL", "DEBUG");
-    __resetLoggerConfigForTests();
+    const error = assertThrows(
+      () => parseSseChunk(`data: ${payload}\n\n`),
+      SyntaxError,
+      "invalid JSON",
+    );
 
-    try {
-      const parsed = parseSseChunk(`data: ${payload}\n\n`);
-      assertEquals(parsed.events, []);
-      assertEquals(parsed.remainder, "");
-    } finally {
-      console.debug = originalDebug;
-      if (originalFormat === undefined) Deno.env.delete("LOG_FORMAT");
-      else Deno.env.set("LOG_FORMAT", originalFormat);
-      if (originalLevel === undefined) Deno.env.delete("LOG_LEVEL");
-      else Deno.env.set("LOG_LEVEL", originalLevel);
-      __resetLoggerConfigForTests();
-    }
+    assertEquals(error.message.includes(secret), false);
+  });
 
-    assertEquals(output.includes(secret), false);
-    const entry = JSON.parse(output) as LogEntry;
-    assertEquals(entry.context?.payloadLength, payload.length);
-    assertEquals("payload" in (entry.context ?? {}), false);
+  it("can explicitly ignore a malformed event and continue parsing", () => {
+    assertEquals(
+      parseSseChunk('data: {invalid}\n\ndata: {"ok":true}\n\n', {
+        invalidEventPolicy: "ignore",
+      }),
+      { events: [{ ok: true }], remainder: "" },
+    );
+  });
+
+  it("supports carriage-return event separators", () => {
+    assertEquals(parseSseChunk('data: {"ok":true}\r\r'), {
+      events: [{ ok: true }],
+      remainder: "",
+    });
+  });
+
+  it("supports carriage-return line separators inside an event", () => {
+    assertEquals(parseSseChunk('data: {"ok":\rdata: true}\r\r'), {
+      events: [{ ok: true }],
+      remainder: "",
+    });
+  });
+
+  it("bounds the number of events parsed from one chunk", () => {
+    assertThrows(
+      () => parseSseChunk('data: {"ok":true}\n\n'.repeat(4_097)),
+      RangeError,
+      "too many events",
+    );
   });
 });

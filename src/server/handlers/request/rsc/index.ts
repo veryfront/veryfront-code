@@ -21,6 +21,14 @@ import { generateNonce } from "#veryfront/security/http/response/security-handle
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { createProjectCodeUnavailableResponse } from "../../../utils/project-code-isolation.ts";
+
+const REMOTE_SAFE_RSC_ENDPOINTS = new Set(["client.js", "dom.js", "flight_page", "probe"]);
+
+function getRscEndpointKind(endpoint: string): string {
+  const kind = endpoint.split("/", 1)[0] || "root";
+  return /^[a-z][a-z0-9._-]{0,31}$/i.test(kind) ? kind : "unknown";
+}
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -44,6 +52,10 @@ export class RSCHandler extends BaseHandler {
         const isHydrationScript = endpoint === "client.js" || endpoint === "dom.js";
         const isClientModuleEndpoint = endpoint === "module";
         const isDeprecatedEndpoint = endpoint === "flight_page";
+
+        if (ctx.isLocalProject === false && !REMOTE_SAFE_RSC_ENDPOINTS.has(endpoint)) {
+          return this.respond(createProjectCodeUnavailableResponse(req));
+        }
 
         if (
           !isRSCEnabled(ctx.config) &&
@@ -120,7 +132,7 @@ export class RSCHandler extends BaseHandler {
           }),
         );
       },
-      { "rsc.pathname": pathname, "rsc.endpoint": endpoint },
+      { "http.method": req.method, "rsc.endpoint": getRscEndpointKind(endpoint) },
     );
   }
 }

@@ -2,7 +2,10 @@ import { escapeHTML } from "./html-escape.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
+  isValidContentHash,
+  RELEASE_ASSET_CONTENT_TYPES,
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
   RELEASE_MODULE_VERSION_PARAM,
   releaseAssetUrl,
@@ -18,6 +21,16 @@ import {
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
+import {
+  assertBoundedHTMLText,
+  getUTF8ByteLength,
+  MAX_HTML_IMPORT_MAP_BYTES,
+  MAX_HTML_IMPORT_SPECIFIER_BYTES,
+  MAX_HTML_RELEASE_ID_BYTES,
+} from "./limits.ts";
+import { validateCustomImportMap } from "./import-map-validation.ts";
+import { snapshotPlainDataRecord } from "./json-snapshot.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -25,14 +38,17 @@ function joinAttributes(attrs: Array<string | false | undefined | null | "">): s
 
 export function buildRootAttributes(
   slug: string,
-  mode: string,
+  mode: "development" | "production",
   noLayout: boolean,
   ssrHash?: string,
 ): string {
+  if (mode !== "development" && mode !== "production") {
+    throw new TypeError("HTML mode must be development or production");
+  }
   return joinAttributes([
     'id="root"',
     `data-veryfront-slug="${escapeHTML(slug || "")}"`,
-    `data-veryfront-mode="${escapeHTML(mode || "production")}"`,
+    `data-veryfront-mode="${escapeHTML(mode)}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
     ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,
   ]);
@@ -44,7 +60,6 @@ interface DetectedVersions {
 }
 
 interface CachedImportMapEntry {
-  cacheKey: string;
   imports: Record<string, string>;
   json: string;
 }
@@ -66,6 +81,17 @@ const DEFAULT_VERSIONS: DetectedVersions = {
  * limit.
  */
 const IMPORT_MAP_CACHE_MAX_ENTRIES = 256;
+const MAX_MANIFEST_DEPENDENCIES = 10_000;
+const MAX_RELEASE_MANIFEST_FIELDS = 256;
+const MAX_RELEASE_DEPENDENCY_ENTRY_FIELDS = 16;
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
+}
 
 const importMapJsonCache = new LRUCache<string, CachedImportMapEntry>({
   maxEntries: IMPORT_MAP_CACHE_MAX_ENTRIES,
@@ -112,10 +138,10 @@ const AI_MODULE_UTILITIES: Record<string, string> = {
   "veryfront/workflow": PLATFORM_UTILITY_PATHS.workflow,
 };
 
-export const PLATFORM_UTILITIES: Record<string, string> = {
+export const PLATFORM_UTILITIES: Readonly<Record<string, string>> = Object.freeze({
   ...CORE_PLATFORM_UTILITIES,
   ...AI_MODULE_UTILITIES,
-};
+});
 
 interface CdnUrlTemplates {
   react: (version: string) => string;
@@ -240,7 +266,11 @@ function getCdnImportMap(
   versions: DetectedVersions,
   provider: CdnProvider = "esm.sh",
 ): Record<string, string> {
-  return (CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap)(versions);
+  const factory = CDN_IMPORT_MAP_FACTORIES[provider];
+  if (!factory) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Unsupported import-map CDN provider" });
+  }
+  return factory(versions);
 }
 
 async function resolveVersions(
@@ -278,7 +308,13 @@ interface BuildImportMapOptions {
 }
 
 function stringifyImportMap(imports: Record<string, string>, pretty = true): string {
-  return jsonForInlineScript({ imports }, pretty ? 2 : undefined);
+  const json = jsonForInlineScript({ imports }, pretty ? 2 : undefined);
+  if (getUTF8ByteLength(json) > MAX_HTML_IMPORT_MAP_BYTES) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Import map exceeds the aggregate byte budget",
+    });
+  }
+  return json;
 }
 
 function stableMapKey(imports?: Record<string, string>): string {
@@ -287,17 +323,92 @@ function stableMapKey(imports?: Record<string, string>): string {
     : "";
 }
 
-function stableManifestDependencyKey(manifest?: ReleaseAssetManifest | null): string {
-  return manifest
+interface ReleaseManifestImportContext {
+  releaseId?: string;
+  dependencies: Array<[string, { contentHash: string }]>;
+}
+
+function snapshotReleaseManifest(
+  manifest: ReleaseAssetManifest | null | undefined,
+  includeDependencies: boolean,
+): ReleaseManifestImportContext | null {
+  if (!manifest) return null;
+  const manifestSnapshot = snapshotPlainDataRecord(
+    manifest,
+    "Release manifest",
+    MAX_RELEASE_MANIFEST_FIELDS,
+  );
+  const releaseId = manifestSnapshot.releaseId;
+  if (releaseId !== undefined && typeof releaseId !== "string") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Release manifest ID must be a string" });
+  }
+  if (typeof releaseId === "string") {
+    assertBoundedHTMLText(releaseId, "HTML release ID", MAX_HTML_RELEASE_ID_BYTES, {
+      allowEmpty: true,
+    });
+  }
+
+  return {
+    releaseId,
+    dependencies: includeDependencies
+      ? collectManifestDependencies(manifestSnapshot.dependencies)
+      : [],
+  };
+}
+
+function stableManifestDependencyKey(context: ReleaseManifestImportContext | null): string {
+  return context
     ? JSON.stringify({
-      assetBasePath: manifest.assetBasePath,
-      releaseId: manifest.releaseId,
-      manifestVersion: manifest.manifestVersion,
-      dependencies: Object.entries(manifest.dependencies)
+      releaseId: context.releaseId,
+      dependencies: context.dependencies
         .map(([specifier, entry]) => [specifier, entry.contentHash])
         .sort(([a], [b]) => String(a).localeCompare(String(b))),
     })
     : "";
+}
+
+function collectManifestDependencies(
+  value: unknown,
+): Array<[string, { contentHash: string }]> {
+  const dependenciesSnapshot = snapshotPlainDataRecord(
+    value,
+    "Release manifest dependency collection",
+    MAX_MANIFEST_DEPENDENCIES,
+  );
+  const specifiers = Object.keys(dependenciesSnapshot);
+
+  const dependencies: Array<[string, { contentHash: string }]> = [];
+  for (const specifier of specifiers) {
+    if (
+      specifier.length === 0 ||
+      getUTF8ByteLength(specifier) > MAX_HTML_IMPORT_SPECIFIER_BYTES ||
+      hasControlCharacter(specifier)
+    ) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "Release manifest dependency specifier is invalid",
+      });
+    }
+    const entry = snapshotPlainDataRecord(
+      dependenciesSnapshot[specifier],
+      "Release manifest dependency entry",
+      MAX_RELEASE_DEPENDENCY_ENTRY_FIELDS,
+    );
+    const contentHash = entry.contentHash;
+    const size = entry.size;
+    const contentType = entry.contentType;
+    if (
+      typeof contentHash !== "string" || !isValidContentHash(contentHash) ||
+      !Number.isSafeInteger(size) || (size as number) < 0 ||
+      (size as number) > RELEASE_ASSET_MAX_SIZE_BYTES ||
+      contentType !== RELEASE_ASSET_CONTENT_TYPES.js
+    ) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "Release manifest dependency entry is invalid",
+      });
+    }
+    dependencies.push([specifier, { contentHash }]);
+  }
+  return dependencies;
 }
 
 function canonicalDependencyUrl(value: string): string {
@@ -321,13 +432,13 @@ function canonicalDependencyUrl(value: string): string {
 
 function applyManifestDependencies(
   imports: Record<string, string>,
-  manifest?: ReleaseAssetManifest | null,
+  context: ReleaseManifestImportContext | null,
+  enabled: boolean,
 ): Record<string, string> {
-  if (!manifest) return imports;
-  if (getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) !== "1") return imports;
+  if (!context || !enabled) return imports;
 
   const dependencyAssets = new Map<string, string>();
-  for (const [specifier, entry] of Object.entries(manifest.dependencies)) {
+  for (const [specifier, entry] of context.dependencies) {
     const assetUrl = releaseAssetUrl(entry.contentHash, "js");
     dependencyAssets.set(specifier, assetUrl);
     dependencyAssets.set(canonicalDependencyUrl(specifier), assetUrl);
@@ -355,6 +466,7 @@ function shouldVersionReleaseModuleImportMapUrl(value: string): boolean {
 
 function appendReleaseModuleVersion(value: string, releaseId: string): string {
   if (!shouldVersionReleaseModuleImportMapUrl(value)) return value;
+  assertBoundedHTMLText(releaseId, "HTML release ID", MAX_HTML_RELEASE_ID_BYTES);
 
   const url = new URL(value, "https://veryfront.local");
   url.searchParams.set(RELEASE_MODULE_VERSION_PARAM, releaseId);
@@ -364,14 +476,15 @@ function appendReleaseModuleVersion(value: string, releaseId: string): string {
 
 function applyReleaseModuleVersions(
   imports: Record<string, string>,
-  manifest?: ReleaseAssetManifest | null,
+  context: ReleaseManifestImportContext | null,
 ): Record<string, string> {
-  if (!manifest?.releaseId) return imports;
+  const releaseId = context?.releaseId;
+  if (!releaseId) return imports;
 
   return Object.fromEntries(
     Object.entries(imports).map(([specifier, url]) => [
       specifier,
-      appendReleaseModuleVersion(url, manifest.releaseId),
+      appendReleaseModuleVersion(url, releaseId),
     ]),
   );
 }
@@ -390,15 +503,35 @@ export async function buildImportMap(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<BuiltImportMap> {
   if (options && isImportMapOnlyOptions(options)) {
-    const imports = { ...options };
+    const imports = validateCustomImportMap(options);
     if (Object.keys(imports).length > 0) {
       return { imports, json: stringifyImportMap(imports) };
     }
   }
 
-  const { projectDir, config, customImports, pretty = true, releaseAssetManifest } =
-    (options ?? {}) as BuildImportMapOptions;
+  const {
+    projectDir,
+    config,
+    customImports: rawCustomImports,
+    pretty = true,
+    releaseAssetManifest,
+  } = (options ?? {}) as BuildImportMapOptions;
+  if (typeof pretty !== "boolean") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Import-map pretty option must be boolean" });
+  }
   const mode = config?.client?.moduleResolution ?? "cdn";
+  if (mode !== "cdn" && mode !== "self-hosted" && mode !== "bundled") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Unsupported module resolution mode" });
+  }
+  const customImports = rawCustomImports === undefined
+    ? undefined
+    : validateCustomImportMap(rawCustomImports);
+  const dependencyImportMapEnabled =
+    getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1";
+  const releaseManifestContext = snapshotReleaseManifest(
+    releaseAssetManifest,
+    dependencyImportMapEnabled,
+  );
   const versions = projectDir || config
     ? await resolveVersions(projectDir, config)
     : DEFAULT_VERSIONS;
@@ -412,8 +545,12 @@ export async function buildImportMap(
       "react/jsx-runtime": reactTemplates.jsxRuntime(versions.react),
       "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(versions.react),
     };
-    imports = applyManifestDependencies(imports, releaseAssetManifest);
-    imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
+    imports = applyManifestDependencies(
+      imports,
+      releaseManifestContext,
+      dependencyImportMapEnabled,
+    );
+    imports = applyReleaseModuleVersions(imports, releaseManifestContext);
     imports = { ...imports, ...customImports };
 
     return { imports, json: stringifyImportMap(imports, pretty) };
@@ -430,8 +567,12 @@ export async function buildImportMap(
   }
 
   imports["@/"] = "/_vf_modules/";
-  imports = applyManifestDependencies(imports, releaseAssetManifest);
-  imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
+  imports = applyManifestDependencies(
+    imports,
+    releaseManifestContext,
+    dependencyImportMapEnabled,
+  );
+  imports = applyReleaseModuleVersions(imports, releaseManifestContext);
 
   if (customImports) {
     imports = { ...imports, ...customImports };
@@ -445,16 +586,15 @@ export async function buildImportMap(
     veryfront: versions.veryfront,
     pretty,
     customImports: stableMapKey(customImports),
-    dependencyImportMapEnabled: getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG) === "1",
-    manifestDependencies: stableManifestDependencyKey(releaseAssetManifest),
+    dependencyImportMapEnabled,
+    manifestDependencies: stableManifestDependencyKey(releaseManifestContext),
   });
   const cached = importMapJsonCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) return { imports: { ...cached.imports }, json: cached.json };
 
   const json = stringifyImportMap(imports, pretty);
-  const built = { cacheKey, imports, json };
-  importMapJsonCache.set(cacheKey, built);
-  return built;
+  importMapJsonCache.set(cacheKey, { imports: { ...imports }, json });
+  return { imports, json };
 }
 
 export async function buildImportMapJson(
@@ -468,5 +608,7 @@ export function clearImportMapCache(): void {
 }
 
 export function shouldDisableLayout(frontmatter?: Record<string, unknown>): boolean {
-  return frontmatter?.layout === false || frontmatter?.layout === "false";
+  if (frontmatter === undefined) return false;
+  const snapshot = snapshotPlainDataRecord(frontmatter, "HTML frontmatter");
+  return snapshot.layout === false || snapshot.layout === "false";
 }

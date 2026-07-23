@@ -59,6 +59,20 @@ describe("fixedWindowStrategy", () => {
     });
   });
 
+  it("bounds retained timestamps after repeated denied requests", async () => {
+    const store = new MemoryRateLimitStore();
+    try {
+      const config = { maxRequests: 3, windowMs: 60_000 };
+      for (let index = 0; index < 100; index++) {
+        await slidingWindowStrategy("bounded", config, store);
+      }
+
+      assertEquals(store.getState("bounded")?.requestTimestamps?.length, 4);
+    } finally {
+      store.destroy();
+    }
+  });
+
   it("should provide a reset time in the future", async () => {
     await withStore(async (store) => {
       const config = createConfig();
@@ -67,6 +81,17 @@ describe("fixedWindowStrategy", () => {
       const result = await fixedWindowStrategy("key", config, store);
 
       assertEquals(result.resetTime >= before, true);
+    });
+  });
+
+  it("keeps the reset boundary stable within a fixed window", async () => {
+    await withStore(async (store) => {
+      const config = createConfig({ windowMs: 1_000 });
+      const first = await fixedWindowStrategy("key", config, store);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const second = await fixedWindowStrategy("key", config, store);
+
+      assertEquals(second.resetTime, first.resetTime);
     });
   });
 

@@ -10,6 +10,7 @@ export interface NavigationCallbacks {
 }
 
 const MAX_SCROLL_POSITIONS = 100;
+const MAX_PENDING_PREFETCHES = 100;
 
 export class NavigationHandlers {
   private prefetchQueue = new Set<string>();
@@ -29,6 +30,10 @@ export class NavigationHandlers {
 
   createClickHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
+      if (
+        event.defaultPrevented || (event.button !== undefined && event.button !== 0) ||
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+      ) return;
       if (!(event.target instanceof HTMLElement)) return;
 
       const anchor = findAnchorElement(event.target);
@@ -38,7 +43,11 @@ export class NavigationHandlers {
       if (!href) return;
 
       event.preventDefault();
-      callbacks.onNavigate(href);
+      void callbacks.onNavigate(href).catch((error) => {
+        logger.error("client navigation failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      });
     };
   }
 
@@ -46,34 +55,47 @@ export class NavigationHandlers {
     return (_event: PopStateEvent) => {
       this.isPopStateNav = true;
       const { pathname, search, hash } = globalThis.location;
-      callbacks.onNavigate(`${pathname}${search}${hash}`);
+      void callbacks.onNavigate(`${pathname}${search}${hash}`).catch((error) => {
+        logger.error("popstate navigation failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      });
     };
   }
 
   createMouseOverHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
       if (!(event.target instanceof HTMLElement)) return;
-      if (event.target.tagName !== "A") return;
+      const anchor = findAnchorElement(event.target);
+      if (!anchor || !isInternalLink(anchor)) return;
 
-      const href = event.target.getAttribute("href");
-      if (!href || href.startsWith("http") || href.startsWith("#")) return;
+      const href = anchor.getAttribute("href");
+      if (!href) return;
 
-      if (!this.shouldPrefetchOnHover(event.target)) return;
+      if (!this.shouldPrefetchOnHover(anchor)) return;
       if (this.prefetchQueue.has(href)) return;
+      if (this.pendingTimeouts.size >= MAX_PENDING_PREFETCHES) return;
 
       this.prefetchQueue.add(href);
 
       const timeoutId = setTimeout(() => {
-        callbacks.onPrefetch(href);
-        this.prefetchQueue.delete(href);
-        this.pendingTimeouts.delete(href);
+        try {
+          callbacks.onPrefetch(href);
+        } catch (error) {
+          logger.warn("client prefetch callback failed", {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        } finally {
+          this.prefetchQueue.delete(href);
+          this.pendingTimeouts.delete(href);
+        }
       }, this.prefetchDelay);
 
       this.pendingTimeouts.set(href, timeoutId);
     };
   }
 
-  private shouldPrefetchOnHover(target: HTMLElement): boolean {
+  private shouldPrefetchOnHover(target: HTMLAnchorElement): boolean {
     const prefetchAttribute = target.getAttribute("data-prefetch");
     if (prefetchAttribute === "false") return false;
     if (prefetchAttribute === "true") return true;
@@ -82,7 +104,7 @@ export class NavigationHandlers {
 
   saveScrollPosition(path: string): void {
     try {
-      if (this.scrollPositions.size >= MAX_SCROLL_POSITIONS) {
+      if (!this.scrollPositions.has(path) && this.scrollPositions.size >= MAX_SCROLL_POSITIONS) {
         const oldest = this.scrollPositions.keys().next().value;
         if (oldest) this.scrollPositions.delete(oldest);
       }
@@ -96,14 +118,16 @@ export class NavigationHandlers {
 
       this.scrollPositions.set(path, scrollY);
     } catch (error) {
-      logger.warn("failed to record scroll position", error);
+      logger.warn("failed to record scroll position", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
   getScrollPosition(path: string): number {
     const position = this.scrollPositions.get(path);
     if (position === undefined) {
-      logger.debug(`No scroll position stored for ${path}`);
+      logger.debug("No scroll position stored for navigation target");
       return 0;
     }
     return position;

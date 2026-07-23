@@ -3,22 +3,30 @@ import { getTraceContext } from "./tracing.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { PROXY_RUNTIME_VERSION } from "./version.ts";
 
-// NOTE: Formatting utilities are INLINED below instead of imported from ../utils/logger/core.ts
-// because the proxy Docker build only copies src/proxy/ and has no access to src/utils/.
-// Keep these in sync with src/utils/logger/core.ts if changes are needed.
+// Formatting is local because the proxy image only contains src/proxy/. Keep
+// general presentation consistent with the shared logger while retaining the
+// proxy-specific bounded redaction applied below.
 
 /**
  * Request context for proxy logging.
  * Stored in AsyncLocalStorage to propagate through the call stack.
  */
-interface ProxyRequestContext {
+export interface ProxyRequestContext {
+  /** Unique request identifier. */
   requestId: string;
+  /** Resolved project slug. */
   projectSlug?: string;
+  /** Resolved project identifier. */
   projectId?: string;
+  /** Resolved release identifier. */
   releaseId?: string;
+  /** Resolved branch identifier. */
   branchId?: string;
+  /** Resolved branch name. */
   branchName?: string;
+  /** Public request domain. */
   domain?: string;
+  /** Resolved runtime environment. */
   environment?: string;
 }
 
@@ -42,6 +50,7 @@ function getProxyRequestContext(): ProxyRequestContext | undefined {
   return requestContextStore.getStore();
 }
 
+/** Supported proxy log severity levels. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
@@ -68,6 +77,25 @@ const MIN_LOG_LEVEL: LogLevel = (() => {
 
 const TAG_WIDTH = 10;
 const PREFIX_WIDTH = 23; // timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1)
+const REDACTED = "[REDACTED]";
+const MAX_LOG_MESSAGE_LENGTH = 8_192;
+const MAX_LOG_ERROR_STACK_LENGTH = 32_768;
+const MAX_LOG_CONTEXT_DEPTH = 8;
+const MAX_LOG_CONTEXT_NODES = 2_000;
+const SENSITIVE_KEY_PARTS = [
+  "password",
+  "passwd",
+  "secret",
+  "token",
+  "authorization",
+  "cookie",
+  "credential",
+  "apikey",
+  "privatekey",
+  "clientsecret",
+  "sessionid",
+  "signature",
+] as const;
 
 const LEVEL_GLYPHS: Record<LogLevel, string> = {
   debug: "·",
@@ -117,10 +145,101 @@ function truncateText(value: string, maxLength = 80): string {
   return `${value.slice(0, maxLength - 1)}…`;
 }
 
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return SENSITIVE_KEY_PARTS.some((part) => normalized.includes(part));
+}
+
+function isErrorDetailKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized === "error" || normalized === "err" || normalized === "reason" ||
+    normalized === "stack";
+}
+
+function sanitizeLogText(value: string): string {
+  let sanitized = value.length > MAX_LOG_ERROR_STACK_LENGTH
+    ? `${value.slice(0, MAX_LOG_ERROR_STACK_LENGTH)}[TRUNCATED]`
+    : value;
+  sanitized = sanitized.replace(
+    /\b([a-z][a-z0-9+.-]*:\/\/)([^@\s/]+)@/gi,
+    `$1${REDACTED}@`,
+  );
+  sanitized = sanitized.replace(
+    /([?&#](?:access_token|refresh_token|token|api_key|apikey|key|code|signature|sig)=)[^&#\s]*/gi,
+    `$1${REDACTED}`,
+  );
+  sanitized = sanitized.replace(
+    /\b((?:proxy-)?authorization)([ \t]*[:=][ \t]*)([^\r\n]*)/gi,
+    `$1$2${REDACTED}`,
+  );
+  sanitized = sanitized.replace(
+    /\b(set-cookie|cookie)([ \t]*[:=][ \t]*)([^\r\n]*)/gi,
+    `$1$2${REDACTED}`,
+  );
+  sanitized = sanitized.replace(
+    /\b(password|passwd|secret|client_secret|access_token|refresh_token|api_key|apikey|token|signature)(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&]+)/gi,
+    `$1$2${REDACTED}`,
+  );
+  return sanitized;
+}
+
+function sanitizeErrorText(value: string): string {
+  return sanitizeLogText(value)
+    .replace(/(?:file:\/\/)?\/(?:Users|home|var\/folders|tmp)\/[^\s)]+/gi, "[LOCAL_PATH]")
+    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?\b/gi, "[HOST]")
+    .replace(/\b(?:localhost|[a-z0-9][a-z0-9-]*):\d{1,5}\b/gi, "[HOST]");
+}
+
+function sanitizeLogValue(
+  value: unknown,
+  depth = 0,
+  seen = new Set<object>(),
+  budget = { remaining: MAX_LOG_CONTEXT_NODES },
+): unknown {
+  if (typeof value === "string") return sanitizeLogText(value);
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "bigint") return String(value);
+  if (value === undefined) return undefined;
+  if (typeof value !== "object") return REDACTED;
+  if (depth >= MAX_LOG_CONTEXT_DEPTH || budget.remaining-- <= 0 || seen.has(value)) {
+    return REDACTED;
+  }
+  seen.add(value);
+
+  try {
+    if (value instanceof Date) {
+      return Number.isNaN(value.valueOf()) ? REDACTED : value.toISOString();
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => sanitizeLogValue(item, depth + 1, seen, budget));
+    }
+
+    const sanitized: Record<string, unknown> = Object.create(null);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) continue;
+      if (!("value" in descriptor) || isSensitiveKey(key)) {
+        sanitized[key] = REDACTED;
+        continue;
+      }
+      if (isErrorDetailKey(key) && typeof descriptor.value === "string") {
+        sanitized[key] = sanitizeErrorText(descriptor.value);
+        continue;
+      }
+      sanitized[key] = sanitizeLogValue(descriptor.value, depth + 1, seen, budget);
+    }
+    return sanitized;
+  } catch {
+    return REDACTED;
+  } finally {
+    seen.delete(value);
+  }
+}
+
 function formatValue(value: unknown): string {
   if (typeof value === "string") {
     const trimmed = normalizeText(value);
-    return /\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed;
+    return truncateText(/\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed, 1_024);
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (value === null) return "null";
@@ -155,15 +274,31 @@ function serializeError(error: unknown): SerializedError | undefined {
   if (error == null) return undefined;
 
   if (error instanceof Error) {
-    const serialized: SerializedError = {
-      name: error.name,
-      message: error.message,
-    };
-    if (error.stack) serialized.stack = error.stack;
-    return serialized;
+    try {
+      const serialized: SerializedError = {
+        name: truncateText(sanitizeErrorText(String(error.name)), 128),
+        message: truncateText(sanitizeErrorText(String(error.message)), MAX_LOG_MESSAGE_LENGTH),
+      };
+      if (MIN_LOG_LEVEL === "debug" && error.stack) {
+        serialized.stack = truncateText(
+          sanitizeErrorText(String(error.stack)),
+          MAX_LOG_ERROR_STACK_LENGTH,
+        );
+      }
+      return serialized;
+    } catch {
+      return { name: "Error", message: "Error details unavailable" };
+    }
   }
 
-  return { name: "UnknownError", message: String(error) };
+  try {
+    return {
+      name: "UnknownError",
+      message: truncateText(sanitizeErrorText(String(error)), MAX_LOG_MESSAGE_LENGTH),
+    };
+  } catch {
+    return { name: "UnknownError", message: "Error details unavailable" };
+  }
 }
 
 function formatContextText(
@@ -186,6 +321,14 @@ function formatContextText(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeLogContext(
+  context: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!context) return undefined;
+  const sanitized = sanitizeLogValue(context);
+  return isRecord(sanitized) ? sanitized : { redacted: true };
 }
 
 // ============================================================================
@@ -276,36 +419,46 @@ class ProxyLogger {
   ): void {
     if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[MIN_LOG_LEVEL]) return;
 
+    const safeMessage = truncateText(
+      normalizeText(sanitizeLogText(message)),
+      MAX_LOG_MESSAGE_LENGTH,
+    );
+    const safeContext = sanitizeLogContext(context);
+    const safeError = serializeError(error);
+
     if (this.format !== "json") {
-      console.log(formatTextLine(level, message, context, serializeError(error)));
+      console.log(formatTextLine(level, safeMessage, safeContext, safeError));
       return;
     }
 
     const traceCtx = getTraceContext();
     const reqCtx = getProxyRequestContext();
+    const sanitizedReqCtx = reqCtx ? sanitizeLogValue(reqCtx) : undefined;
+    const safeReqCtx = isRecord(sanitizedReqCtx)
+      ? sanitizedReqCtx as unknown as ProxyRequestContext
+      : undefined;
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       service: "proxy",
       veryfrontVersion: PROXY_RUNTIME_VERSION,
-      message,
+      message: safeMessage,
       ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
       // Include request context fields at top level (like renderer logs)
-      ...(reqCtx?.requestId && { requestId: reqCtx.requestId }),
-      ...(reqCtx?.projectSlug && { projectSlug: reqCtx.projectSlug }),
-      ...(reqCtx?.projectId && { projectId: reqCtx.projectId }),
-      ...(reqCtx?.releaseId && { releaseId: reqCtx.releaseId }),
-      ...(reqCtx?.branchId && { branchId: reqCtx.branchId }),
-      ...(reqCtx?.branchName && { branchName: reqCtx.branchName }),
-      ...(reqCtx?.domain && { domain: reqCtx.domain }),
-      ...(reqCtx?.environment && { environment: reqCtx.environment }),
+      ...(safeReqCtx?.requestId && { requestId: safeReqCtx.requestId }),
+      ...(safeReqCtx?.projectSlug && { projectSlug: safeReqCtx.projectSlug }),
+      ...(safeReqCtx?.projectId && { projectId: safeReqCtx.projectId }),
+      ...(safeReqCtx?.releaseId && { releaseId: safeReqCtx.releaseId }),
+      ...(safeReqCtx?.branchId && { branchId: safeReqCtx.branchId }),
+      ...(safeReqCtx?.branchName && { branchName: safeReqCtx.branchName }),
+      ...(safeReqCtx?.domain && { domain: safeReqCtx.domain }),
+      ...(safeReqCtx?.environment && { environment: safeReqCtx.environment }),
     };
 
-    if (context && Object.keys(context).length > 0) entry.context = context;
+    if (safeContext && Object.keys(safeContext).length > 0) entry.context = safeContext;
 
-    const serializedError = serializeError(error);
-    if (serializedError) entry.error = serializedError;
+    if (safeError) entry.error = safeError;
 
     console.log(JSON.stringify(entry));
   }
@@ -330,16 +483,18 @@ class ProxyLogger {
     error?: unknown,
   ): void {
     if (error !== undefined) {
-      this.log("error", message, contextOrError as Record<string, unknown>, error);
+      this.log("error", message, isRecord(contextOrError) ? contextOrError : undefined, error);
       return;
     }
 
-    if (contextOrError instanceof Error) {
+    if (
+      contextOrError instanceof Error || (contextOrError !== undefined && !isRecord(contextOrError))
+    ) {
       this.log("error", message, undefined, contextOrError);
       return;
     }
 
-    this.log("error", message, contextOrError as Record<string, unknown>);
+    this.log("error", message, contextOrError);
   }
 
   /**
@@ -380,11 +535,17 @@ class ChildProxyLogger {
     error?: unknown,
   ): void {
     if (error !== undefined) {
-      this.parent.error(message, this.merge(contextOrError as Record<string, unknown>), error);
+      this.parent.error(
+        message,
+        isRecord(contextOrError) ? this.merge(contextOrError) : this.boundContext,
+        error,
+      );
       return;
     }
 
-    if (contextOrError instanceof Error) {
+    if (
+      contextOrError instanceof Error || (contextOrError !== undefined && !isRecord(contextOrError))
+    ) {
       this.parent.error(message, this.boundContext, contextOrError);
       return;
     }
@@ -394,7 +555,7 @@ class ChildProxyLogger {
       return;
     }
 
-    this.parent.error(message, this.merge(contextOrError as Record<string, unknown>));
+    this.parent.error(message, this.boundContext);
   }
 
   child(context: Record<string, unknown>): ChildProxyLogger {
@@ -402,4 +563,5 @@ class ChildProxyLogger {
   }
 }
 
+/** Process-wide structured proxy logger. */
 export const proxyLogger = new ProxyLogger();

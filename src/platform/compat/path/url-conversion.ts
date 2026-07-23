@@ -1,57 +1,42 @@
-import { hasNodePath, isDeno } from "./runtime.ts";
 import { isAbsolute, resolve } from "./resolution.ts";
-
-type GlobalWithRequire = typeof globalThis & {
-  require?: (specifier: string) => { fileURLToPath?: (url: string | URL) => string };
-  Deno?: { cwd?: () => string; build?: { os?: string } };
-};
-
-let _fileURLToPath: ((url: string | URL) => string) | null = null;
-
-function getFileURLToPath(): ((url: string | URL) => string) | null {
-  if (_fileURLToPath) return _fileURLToPath;
-  if (!hasNodePath) return null;
-
-  try {
-    const nodeUrl = (globalThis as GlobalWithRequire).require?.("node:url");
-    const fileURLToPath = nodeUrl?.fileURLToPath;
-
-    if (!fileURLToPath) return null;
-
-    _fileURLToPath = fileURLToPath;
-    return _fileURLToPath;
-  } catch (_) {
-    /* expected: node:url require may fail in non-Node runtimes */
-    return null;
-  }
-}
+import { canonicalizeSeparators, normalizeCanonicalPath } from "./internals.ts";
 
 export function fromFileUrl(url: string | URL): string {
-  const fileURLToPath = getFileURLToPath();
-  if (fileURLToPath) return fileURLToPath(url);
-
-  const urlString = typeof url === "string" ? url : url.toString();
-
-  if (isDeno) {
-    const g = globalThis as GlobalWithRequire;
-    const hasCwd = Boolean(g.Deno?.cwd);
-    const isWindows = g.Deno?.build?.os === "windows";
-
-    if (hasCwd && isWindows) {
-      return decodeURIComponent(urlString.slice(8).replace(/\//g, "\\"));
-    }
-
-    return decodeURIComponent(urlString.slice(7));
-  }
-
-  if (!urlString.startsWith("file://")) {
+  const parsed = url instanceof URL ? url : new URL(url);
+  if (parsed.protocol !== "file:") {
     throw new TypeError("Must be a file URL");
   }
+  if (/%2f|%5c/i.test(parsed.pathname)) {
+    throw new TypeError("File URL path must not contain encoded separators");
+  }
 
-  return decodeURIComponent(urlString.slice(7));
+  let path: string;
+  try {
+    path = decodeURIComponent(parsed.pathname);
+  } catch {
+    throw new TypeError("File URL path contains invalid percent encoding");
+  }
+
+  if (parsed.hostname && parsed.hostname !== "localhost") {
+    return normalizeCanonicalPath(`//${parsed.hostname}${path}`);
+  }
+  if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+  return canonicalizeSeparators(path);
 }
 
 export function toFileUrl(path: string): URL {
-  const absolute = hasNodePath ? path : isAbsolute(path) ? path : resolve(path);
-  return new URL(`file://${absolute}`);
+  const absolute = normalizeCanonicalPath(isAbsolute(path) ? path : resolve(path));
+  const encodedPath = absolute.replace(/%/g, "%25");
+
+  if (encodedPath.startsWith("//")) {
+    const [hostname, ...segments] = encodedPath.slice(2).split("/");
+    const result = new URL("file:///");
+    result.hostname = hostname ?? "";
+    result.pathname = `/${segments.join("/")}`;
+    return result;
+  }
+
+  const result = new URL("file:///");
+  result.pathname = /^[A-Za-z]:\//.test(encodedPath) ? `/${encodedPath}` : encodedPath;
+  return result;
 }

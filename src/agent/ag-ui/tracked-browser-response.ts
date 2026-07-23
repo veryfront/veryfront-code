@@ -13,7 +13,9 @@ export interface CreateAgUiTrackedBrowserResponseInput<TChunk> extends
     CreateAgUiRuntimeBrowserResponseInput<TChunk, null>,
     "encoder" | "initialState" | "onChunk" | "getFinalResponse"
   > {
+  /** Chunk encoder value. */
   chunkEncoder: Pick<AgUiChunkEncoderBridge<TChunk>, "encode" | "finalize">;
+  /** Finalize tracker value. */
   finalizeTracker: Pick<
     AgUiBrowserFinalizeTracker<TChunk>,
     "observeChunk" | "observeEncodedEvents" | "getFinalResponse"

@@ -49,6 +49,19 @@ describe("react-paths", () => {
       const paths2 = getLocalReactPaths();
       assertEquals(paths1, paths2);
     });
+
+    it("returns an immutable mapping so callers cannot poison the cache", () => {
+      const paths = getLocalReactPaths();
+      assertEquals(Object.isFrozen(paths), true);
+      const originalReactPath = paths.react;
+
+      try {
+        paths.react = "file:///PRIVATE_OVERRIDE";
+      } catch {
+        // Frozen records can throw in strict mode.
+      }
+      assertEquals(getLocalReactPaths().react, originalReactPath);
+    });
   });
 
   describe("clearReactPathsCache", () => {

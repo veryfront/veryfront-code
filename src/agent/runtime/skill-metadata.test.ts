@@ -32,6 +32,62 @@ Deno.test("parseRuntimeSkillMetadata returns empty metadata for empty content", 
   assertEquals(metadata.name, undefined);
 });
 
+Deno.test("parseRuntimeSkillMetadata preserves absent and explicit empty allowed-tools policies", () => {
+  const absent = parseRuntimeSkillMetadata(`---
+name: Unrestricted
+---
+Body`);
+  const emptyString = parseRuntimeSkillMetadata(`---
+allowed-tools: ""
+---
+Body`);
+  const emptyArray = parseRuntimeSkillMetadata(`---
+allowed-tools: []
+---
+Body`);
+
+  assertEquals(absent?.allowedTools, undefined);
+  assertEquals(emptyString?.allowedTools, []);
+  assertEquals(emptyArray?.allowedTools, []);
+});
+
+Deno.test("parseRuntimeSkillMetadata rejects ambiguous allowed-tools aliases", () => {
+  const errors: Array<Record<string, unknown> | undefined> = [];
+  const metadata = parseRuntimeSkillMetadata(
+    `---
+allowed-tools: read_file
+allowed_tools: write_file
+---
+Body`,
+    {
+      logger: {
+        error: (_message, details) => errors.push(details),
+      },
+    },
+  );
+
+  assertEquals(metadata, null);
+  assertEquals(errors.length, 1);
+});
+
+Deno.test("parseRuntimeSkillMetadata rejects invalid allowed-tools patterns", () => {
+  const errors: Array<Record<string, unknown> | undefined> = [];
+  const metadata = parseRuntimeSkillMetadata(
+    `---
+allowed-tools: Bash(git:*)
+---
+Body`,
+    {
+      logger: {
+        error: (_message, details) => errors.push(details),
+      },
+    },
+  );
+
+  assertEquals(metadata, null);
+  assertEquals(errors.length, 1);
+});
+
 Deno.test("buildRuntimeSkillDefinition builds a skill definition from valid content", () => {
   const content = `---
 name: Code Review
@@ -72,6 +128,7 @@ Deno.test("buildRuntimeSkillDefinition builds a bare skill", () => {
   assertExists(skill);
   assertEquals(skill.id, "bare");
   assertEquals(skill.name, "bare");
+  assertEquals(skill.allowedTools, undefined);
 });
 
 Deno.test("buildRuntimeSkillDefinition includes optional runtime fields", () => {
@@ -262,6 +319,41 @@ Write carefully.`,
   assertEquals(response.note, "No direct tools are available.");
 });
 
+Deno.test("buildRuntimeLoadedSkillResponse treats an empty runtime tool surface as known", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "write",
+    instructions: `---
+allowed-tools: write_file
+---
+Write carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: [],
+  });
+
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.delegationTools, ["write_file"]);
+  assertEquals(response.unavailableCurrentRunTools, ["write_file"]);
+  assertEquals(response.note, "No direct tools are available.");
+  assertEquals(response.delegationNote, "Delegate unavailable tools.");
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse preserves an explicit deny-all policy", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "read-only",
+    instructions: `---
+allowed-tools: []
+---
+Read carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+  });
+
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.delegationTools, []);
+  assertEquals(response.note, "No direct tools are available.");
+});
+
 Deno.test("buildRuntimeLoadedSkillResponse preserves runtime overrides and references", () => {
   const response = buildRuntimeLoadedSkillResponse({
     skillId: "research",
@@ -284,7 +376,7 @@ Research carefully.`,
   assertEquals(response.referenceNote, "Load references separately.");
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse logs invalid metadata and returns a base response", () => {
+Deno.test("buildRuntimeLoadedSkillResponse logs invalid metadata and fails closed", () => {
   const instructions = `---
 allowed-tools:
   - shell
@@ -302,10 +394,8 @@ Body`;
     },
   });
 
-  assertEquals(response, {
-    skillId: "invalid",
-    instructions,
-    nextStep: "Continue after loading.",
-  });
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.delegationTools, []);
+  assertEquals(response.note, "No direct tools are available.");
   assertEquals(errors.length, 1);
 });

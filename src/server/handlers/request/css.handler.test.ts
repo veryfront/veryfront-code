@@ -68,4 +68,29 @@ describe("server/handlers/request/css", () => {
     assertEquals(response.headers.get("content-type"), "text/css; charset=utf-8");
     assertEquals(await response.text(), ".flex{display:flex}");
   });
+
+  it("serves an intentionally empty built stylesheet", async () => {
+    const result = await new CSSHandler().handle(
+      new Request("http://localhost/_vf/css/empty.css"),
+      makeCtx({ "/project/dist/_vf/css/empty.css": "" }),
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(await result.response?.text(), "");
+  });
+
+  it("returns a private 500 when built CSS storage is unavailable", async () => {
+    const ctx = makeCtx();
+    ctx.adapter.fs.exists = () => Promise.reject(new Deno.errors.PermissionDenied("private"));
+
+    const result = await new CSSHandler().handle(
+      new Request("http://localhost/_vf/css/storage.css"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.headers.get("cache-control")?.includes("no-store"), true);
+    assertEquals(result.response?.headers.get("x-content-type-options"), "nosniff");
+    assertEquals((await result.response!.text()).includes("private"), false);
+  });
 });

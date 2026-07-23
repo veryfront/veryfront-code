@@ -1,10 +1,11 @@
-import { dirname, join } from "#veryfront/compat/path";
+import { dirname, isAbsolute, join, relative } from "#veryfront/compat/path";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
-import * as React from "react";
+import type * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { sanitizeErrorText } from "#veryfront/errors/sanitization.ts";
 
 interface DeferredComponentSource {
   source: string;
@@ -19,63 +20,24 @@ interface FailedComponent {
   timestamp: number;
 }
 
-function createErrorFallbackComponent(
-  componentName: string,
-  error: string,
-): React.ComponentType<Record<string, unknown>> {
-  const ErrorFallback: React.FC<Record<string, unknown>> = () => {
-    const isDev = getEnv("NODE_ENV") === "development";
-    if (!isDev) return React.createElement(React.Fragment);
+const MAX_COMPONENT_ENTRIES = 10_000;
+const MAX_COMPONENT_DEPTH = 64;
 
-    return React.createElement(
-      "div",
-      {
-        style: {
-          padding: "16px",
-          margin: "8px 0",
-          backgroundColor: "#fef2f2",
-          border: "1px solid #fecaca",
-          borderRadius: "8px",
-          fontFamily: "system-ui, sans-serif",
-        },
-      },
-      React.createElement(
-        "div",
-        {
-          style: {
-            fontWeight: "600",
-            color: "#991b1b",
-            marginBottom: "8px",
-          },
-        },
-        `⚠️ Component "${componentName}" failed to load`,
-      ),
-      React.createElement(
-        "pre",
-        {
-          style: {
-            fontSize: "12px",
-            color: "#7f1d1d",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            margin: 0,
-          },
-        },
-        error,
-      ),
-    );
-  };
-
-  ErrorFallback.displayName = `ErrorFallback(${componentName})`;
-  return ErrorFallback;
+interface ComponentScanState {
+  readonly root: string;
+  readonly canonicalRoot?: string;
+  entries: number;
 }
 
 export class ComponentRegistry {
   private components = new Map<string, React.ComponentType<Record<string, unknown>>>();
   private virtualModules: VirtualModuleSystem;
   private componentSources = new Map<string, DeferredComponentSource>();
+  private componentPaths = new Map<string, string>();
   private failedComponents = new Map<string, FailedComponent>();
   private initialized = false;
+  private initializationPromise?: Promise<void>;
+  private generation = 0;
   private projectDir = "";
   private serverPort: number;
   private adapter?: RuntimeAdapter;
@@ -83,6 +45,7 @@ export class ComponentRegistry {
   private vendorBundleHash?: string;
   private projectId?: string;
   private contentSourceId?: string;
+  private dev: boolean;
 
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -92,14 +55,20 @@ export class ComponentRegistry {
     vendorBundleHash?: string,
     projectId?: string,
     contentSourceId?: string,
+    dev = false,
   ) {
-    this.virtualModules = virtualModules ?? new VirtualModuleSystem();
+    if (!virtualModules && !adapter) {
+      throw new TypeError("ComponentRegistry requires a RuntimeAdapter or VirtualModuleSystem");
+    }
+    this.virtualModules = virtualModules ??
+      new VirtualModuleSystem("/_veryfront/modules", adapter!);
     this.serverPort = serverPort;
     this.adapter = adapter;
     this.moduleServerUrl = moduleServerUrl;
     this.vendorBundleHash = vendorBundleHash;
     this.projectId = projectId;
     this.contentSourceId = contentSourceId;
+    this.dev = dev;
   }
 
   async loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
@@ -109,11 +78,27 @@ export class ComponentRegistry {
 
     this.projectDir ||= actualProjectRoot;
 
+    if (!isPathWithin(actualProjectRoot, dir)) {
+      throw new TypeError("Component directory must stay within its project root");
+    }
+
     try {
-      const processed = await this.collectComponents(dir, actualProjectRoot, deferLoading);
-      logger.debug(`Loaded ${processed} component${processed === 1 ? "" : "s"} from ${dir}`);
+      const fs = this.requireAdapter().fs;
+      if (fs.lstat && (await fs.lstat(dir)).isSymlink) {
+        throw new TypeError("Component directory cannot be a symbolic link");
+      }
+      const canonicalRoot = fs.realPath ? await fs.realPath(dir) : undefined;
+      const processed = await this.collectComponents(
+        dir,
+        actualProjectRoot,
+        deferLoading,
+        { root: dir, canonicalRoot, entries: 0 },
+        0,
+      );
+      logger.debug("Component directory loaded", { componentCount: processed });
     } catch (error) {
-      logger.debug(`Components directory not found: ${dir}`, error);
+      if (isNotFoundError(error)) return;
+      throw error;
     }
   }
 
@@ -147,25 +132,38 @@ export class ComponentRegistry {
   clear(): void {
     this.components.clear();
     this.componentSources.clear();
+    this.componentPaths.clear();
     this.failedComponents.clear();
+    this.virtualModules.clear();
     this.initialized = false;
+    this.generation++;
+    this.initializationPromise = undefined;
   }
 
   async initializeComponents(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializationPromise) return await this.initializationPromise;
 
-    const adapter = this.adapter;
-    if (!adapter) {
-      logger.warn("Component registry adapter unavailable; skipping initialization");
-      return;
-    }
+    const generation = this.generation;
+    const promise = this.initializeComponentsInternal(generation).finally(() => {
+      if (this.initializationPromise === promise) this.initializationPromise = undefined;
+    });
+    this.initializationPromise = promise;
+    return await promise;
+  }
 
-    logger.debug(`Initializing ${this.componentSources.size} deferred components`);
+  private async initializeComponentsInternal(generation: number): Promise<void> {
+    const adapter = this.requireAdapter();
+    const pendingComponents = [...this.componentSources.entries()];
+    const loadedComponents = new Map<string, React.ComponentType<Record<string, unknown>>>();
+
+    logger.debug("Initializing deferred components", { componentCount: pendingComponents.length });
 
     let successCount = 0;
     let failCount = 0;
 
-    for (const [componentName, info] of this.componentSources) {
+    for (const [componentName, info] of pendingComponents) {
+      if (generation !== this.generation) return;
       try {
         const Component = await loadComponentFromSource(
           info.source,
@@ -175,44 +173,45 @@ export class ComponentRegistry {
           this.getLoaderOptions(info.projectRoot),
         );
 
-        this.components.set(componentName, Component);
-        this.failedComponents.delete(componentName);
+        loadedComponents.set(componentName, Component);
         successCount++;
-        logger.debug(`Successfully loaded component: ${componentName}`);
+        logger.debug("Deferred component loaded", { componentName });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = sanitizeErrorText(
+          error instanceof Error ? error.message : String(error),
+          1_024,
+        );
         failCount++;
 
+        if (generation !== this.generation) return;
         this.failedComponents.set(componentName, {
           name: componentName,
           error: errorMessage,
-          filePath: info.filePath,
+          filePath: toProjectRelativePath(info.projectRoot, info.filePath),
           timestamp: Date.now(),
         });
-
-        this.components.set(
+        logger.debug("Deferred component failed to load", {
           componentName,
-          createErrorFallbackComponent(componentName, errorMessage),
-        );
-
-        logger.debug(`Failed to load component ${componentName}, using fallback`, {
-          error: errorMessage,
-          filePath: info.filePath,
+          errorName: error instanceof Error ? error.name : "UnknownError",
         });
       }
     }
 
-    this.componentSources.clear();
-    this.initialized = true;
-
     if (failCount > 0) {
-      logger.warn(
-        `Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks, set LOG_LEVEL=debug for details)`,
+      throw new AggregateError(
+        this.getFailedComponents().map((failure) => new Error(failure.error)),
+        `Component initialization failed for ${failCount} component${failCount === 1 ? "" : "s"}`,
       );
-      return;
     }
 
-    logger.debug(`Component initialization complete: ${successCount} components loaded`);
+    if (generation !== this.generation) return;
+    for (const [componentName, component] of loadedComponents) {
+      this.components.set(componentName, component);
+      this.failedComponents.delete(componentName);
+    }
+    this.componentSources.clear();
+    this.initialized = true;
+    logger.debug("Component initialization complete", { componentCount: successCount });
   }
 
   getFailedComponents(): FailedComponent[] {
@@ -225,14 +224,14 @@ export class ComponentRegistry {
 
   private getLoaderOptions(projectRoot: string): {
     projectId: string;
-    dev: true;
+    dev: boolean;
     moduleServerUrl?: string;
     vendorBundleHash?: string;
     contentSourceId?: string;
   } {
     return {
       projectId: this.projectId ?? projectRoot,
-      dev: true,
+      dev: this.dev,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,
@@ -243,22 +242,45 @@ export class ComponentRegistry {
     dir: string,
     projectRoot: string,
     deferLoading: boolean,
+    state: ComponentScanState,
+    depth: number,
   ): Promise<number> {
-    const adapter = this.adapter;
-    const readDir = adapter?.fs.readDir;
-    if (!readDir) return 0;
+    if (depth > MAX_COMPONENT_DEPTH) {
+      throw new RangeError("Component directory depth exceeds the supported limit");
+    }
+
+    const adapter = this.requireAdapter();
+    const entries = [];
+    for await (const entry of adapter.fs.readDir(dir)) entries.push(entry);
+    entries.sort((a, b) => a.name.localeCompare(b.name));
 
     let count = 0;
-    let failureCount = 0;
 
-    for await (const entry of readDir(dir)) {
+    for (const entry of entries) {
+      validateEntryName(entry.name);
+      if (entry.isSymlink) continue;
+
+      state.entries++;
+      if (state.entries > MAX_COMPONENT_ENTRIES) {
+        throw new RangeError("Component directory contains too many entries");
+      }
+
       const entryPath = join(dir, entry.name);
+      if (!isPathWithin(state.root, entryPath)) {
+        throw new TypeError("Component entry escaped the configured directory");
+      }
+
+      if (adapter.fs.lstat && (await adapter.fs.lstat(entryPath)).isSymlink) continue;
+      if (adapter.fs.realPath && state.canonicalRoot) {
+        const canonicalPath = await adapter.fs.realPath(entryPath);
+        if (!isPathWithin(state.canonicalRoot, canonicalPath)) continue;
+      }
 
       if (entry.name === "node_modules") continue;
       if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
 
       if (
-        dir.includes(".veryfront") &&
+        isInsideVeryfrontDirectory(projectRoot, dir) &&
         ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(
           entry.name,
         )
@@ -267,16 +289,32 @@ export class ComponentRegistry {
       }
 
       if (entry.isDirectory) {
-        count += await this.collectComponents(entryPath, projectRoot, deferLoading);
+        count += await this.collectComponents(
+          entryPath,
+          projectRoot,
+          deferLoading,
+          state,
+          depth + 1,
+        );
         continue;
       }
 
-      if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) continue;
+      if (!entry.isFile || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) continue;
 
       const extMatch = /\.(tsx|jsx|ts|js)$/.exec(entry.name);
       const fileType = extMatch?.[1] as "tsx" | "jsx" | "ts" | "js" | undefined;
-      const componentName = entry.name.replace(/\.(tsx|jsx|ts|js)$/, "");
+      const componentName = entry.name
+        .replace(/\.(tsx|jsx|ts|js)$/, "")
+        .replace(/\.(client|server)$/, "");
       if (componentName === "index") continue;
+      if (!/^[A-Za-z][A-Za-z0-9_-]{0,255}$/.test(componentName)) {
+        throw new TypeError("Component file name cannot be represented as a module identifier");
+      }
+
+      const existingPath = this.componentPaths.get(componentName);
+      if (existingPath && existingPath !== entryPath) {
+        throw new Error(`Duplicate component name "${componentName}"`);
+      }
 
       try {
         const fileContent = await adapter.fs.readFile(entryPath);
@@ -296,7 +334,9 @@ export class ComponentRegistry {
             filePath: entryPath,
             projectRoot,
           });
-          logger.debug(`Stored component source for deferred loading: ${componentName}`);
+          this.generation++;
+          this.initialized = false;
+          logger.debug("Stored component source for deferred loading", { componentName });
         } else {
           const Component = await loadComponentFromSource(
             fileContent,
@@ -307,29 +347,58 @@ export class ComponentRegistry {
           );
 
           this.components.set(componentName, Component);
-          logger.debug(`Loaded component immediately: ${componentName}`);
+          logger.debug("Loaded component immediately", { componentName });
         }
 
+        this.componentPaths.set(componentName, entryPath);
         count++;
       } catch (error) {
-        failureCount++;
-        logger.debug(`Failed to process component ${componentName}`, {
-          filePath: entryPath,
-          error: error instanceof Error ? error.message : String(error),
+        this.failedComponents.set(componentName, {
+          name: componentName,
+          error: sanitizeErrorText(
+            error instanceof Error ? error.message : String(error),
+            1_024,
+          ),
+          filePath: toProjectRelativePath(projectRoot, entryPath),
+          timestamp: Date.now(),
         });
+        throw error;
       }
     }
 
-    if (failureCount > 0) {
-      const relativeDir = dir.startsWith(projectRoot) ? dir.slice(projectRoot.length + 1) : dir;
-      logger.warn(
-        `Component scan: ${failureCount} failure${
-          failureCount === 1 ? "" : "s"
-        } (set LOG_LEVEL=debug for details)`,
-        { dir: relativeDir },
-      );
-    }
-
     return count;
+  }
+
+  private requireAdapter(): RuntimeAdapter {
+    if (!this.adapter) throw new TypeError("ComponentRegistry requires a RuntimeAdapter");
+    return this.adapter;
+  }
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith("../"));
+}
+
+function isInsideVeryfrontDirectory(projectRoot: string, dir: string): boolean {
+  if (!isPathWithin(projectRoot, dir)) return false;
+  return relative(projectRoot, dir).replaceAll("\\", "/").split("/").includes(".veryfront");
+}
+
+function toProjectRelativePath(projectRoot: string, path: string): string {
+  const relativePath = relative(projectRoot, path).replaceAll("\\", "/");
+  return isPathWithin(projectRoot, path) ? relativePath : "<OUTSIDE_PROJECT>";
+}
+
+function validateEntryName(name: string): void {
+  if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
+    throw new TypeError("Component directory contains an invalid entry name");
+  }
+  for (const character of name) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      throw new TypeError("Component directory contains an invalid entry name");
+    }
   }
 }

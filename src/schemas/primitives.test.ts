@@ -41,6 +41,7 @@ describe("primitive schemas", () => {
     it("rejects zero and decimals", () => {
       assertParseFailure(getPositiveIntSchema().safeParse(0));
       assertParseFailure(getPositiveIntSchema().safeParse(1.5));
+      assertParseFailure(getPositiveIntSchema().safeParse(Number.MAX_SAFE_INTEGER + 1));
     });
   });
 
@@ -52,6 +53,7 @@ describe("primitive schemas", () => {
     it("rejects negative numbers and decimals", () => {
       assertParseFailure(getNonNegativeIntSchema().safeParse(-1));
       assertParseFailure(getNonNegativeIntSchema().safeParse(0.5));
+      assertParseFailure(getNonNegativeIntSchema().safeParse(Number.MAX_SAFE_INTEGER + 1));
     });
   });
 
@@ -92,6 +94,72 @@ describe("primitive schemas", () => {
     it("rejects undefined values", () => {
       assertParseFailure(getJsonValueSchema().safeParse({ invalid: undefined }));
     });
+
+    it("rejects cyclic and excessively deep values without throwing", () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+      assertParseFailure(getJsonValueSchema().safeParse(cyclic));
+
+      let deeplyNested: unknown = null;
+      for (let depth = 0; depth < 5_000; depth++) deeplyNested = [deeplyNested];
+      assertParseFailure(getJsonValueSchema().safeParse(deeplyNested));
+    });
+
+    it("enforces the documented depth and node boundaries", () => {
+      let maximumDepth: unknown = null;
+      for (let depth = 0; depth < 100; depth++) maximumDepth = [maximumDepth];
+      assertParseSuccess(getJsonValueSchema().safeParse(maximumDepth));
+
+      let excessiveDepth: unknown = null;
+      for (let depth = 0; depth < 101; depth++) excessiveDepth = [excessiveDepth];
+      assertParseFailure(getJsonValueSchema().safeParse(excessiveDepth));
+
+      assertParseFailure(
+        getJsonValueSchema().safeParse(Array.from({ length: 100_000 }, () => null)),
+      );
+    });
+
+    it("rejects non-JSON primitives, exotic objects, and sparse arrays", () => {
+      for (
+        const value of [
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          Number.NEGATIVE_INFINITY,
+          1n,
+          Symbol("value"),
+          () => undefined,
+          new Date(),
+          new Map(),
+          new Array(1),
+        ]
+      ) {
+        assertParseFailure(getJsonValueSchema().safeParse(value));
+      }
+    });
+
+    it("accepts null-prototype objects and repeated acyclic references", () => {
+      const shared = { value: true };
+      const nullPrototype = Object.assign(Object.create(null), { shared });
+
+      assertParseSuccess(
+        getJsonValueSchema().safeParse({ first: shared, second: shared, nullPrototype }),
+      );
+    });
+
+    it("returns a sanitized failure when input mutates during validation", () => {
+      const canary = "private-validation-canary";
+      let reads = 0;
+      const unstable = new Proxy({ value: "ok" }, {
+        get(target, property, receiver) {
+          if (property === "value" && ++reads > 1) throw new Error(canary);
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const result = getJsonValueSchema().safeParse(unstable);
+      assertParseFailure(result);
+      assertEquals(JSON.stringify(result).includes(canary), false);
+    });
   });
 
   describe("hexColor", () => {
@@ -127,16 +195,29 @@ describe("primitive schemas", () => {
     it("rejects empty file paths", () => {
       assertParseFailure(getFilePathSchema().safeParse(""));
     });
+
+    it("rejects NUL bytes and unbounded paths", () => {
+      assertParseFailure(getFilePathSchema().safeParse("src/unsafe\0name.ts"));
+      assertParseFailure(getFilePathSchema().safeParse("x".repeat(4_097)));
+    });
   });
 
   describe("absolutePath", () => {
     it("accepts unix and windows absolute paths", () => {
       assertParseSuccess(getAbsolutePathSchema().safeParse("/usr/local/bin"));
       assertParseSuccess(getAbsolutePathSchema().safeParse(String.raw`C:\Projects\veryfront`));
+      assertParseSuccess(getAbsolutePathSchema().safeParse("C:/Projects/veryfront"));
+      assertParseSuccess(getAbsolutePathSchema().safeParse(String.raw`\\server\share\project`));
     });
 
     it("rejects relative paths", () => {
       assertParseFailure(getAbsolutePathSchema().safeParse("relative/path"));
+    });
+
+    it("rejects malformed and unsafe absolute paths", () => {
+      assertParseFailure(getAbsolutePathSchema().safeParse(String.raw`\\server`));
+      assertParseFailure(getAbsolutePathSchema().safeParse("/unsafe\0path"));
+      assertParseFailure(getAbsolutePathSchema().safeParse("/" + "x".repeat(4_097)));
     });
   });
 });

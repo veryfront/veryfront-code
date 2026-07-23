@@ -10,10 +10,18 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
-import { releaseAssetUrl } from "./constants.ts";
-import type { ReleaseAssetManifest } from "./manifest-schema.ts";
+import { RELEASE_ASSET_MANIFEST_KEY_MAX_BYTES, releaseAssetUrl } from "./constants.ts";
+import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 
 const logger = serverLogger.component("release-asset-consume");
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
+}
 
 /**
  * Normalize a logical module path to the manifest's key convention.
@@ -25,7 +33,13 @@ const logger = serverLogger.component("release-asset-consume");
  * extensions.
  */
 export function normalizeManifestModuleKey(path: string): string {
-  let key = String(path || "").replace(/^\/?_vf_modules\//, "");
+  if (
+    typeof path !== "string" || path.length > RELEASE_ASSET_MANIFEST_KEY_MAX_BYTES ||
+    hasControlCharacter(path)
+  ) {
+    return "";
+  }
+  let key = path.replace(/^\/?_vf_modules\//, "");
   key = key.replace(/^\/+/, "");
   key = key.replace(/[?#].*$/, "");
   return key;
@@ -42,14 +56,20 @@ export function resolveManifestModuleUrl(
   manifest: ReleaseAssetManifest,
   logicalPath: string,
 ): string | null {
+  const parsed = parseReleaseAssetManifest(manifest);
+  if (!parsed) {
+    logger.debug("invalid release asset manifest during module resolution");
+    return null;
+  }
   const key = normalizeManifestModuleKey(logicalPath);
-  const direct = manifest.modules[key];
+  if (!key) return null;
+  const direct = parsed.modules[key];
   if (direct) return releaseAssetUrl(direct.contentHash, "js");
 
   // Tolerate keys that differ only by extension (e.g. ".js" vs source ext).
   const withoutExt = key.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
   for (const candidateExt of [".tsx", ".ts", ".jsx", ".mdx", ".js"]) {
-    const candidate = manifest.modules[withoutExt + candidateExt];
+    const candidate = parsed.modules[withoutExt + candidateExt];
     if (candidate) return releaseAssetUrl(candidate.contentHash, "js");
   }
 
@@ -62,17 +82,26 @@ export function resolveManifestRoutePreloadUrls(
   manifest: ReleaseAssetManifest,
   route: string,
 ): string[] {
-  const entry = manifest.routes[route] ?? manifest.routes[`/${route}`] ??
-    manifest.routes[route.replace(/^\//, "")];
+  const parsed = parseReleaseAssetManifest(manifest);
+  if (
+    !parsed || typeof route !== "string" ||
+    route.length > RELEASE_ASSET_MANIFEST_KEY_MAX_BYTES ||
+    hasControlCharacter(route)
+  ) {
+    logger.debug("invalid release asset manifest or route during preload resolution");
+    return [];
+  }
+  const entry = parsed.routes[route] ?? parsed.routes[`/${route}`] ??
+    parsed.routes[route.replace(/^\//, "")];
   if (!entry) {
     logger.debug("manifest route miss", { route });
     return [];
   }
 
-  const urls: string[] = [];
+  const urls = new Set<string>();
   for (const modulePath of entry.modules) {
-    const asset = manifest.modules[modulePath];
-    if (asset) urls.push(releaseAssetUrl(asset.contentHash, "js"));
+    const asset = parsed.modules[modulePath];
+    if (asset) urls.add(releaseAssetUrl(asset.contentHash, "js"));
   }
-  return urls;
+  return [...urls];
 }

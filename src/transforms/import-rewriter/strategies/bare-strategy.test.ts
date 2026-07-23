@@ -77,6 +77,18 @@ describe("BareStrategy", () => {
     it("should not match veryfront imports", () => {
       assertEquals(bareStrategy.matches("veryfront/client", makeCtx()), false);
     });
+
+    it("should not match cross-project imports", () => {
+      assertEquals(bareStrategy.matches("shared-lib/@/utils", makeCtx()), false);
+    });
+
+    it("should not match unsupported URL schemes", () => {
+      assertEquals(bareStrategy.matches("jsr:@scope/package", makeCtx()), false);
+    });
+
+    it("should not match unsafe package paths", () => {
+      assertEquals(bareStrategy.matches("lodash/../secret", makeCtx()), false);
+    });
   });
 
   describe("rewrite", () => {

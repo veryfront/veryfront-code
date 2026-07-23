@@ -18,7 +18,7 @@ import {
   waitForDiskCleanup,
 } from "./index.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { exists, remove, symlink, writeTextFile } from "#veryfront/compat/fs.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
@@ -29,6 +29,101 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 describe("MDX module path cache", () => {
+  it("atomically replaces the persisted module index", async () => {
+    clearModulePathCache();
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-index-atomic-" });
+    const localFs = getLocalFs();
+    const originalWriteTextFile = localFs.writeTextFile.bind(localFs);
+    const originalRename = localFs.rename?.bind(localFs);
+    if (!originalRename) throw new Error("Test filesystem must support rename");
+
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("atomicindex"));
+    const cacheKey = buildMdxEsmPathCacheKey("_vf_modules/atomic.js", "19.1.1");
+    const cache = await getModulePathCache(cacheDir);
+    cache.set(cacheKey, cachedPath);
+
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
+    localFs.writeTextFile = async (path, data) => {
+      writes.push(path);
+      await originalWriteTextFile(path, data);
+    };
+    localFs.rename = async (from, to) => {
+      renames.push([from, to]);
+      await originalRename(from, to);
+    };
+
+    try {
+      await saveModulePathCache(cacheDir);
+
+      const indexPath = join(cacheDir, "_index.json");
+      const temporaryWrite = writes.find((path) => path.startsWith(`${indexPath}.tmp-`));
+      assertEquals(typeof temporaryWrite, "string");
+      assertEquals(renames, [[temporaryWrite!, indexPath]]);
+      assertEquals(JSON.parse(await localFs.readTextFile(indexPath)), {
+        [cacheKey]: cachedPath,
+      });
+    } finally {
+      localFs.writeTextFile = originalWriteTextFile;
+      localFs.rename = originalRename;
+      clearModulePathCache();
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("serializes index replacement so an older snapshot cannot win", async () => {
+    clearModulePathCache();
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-index-order-" });
+    const localFs = getLocalFs();
+    const originalRename = localFs.rename?.bind(localFs);
+    if (!originalRename) throw new Error("Test filesystem must support rename");
+
+    const firstPath = join(cacheDir, buildMdxEsmModuleFileName("first"));
+    const secondPath = join(cacheDir, buildMdxEsmModuleFileName("second"));
+    const firstKey = buildMdxEsmPathCacheKey("_vf_modules/first.js", "19.1.1");
+    const secondKey = buildMdxEsmPathCacheKey("_vf_modules/second.js", "19.1.1");
+    const cache = await getModulePathCache(cacheDir);
+    cache.set(firstKey, firstPath);
+
+    let releaseFirstRename!: () => void;
+    const firstRenameGate = new Promise<void>((resolve) => {
+      releaseFirstRename = resolve;
+    });
+    let signalFirstRename!: () => void;
+    const firstRenameStarted = new Promise<void>((resolve) => {
+      signalFirstRename = resolve;
+    });
+    let renameCount = 0;
+    localFs.rename = async (from, to) => {
+      renameCount++;
+      if (renameCount === 1) {
+        signalFirstRename();
+        await firstRenameGate;
+      }
+      await originalRename(from, to);
+    };
+
+    try {
+      const firstSave = saveModulePathCache(cacheDir);
+      await firstRenameStarted;
+      cache.set(secondKey, secondPath);
+      const secondSave = saveModulePathCache(cacheDir);
+      releaseFirstRename();
+      await Promise.all([firstSave, secondSave]);
+
+      assertEquals(JSON.parse(await localFs.readTextFile(join(cacheDir, "_index.json"))), {
+        [firstKey]: firstPath,
+        [secondKey]: secondPath,
+      });
+      assertEquals(renameCount, 2);
+    } finally {
+      releaseFirstRename();
+      localFs.rename = originalRename;
+      clearModulePathCache();
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("partitions SSR cache directories by runtime version", async () => {
     const cacheBase = await makeTempDir({ prefix: "vf-mdx-versioned-cache-dir-" });
     const projectId = "project-versioned-cache";
@@ -56,6 +151,56 @@ describe("MDX module path cache", () => {
       });
     } finally {
       await remove(cacheBase, { recursive: true });
+    }
+  });
+
+  it("keeps legacy raw namespace cleanup inside its hashed project directory", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-raw-cache-containment-" });
+    const projectId = "project-cache-containment";
+    const contentSourceId = "../../raw-outside";
+    const outsideDir = join(cacheBase, "raw-outside");
+    const sentinelPath = join(outsideDir, "sentinel.txt");
+
+    try {
+      await getLocalFs().mkdir(outsideDir, { recursive: true });
+      await writeTextFile(sentinelPath, "keep");
+
+      await runWithCacheDir(cacheBase, async () => {
+        await clearMdxEsmCacheNamespace(projectId, contentSourceId);
+
+        assertEquals(await exists(sentinelPath), true);
+        assertEquals(
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId).includes(outsideDir),
+          false,
+        );
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
+  it("keeps legacy encoded namespace cleanup inside the MDX cache root", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-encoded-cache-containment-" });
+    const outsideDir = join(cacheBase, "encoded-outside");
+    const sentinelPath = join(outsideDir, "sentinel.txt");
+
+    try {
+      await getLocalFs().mkdir(outsideDir, { recursive: true });
+      await writeTextFile(sentinelPath, "keep");
+
+      await runWithCacheDir(cacheBase, async () => {
+        await clearMdxEsmCacheNamespace("..", "encoded-outside");
+
+        assertEquals(await exists(sentinelPath), true);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+      clearModulePathCache();
     }
   });
 
@@ -215,20 +360,20 @@ describe("MDX module path cache", () => {
     try {
       await writeTextFile(
         join(cacheDirA, "_index.json"),
-        JSON.stringify({ "_vf_modules/pages/index.js": "/tmp/a.mjs" }),
+        JSON.stringify({ "_vf_modules/pages/index.js": join(cacheDirA, "a.mjs") }),
       );
       await writeTextFile(
         join(cacheDirB, "_index.json"),
-        JSON.stringify({ "_vf_modules/pages/index.js": "/tmp/b.mjs" }),
+        JSON.stringify({ "_vf_modules/pages/index.js": join(cacheDirB, "b.mjs") }),
       );
 
       const cacheA = await getModulePathCache(cacheDirA);
       const cacheB = await getModulePathCache(cacheDirB);
 
-      assertEquals(cacheA.get("_vf_modules/pages/index.js"), "/tmp/a.mjs");
-      assertEquals(cacheB.get("_vf_modules/pages/index.js"), "/tmp/b.mjs");
+      assertEquals(cacheA.get("_vf_modules/pages/index.js"), join(cacheDirA, "a.mjs"));
+      assertEquals(cacheB.get("_vf_modules/pages/index.js"), join(cacheDirB, "b.mjs"));
 
-      cacheA.set("_vf_modules/pages/about.js", "/tmp/a-about.mjs");
+      cacheA.set("_vf_modules/pages/about.js", join(cacheDirA, "a-about.mjs"));
       await saveModulePathCache(cacheDirA);
 
       assertEquals(cacheB.get("_vf_modules/pages/about.js"), undefined);
@@ -237,6 +382,78 @@ describe("MDX module path cache", () => {
         remove(cacheDirA, { recursive: true }),
         remove(cacheDirB, { recursive: true }),
       ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("ignores module indexes that point outside the cache directory", async () => {
+    clearModulePathCache();
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-cache-index-scope-" });
+    const externalDir = await makeTempDir({ prefix: "vf-mdx-cache-external-" });
+    const externalPath = join(externalDir, "external.mjs");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/pages/index.js");
+
+    try {
+      await writeTextFile(externalPath, "export const secret = true;");
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: externalPath }));
+
+      const cache = await getModulePathCache(cacheDir);
+
+      assertEquals(cache.size, 0);
+      assertEquals(await exists(externalPath), true);
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }),
+        remove(externalDir, { recursive: true }),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("rejects cached module symlinks that escape the cache directory", async () => {
+    clearModulePathCache();
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-cache-symlink-scope-" });
+    const externalDir = await makeTempDir({ prefix: "vf-mdx-cache-symlink-external-" });
+    const externalPath = join(externalDir, "external.mjs");
+    const linkedPath = join(cacheDir, "linked.mjs");
+    const sourcePath = join(cacheDir, "page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/page.js");
+
+    try {
+      await writeTextFile(externalPath, "export const secret = true;");
+      await symlink(externalPath, linkedPath);
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: linkedPath }));
+
+      const result = await lookupMdxEsmCache(sourcePath, cacheDir, cacheDir);
+
+      assertEquals(result.status, "corrupted");
+      assertEquals(await exists(externalPath), true);
+    } finally {
+      await waitForDiskCleanup();
+      await Promise.all([
+        remove(cacheDir, { recursive: true }),
+        remove(externalDir, { recursive: true }),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("bounds the number of resident cache directories", async () => {
+    clearModulePathCache();
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-cache-dir-bound-" });
+
+    try {
+      for (let index = 0; index < 140; index++) {
+        await getModulePathCache(join(cacheBase, String(index)));
+      }
+
+      const stats = getCacheStats();
+      const pathCacheStats = stats.find((entry) => entry.name === "mdx-esm-path-caches") as
+        | { cacheDirs?: number }
+        | undefined;
+      assertEquals(pathCacheStats?.cacheDirs, 128);
+    } finally {
+      await remove(cacheBase, { recursive: true });
       clearModulePathCache();
     }
   });
@@ -250,11 +467,15 @@ describe("MDX module path cache", () => {
     try {
       await writeTextFile(
         join(cacheDirA, "_index.json"),
-        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/a.js")]: "/tmp/a.mjs" }),
+        JSON.stringify({
+          [buildMdxEsmPathCacheKey("_vf_modules/pages/a.js")]: join(cacheDirA, "a.mjs"),
+        }),
       );
       await writeTextFile(
         join(cacheDirB, "_index.json"),
-        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/b.js")]: "/tmp/b.mjs" }),
+        JSON.stringify({
+          [buildMdxEsmPathCacheKey("_vf_modules/pages/b.js")]: join(cacheDirB, "b.mjs"),
+        }),
       );
 
       await getModulePathCache(cacheDirA);
@@ -318,13 +539,26 @@ describe("MDX module path cache", () => {
       assertEquals(result.status, "corrupted");
       assertEquals(
         debugEntries.some((entry) => {
-          const metadata = entry.metadata[0] as { error?: unknown } | undefined;
+          const metadata = entry.metadata[0] as
+            | { sourceFile?: unknown; cacheFile?: unknown; errorName?: unknown }
+            | undefined;
           return entry.message.includes("Stale cached module cleanup failed") &&
-            metadata?.error instanceof Error &&
-            metadata.error.message === "remove denied";
+            metadata?.sourceFile === "page.tsx" &&
+            metadata.cacheFile === buildMdxEsmModuleFileName("unresolved") &&
+            metadata.errorName === "Error";
         }),
         true,
         "failed stale-file cleanup should be observable",
+      );
+      assertEquals(
+        JSON.stringify(debugEntries).includes("remove denied"),
+        false,
+        "failed stale-file cleanup should not expose the raw backend error",
+      );
+      assertEquals(
+        JSON.stringify(debugEntries).includes(projectDir),
+        false,
+        "failed stale-file cleanup should not expose local paths",
       );
     } finally {
       localFs.remove = originalRemove;
@@ -343,7 +577,7 @@ describe("MDX module path cache", () => {
     const cacheDir = await makeTempDir({ prefix: "vf-mdx-cache-bound-" });
     const index: Record<string, string> = {};
     for (let i = 0; i < 501; i++) {
-      index[buildMdxEsmPathCacheKey(`_vf_modules/pages/${i}.js`)] = `/tmp/${i}.mjs`;
+      index[buildMdxEsmPathCacheKey(`_vf_modules/pages/${i}.js`)] = join(cacheDir, `${i}.mjs`);
     }
 
     try {
@@ -360,7 +594,10 @@ describe("MDX module path cache", () => {
       assertEquals(pathCacheStats?.maxEntries, 500);
       assertEquals(pathCacheStats?.cacheDirs, 1);
       assertEquals(cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/0.js")), undefined);
-      assertEquals(cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/500.js")), "/tmp/500.mjs");
+      assertEquals(
+        cache.get(buildMdxEsmPathCacheKey("_vf_modules/pages/500.js")),
+        join(cacheDir, "500.mjs"),
+      );
     } finally {
       await remove(cacheDir, { recursive: true }).catch(() => {});
       clearModulePathCache();

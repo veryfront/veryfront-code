@@ -41,6 +41,73 @@ export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
 };
 
 const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
+const MAX_SAFE_SERIALIZED_COLLECTION_ITEMS = 10_000;
+const MAX_SAFE_SERIALIZED_DEPTH = 64;
+const MAX_HISTORICAL_SUMMARY_ITEMS = 20;
+const MAX_COMPRESSED_USER_QUERY_CHARS = 100;
+const MAX_COMPRESSED_ASSISTANT_CONCLUSION_CHARS = 150;
+const MAX_COMPRESSED_TOOL_NAME_CHARS = 100;
+const MAX_COMPRESSED_TOOL_NAMES = 20;
+const MAX_HISTORICAL_JSON_PARSE_CHARS = 1_048_576;
+
+function toSafeSerializableValue(
+  value: unknown,
+  context: {
+    activeObjects: WeakSet<object>;
+    remainingEntries: number;
+  },
+  depth: number,
+): unknown {
+  if (depth > MAX_SAFE_SERIALIZED_DEPTH) return "[MaxDepth]";
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value !== "object") return null;
+  if (context.activeObjects.has(value)) return "[Circular]";
+
+  context.activeObjects.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      for (
+        let index = 0;
+        index < value.length && context.remainingEntries > 0;
+        index += 1
+      ) {
+        context.remainingEntries -= 1;
+        const descriptor = Object.getOwnPropertyDescriptor(value, index);
+        const entry = descriptor && "value" in descriptor ? descriptor.value : undefined;
+        result.push(toSafeSerializableValue(entry, context, depth + 1));
+      }
+      return result;
+    }
+
+    const entries: Array<[string, unknown]> = [];
+    for (const key of Object.keys(value)) {
+      if (context.remainingEntries <= 0) break;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) continue;
+      context.remainingEntries -= 1;
+      entries.push([key, toSafeSerializableValue(descriptor.value, context, depth + 1)]);
+    }
+    return Object.fromEntries(entries);
+  } catch {
+    return "[Unserializable]";
+  } finally {
+    context.activeObjects.delete(value);
+  }
+}
+
+function safeSerializedValue(value: unknown): string {
+  try {
+    return JSON.stringify(toSafeSerializableValue(value, {
+      activeObjects: new WeakSet<object>(),
+      remainingEntries: MAX_SAFE_SERIALIZED_COLLECTION_ITEMS,
+    }, 0)) ?? "null";
+  } catch {
+    return '"[Unserializable]"';
+  }
+}
 
 /** Field selector retained in a historical tool-input summary. */
 export type HistoricalToolInputRetainedField =
@@ -95,7 +162,7 @@ export interface PrepareProviderModelMessagesFromUiMessagesOptions {
 
 /** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value ?? "").length / CHARS_PER_TOKEN);
+  return Math.ceil(safeSerializedValue(value ?? "").length / CHARS_PER_TOKEN);
 }
 
 /** Approximate token categories for context diagnostics. */
@@ -219,7 +286,9 @@ export function estimateMessageTokenBreakdown(messages: readonly unknown[]): Mes
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
-  return `${text.slice(0, maxLen)}…`;
+  if (maxLen <= 0) return "";
+  if (maxLen === 1) return "…";
+  return `${text.slice(0, maxLen - 1)}…`;
 }
 
 /** Compress turn. */
@@ -229,7 +298,7 @@ export function compressTurn(
   endIdx: number,
 ): ProviderModelMessage[] {
   let userQuery = "";
-  const toolNames: string[] = [];
+  const toolNames = new Set<string>();
   let assistantConclusion = "";
 
   for (let i = startIdx; i <= endIdx; i++) {
@@ -237,28 +306,31 @@ export function compressTurn(
     if (!msg) continue;
 
     if (msg.role === "user") {
-      const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-      userQuery = truncate(text, 100);
+      const text = typeof msg.content === "string" ? msg.content : safeSerializedValue(msg.content);
+      userQuery = truncate(text, MAX_COMPRESSED_USER_QUERY_CHARS);
     } else if (msg.role === "assistant" && Array.isArray(msg.content)) {
       for (const part of msg.content) {
-        if (part.type === "tool-call") {
-          toolNames.push(part.toolName);
+        if (part.type === "tool-call" && toolNames.size < MAX_COMPRESSED_TOOL_NAMES) {
+          toolNames.add(truncate(part.toolName, MAX_COMPRESSED_TOOL_NAME_CHARS));
         } else if (part.type === "text") {
-          assistantConclusion = truncate(part.text, 150);
+          assistantConclusion = truncate(part.text, MAX_COMPRESSED_ASSISTANT_CONCLUSION_CHARS);
         }
       }
     } else if (msg.role === "assistant" && typeof msg.content === "string") {
-      assistantConclusion = truncate(msg.content, 150);
+      assistantConclusion = truncate(msg.content, MAX_COMPRESSED_ASSISTANT_CONCLUSION_CHARS);
     }
   }
 
-  const toolSummary = toolNames.length > 0 ? ` → used ${toolNames.join(", ")}` : "";
-  const conclusionSummary = assistantConclusion ? ` → ${assistantConclusion}` : "";
+  const toolSummary = toolNames.size > 0 ? `; used ${[...toolNames].join(", ")}` : "";
+  const conclusionSummary = assistantConclusion ? `; ${assistantConclusion}` : "";
   const summary = `[Compressed: ${userQuery}${toolSummary}${conclusionSummary}]`;
+  const assistantSummary = assistantConclusion
+    ? `[Earlier assistant response: ${assistantConclusion}]`
+    : "[Earlier assistant response omitted during context compaction.]";
 
   return [
     { role: "user", content: summary },
-    { role: "assistant", content: "Acknowledged." },
+    { role: "assistant", content: assistantSummary },
   ];
 }
 
@@ -303,11 +375,29 @@ export function enforceTokenBudgetWithTurnCompression(
   budget: number,
   overhead: number,
 ): ProviderModelMessage[] {
+  if (!Number.isFinite(budget) || budget <= 0) {
+    throw new RangeError("budget must be a positive finite number");
+  }
+  if (!Number.isFinite(overhead) || overhead < 0) {
+    throw new RangeError("overhead must be a nonnegative finite number");
+  }
   const effectiveBudget = budget - overhead;
+  if (effectiveBudget <= 0) {
+    throw new RangeError("overhead must be smaller than budget");
+  }
   let totalTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
   if (totalTokens <= effectiveBudget) return messages;
 
   const turns = collectTurns(messages);
+  const latestTurn = turns.at(-1);
+  const leadingMessageCount = turns[0]?.startIdx ?? messages.length;
+  const leadingTokens = messages.slice(0, leadingMessageCount).reduce(
+    (sum, message) => sum + estimateTokens(message.content),
+    0,
+  );
+  if (!latestTurn || leadingTokens + latestTurn.tokens > effectiveBudget) {
+    throw new RangeError("Latest chat turn exceeds the available token budget");
+  }
   const result = [...messages];
   const latestTurnIndex = Math.max(0, turns.length - 1);
 
@@ -353,7 +443,7 @@ export function enforceTokenBudgetWithTurnCompression(
   if (totalTokens <= effectiveBudget) return result;
 
   const finalTurns = collectTurns(result);
-  const finalMinKeep = Math.min(2, finalTurns.length);
+  const finalMinKeep = Math.min(1, finalTurns.length);
   let dropCount = 0;
   while (totalTokens > effectiveBudget && dropCount < finalTurns.length - finalMinKeep) {
     const turn = finalTurns[dropCount];
@@ -362,13 +452,24 @@ export function enforceTokenBudgetWithTurnCompression(
     dropCount++;
   }
 
-  if (dropCount === 0) return result;
+  if (dropCount === 0) {
+    throw new RangeError("Latest chat turn exceeds the available token budget");
+  }
 
   const firstKeptTurn = finalTurns[dropCount];
   if (!firstKeptTurn) return result;
 
   const firstKeepIdx = firstKeptTurn.startIdx;
-  return result.slice(firstKeepIdx);
+  const leadingMessages = result.slice(0, finalTurns[0]?.startIdx ?? 0);
+  const sliced = [...leadingMessages, ...result.slice(firstKeepIdx)];
+  const slicedTokens = sliced.reduce(
+    (sum, message) => sum + estimateTokens(message.content),
+    0,
+  );
+  if (slicedTokens > effectiveBudget) {
+    throw new RangeError("Latest chat turn exceeds the available token budget");
+  }
+  return sliced;
 }
 
 const BUDGET_RATIO = 0.85;
@@ -411,15 +512,11 @@ const DEFAULT_CHILD_AGENT_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInput
 ];
 
 function serializedLength(value: unknown): number {
-  return JSON.stringify(value ?? "").length;
+  return safeSerializedValue(value ?? "").length;
 }
 
 function serializedValue(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return String(value);
-  }
+  return safeSerializedValue(value ?? null);
 }
 
 function stableHash(value: unknown): string {
@@ -434,6 +531,7 @@ function stableHash(value: unknown): string {
 
 function tryParseJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
+  if (value.length > MAX_HISTORICAL_JSON_PARSE_CHARS) return value;
   try {
     return JSON.parse(value);
   } catch {
@@ -442,7 +540,62 @@ function tryParseJson(value: unknown): unknown {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasOwnDataProperty(value: object, key: PropertyKey): boolean {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor;
+  } catch {
+    return false;
+  }
+}
+
+function setOwnDataProperty(target: object, key: PropertyKey, value: unknown): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function readBoundedArrayValues(value: readonly unknown[], maximum: number): unknown[] {
+  const result: unknown[] = [];
+  const limit = Math.min(value.length, maximum);
+  for (let index = 0; index < limit; index += 1) {
+    result.push(readOwnDataProperty(value, index));
+  }
+  return result;
+}
+
+function readBoundedOwnDataEntries(
+  value: object,
+  maximum: number,
+): Array<[string, unknown]> {
+  try {
+    return Object.keys(value).slice(0, maximum).flatMap((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor && "value" in descriptor ? [[key, descriptor.value]] : [];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function normalizeToolInputName(toolName: string): string {
@@ -458,7 +611,13 @@ function isChildAgentToolInput(toolName: string): boolean {
 }
 
 function resolveMessagePrepLimits(overrides?: Partial<MessagePrepLimits>): MessagePrepLimits {
-  return overrides ? { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides } : DEFAULT_MESSAGE_PREP_LIMITS;
+  const resolved = { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides };
+  for (const [name, value] of Object.entries(resolved)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new RangeError(`${name} must be a positive safe integer`);
+    }
+  }
+  return resolved;
 }
 
 function getDefaultHistoricalToolInputRetentionPolicy(
@@ -496,6 +655,17 @@ function resolveHistoricalToolInputRetentionPolicy(
   return getDefaultHistoricalToolInputRetentionPolicy(toolName);
 }
 
+function resolveHistoricalToolInputThreshold(
+  policy: HistoricalToolInputRetentionPolicy,
+  fallback: number,
+): number {
+  const threshold = policy.compactAfterChars ?? fallback;
+  if (!Number.isSafeInteger(threshold) || threshold <= 0) {
+    throw new RangeError("compactAfterChars must be a positive safe integer");
+  }
+  return threshold;
+}
+
 function shouldCompactHistoricalToolInput(
   policy: HistoricalToolInputRetentionPolicy | undefined,
   input: unknown,
@@ -505,25 +675,34 @@ function shouldCompactHistoricalToolInput(
 
 function compactMetadataValue(value: unknown, limits: MessagePrepLimits): unknown {
   if (typeof value === "string") return truncate(value, limits.retainedMetadataStringMaxChars);
-  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "boolean") return value;
   if (Array.isArray(value)) {
-    const compact = value
+    const compact = readBoundedArrayValues(value, limits.retainedMetadataArrayMaxItems)
       .filter((entry) =>
-        typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean"
-      )
-      .slice(0, limits.retainedMetadataArrayMaxItems);
+        typeof entry === "string" ||
+        (typeof entry === "number" && Number.isFinite(entry)) ||
+        typeof entry === "boolean"
+      );
     return compact.length > 0 ? compact : undefined;
   }
   if (isRecord(value)) {
-    const compact: Record<string, unknown> = {};
+    const entries: Array<[string, unknown]> = [];
     for (
-      const [key, entry] of Object.entries(value).slice(0, limits.retainedMetadataObjectMaxEntries)
+      const [key, entry] of readBoundedOwnDataEntries(
+        value,
+        limits.retainedMetadataObjectMaxEntries,
+      )
     ) {
       if (typeof entry === "string") {
-        compact[key] = truncate(entry, limits.retainedMetadataStringMaxChars);
-      } else if (typeof entry === "number" || typeof entry === "boolean") compact[key] = entry;
+        entries.push([key, truncate(entry, limits.retainedMetadataStringMaxChars)]);
+      } else if (
+        typeof entry === "boolean" || (typeof entry === "number" && Number.isFinite(entry))
+      ) {
+        entries.push([key, entry]);
+      }
     }
-    return Object.keys(compact).length > 0 ? compact : undefined;
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
   }
   return undefined;
 }
@@ -536,9 +715,9 @@ function copyFirstMetadataField(
   limits: MessagePrepLimits,
 ): void {
   for (const name of inputNames) {
-    const value = compactMetadataValue(input[name], limits);
+    const value = compactMetadataValue(readOwnDataProperty(input, name), limits);
     if (value !== undefined) {
-      target[outputName] = value;
+      setOwnDataProperty(target, outputName, value);
       return;
     }
   }
@@ -551,9 +730,9 @@ function copyNamedMetadataFields(
   limits: MessagePrepLimits,
 ): void {
   for (const name of names) {
-    const value = compactMetadataValue(input[name], limits);
+    const value = compactMetadataValue(readOwnDataProperty(input, name), limits);
     if (value !== undefined) {
-      target[name] = value;
+      setOwnDataProperty(target, name, value);
     }
   }
 }
@@ -575,9 +754,9 @@ function copyRetainedMetadataFields(
       continue;
     }
 
-    const value = compactMetadataValue(input[field.inputName], limits);
+    const value = compactMetadataValue(readOwnDataProperty(input, field.inputName), limits);
     if (value !== undefined) {
-      target[field.outputName ?? field.inputName] = value;
+      setOwnDataProperty(target, field.outputName ?? field.inputName, value);
     }
   }
 }
@@ -752,7 +931,7 @@ function isPendingToolPart(part: unknown): boolean {
 
   const state = typeof part.state === "string" ? part.state : null;
   const isPendingState = state === "pending" || state === "input-available" ||
-    state === "input-streaming";
+    state === "input-streaming" || state === "output-streaming";
   if (!isPendingState) {
     return false;
   }
@@ -765,8 +944,11 @@ function getToolPartCallId(part: unknown): string | null {
     return null;
   }
 
-  const toolCallId = part.toolCallId;
-  return typeof toolCallId === "string" && toolCallId.length > 0 ? toolCallId : null;
+  for (const key of ["toolCallId", "tool_call_id", "id"] as const) {
+    const toolCallId = part[key];
+    if (typeof toolCallId === "string" && toolCallId.length > 0) return toolCallId;
+  }
+  return null;
 }
 
 function isToolLikePart(part: unknown): part is Record<string, unknown> & { type: string } {
@@ -818,7 +1000,7 @@ function stripSupersededToolErrorParts(messages: ChatUiMessage[]): ChatUiMessage
 
     const completedToolCallIds = new Set<string>();
     for (const part of message.parts) {
-      if (hasToolState(part, "output-available")) {
+      if (hasToolState(part, "output-available") || hasToolState(part, "completed")) {
         const toolCallId = getToolPartCallId(part);
         if (toolCallId) {
           completedToolCallIds.add(toolCallId);
@@ -1048,32 +1230,40 @@ function buildToolCallMap(messages: ProviderModelMessage[]): Map<string, ToolCal
 
 function maskReadFile(input: unknown, charCount: number): string {
   const path = getStringField(input, "path", "unknown");
-  return `[File read: ${path} — content omitted (${charCount} chars)]`;
+  return `[File read: ${path}, content omitted (${charCount} chars)]`;
 }
 
 function maskBash(input: unknown, output: unknown, charCount: number): string {
   const cmd = truncate(getStringField(input, "command", "unknown"), 80);
   let exitCode = "?";
   const parsed = tryParseJson(output);
-  if (isRecord(parsed) && "exitCode" in parsed) {
-    exitCode = String(parsed.exitCode);
+  if (isRecord(parsed)) {
+    const parsedExitCode = readOwnDataProperty(parsed, "exitCode");
+    if (parsedExitCode !== undefined) exitCode = String(parsedExitCode);
   }
-  return `[Command: ${cmd} — exit ${exitCode}, output omitted (${charCount} chars)]`;
+  return `[Command: ${cmd}, exit ${exitCode}, output omitted (${charCount} chars)]`;
 }
 
-function maskWebSearch(output: unknown): unknown {
+function maskWebSearch(output: unknown, charCount: number): unknown {
   const parsed = tryParseJson(output);
-  if (!Array.isArray(parsed)) return output;
-  return parsed.map((item: unknown) => {
-    if (!isRecord(item)) return item;
-    const { encryptedContent: _, ...rest } = item;
-    return rest;
+  if (!Array.isArray(parsed)) return `[web_search output omitted (${charCount} chars)]`;
+  return parsed.slice(0, MAX_HISTORICAL_SUMMARY_ITEMS).map((item: unknown) => {
+    if (!isRecord(item)) return compactMetadataValue(item, DEFAULT_MESSAGE_PREP_LIMITS);
+    const compact: Record<string, unknown> = {};
+    for (const field of ["title", "url", "snippet", "content", "publishedAt"] as const) {
+      const value = compactMetadataValue(
+        readOwnDataProperty(item, field),
+        DEFAULT_MESSAGE_PREP_LIMITS,
+      );
+      if (value !== undefined) setOwnDataProperty(compact, field, value);
+    }
+    return compact;
   });
 }
 
 function maskWebFetch(input: unknown, charCount: number): string {
   const url = getStringField(input, "url", "unknown");
-  return `[Fetched: ${url} — content omitted (${charCount} chars)]`;
+  return `[Fetched: ${url}, content omitted (${charCount} chars)]`;
 }
 
 function maskTask(output: unknown, charCount: number): unknown {
@@ -1084,19 +1274,25 @@ function maskTask(output: unknown, charCount: number): unknown {
 
   const masked: Record<string, unknown> = {};
 
-  if ("success" in parsed) masked.success = parsed.success;
-  if ("description" in parsed) masked.description = parsed.description;
-  if ("result" in parsed) {
-    masked.result = typeof parsed.result === "string"
-      ? truncate(parsed.result, 500)
-      : parsed.result;
+  const success = readOwnDataProperty(parsed, "success");
+  if (typeof success === "boolean") masked.success = success;
+  const description = compactMetadataValue(
+    readOwnDataProperty(parsed, "description"),
+    DEFAULT_MESSAGE_PREP_LIMITS,
+  );
+  if (description !== undefined) masked.description = description;
+  const result = readOwnDataProperty(parsed, "result");
+  if (result !== undefined) {
+    masked.result = compactMetadataValue(result, DEFAULT_MESSAGE_PREP_LIMITS);
   }
 
-  return masked;
+  return Object.keys(masked).length > 0 ? masked : `[task output omitted (${charCount} chars)]`;
 }
 
-function maskGeneric(toolName: string, charCount: number): string {
-  return `[${toolName} output omitted (${charCount} chars)]`;
+function maskGeneric(toolName: string | undefined, charCount: number): string {
+  return toolName
+    ? `[${toolName} output omitted (${charCount} chars)]`
+    : `[Tool output omitted (${charCount} chars)]`;
 }
 
 type HistoricalToolSummaryField = IntegrationEndpointHistoricalSummary["itemFields"][number];
@@ -1107,18 +1303,24 @@ function compactContactValue(value: unknown): Record<string, unknown> | string |
   if (!isRecord(value)) return null;
 
   const compact: Record<string, unknown> = {};
-  const emailAddress = value.emailAddress;
+  const emailAddress = readOwnDataProperty(value, "emailAddress");
 
   if (isRecord(emailAddress)) {
-    if (typeof emailAddress.name === "string") compact.name = emailAddress.name;
-    if (typeof emailAddress.address === "string") compact.address = emailAddress.address;
+    const name = readOwnDataProperty(emailAddress, "name");
+    const address = readOwnDataProperty(emailAddress, "address");
+    if (typeof name === "string") compact.name = name;
+    if (typeof address === "string") compact.address = address;
   }
 
   for (
     const field of ["login", "name", "displayName", "address", "email", "id", "accountId"] as const
   ) {
-    if (typeof value[field] === "string" || typeof value[field] === "number") {
-      compact[field] = value[field];
+    const fieldValue = readOwnDataProperty(value, field);
+    if (
+      typeof fieldValue === "string" ||
+      (typeof fieldValue === "number" && Number.isFinite(fieldValue))
+    ) {
+      compact[field] = fieldValue;
     }
   }
 
@@ -1130,7 +1332,7 @@ function compactNamedArrayValue(value: unknown): string | null {
   if (!isRecord(value)) return null;
 
   for (const field of ["name", "displayName", "login", "key", "id"] as const) {
-    const candidate = value[field];
+    const candidate = readOwnDataProperty(value, field);
     if (typeof candidate === "string" && candidate.length > 0) return candidate;
     if (typeof candidate === "number") return String(candidate);
   }
@@ -1148,7 +1350,7 @@ function compactHistoricalField(
 
   if (field.kind === "contact-array") {
     if (!Array.isArray(fieldValue)) return null;
-    const contacts = fieldValue
+    const contacts = readBoundedArrayValues(fieldValue, MAX_HISTORICAL_SUMMARY_ITEMS)
       .map((item) => compactContactValue(item))
       .filter((item): item is Record<string, unknown> | string => item !== null);
     return contacts.length > 0 ? contacts : null;
@@ -1156,13 +1358,15 @@ function compactHistoricalField(
 
   if (field.kind === "string-array") {
     if (!Array.isArray(fieldValue)) return null;
-    const strings = fieldValue.filter((item) => typeof item === "string");
+    const strings = readBoundedArrayValues(fieldValue, MAX_HISTORICAL_SUMMARY_ITEMS).filter(
+      (item): item is string => typeof item === "string",
+    );
     return strings.length > 0 ? strings : null;
   }
 
   if (field.kind === "named-array") {
     if (!Array.isArray(fieldValue)) return null;
-    const names = fieldValue
+    const names = readBoundedArrayValues(fieldValue, MAX_HISTORICAL_SUMMARY_ITEMS)
       .map((item) => compactNamedArrayValue(item))
       .filter((item): item is string => item !== null);
     return names.length > 0 ? names : null;
@@ -1170,25 +1374,38 @@ function compactHistoricalField(
 
   if (field.kind === "object") {
     if (!isRecord(fieldValue)) return null;
-    const compact: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(fieldValue)) {
-      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
-        compact[key] = value;
+    const entries: Array<[string, unknown]> = [];
+    for (
+      const [key, value] of readBoundedOwnDataEntries(
+        fieldValue,
+        MAX_HISTORICAL_SUMMARY_ITEMS,
+      )
+    ) {
+      if (
+        typeof value === "string" || typeof value === "boolean" ||
+        (typeof value === "number" && Number.isFinite(value))
+      ) {
+        entries.push([key, value]);
       }
     }
-    return Object.keys(compact).length > 0 ? compact : null;
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
   }
 
   if (typeof fieldValue === "string") {
     return field.maxLength ? truncate(fieldValue, field.maxLength) : fieldValue;
   }
 
-  if (typeof fieldValue === "boolean" || typeof fieldValue === "number") {
+  if (
+    typeof fieldValue === "boolean" ||
+    (typeof fieldValue === "number" && Number.isFinite(fieldValue))
+  ) {
     return fieldValue;
   }
 
   if (Array.isArray(fieldValue)) {
-    const strings = fieldValue.filter((item) => typeof item === "string");
+    const strings = readBoundedArrayValues(fieldValue, MAX_HISTORICAL_SUMMARY_ITEMS).filter(
+      (item): item is string => typeof item === "string",
+    );
     return strings.length > 0 ? strings : null;
   }
 
@@ -1200,13 +1417,13 @@ function getHistoricalFieldValue(
   field: HistoricalToolSummaryField,
 ): unknown {
   if (!field.path || field.path.length === 0) {
-    return source[field.name];
+    return readOwnDataProperty(source, field.name);
   }
 
   let value: unknown = source;
   for (const segment of field.path) {
     if (!isRecord(value)) return undefined;
-    value = value[segment];
+    value = readOwnDataProperty(value, segment);
   }
 
   return value;
@@ -1221,7 +1438,7 @@ function compactHistoricalItemValue(
   const compact: Record<string, unknown> = {};
   for (const field of fields) {
     const fieldValue = compactHistoricalField(field, getHistoricalFieldValue(value, field));
-    if (fieldValue !== null) compact[field.name] = fieldValue;
+    if (fieldValue !== null) setOwnDataProperty(compact, field.name, fieldValue);
   }
 
   return Object.keys(compact).length > 0 ? compact : null;
@@ -1230,7 +1447,9 @@ function compactHistoricalItemValue(
 function findHistoricalToolSummaryContract(
   toolName: string,
 ): HistoricalToolSummaryContract | null {
-  return historicalToolSummaries[toolName] ?? null;
+  return Object.hasOwn(historicalToolSummaries, toolName)
+    ? historicalToolSummaries[toolName] ?? null
+    : null;
 }
 
 function getHistoricalSummaryItems(
@@ -1241,7 +1460,7 @@ function getHistoricalSummaryItems(
   if (!isRecord(parsed)) return null;
 
   for (const key of contract.collectionKeys) {
-    const value = parsed[key];
+    const value = readOwnDataProperty(parsed, key);
     if (Array.isArray(value)) return value;
   }
 
@@ -1260,14 +1479,14 @@ function compactHistoricalToolSummaryOutput(
 
   if (!sourceItems) return null;
 
-  const items = sourceItems
+  const items = readBoundedArrayValues(sourceItems, MAX_HISTORICAL_SUMMARY_ITEMS)
     .map((item) => compactHistoricalItemValue(item, contract.itemFields))
     .filter((item): item is Record<string, unknown> => item !== null);
 
   if (items.length === 0) return null;
 
   const compacted: Record<string, unknown> = {
-    [`${contract.collectionName}Count`]: items.length,
+    [`${contract.collectionName}Count`]: sourceItems.length,
     [contract.collectionName]: items,
     omitted: contract.omitted,
   };
@@ -1275,7 +1494,7 @@ function compactHistoricalToolSummaryOutput(
   if (output && contract.outputFields) {
     for (const field of contract.outputFields) {
       const fieldValue = compactHistoricalField(field, getHistoricalFieldValue(output, field));
-      if (fieldValue !== null) compacted[field.name] = fieldValue;
+      if (fieldValue !== null) setOwnDataProperty(compacted, field.name, fieldValue);
     }
   }
 
@@ -1284,8 +1503,9 @@ function compactHistoricalToolSummaryOutput(
 
 function getOutputValue(output: unknown): unknown {
   if (!isRecord(output)) return output;
-  if ((output.type === "text" || output.type === "json") && "value" in output) {
-    return output.value;
+  const type = readOwnDataProperty(output, "type");
+  if ((type === "text" || type === "json") && hasOwnDataProperty(output, "value")) {
+    return readOwnDataProperty(output, "value");
   }
   return output;
 }
@@ -1294,7 +1514,7 @@ function wrapToolResultOutput(
   original: ChatToolResultOutput,
   newValue: unknown,
 ): ChatToolResultOutput {
-  const textValue = typeof newValue === "string" ? newValue : JSON.stringify(newValue);
+  const textValue = typeof newValue === "string" ? newValue : safeSerializedValue(newValue);
   if (original.type === "text") {
     return { ...original, value: textValue };
   }
@@ -1343,12 +1563,12 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
       if (charCount < MASK_THRESHOLD) return part;
 
       const callInfo = toolCallMap.get(part.toolCallId);
-      const toolName = part.toolName || callInfo?.toolName || "unknown";
+      const toolName = part.toolName || callInfo?.toolName;
       const input = callInfo?.input;
 
       let masked: unknown;
 
-      const summaryContract = findHistoricalToolSummaryContract(toolName);
+      const summaryContract = toolName ? findHistoricalToolSummaryContract(toolName) : undefined;
       if (summaryContract) {
         masked = compactHistoricalToolSummaryOutput(rawValue, summaryContract) ??
           maskGeneric(toolName, charCount);
@@ -1362,7 +1582,7 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
             masked = maskBash(input, rawValue, charCount);
             break;
           case "web_search":
-            masked = maskWebSearch(rawValue);
+            masked = maskWebSearch(rawValue, charCount);
             break;
           case "web_fetch":
             masked = maskWebFetch(input, charCount);
@@ -1447,7 +1667,12 @@ export function compactOldToolInputs(
       }
 
       const charCount = serializedLength(part.input);
-      if (charCount < (policy.compactAfterChars ?? limits.historicalToolInputMaskChars)) {
+      if (
+        charCount < resolveHistoricalToolInputThreshold(
+          policy,
+          limits.historicalToolInputMaskChars,
+        )
+      ) {
         return part;
       }
 
@@ -1536,7 +1761,12 @@ export function compactHistoricalUiMessageToolInputs(
       }
 
       const charCount = serializedLength(part.input);
-      if (charCount < (policy.compactAfterChars ?? limits.historicalToolInputMaskChars)) {
+      if (
+        charCount < resolveHistoricalToolInputThreshold(
+          policy,
+          limits.historicalToolInputMaskChars,
+        )
+      ) {
         return part;
       }
 
@@ -1578,162 +1808,124 @@ export function compactHistoricalUiMessageToolInputs(
   return mutated ? result : messages;
 }
 
-function createSyntheticToolResult(toolCallId: string, toolName: string): ChatToolResultPart {
-  return {
-    type: "tool-result",
-    toolCallId,
-    toolName,
-    output: { type: "text", value: "[tool result unavailable]" },
-  };
-}
+type SegmentToolCall = {
+  messageIndex: number;
+  part: Extract<ChatAssistantContentPart, { type: "tool-call" }>;
+};
 
-/** Repair tool pairs. */
-export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
-  const result = [...messages];
-  let mutated = false;
+type SegmentToolResult = {
+  part: ChatToolResultPart;
+};
 
-  for (let index = 0; index < result.length; index++) {
-    const message = result[index];
-    if (!message) continue;
+function repairToolPairsInTurn(
+  messages: readonly ProviderModelMessage[],
+): ProviderModelMessage[] {
+  const callsById = new Map<string, SegmentToolCall>();
+  const resultsById = new Map<string, SegmentToolResult>();
+  const duplicateCallIds = new Set<string>();
+  const duplicateResultIds = new Set<string>();
 
-    if (message.role !== "assistant" || !Array.isArray(message.content)) {
-      continue;
-    }
-
-    const inlineResultIds = new Set<string>();
-    for (const part of message.content) {
-      if (isToolResultPart(part)) {
-        inlineResultIds.add(part.toolCallId);
-      }
-    }
-
-    const repairedContent: ChatAssistantContentPart[] = [];
-    const regularToolCalls: Array<{ id: string; toolName: string }> = [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    if (!message || !Array.isArray(message.content)) continue;
 
     for (const part of message.content) {
-      repairedContent.push(part);
-
-      if (!isToolCallPart(part)) {
-        continue;
-      }
-
-      const toolName = part.toolName ?? "unknown";
-
-      if (part.providerExecuted) {
-        if (!inlineResultIds.has(part.toolCallId)) {
-          repairedContent.push(createSyntheticToolResult(part.toolCallId, toolName));
-          mutated = true;
-        }
-        continue;
-      }
-
-      if (!inlineResultIds.has(part.toolCallId)) {
-        regularToolCalls.push({ id: part.toolCallId, toolName });
+      if (isToolCallPart(part)) {
+        if (callsById.has(part.toolCallId)) duplicateCallIds.add(part.toolCallId);
+        else callsById.set(part.toolCallId, { messageIndex, part });
+      } else if (isToolResultPart(part)) {
+        if (resultsById.has(part.toolCallId)) duplicateResultIds.add(part.toolCallId);
+        else resultsById.set(part.toolCallId, { part });
       }
     }
-
-    if (repairedContent.length !== message.content.length) {
-      result[index] = copyProviderModelMessageSourceId(message, {
-        ...message,
-        content: repairedContent,
-      });
-    }
-
-    if (regularToolCalls.length === 0) {
-      continue;
-    }
-
-    const nextMessage = result[index + 1];
-    const immediateResultIds = new Set<string>();
-
-    if (nextMessage?.role === "tool" && Array.isArray(nextMessage.content)) {
-      for (const part of nextMessage.content) {
-        if (isToolResultPart(part)) {
-          immediateResultIds.add(part.toolCallId);
-        }
-      }
-    }
-
-    const unresolvedCalls = regularToolCalls.filter((toolCall) =>
-      !immediateResultIds.has(toolCall.id)
-    );
-    if (unresolvedCalls.length === 0) {
-      continue;
-    }
-
-    const movedResults = new Map<string, ChatToolResultPart>();
-
-    for (
-      let laterIndex = index + 2;
-      laterIndex < result.length && movedResults.size < unresolvedCalls.length;
-      laterIndex++
-    ) {
-      const laterMessage = result[laterIndex];
-      if (laterMessage?.role !== "tool" || !Array.isArray(laterMessage.content)) {
-        continue;
-      }
-
-      let removedFromLater = false;
-      const keptLaterContent = laterMessage.content.filter((part) => {
-        if (!isToolResultPart(part)) {
-          return true;
-        }
-
-        if (
-          !unresolvedCalls.some((toolCall) => toolCall.id === part.toolCallId) ||
-          movedResults.has(part.toolCallId)
-        ) {
-          return true;
-        }
-
-        movedResults.set(part.toolCallId, part);
-        removedFromLater = true;
-        return false;
-      });
-
-      if (!removedFromLater) {
-        continue;
-      }
-
-      if (keptLaterContent.length === 0) {
-        result.splice(laterIndex, 1);
-        laterIndex--;
-        continue;
-      }
-
-      result[laterIndex] = copyProviderModelMessageSourceId(laterMessage, {
-        ...laterMessage,
-        content: keptLaterContent,
-      });
-    }
-
-    const repairedResults = unresolvedCalls.map(
-      (toolCall) =>
-        movedResults.get(toolCall.id) ?? createSyntheticToolResult(toolCall.id, toolCall.toolName),
-    );
-
-    if (nextMessage?.role === "tool" && Array.isArray(nextMessage.content)) {
-      result[index + 1] = copyProviderModelMessageSourceId(nextMessage, {
-        ...nextMessage,
-        content: [...repairedResults, ...nextMessage.content],
-      });
-    } else {
-      const toolMessage: ProviderModelMessage = {
-        role: "tool",
-        content: repairedResults,
-      };
-      result.splice(index + 1, 0, copyProviderModelMessageSourceId(message, toolMessage));
-    }
-    mutated = true;
   }
 
-  return mutated ? result : messages;
+  const validResultByCallId = new Map<string, ChatToolResultPart>();
+  const resultIdsByAssistant = new Map<number, string[]>();
+  for (const [toolCallId, call] of callsById) {
+    const result = resultsById.get(toolCallId);
+    if (
+      duplicateCallIds.has(toolCallId) || duplicateResultIds.has(toolCallId) ||
+      !result || result.part.toolName !== call.part.toolName
+    ) {
+      continue;
+    }
+    validResultByCallId.set(toolCallId, result.part);
+    const resultIds = resultIdsByAssistant.get(call.messageIndex) ?? [];
+    resultIds.push(toolCallId);
+    resultIdsByAssistant.set(call.messageIndex, resultIds);
+  }
+
+  const repaired: ProviderModelMessage[] = [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    if (!message) continue;
+
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      const content = message.content.filter((part) => {
+        if (isToolResultPart(part)) return false;
+        return !isToolCallPart(part) || validResultByCallId.has(part.toolCallId);
+      });
+      if (content.length > 0) {
+        repaired.push(copyProviderModelMessageSourceId(message, { ...message, content }));
+      }
+
+      const resultIds = resultIdsByAssistant.get(messageIndex) ?? [];
+      const results = resultIds.flatMap((toolCallId) => {
+        const result = validResultByCallId.get(toolCallId);
+        return result ? [result] : [];
+      });
+      if (results.length > 0) {
+        repaired.push(copyProviderModelMessageSourceId(message, {
+          role: "tool",
+          content: results,
+        }));
+      }
+      continue;
+    }
+
+    if (message.role !== "tool") {
+      repaired.push(message);
+    }
+  }
+
+  return repaired;
+}
+
+/** Repair tool pairs without inventing missing calls, names, or results. */
+export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+  const repaired: ProviderModelMessage[] = [];
+  let currentTurn: ProviderModelMessage[] = [];
+
+  const flushTurn = () => {
+    repaired.push(...repairToolPairsInTurn(currentTurn));
+    currentTurn = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      flushTurn();
+      repaired.push(message);
+      continue;
+    }
+    currentTurn.push(message);
+  }
+  flushTurn();
+
+  return repaired;
 }
 
 /** Estimate overhead. */
 export function estimateOverhead(instructions: unknown, toolCount: number): number {
+  if (!Number.isSafeInteger(toolCount) || toolCount < 0) {
+    throw new RangeError("toolCount must be a nonnegative safe integer");
+  }
   const instructionTokens = estimateTokens(instructions);
-  return instructionTokens + toolCount * TOKENS_PER_TOOL;
+  const overhead = instructionTokens + toolCount * TOKENS_PER_TOOL;
+  if (!Number.isSafeInteger(overhead)) {
+    throw new RangeError("estimated overhead exceeds the safe integer range");
+  }
+  return overhead;
 }
 
 /** Ensure tool call inputs helper. */

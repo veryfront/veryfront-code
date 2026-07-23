@@ -1,4 +1,13 @@
-import { escapeHtml } from "#veryfront/utils/html-escape.ts";
+import { escapeHTML } from "./html-escape.ts";
+import { assertBoundedHTMLText, MAX_HTML_NONCE_BYTES } from "./limits.ts";
+
+const MAX_BUFFERED_HTML_TOKEN_LENGTH = 64 * 1024;
+
+function assertHTMLTokenLength(length: number): void {
+  if (length > MAX_BUFFERED_HTML_TOKEN_LENGTH) {
+    throw new TypeError("HTML token exceeds the streaming nonce-injection limit");
+  }
+}
 
 function findTagEnd(html: string, start: number): number {
   let activeQuote: '"' | "'" | null = null;
@@ -34,22 +43,26 @@ function isTagBoundary(char: string | undefined): boolean {
 }
 
 function findRawTextClosingTagStart(
-  lowerHtml: string,
+  html: string,
   tagName: "script" | "style",
   fromIndex: number,
 ): number {
-  const needle = `</${tagName}`;
   let searchIndex = fromIndex;
 
-  while (searchIndex < lowerHtml.length) {
-    const closingIndex = lowerHtml.indexOf(needle, searchIndex);
+  while (searchIndex < html.length) {
+    const closingIndex = html.indexOf("</", searchIndex);
     if (closingIndex === -1) return -1;
 
-    if (isTagBoundary(lowerHtml[closingIndex + needle.length])) {
+    const nameStart = closingIndex + 2;
+    const nameEnd = nameStart + tagName.length;
+    if (
+      html.slice(nameStart, nameEnd).toLowerCase() === tagName &&
+      isTagBoundary(html[nameEnd])
+    ) {
       return closingIndex;
     }
 
-    searchIndex = closingIndex + needle.length;
+    searchIndex = nameStart;
   }
 
   return -1;
@@ -127,15 +140,15 @@ function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
 export function addNonceToHtmlTags(html: string, nonce?: string): string {
   if (!nonce) return html;
 
-  const escapedNonce = escapeHtml(nonce);
-  const lowerHtml = html.toLowerCase();
+  assertBoundedHTMLText(nonce, "HTML nonce", MAX_HTML_NONCE_BYTES);
+  const escapedNonce = escapeHTML(nonce);
   let result = "";
   let index = 0;
   let rawTextTag: "script" | "style" | null = null;
 
   while (index < html.length) {
     if (rawTextTag) {
-      const closingIndex = findRawTextClosingTagStart(lowerHtml, rawTextTag, index);
+      const closingIndex = findRawTextClosingTagStart(html, rawTextTag, index);
       if (closingIndex === -1) {
         result += html.slice(index);
         break;
@@ -150,22 +163,27 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
     if (html.startsWith("<!--", index)) {
       const commentEnd = html.indexOf("-->", index + 4);
       const endIndex = commentEnd === -1 ? html.length : commentEnd + 3;
+      assertHTMLTokenLength(endIndex - index);
       result += html.slice(index, endIndex);
       index = endIndex;
       continue;
     }
 
     if (html[index] !== "<") {
-      result += html[index];
-      index++;
+      const nextTagIndex = html.indexOf("<", index);
+      const endIndex = nextTagIndex === -1 ? html.length : nextTagIndex;
+      result += html.slice(index, endIndex);
+      index = endIndex;
       continue;
     }
 
     const tagEnd = findTagEnd(html, index);
     if (tagEnd === -1) {
+      assertHTMLTokenLength(html.length - index);
       result += html.slice(index);
       break;
     }
+    assertHTMLTokenLength(tagEnd + 1 - index);
 
     const tag = html.slice(index, tagEnd + 1);
     const tagName = getOpeningTagName(tag);
@@ -179,9 +197,9 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
     result += injectNonceIntoOpeningTag(tag, escapedNonce);
     index = tagEnd + 1;
 
-    if (!/\/\s*>$/u.test(tag)) {
-      rawTextTag = tagName;
-    }
+    // The HTML parser ignores self-closing syntax on script and style tags.
+    // Keep raw-text mode active even for `<script/>` and `<style/>`.
+    rawTextTag = tagName;
   }
 
   return result;
@@ -193,11 +211,11 @@ export function addNonceToHtmlStream(
 ): ReadableStream<Uint8Array> {
   if (!nonce) return stream;
 
-  const escapedNonce = escapeHtml(nonce);
+  assertBoundedHTMLText(nonce, "HTML nonce", MAX_HTML_NONCE_BYTES);
+  const escapedNonce = escapeHTML(nonce);
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
-  let lowerBuffer = "";
   let rawTextTag: "script" | "style" | null = null;
 
   function transformBuffer(flush: boolean): string {
@@ -206,7 +224,7 @@ export function addNonceToHtmlStream(
 
     while (index < buffer.length) {
       if (rawTextTag) {
-        const closingIndex = findRawTextClosingTagStart(lowerBuffer, rawTextTag, index);
+        const closingIndex = findRawTextClosingTagStart(buffer, rawTextTag, index);
         if (closingIndex === -1) {
           if (flush) {
             result += buffer.slice(index);
@@ -238,6 +256,7 @@ export function addNonceToHtmlStream(
         }
 
         const endIndex = commentEnd + 3;
+        assertHTMLTokenLength(endIndex - index);
         result += buffer.slice(index, endIndex);
         index = endIndex;
         continue;
@@ -260,6 +279,7 @@ export function addNonceToHtmlStream(
         break;
       }
 
+      assertHTMLTokenLength(tagEnd + 1 - index);
       const tag = buffer.slice(index, tagEnd + 1);
       const tagName = getOpeningTagName(tag);
 
@@ -272,14 +292,11 @@ export function addNonceToHtmlStream(
       result += injectNonceIntoOpeningTag(tag, escapedNonce);
       index = tagEnd + 1;
 
-      if (!/\/\s*>$/u.test(tag)) {
-        rawTextTag = tagName;
-      }
+      rawTextTag = tagName;
     }
 
     if (index > 0) {
       buffer = buffer.slice(index);
-      lowerBuffer = buffer.toLowerCase();
     }
     return result;
   }
@@ -302,7 +319,6 @@ export function addNonceToHtmlStream(
           if (done) {
             const decoded = decoder.decode();
             buffer += decoded;
-            lowerBuffer += decoded.toLowerCase();
             const transformed = transformBuffer(true);
             if (transformed) controller.enqueue(encoder.encode(transformed));
             controller.close();
@@ -312,15 +328,21 @@ export function addNonceToHtmlStream(
 
           const decoded = decoder.decode(value, { stream: true });
           buffer += decoded;
-          lowerBuffer += decoded.toLowerCase();
           const transformed = transformBuffer(false);
+          assertHTMLTokenLength(buffer.length);
           if (transformed) {
             controller.enqueue(encoder.encode(transformed));
             return;
           }
         }
       } catch (error) {
-        releaseReaderLock();
+        try {
+          await reader.cancel(error);
+        } catch {
+          // Preserve the transformation error when upstream cancellation fails.
+        } finally {
+          releaseReaderLock();
+        }
         controller.error(error);
       }
     },

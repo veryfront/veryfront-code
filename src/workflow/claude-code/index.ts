@@ -57,7 +57,12 @@ export {
   WebSocketPublisher,
 } from "./websocket-publisher.ts";
 
-export type { WebSocketPublisherConfig } from "./websocket-publisher.ts";
+export type {
+  WebSocketConnectionContext,
+  WebSocketConnectionDisposer,
+  WebSocketHandlerConfig,
+  WebSocketPublisherConfig,
+} from "./websocket-publisher.ts";
 
 // Workspace Sync (for cloud deployments with API-backed file operations)
 export { createWorkspaceSync, withWorkspace, WorkspaceSync } from "./workspace-sync.ts";
@@ -66,6 +71,8 @@ export type {
   FileChange,
   UploadResult,
   WorkspaceConfig,
+  WorkspaceFileApi,
+  WorkspaceSyncDependencies,
   WorkspaceSyncResult,
 } from "./workspace-sync.ts";
 

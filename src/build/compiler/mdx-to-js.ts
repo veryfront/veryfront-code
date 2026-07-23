@@ -1,143 +1,91 @@
-import { bundlerLogger as logger } from "#veryfront/utils";
-import * as esbuild from "veryfront/extensions/bundler";
-import { extract } from "#std/front-matter/yaml.ts";
+import { isAbsolute, relative, resolve } from "#veryfront/compat/path/index.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "#veryfront/errors";
+import {
+  createFrontmatterModuleExpression,
+  type MDXFrontmatter,
+  normalizeMDXFrontmatter,
+} from "./frontmatter.ts";
 
-export interface MDXFrontmatter {
-  title?: string;
-  description?: string;
-  layout?: boolean;
-  [key: string]: unknown;
-}
+export type { MDXFrontmatter } from "./frontmatter.ts";
 
-interface CompileToJSOptions {
+/** Runtime context for compiling one MDX or Markdown source. */
+export interface CompileToJSOptions {
+  /** Project root used to constrain and resolve `mdxPath`. */
   projectDir: string;
+  /** Compilation mode passed to the configured content processor. */
   mode: "development" | "production";
-  components?: string[];
+  /** Runtime adapter used by the content processor. */
   adapter: RuntimeAdapter;
 }
 
-function getComponentName(imp: { name: string; path: string }): string {
-  return imp.path.split("/").pop()?.replace(/\.(jsx?|tsx?)$/, "") ?? imp.name;
+/** Standalone ESM output and normalized source frontmatter. */
+export interface CompileToJSResult {
+  code: string;
+  frontmatter: MDXFrontmatter;
 }
 
-async function extractFrontmatter(
-  mdxContent: string,
-): Promise<{ frontmatter: MDXFrontmatter; content: string }> {
-  try {
-    const result = extract(mdxContent);
-    return {
-      frontmatter: (result.attrs ?? {}) as MDXFrontmatter,
-      content: result.body,
-    };
-  } catch (error) {
-    logger.warn("Failed to extract frontmatter with gray-matter:", error);
+function resolveSourcePath(projectDir: string, mdxPath: string): string {
+  const projectRoot = resolve(projectDir);
+  const sourcePath = resolve(projectRoot, mdxPath);
+  const projectRelativePath = relative(projectRoot, sourcePath);
+
+  if (
+    projectRelativePath === "" ||
+    projectRelativePath.split(/[\\/]/)[0] === ".." ||
+    isAbsolute(projectRelativePath)
+  ) {
+    throw new TypeError(`MDX source path is outside projectDir: ${mdxPath}`);
+  }
+  if (!/\.mdx?$/i.test(sourcePath)) {
+    throw new TypeError(`MDX source path must end with .md or .mdx: ${mdxPath}`);
   }
 
-  if (!mdxContent.startsWith("---")) return { frontmatter: {}, content: mdxContent };
-
-  const match = mdxContent.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match?.[1]) return { frontmatter: {}, content: mdxContent };
-
-  try {
-    const { parse } = await import("@std/yaml/parse");
-    const parsed = parse(match[1]);
-    const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
-
-    if (!match[2]) {
-      throw toError(
-        createError({
-          type: "build",
-          message: "MDX content missing after frontmatter",
-        }),
-      );
-    }
-
-    return { frontmatter, content: String(match[2]) };
-  } catch (yamlError) {
-    logger.error("Failed to parse YAML frontmatter:", yamlError);
-    return { frontmatter: {}, content: mdxContent };
-  }
+  return sourcePath;
 }
 
-/**
- * Compile MDX to a standalone JS module
- */
+/** Compile MDX or Markdown to a standalone ESM module. */
 export async function compileMDXToJS(
   mdxPath: string,
   mdxContent: string,
   options: CompileToJSOptions,
-): Promise<{ code: string; frontmatter: MDXFrontmatter }> {
-  const { frontmatter, content } = await extractFrontmatter(mdxContent);
-
-  const importRegex = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
-  const imports: Array<{ name: string; path: string }> = [];
-
-  for (let match: RegExpExecArray | null; (match = importRegex.exec(content)) !== null;) {
-    const name = match[1];
-    const path = match[2];
-    if (name && path) imports.push({ name, path });
+): Promise<CompileToJSResult> {
+  if (typeof mdxPath !== "string" || !mdxPath.trim()) {
+    throw new TypeError("mdxPath must be a non-empty string");
   }
-
-  const contentWithoutImports = content.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, "");
-
+  if (typeof mdxContent !== "string") throw new TypeError("mdxContent must be a string");
+  if (!options || typeof options !== "object") throw new TypeError("options must be an object");
+  if (typeof options.projectDir !== "string" || !options.projectDir.trim()) {
+    throw new TypeError("projectDir must be a non-empty string");
+  }
+  if (options.mode !== "development" && options.mode !== "production") {
+    throw new TypeError("mode must be development or production");
+  }
+  if (!options.adapter || typeof options.adapter !== "object") {
+    throw new TypeError("adapter must be a runtime adapter");
+  }
+  const projectDir = resolve(options.projectDir);
+  const sourcePath = resolveSourcePath(projectDir, mdxPath);
   const processor = resolveContract<ContentProcessor>("ContentProcessor");
-  const compiled = await processor.compileMdx({
-    projectDir: options.projectDir,
-    content: contentWithoutImports,
-    filePath: mdxPath,
+  const compile = sourcePath.toLowerCase().endsWith(".mdx")
+    ? processor.compileMdx.bind(processor)
+    : processor.compileMarkdown.bind(processor);
+  const compiled = await compile({
+    projectDir,
+    content: mdxContent,
+    filePath: sourcePath,
     mode: options.mode,
     target: "server",
+    outputFormat: "program",
   });
+  if (typeof compiled.compiledCode !== "string" || !compiled.compiledCode.trim()) {
+    throw new TypeError("Content processor returned invalid compiled code");
+  }
+  const frontmatter = normalizeMDXFrontmatter(compiled.frontmatter);
+  const moduleCode = `${compiled.compiledCode}\nexport const frontmatter = ${
+    createFrontmatterModuleExpression(frontmatter)
+  };\n`;
 
-  const componentStubs = imports
-    .map((imp) => {
-      const componentName = getComponentName(imp);
-      if (options.components?.includes(componentName)) {
-        return `// ${imp.name} will be provided at runtime`;
-      }
-      return `const ${imp.name} = () => React.createElement('div', { className: 'missing-component' }, 'Component: ${imp.name}');`;
-    })
-    .join("\n");
-
-  const compiledBody = compiled.compiledCode
-    .replace(/export\s+{\s*\w+\s+as\s+default\s*}/g, "")
-    .replace(/export\s+default\s+/g, "");
-
-  const runtimeComponentBindings = imports
-    .map((imp) => {
-      const componentName = getComponentName(imp);
-      return `const ${imp.name} = components["${componentName}"] || components["${imp.name}"] || (() => React.createElement('div', { className: 'missing-component' }, 'Component: ${imp.name}'));`;
-    })
-    .join("\n  ");
-
-  const componentList = imports.length ? `${imports.map((imp) => imp.name).join(", ")}, ` : "";
-
-  const moduleCode = `
-// Generated from ${mdxPath}
-import * as React from "react";
-
-export const frontmatter = ${JSON.stringify(frontmatter, null, 2)};
-${componentStubs}
-${compiledBody}
-export default function MDXPage({ components = {} }) {
-  ${runtimeComponentBindings}
-  
-  return React.createElement(MDXContent, { components: { ${componentList}...components } });
-
-}
-`;
-
-  const result = await esbuild.transform(moduleCode, {
-    loader: "jsx",
-    jsx: "automatic",
-    jsxImportSource: "react",
-    format: "esm",
-    target: options.mode === "development" ? "es2020" : "es2018",
-  });
-
-  return { code: result.code, frontmatter };
+  return { code: moduleCode, frontmatter };
 }

@@ -13,10 +13,27 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
+import { generateOperationId } from "./path-utils.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 
 const logger = baseLogger.component("open-api-mcp");
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options"] as const;
+const DEFAULT_API_TIMEOUT_MS = 15_000;
+const MAX_API_TIMEOUT_MS = 120_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024 - 1;
+const MAX_API_REDIRECTS = 5;
+const FORBIDDEN_CALLER_HEADERS = new Set([
+  "connection",
+  "content-length",
+  "host",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 type HttpMethod = (typeof HTTP_METHODS)[number];
 
 function isHttpMethod(method: string): method is HttpMethod {
@@ -33,6 +50,18 @@ export interface MCPToolsConfig {
   toolPrefix?: string;
   /** Additional headers to include in requests */
   headers?: Record<string, string>;
+  /** Request timeout in milliseconds (default: 15000) */
+  timeoutMs?: number;
+  /** Maximum response body size in bytes (default: 5242880) */
+  maxResponseBytes?: number;
+}
+
+interface NormalizedMCPToolsConfig {
+  baseUrl: URL;
+  headers: Headers;
+  maxResponseBytes: number;
+  timeoutMs: number;
+  toolPrefix: string;
 }
 
 /**
@@ -42,7 +71,8 @@ export interface MCPToolsConfig {
  */
 export function generateMCPToolsFromSpec(spec: OpenAPISpec, config: MCPToolsConfig): Tool[] {
   const tools: Tool[] = [];
-  const toolPrefix = config.toolPrefix ?? "api";
+  const normalizedConfig = normalizeConfig(config);
+  const toolIds = new Set<string>();
 
   for (const [path, pathItem] of Object.entries(spec.paths)) {
     if (!pathItem) continue;
@@ -52,19 +82,33 @@ export function generateMCPToolsFromSpec(spec: OpenAPISpec, config: MCPToolsConf
 
       const operation = operationValue as OpenAPIOperation | undefined;
       if (!operation) continue;
+      const operationId = operation.operationId?.trim() || generateOperationId(method, path);
+      if (!/^[A-Za-z0-9_.-]+$/.test(operationId)) {
+        throw new TypeError(`Invalid OpenAPI operation id: ${operationId}`);
+      }
+      const toolId = `${normalizedConfig.toolPrefix}:${operationId}`;
+      if (toolId.length > 128) {
+        throw new TypeError("Generated OpenAPI tool id exceeds 128 characters");
+      }
+      if (toolIds.has(toolId)) {
+        throw new TypeError(`Duplicate OpenAPI operation id: ${operationId}`);
+      }
+      toolIds.add(toolId);
+
+      const operationSnapshot = structuredClone({ ...operation, operationId });
 
       tools.push(
         dynamicTool({
-          id: `${toolPrefix}:${operation.operationId}`,
-          description: buildToolDescription(operation, method, path),
-          inputSchema: buildInputSchema(operation),
+          id: toolId,
+          description: buildToolDescription(operationSnapshot, method, path),
+          inputSchema: buildInputSchema(operationSnapshot),
           execute: (input, context?) =>
             executeAPICall(
-              config,
+              normalizedConfig,
               method,
               path,
               input as Record<string, unknown>,
-              operation,
+              operationSnapshot,
               context,
             ),
           mcp: { enabled: true },
@@ -75,6 +119,46 @@ export function generateMCPToolsFromSpec(spec: OpenAPISpec, config: MCPToolsConf
 
   logger.debug("Generated tools", { count: tools.length });
   return tools;
+}
+
+function normalizeConfig(config: MCPToolsConfig): NormalizedMCPToolsConfig {
+  const baseUrl = new URL(config.baseUrl);
+  if (
+    (baseUrl.protocol !== "http:" && baseUrl.protocol !== "https:") || baseUrl.username ||
+    baseUrl.password || baseUrl.search || baseUrl.hash ||
+    (baseUrl.pathname !== "/" && baseUrl.pathname !== "")
+  ) {
+    throw new TypeError("OpenAPI MCP baseUrl must be an HTTP(S) origin without credentials");
+  }
+
+  const toolPrefix = config.toolPrefix ?? "api";
+  if (!/^[A-Za-z0-9_.-]+$/.test(toolPrefix) || toolPrefix.length > 64) {
+    throw new TypeError(
+      "OpenAPI MCP toolPrefix must contain only letters, numbers, dot, dash, or underscore",
+    );
+  }
+
+  const timeoutMs = config.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_API_TIMEOUT_MS) {
+    throw new RangeError(`OpenAPI MCP timeoutMs must be between 1 and ${MAX_API_TIMEOUT_MS}`);
+  }
+  const maxResponseBytes = config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  if (
+    !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 ||
+    maxResponseBytes > MAX_RESPONSE_BYTES
+  ) {
+    throw new RangeError(
+      `OpenAPI MCP maxResponseBytes must be between 1 and ${MAX_RESPONSE_BYTES}`,
+    );
+  }
+
+  return {
+    baseUrl,
+    headers: new Headers(config.headers),
+    maxResponseBytes,
+    timeoutMs,
+    toolPrefix,
+  };
 }
 
 function buildToolDescription(operation: OpenAPIOperation, method: string, path: string): string {
@@ -100,7 +184,10 @@ function buildInputSchema(operation: OpenAPIOperation): Schema<unknown> {
     addParamGroup(v, shape, params, "header", "headers", "Request headers");
 
     if (operation.requestBody) {
-      shape.body = v.record(v.string(), v.unknown()).optional().describe("Request body (JSON)");
+      shape.body = withRequired(
+        v.unknown().describe("Request body (JSON)"),
+        operation.requestBody.required,
+      );
     }
 
     return v.object(shape);
@@ -151,61 +238,119 @@ function buildParamSchema(
 }
 
 async function executeAPICall(
-  config: MCPToolsConfig,
+  config: NormalizedMCPToolsConfig,
   method: string,
   path: string,
   input: Record<string, unknown>,
   operation: OpenAPIOperation,
-  _context?: ToolExecutionContext,
+  context?: ToolExecutionContext,
 ): Promise<unknown> {
-  let url = `${config.baseUrl}${path}`;
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new TypeError("OpenAPI operation path must start with one slash");
+  }
+  let resolvedPath = path;
 
   const params = operation.parameters ?? [];
   for (const param of params) {
     if (param.in !== "path") continue;
 
     const value = input[param.name];
-    if (value === undefined) continue;
+    if (value === undefined || value === null) {
+      if (param.required) throw new TypeError(`Missing required path parameter: ${param.name}`);
+      continue;
+    }
 
-    url = url.replace(`{${param.name}}`, encodeURIComponent(String(value)));
+    resolvedPath = resolvedPath.replaceAll(`{${param.name}}`, encodeURIComponent(String(value)));
+  }
+  if (/\{[^}]+\}/.test(resolvedPath)) throw new TypeError("OpenAPI operation path is unresolved");
+
+  const url = new URL(resolvedPath, config.baseUrl);
+  if (url.origin !== config.baseUrl.origin) {
+    throw new TypeError("OpenAPI operation path changed origin");
   }
 
   const queryParams = input.query as Record<string, unknown> | undefined;
   if (queryParams && Object.keys(queryParams).length) {
-    const searchParams = new URLSearchParams();
+    const allowedQueryParams = new Set(
+      params.filter((param) => param.in === "query").map((param) => param.name),
+    );
     for (const [key, value] of Object.entries(queryParams)) {
       if (value === undefined || value === null) continue;
-      searchParams.append(key, String(value));
+      if (!allowedQueryParams.has(key)) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item !== undefined && item !== null) url.searchParams.append(key, String(item));
+        }
+      } else if (typeof value === "object") {
+        throw new TypeError(`Query parameter ${key} must be a primitive or array`);
+      } else {
+        url.searchParams.append(key, String(value));
+      }
     }
-    url += `?${searchParams.toString()}`;
   }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...config.headers,
-    ...((input.headers as Record<string, string> | undefined) ?? {}),
-  };
+  const headers = new Headers();
+  const allowedInputHeaders = new Set(
+    params.filter((param) => param.in === "header").map((param) => param.name.toLowerCase()),
+  );
+  for (const [name, value] of Object.entries(input.headers as Record<string, unknown> ?? {})) {
+    const normalizedName = name.toLowerCase();
+    if (!allowedInputHeaders.has(normalizedName) || FORBIDDEN_CALLER_HEADERS.has(normalizedName)) {
+      continue;
+    }
+    if (typeof value !== "string") throw new TypeError(`Header ${name} must be a string`);
+    headers.set(name, value);
+  }
+  for (const [name, value] of config.headers) headers.set(name, value);
 
   const requestInit: RequestInit = {
     method: method.toUpperCase(),
     headers,
   };
 
-  if (["post", "put", "patch"].includes(method) && input.body) {
+  if (["post", "put", "patch"].includes(method) && input.body !== undefined) {
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
     requestInit.body = JSON.stringify(input.body);
   }
 
-  logger.debug("Executing API call", { method, url });
+  logger.debug("Executing API call", { method, path });
+
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort(new DOMException("API call timed out", "TimeoutError"));
+  }, config.timeoutMs);
+  const abortFromContext = () => abortController.abort(context?.abortSignal?.reason);
+  if (context?.abortSignal?.aborted) abortFromContext();
+  else context?.abortSignal?.addEventListener("abort", abortFromContext, { once: true });
+  requestInit.signal = abortController.signal;
 
   try {
-    const response = await fetch(url, requestInit);
+    const response = await fetchWithSameOriginRedirects(url, requestInit, config.baseUrl.origin);
     const contentType = response.headers.get("content-type") ?? "";
+    const contentLength = response.headers.get("content-length");
+    if (contentLength !== null) {
+      if (!/^\d+$/.test(contentLength)) {
+        throw new TypeError("API response Content-Length is invalid");
+      }
+      if (Number(contentLength) > config.maxResponseBytes) {
+        await response.body?.cancel().catch(() => {});
+        throw new RangeError("API response exceeded the configured size limit");
+      }
+    }
+    const body = await readResponseTextPrefix(response, config.maxResponseBytes + 1);
+    if (
+      body.truncated || new TextEncoder().encode(body.text).byteLength > config.maxResponseBytes
+    ) {
+      throw new RangeError("API response exceeded the configured size limit");
+    }
 
     let data: unknown;
-    if (contentType.includes("application/json")) {
-      data = await response.json();
+    if (contentType.toLowerCase().includes("application/json")) {
+      data = body.text ? JSON.parse(body.text) : null;
     } else {
-      data = await response.text();
+      data = body.text;
     }
 
     return {
@@ -214,10 +359,56 @@ async function executeAPICall(
       data,
     };
   } catch (error) {
-    logger.error("API call failed", { method, url, error: String(error) });
+    logger.error("API call failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+      method,
+      path,
+    });
+    const message = error instanceof RangeError &&
+        error.message === "API response exceeded the configured size limit"
+      ? error.message
+      : timedOut
+      ? "API call timed out"
+      : context?.abortSignal?.aborted
+      ? "API call was cancelled"
+      : "API call failed";
     return {
       error: true,
-      message: error instanceof Error ? error.message : String(error),
+      message,
     };
+  } finally {
+    clearTimeout(timeout);
+    context?.abortSignal?.removeEventListener("abort", abortFromContext);
   }
+}
+
+async function fetchWithSameOriginRedirects(
+  initialUrl: URL,
+  initialInit: RequestInit,
+  allowedOrigin: string,
+): Promise<Response> {
+  let url = initialUrl;
+  let init = { ...initialInit, redirect: "manual" as const };
+
+  for (let redirectCount = 0; redirectCount <= MAX_API_REDIRECTS; redirectCount++) {
+    const response = await fetch(url, init);
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.headers.get("location");
+    if (!location) return response;
+    await response.body?.cancel().catch(() => {});
+    if (redirectCount === MAX_API_REDIRECTS) throw new Error("API redirect limit exceeded");
+
+    const redirected = new URL(location, url);
+    if (redirected.origin !== allowedOrigin) throw new Error("API redirect changed origin");
+    if (
+      response.status === 303 ||
+      ((response.status === 301 || response.status === 302) && init.method === "POST")
+    ) {
+      init = { ...init, method: "GET", body: undefined };
+    }
+    url = redirected;
+  }
+
+  throw new Error("API redirect validation failed");
 }

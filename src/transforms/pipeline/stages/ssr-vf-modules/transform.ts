@@ -38,6 +38,8 @@ import {
   veryfrontTransformCache,
 } from "./constants.ts";
 import { buildFrameworkVfModuleCacheFileName } from "../../../mdx/esm-module-loader/cache-format.ts";
+import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { errorLogName, fileLogLabel } from "../../../shared/log-context.ts";
 
 const DENO_CONFIG_STUB_CODE = `export default ${JSON.stringify(denoConfig)};`;
 
@@ -95,16 +97,23 @@ export async function cacheTransformedCode(
 
   // Use Singleflight to prevent concurrent writes to the same file
   return await frameworkWriteFlight.do(cachePath, async () => {
-    await fs.mkdir(frameworkCacheDir, { recursive: true });
-
     // Check if file already exists to avoid unnecessary writes
     if (await fs.exists(cachePath)) {
-      logger.debug(`${LOG_PREFIX} Framework module cache hit`, { cachePath });
+      logger.debug(`${LOG_PREFIX} Framework module cache hit`, {
+        cacheFile: fileLogLabel(cachePath),
+      });
       return cachePath;
     }
 
-    await fs.writeTextFile(cachePath, transformed);
-    logger.debug(`${LOG_PREFIX} Wrote framework module to cache`, { cachePath });
+    const written = await writeCacheFile(fs, cachePath, transformed, "SSR-VF-MODULES");
+    if (!written) {
+      throw IMPORT_RESOLUTION_ERROR.create({
+        detail: "Framework module cache file was not created after a successful write.",
+      });
+    }
+    logger.debug(`${LOG_PREFIX} Wrote framework module to cache`, {
+      cacheFile: fileLogLabel(cachePath),
+    });
 
     return cachePath;
   });
@@ -180,7 +189,7 @@ async function transformAndCacheFallbackDep(
     // dev server isn't silently producing un-loadable cache files.
     logger.warn(
       `${LOG_PREFIX} Depth-limit fallback skipping cycle`,
-      { resolvedPath: resolvedPath.slice(-60) },
+      { sourceFile: fileLogLabel(resolvedPath) },
     );
     return null;
   }
@@ -190,7 +199,7 @@ async function transformAndCacheFallbackDep(
   } catch (error) {
     logger.warn(
       `${LOG_PREFIX} Depth-limit fallback could not read dependency`,
-      { resolvedPath: resolvedPath.slice(-60), error: String(error) },
+      { sourceFile: fileLogLabel(resolvedPath), errorName: errorLogName(error) },
     );
     return null;
   }
@@ -230,7 +239,7 @@ async function transformAndCacheFallbackDep(
   } catch (error) {
     logger.warn(
       `${LOG_PREFIX} Depth-limit fallback could not compile dependency`,
-      { resolvedPath: resolvedPath.slice(-60), error: String(error) },
+      { sourceFile: fileLogLabel(resolvedPath), errorName: errorLogName(error) },
     );
     return null;
   }
@@ -277,8 +286,11 @@ async function rewriteFallbackRelativeImports(
     const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
     if (!resolvedPath) {
       logger.warn(
-        `${LOG_PREFIX} Depth-limit fallback could not resolve relative import "${specifier}"`,
-        { sourcePath: sourcePath.slice(-60) },
+        `${LOG_PREFIX} Depth-limit fallback could not resolve relative import`,
+        {
+          importFile: fileLogLabel(specifier),
+          sourceFile: fileLogLabel(sourcePath),
+        },
       );
       continue;
     }
@@ -352,9 +364,11 @@ export async function transformFrameworkCode(
 
   if (ancestry.has(transformKey)) {
     logger.debug(`${LOG_PREFIX} Detected cycle, skipping`, {
-      sourcePath: sourcePath.slice(-60),
+      sourceFile: fileLogLabel(sourcePath),
     });
-    return `/* Cycle detected: ${sourcePath} ${CYCLE_PLACEHOLDER_MARKER} */\nexport {};`;
+    return `/* Cycle detected: ${
+      fileLogLabel(sourcePath)
+    } ${CYCLE_PLACEHOLDER_MARKER} */\nexport {};`;
   }
 
   const nextAncestry = new Set(ancestry);
@@ -391,7 +405,7 @@ async function transformFrameworkCodeUncoalesced(
   // Check depth limit
   if (depth > MAX_RELATIVE_IMPORT_DEPTH) {
     logger.warn(`${LOG_PREFIX} Max relative import depth exceeded`, {
-      sourcePath: sourcePath.slice(-60),
+      sourceFile: fileLogLabel(sourcePath),
       depth,
     });
     // Compile the file, then rewrite its relative imports so the cached
@@ -415,11 +429,13 @@ async function transformFrameworkCodeUncoalesced(
     // Validate cached code - reject cycle placeholders and unresolved imports
     if (isCyclePlaceholder(cached)) {
       logger.debug(`${LOG_PREFIX} Cache contains cycle placeholder, invalidating`, {
-        sourcePath: sourcePath.slice(-60),
+        sourceFile: fileLogLabel(sourcePath),
       });
       frameworkFileCache.delete(transformKey);
     } else {
-      logger.debug(`${LOG_PREFIX} Framework file cache hit`, { sourcePath: sourcePath.slice(-60) });
+      logger.debug(`${LOG_PREFIX} Framework file cache hit`, {
+        sourceFile: fileLogLabel(sourcePath),
+      });
       return cached;
     }
   }
@@ -455,12 +471,9 @@ async function transformFrameworkCodeUncoalesced(
         veryfrontReplacements.set(specifier, resolved);
       } else if (throwOnMissingImport) {
         throw IMPORT_RESOLUTION_ERROR.create({
-          detail:
-            `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${sourcePath}. ` +
-            `Expected to find ${
-              join(FRAMEWORK_ROOT, "src", specifier.slice("#veryfront/".length))
-            }.{ts,tsx,js,jsx} ` +
-            `or an index file at that path.`,
+          detail: `${LOG_PREFIX} Could not resolve framework import "${specifier}" in ${
+            fileLogLabel(sourcePath)
+          }. Verify that the framework module exists and is exported.`,
         });
       }
     }
@@ -494,14 +507,17 @@ async function transformFrameworkCodeUncoalesced(
 
         const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
         if (!resolvedPath) {
+          const sourceFile = fileLogLabel(sourcePath);
           if (throwOnMissingImport) {
             throw IMPORT_RESOLUTION_ERROR.create({
-              detail:
-                `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+              detail: `${LOG_PREFIX} Could not resolve relative import ${
+                fileLogLabel(specifier)
+              } in ${sourceFile}`,
             });
           }
           logger.warn(
-            `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
+            `${LOG_PREFIX} Could not resolve relative import`,
+            { importFile: fileLogLabel(specifier), sourceFile },
           );
           continue;
         }
@@ -553,8 +569,8 @@ async function transformFrameworkCodeUncoalesced(
           // Skip cycle placeholders - don't cache or use them
           if (isCyclePlaceholder(transformedDep)) {
             logger.debug(`${LOG_PREFIX} Skipping relative import cycle placeholder`, {
-              specifier,
-              resolvedPath: resolvedPath.slice(-60),
+              importFile: fileLogLabel(specifier),
+              sourceFile: fileLogLabel(resolvedPath),
             });
             continue;
           }
@@ -568,15 +584,16 @@ async function transformFrameworkCodeUncoalesced(
           frameworkFileCache.set(dependencyTransformKey, transformedDep);
 
           logger.debug(`${LOG_PREFIX} Transformed relative import`, {
-            from: sourcePath.slice(-40),
-            specifier,
-            cachePath: cachePath.slice(-60),
+            sourceFile: fileLogLabel(sourcePath),
+            importFile: fileLogLabel(specifier),
+            cacheFile: fileLogLabel(cachePath),
           });
         } catch (error) {
-          logger.warn(`${LOG_PREFIX} Failed to transform relative import: ${specifier}`, {
-            from: sourcePath.slice(-40),
-            resolvedPath: resolvedPath.slice(-40),
-            error: error instanceof Error ? error.message : String(error),
+          logger.warn(`${LOG_PREFIX} Failed to transform relative import`, {
+            importFile: fileLogLabel(specifier),
+            sourceFile: fileLogLabel(sourcePath),
+            dependencyFile: fileLogLabel(resolvedPath),
+            errorName: errorLogName(error),
           });
         }
       }
@@ -654,7 +671,9 @@ export async function resolveAndTransformVeryfrontImport(
     // A cycle placeholder indicates the current traversal already visited the
     // module, so it must not be cached.
     if (isCyclePlaceholder(transformed)) {
-      logger.debug(`${LOG_PREFIX} Skipping cache for cycle placeholder`, { specifier });
+      logger.debug(`${LOG_PREFIX} Skipping cache for cycle placeholder`, {
+        importFile: fileLogLabel(specifier),
+      });
       return null;
     }
 
@@ -666,15 +685,16 @@ export async function resolveAndTransformVeryfrontImport(
     veryfrontTransformCache.set(transformKey, fileUrl);
 
     logger.debug(`${LOG_PREFIX} Transformed #veryfront/ dependency`, {
-      specifier,
-      sourcePath,
-      cachePath,
+      importFile: fileLogLabel(specifier),
+      sourceFile: fileLogLabel(sourcePath),
+      cacheFile: fileLogLabel(cachePath),
     });
 
     return fileUrl;
   } catch (error) {
-    logger.warn(`${LOG_PREFIX} Failed to transform #veryfront/ dependency: ${specifier}`, {
-      error: error instanceof Error ? error.message : String(error),
+    logger.warn(`${LOG_PREFIX} Failed to transform #veryfront/ dependency`, {
+      importFile: fileLogLabel(specifier),
+      errorName: errorLogName(error),
     });
     // Return null on failure - caller will handle missing imports appropriately.
     // No fallback to raw TypeScript paths as these fail in compiled binaries.

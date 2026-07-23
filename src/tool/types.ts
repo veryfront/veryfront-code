@@ -139,7 +139,7 @@ export interface ToolExecutionDataEvent {
  * - 'function': Standard tool with known input/output types (default)
  * - 'dynamic': Dynamic tool with unknown types (MCP tools, user-defined functions)
  */
-type ToolType = "function" | "dynamic";
+export type ToolType = "function" | "dynamic";
 
 /**
  * Tool instance (returned by tool() function)
@@ -211,10 +211,15 @@ export type ToolSet = Record<string, Tool<unknown, unknown>>;
  * Provider-facing tool definition used for model/tool registration.
  */
 export interface ToolDefinition {
+  /** Tool name exposed to the model or remote client. */
   name: string;
+  /** Human-readable description of the tool behavior. */
   description: string;
+  /** JSON Schema for tool input. */
   parameters: JsonSchema;
+  /** Optional display title. */
   title?: string;
+  /** Optional behavioral hints for MCP clients. */
   annotations?: ToolAnnotations;
 }
 
@@ -224,8 +229,11 @@ export interface ToolDefinition {
  * without registering those tools globally inside the framework.
  */
 export interface RemoteToolSource {
+  /** Stable source identifier. */
   id: string;
+  /** List tool definitions visible in the supplied execution context. */
   listTools(context?: ToolExecutionContext): Promise<ToolDefinition[]>;
+  /** Execute a named remote tool. */
   executeTool(
     toolName: string,
     args: Record<string, unknown>,

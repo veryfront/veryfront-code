@@ -4,91 +4,142 @@ import {
   type MessageTokenBreakdown,
 } from "../../chat/message-prep.ts";
 import { defineSchema } from "../../schemas/index.ts";
-import type { InferSchema } from "../../extensions/schema/index.ts";
+import type { Schema } from "../../extensions/schema/index.ts";
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 
+/** Durable event type emitted when runtime context is compacted. */
 export const AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE = "AGENT_RUN_CONTEXT_COMPACTED" as const;
 
-export const getContextCompactionSummarySchema = defineSchema((v) =>
-  v.object({
-    text: v.string().min(1),
-  })
-);
+/** Reason a runtime compacted conversation context. */
+export type ContextCompactionReason = "context_window" | "transport_body";
 
-export const getContextCompactionEventPayloadSchema = defineSchema((v) =>
-  v.object({
-    type: v.literal(AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE),
-    summary: getContextCompactionSummarySchema(),
-    firstKeptEntryId: v.string().min(1),
-    tokensBefore: v.number().int().nonnegative(),
-    tokensAfter: v.number().int().nonnegative(),
-    tokenBudget: v.number().int().positive(),
-    reserveTokens: v.number().int().nonnegative(),
-    reason: v.enum(["context_window", "transport_body"]),
-  }).superRefine((event, ctx) => {
-    const usableBudget = event.tokenBudget - event.reserveTokens;
-    if (usableBudget <= 0) {
-      ctx.addIssue({
-        code: "custom",
-        message: "reserveTokens must be lower than tokenBudget",
-        path: ["reserveTokens"],
-      });
-    }
-    if (event.tokensAfter > usableBudget) {
-      ctx.addIssue({
-        code: "custom",
-        message: "tokensAfter must fit within the usable token budget",
-        path: ["tokensAfter"],
-      });
-    }
-    if (event.tokensAfter > event.tokensBefore) {
-      ctx.addIssue({
-        code: "custom",
-        message: "tokensAfter cannot exceed tokensBefore",
-        path: ["tokensAfter"],
-      });
-    }
-  })
-);
+/** Model-generated summary used to replace compacted context. */
+export interface ContextCompactionSummary {
+  /** Summary text inserted into the retained context. */
+  text: string;
+}
 
-export type ContextCompactionSummary = InferSchema<
-  ReturnType<typeof getContextCompactionSummarySchema>
->;
+/** Durable payload describing one context compaction. */
+export interface ContextCompactionEventPayload {
+  /** Additional event fields accepted by durable run transport. */
+  [key: string]: unknown;
+  /** Event discriminator. */
+  type: typeof AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE;
+  /** Summary inserted in place of compacted messages. */
+  summary: ContextCompactionSummary;
+  /** First retained conversation entry. */
+  firstKeptEntryId: string;
+  /** Estimated token count before compaction. */
+  tokensBefore: number;
+  /** Estimated token count after compaction. */
+  tokensAfter: number;
+  /** Total configured token budget. */
+  tokenBudget: number;
+  /** Tokens reserved for model output and runtime overhead. */
+  reserveTokens: number;
+  /** Reason compaction was required. */
+  reason: ContextCompactionReason;
+}
 
-export type ContextCompactionEventPayload = InferSchema<
-  ReturnType<typeof getContextCompactionEventPayloadSchema>
->;
+/** Returns the context compaction summary schema. */
+export const getContextCompactionSummarySchema: () => Schema<ContextCompactionSummary> =
+  defineSchema((v) =>
+    v.object({
+      text: v.string().min(1),
+    })
+  );
 
-export type ContextCompactionReason = ContextCompactionEventPayload["reason"];
+/** Returns the context compaction event payload schema. */
+export const getContextCompactionEventPayloadSchema: () => Schema<ContextCompactionEventPayload> =
+  defineSchema((v) =>
+    v.object({
+      type: v.literal(AGENT_RUN_CONTEXT_COMPACTED_EVENT_TYPE),
+      summary: getContextCompactionSummarySchema(),
+      firstKeptEntryId: v.string().min(1),
+      tokensBefore: v.number().int().nonnegative(),
+      tokensAfter: v.number().int().nonnegative(),
+      tokenBudget: v.number().int().positive(),
+      reserveTokens: v.number().int().nonnegative(),
+      reason: v.enum(["context_window", "transport_body"] as const),
+    }).superRefine((event, ctx) => {
+      const usableBudget = event.tokenBudget - event.reserveTokens;
+      if (usableBudget <= 0) {
+        ctx.addIssue({
+          code: "custom",
+          message: "reserveTokens must be lower than tokenBudget",
+          path: ["reserveTokens"],
+        });
+      }
+      if (event.tokensAfter > usableBudget) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tokensAfter must fit within the usable token budget",
+          path: ["tokensAfter"],
+        });
+      }
+      if (event.tokensAfter > event.tokensBefore) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tokensAfter cannot exceed tokensBefore",
+          path: ["tokensAfter"],
+        });
+      }
+    })
+  );
 
+/** Produces a bounded summary for messages selected for compaction. */
 export type ContextSummaryGenerator = (input: {
+  /** Messages selected for replacement by a summary. */
   messagesToSummarize: AgentRuntimeMessage[];
+  /** Recent messages retained verbatim. */
   retainedMessages: AgentRuntimeMessage[];
+  /** Optional application-specific summary instructions. */
   customInstructions?: string;
 }) => Promise<ContextCompactionSummary> | ContextCompactionSummary;
 
+/** Token budgets and hooks used by context compaction. */
 export type ContextBudgetManagerOptions = {
+  /** Maximum estimated tokens available for conversation context. */
   tokenBudget: number;
+  /** Tokens reserved for output and runtime overhead. */
   reserveTokens: number;
+  /** Recent tail token target retained verbatim. */
   recentTailTokens: number;
+  /** Minimum number of recent turns retained verbatim. */
   minimumRecentTurns?: number;
+  /** Maximum tokens requested from the summary generator. */
   maxSummaryTokens?: number;
+  /** Optional application-specific summary instructions. */
   customInstructions?: string;
+  /** Reason recorded when compaction occurs. */
   reason?: ContextCompactionReason;
+  /** Clock used to timestamp generated summary messages. */
   now?: () => number;
+  /** Generates the replacement summary. */
   summaryGenerator: ContextSummaryGenerator;
 };
 
+/** Measurements produced while enforcing a context budget. */
 export type ContextBudgetDiagnostics = {
+  /** Whether any messages were compacted. */
   compacted: boolean;
+  /** Estimated tokens before compaction. */
   tokensBefore: number;
+  /** Estimated tokens after compaction. */
   tokensAfter: number;
+  /** Token breakdown before compaction. */
   beforeBreakdown: MessageTokenBreakdown;
+  /** Token breakdown after compaction. */
   afterBreakdown: MessageTokenBreakdown;
+  /** Configured total token budget. */
   tokenBudget: number;
+  /** Configured token reserve. */
   reserveTokens: number;
+  /** Estimated tokens in the generated summary. */
   summaryTokens: number;
+  /** Estimated tokens retained in the recent tail. */
   retainedTailTokens: number;
+  /** Reason recorded for compaction. */
   reason: ContextCompactionReason;
 };
 

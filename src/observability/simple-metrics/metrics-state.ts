@@ -49,11 +49,11 @@ export const state: MetricsState = {
 };
 
 export function getSSRBoundaries(): number[] {
-  return SSR_BOUNDARIES_MS;
+  return [...SSR_BOUNDARIES_MS];
 }
 
 export function getContentNetworkBoundaries(): number[] {
-  return CONTENT_NETWORK_BOUNDARIES_MS;
+  return [...CONTENT_NETWORK_BOUNDARIES_MS];
 }
 
 export function createSnapshot(): VeryfrontMetrics {
@@ -150,6 +150,7 @@ export function resetMetrics(): void {
   state.contentProductionRequests = 0;
   state._ssrCounts.fill(0);
   state._contentNetworkCounts.fill(0);
+  state.ssrHistogram = undefined;
   state.rscStreamHistogram = undefined;
   state.contentNetworkHistogram = undefined;
 }

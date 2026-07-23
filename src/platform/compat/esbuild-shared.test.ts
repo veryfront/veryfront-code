@@ -32,6 +32,13 @@ describe("platform/compat/esbuild-shared", () => {
         assertEquals(name.endsWith("-arm64"), true);
       }
     });
+
+    it("derives a Windows package name without reading the host build", () => {
+      assertEquals(
+        getEsbuildBinaryName({ os: "windows", arch: "x86_64" }),
+        "@esbuild/windows-x64",
+      );
+    });
   });
 
   describe("getVFSBasePath", () => {
@@ -45,18 +52,18 @@ describe("platform/compat/esbuild-shared", () => {
 
     it("should return parent of src when path contains src directory", () => {
       const result = getVFSBasePath(
-        "/home/user/project/src/platform/compat/esbuild.ts",
+        "/workspace/project/src/platform/compat/esbuild.ts",
         "/tmp",
       );
-      assertEquals(result, "/home/user/project");
+      assertEquals(result, "/workspace/project");
     });
 
     it("should use last src index when multiple src directories exist", () => {
       const result = getVFSBasePath(
-        "/home/user/src/project/src/platform/compat/esbuild.ts",
+        "/workspace/src/project/src/platform/compat/esbuild.ts",
         "/tmp",
       );
-      assertEquals(result, "/home/user/src/project");
+      assertEquals(result, "/workspace/src/project");
     });
 
     it("should fallback to temp dir when no patterns match", () => {
@@ -75,6 +82,23 @@ describe("platform/compat/esbuild-shared", () => {
         "/tmp",
       );
       assertEquals(result, "/tmp/deno-compile-xyz");
+    });
+
+    it("normalizes Windows VFS paths", () => {
+      assertEquals(
+        getVFSBasePath(
+          "C:\\Temp\\deno-compile-abc123\\src\\platform\\compat\\esbuild-init.ts",
+          "C:\\Temp",
+        ),
+        "C:/Temp/deno-compile-abc123",
+      );
+    });
+
+    it("normalizes the fallback path without hard-coding an OS temp directory", () => {
+      assertEquals(
+        getVFSBasePath("esbuild-init.ts", "C:\\Temp\\runner"),
+        "C:/Temp/runner/deno-compile-veryfront",
+      );
     });
   });
 });

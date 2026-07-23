@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   createFSAdapterFromConfig,
   enhanceAdapterWithFS,
@@ -28,6 +29,37 @@ describe("integration.ts", () => {
   it("should return original adapter when fs.type is not set", async () => {
     const adapter = await enhanceAdapterWithFS(denoAdapter, { fs: {} });
     assertEquals(adapter, denoAdapter);
+  });
+
+  it("snapshots the filesystem type once before selecting an adapter", async () => {
+    const secret = "PRIVATE_FS_TYPE/project-357";
+    let reads = 0;
+    const fs = Object.create(null);
+    Object.defineProperty(fs, "type", {
+      get() {
+        reads++;
+        if (reads > 1) throw new Error(secret);
+        return "local";
+      },
+    });
+
+    const adapter = await enhanceAdapterWithFS(denoAdapter, { fs });
+    assertEquals(adapter, denoAdapter);
+    assertEquals(reads, 1);
+  });
+
+  it("rejects unreadable integration configuration without retaining trap data", async () => {
+    const secret = "PRIVATE_FS_INTEGRATION/project-468";
+    const config = Object.create(null);
+    Object.defineProperty(config, "fs", {
+      get() {
+        throw new Error(secret);
+      },
+    });
+
+    const error = await assertRejects(() => createFSAdapterFromConfig(config));
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals(JSON.stringify(error).includes(secret), false);
   });
 
   it("should export createFSAdapterFromConfig function", () => {
@@ -93,29 +125,60 @@ describe("integration.ts", () => {
     assertEquals(getFSAdapterType({ fs: {} }), "local");
   });
 
-  describe("enhanceAdapterWithFS error fallback", () => {
-    it("should fall back to original adapter for unsupported type", async () => {
-      const adapter = await enhanceAdapterWithFS(denoAdapter, {
-        fs: { type: "unsupported-type" as any },
-      });
-      assertEquals(adapter, denoAdapter);
+  it("fails safely when a synchronous type lookup is unreadable", () => {
+    const secret = "PRIVATE_SYNC_FS_CONFIG/project-579";
+    const config = Object.create(null);
+    Object.defineProperty(config, "fs", {
+      get() {
+        throw new Error(secret);
+      },
     });
 
-    it("should fall back to original adapter for github type without config", async () => {
-      const adapter = await enhanceAdapterWithFS(denoAdapter, {
-        fs: { type: "github" },
-      });
-      assertEquals(adapter, denoAdapter);
-    });
+    let error: unknown;
+    try {
+      getFSAdapterType(config);
+    } catch (caught) {
+      error = caught;
+    }
 
-    it("should pass projectDir to FSAdapter config", async () => {
-      // With an unsupported type, it will fail and fall back, but the branch is exercised
-      const adapter = await enhanceAdapterWithFS(
-        denoAdapter,
-        { fs: { type: "unknown-type" as any } },
-        "/some/project/dir",
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals(JSON.stringify(error).includes(secret), false);
+  });
+
+  describe("enhanceAdapterWithFS error propagation", () => {
+    it("fails closed for an unsupported configured adapter", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: { type: "unsupported-type" as any },
+          }),
+        Error,
+        'FSAdapter type "unsupported-type" is not implemented',
       );
-      assertEquals(adapter, denoAdapter);
+    });
+
+    it("fails closed when a configured adapter is invalid", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: { type: "github" },
+          }),
+        Error,
+        "GitHub adapter requires github configuration",
+      );
+    });
+
+    it("propagates adapter errors when projectDir is supplied", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(
+            denoAdapter,
+            { fs: { type: "unknown-type" as any } },
+            "/some/project/dir",
+          ),
+        Error,
+        'FSAdapter type "unknown-type" is not implemented',
+      );
     });
   });
 

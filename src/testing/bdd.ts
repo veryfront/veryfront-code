@@ -1,7 +1,7 @@
 /**
  * Portable BDD testing utilities (describe, it, beforeEach, afterEach).
  *
- * In Deno: Direct re-export from @std/testing/bdd (no wrapper)
+ * In Deno: Uses @std/testing/bdd
  * In Node.js: Uses node:test
  * In Bun: Uses bun:test
  *
@@ -9,185 +9,160 @@
  */
 
 import "./init.ts";
+import { dynamicImport } from "#veryfront/platform/compat/dynamic-import.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getEnvOverlayStorage } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getEnvOverlayStorage } from "#veryfront/platform/compat/process.ts";
+import {
+  resolveBunTestAdapter,
+  resolveDefaultTestTimeout,
+  validateTestTimeout,
+  wrapTestFunctionWithTimeout,
+} from "./bdd-adapter.ts";
+import { ensureEnvOverlayRuntime, EnvOverlayStore } from "./env-overlay.ts";
 
-/** Test function that can be sync or async */
-type TestFn = () => void | Promise<void>;
-
-/** Test options for Deno sanitizers (ignored in Node/Bun) */
+/** Portable test options. Sanitizer fields only apply to Deno. */
 export interface TestOptions {
+  /** Ask Deno to detect leaked runtime resources. */
   sanitizeResources?: boolean;
+  /** Ask Deno to detect leaked asynchronous operations. */
   sanitizeOps?: boolean;
+  /** Ask Deno to prevent the test from exiting the process. */
   sanitizeExit?: boolean;
+  /** Skip this test or suite. */
   skip?: boolean;
+  /** Run only this test or suite. */
   only?: boolean;
+  /** Alias for `skip`. */
   ignore?: boolean;
+  /** Maximum test or hook duration in milliseconds. Suites pass this limit to descendants. */
   timeout?: number;
 }
 
-/** Context passed to hooks and tests (BDD-specific) */
+/** Context passed to BDD hooks and tests. */
 export interface BddTestContext {
+  /** Test or step name supplied by the active runtime. */
   name: string;
+  /** Source location supplied by the active runtime, when available. */
   origin?: string;
+  /** Parent test context for nested steps, when available. */
   parent?: BddTestContext;
+  /** Run a nested test step when the active runtime supports steps. */
   step?: (name: string, fn: TestFn) => Promise<void>;
 }
 
-/** Hook function */
-type HookFn = (ctx?: BddTestContext) => void | Promise<void>;
+/** Test function that can be sync or async. */
+export type TestFn = (ctx?: BddTestContext) => void | Promise<void>;
 
-type EnvOverlayStorageShim = {
-  storage: {
-    getStore: () => unknown;
-    run?: <T>(store: unknown, fn: () => T) => T;
-    enterWith?: (store: unknown) => void;
-  };
-};
+/** Hook function that can be sync or async. */
+export type HookFn = (ctx?: BddTestContext) => void | Promise<void>;
 
-type EnvOverlayValue = string | null;
-type EnvOverlayStore = Map<string, EnvOverlayValue>;
-
-type DenoEnvFacade = {
-  get: (key: string) => string | undefined;
-  set: (key: string, value: string) => void;
-  delete: (key: string) => void;
-  has: (key: string) => boolean;
-  toObject: () => Record<string, string>;
-};
-
-function getActiveEnvOverlay(): EnvOverlayStore | null {
-  const storage = getEnvOverlayStorage();
-  const store = storage?.getStore();
-  return store instanceof Map ? store as EnvOverlayStore : null;
-}
-
-function applyEnvOverlay(
-  base: Record<string, string>,
-  overlay: EnvOverlayStore | null,
-): Record<string, string> {
-  if (!overlay) return { ...base };
-
-  const merged = { ...base };
-  for (const [key, value] of overlay.entries()) {
-    if (value === null) {
-      delete merged[key];
-      continue;
-    }
-    merged[key] = value;
+function readContextProperty(context: object, property: PropertyKey): unknown {
+  try {
+    return Reflect.get(context, property);
+  } catch {
+    return undefined;
   }
-  return merged;
 }
 
-function installDenoEnvOverlayFacade(): void {
-  if (!isDeno || typeof Deno === "undefined" || typeof Deno.env === "undefined") return;
+function adaptBddContext(
+  context: unknown,
+  nestedMethod: "step" | "test",
+  fallbackName = "",
+  seen = new WeakMap<object, BddTestContext>(),
+): BddTestContext {
+  if ((typeof context !== "object" && typeof context !== "function") || context === null) {
+    return { name: fallbackName };
+  }
+  const existing = seen.get(context);
+  if (existing) return existing;
 
-  const globalAny = globalThis as Record<string, unknown>;
-  if (globalAny["__vfTestDenoEnvOverlayFacadeInstalled"]) return;
-  globalAny["__vfTestDenoEnvOverlayFacadeInstalled"] = true;
-
-  const originalDenoEnv = {
-    get: Deno.env.get.bind(Deno.env),
-    set: Deno.env.set.bind(Deno.env),
-    delete: Deno.env.delete.bind(Deno.env),
-    has: Deno.env.has.bind(Deno.env),
-    toObject: Deno.env.toObject.bind(Deno.env),
-  } satisfies DenoEnvFacade;
-
-  Deno.env.get = (key: string): string | undefined => {
-    const overlay = getActiveEnvOverlay();
-    if (overlay?.has(key)) return overlay.get(key) ?? undefined;
-    return originalDenoEnv.get(key);
+  const name = readContextProperty(context, "name");
+  const portable: BddTestContext = {
+    name: typeof name === "string" ? name : fallbackName,
   };
+  seen.set(context, portable);
 
-  Deno.env.set = (key: string, value: string): void => {
-    const overlay = getActiveEnvOverlay();
-    if (overlay) {
-      overlay.set(key, value);
-      return;
-    }
-    originalDenoEnv.set(key, value);
-  };
-
-  Deno.env.delete = (key: string): void => {
-    const overlay = getActiveEnvOverlay();
-    if (overlay) {
-      overlay.set(key, null);
-      return;
-    }
-    originalDenoEnv.delete(key);
-  };
-
-  Deno.env.has = (key: string): boolean => {
-    const overlay = getActiveEnvOverlay();
-    if (overlay?.has(key)) return overlay.get(key) !== null;
-    return originalDenoEnv.has(key);
-  };
-
-  Deno.env.toObject = (): Record<string, string> => {
-    return applyEnvOverlay(originalDenoEnv.toObject(), getActiveEnvOverlay());
-  };
-
-  const processAny = globalAny["process"] as
-    | { env?: Record<string, string | undefined> }
-    | undefined;
-  if (!processAny?.env) return;
-
-  const baseProcessEnv = processAny.env;
-  processAny.env = new Proxy(baseProcessEnv, {
-    get(target, prop, receiver) {
-      if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
-      return Deno.env.get(prop);
-    },
-    set(target, prop, value, receiver) {
-      if (typeof prop !== "string") return Reflect.set(target, prop, value, receiver);
-      Deno.env.set(prop, String(value));
-      return true;
-    },
-    deleteProperty(target, prop) {
-      if (typeof prop !== "string") return Reflect.deleteProperty(target, prop);
-      Deno.env.delete(prop);
-      return true;
-    },
-    has(target, prop) {
-      if (typeof prop !== "string") return Reflect.has(target, prop);
-      return Deno.env.has(prop);
-    },
-    ownKeys() {
-      return Object.keys(Deno.env.toObject());
-    },
-    getOwnPropertyDescriptor(target, prop) {
-      if (typeof prop !== "string") return Reflect.getOwnPropertyDescriptor(target, prop);
-      const value = Deno.env.get(prop);
-      if (value === undefined) return undefined;
-      return {
-        configurable: true,
-        enumerable: true,
-        writable: true,
-        value,
-      };
-    },
-  });
-}
-
-async function installDenoEnvOverlayStorage(): Promise<void> {
-  if (!isDeno) return;
-
-  const globalAny = globalThis as Record<string, unknown>;
-  if (!globalAny["__vfTestDenoEnvOverlay"]) {
-    const { AsyncLocalStorage } = await import("node:async_hooks");
-    const storage = new AsyncLocalStorage<EnvOverlayStore>();
-
-    globalAny["__vfTestDenoEnvOverlay"] = {
-      storage: {
-        getStore: () => storage.getStore(),
-        run: <T>(store: unknown, fn: () => T) => storage.run(store as EnvOverlayStore, fn),
-        enterWith: (store: unknown) => storage.enterWith(store as EnvOverlayStore),
-      },
-    } satisfies EnvOverlayStorageShim;
+  const origin = readContextProperty(context, "origin");
+  if (typeof origin === "string") portable.origin = origin;
+  const parent = readContextProperty(context, "parent");
+  if ((typeof parent === "object" || typeof parent === "function") && parent !== null) {
+    portable.parent = adaptBddContext(parent, nestedMethod, "", seen);
   }
 
-  installDenoEnvOverlayFacade();
+  const runtimeStep = readContextProperty(context, nestedMethod);
+  if (typeof runtimeStep === "function") {
+    portable.step = async (stepName, fn): Promise<void> => {
+      await Reflect.apply(runtimeStep, context, [
+        stepName,
+        (childContext: unknown) =>
+          fn(adaptBddContext(childContext, nestedMethod, stepName, new WeakMap())),
+      ]);
+    };
+  }
+  return portable;
+}
+
+function withNodeContextAdapter<T extends TestFn | HookFn>(fn: T): T {
+  if (isDeno || isBun) return fn;
+  return ((context?: unknown) =>
+    fn(context === undefined ? undefined : adaptBddContext(context, "test"))) as T;
+}
+
+const DEFAULT_TEST_TIMEOUT_MS = 30_000;
+
+const suiteTimeoutStack: Array<number | undefined> = [];
+
+function currentSuiteTimeout(): number | undefined {
+  return suiteTimeoutStack.at(-1);
+}
+
+function effectiveTimeout(configured?: number): number | undefined {
+  const timeout = configured ?? currentSuiteTimeout();
+  return timeout === undefined ? undefined : validateTestTimeout(timeout);
+}
+
+function withSuiteTimeout(testFn: () => void, configured?: number): () => void {
+  const timeout = effectiveTimeout(configured);
+  return () => {
+    suiteTimeoutStack.push(timeout);
+    try {
+      testFn();
+    } finally {
+      suiteTimeoutStack.pop();
+    }
+  };
+}
+
+function withPortableTimeout<T extends TestFn | HookFn>(
+  fn: T,
+  timeout?: number,
+): T {
+  if (timeout === undefined) return fn;
+  return wrapTestFunctionWithTimeout(
+    fn as (...args: [BddTestContext?]) => void | Promise<void>,
+    timeout,
+  ) as T;
+}
+
+const contextEnvOverlays = new WeakMap<object, EnvOverlayStore>();
+
+function contextFromArgs(args: unknown[]): object | undefined {
+  const context = args[0];
+  return typeof context === "object" && context !== null ? context : undefined;
+}
+
+function getContextEnvOverlay(args: unknown[]): EnvOverlayStore | undefined {
+  const context = contextFromArgs(args);
+  if (!context) return undefined;
+  const existing = contextEnvOverlays.get(context);
+  if (existing) return existing;
+  const overlay = new EnvOverlayStore();
+  contextEnvOverlays.set(context, overlay);
+  return overlay;
+}
+
+function hasActiveEnvOverlay(): boolean {
+  return getEnvOverlayStorage()?.getStore() instanceof Map;
 }
 
 function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
@@ -195,23 +170,55 @@ function withEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
   if (!overlay) return fn;
 
   return ((...args: unknown[]) => {
-    if (getActiveEnvOverlay()) {
+    const contextOverlay = isDeno ? undefined : getContextEnvOverlay(args);
+    if (contextOverlay && overlay.run) {
+      return overlay.run(
+        contextOverlay,
+        () => Promise.resolve().then(() => fn(...(args as []))),
+      );
+    }
+
+    if (hasActiveEnvOverlay()) {
       return Promise.resolve().then(() => fn(...(args as [])));
     }
 
     if (overlay.run) {
       return overlay.run(
-        new Map<string, string | null>(),
+        new EnvOverlayStore(),
         () => Promise.resolve().then(() => fn(...(args as []))),
       );
     }
 
     if (overlay.enterWith) {
-      overlay.enterWith(new Map<string, string | null>());
+      overlay.enterWith(new EnvOverlayStore());
     }
 
     return fn(...(args as []));
   }) as T;
+}
+
+function withHookEnvOverlay(fn: HookFn): HookFn {
+  if (isDeno) return withEnvOverlay(fn);
+
+  const overlay = getEnvOverlayStorage();
+  if (!overlay?.run) return fn;
+
+  return ((...args: unknown[]) => {
+    const contextOverlay = getContextEnvOverlay(args);
+    if (contextOverlay) {
+      return overlay.run!(
+        contextOverlay,
+        () => Promise.resolve().then(() => fn(...(args as [BddTestContext?]))),
+      );
+    }
+    if (hasActiveEnvOverlay()) {
+      return Promise.resolve().then(() => fn(...(args as [BddTestContext?])));
+    }
+    return overlay.run!(
+      new EnvOverlayStore(),
+      () => Promise.resolve().then(() => fn(...(args as [BddTestContext?]))),
+    );
+  }) as HookFn;
 }
 
 function withoutEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
@@ -227,8 +234,9 @@ function withoutEnvOverlay<T extends TestFn | (() => void)>(fn: T): T {
 // This avoids creating a "global" test suite from top-level await
 let denoBdd: typeof import("#std/testing/bdd") | null = null;
 
+ensureEnvOverlayRuntime();
+
 if (isDeno) {
-  await installDenoEnvOverlayStorage();
   denoBdd = await import("#std/testing/bdd");
 }
 
@@ -260,7 +268,8 @@ function parseBddArgs<T extends TestFn | (() => void)>(
 
   let options: TestOptions = {};
   if (typeof nameOrOptions === "object") {
-    options = nameOrOptions;
+    const { name: _name, ...rest } = nameOrOptions;
+    options = rest;
   } else if (typeof optionsOrFn === "object" && typeof optionsOrFn !== "function") {
     options = optionsOrFn;
   }
@@ -293,7 +302,10 @@ function createNodeImpl(nodeTest: {
         return;
       }
 
-      if (options.only && nodeTest.describe.only) {
+      if (options.only) {
+        if (!nodeTest.describe.only) {
+          throw new Error("The Node test adapter does not support exclusive suites");
+        }
         nodeTest.describe.only(name, testFn);
         return;
       }
@@ -310,7 +322,10 @@ function createNodeImpl(nodeTest: {
         return;
       }
 
-      if (options.only && nodeTest.it.only) {
+      if (options.only) {
+        if (!nodeTest.it.only) {
+          throw new Error("The Node test adapter does not support exclusive tests");
+        }
         nodeTest.it.only(name, testFn);
         return;
       }
@@ -346,14 +361,10 @@ interface BunTestModule {
 }
 
 function createBunImpl(bunTest: BunTestModule): BddImpl {
-  const defaultTimeout = (() => {
-    const env = (globalThis as Record<string, unknown>).process as
-      | { env?: Record<string, string | undefined> }
-      | undefined;
-    const raw = env?.env?.BUN_TEST_TIMEOUT ?? env?.env?.VF_TEST_TIMEOUT ?? "30000";
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
-  })();
+  const defaultTimeout = resolveDefaultTestTimeout(
+    getEnv("BUN_TEST_TIMEOUT") ?? getEnv("VF_TEST_TIMEOUT"),
+    DEFAULT_TEST_TIMEOUT_MS,
+  );
 
   return {
     describe(nameOrOptions, optionsOrFn, fn): void {
@@ -364,10 +375,16 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
         bunTest.describe.skip(name, testFn);
         return;
       }
+      if (options.skip || options.ignore) {
+        throw new Error("The Bun test adapter does not support skipped suites");
+      }
 
       if (options.only && bunTest.describe.only) {
         bunTest.describe.only(name, testFn);
         return;
+      }
+      if (options.only) {
+        throw new Error("The Bun test adapter does not support exclusive suites");
       }
 
       bunTest.describe(name, testFn);
@@ -377,7 +394,6 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
       if (!testFn) throw new Error("it requires a test function");
 
-      const testWithEnv = withEnvOverlay(testFn);
       const isSkip = options.skip || options.ignore;
 
       type TestRunner = (
@@ -387,21 +403,27 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
       ) => void;
 
       let runner: TestRunner = bunTest.it;
-      if (isSkip) runner = (bunTest.it.skip ?? bunTest.it) as TestRunner;
+      if (isSkip && !bunTest.it.skip) {
+        throw new Error("The Bun test adapter does not support skipped tests");
+      }
+      if (options.only && !bunTest.it.only) {
+        throw new Error("The Bun test adapter does not support exclusive tests");
+      }
+      if (isSkip) runner = bunTest.it.skip as TestRunner;
       else if (options.only && bunTest.it.only) runner = bunTest.it.only as TestRunner;
 
       if (isSkip) {
-        runner(name, testWithEnv);
+        runner(name, testFn);
         return;
       }
 
       const timeout = options.timeout ?? defaultTimeout;
       if (Number.isFinite(timeout) && timeout > 0) {
-        runner(name, { timeout }, testWithEnv);
+        runner(name, { timeout }, testFn);
         return;
       }
 
-      runner(name, testWithEnv);
+      runner(name, testFn);
     },
 
     beforeEach: bunTest.beforeEach,
@@ -415,16 +437,19 @@ async function getImpl(): Promise<BddImpl> {
   if (_impl) return _impl;
 
   if (isBun) {
-    const importBunTest = new Function("return import('bun:test')") as () => Promise<{
-      default: BunTestModule;
-    }>;
-    const bunTestModule = await importBunTest();
-    _impl = createBunImpl(bunTestModule.default);
+    const imported = await dynamicImport("bun:test");
+    const bunTest = resolveBunTestAdapter(imported);
+    if (!bunTest) {
+      throw new Error("The Bun test adapter is missing required test functions");
+    }
+    _impl = createBunImpl(bunTest as unknown as BunTestModule);
+    _impl.beforeEach(() => {
+      getEnvOverlayStorage()?.enterWith?.(new EnvOverlayStore());
+    });
     return _impl;
   }
 
-  const importNodeTest = new Function("return import('node:test')") as () => Promise<unknown>;
-  const nodeTest = await importNodeTest();
+  const nodeTest = await dynamicImport("node:test");
   _impl = createNodeImpl(
     nodeTest as {
       describe: ((name: string, fn: () => void) => void) & {
@@ -441,6 +466,9 @@ async function getImpl(): Promise<BddImpl> {
       afterEach: (fn: HookFn) => void;
     },
   );
+  _impl.beforeEach(() => {
+    getEnvOverlayStorage()?.enterWith?.(new EnvOverlayStore());
+  });
 
   return _impl;
 }
@@ -450,9 +478,14 @@ function hasOptions(options: TestOptions): boolean {
 }
 
 function normalizeDenoOptions(options: TestOptions): TestOptions {
-  if (!options.skip) return options;
-  const { skip: _skip, ...rest } = options;
-  return { ...rest, ignore: true };
+  const { skip, timeout: _timeout, ...rest } = options;
+  return skip ? { ...rest, ignore: true } : rest;
+}
+
+function adaptDenoTestFn(
+  fn: TestFn,
+): (context: Deno.TestContext) => void | Promise<void> {
+  return (context) => fn(adaptBddContext(context, "step"));
 }
 
 function requireImpl(): BddImpl {
@@ -462,35 +495,31 @@ function requireImpl(): BddImpl {
   );
 }
 
-let denoDescribeDepth = 0;
+let describeDepth = 0;
 
-function withDenoSuiteEnvOverlay(testFn: () => void): () => void {
+function withSuiteEnvOverlay(testFn: () => void): () => void {
+  if (!denoBdd) return testFn;
+
   return () => {
-    const isTopLevelSuite = denoDescribeDepth === 0;
+    const isTopLevelSuite = describeDepth === 0;
+    const initializeTestEnv = () => {
+      getEnvOverlayStorage()?.enterWith?.(new EnvOverlayStore());
+    };
     if (isTopLevelSuite) {
-      denoBdd!.beforeEach(() => {
-        getEnvOverlayStorage()?.enterWith?.(new Map<string, string | null>());
-      });
+      denoBdd.beforeEach(initializeTestEnv);
     }
 
-    denoDescribeDepth++;
+    describeDepth++;
     try {
       testFn();
     } finally {
-      denoDescribeDepth--;
+      describeDepth--;
+    }
+
+    if (isTopLevelSuite) {
+      denoBdd.afterEach(initializeTestEnv);
     }
   };
-}
-
-function getNameAndFn<T extends TestFn | (() => void)>(
-  nameOrOptions: string | (TestOptions & { name: string }),
-  optionsOrFn?: TestOptions | T,
-  fn?: T,
-): { name: string; testFn: T } {
-  const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
-  const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) throw new Error("Missing test function");
-  return { name, testFn };
 }
 
 /** Group related BDD tests. */
@@ -500,7 +529,14 @@ export function describe(
   fn?: () => void,
 ): void {
   if (!denoBdd) {
-    requireImpl().describe(nameOrOptions, optionsOrFn, fn);
+    const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+    if (!testFn) throw new Error("describe requires a test function");
+    const suiteWithEnv = withSuiteEnvOverlay(withSuiteTimeout(testFn, options.timeout));
+    if (hasOptions(options)) {
+      requireImpl().describe({ name, ...options }, suiteWithEnv);
+      return;
+    }
+    requireImpl().describe(name, suiteWithEnv);
     return;
   }
 
@@ -508,7 +544,7 @@ export function describe(
   if (!testFn) throw new Error("describe requires a test function");
 
   const denoOptions = normalizeDenoOptions(options);
-  const suiteWithEnv = withDenoSuiteEnvOverlay(testFn);
+  const suiteWithEnv = withSuiteEnvOverlay(withSuiteTimeout(testFn, options.timeout));
   if (hasOptions(denoOptions)) {
     denoBdd.describe({ name, ...denoOptions }, suiteWithEnv);
     return;
@@ -517,36 +553,61 @@ export function describe(
   denoBdd.describe(name, suiteWithEnv);
 }
 
+/** Define a skipped BDD suite. */
 describe.skip = function skip(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
   fn?: () => void,
 ): void {
-  const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
+  const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+  if (!testFn) throw new Error("describe.skip requires a test function");
+  const skipOptions = { ...options, only: false, ignore: true };
 
   if (denoBdd) {
-    denoBdd.describe({ name, ignore: true }, withDenoSuiteEnvOverlay(testFn));
+    denoBdd.describe(
+      { name, ...normalizeDenoOptions(skipOptions) },
+      withSuiteEnvOverlay(withSuiteTimeout(testFn, options.timeout)),
+    );
     return;
   }
 
-  requireImpl().describe({ name, ignore: true }, testFn);
+  requireImpl().describe(
+    { name, ...skipOptions },
+    withSuiteEnvOverlay(withSuiteTimeout(testFn, options.timeout)),
+  );
 };
 
-describe.ignore = describe.skip;
+/** Define an ignored BDD suite. */
+describe.ignore = function ignore(
+  nameOrOptions: string | (TestOptions & { name: string }),
+  optionsOrFn?: TestOptions | (() => void),
+  fn?: () => void,
+): void {
+  describe.skip(nameOrOptions, optionsOrFn, fn);
+};
 
+/** Define an exclusive BDD suite. */
 describe.only = function only(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
   fn?: () => void,
 ): void {
-  const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
+  const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+  if (!testFn) throw new Error("describe.only requires a test function");
+  const onlyOptions = { ...options, skip: false, ignore: false, only: true };
 
   if (denoBdd) {
-    denoBdd.describe({ name, only: true }, withDenoSuiteEnvOverlay(testFn));
+    denoBdd.describe(
+      { name, ...normalizeDenoOptions(onlyOptions) },
+      withSuiteEnvOverlay(withSuiteTimeout(testFn, options.timeout)),
+    );
     return;
   }
 
-  requireImpl().describe({ name, only: true }, testFn);
+  requireImpl().describe(
+    { name, ...onlyOptions },
+    withSuiteEnvOverlay(withSuiteTimeout(testFn, options.timeout)),
+  );
 };
 
 /** Define a BDD test case. */
@@ -556,69 +617,109 @@ export function it(
   fn?: TestFn,
 ): void {
   if (!denoBdd) {
-    requireImpl().it(nameOrOptions, optionsOrFn, fn);
+    const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+    if (!testFn) throw new Error("it requires a test function");
+    const timeout = effectiveTimeout(options.timeout);
+    const testWithEnv = withEnvOverlay(withNodeContextAdapter(testFn));
+    const runtimeOptions = timeout === undefined ? options : { ...options, timeout };
+    if (hasOptions(runtimeOptions)) {
+      requireImpl().it({ name, ...runtimeOptions }, testWithEnv);
+      return;
+    }
+    requireImpl().it(name, testWithEnv);
     return;
   }
 
   const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
   if (!testFn) throw new Error("it requires a test function");
-  const testWithEnv = withEnvOverlay(testFn);
+  const timeout = effectiveTimeout(options.timeout);
+  const testWithEnv = withPortableTimeout(withEnvOverlay(testFn), timeout);
 
   const denoOptions = normalizeDenoOptions(options);
   if (hasOptions(denoOptions)) {
-    denoBdd.it({ name, ...denoOptions }, testWithEnv);
+    denoBdd.it({ name, ...denoOptions }, adaptDenoTestFn(testWithEnv));
     return;
   }
 
-  denoBdd.it(name, testWithEnv);
+  denoBdd.it(name, adaptDenoTestFn(testWithEnv));
 }
 
+/** Define a skipped BDD test. */
 it.skip = function skip(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | TestFn,
   fn?: TestFn,
 ): void {
-  const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
-  const testWithEnv = withEnvOverlay(testFn);
+  const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+  if (!testFn) throw new Error("it.skip requires a test function");
+  const timeout = effectiveTimeout(options.timeout);
+  const testWithEnv = denoBdd
+    ? withPortableTimeout(withEnvOverlay(testFn), timeout)
+    : withEnvOverlay(withNodeContextAdapter(testFn));
+  const skipOptions = { ...options, timeout, only: false, ignore: true };
 
   if (denoBdd) {
-    denoBdd.it({ name, ignore: true }, testWithEnv);
+    denoBdd.it(
+      { name, ...normalizeDenoOptions(skipOptions) },
+      adaptDenoTestFn(testWithEnv),
+    );
     return;
   }
 
-  requireImpl().it({ name, ignore: true }, testWithEnv);
+  requireImpl().it({ name, ...skipOptions }, testWithEnv);
 };
 
-it.ignore = it.skip;
+/** Define an ignored BDD test. */
+it.ignore = function ignore(
+  nameOrOptions: string | (TestOptions & { name: string }),
+  optionsOrFn?: TestOptions | TestFn,
+  fn?: TestFn,
+): void {
+  it.skip(nameOrOptions, optionsOrFn, fn);
+};
 
+/** Define an exclusive BDD test. */
 it.only = function only(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | TestFn,
   fn?: TestFn,
 ): void {
-  const { name, testFn } = getNameAndFn(nameOrOptions, optionsOrFn, fn);
-  const testWithEnv = withEnvOverlay(testFn);
+  const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+  if (!testFn) throw new Error("it.only requires a test function");
+  const timeout = effectiveTimeout(options.timeout);
+  const testWithEnv = denoBdd
+    ? withPortableTimeout(withEnvOverlay(testFn), timeout)
+    : withEnvOverlay(withNodeContextAdapter(testFn));
+  const onlyOptions = { ...options, timeout, skip: false, ignore: false, only: true };
 
   if (denoBdd) {
-    denoBdd.it({ name, only: true }, testWithEnv);
+    denoBdd.it(
+      { name, ...normalizeDenoOptions(onlyOptions) },
+      adaptDenoTestFn(testWithEnv),
+    );
     return;
   }
 
-  requireImpl().it({ name, only: true }, testWithEnv);
+  requireImpl().it({ name, ...onlyOptions }, testWithEnv);
 };
 
 /** Register a hook before each BDD test. */
 export function beforeEach(fn: HookFn): void {
+  const hookWithEnv = withHookEnvOverlay(
+    withPortableTimeout(withNodeContextAdapter(fn), currentSuiteTimeout()),
+  );
   if (denoBdd) {
-    denoBdd.beforeEach(fn);
+    denoBdd.beforeEach(hookWithEnv);
     return;
   }
-  requireImpl().beforeEach(fn);
+  requireImpl().beforeEach(hookWithEnv);
 }
 
 /** Register a hook after each BDD test. */
 export function afterEach(fn: HookFn): void {
-  const hookWithEnv = withEnvOverlay(fn);
+  const hookWithEnv = withHookEnvOverlay(
+    withPortableTimeout(withNodeContextAdapter(fn), currentSuiteTimeout()),
+  );
   if (denoBdd) {
     denoBdd.afterEach(hookWithEnv);
     return;
@@ -628,7 +729,9 @@ export function afterEach(fn: HookFn): void {
 
 /** Register a hook before all BDD tests in a group. */
 export function beforeAll(fn: HookFn): void {
-  const hostHook = withoutEnvOverlay(fn);
+  const hostHook = withoutEnvOverlay(
+    withPortableTimeout(withNodeContextAdapter(fn), currentSuiteTimeout()),
+  );
   if (denoBdd) {
     denoBdd.beforeAll(hostHook);
     return;
@@ -638,7 +741,9 @@ export function beforeAll(fn: HookFn): void {
 
 /** Register a hook after all BDD tests in a group. */
 export function afterAll(fn: HookFn): void {
-  const hostHook = withoutEnvOverlay(fn);
+  const hostHook = withoutEnvOverlay(
+    withPortableTimeout(withNodeContextAdapter(fn), currentSuiteTimeout()),
+  );
   if (denoBdd) {
     denoBdd.afterAll(hostHook);
     return;
@@ -647,7 +752,7 @@ export function afterAll(fn: HookFn): void {
 }
 
 /** Shared test value. */
-export const test = it;
+export const test: typeof it = it;
 
 /** Initialize the BDD test adapter. */
 export async function initBdd(): Promise<void> {

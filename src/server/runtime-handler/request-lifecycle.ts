@@ -20,7 +20,7 @@ import {
   endRequestMetrics,
   startRequestMetrics,
 } from "#veryfront/platform/adapters/fs/veryfront/read-operations.ts";
-import { requestTracker } from "./request-tracker.ts";
+import { requestTracker, type RequestTrackingKey } from "./request-tracker.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
 import {
   completeOnResponseBodySettlement,
@@ -49,7 +49,7 @@ export function startRequestLifecycle(
 ): RequestLifecycleContext {
   const incomingId = req.headers.get("x-request-id");
   const perfEnabled = isPerfEnabled();
-  const perfRequestId = perfEnabled ? generateRequestId(incomingId) : undefined;
+  const perfRequestId = perfEnabled ? generateRequestId() : undefined;
 
   if (perfRequestId) startRequest(perfRequestId);
   const stopTotal = startTimer("total");
@@ -75,8 +75,8 @@ export function startRequestTracking(
   method: string,
   environment: string | undefined,
   releaseId: string | undefined,
-): void {
-  requestTracker.start(
+): RequestTrackingKey {
+  return requestTracker.start(
     requestId,
     projectSlug,
     pathname,
@@ -108,12 +108,12 @@ export function endContentMetrics(info: {
  * Complete request tracking and record completion status.
  */
 export function completeRequestTracking(
-  requestId: string,
+  trackingKey: RequestTrackingKey,
   status: number,
   isTimeout: boolean,
   profile?: RequestProfileRecord | null,
 ): void {
-  requestTracker.complete(requestId, status, isTimeout, profile);
+  requestTracker.complete(trackingKey, status, isTimeout, profile);
 }
 
 /**
@@ -122,7 +122,7 @@ export function completeRequestTracking(
  * continue producing events for several minutes after that point.
  */
 export function completeRequestTrackingOnResponseEnd(
-  requestId: string,
+  trackingKey: RequestTrackingKey,
   response: Response,
   isTimeout: boolean,
   profile?: RequestProfileRecord | null,
@@ -130,20 +130,20 @@ export function completeRequestTrackingOnResponseEnd(
 ): Response {
   if (isTimeout && handlerSettled) {
     void handlerSettled.then(
-      () => completeRequestTracking(requestId, response.status, true, profile),
-      () => completeRequestTracking(requestId, response.status, true, profile),
+      () => completeRequestTracking(trackingKey, response.status, true, profile),
+      () => completeRequestTracking(trackingKey, response.status, true, profile),
     );
     return response;
   }
 
   if (!isEventStreamResponse(response)) {
-    completeRequestTracking(requestId, response.status, isTimeout, profile);
+    completeRequestTracking(trackingKey, response.status, isTimeout, profile);
     return response;
   }
 
-  requestTracker.markLongLived(requestId);
+  requestTracker.markLongLived(trackingKey);
   return completeOnResponseBodySettlement(response, () => {
-    completeRequestTracking(requestId, response.status, isTimeout, profile);
+    completeRequestTracking(trackingKey, response.status, isTimeout, profile);
   });
 }
 

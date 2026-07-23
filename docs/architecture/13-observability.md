@@ -24,9 +24,9 @@ Primary source areas:
 2. Instrument factories attach metrics and tracing to supported runtime paths.
 3. Error collectors normalize compile, build, route, and runtime errors.
 4. Log subscribers and buffers expose recent runtime output.
-5. Request profiling records route-level timing and resource use.
+5. Request profiling records bounded request and phase timing.
 
-## OpenTelemetry Runtime Modes
+## OpenTelemetry runtime modes
 
 OpenTelemetry exporter routing is process-level runtime configuration. In shared
 Veryfront runtimes, the platform process owns `OTEL_*` and `VERYFRONT_OTEL`
@@ -97,6 +97,10 @@ to estimate proxy-to-renderer network and response header overhead.
 - Add tests for metric names, trace attributes, log filtering, and error
   collection when changing instrumentation.
 - Keep sensitive values out of logs and trace attributes.
+- Keep propagation limited to trace-context headers. Do not inject baggage or
+  overwrite application authorization headers.
+- Keep diagnostic buffers, profile histories, metric attributes, and file log
+  queues bounded.
 
 ## Related guides
 

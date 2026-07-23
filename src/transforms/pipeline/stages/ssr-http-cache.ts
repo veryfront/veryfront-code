@@ -14,6 +14,7 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { fileLogLabel } from "../../shared/log-context.ts";
 
 const LOG_PREFIX = "[SSR-HTTP-CACHE]";
 
@@ -36,7 +37,9 @@ export const ssrHttpCachePlugin: TransformPlugin = {
     });
 
     if (code !== ctx.code) {
-      logger.debug(`${LOG_PREFIX} Cached HTTP imports for ${ctx.filePath.slice(-40)}`);
+      logger.debug(`${LOG_PREFIX} Cached HTTP imports`, {
+        sourceFile: fileLogLabel(ctx.filePath),
+      });
     }
 
     // Store bundle manifest ID in context metadata for downstream consumers
