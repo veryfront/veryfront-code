@@ -197,6 +197,28 @@ export function filterHostedChatRuntimeLocalTools(input: {
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
 }
 
+function shouldIncludeHostedWebFetchFallback(input: {
+  localTools: HostToolSet;
+  sourceProviderToolNames: Set<string>;
+  allowedToolNames: ReadonlySet<string> | null;
+  allowedProviderToolNames: ReadonlySet<string> | null;
+  providerNativeToolNames: readonly string[];
+}): boolean {
+  if (!Object.hasOwn(input.localTools, "web_fetch")) {
+    return false;
+  }
+  if (input.providerNativeToolNames.includes("web_fetch")) {
+    return false;
+  }
+  if (input.allowedProviderToolNames !== null) {
+    return input.allowedProviderToolNames.has("web_fetch");
+  }
+  if (input.allowedToolNames !== null) {
+    return input.allowedToolNames.has("web_fetch");
+  }
+  return input.sourceProviderToolNames.has("web_fetch");
+}
+
 /** Prepare hosted chat runtime tool assembly. */
 export async function prepareHostedChatRuntimeToolAssembly<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
@@ -214,15 +236,39 @@ export async function prepareHostedChatRuntimeToolAssembly<
     availableSkillIds: input.taskContext.availableSkillIds,
     includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
   });
+  const postFormInputLocalTools = filterPostFormInputLocalTools(
+    input.localTools,
+    input.taskContext,
+  );
   const selectedLocalTools = filterHostedChatRuntimeLocalTools({
-    tools: filterPostFormInputLocalTools(input.localTools, input.taskContext),
+    tools: postFormInputLocalTools,
     allowedToolNames,
     sourceProviderToolNames: input.sourceProviderToolNames,
   });
+  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
+  const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
+    input.allowedProviderToolNames,
+  );
+  const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
+  const sortedLocalToolEntries = Object.entries(selectedLocalTools).filter(([toolName]) =>
+    isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy)
+  );
+  if (
+    shouldIncludeHostedWebFetchFallback({
+      localTools: postFormInputLocalTools,
+      sourceProviderToolNames,
+      allowedToolNames,
+      allowedProviderToolNames,
+      providerNativeToolNames,
+    }) && isIntegrationToolAllowedBySourcePolicy("web_fetch", input.sourceIntegrationPolicy)
+  ) {
+    const hostedWebFetchTool = postFormInputLocalTools.web_fetch;
+    if (hostedWebFetchTool !== undefined) {
+      sortedLocalToolEntries.push(["web_fetch", hostedWebFetchTool]);
+    }
+  }
   const sortedLocalTools = Object.fromEntries(
-    Object.entries(selectedLocalTools).filter(([toolName]) =>
-      isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy)
-    ),
+    sortedLocalToolEntries.sort(([left], [right]) => left.localeCompare(right)),
   );
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
@@ -257,11 +303,6 @@ export async function prepareHostedChatRuntimeToolAssembly<
     listedRemoteToolNames,
     input.sourceIntegrationPolicy,
   );
-  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
-  const allowedProviderToolNames = normalizeHostedRuntimeAllowedToolNames(
-    input.allowedProviderToolNames,
-  );
-  const providerNativeToolNames = getProviderNativeToolNames({ model: input.taskContext.model });
   const localProviderToolNames = new Set(
     Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
   );
