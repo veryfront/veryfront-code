@@ -99,6 +99,7 @@ import {
 } from "../runtime/skill-metadata.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
@@ -879,6 +880,7 @@ export const veryfrontCloudAgentServiceInternals = {
   resolveHostedChildAgentExecutionConfig,
   resolveHostedChildToolNames,
   resolveMcpServers,
+  shouldExposeLegacyInvokeAgent,
 };
 
 async function resolveHostedChildAgentExecutionConfig(
@@ -1020,6 +1022,13 @@ function buildHostedDeclarativeDelegateTools(
   });
 }
 
+function shouldExposeLegacyInvokeAgent(
+  agentConfig: RuntimeAgentMarkdownDefinition | undefined,
+): boolean {
+  return agentConfig?.tools === true ||
+    !agentConfig?.tools?.some((toolName) => toolName.startsWith(AGENT_DELEGATE_TOOL_PREFIX));
+}
+
 function buildLocalTools(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
@@ -1041,9 +1050,9 @@ function buildLocalTools(
         tools,
         buildHostedDeclarativeDelegateTools(context, agentConfig, taskContext),
       );
-    } else {
+    } else if (shouldExposeLegacyInvokeAgent(agentConfig)) {
       // Agents authored before declarative delegates retain the legacy hosted
-      // child-fork tool. An explicit empty list opts out.
+      // child-fork tool. An explicit empty list or scoped delegate binding opts out.
       tools.invoke_agent = createInvokeAgentTool(context, taskContext);
     }
   }

@@ -158,6 +158,37 @@ Deno.test("hosted child project agents request only materialized skill and deleg
   );
 });
 
+Deno.test("hosted scoped delegate tools opt out of legacy invoke_agent", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.shouldExposeLegacyInvokeAgent({
+      id: "job-submission-orchestrator",
+      name: "Job submission orchestrator",
+      description: "Coordinate job submission specialists.",
+      instructions: "Coordinate the workflow.",
+      skills: ["orchestrate-job-submission"],
+      tools: [
+        "agent_ingestion-agent",
+        "agent_extraction-agent",
+        "agent_enrichment-agent",
+        "agent_submission-agent",
+        "get_file",
+      ],
+    }),
+    false,
+  );
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.shouldExposeLegacyInvokeAgent({
+      id: "legacy-agent",
+      name: "Legacy agent",
+      description: "Uses legacy delegation.",
+      instructions: "Delegate when useful.",
+      skills: ["legacy-workflow"],
+      tools: ["get_file"],
+    }),
+    true,
+  );
+});
+
 Deno.test("hosted nested delegates inherit child scope and durable lineage", () => {
   const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
     {
