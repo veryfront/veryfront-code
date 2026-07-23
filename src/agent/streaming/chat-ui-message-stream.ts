@@ -89,6 +89,7 @@ type ToolPart = {
   inputText: string;
   input: Record<string, unknown>;
   state: "input-available" | "output-available" | "output-error";
+  providerExecuted?: boolean;
   output?: unknown;
   errorText?: string;
 };
@@ -250,8 +251,13 @@ function observeChatStreamEvent(input: {
           inputText: "",
           input: {},
           state: "input-available",
+          ...(event.providerExecuted !== undefined
+            ? { providerExecuted: event.providerExecuted }
+            : {}),
         });
         state.nextOrder += 1;
+      } else if (event.providerExecuted !== undefined) {
+        state.toolParts.get(event.toolCallId)!.providerExecuted = event.providerExecuted;
       }
 
       const pendingToolDelta = state.pendingToolDeltas.get(event.toolCallId);
@@ -292,6 +298,9 @@ function observeChatStreamEvent(input: {
         toolPart.toolName = event.toolName;
         toolPart.input = input;
         toolPart.state = "input-available";
+        if (event.providerExecuted !== undefined) {
+          toolPart.providerExecuted = event.providerExecuted;
+        }
       } else {
         state.toolParts.set(event.toolCallId, {
           toolCallId: event.toolCallId,
@@ -300,6 +309,9 @@ function observeChatStreamEvent(input: {
           inputText: "",
           input,
           state: "input-available",
+          ...(event.providerExecuted !== undefined
+            ? { providerExecuted: event.providerExecuted }
+            : {}),
         });
         state.nextOrder += 1;
       }
@@ -313,6 +325,9 @@ function observeChatStreamEvent(input: {
       }
       toolPart.state = "output-available";
       toolPart.output = event.output;
+      if (event.providerExecuted !== undefined) {
+        toolPart.providerExecuted = event.providerExecuted;
+      }
       return;
     }
     case "tool-output-error":
@@ -321,6 +336,9 @@ function observeChatStreamEvent(input: {
       if (toolPart) {
         toolPart.state = "output-error";
         toolPart.errorText = event.errorText;
+        if (event.providerExecuted !== undefined) {
+          toolPart.providerExecuted = event.providerExecuted;
+        }
         if ("input" in event && event.input !== undefined) {
           toolPart.input = parseToolInputObject(event.input);
         }
@@ -335,6 +353,9 @@ function observeChatStreamEvent(input: {
           ? parseToolInputObject(event.input)
           : {},
         state: "output-error",
+        ...(event.providerExecuted !== undefined
+          ? { providerExecuted: event.providerExecuted }
+          : {}),
         errorText: event.errorText,
       });
       state.nextOrder += 1;
@@ -421,12 +442,15 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
   for (const toolPart of state.toolParts.values()) {
     const basePart: Pick<
       ChatDynamicToolUiPart,
-      "type" | "toolName" | "toolCallId" | "input"
+      "type" | "toolName" | "toolCallId" | "input" | "providerExecuted"
     > = {
       type: "dynamic-tool",
       toolName: toolPart.toolName,
       toolCallId: toolPart.toolCallId,
       input: toolPart.input,
+      ...(toolPart.providerExecuted !== undefined
+        ? { providerExecuted: toolPart.providerExecuted }
+        : {}),
     };
 
     const part: ChatUiMessage["parts"][number] = toolPart.state === "output-available"

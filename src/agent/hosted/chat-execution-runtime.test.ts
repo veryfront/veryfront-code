@@ -887,7 +887,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(terminalStates, [{ status: "completed" }]);
   });
 
-  it("completes response finalization with provider-native web tool input still open", async () => {
+  it("completes response finalization with provider-owned web tool input still open", async () => {
     let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
     const terminalStates: HostedLifecycleTerminalState[] = [];
     const runtime = createHostedChatExecutionRuntime({
@@ -927,6 +927,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
             toolCallId: "srvtoolu-fetch",
             input: { url: "https://veryfront.com/docs/agent/create-agent" },
             state: "input-available",
+            providerExecuted: true,
           },
         ],
       }),

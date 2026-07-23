@@ -351,6 +351,8 @@ type IdDeltaChunk<TType extends string> = IdChunk<TType> & {
 type ToolCallChunk<TType extends string> = {
   type: TType;
   toolCallId: string;
+  providerExecuted?: boolean;
+  dynamic?: boolean;
 };
 
 /** Public API contract for named tool call chunk. */
