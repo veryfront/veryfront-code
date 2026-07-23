@@ -24,6 +24,7 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { tool } from "#veryfront/tool";
 
@@ -238,6 +239,37 @@ Deno.test("discoverProjectAgentRuntime clears stale runtime registries before re
     assertEquals(getMCPRegistry().resources.has("stale-resource"), false);
     assertEquals(getMCPRegistry().prompts.has("stale-prompt"), false);
     assertEquals(workflowRegistry.has("stale-workflow"), false);
+  });
+});
+
+Deno.test("project runtime discovers local skills without an explicit adapter", async () => {
+  await withTempDir(async (rootDir) => {
+    const skillDir = resolve(rootDir, "skills", "extract-submission");
+    Deno.mkdirSync(skillDir, { recursive: true });
+    Deno.writeTextFileSync(
+      resolve(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: extract-submission",
+        "description: Extract one submission",
+        "---",
+        "",
+        "Parse the staged attachment and preserve field provenance.",
+        "",
+      ].join("\n"),
+    );
+
+    const discovery = await discoverProjectAgentRuntime({ projectDir: rootDir });
+
+    assertEquals([...discovery.skills.keys()], ["extract-submission"]);
+    const loaded = await createLoadSkillTool().execute({
+      skillId: "extract-submission",
+    }) as { skillId: string; instructions: string };
+    assertEquals(loaded.skillId, "extract-submission");
+    assertStringIncludes(
+      loaded.instructions,
+      "Parse the staged attachment and preserve field provenance.",
+    );
   });
 });
 
