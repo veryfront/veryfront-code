@@ -254,6 +254,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     isIntegrationToolAllowedBySourcePolicy(toolName, input.sourceIntegrationPolicy)
   );
   if (
+    !Object.hasOwn(selectedLocalTools, "web_fetch") &&
     shouldIncludeHostedWebFetchFallback({
       localTools: postFormInputLocalTools,
       sourceProviderToolNames,
