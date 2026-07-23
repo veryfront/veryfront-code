@@ -8,7 +8,13 @@ function toBase64Url(b64: string): string {
   return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
-/** Encode a UTF-8 string as standard base64 (handles non-Latin1 input). */
+/**
+ * Encode a string as standard base64. Latin-1 input (all code points <= 0xFF)
+ * is encoded with btoa's binary-string semantics; input outside Latin-1 falls
+ * back to UTF-8 bytes. Callers that need guaranteed UTF-8 bytes regardless of
+ * input (e.g. data: URLs decoded as UTF-8) should use
+ * `encodeBase64Bytes(new TextEncoder().encode(value))` instead.
+ */
 export function encodeBase64(value: string): string {
   if (typeof globalThis.btoa === "function") {
     try {
