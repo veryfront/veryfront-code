@@ -14,6 +14,7 @@ const ROUTING_INVALIDATION_ACK_PREFIX = `${ROUTING_INVALIDATION_CHANNEL}:ack:`;
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
 const TEST_NOW_MS = 1_800_000_000_000;
+const TEST_ACKNOWLEDGEMENT_TIMEOUT_MS = 1_000;
 
 function createFakeRedisServer() {
   const subscriptions = new Map<RoutingInvalidationRedisClient, Map<string, RedisListener>>();
@@ -128,7 +129,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TEST_ACKNOWLEDGEMENT_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -139,7 +140,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TEST_ACKNOWLEDGEMENT_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -167,7 +168,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TEST_ACKNOWLEDGEMENT_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {},
@@ -176,7 +177,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: TEST_ACKNOWLEDGEMENT_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {
