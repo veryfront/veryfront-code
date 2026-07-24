@@ -308,6 +308,63 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-generate");
   });
 
+  it("preserves the finish reason when generate() stops without final text", async () => {
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/empty-final-text",
+      async doGenerate() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "write-1",
+              toolName: "write_report",
+              input: '{"path":"research/report.md"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]),
+        };
+      },
+    };
+
+    const writeReport = tool({
+      id: "write_report",
+      description: "Write a report",
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+      execute: ({ path }) => ({ path, created: true }),
+    });
+
+    const assistant = agent({
+      model: "hosted/empty-final-text",
+      system: "Write the report and summarize the result.",
+      tools: { write_report: writeReport },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = await assistant.generate({ input: "Write a report" });
+
+    assertEquals(callCount, 2);
+    assertEquals(response.status, "completed");
+    assertEquals(response.text, "");
+    assertEquals(response.metadata?.finishReason, "stop");
+    assertEquals(response.toolCalls[0]?.status, "completed");
+  });
+
   it("classifies structured errors returned during generate()", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;

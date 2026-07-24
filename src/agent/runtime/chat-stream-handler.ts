@@ -17,6 +17,11 @@ import {
   stripLeadingEmptyObjectPlaceholder,
 } from "../streaming/data-stream.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
+import {
+  getStreamErrorMessage,
+  hasCompletedStepSignal,
+  isLateProviderBodyReadError,
+} from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
@@ -231,42 +236,6 @@ function logProviderToolPart(
     error: summarizeProviderToolDebugValue(part.error),
     input: summarizeProviderToolDebugValue(part.input),
   });
-}
-
-function getStreamErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (
-    typeof error === "object" && error !== null && "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-function isLateProviderBodyReadError(error: unknown): boolean {
-  return /error reading a body from connection/i.test(getStreamErrorMessage(error));
-}
-
-function hasCompletedStepSignal(finishReason: string | null): boolean {
-  switch (finishReason) {
-    case "stop":
-    case "length":
-    case "tool-calls":
-    case "content-filter":
-    case "other":
-      return true;
-    default:
-      return false;
-  }
 }
 
 function hasStreamOutput(state: ChatStreamState): boolean {
