@@ -25,8 +25,8 @@ export type { VeryfrontConfig } from "#veryfront/config";
 export { getEnv } from "#veryfront/platform";
 
 // NOTE: the server bootstrap value export (`createHandler`, `startServer`,
-// `toNodeHandler` from "#veryfront/server") is intentionally omitted here — it
-// is server-only and pulls production-server.ts (top-level await) into client
+// `toNodeHandler` from the public server entrypoint) is intentionally omitted
+// here because it pulls production-server.ts (top-level await) into client
 // chunks. Types are erased at transform time, so re-exporting them is inert.
 export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";
 

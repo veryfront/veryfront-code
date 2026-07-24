@@ -43,12 +43,20 @@ describe("generate-api-reference", () => {
       const rootReference = await Deno.readTextFile(
         `${outputDir}/veryfront/index.md`,
       );
+      const clientReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/index.client.md`,
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
         ),
         false,
         "generated reference pages must not duplicate the frontmatter description as body copy",
+      );
+      assertEquals(
+        clientReference.includes("#veryfront/"),
+        false,
+        "generated client reference must not expose internal import specifiers",
       );
       assertStringIncludes(
         routerReference,
