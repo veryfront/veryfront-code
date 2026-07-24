@@ -6,7 +6,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { cors } from "#veryfront/security";
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { generateRequestId } from "#veryfront/utils/request-id.ts";
@@ -281,15 +280,10 @@ function normalizeMiddlewareExport(
 
 export async function setupMiddleware(
   pipeline: MiddlewarePipeline,
-  config: VeryfrontConfig,
+  _config: VeryfrontConfig,
   requestHandler: (req: Request) => Promise<Response>,
 ): Promise<void> {
   pipeline.use(createRequestLoggerMiddleware());
-
-  const corsConfig = config.security?.cors;
-  if (corsConfig) {
-    pipeline.use(cors(corsConfig === true ? {} : corsConfig));
-  }
 
   pipeline.use((c) => requestHandler(c.req));
 }

@@ -10,7 +10,12 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { clearConfigCache } from "#veryfront/config";
 import { ErrorOverlay, parseErrorLocation } from "./error-overlay/index.ts";
-import { createResponseBuilder } from "#veryfront/security/index.ts";
+import {
+  applyCORSHeaders,
+  createResponseBuilder,
+  handleCORSPreflight,
+  isPreflightRequest,
+} from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
@@ -18,9 +23,16 @@ import { getErrorCollector, getLogBuffer } from "#veryfront/observability";
 import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 
 const logger = serverLogger.component("dev");
+const DEV_SERVER_ALLOWED_METHODS = "GET, HEAD, OPTIONS";
+type RuntimeRequestHandler = (request: Request) => Promise<Response>;
+type RuntimeRequestHandlerFactory = () => Promise<RuntimeRequestHandler>;
+interface RequestHandlerDependencies {
+  runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
+}
 
 export class RequestHandler {
-  private runtimeHandler?: (req: Request) => Promise<Response>;
+  private runtimeHandler?: RuntimeRequestHandler;
+  private readonly runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
 
   constructor(
     private projectDir: string,
@@ -31,7 +43,10 @@ export class RequestHandler {
     private defaultProjectSlug?: string,
     private defaultProjectId?: string,
     private localProjects?: Record<string, string>,
-  ) {}
+    dependencies: RequestHandlerDependencies = {},
+  ) {
+    this.runtimeHandlerFactory = dependencies.runtimeHandlerFactory;
+  }
 
   async handleRequest(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -39,15 +54,18 @@ export class RequestHandler {
     logger.debug(`Request: ${req.method} ${url.pathname}`);
 
     const healthResponse = this.handleHealthCheck(url.pathname);
-    if (healthResponse) return healthResponse;
+    if (healthResponse) {
+      return this.applyOwnedEndpointCORS(req, healthResponse);
+    }
 
     this.incrementRequestMetrics();
 
     try {
       const devResponse = this.handleDevEndpoint(req, url.pathname);
       if (devResponse) {
-        this.logRequest(req.method, url.pathname, devResponse.status, start);
-        return devResponse;
+        const response = await this.applyOwnedEndpointCORS(req, devResponse);
+        this.logRequest(req.method, url.pathname, response.status, start);
+        return response;
       }
 
       const response = await this.handleApplicationRequest(req);
@@ -86,6 +104,24 @@ export class RequestHandler {
       status: ready ? HTTP_OK : HTTP_UNAVAILABLE,
       headers: { "content-type": "text/plain" },
     });
+  }
+
+  private async applyOwnedEndpointCORS(
+    request: Request,
+    response: Response,
+  ): Promise<Response> {
+    const config = this.config?.security?.cors;
+    if (config === undefined) return response;
+
+    if (isPreflightRequest(request)) {
+      return handleCORSPreflight({
+        request,
+        config,
+        allowMethods: DEV_SERVER_ALLOWED_METHODS,
+      });
+    }
+
+    return (await applyCORSHeaders({ request, response, config })) ?? response;
   }
 
   private async incrementRequestMetrics(): Promise<void> {
@@ -132,16 +168,20 @@ export class RequestHandler {
 
   private async handleApplicationRequest(req: Request): Promise<Response> {
     if (!this.runtimeHandler) {
-      const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
-      this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
-        projectDir: this.projectDir,
-        debug: this.isDebug(),
-        moduleServerUrl: "/_vf_modules",
-        config: this.config,
-        defaultProjectSlug: this.defaultProjectSlug,
-        defaultProjectId: this.defaultProjectId,
-        localProjects: this.localProjects,
-      });
+      if (this.runtimeHandlerFactory) {
+        this.runtimeHandler = await this.runtimeHandlerFactory();
+      } else {
+        const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
+        this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
+          projectDir: this.projectDir,
+          debug: this.isDebug(),
+          moduleServerUrl: "/_vf_modules",
+          config: this.config,
+          defaultProjectSlug: this.defaultProjectSlug,
+          defaultProjectId: this.defaultProjectId,
+          localProjects: this.localProjects,
+        });
+      }
     }
 
     return this.runtimeHandler(req);

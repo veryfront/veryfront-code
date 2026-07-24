@@ -7,7 +7,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { loadMiddlewareFile } from "./middleware.ts";
+import { MiddlewarePipeline } from "#veryfront/middleware/core/index.ts";
+import { loadMiddlewareFile, setupMiddleware } from "./middleware.ts";
 
 function createVirtualAdapter(source: string): RuntimeAdapter {
   const fs = {
@@ -182,5 +183,103 @@ describe("dev-server/middleware: actionable rejection", () => {
 
     const middleware = await loadMiddlewareFile("/app", adapter, { throwOnError: true });
     assertEquals(middleware.length, 2);
+  });
+});
+
+describe("dev-server/middleware: runtime-owned CORS", () => {
+  it("does not apply bootstrap CORS to an application response", async () => {
+    let validatorCalls = 0;
+    const downstreamResponse = new Response("tenant response", {
+      status: 201,
+      headers: {
+        "access-control-allow-origin": "https://tenant.example",
+        "access-control-allow-credentials": "true",
+      },
+    });
+    const pipeline = new MiddlewarePipeline();
+    await setupMiddleware(
+      pipeline,
+      {
+        security: {
+          cors: {
+            origin: () => {
+              validatorCalls++;
+              return false;
+            },
+          },
+        },
+      },
+      () => Promise.resolve(downstreamResponse),
+    );
+
+    const response = await pipeline.execute(
+      new Request("http://localhost/api/test", {
+        headers: { origin: "https://app.example.com" },
+      }),
+    );
+
+    assertEquals(response === downstreamResponse, true);
+    assertEquals(response.status, 201);
+    assertEquals(await response.text(), "tenant response");
+    assertEquals(
+      response.headers.get("access-control-allow-origin"),
+      "https://tenant.example",
+    );
+    assertEquals(response.headers.get("access-control-allow-credentials"), "true");
+    assertEquals(validatorCalls, 0);
+  });
+
+  it("passes application preflights through without altering runtime headers", async () => {
+    let downstreamCalls = 0;
+    const downstreamResponse = new Response(null, {
+      status: 204,
+      headers: {
+        "access-control-allow-origin": "https://tenant.example",
+        "access-control-allow-methods": "GET, HEAD, OPTIONS",
+        "content-security-policy": "default-src 'self'",
+      },
+    });
+    const pipeline = new MiddlewarePipeline();
+    await setupMiddleware(
+      pipeline,
+      {
+        security: {
+          cors: {
+            origin: "https://bootstrap.example",
+            methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+          },
+        },
+      },
+      () => {
+        downstreamCalls++;
+        return Promise.resolve(downstreamResponse);
+      },
+    );
+
+    const response = await pipeline.execute(
+      new Request("http://localhost/api/test", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://tenant.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(response === downstreamResponse, true);
+    assertEquals(response.status, 204);
+    assertEquals(
+      response.headers.get("access-control-allow-origin"),
+      "https://tenant.example",
+    );
+    assertEquals(
+      response.headers.get("access-control-allow-methods"),
+      "GET, HEAD, OPTIONS",
+    );
+    assertEquals(
+      response.headers.get("content-security-policy"),
+      "default-src 'self'",
+    );
+    assertEquals(downstreamCalls, 1);
   });
 });

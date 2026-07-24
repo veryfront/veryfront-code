@@ -104,7 +104,11 @@ export class CsrfHandler extends BaseHandler {
 
     if (!validateCsrf(req, options)) {
       return this.respond(
-        new Response("Forbidden – invalid or missing CSRF token", { status: 403 }),
+        this.createResponseBuilder(ctx)
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
+          .withCache("no-store")
+          .text("Forbidden – invalid or missing CSRF token", 403),
       );
     }
 
