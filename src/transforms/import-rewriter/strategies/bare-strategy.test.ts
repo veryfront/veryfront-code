@@ -158,11 +158,50 @@ describe("BareStrategy", () => {
       );
     });
 
-    // On the SSR target every bare/`npm:` package is left external regardless of
-    // whether it is server-only — the rewrite only ever targets the browser.
+    // `npm:` specifiers are left external on SSR — the Deno npm resolver
+    // understands their version, so no rewrite is needed.
     it("leaves a browser-safe npm: specifier external on the SSR target", () => {
       const result = bareStrategy.rewrite(makeInfo("npm:zod@4.0.0"), makeCtx({ target: "ssr" }));
       assertEquals(result.specifier, null);
+    });
+  });
+
+  describe("rewrite: SSR strips explicit versions from bare specifiers", () => {
+    const ssr = makeCtx({ target: "ssr" });
+
+    it("strips the version so an installed package resolves by name", () => {
+      // Regression: `import()` of `next-themes@0.4.6` has no matching
+      // node_modules entry and stalls the cold module load to a 500.
+      assertEquals(bareStrategy.rewrite(makeInfo("next-themes@0.4.6"), ssr), {
+        specifier: "next-themes",
+      });
+    });
+
+    it("leaves an unversioned specifier unchanged", () => {
+      assertEquals(bareStrategy.rewrite(makeInfo("next-themes"), ssr), { specifier: null });
+    });
+
+    it("preserves the subpath while stripping the version", () => {
+      assertEquals(bareStrategy.rewrite(makeInfo("date-fns@3.6.0/locale"), ssr), {
+        specifier: "date-fns/locale",
+      });
+    });
+
+    it("strips the version from a scoped package", () => {
+      assertEquals(bareStrategy.rewrite(makeInfo("@tanstack/react-query@5.0.0"), ssr), {
+        specifier: "@tanstack/react-query",
+      });
+    });
+
+    it("keeps the version in the browser esm.sh URL (unchanged)", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("next-themes@0.4.6"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier?.startsWith("https://esm.sh/next-themes@0.4.6"),
+        true,
+      );
     });
   });
 });

@@ -316,6 +316,14 @@ function isBareImport(path: string): boolean {
   );
 }
 
+/**
+ * A Node built-in module specifier (`node:crypto`, `node:fs`, …). These are
+ * server-only and must never be rewritten to an esm.sh URL for a browser bundle.
+ */
+function isNodeBuiltinSpecifier(path: string): boolean {
+  return path === "node" || path.startsWith("node:");
+}
+
 function toEsmUrl(path: string): string {
   return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
 }
@@ -386,6 +394,22 @@ export function createBareExternalPlugin(
       build.onResolve({ filter: /.*/ }, (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+
+        // Fail closed on Node built-ins. This plugin only runs for browser
+        // bundles (platform: "browser"), where a server-only `node:*` import can
+        // never work: rewriting it to an esm.sh URL silently ships a module that
+        // 404s on esm.sh and throws (e.g. `createHash is not a function`) at
+        // hydration. Surface a clear build error instead of a broken rewrite.
+        if (isNodeBuiltinSpecifier(args.path)) {
+          return {
+            errors: [{
+              text: `Cannot bundle server-only import "${args.path}" for the browser. ` +
+                `Node built-in modules are not available on the client. Move it into a ` +
+                `server component, an API route, or middleware — or gate the code behind a ` +
+                `"use client" boundary that does not import it.`,
+            }],
+          };
+        }
 
         // Keep import-map-resolved specifiers as bare externals — the browser's
         // <script type="importmap"> resolves them to the correct CDN URL.
