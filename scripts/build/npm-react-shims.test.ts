@@ -1,5 +1,29 @@
 import { assertEquals, assertThrows } from "#std/assert";
-import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
+import {
+  assertNoBundledReactDomClientShim,
+  normalizeEsmShReactNpmShims,
+} from "./npm-react-shims.ts";
+
+Deno.test("rejects an emitted local react-dom client shim", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    assertNoBundledReactDomClientShim(root);
+
+    await Deno.mkdir(`${root}/src/react`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/src/react/react-dom-client.js`,
+      'export * from "@veryfront/react-dom-client-upstream";\n',
+    );
+
+    assertThrows(
+      () => assertNoBundledReactDomClientShim(root),
+      Error,
+      "local react-dom/client shim",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
 
 Deno.test("normalizeEsmShReactNpmShims rewrites React ecosystem esm.sh shims to npm package exports", async () => {
   const root = await Deno.makeTempDir();

@@ -29,7 +29,10 @@ import {
 	normalizeNpmPackageMetadata,
 	removeInternalNpmEntryPointExports,
 } from "./npm-package-metadata.ts";
-import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
+import {
+	assertNoBundledReactDomClientShim,
+	normalizeEsmShReactNpmShims,
+} from "./npm-react-shims.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -135,13 +138,15 @@ await build({
 		// the local shims straight to the bare npm specifiers makes emitted code
 		// `import … from "react"`, so `React.HTMLAttributes` resolves against the
 		// consumer's own `@types/react`. See scripts/typecheck/README.md.
+		//
+		// `react-dom/client` is intentionally absent. Browser hydration imports are
+		// prebundled separately and no npm entry point reaches the local client
+		// shim. Dnt rejects package mappings that are not present in its module
+		// graph, so retaining that stale mapping makes the npm build fail before
+		// emission. The generated-package gates below fail closed if this local
+		// shim becomes reachable and verify consumer-facing React declarations.
 		"./react/react.ts": { name: "react", version: reactRange },
 		"./react/react-dom.ts": { name: "react-dom", version: reactRange },
-		"./react/react-dom-client.ts": {
-			name: "react-dom",
-			version: reactRange,
-			subPath: "client",
-		},
 		"./react/react-dom-server.ts": {
 			name: "react-dom",
 			version: reactRange,
@@ -240,6 +245,7 @@ await build({
 		if (patchedReactShimCount > 0) {
 			console.log(`📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`);
 		}
+		assertNoBundledReactDomClientShim("./npm/esm");
 
 		// Guard the react-mapping fix: emitted component `.d.ts` MUST import react
 		// via the bare `react` specifier so `React.HTMLAttributes` resolves against

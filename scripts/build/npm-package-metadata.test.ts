@@ -16,6 +16,7 @@ import {
   manifestDependencies,
   type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
+import { assertNoBundledReactDomClientShim } from "./npm-react-shims.ts";
 
 Deno.test("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
@@ -807,6 +808,10 @@ describe("npm generated integration artifacts", () => {
       assertEquals(source.includes("_dnt.polyfills"), false);
       assertEquals(source.includes("_dnt.shims"), false);
     }
+  });
+
+  it("does not publish the Deno-only react-dom client shim", () => {
+    assertNoBundledReactDomClientShim("npm/esm");
   });
 
   it("keeps the active Jira JQL search endpoint in the npm source artifact", async () => {
