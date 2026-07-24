@@ -1,39 +1,70 @@
 import type { CORSConfig, CORSHeaderOptions, CORSValidationResult } from "./types.ts";
-import { validateOrigin, validateOriginSync } from "./validators.ts";
+import {
+  corsOriginForTelemetry,
+  normalizeCORSConfig,
+  type NormalizedCORSConfig,
+  validateNormalizedOrigin,
+  validateNormalizedOriginSync,
+} from "./validators.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
+
+export function scrubPolicyOwnedCORSHeaders(headers: Headers): boolean {
+  let changed = false;
+  for (const name of [...headers.keys()]) {
+    if (!isCorsPolicyResponseHeaderName(name)) continue;
+    headers.delete(name);
+    changed = true;
+  }
+  return changed;
+}
 
 function applyValidatedHeaders(
   validation: CORSValidationResult,
   options: CORSHeaderOptions,
+  config: NormalizedCORSConfig,
 ): Response | void {
-  const { response, headers: headersObj, config } = options;
-
-  if (!validation.allowedOrigin) {
-    return response;
-  }
-
+  const { response, headers: headersObj } = options;
   const headers = headersObj ?? (response ? new Headers(response.headers) : new Headers());
 
+  if (!validation.allowedOrigin) {
+    const changed = scrubPolicyOwnedCORSHeaders(headers);
+
+    if (!response) return;
+    if (!headersObj && !changed) return response;
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  scrubPolicyOwnedCORSHeaders(headers);
   headers.set("Access-Control-Allow-Origin", validation.allowedOrigin);
 
   if (validation.allowedOrigin !== "*") {
     const varyValues = headers
       .get("Vary")
       ?.split(",")
-      .map((v) => v.trim()) ?? [];
+      .map((value) => value.trim())
+      .filter(Boolean) ?? [];
 
-    if (!varyValues.includes("Origin")) {
+    if (
+      !varyValues.some((value) => value === "*" || value.toLowerCase() === "origin")
+    ) {
       headers.set("Vary", [...varyValues, "Origin"].join(", "));
     }
   }
 
   if (validation.allowCredentials && validation.allowedOrigin !== "*") {
     headers.set("Access-Control-Allow-Credentials", "true");
-  }
+  } else headers.delete("Access-Control-Allow-Credentials");
 
   const corsConfig = typeof config === "object" ? config : null;
   if (corsConfig?.exposedHeaders?.length) {
     headers.set("Access-Control-Expose-Headers", corsConfig.exposedHeaders.join(", "));
+  } else {
+    headers.delete("Access-Control-Expose-Headers");
   }
 
   if (!response) {
@@ -48,33 +79,65 @@ function applyValidatedHeaders(
 }
 
 export function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response | void> {
-  const origin = options.request.headers.get("origin");
+  const normalized = normalizeCORSConfig(options.config);
+  const origin = readRequestOrigin(options.request);
 
   return withSpan(
     "security.cors.applyHeaders",
     async () => {
-      const validation = await validateOrigin(origin, options.config);
-      return applyValidatedHeaders(validation, options);
+      if (!normalized.valid) {
+        return applyValidatedHeaders(
+          Object.freeze({
+            allowedOrigin: null,
+            allowCredentials: false,
+            error: normalized.error,
+          }),
+          options,
+          false,
+        );
+      }
+      const validation = await validateNormalizedOrigin(origin, normalized.config);
+      return applyValidatedHeaders(validation, options, normalized.config);
     },
-    { "cors.origin": origin ?? "unknown" },
+    { "cors.origin": corsOriginForTelemetry(origin) },
   );
 }
 
+/**
+ * Apply CORS synchronously. The existing CORSHeaderOptions signature remains
+ * broad for source compatibility; async validators are denied at runtime.
+ */
 export function applyCORSHeadersSync(options: CORSHeaderOptions): Response | void {
-  const origin = options.request.headers.get("origin");
-  const validation = validateOriginSync(origin, options.config);
-  return applyValidatedHeaders(validation, options);
+  const normalized = normalizeCORSConfig(options.config);
+  const origin = readRequestOrigin(options.request);
+  if (!normalized.valid) {
+    return applyValidatedHeaders(
+      Object.freeze({
+        allowedOrigin: null,
+        allowCredentials: false,
+        error: normalized.error,
+      }),
+      options,
+      false,
+    );
+  }
+  const validation = validateNormalizedOriginSync(origin, normalized.config);
+  return applyValidatedHeaders(validation, options, normalized.config);
 }
 
 export function shouldApplyCORS(request: Request, config?: boolean | CORSConfig): boolean {
-  if (!config) {
-    return false;
-  }
+  const normalized = normalizeCORSConfig(config);
+  if (!normalized.valid || normalized.config === false) return false;
+  if (normalized.config === true) return true;
 
-  if (config === true) {
-    return true;
-  }
+  const origin = readRequestOrigin(request);
+  return typeof origin === "string" ? true : normalized.config.origin === "*";
+}
 
-  const origin = request.headers.get("origin");
-  return origin ? true : config.origin === "*";
+function readRequestOrigin(request: Request): unknown {
+  try {
+    return request.headers.get("origin");
+  } catch {
+    return undefined;
+  }
 }

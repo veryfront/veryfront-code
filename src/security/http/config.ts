@@ -8,6 +8,87 @@ import { isProduction } from "#veryfront/platform/environment.ts";
 
 const logger = serverLogger.component("security-config-loader");
 
+export interface DerivedSecurityContext {
+  securityConfig: SecurityConfig;
+  cspUserHeader: string | null;
+}
+
+export interface DeriveSecurityContextOptions {
+  /**
+   * Apply security defaults used by production runtimes. Defaults to the
+   * process environment; callers with an independently trusted runtime
+   * classification may override it explicitly.
+   */
+  productionDefaults?: boolean;
+}
+
+function cloneAndFreezeSecurityValue<T>(
+  value: T,
+  seen: WeakMap<object, unknown> = new WeakMap(),
+): T {
+  if (value === null) return value;
+
+  if (typeof value === "function") {
+    const source = value as (...args: unknown[]) => unknown;
+    const cached = seen.get(source);
+    if (cached !== undefined) return cached as T;
+
+    const wrapped = function (this: unknown, ...args: unknown[]): unknown {
+      return Reflect.apply(source, this, args);
+    };
+    seen.set(source, wrapped);
+    return Object.freeze(wrapped) as T;
+  }
+
+  if (typeof value !== "object") return value;
+
+  const source = value as object;
+  const cached = seen.get(source);
+  if (cached !== undefined) return cached as T;
+
+  if (Array.isArray(value)) {
+    const clone: unknown[] = [];
+    seen.set(source, clone);
+    for (const item of value) clone.push(cloneAndFreezeSecurityValue(item, seen));
+    return Object.freeze(clone) as T;
+  }
+
+  const clone: Record<string, unknown> = {};
+  seen.set(source, clone);
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    clone[key] = cloneAndFreezeSecurityValue(child, seen);
+  }
+  return Object.freeze(clone) as T;
+}
+
+/**
+ * Derive a request-owned security context from schema-validated project config.
+ *
+ * Config objects can be cached and shared between projects or requests. Deep
+ * cloning and freezing here prevents a handler from mutating that shared
+ * source. Function-valued origin validators are wrapped in request-owned
+ * frozen callables so mutable function objects are not shared across requests.
+ */
+export function deriveSecurityContext(
+  cfg?: VeryfrontConfig,
+  options: DeriveSecurityContextOptions = {},
+): DerivedSecurityContext {
+  const source = cfg?.security as SecurityConfig | undefined;
+  const normalized: SecurityConfig = source ? { ...source } : {};
+  normalized.cors ??= false;
+
+  const productionDefaults = options.productionDefaults ?? isProduction();
+  if (normalized.csrf === undefined && productionDefaults) {
+    normalized.csrf = true;
+  }
+
+  const securityConfig = cloneAndFreezeSecurityValue(normalized);
+  return Object.freeze({
+    securityConfig,
+    cspUserHeader: serializeCSPDirectives(securityConfig.csp),
+  });
+}
+
 export class SecurityConfigLoader {
   private securityConfig: SecurityConfig | null = null;
   private cspUserHeader: string | null = null;
@@ -44,14 +125,8 @@ export class SecurityConfigLoader {
   }
 
   private applyConfig(cfg?: VeryfrontConfig): void {
-    const security: SecurityConfig = cfg?.security ? { ...cfg.security } as SecurityConfig : {};
-
-    if (security.headers) security.headers = { ...security.headers };
-
-    security.cors ??= false;
-    if (security.csrf === undefined && isProduction()) {
-      security.csrf = true;
-    }
+    const derived = deriveSecurityContext(cfg);
+    const security = derived.securityConfig;
 
     if (!security.cors && !security.csrf) {
       logger.warn(
@@ -62,7 +137,7 @@ export class SecurityConfigLoader {
     }
 
     this.securityConfig = security;
-    this.cspUserHeader = serializeCSPDirectives(security.csp);
+    this.cspUserHeader = derived.cspUserHeader;
     this.isLoaded = true;
   }
 

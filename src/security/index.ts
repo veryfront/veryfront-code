@@ -63,6 +63,9 @@ export type {
   CORSPreflightOptions,
   CORSValidationResult,
   OriginValidator,
+  SyncCORSConfig,
+  SyncCORSHeaderOptions,
+  SyncOriginValidator,
 } from "./http/cors/index.ts";
 
 export {

@@ -3,6 +3,12 @@ import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/tes
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import {
+  MAX_CORS_ORIGIN_COUNT,
+  MAX_CORS_ORIGIN_LENGTH,
+  MAX_CORS_TOKEN_COUNT,
+  MAX_CORS_TOKEN_LENGTH,
+} from "#veryfront/utils/cors-policy-limits.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
@@ -250,6 +256,9 @@ describe("configSchema", () => {
         { origin: "*", credentials: true },
         { origin: [] },
         { origin: [""] },
+        { origin: "https://example.com\r\nX-Injected: yes" },
+        { origin: "https://例.example" },
+        { origin: " https://example.com" },
         { methods: [] },
         { methods: [""] },
         { methods: ["GET, POST"] },
@@ -258,8 +267,37 @@ describe("configSchema", () => {
         { allowedHeaders: ["X Invalid"] },
         { exposedHeaders: [] },
         { exposedHeaders: ["X-Valid\r\nInjected"] },
+        { origin: "a".repeat(MAX_CORS_ORIGIN_LENGTH + 1) },
+        {
+          origin: Array.from(
+            { length: MAX_CORS_ORIGIN_COUNT + 1 },
+            (_, index) => `https://origin-${index}.example`,
+          ),
+        },
+        {
+          origin: Array.from(
+            { length: 5 },
+            (_, index) => `${index}${"a".repeat(MAX_CORS_ORIGIN_LENGTH - 1)}`,
+          ),
+        },
+        {
+          methods: Array.from(
+            { length: MAX_CORS_TOKEN_COUNT + 1 },
+            (_, index) => `M-${index}`,
+          ),
+        },
+        { allowedHeaders: ["X".repeat(MAX_CORS_TOKEN_LENGTH + 1)] },
+        {
+          exposedHeaders: Array.from(
+            { length: 17 },
+            (_, index) =>
+              `${"X".repeat(MAX_CORS_TOKEN_LENGTH - 3)}${String(index).padStart(3, "0")}`,
+          ),
+        },
         { maxAge: -1 },
         { maxAge: 1.5 },
+        { maxAge: Number.NaN },
+        { maxAge: Number.POSITIVE_INFINITY },
         { maxAge: Number.MAX_SAFE_INTEGER + 1 },
         { headers: ["Authorization"] },
       ]

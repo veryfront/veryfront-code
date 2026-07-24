@@ -6,9 +6,19 @@ import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/sour
 import { validateLegacyRenderRedisCacheKeyPrefix } from "#veryfront/cache/backends/redis-keyspace.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
+import {
+  HTTP_TOKEN_PATTERN,
+  isBoundedCorsOrigin,
+  isBoundedCorsOriginList,
+  isBoundedCorsTokenList,
+  MAX_CORS_MAX_AGE,
+  MAX_CORS_ORIGIN_COUNT,
+  MAX_CORS_ORIGIN_LENGTH,
+  MAX_CORS_TOKEN_COUNT,
+  MAX_CORS_TOKEN_LENGTH,
+} from "#veryfront/utils/cors-policy-limits.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
-const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
   try {
@@ -26,8 +36,22 @@ type CorsOriginValidator = (
 
 const getCorsOriginSchema = defineSchema((v) =>
   v.union([
-    v.string().min(1),
-    v.array(v.string().min(1)).min(1),
+    v
+      .string()
+      .min(1)
+      .max(MAX_CORS_ORIGIN_LENGTH)
+      .refine(isBoundedCorsOrigin, "Expected a bounded CORS origin without control characters"),
+    v
+      .array(
+        v
+          .string()
+          .min(1)
+          .max(MAX_CORS_ORIGIN_LENGTH)
+          .refine(isBoundedCorsOrigin, "Expected a CORS origin without control characters"),
+      )
+      .min(1)
+      .max(MAX_CORS_ORIGIN_COUNT)
+      .refine(isBoundedCorsOriginList, "CORS origin list exceeds its aggregate size limit"),
     v.custom<CorsOriginValidator>(
       (value) => typeof value === "function",
       "Expected a CORS origin, origin list, or origin validator",
@@ -42,18 +66,39 @@ const getCorsSchema = defineSchema((v) =>
       origin: getCorsOriginSchema().optional(),
       credentials: v.boolean().optional(),
       methods: v
-        .array(v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP method"))
+        .array(
+          v.string().max(MAX_CORS_TOKEN_LENGTH).regex(
+            HTTP_TOKEN_PATTERN,
+            "Expected a valid HTTP method",
+          ),
+        )
         .min(1)
+        .max(MAX_CORS_TOKEN_COUNT)
+        .refine(isBoundedCorsTokenList, "CORS methods exceed their aggregate size limit")
         .optional(),
       allowedHeaders: v
-        .array(v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name"))
+        .array(
+          v.string().max(MAX_CORS_TOKEN_LENGTH).regex(
+            HTTP_TOKEN_PATTERN,
+            "Expected a valid HTTP header name",
+          ),
+        )
         .min(1)
+        .max(MAX_CORS_TOKEN_COUNT)
+        .refine(isBoundedCorsTokenList, "CORS allowed headers exceed their aggregate size limit")
         .optional(),
       exposedHeaders: v
-        .array(v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name"))
+        .array(
+          v.string().max(MAX_CORS_TOKEN_LENGTH).regex(
+            HTTP_TOKEN_PATTERN,
+            "Expected a valid HTTP header name",
+          ),
+        )
         .min(1)
+        .max(MAX_CORS_TOKEN_COUNT)
+        .refine(isBoundedCorsTokenList, "CORS exposed headers exceed their aggregate size limit")
         .optional(),
-      maxAge: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+      maxAge: v.number().int().nonnegative().max(MAX_CORS_MAX_AGE).optional(),
     }).strict().refine(
       (cors) => !(cors.origin === "*" && cors.credentials),
       "Cannot use credentials with wildcard origin (*)",

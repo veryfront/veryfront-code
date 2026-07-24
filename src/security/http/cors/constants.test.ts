@@ -5,9 +5,13 @@ import {
   DEFAULT_HEADERS,
   DEFAULT_MAX_AGE,
   DEFAULT_METHODS,
+  getDefaultCORSHeaders,
+  getDefaultCORSMethods,
   HTTP_FORBIDDEN,
   HTTP_NO_CONTENT,
 } from "./constants.ts";
+
+function acceptsLegacyMutableArray(_value: string[]): void {}
 
 describe("CORS constants", () => {
   describe("DEFAULT_METHODS", () => {
@@ -20,12 +24,34 @@ describe("CORS constants", () => {
     it("should have 6 methods", () => {
       assertEquals(DEFAULT_METHODS.length, 6);
     });
+
+    it("preserves its mutable public type without owning runtime policy", () => {
+      acceptsLegacyMutableArray(DEFAULT_METHODS);
+      const originalLength = DEFAULT_METHODS.length;
+      DEFAULT_METHODS.push("PUBLIC-CONSUMER-METHOD");
+      try {
+        assertEquals(getDefaultCORSMethods().includes("PUBLIC-CONSUMER-METHOD"), false);
+      } finally {
+        DEFAULT_METHODS.length = originalLength;
+      }
+    });
   });
 
   describe("DEFAULT_HEADERS", () => {
     it("should include Content-Type and Authorization", () => {
       for (const header of ["Content-Type", "Authorization"]) {
         assert(DEFAULT_HEADERS.includes(header));
+      }
+    });
+
+    it("preserves its mutable public type without owning runtime policy", () => {
+      acceptsLegacyMutableArray(DEFAULT_HEADERS);
+      const originalLength = DEFAULT_HEADERS.length;
+      DEFAULT_HEADERS.push("Public-Consumer-Header");
+      try {
+        assertEquals(getDefaultCORSHeaders().includes("Public-Consumer-Header"), false);
+      } finally {
+        DEFAULT_HEADERS.length = originalLength;
       }
     });
   });

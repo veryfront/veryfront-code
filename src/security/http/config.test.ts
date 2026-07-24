@@ -2,7 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { SecurityConfigLoader } from "./config.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { deriveSecurityContext, SecurityConfigLoader } from "./config.ts";
 
 function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
   const originalWarn = console.warn;
@@ -159,6 +160,83 @@ describe("security/http/config", () => {
     await loader.ensureLoaded();
 
     assertEquals(loader.getSecurityConfig()?.csrf, false);
+  });
+
+  it("derives a deep-frozen request-owned security context without mutating config", () => {
+    const originValidator = (origin: string) => origin === "https://client.example";
+    const config = {
+      security: {
+        cors: {
+          origin: originValidator,
+          methods: ["GET"],
+          allowedHeaders: ["authorization"],
+        },
+        csrf: {
+          excludePaths: ["/webhooks"],
+        },
+        csp: {
+          "default-src": ["'none'"],
+        },
+        auth: {
+          basic: {
+            username: "alice",
+            password: "secret",
+          },
+        },
+      },
+    } as VeryfrontConfig;
+
+    const first = deriveSecurityContext(config, { productionDefaults: true });
+    const second = deriveSecurityContext(config, { productionDefaults: true });
+    const sourceCors = config.security?.cors as Exclude<
+      NonNullable<NonNullable<VeryfrontConfig["security"]>["cors"]>,
+      boolean
+    >;
+    const derivedCors = first.securityConfig.cors as Exclude<
+      NonNullable<typeof first.securityConfig.cors>,
+      boolean
+    >;
+
+    assertEquals(first.securityConfig === config.security, false);
+    assertEquals(first.securityConfig === second.securityConfig, false);
+    assertEquals(derivedCors === sourceCors, false);
+    assertEquals(derivedCors.methods === sourceCors.methods, false);
+    assertEquals(Object.isFrozen(first), true);
+    assertEquals(Object.isFrozen(first.securityConfig), true);
+    assertEquals(Object.isFrozen(derivedCors), true);
+    assertEquals(Object.isFrozen(derivedCors.methods), true);
+    assertEquals(derivedCors.origin === originValidator, false);
+    assertEquals(Object.isFrozen(derivedCors.origin), true);
+    assertEquals(
+      typeof derivedCors.origin === "function" &&
+        derivedCors.origin("https://client.example"),
+      true,
+    );
+    assertEquals(
+      typeof (second.securityConfig.cors as { origin?: unknown }).origin === "function" &&
+        (second.securityConfig.cors as { origin?: unknown }).origin === derivedCors.origin,
+      false,
+    );
+    assertEquals(first.cspUserHeader, "default-src 'none'");
+
+    sourceCors.methods?.push("POST");
+    assertEquals(derivedCors.methods, ["GET"]);
+  });
+
+  it("applies production defaults without overriding explicit security choices", () => {
+    const production = deriveSecurityContext(
+      { security: { csrf: false, cors: false } },
+      { productionDefaults: true },
+    );
+    const development = deriveSecurityContext(
+      { security: {} },
+      { productionDefaults: false },
+    );
+
+    assertEquals(production.securityConfig.csrf, false);
+    assertEquals(production.securityConfig.cors, false);
+    assertEquals(development.securityConfig.csrf, undefined);
+    assertEquals(development.securityConfig.cors, false);
   });
 
   it("rejects a failed load for the current caller and retries on the next call", async () => {

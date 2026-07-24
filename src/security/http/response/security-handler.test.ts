@@ -614,6 +614,30 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.get("X-Custom-Header"), "custom-value");
     });
 
+    it("keeps Access-Control-* headers authoritative to the CORS policy layer", () => {
+      const config: SecurityConfig = {
+        headers: {
+          "X-Custom-Header": "custom-value",
+          "Access-Control-Allow-Origin": "*",
+          "aCcEsS-CoNtRoL-AlLoW-CrEdEnTiAlS": "true",
+          "Access-Control-Future-Policy": "unsafe",
+        },
+      };
+      const headers = new Headers({
+        "Access-Control-Allow-Origin": "https://policy.example",
+      });
+
+      applySecurityHeaders(headers, false, "nonce", null, config);
+
+      assertEquals(headers.get("X-Custom-Header"), "custom-value");
+      assertEquals(
+        headers.get("Access-Control-Allow-Origin"),
+        "https://policy.example",
+      );
+      assertEquals(headers.get("Access-Control-Allow-Credentials"), null);
+      assertEquals(headers.get("Access-Control-Future-Policy"), null);
+    });
+
     it("should allow overriding security headers via config.headers", () => {
       const config: SecurityConfig = {
         headers: {
