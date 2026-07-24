@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#std/assert";
-import { createOAuthCallbackDispatcher } from "./callback-handler.ts";
+import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  createOAuthCallbackDispatcher as createRuntimeOAuthCallbackDispatcher,
+  type OAuthCallbackDispatcherOptions,
+} from "./callback-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig, StoredOAuthState } from "../types.ts";
 import { MAX_OAUTH_ERROR_DESCRIPTION_LENGTH, MAX_OAUTH_SERVICE_ID_LENGTH } from "../limits.ts";
@@ -9,6 +13,10 @@ const APP_URL = "http://localhost:3000";
 const CALLBACK_ROUTE_ID = "shared";
 const CALLBACK_URI = `${APP_URL}/api/auth/${CALLBACK_ROUTE_ID}/callback`;
 const CODE_VERIFIER = "v".repeat(64);
+const TEST_ENV = createTestEnvironmentConfig({
+  veryfrontEnv: "test",
+  appUrl: APP_URL,
+});
 
 const ALPHA_CONFIG: OAuthServiceConfig = {
   providerId: "alpha-provider",
@@ -41,6 +49,16 @@ const ENV: Record<string, string> = {
   BETA_CLIENT_ID: "beta-id",
   BETA_CLIENT_SECRET: "beta-secret",
 };
+
+function createOAuthCallbackDispatcher(
+  configs: readonly OAuthServiceConfig[],
+  options: OAuthCallbackDispatcherOptions,
+): (request: Request) => Promise<Response> {
+  return createRuntimeOAuthCallbackDispatcher(configs, {
+    env: TEST_ENV,
+    ...options,
+  });
+}
 
 function makeRequest(entries: readonly (readonly [string, string])[]): Request {
   const url = new URL(CALLBACK_URI);

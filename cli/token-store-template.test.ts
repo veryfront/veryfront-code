@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createDefaultTokenStore,
@@ -9,15 +9,17 @@ import {
   type OAuthToken,
 } from "./templates/integrations/_base/files/lib/token-store.ts";
 
-const AUTO_KEY_STORAGE = "__veryfront_auto_encryption_key__";
-const globalStore = globalThis as Record<string, unknown>;
+function restoreEnvironmentVariable(name: string, value: string | undefined): void {
+  if (value === undefined) Deno.env.delete(name);
+  else Deno.env.set(name, value);
+}
 
 /**
  * Tests that the token store does not leak sensitive data via console output.
  *
  * Verifies:
- * - Auto-generated encryption keys are not logged
- * - Decryption failures do not include raw error objects or token data
+ * - Encryption is enabled only by an explicit key
+ * - Decryption failures do not log raw error objects or token data
  * - Encrypt/decrypt roundtrip still works correctly
  */
 describe("token store console output", () => {
@@ -25,6 +27,7 @@ describe("token store console output", () => {
   const originalError = console.error;
   const originalNodeEnv = Deno.env.get("NODE_ENV");
   const originalDatabaseUrl = Deno.env.get("DATABASE_URL");
+  const originalEncryptionKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
   let logCalls: unknown[][] = [];
   let errorCalls: unknown[][] = [];
 
@@ -33,26 +36,22 @@ describe("token store console output", () => {
     errorCalls = [];
     console.log = (...args: unknown[]) => logCalls.push(args);
     console.error = (...args: unknown[]) => errorCalls.push(args);
+    Deno.env.delete("TOKEN_ENCRYPTION_KEY");
   });
 
   afterEach(() => {
     console.log = originalLog;
     console.error = originalError;
-    if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
-    else Deno.env.set("NODE_ENV", originalNodeEnv);
-    if (originalDatabaseUrl === undefined) Deno.env.delete("DATABASE_URL");
-    else Deno.env.set("DATABASE_URL", originalDatabaseUrl);
+    restoreEnvironmentVariable("NODE_ENV", originalNodeEnv);
+    restoreEnvironmentVariable("DATABASE_URL", originalDatabaseUrl);
+    restoreEnvironmentVariable("TOKEN_ENCRYPTION_KEY", originalEncryptionKey);
   });
 
-  it("does not log auto-generated encryption key to console", async () => {
-    // Clear cached key to force regeneration code path
-    delete globalStore[AUTO_KEY_STORAGE];
-
-    // Trigger encryption which causes auto-key generation
+  it("does not auto-generate or log an encryption key", async () => {
     const token: OAuthToken = { accessToken: "test-access-token" };
-    await encryptToken(token);
+    const serialized = await encryptToken(token);
 
-    // No console.log calls should mention key generation
+    assertEquals(serialized, JSON.stringify(token));
     const logMessages = logCalls.map((args) => args.join(" "));
     for (const msg of logMessages) {
       assertEquals(
@@ -63,50 +62,44 @@ describe("token store console output", () => {
     }
   });
 
-  it("does not include error object in decryption failure log", async () => {
-    // Pass corrupted encrypted data to trigger decryption failure
-    const result = await decryptToken("encrypted:aW52YWxpZC1kYXRh");
+  it("rejects corrupted encrypted data without logging the failure", async () => {
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", "ab".repeat(32));
+    const encrypted = await encryptToken({ accessToken: "test-access-token" });
+    const corrupted = encrypted.split("");
+    const ciphertextIndex = "encrypted:".length + 20;
+    corrupted[ciphertextIndex] = corrupted[ciphertextIndex] === "A" ? "B" : "A";
 
-    assertEquals(result, null);
-
-    // Find the "Decryption failed" error call
-    const failureCalls = errorCalls.filter(
-      (args) => typeof args[0] === "string" && args[0].includes("Decryption failed"),
+    await assertRejects(
+      () => decryptToken(corrupted.join("")),
+      Error,
+      "failed authentication",
     );
 
-    // Should have logged the failure
-    assertNotEquals(failureCalls.length, 0, "Should log decryption failure");
-
-    // Should only contain the message string, no error object
-    for (const call of failureCalls) {
-      assertEquals(
-        call.length,
-        1,
-        `Decryption failure log should only contain message string, got ${call.length} args`,
-      );
-    }
+    assertEquals(errorCalls, []);
   });
 
-  it("does not use the default memory-backed store in production when durable env vars are present", () => {
+  it("rejects the default memory-backed store in production despite durable-looking env vars", () => {
     Deno.env.set("NODE_ENV", "production");
     Deno.env.set("DATABASE_URL", "postgres://example");
 
-    let message = "";
-    try {
-      createDefaultTokenStore();
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
-    }
-
-    assertEquals(
-      message.includes("In-memory token storage is not allowed in production"),
-      true,
+    assertThrows(
+      () => createDefaultTokenStore(),
+      Error,
+      "In-memory credential storage is not allowed in production",
     );
   });
 });
 
 describe("token store encrypt/decrypt roundtrip", () => {
+  const originalEncryptionKey = Deno.env.get("TOKEN_ENCRYPTION_KEY");
+
+  beforeEach(() => Deno.env.delete("TOKEN_ENCRYPTION_KEY"));
+  afterEach(() => {
+    restoreEnvironmentVariable("TOKEN_ENCRYPTION_KEY", originalEncryptionKey);
+  });
+
   it("encrypts and decrypts a token correctly", async () => {
+    Deno.env.set("TOKEN_ENCRYPTION_KEY", "cd".repeat(32));
     const token: OAuthToken = {
       accessToken: "access-123",
       refreshToken: "refresh-456",
@@ -125,9 +118,12 @@ describe("token store encrypt/decrypt roundtrip", () => {
     assertEquals(decrypted?.scope, token.scope);
   });
 
-  it("returns null for invalid JSON in unencrypted data", async () => {
-    const result = await decryptToken("not-valid-json{{{");
-    assertEquals(result, null);
+  it("rejects invalid JSON in unencrypted data", async () => {
+    await assertRejects(
+      () => decryptToken("not-valid-json{{{"),
+      TypeError,
+      "Stored credential is not valid JSON",
+    );
   });
 
   it("generates 64-character hex encryption keys", () => {

@@ -46,7 +46,12 @@ function makeDisconnectRequest(origin = "http://localhost:3000"): Request {
 }
 
 function makeEnv(appUrl = "http://localhost:3000"): EnvironmentConfig {
-  return { ...getEnvironmentConfig(), appUrl };
+  return {
+    ...getEnvironmentConfig(),
+    nodeEnv: "test",
+    veryfrontEnv: "test",
+    appUrl,
+  };
 }
 
 function makeDeploymentEnv(
@@ -467,6 +472,7 @@ Deno.test("disconnect handler: returns 401 when getUserId is not provided (fail-
   const store = new MemoryTokenStore();
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
+    env: makeEnv(),
     // deno-lint-ignore no-explicit-any
   } as any);
 
@@ -481,6 +487,7 @@ Deno.test("disconnect handler: clears only the calling user's tokens", async () 
 
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
+    env: makeEnv(),
     getUserId: () => "alice",
   });
 
@@ -501,6 +508,7 @@ Deno.test("disconnect handler: returns 401 when isAuthenticated returns false", 
   const store = new MemoryTokenStore();
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
+    env: makeEnv(),
     isAuthenticated: () => false,
     getUserId: () => "alice",
   });
@@ -515,6 +523,7 @@ Deno.test("disconnect handler: supports async isAuthenticated and getUserId", as
   const store = new MemoryTokenStore();
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore: store,
+    env: makeEnv(),
     isAuthenticated: async () => false,
     getUserId: async () => "alice",
   });
@@ -778,6 +787,7 @@ Deno.test("disconnect handler: token-store failures do not report success", asyn
   tokenStore.clearTokens = () => Promise.reject(new Error("private database detail"));
   const handler = createOAuthDisconnectHandler(TEST_CONFIG, {
     tokenStore,
+    env: makeEnv(),
     getUserId: () => "alice",
   });
 
