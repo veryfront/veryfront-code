@@ -54,7 +54,6 @@ import {
 } from "./cloud-agent-config.ts";
 import {
   buildHostedDelegateTools,
-  type ChildRunContext,
   createInvokeAgentTool,
   createLoadSkillTool,
   fetchProjectSteering,
@@ -104,7 +103,7 @@ export function buildLocalTools(
         buildHostedDelegateTools(context, {
           delegates: binding.delegateIds,
           selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
-          taskContext: taskContext as unknown as ChildRunContext,
+          taskContext,
         }),
       );
     } else {
@@ -112,7 +111,7 @@ export function buildLocalTools(
       // child-fork tool. Explicit scoped delegate bindings opt out.
       tools.invoke_agent = createInvokeAgentTool(
         context,
-        taskContext as unknown as ChildRunContext,
+        taskContext,
       );
     }
   }

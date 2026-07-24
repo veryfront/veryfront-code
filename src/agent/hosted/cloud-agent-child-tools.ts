@@ -104,7 +104,7 @@ export function resolveMcpServers(
   }
 
   if (agentConfig?.mcpServers !== undefined) {
-    return agentConfig.mcpServers as AgentServiceMcpServerConfig[];
+    return agentConfig.mcpServers;
   }
   return defaultAgentServiceMcpServers();
 }
