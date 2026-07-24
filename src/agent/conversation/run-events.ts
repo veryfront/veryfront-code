@@ -256,12 +256,18 @@ export class ConversationRunEventEncoder {
         return events;
       }
 
+      case "source-document":
+        return [{
+          type: conversationRunEventTypes.custom,
+          name: "source-document",
+          value: chunk,
+        }];
+
       case "error":
       case "finish":
       case "abort":
       case "message-metadata":
       case "source-url":
-      case "source-document":
       case "file":
       case "tool-approval-request":
       case "start-step":
