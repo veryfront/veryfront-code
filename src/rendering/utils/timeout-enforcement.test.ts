@@ -126,7 +126,7 @@ describe("Timeout Enforcement", () => {
       assertEquals(await result, "success");
     });
 
-    it("allows an outer deadline to bound progressing work without a local hard cap", async () => {
+    it("allows progressing work to complete without a local hard cap", async () => {
       using time = new FakeTime();
       let markStarted!: () => void;
       const started = new Promise<void>((resolve) => markStarted = resolve);
