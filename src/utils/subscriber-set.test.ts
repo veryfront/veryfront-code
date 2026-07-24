@@ -13,20 +13,24 @@ describe("utils/subscriber-set", () => {
     assertEquals(seen, ["a:x", "b:x"]);
   });
 
-  it("is safe for a listener to unsubscribe itself or others mid-notify", () => {
+  it("still notifies a listener that was unsubscribed earlier in the same notify (snapshot)", () => {
     const set = createSubscriberSet();
     const calls: string[] = [];
-    const unsubscribeB = set.subscribe(() => calls.push("b"));
+    // Register the remover FIRST so it removes a listener that has not run
+    // yet. Live Set iteration would skip b; the snapshot must still call it.
+    let unsubscribeB = () => {};
     set.subscribe(() => {
       calls.push("a");
       unsubscribeB();
     });
+    unsubscribeB = set.subscribe(() => calls.push("b"));
 
-    // Insertion order: b first, then a. Removing b during a's run must not
-    // disturb the snapshot; on the next notify b is gone.
     set.notify();
+    assertEquals(calls, ["a", "b"]);
+
+    // The removal still takes effect for subsequent notifies.
     set.notify();
-    assertEquals(calls, ["b", "a", "a"]);
+    assertEquals(calls, ["a", "b", "a"]);
   });
 
   it("isolates a throwing listener so the rest still run", () => {
