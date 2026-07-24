@@ -46,13 +46,17 @@ function isDynamicBuildFallbackPath(pathname: string): boolean {
     pathname.startsWith("/_veryfront/data/");
 }
 
+function isProjectApiPath(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
 export class StaticHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "StaticHandler",
     priority: PRIORITY_MEDIUM_STATIC as HandlerPriority,
     patterns: [
-      { pattern: /^\/[^_].*/, method: "GET" },
-      { pattern: /^\/[^_].*/, method: "HEAD" },
+      { pattern: /^\/(?!api(?:\/|$))[^_].*/, method: "GET" },
+      { pattern: /^\/(?!api(?:\/|$))[^_].*/, method: "HEAD" },
     ],
   };
 
@@ -63,6 +67,9 @@ export class StaticHandler extends BaseHandler {
     if (method !== "GET" && method !== "HEAD") return Promise.resolve(this.continue());
 
     const pathname = new URL(req.url).pathname;
+    if (isProjectApiPath(pathname)) {
+      return Promise.resolve(this.continue());
+    }
     if (pathname.startsWith("/_") && !isProductionBuildAssetPath(pathname)) {
       return Promise.resolve(this.continue());
     }

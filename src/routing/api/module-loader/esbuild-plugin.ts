@@ -15,8 +15,13 @@ import { isAllowedRemoteHost } from "./http-validator.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+import {
+  isNativeErrorWithoutHooks,
+  snapshotThrowableDiagnostic,
+} from "#veryfront/errors/safe-diagnostics.ts";
 
 const logger = serverLogger.component("api");
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
@@ -93,7 +98,9 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
     try {
       return JSON.parse(await fs.readTextFile(metadataPath)) as CachedHTTPModuleMetadata;
     } catch (error) {
-      logger.debug(`[http] ignoring unreadable module cache metadata: ${error}`);
+      logger.debug(
+        `[http] ignoring unreadable module cache metadata: ${snapshotThrowableDiagnostic(error)}`,
+      );
       return null;
     }
   }
@@ -121,7 +128,9 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
 
         return contents;
       } catch (error) {
-        logger.debug(`[http] module cache read miss for ${url}: ${error}`);
+        logger.debug(
+          `[http] module cache read miss for ${url}: ${snapshotThrowableDiagnostic(error)}`,
+        );
         return null;
       }
     },
@@ -152,7 +161,9 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
           }\n`,
         );
       } catch (error) {
-        logger.debug(`[http] could not update module cache for ${url}: ${error}`);
+        logger.debug(
+          `[http] could not update module cache for ${url}: ${snapshotThrowableDiagnostic(error)}`,
+        );
       }
     },
   };
@@ -285,20 +296,38 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       }
 
       function describePersistenceError(error: unknown): string {
-        if (!(error instanceof Error)) return typeof error;
+        if (!isNativeErrorWithoutHooks(error)) return typeof error;
 
-        const code = (error as { code?: unknown }).code;
-        const name = error.name || "Error";
+        const codeDescriptor = getOwnPropertyDescriptor(error, "code");
+        const code = codeDescriptor && "value" in codeDescriptor ? codeDescriptor.value : undefined;
+        const nameDescriptor = getOwnPropertyDescriptor(error, "name");
+        const ownName = nameDescriptor && "value" in nameDescriptor
+          ? nameDescriptor.value
+          : undefined;
+        const name = typeof ownName === "string" && ownName ? ownName : "Error";
         return typeof code === "string" && code ? `${name}(${code})` : name;
       }
 
-      function isReadOnlyFileSystemError(error: unknown): boolean {
-        if (error == null) return false;
+      function isReadOnlyFileSystemError(
+        error: unknown,
+        seen: Set<unknown> = new Set(),
+      ): boolean {
+        if (!isNativeErrorWithoutHooks(error) || seen.has(error)) return false;
+        seen.add(error);
 
-        const message = error instanceof Error ? error.message : String(error);
-        if (/read-only file ?system|os error 30|erofs/i.test(message)) return true;
+        if (
+          /read-only file ?system|os error 30|erofs/i.test(
+            snapshotThrowableDiagnostic(error),
+          )
+        ) {
+          return true;
+        }
 
-        return error instanceof Error && isReadOnlyFileSystemError(error.cause);
+        const causeDescriptor = getOwnPropertyDescriptor(error, "cause");
+        const cause = causeDescriptor && "value" in causeDescriptor
+          ? causeDescriptor.value
+          : undefined;
+        return cause !== undefined && isReadOnlyFileSystemError(cause, seen);
       }
 
       async function persistLockfileEntry(
@@ -345,7 +374,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               throw error;
             }
             result = {
-              response: new Response(error instanceof Error ? error.message : String(error), {
+              response: new Response(snapshotThrowableDiagnostic(error), {
                 status: HTTP_NETWORK_CONNECT_TIMEOUT,
               }),
               resolvedUrl: url,

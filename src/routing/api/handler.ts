@@ -4,22 +4,77 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { createError, toError } from "#veryfront/errors";
-import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
+import {
+  badGateway,
+  internalServerError,
+  notFound,
+  serviceUnavailable,
+} from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 import { type APIContext } from "./context-builder.ts";
 import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
-import { loadHandlerModule } from "./module-loader/loader.ts";
+import { loadHandlerModule, prepareHandlerModule } from "./module-loader/loader.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
-import { executeAppRoute, executePagesRoute, type ExecuteRouteOptions } from "./route-executor.ts";
+import {
+  executeAppRoute,
+  executePagesRoute,
+  executePreparedAppRoute,
+  executePreparedPagesRoute,
+  resolvePreparedRouteMethods,
+} from "./route-executor.ts";
+import { resolveExecutableRouteMethods } from "./route-methods.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import {
+  getWorkerPool,
+  isWorkerIsolationEnabled,
+} from "#veryfront/security/sandbox/worker-pool.ts";
+import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isCompiledBinary } from "#veryfront/utils";
+import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
+/** Max in-flight/cached prepared source promises retained by one handler. */
+const PREPARED_HANDLER_CACHE_MAX_ENTRIES = 256;
+const objectKeys = Object.keys;
+const apply = Reflect.apply;
+const randomUUID = crypto.randomUUID;
+
+function isAppRouteModule(modulePath: string): boolean {
+  return /\/route\.(ts|js|tsx|jsx)$/.test(modulePath);
+}
+
+function snapshotRequestLocality(ctx?: HandlerContext): boolean {
+  try {
+    return ctx?.isLocalProject === true;
+  } catch {
+    return false;
+  }
+}
 
 export type { APIContext, APIRoute };
+
+/** Result of resolving the runtime HTTP capabilities for one API route path. */
+export type APIRouteMethodResolution =
+  | { status: "resolved"; methods: string[] }
+  | { status: "not-found" }
+  | { status: "unavailable" };
+
+/** Per-call response finalization controls for server integrations. */
+export interface APIRouteHandleOptions {
+  /**
+   * Apply the route handler's configured CORS policy before returning.
+   *
+   * The server wrapper disables this so it can merge project headers, apply
+   * centralized security, and perform one authoritative asynchronous CORS pass.
+   */
+  applyCORS?: boolean;
+}
 
 /** Longest sanitised load error a response body carries. */
 const MAX_LOAD_ERROR_LENGTH = 300;
@@ -60,6 +115,7 @@ export function sanitizeLoadErrorForResponse(message: string, projectDir?: strin
  */
 interface APIRouteHandlerDeps {
   loadHandlerModule?: typeof loadHandlerModule;
+  prepareHandlerModule?: typeof prepareHandlerModule;
   discoverPagesRoutes?: typeof discoverPagesRoutes;
   discoverAppRoutes?: typeof discoverAppRoutes;
   getConfig?: typeof getConfig;
@@ -77,6 +133,7 @@ export function __injectDepsForTests(deps: APIRouteHandlerDeps | null): void {
 function getDeps(): Required<APIRouteHandlerDeps> {
   return {
     loadHandlerModule: injectedDeps?.loadHandlerModule ?? loadHandlerModule,
+    prepareHandlerModule: injectedDeps?.prepareHandlerModule ?? prepareHandlerModule,
     discoverPagesRoutes: injectedDeps?.discoverPagesRoutes ?? discoverPagesRoutes,
     discoverAppRoutes: injectedDeps?.discoverAppRoutes ?? discoverAppRoutes,
     getConfig: injectedDeps?.getConfig ?? getConfig,
@@ -102,12 +159,22 @@ interface LoadAttempt {
   errorMessage: string | null;
 }
 
+interface PrepareAttempt {
+  module: PreparedWorkerModule | null;
+  errorMessage: string | null;
+}
+
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, APIRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
+  private preparedRouteCache = new LRUCache<string, Promise<PreparedWorkerModule>>({
+    maxEntries: PREPARED_HANDLER_CACHE_MAX_ENTRIES,
+  });
   private activeRequests = 0;
   private destroyRequested = false;
   private destroyed = false;
+  private workerUsed = false;
+  private isolationUnavailableReason: string | null = null;
 
   private adapter: RuntimeAdapter | null;
   private adapterPromise: Promise<RuntimeAdapter> | null = null;
@@ -122,9 +189,17 @@ export class APIRouteHandler {
   constructor(
     private projectDir: string,
     adapter?: RuntimeAdapter,
+    initialConfig?: Awaited<ReturnType<typeof getConfig>>,
+    private readonly executionScopeId: string = `api:${apply(randomUUID, crypto, [])}`,
   ) {
     this.adapter = adapter ?? null;
     this.adapterPromise = adapter ? Promise.resolve(adapter) : null;
+
+    if (initialConfig) {
+      this.config = initialConfig;
+      this.corsConfig = initialConfig.security?.cors ?? null;
+      this.corsConfigLoaded = true;
+    }
   }
 
   initialize(): Promise<void> {
@@ -133,6 +208,7 @@ export class APIRouteHandler {
       async () => {
         const adapter = await this.ensureAdapter();
         await this.ensureConfig(adapter);
+        this.isolationUnavailableReason = await this.assessIsolationCompatibility(adapter);
 
         logger.debug("Initializing route handler", { projectDir: this.projectDir });
 
@@ -175,8 +251,19 @@ export class APIRouteHandler {
     );
   }
 
-  handle(request: Request, ctx?: HandlerContext): Promise<Response | null> {
+  handle(
+    request: Request,
+    ctx?: HandlerContext,
+    options: APIRouteHandleOptions = {},
+  ): Promise<Response | null> {
     const { pathname } = new URL(request.url);
+    const isLocalProject = snapshotRequestLocality(ctx);
+    let applyCORS = true;
+    try {
+      applyCORS = options.applyCORS !== false;
+    } catch {
+      // An unreadable caller option must not silently disable policy.
+    }
     this.activeRequests++;
 
     return withSpan(
@@ -218,54 +305,69 @@ export class APIRouteHandler {
           params: match.params,
         });
 
-        const { handler, errorMessage } = await this.loadHandler(match);
-        if (!handler) {
-          const msg = errorMessage ?? "Handler not found";
-
-          try {
-            // The full detail, paths and all, belongs in the log.
-            logger.error(`handler module failed to load: ${match.route.page}`, { reason: msg });
-          } catch (e) {
-            logger.warn("API error log failed", e);
-          }
-
-          if (msg.includes("Remote import blocked by allow-list")) return badGateway(msg);
-
-          // The reason the module failed to load is the only useful thing here.
-          // Reporting a flat "Handler not found" for what is usually a syntax or
-          // import error sends people hunting for a routing problem that does
-          // not exist. Local development only, and sanitised: a raw load error
-          // carries temp directories, absolute paths and a stack trace, none of
-          // which belong in a response body.
-          return internalServerError(
-            ctx?.isLocalProject
-              ? sanitizeLoadErrorForResponse(msg, this.projectDir)
-              : "Handler not found",
-          );
-        }
-
         // App Router routes are always named route.ts/js/tsx/jsx
         // Pages Router routes have descriptive names like articles.ts
         // Note: Cannot use path-based detection (/app/) as projectDir may be '/app' in production
-        const isAppRoute = /\/route\.(ts|js|tsx|jsx)$/.test(match.route.page);
+        const isAppRoute = isAppRouteModule(match.route.page);
+        let response: Response;
 
-        const isolationOptions: ExecuteRouteOptions = {
-          modulePath: match.route.page,
-          projectDir: this.projectDir,
-          isLocalProject: ctx?.isLocalProject,
-        };
+        if (isWorkerIsolationEnabled()) {
+          if (this.isolationUnavailableReason) {
+            logger.error("Worker-isolated API route is unavailable", {
+              modulePath: match.route.page,
+              reason: this.isolationUnavailableReason,
+            });
+            return serviceUnavailable(
+              isLocalProject ? this.isolationUnavailableReason : "API route unavailable",
+            );
+          }
 
-        const response = isAppRoute
-          ? await executeAppRoute(handler, request, match, pathname, adapter, isolationOptions)
-          : await executePagesRoute(
-            handler,
-            request,
-            match,
-            pathname,
-            adapter,
-            this.projectDir,
-            isolationOptions,
-          );
+          const { module, errorMessage } = await this.prepareHandler(match);
+          if (!module) {
+            return this.createLoadFailureResponse(
+              match.route.page,
+              errorMessage,
+              isLocalProject,
+            );
+          }
+
+          this.workerUsed = true;
+          const preparedOptions = {
+            executionScopeId: this.executionScopeId,
+            module,
+            modulePath: match.route.page,
+            projectDir: this.projectDir,
+            isLocalProject,
+          };
+          response = isAppRoute
+            ? await executePreparedAppRoute(request, match, pathname, preparedOptions)
+            : await executePreparedPagesRoute(request, match, pathname, preparedOptions);
+        } else {
+          const { handler, errorMessage } = await this.loadHandler(match);
+          if (!handler) {
+            return this.createLoadFailureResponse(
+              match.route.page,
+              errorMessage,
+              isLocalProject,
+            );
+          }
+
+          response = isAppRoute
+            ? await executeAppRoute(handler, request, match, pathname, adapter, {
+              isLocalProject,
+            })
+            : await executePagesRoute(
+              handler,
+              request,
+              match,
+              pathname,
+              adapter,
+              this.projectDir,
+              { isLocalProject },
+            );
+        }
+
+        if (!applyCORS) return response;
 
         const corsResponse = await applyCORSHeaders({
           request,
@@ -277,6 +379,135 @@ export class APIRouteHandler {
       },
       { "http.method": request.method, "http.path": pathname },
     ).finally(() => this.completeRequest());
+  }
+
+  /**
+   * Resolve the methods the same matched and loaded module can execute.
+   *
+   * This deliberately shares route discovery, VFS loading, transpilation, and
+   * handler caching with request execution. Callers can therefore distinguish a
+   * genuine route miss from a matched route whose module was unsafe or unable
+   * to load, without attempting a second host-filesystem import.
+   */
+  resolveRouteMethods(
+    pathname: string,
+    requestedMethod?: string,
+  ): Promise<APIRouteMethodResolution> {
+    this.activeRequests++;
+
+    return withSpan<APIRouteMethodResolution>(
+      "api.resolveRouteMethods",
+      async () => {
+        const match = this.router.match(pathname);
+        if (!match) return { status: "not-found" };
+
+        if (isWorkerIsolationEnabled()) {
+          if (this.isolationUnavailableReason) return { status: "unavailable" };
+
+          const { module } = await this.prepareHandler(match);
+          if (!module) return { status: "unavailable" };
+
+          try {
+            this.workerUsed = true;
+            return {
+              status: "resolved",
+              methods: await resolvePreparedRouteMethods(requestedMethod, {
+                executionScopeId: this.executionScopeId,
+                module,
+                modulePath: match.route.page,
+                projectDir: this.projectDir,
+              }),
+            };
+          } catch (error) {
+            logger.error("Failed to inspect isolated API route methods", {
+              modulePath: match.route.page,
+              reason: snapshotThrowableDiagnostic(error),
+            });
+            return { status: "unavailable" };
+          }
+        }
+
+        const { handler } = await this.loadHandler(match);
+        if (!handler) return { status: "unavailable" };
+
+        return {
+          status: "resolved",
+          methods: resolveExecutableRouteMethods(
+            handler as Record<string, unknown>,
+            requestedMethod,
+          ),
+        };
+      },
+      {
+        "http.path": pathname,
+        "http.requested_method": requestedMethod ?? "",
+      },
+    ).finally(() => this.completeRequest());
+  }
+
+  private createLoadFailureResponse(
+    modulePath: string,
+    errorMessage: string | null,
+    isLocalProject: boolean,
+  ): Response {
+    const msg = errorMessage ?? "Handler not found";
+
+    try {
+      logger.error(`handler module failed to load: ${modulePath}`, { reason: msg });
+    } catch (error) {
+      logger.warn("API error log failed", error);
+    }
+
+    if (msg.includes("Remote import blocked by allow-list")) return badGateway(msg);
+
+    return internalServerError(
+      isLocalProject ? sanitizeLoadErrorForResponse(msg, this.projectDir) : "Handler not found",
+    );
+  }
+
+  private prepareHandler(match: RouteMatch): Promise<PrepareAttempt> {
+    const modulePath = match.route.page;
+
+    return withSpan(
+      "api.prepareHandler",
+      async () => {
+        const adapter = await this.ensureAdapter();
+        await this.ensureConfig(adapter);
+
+        const cached = this.preparedRouteCache.get(modulePath);
+        if (cached) {
+          try {
+            return { module: await cached, errorMessage: null };
+          } catch (error) {
+            return {
+              module: null,
+              errorMessage: snapshotThrowableDiagnostic(error),
+            };
+          }
+        }
+
+        const deps = getDeps();
+        const preparation = deps.prepareHandlerModule({
+          projectDir: this.projectDir,
+          modulePath,
+          adapter,
+          config: this.config ?? undefined,
+        });
+        this.preparedRouteCache.set(modulePath, preparation);
+
+        try {
+          return { module: await preparation, errorMessage: null };
+        } catch (error) {
+          if (this.preparedRouteCache.get(modulePath) === preparation) {
+            this.preparedRouteCache.delete(modulePath);
+          }
+          const msg = snapshotThrowableDiagnostic(error);
+          logger.error(`[API] Failed to prepare handler for ${modulePath}: ${msg}`);
+          return { module: null, errorMessage: msg };
+        }
+      },
+      { "api.modulePath": modulePath },
+    );
   }
 
   private loadHandler(match: RouteMatch): Promise<LoadAttempt> {
@@ -303,12 +534,12 @@ export class APIRouteHandler {
           // Only cache handlers that export at least one HTTP method.
           // Empty objects ({}) from failed imports are truthy but useless —
           // caching them would prevent retry after the user fixes the import.
-          const usable = handler && Object.keys(handler).length > 0 ? handler : null;
+          const usable = handler && objectKeys(handler).length > 0 ? handler : null;
           if (usable) this.routeCache.set(modulePath, usable);
 
           return { handler: usable, errorMessage: null };
         } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
+          const msg = snapshotThrowableDiagnostic(error);
           logger.error(`[API] Failed to load handler for ${modulePath}: ${msg}`);
           return { handler: null, errorMessage: msg };
         }
@@ -319,7 +550,9 @@ export class APIRouteHandler {
 
   clearCache(): void {
     this.routeCache.clear();
+    this.preparedRouteCache.clear();
     this.router.clearCache();
+    this.evictWorkerScope();
   }
 
   destroy(): void {
@@ -343,7 +576,15 @@ export class APIRouteHandler {
 
     this.destroyed = true;
     this.routeCache.destroy();
+    this.preparedRouteCache.destroy();
     this.router.destroy();
+    this.evictWorkerScope();
+  }
+
+  private evictWorkerScope(): void {
+    if (!this.workerUsed) return;
+    getWorkerPool().evictWorkerScope(this.executionScopeId);
+    this.workerUsed = false;
   }
 
   private async ensureAdapter(): Promise<RuntimeAdapter> {
@@ -366,6 +607,60 @@ export class APIRouteHandler {
     }
 
     return this.adapter;
+  }
+
+  /**
+   * Prepared-source API isolation intentionally fails closed for source
+   * capabilities that are not yet represented inside the worker boundary.
+   * This check never imports project code.
+   */
+  private async assessIsolationCompatibility(
+    adapter: RuntimeAdapter,
+  ): Promise<string | null> {
+    if (!isWorkerIsolationEnabled()) return null;
+
+    if (isCompiledBinary()) {
+      return "Worker-isolated API routes are unavailable in compiled binaries";
+    }
+
+    if (isVirtualFilesystem(adapter.fs)) {
+      return "Worker-isolated API routes require a prepared virtual-filesystem capability";
+    }
+
+    const discovery = createProjectDiscoveryConfig({
+      projectDir: this.projectDir,
+      config: this.config,
+      fsAdapter: adapter.fs,
+    });
+    const configuredDirectories = [
+      ...discovery.toolDirs,
+      ...discovery.agentDirs,
+      ...discovery.skillDirs,
+      ...discovery.resourceDirs,
+      ...discovery.promptDirs,
+      ...discovery.workflowDirs,
+      ...discovery.taskDirs,
+      ...discovery.scheduleDirs,
+      ...discovery.webhookDirs,
+      ...discovery.evalDirs,
+    ];
+
+    try {
+      for (const directory of configuredDirectories) {
+        const path = discovery.baseDir === "" ? directory : `${discovery.baseDir}/${directory}`;
+        if (!await adapter.fs.exists(path)) continue;
+        for await (const _entry of adapter.fs.readDir(path)) {
+          return "Worker-isolated API routes require prepared project discovery capabilities";
+        }
+      }
+    } catch (error) {
+      logger.warn("Unable to verify isolated API discovery boundary", {
+        reason: snapshotThrowableDiagnostic(error),
+      });
+      return "Worker-isolated API routes could not verify project discovery capabilities";
+    }
+
+    return null;
   }
 
   private async ensureCorsConfig(adapter: RuntimeAdapter): Promise<void> {

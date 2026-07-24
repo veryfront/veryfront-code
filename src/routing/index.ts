@@ -37,7 +37,14 @@ export {
   ViewportPrefetch,
 } from "./client/index.ts";
 
-export type { APIContext, APIHandler, APIResponse, APIRoute } from "./api/index.ts";
+export type {
+  APIContext,
+  APIHandler,
+  APIResponse,
+  APIRoute,
+  APIRouteHandleOptions,
+  APIRouteMethodResolution,
+} from "./api/index.ts";
 export {
   APIRouteHandler,
   ApiRouteMatcher,

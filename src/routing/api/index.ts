@@ -5,7 +5,14 @@
  */
 
 export { APIRouteHandler } from "./handler.ts";
-export type { APIContext, APIHandler, APIResponse, APIRoute } from "./handler.ts";
+export type {
+  APIContext,
+  APIHandler,
+  APIResponse,
+  APIRoute,
+  APIRouteHandleOptions,
+  APIRouteMethodResolution,
+} from "./handler.ts";
 
 export { ApiRouteMatcher } from "./api-route-matcher.ts";
 export type { Route, RouteMatch } from "./api-route-matcher.ts";

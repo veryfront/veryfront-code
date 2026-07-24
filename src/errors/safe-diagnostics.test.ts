@@ -7,10 +7,13 @@ import {
   ERROR_DOCS_BASE_URL,
   ERROR_DOCS_SLUG_MAX_LENGTH_CHARS,
   ERROR_STACK_MAX_LENGTH_CHARS,
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
   sanitizeDiagnosticText,
   sanitizeStackDiagnosticText,
   sanitizeTerminalDiagnosticText,
   snapshotErrorForBoundary,
+  snapshotThrowableDiagnostic,
 } from "./safe-diagnostics.ts";
 import { VeryfrontError } from "./types.ts";
 
@@ -113,5 +116,74 @@ describe("safe-diagnostics", () => {
 
     assertEquals(stack.length, ERROR_STACK_MAX_LENGTH_CHARS);
     assert(stack.endsWith("...[truncated]"));
+  });
+
+  it("snapshots throwable diagnostics without invoking object conversion hooks", () => {
+    let messageReads = 0;
+    let coercionCalls = 0;
+    let proxyTrapCalls = 0;
+    let errorMessageReads = 0;
+    const hostile = Object.defineProperties({}, {
+      message: {
+        get() {
+          messageReads++;
+          throw new Error("message getter must not run");
+        },
+      },
+      [Symbol.toPrimitive]: {
+        value() {
+          coercionCalls++;
+          throw new Error("coercion hook must not run");
+        },
+      },
+    });
+    const proxiedError = new Proxy(new Error("must stay private"), {
+      get(target, property, receiver) {
+        proxyTrapCalls++;
+        return Reflect.get(target, property, receiver);
+      },
+      getOwnPropertyDescriptor(target, property) {
+        proxyTrapCalls++;
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+      getPrototypeOf(target) {
+        proxyTrapCalls++;
+        return Reflect.getPrototypeOf(target);
+      },
+      ownKeys(target) {
+        proxyTrapCalls++;
+        return Reflect.ownKeys(target);
+      },
+    });
+    const accessorError = new Error("must stay private");
+    Object.defineProperty(accessorError, "message", {
+      get() {
+        errorMessageReads++;
+        throw new Error("Error message getter must not run");
+      },
+    });
+
+    assertEquals(isNativeErrorWithoutHooks(proxiedError), false);
+    assertEquals(isProxyWithoutHooks(proxiedError), true);
+    assertEquals(snapshotThrowableDiagnostic(hostile), "Unknown error");
+    assertEquals(snapshotThrowableDiagnostic(proxiedError), "Unknown error");
+    assertEquals(snapshotThrowableDiagnostic(accessorError), "Unknown error");
+    assertEquals(snapshotThrowableDiagnostic(new DOMException("DOM failure")), "DOM failure");
+    assertEquals(snapshotThrowableDiagnostic("primitive failure"), "primitive failure");
+    assertEquals(snapshotThrowableDiagnostic(42), "42");
+    assertEquals(snapshotThrowableDiagnostic(null), "null");
+    assertEquals(messageReads, 0);
+    assertEquals(coercionCalls, 0);
+    assertEquals(proxyTrapCalls, 0);
+    assertEquals(errorMessageReads, 0);
+  });
+
+  it("bounds a safely snapshotted Error message", () => {
+    const diagnostic = snapshotThrowableDiagnostic(
+      new Error("x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS * 2)),
+    );
+
+    assertEquals(diagnostic.length, ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+    assert(diagnostic.endsWith("...[truncated]"));
   });
 });

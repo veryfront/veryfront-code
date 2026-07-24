@@ -30,6 +30,14 @@ import type {
 
 const logger = serverLogger.component("project-worker");
 const textEncoder = new TextEncoder();
+const NativeMessageChannel = MessageChannel;
+const apply = Reflect.apply;
+const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
+const messagePortClose = MessagePort.prototype.close;
+const messagePortPostMessage = MessagePort.prototype.postMessage;
+const messagePortStart = MessagePort.prototype.start;
+const workerPostMessage = Worker.prototype.postMessage;
+const arrayIncludes = Array.prototype.includes;
 
 // Intersection with the DOM `WorkerOptions` so the value is assignable to the
 // `Worker` constructor without suppression — Deno reads the extra `deno` field
@@ -54,6 +62,7 @@ interface PendingRequest {
   resolve: (value: WorkerResponse) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  expectedTypes: readonly string[];
 }
 
 interface StreamHandler {
@@ -67,12 +76,33 @@ interface StreamHandler {
  */
 export type WorkerStatus = "idle" | "busy" | "crashed" | "terminated";
 
+function expectedResponseTypes(request: WorkerRequest): readonly string[] {
+  switch (request.type) {
+    case "execute-app-route":
+    case "execute-pages-route":
+      return ["result", "prepared-module-capacity", "error"];
+    case "inspect-api-route-methods":
+      return ["api-route-methods", "prepared-module-capacity", "error"];
+    case "fetch-data":
+      return ["data-result", "error"];
+    case "render-ssr":
+      return ["ssr-result", "error"];
+    default:
+      // Runtime callers can still cross the TypeScript boundary. The worker
+      // owns validation and reports unknown request kinds as a typed error.
+      return ["error"];
+  }
+}
+
 export class ProjectWorker {
   readonly projectId: string;
 
   private worker: Worker | null = null;
+  private controlPort: MessagePort | null = null;
   private pending = new Map<string, PendingRequest>();
   private streamHandlers = new Map<string, StreamHandler>();
+  private idleListeners = new Set<() => void>();
+  private suppressIdleNotifications = false;
   private requestTimeoutMs: number;
   private permissions: WorkerPermissions;
   private workerScriptUrl?: string;
@@ -103,7 +133,18 @@ export class ProjectWorker {
   }
 
   get hasPendingRequests(): boolean {
-    return this.pending.size > 0;
+    return this.pending.size > 0 || this.streamHandlers.size > 0;
+  }
+
+  /** Subscribe to the transition where all worker protocol work has settled. */
+  onIdle(listener: () => void): () => void {
+    this.idleListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.idleListeners.delete(listener);
+    };
   }
 
   /**
@@ -141,33 +182,63 @@ export class ProjectWorker {
       };
 
       this.worker = new Worker(workerUrl, workerOptions);
+      const startedWorker = this.worker;
       this._status = "idle";
 
-      this.worker.onmessage = (event: MessageEvent) => {
-        this.handleMessage(event.data);
-      };
+      if (this.workerScriptUrl) {
+        startedWorker.onmessage = (event: MessageEvent) => {
+          if (this.worker !== startedWorker) return;
+          this.handleMessage(event.data);
+        };
+        apply(eventTargetAddEventListener, startedWorker, [
+          "messageerror",
+          () => {
+            if (this.worker !== startedWorker) return;
+            this.failWorker("crashed", "Worker message could not be deserialized");
+          },
+        ]);
+      } else {
+        const channel = new NativeMessageChannel();
+        this.controlPort = channel.port1;
+        const controlPort = this.controlPort;
+        apply(eventTargetAddEventListener, controlPort, [
+          "message",
+          (event: MessageEvent) => {
+            if (this.controlPort !== controlPort || this.worker !== startedWorker) return;
+            this.handleMessage(event.data);
+          },
+        ]);
+        apply(eventTargetAddEventListener, controlPort, [
+          "messageerror",
+          () => {
+            if (this.controlPort !== controlPort || this.worker !== startedWorker) return;
+            this.failWorker("crashed", "Worker control message could not be deserialized");
+          },
+        ]);
+        apply(messagePortStart, controlPort, []);
 
-      this.worker.onerror = (event) => {
+        apply(workerPostMessage, startedWorker, [
+          {
+            type: "initialize-egress",
+            options: {
+              allowInternalEgress,
+              socksProxy: this.egressBroker?.config.socksProxy,
+              httpBroker: this.egressBroker?.config.httpBroker,
+            },
+            controlPort: channel.port2,
+          },
+          [channel.port2],
+        ]);
+      }
+
+      startedWorker.onerror = (event) => {
+        if (this.worker !== startedWorker) return;
         logger.error("Worker error", {
           projectId: this.projectId,
           error: event.message ?? String(event),
         });
-        this._status = "crashed";
-        this.egressBroker?.close();
-        this.egressBroker = null;
-        this.rejectAllPending("Worker crashed");
+        this.failWorker("crashed", "Worker crashed");
       };
-
-      if (!this.workerScriptUrl) {
-        this.worker.postMessage({
-          type: "initialize-egress",
-          options: {
-            allowInternalEgress,
-            socksProxy: this.egressBroker?.config.socksProxy,
-            httpBroker: this.egressBroker?.config.httpBroker,
-          },
-        });
-      }
     } catch (error) {
       try {
         this.worker?.terminate();
@@ -175,6 +246,7 @@ export class ProjectWorker {
         // Preserve the startup error while still closing the egress broker.
       }
       this.worker = null;
+      this.closeControlPort();
       this.egressBroker?.close();
       this.egressBroker = null;
       this._status = "terminated";
@@ -196,6 +268,9 @@ export class ProjectWorker {
             UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` }),
           );
         }
+        if (this.pending.has(request.id)) {
+          return Promise.reject(UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" }));
+        }
 
         this._requestCount++;
         this._lastActivityAt = Date.now();
@@ -204,16 +279,30 @@ export class ProjectWorker {
         return new Promise<WorkerResponse>((resolve, reject) => {
           const timer = setTimeout(() => {
             this.pending.delete(request.id);
-            this.updateIdleStatus();
-            reject(
-              TIMEOUT_ERROR.create({
-                detail: `Worker request timed out after ${this.requestTimeoutMs}ms`,
-              }),
-            );
+            const timeoutError = TIMEOUT_ERROR.create({
+              detail: `Worker request timed out after ${this.requestTimeoutMs}ms`,
+            });
+            this.terminate();
+            reject(timeoutError);
           }, this.requestTimeoutMs);
 
-          this.pending.set(request.id, { resolve, reject, timer });
-          this.worker!.postMessage(request);
+          this.pending.set(request.id, {
+            resolve,
+            reject,
+            timer,
+            expectedTypes: expectedResponseTypes(request),
+          });
+          try {
+            this.postToWorker(request);
+          } catch {
+            clearTimeout(timer);
+            this.pending.delete(request.id);
+            const sendError = UNKNOWN_ERROR.create({
+              detail: "Worker request could not be sent",
+            });
+            this.failWorker("crashed", "Worker control channel failed");
+            reject(sendError);
+          }
         });
       },
       {
@@ -237,56 +326,73 @@ export class ProjectWorker {
       throw UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` });
     }
 
+    if (this.pending.has(request.id) || this.streamHandlers.has(request.id)) {
+      throw UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" });
+    }
+
     this._requestCount++;
     this._lastActivityAt = Date.now();
     this._status = "busy";
 
     const requestId = request.id;
+    let cancelRequest: (() => void) | undefined;
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
-        let timer = setTimeout(() => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout>;
+
+        const clearRegistration = () => {
+          clearTimeout(timer);
           this.streamHandlers.delete(requestId);
           this.pending.delete(requestId);
-          this.updateIdleStatus();
-          controller.error(
-            TIMEOUT_ERROR.create({
-              detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
-            }),
-          );
-        }, this.requestTimeoutMs);
+        };
+        const handleTimeout = () => {
+          if (settled) return;
+          settled = true;
+          clearRegistration();
+          const timeoutError = TIMEOUT_ERROR.create({
+            detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
+          });
+          this.terminate();
+          controller.error(timeoutError);
+        };
+
+        timer = setTimeout(handleTimeout, this.requestTimeoutMs);
 
         const resetTimer = () => {
           clearTimeout(timer);
-          timer = setTimeout(() => {
-            this.streamHandlers.delete(requestId);
-            this.pending.delete(requestId);
-            this.updateIdleStatus();
-            controller.error(
-              TIMEOUT_ERROR.create({
-                detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
-              }),
-            );
-          }, this.requestTimeoutMs);
+          timer = setTimeout(handleTimeout, this.requestTimeoutMs);
+        };
+
+        cancelRequest = () => {
+          if (settled) return;
+          settled = true;
+          clearRegistration();
+          // No worker-side cancel RPC exists. Retiring the worker is the only
+          // boundary that guarantees project rendering stops when the
+          // downstream consumer disconnects.
+          this.terminate();
         };
 
         // Register a stream handler for this request
         this.streamHandlers.set(requestId, {
           onChunk: (chunk: Uint8Array) => {
+            if (settled) return;
             resetTimer();
             controller.enqueue(chunk);
           },
           onEnd: () => {
-            clearTimeout(timer);
-            this.streamHandlers.delete(requestId);
-            this.pending.delete(requestId);
+            if (settled) return;
+            settled = true;
+            clearRegistration();
             this.updateIdleStatus();
             controller.close();
           },
           onError: (error: Error) => {
-            clearTimeout(timer);
-            this.streamHandlers.delete(requestId);
-            this.pending.delete(requestId);
+            if (settled) return;
+            settled = true;
+            clearRegistration();
             this.updateIdleStatus();
             controller.error(error);
           },
@@ -295,9 +401,9 @@ export class ProjectWorker {
         // Also register in pending for non-streaming responses (fallback)
         this.pending.set(requestId, {
           resolve: (response) => {
-            clearTimeout(timer);
-            this.streamHandlers.delete(requestId);
-            this.pending.delete(requestId);
+            if (settled) return;
+            settled = true;
+            clearRegistration();
             this.updateIdleStatus();
 
             // If we get an ssr-result, emit it as a single chunk
@@ -313,16 +419,30 @@ export class ProjectWorker {
             }
           },
           reject: (error) => {
-            clearTimeout(timer);
-            this.streamHandlers.delete(requestId);
-            this.pending.delete(requestId);
+            if (settled) return;
+            settled = true;
+            clearRegistration();
             this.updateIdleStatus();
             controller.error(error);
           },
           timer,
+          expectedTypes: expectedResponseTypes(request),
         });
 
-        this.worker!.postMessage(request);
+        try {
+          this.postToWorker(request);
+        } catch {
+          settled = true;
+          clearRegistration();
+          const sendError = UNKNOWN_ERROR.create({
+            detail: "Worker stream request could not be sent",
+          });
+          this.failWorker("crashed", "Worker control channel failed");
+          controller.error(sendError);
+        }
+      },
+      cancel: () => {
+        cancelRequest?.();
       },
     });
   }
@@ -355,9 +475,17 @@ export class ProjectWorker {
           resolve(false);
         },
         timer,
+        expectedTypes: ["pong"],
       });
 
-      this.worker!.postMessage({ type: "ping", id });
+      try {
+        this.postToWorker({ type: "ping", id });
+      } catch {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        this.failWorker("crashed", "Worker health message could not be sent");
+        resolve(false);
+      }
     });
   }
 
@@ -366,36 +494,73 @@ export class ProjectWorker {
    */
   clearModuleCache(): void {
     if (!this.worker || this._status === "crashed" || this._status === "terminated") return;
-    this.worker.postMessage({ type: "clear-cache" });
+    // ESM imports cannot be evicted from an existing worker isolate. Retiring
+    // the worker is the only honest invalidation boundary for file-based data
+    // and SSR modules.
+    this.terminate();
   }
 
   /**
    * Terminate the worker. Rejects all pending requests.
    */
   terminate(): void {
-    if (!this.worker) return;
-
-    this._status = "terminated";
-    this.rejectAllPending("Worker terminated");
-
-    try {
-      this.worker.terminate();
-    } catch (error) {
-      logger.debug("Worker terminate failed", {
-        projectId: this.projectId,
-        error,
-      });
-    }
-
-    this.worker = null;
-    this.egressBroker?.close();
-    this.egressBroker = null;
+    this.failWorker("terminated", "Worker terminated");
     logger.debug("Worker terminated", { projectId: this.projectId });
   }
 
   // -----------------------------------------------------------------------
   // Private
   // -----------------------------------------------------------------------
+
+  private postToWorker(message: unknown): void {
+    if (this.controlPort) {
+      apply(messagePortPostMessage, this.controlPort, [message]);
+      return;
+    }
+    if (!this.worker) {
+      throw UNKNOWN_ERROR.create({ detail: "Worker not available" });
+    }
+    apply(workerPostMessage, this.worker, [message]);
+  }
+
+  private failWorker(status: "crashed" | "terminated", reason: string): void {
+    const worker = this.worker;
+    this.worker = null;
+    this._status = status;
+
+    this.suppressIdleNotifications = true;
+    try {
+      this.rejectAllPending(reason);
+    } finally {
+      this.suppressIdleNotifications = false;
+    }
+
+    if (worker) {
+      try {
+        worker.terminate();
+      } catch (error) {
+        logger.debug("Worker terminate failed", {
+          projectId: this.projectId,
+          error,
+        });
+      }
+    }
+
+    this.closeControlPort();
+    this.egressBroker?.close();
+    this.egressBroker = null;
+    this.notifyIdleListeners();
+  }
+
+  private closeControlPort(): void {
+    if (!this.controlPort) return;
+    try {
+      apply(messagePortClose, this.controlPort, []);
+    } catch {
+      // Worker termination still closes the underlying transport.
+    }
+    this.controlPort = null;
+  }
 
   private getWorkerScriptUrl(): string {
     if (this.workerScriptUrl) return this.workerScriptUrl;
@@ -421,6 +586,11 @@ export class ProjectWorker {
       | { type: "worker-exit" }
       | { type: "pong"; id: string },
   ): void {
+    if (typeof data !== "object" || data === null || typeof data.type !== "string") {
+      this.failWorker("crashed", "Worker returned an invalid control message");
+      return;
+    }
+
     if (data.type === "worker-exit") {
       this.terminate();
       return;
@@ -429,6 +599,10 @@ export class ProjectWorker {
     if (data.type === "pong") {
       const pending = this.pending.get((data as { id: string }).id);
       if (pending) {
+        if (!apply(arrayIncludes, pending.expectedTypes, ["pong"])) {
+          this.failWorker("crashed", "Worker returned a response for the wrong request type");
+          return;
+        }
         clearTimeout(pending.timer);
         pending.resolve(data as unknown as WorkerResponse);
         this.pending.delete((data as { id: string }).id);
@@ -439,13 +613,21 @@ export class ProjectWorker {
     // Handle streaming SSR chunks
     if (data.type === "stream-chunk") {
       const handler = this.streamHandlers.get(data.id);
-      if (handler) handler.onChunk(data.chunk);
+      if (!handler) {
+        this.failWorker("crashed", "Worker returned an unexpected stream chunk");
+        return;
+      }
+      handler.onChunk(data.chunk);
       return;
     }
 
     if (data.type === "stream-end") {
       const handler = this.streamHandlers.get(data.id);
-      if (handler) handler.onEnd();
+      if (!handler) {
+        this.failWorker("crashed", "Worker returned an unexpected stream end");
+        return;
+      }
+      handler.onEnd();
       return;
     }
 
@@ -458,6 +640,10 @@ export class ProjectWorker {
       });
       return;
     }
+    if (!apply(arrayIncludes, pending.expectedTypes, [response.type])) {
+      this.failWorker("crashed", "Worker returned a response for the wrong request type");
+      return;
+    }
 
     clearTimeout(pending.timer);
     this.pending.delete(response.id);
@@ -467,8 +653,25 @@ export class ProjectWorker {
   }
 
   private updateIdleStatus(): void {
-    if (this.pending.size === 0 && this._status === "busy") {
-      this._status = "idle";
+    if (this.pending.size !== 0 || this.streamHandlers.size !== 0) return;
+    if (this._status === "busy") this._status = "idle";
+    this.notifyIdleListeners();
+  }
+
+  private notifyIdleListeners(): void {
+    if (
+      this.suppressIdleNotifications ||
+      this.pending.size !== 0 ||
+      this.streamHandlers.size !== 0
+    ) {
+      return;
+    }
+    for (const listener of [...this.idleListeners]) {
+      try {
+        listener();
+      } catch {
+        // Lifecycle observers cannot interfere with worker cleanup.
+      }
     }
   }
 

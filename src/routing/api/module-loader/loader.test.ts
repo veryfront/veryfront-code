@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
@@ -365,6 +365,129 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertMatch(caught, /Cannot find module 'config'/);
     assertEquals(readCount, 1, "the broken module was read more than once");
+  });
+
+  it("does not coerce hostile adapter rejections while wrapping the load failure", async () => {
+    let messageReads = 0;
+    let coercionCalls = 0;
+    const hostile = Object.defineProperties({}, {
+      message: {
+        get() {
+          messageReads++;
+          throw new Error("message getter must not run");
+        },
+      },
+      [Symbol.toPrimitive]: {
+        value() {
+          coercionCalls++;
+          throw new Error("coercion hook must not run");
+        },
+      },
+    });
+    const hostileAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: () => Promise.reject(hostile),
+      },
+    };
+    let caught: unknown;
+
+    try {
+      await loadHandlerModule({
+        projectDir: "/virtual/hostile-load",
+        modulePath: "/virtual/hostile-load/handler.ts",
+        adapter: hostileAdapter,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assert(caught instanceof Error);
+    assertEquals(caught.message, "Failed to load API handler: Unknown error");
+    assertEquals(caught.message.length < 300, true);
+    assertEquals(messageReads, 0);
+    assertEquals(coercionCalls, 0);
+  });
+
+  it("does not invoke traps on Error proxies rejected by an adapter", async () => {
+    let trapCalls = 0;
+    const hostile = new Proxy(new Error("must not escape"), {
+      get(target, property, receiver) {
+        trapCalls++;
+        return Reflect.get(target, property, receiver);
+      },
+      getOwnPropertyDescriptor(target, property) {
+        trapCalls++;
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+      getPrototypeOf(target) {
+        trapCalls++;
+        return Reflect.getPrototypeOf(target);
+      },
+      ownKeys(target) {
+        trapCalls++;
+        return Reflect.ownKeys(target);
+      },
+    });
+    const hostileAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: () => Promise.reject(hostile),
+      },
+    };
+    let caught: unknown;
+
+    try {
+      await loadHandlerModule({
+        projectDir: "/virtual/proxied-load",
+        modulePath: "/virtual/proxied-load/handler.ts",
+        adapter: hostileAdapter,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assert(caught instanceof Error);
+    assertEquals(caught.message, "Failed to load API handler: Unknown error");
+    assertEquals(trapCalls, 0);
+  });
+
+  it("does not invoke Error accessors while classifying adapter failures", async () => {
+    let accessorReads = 0;
+    const hostile = new Error("must not escape");
+    for (const property of ["message", "code", "cause"] as const) {
+      Object.defineProperty(hostile, property, {
+        configurable: true,
+        get() {
+          accessorReads++;
+          return property === "code" ? "ENOENT" : "must not escape";
+        },
+      });
+    }
+    const hostileAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: () => Promise.reject(hostile),
+      },
+    };
+    let caught: unknown;
+
+    try {
+      await loadHandlerModule({
+        projectDir: "/virtual/accessor-load",
+        modulePath: "/virtual/accessor-load/handler.ts",
+        adapter: hostileAdapter,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assert(caught instanceof Error);
+    assertEquals(caught.message, "Failed to load API handler: Unknown error");
+    assertEquals(accessorReads, 0);
   });
 
   it("throws on missing file", async () => {

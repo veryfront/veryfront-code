@@ -6,9 +6,15 @@ import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
+import { computeHash } from "#veryfront/utils";
 
 const testSuite = isDeno ? describe : describe.skip;
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
+const TEST_EMPTY_MODULE_SOURCE = "export {};";
+const TEST_EMPTY_PREPARED_MODULE = {
+  source: TEST_EMPTY_MODULE_SOURCE,
+  sha256: await computeHash(TEST_EMPTY_MODULE_SOURCE),
+};
 
 const TEST_PERMISSIONS: WorkerPermissions = {
   read: true,
@@ -60,6 +66,11 @@ function createTestWorker(projectId = "test-project"): ProjectWorker {
 
 async function assertWorkerReady(worker: ProjectWorker): Promise<void> {
   assertEquals(await worker.isHealthy(30_000), true);
+}
+
+async function prepareModulePath(modulePath: string) {
+  const source = await Deno.readTextFile(modulePath);
+  return { source, sha256: await computeHash(source) };
 }
 
 testSuite("ProjectWorker", () => {
@@ -164,6 +175,7 @@ testSuite("ProjectWorker - error handling", () => {
       await worker.execute({
         type: "execute-app-route",
         id: "test-id",
+        module: TEST_EMPTY_PREPARED_MODULE,
         modulePath: "/nonexistent.ts",
         method: "GET",
         request: {
@@ -181,15 +193,146 @@ testSuite("ProjectWorker - error handling", () => {
       assertExists(error);
     }
   });
+
+  it("cleans pending state and retires the worker on synchronous clone failure", async () => {
+    const worker = createTestWorker("test-clone-failure");
+    worker.start();
+    try {
+      const rejected = await worker.execute({
+        type: "execute-app-route",
+        id: "invalid-clone",
+        module: {
+          source: "export function GET() {}",
+          sha256: "0".repeat(64),
+        },
+        modulePath: "/project/route.ts",
+        method: "GET",
+        request: {
+          url: "http://localhost/api/test",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {
+          invalid: (() => undefined) as unknown as string,
+        },
+        projectDir: "/project",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      }).then(
+        () => false,
+        () => true,
+      );
+
+      assertEquals(rejected, true);
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(worker.status, "crashed");
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("rejects existing requests when a later send proves the channel unusable", async () => {
+    const worker = createTestWorker("test-clone-failure-concurrent");
+    worker.start();
+    try {
+      const hanging = worker.execute({
+        type: "render-ssr",
+        id: "hanging",
+        pageModulePath: "/project/page.ts",
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "string",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+      const invalid = worker.execute({
+        type: "execute-app-route",
+        id: "invalid-clone",
+        module: {
+          source: "export function GET() {}",
+          sha256: "0".repeat(64),
+        },
+        modulePath: "/project/route.ts",
+        method: "GET",
+        request: {
+          url: "http://localhost/api/test",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {
+          invalid: (() => undefined) as unknown as string,
+        },
+        projectDir: "/project",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+
+      const results = await Promise.allSettled([hanging, invalid]);
+      assertEquals(results[0]?.status, "rejected");
+      assertEquals(results[1]?.status, "rejected");
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(worker.status, "crashed");
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("fatally rejects a response that does not match the pending request type", async () => {
+    const script = `data:application/typescript,${
+      encodeURIComponent(`
+        self.onmessage = (event) => {
+          const msg = event.data;
+          self.postMessage({ type: "data-result", id: msg.id, result: { props: {} } });
+        };
+      `)
+    }`;
+    const worker = new ProjectWorker({
+      projectId: "test-response-type-mismatch",
+      permissions: TEST_PERMISSIONS,
+      requestTimeoutMs: 5_000,
+      workerScriptUrl: script,
+    });
+    worker.start();
+    try {
+      const rejected = await worker.execute({
+        type: "execute-app-route",
+        id: "wrong-response",
+        module: {
+          source: "export function GET() {}",
+          sha256: "0".repeat(64),
+        },
+        modulePath: "/project/route.ts",
+        method: "GET",
+        request: {
+          url: "http://localhost/api/test",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir: "/project",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      }).then(
+        () => false,
+        () => true,
+      );
+
+      assertEquals(rejected, true);
+      assertEquals(worker.status, "crashed");
+      assertEquals(worker.hasPendingRequests, false);
+    } finally {
+      worker.terminate();
+    }
+  });
 });
 
 testSuite("ProjectWorker - clearModuleCache", () => {
-  it("clearModuleCache does not throw on running worker", () => {
+  it("retires a running worker because ESM modules cannot be evicted in-place", () => {
     const worker = createTestWorker("test-clear-cache");
     worker.start();
     try {
       worker.clearModuleCache();
-      assertEquals(worker.status, "idle");
+      assertEquals(worker.status, "terminated");
     } finally {
       worker.terminate();
     }
@@ -271,6 +414,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
           worker.execute({
             type: "execute-app-route",
             id: `worker-${label}`,
+            module: await prepareModulePath(modulePath),
             modulePath,
             method: "GET",
             request: {
@@ -322,8 +466,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       assertEquals(response.type, "error");
       if (response.type !== "error") throw new Error("expected error response");
       assertEquals(response.id, "unknown");
-      assertEquals(response.error.name, "Error");
-      assertEquals(response.error.message, "Unknown request type: unknown-request");
+      assertEquals(response.error.name, "TypeError");
+      assertEquals(response.error.message, "Invalid worker request type");
     } finally {
       worker.terminate();
     }
@@ -364,6 +508,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: requestId,
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -407,6 +552,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       {
         type: "execute-app-route",
         id: "app-route",
+        module: TEST_EMPTY_PREPARED_MODULE,
         modulePath,
         method: "GET",
         request: serializedRequest,
@@ -416,6 +562,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       {
         type: "execute-pages-route",
         id: "pages-route",
+        module: TEST_EMPTY_PREPARED_MODULE,
         modulePath,
         method: "GET",
         context: { request: serializedRequest, params: {}, cookies: {} },
@@ -488,6 +635,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const first = await worker.execute({
         type: "execute-app-route",
         id: "first",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -512,6 +660,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const second = await worker.execute({
         type: "execute-app-route",
         id: "second",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -578,6 +727,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const first = worker.execute({
         type: "execute-app-route",
         id: "request-a",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -595,6 +745,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const second = worker.execute({
         type: "execute-app-route",
         id: "request-b",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -685,6 +836,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "env-allowlist",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -748,6 +900,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "direct-read",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -806,6 +959,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-fetch",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -868,6 +1022,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-connect",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -930,6 +1085,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "loopback-fetch-override",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -1011,6 +1167,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "post-307",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -1098,6 +1255,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "dns-pinned-fetch",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -1199,6 +1357,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "raw-tcp-pinned",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -1318,6 +1477,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       const response = await worker.execute({
         type: "execute-app-route",
         id: "native-bypass-denied",
+        module: await prepareModulePath(modulePath),
         modulePath,
         method: "GET",
         request: {
@@ -1376,7 +1536,7 @@ testSuite("ProjectWorker - executeStream", () => {
     assert(threw, "should throw when worker is not available");
   });
 
-  it("returns a ReadableStream when worker is started", () => {
+  it("returns a ReadableStream when worker is started", async () => {
     const worker = createTestWorker("test-stream");
     worker.start();
     try {
@@ -1392,7 +1552,49 @@ testSuite("ProjectWorker - executeStream", () => {
       });
       assert(stream instanceof ReadableStream, "should return a ReadableStream");
       // Cancel the stream to clean up
-      stream.cancel();
+      await stream.cancel();
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  it("terminates the worker generation and rejects concurrent work when the consumer cancels", async () => {
+    const worker = createTestWorker("test-stream-cancel");
+    worker.start();
+    try {
+      const concurrentOutcome = worker.execute({
+        type: "render-ssr",
+        id: "concurrent-request",
+        pageModulePath: "/nonexistent.ts",
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "string",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      }).then(
+        () => "resolved",
+        () => "rejected",
+      );
+      const stream = worker.executeStream({
+        type: "render-ssr",
+        id: "cancelled-stream",
+        pageModulePath: "/nonexistent.ts",
+        layoutModulePaths: [],
+        pageProps: {},
+        layoutProps: [],
+        delivery: "stream",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      });
+
+      assertEquals(worker.status, "busy");
+      assertEquals(worker.hasPendingRequests, true);
+
+      await stream.cancel("downstream disconnected");
+
+      assertEquals(await concurrentOutcome, "rejected");
+      assertEquals(worker.status, "terminated");
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(await worker.isHealthy(), false);
     } finally {
       worker.terminate();
     }

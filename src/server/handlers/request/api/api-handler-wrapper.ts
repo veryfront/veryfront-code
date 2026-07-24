@@ -9,6 +9,16 @@ import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
+import {
+  SECURITY_POLICY_RESPONSE_HEADER_NAMES,
+} from "#veryfront/security/http/response/security-handler.ts";
+import { isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
+import { internalServerError, serviceUnavailable } from "#veryfront/http/responses";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+
+const NativeResponse = Response;
+const stringStartsWith = String.prototype.startsWith;
+const apply = Reflect.apply;
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -25,6 +35,10 @@ type FsWrapper = {
     },
   ) => Promise<T>;
 };
+
+function removeProjectSecurityHeaders(headers: Headers): void {
+  for (const name of SECURITY_POLICY_RESPONSE_HEADER_NAMES) headers.delete(name);
+}
 
 export class ApiHandlerWrapper extends BaseHandler {
   private projectDir: string;
@@ -115,47 +129,71 @@ export class ApiHandlerWrapper extends BaseHandler {
     return withSpan(
       "api.handleWithContext",
       async () => {
+        const ownsApiPath = pathname === "/api" ||
+          apply(stringStartsWith, pathname, ["/api/"]);
         try {
-          // Lazy per-project primitive discovery (agents, tools) on first access.
-          // Must run within runWithContext so VFS and registry scope are correct.
-          await ensureProjectDiscovery(ctx);
+          // In-process discovery imports project modules into host registries.
+          // Isolated API handling must never cross that boundary: the route
+          // handler either uses worker-owned prepared capabilities or rejects
+          // the unsupported project explicitly before creating a worker.
+          if (!isWorkerIsolationEnabled()) {
+            await ensureProjectDiscovery(ctx);
+          }
 
-          const apiRes = await withApiHandler(ctx, (api) => api.handle(req, ctx));
+          const apiRes = await withApiHandler(
+            ctx,
+            (api) => api.handle(req, ctx, { applyCORS: false }),
+          );
 
           if (!apiRes) {
             this.logDebug(
-              "[API-Wrapper] API handler returned null, continuing to next handler",
-              { pathname },
+              "[API-Wrapper] API handler returned null",
+              { pathname, terminal: ownsApiPath },
               ctx,
             );
+            if (ownsApiPath) {
+              return this.respond(serviceUnavailable("API route unavailable"));
+            }
             return this.continue();
           }
 
+          const normalizedApiRes = apiRes.status === 0
+            ? internalServerError("API route returned an invalid response")
+            : apiRes;
+
           this.logDebug(
             "[API-Wrapper] API handler returned response",
-            { pathname, status: apiRes.status },
+            { pathname, status: normalizedApiRes.status },
             ctx,
           );
 
-          const builder = this.createResponseBuilder(ctx);
-          const finalRes = builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined, req)
-            .withHeaders(apiRes.headers)
-            .build(apiRes.body, apiRes.status);
+          const builder = this.createResponseBuilder(ctx)
+            .withHeaders(normalizedApiRes.headers);
+          removeProjectSecurityHeaders(builder.headers);
+          builder.withSecurity(ctx.securityConfig ?? undefined, req);
+          await builder.withCORSAsync(req);
+
+          const finalRes = new NativeResponse(normalizedApiRes.body, {
+            status: normalizedApiRes.status,
+            statusText: normalizedApiRes.statusText,
+            headers: builder.headers,
+          });
 
           return this.respond(finalRes);
         } catch (error) {
           this.logDebug(
-            "[API-Wrapper] API handler error - falling through to next handler",
+            "[API-Wrapper] API handler error",
             {
               pathname,
-              error: this.getErrorMessage(error),
-              stack: error instanceof Error ? error.stack : undefined,
+              terminal: ownsApiPath,
+              error: snapshotThrowableDiagnostic(error),
             },
             ctx,
           );
 
+          if (ownsApiPath) {
+            return this.respond(serviceUnavailable("API route unavailable"));
+          }
           return this.continue();
         }
       },

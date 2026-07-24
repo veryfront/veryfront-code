@@ -5,6 +5,7 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
+  finalizePreparedWorkerImportsForRoute,
   getNodeExternalPackagesToResolveForRoute,
   NODE_BUILTINS as ROUTE_NODE_BUILTINS,
   readProjectDependenciesForRoute,
@@ -17,6 +18,7 @@ import {
 import type {
   EsmDependencyLocation as RouteEsmDependencyLocation,
 } from "#veryfront/transforms/import-rewriter/route-adapter.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { resolveExportEntry } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");
@@ -272,8 +274,31 @@ export async function rewriteDenoNpmDependencyImports(
   projectDir: string,
   fs: FileSystem,
   userDeps: Map<string, string>,
+  options: { requireInstalledExactVersions?: boolean } = {},
 ): Promise<string> {
-  return await rewriteDenoNpmDependencyImportsForRoute(code, projectDir, fs, userDeps);
+  return await rewriteDenoNpmDependencyImportsForRoute(
+    code,
+    projectDir,
+    fs,
+    userDeps,
+    options,
+  );
+}
+
+/**
+ * Finalize and validate the import surface of a host-prepared worker module.
+ *
+ * Data-URL modules do not have a project-relative referrer. Installed npm
+ * dependencies must already have been rewritten to exact npm specifiers, and
+ * framework imports remain unavailable until their graph is snapshot-owned.
+ * Any other unresolved external is rejected during preparation instead of
+ * falling through to runtime resolution in the project worker.
+ */
+export async function finalizePreparedWorkerImports(
+  code: string,
+  projectDir: string,
+): Promise<string> {
+  return await finalizePreparedWorkerImportsForRoute(code, projectDir);
 }
 
 export function rewriteDenoNodeBuiltinImports(code: string): string {
@@ -285,6 +310,10 @@ export async function rewriteExternalImports(
   projectDir: string,
   fs: FileSystem,
   userDeps: Map<string, string> = new Map(),
+  options: {
+    preparedWorker?: boolean;
+    requireInstalledExactVersions?: boolean;
+  } = {},
 ): Promise<string> {
   let transformed = code;
 
@@ -292,7 +321,7 @@ export async function rewriteExternalImports(
     try {
       transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
     } catch (e) {
-      logger.warn(`Failed to import node:module: ${e}`);
+      logger.warn(`Failed to import node:module: ${snapshotThrowableDiagnostic(e)}`);
     }
   }
 
@@ -309,7 +338,13 @@ export async function rewriteExternalImports(
       const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
       transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps, esmDeps);
     } else {
-      transformed = await rewriteDenoNpmDependencyImports(transformed, projectDir, fs, userDeps);
+      transformed = await rewriteDenoNpmDependencyImports(
+        transformed,
+        projectDir,
+        fs,
+        userDeps,
+        { requireInstalledExactVersions: options.requireInstalledExactVersions },
+      );
     }
 
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
@@ -317,6 +352,10 @@ export async function rewriteExternalImports(
     if (isCompiledBinary()) {
       transformed = rewriteCompiledBinaryVeryfrontImports(transformed);
     }
+  }
+
+  if (options.preparedWorker) {
+    transformed = await finalizePreparedWorkerImports(transformed, projectDir);
   }
 
   return transformed;

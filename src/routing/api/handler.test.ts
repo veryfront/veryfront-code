@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { HTTP_OK } from "#veryfront/utils";
+import { computeHash, HTTP_OK } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   __injectDepsForTests,
   type APIRoute,
@@ -31,9 +34,36 @@ async function createInitializedHandler(
   return handler;
 }
 
+async function withApiWorkerIsolation<T>(run: () => Promise<T>): Promise<T> {
+  const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
+  const previousApi = Deno.env.get("WORKER_ISOLATION_API");
+  Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+  Deno.env.set("WORKER_ISOLATION_API", "1");
+  __resetPoolForTests();
+
+  try {
+    return await runWithExactSourceIntegrationPolicy(
+      normalizeSourceIntegrationPolicy(undefined),
+      run,
+    );
+  } finally {
+    __resetPoolForTests();
+    if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
+    if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
+    else Deno.env.set("WORKER_ISOLATION_API", previousApi);
+  }
+}
+
 afterEach((): void => {
   while (handlers.length) handlers.pop()?.destroy();
+  __resetPoolForTests();
   __injectDepsForTests(null);
+});
+
+afterAll(async () => {
+  const { stop } = await import("veryfront/extensions/bundler");
+  await stop();
 });
 
 describe("APIRouteHandler", () => {
@@ -157,6 +187,120 @@ describe("APIRouteHandler", () => {
       const response = await handler.handle(request);
 
       assertEquals(response?.status, 204);
+    });
+
+    it("keeps framework preflight authoritative over a route OPTIONS export", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/test/route.ts",
+        `export function OPTIONS() { return new Response("project options", { status: 299 }); }`,
+      );
+      let hostLoads = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          return Promise.resolve({
+            OPTIONS: () => new Response("project options", { status: 299 }),
+          });
+        },
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/test", { method: "OPTIONS" }),
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(await response?.text(), "");
+      assertEquals(hostLoads, 0);
+    });
+  });
+
+  describe("worker-isolated route execution", () => {
+    it("prepares and inspects route source without loading the module on the host", async () => {
+      await withApiWorkerIsolation(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        const preparedSource = [
+          `export function GET() { return new Response("prepared worker"); }`,
+          `export function PATCH() { return new Response("patched"); }`,
+        ].join("\n");
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("host execution"),
+            });
+          },
+          prepareHandlerModule: async () => {
+            preparations++;
+            return {
+              source: preparedSource,
+              sha256: await computeHash(preparedSource),
+            };
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: true } as HandlerContext,
+        );
+        const capabilities = await handler.resolveRouteMethods("/api/resource");
+
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "prepared worker");
+        assertEquals(capabilities, {
+          status: "resolved",
+          methods: ["GET", "HEAD", "PATCH", "OPTIONS"],
+        });
+        assertEquals(preparations, 1);
+        assertEquals(hostLoads, 0);
+      });
+    });
+
+    it("fails closed before preparation when project discovery requires host evaluation", async () => {
+      await withApiWorkerIsolation(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("unreachable"); }`,
+        );
+        adapter.fs.files.set(
+          "/test/project/tools/project-tool.ts",
+          `throw new Error("project discovery must not execute on host");`,
+        );
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({});
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            return Promise.reject(new Error("preparation must not run"));
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: false } as HandlerContext,
+        );
+        const capabilities = await handler.resolveRouteMethods("/api/resource");
+
+        assertEquals(response?.status, 503);
+        assertEquals(await response?.text(), "API route unavailable");
+        assertEquals(capabilities, { status: "unavailable" });
+        assertEquals(preparations, 0);
+        assertEquals(hostLoads, 0);
+      });
     });
   });
 
@@ -374,6 +518,116 @@ describe("APIRouteHandler", () => {
   });
 
   describe("HTTP method handling", () => {
+    it("resolves exact method capabilities through the VFS-backed canonical loader", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/resource/route.ts",
+        [
+          `export function GET() { return new Response("get"); }`,
+          `export function PATCH() { return new Response("patch"); }`,
+        ].join("\n"),
+      );
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const capabilities = await handler.resolveRouteMethods("/api/resource");
+
+      assertEquals(capabilities, {
+        status: "resolved",
+        methods: ["GET", "HEAD", "PATCH", "OPTIONS"],
+      });
+    });
+
+    it("reports a matched route as unavailable when its module cannot load", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/broken/route.ts",
+        `export function POST() { return new Response("post"); }`,
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.reject(new Error("synthetic loader failure")),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const capabilities = await handler.resolveRouteMethods("/api/broken");
+
+      assertEquals(capabilities, { status: "unavailable" });
+    });
+
+    it("reports no route instead of inventing API method capabilities", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const capabilities = await handler.resolveRouteMethods("/api/missing");
+
+      assertEquals(capabilities, { status: "not-found" });
+    });
+
+    it("recognizes a default route handler as supporting every routed HTTP method", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/default.ts",
+        `export default function handler() { return new Response("ok"); }`,
+      );
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const capabilities = await handler.resolveRouteMethods("/api/default");
+
+      assertEquals(capabilities, {
+        status: "resolved",
+        methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      });
+    });
+
+    it("advertises the App Router default export fallback for every routed method", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/default/route.ts",
+        `export default function handler() { return new Response("ok"); }`,
+      );
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const capabilities = await handler.resolveRouteMethods("/api/default");
+
+      assertEquals(capabilities, {
+        status: "resolved",
+        methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      });
+    });
+
+    it("advertises and executes a requested custom method through the same default contract", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/default/route.ts",
+        `export default function handler() { return new Response("custom"); }`,
+      );
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const capabilities = await handler.resolveRouteMethods(
+        "/api/default",
+        "PROPFIND",
+      );
+      const response = await handler.handle(
+        new Request("http://localhost/api/default", { method: "PROPFIND" }),
+        { isLocalProject: true } as HandlerContext,
+      );
+
+      assertEquals(capabilities, {
+        status: "resolved",
+        methods: [
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "PATCH",
+          "DELETE",
+          "OPTIONS",
+          "PROPFIND",
+        ],
+      });
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "custom");
+    });
+
     it("should accept different HTTP methods in route names", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
@@ -528,6 +782,41 @@ describe("APIRouteHandler", () => {
       assertEquals(await empty?.text(), "Handler not found");
     });
 
+    it("does not coerce hostile rejected values while producing a bounded local 500", async () => {
+      let messageReads = 0;
+      let coercionCalls = 0;
+      const hostile = Object.defineProperties({}, {
+        message: {
+          get() {
+            messageReads++;
+            throw new Error("message getter must not run");
+          },
+        },
+        [Symbol.toPrimitive]: {
+          value() {
+            coercionCalls++;
+            throw new Error("coercion hook must not run");
+          },
+        },
+      });
+      const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) return Promise.reject(hostile);
+        return Promise.resolve({});
+      });
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/broken"),
+        localCtx,
+      );
+      const body = await response?.text() ?? "";
+
+      assertEquals(response?.status, 500);
+      assertEquals(body, "Unknown error");
+      assertEquals(body.length <= 300, true);
+      assertEquals(messageReads, 0);
+      assertEquals(coercionCalls, 0);
+    });
+
     // The load error names files, specifiers and build internals. It is a
     // development aid, and the only thing keeping it out of a deployed response
     // body is this flag.
@@ -542,6 +831,33 @@ describe("APIRouteHandler", () => {
       const hosted = await handler.handle(
         new Request("http://localhost/api/broken"),
         { ...localCtx, isLocalProject: false },
+      );
+
+      assertEquals(hosted?.status, 500);
+      assertEquals(await hosted?.text(), "Handler not found");
+    });
+
+    it("fails closed when request locality cannot be read", async () => {
+      const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) {
+          throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
+        }
+        return Promise.resolve({});
+      });
+      const unreadableCtx = Object.defineProperty(
+        { ...localCtx },
+        "isLocalProject",
+        {
+          enumerable: true,
+          get() {
+            throw new Error("request locality unavailable");
+          },
+        },
+      ) as HandlerContext;
+
+      const hosted = await handler.handle(
+        new Request("http://localhost/api/broken"),
+        unreadableCtx,
       );
 
       assertEquals(hosted?.status, 500);

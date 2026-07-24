@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import {
+  getTrustedProjectEnvSnapshot,
+  registerTrustedProjectEnvSnapshot,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   getProjectEnv,
   getProjectEnvSnapshot,
@@ -68,6 +72,29 @@ describe("project-env/storage", () => {
     runWithProjectEnv({}, () => {
       assertEquals(getProjectEnvSnapshot(), {});
     });
+  });
+
+  it("does not allow the trusted snapshot bridge to be replaced", () => {
+    assertThrows(
+      () => registerTrustedProjectEnvSnapshot(() => ({ FOO: "attacker" })),
+      Error,
+      "Project environment snapshot bridge is already registered",
+    );
+
+    const globals = globalThis as Record<string, unknown>;
+    const previousLegacyGetter = globals.__vfProjectEnvSnapshotGetter;
+    globals.__vfProjectEnvSnapshotGetter = () => ({ FOO: "legacy-attacker" });
+    try {
+      runWithProjectEnv({ FOO: "trusted" }, () => {
+        assertEquals(getTrustedProjectEnvSnapshot(), { FOO: "trusted" });
+      });
+    } finally {
+      if (previousLegacyGetter === undefined) {
+        delete globals.__vfProjectEnvSnapshotGetter;
+      } else {
+        globals.__vfProjectEnvSnapshotGetter = previousLegacyGetter;
+      }
+    }
   });
 
   it("concurrent async contexts are isolated", async () => {

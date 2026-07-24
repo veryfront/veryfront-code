@@ -3,7 +3,9 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
+import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
@@ -248,11 +250,38 @@ export async function resolveProjectRuntimeContext(
     };
   }
 
+  const configIntentionallyDeferred = isConfigOptionalControlPlaneRunRequest(
+    input.req.method,
+    input.url.pathname,
+  );
+  if (input.isProxyMode && !adapterRes.config && !configIntentionallyDeferred) {
+    throw new Error("Proxy project config is unavailable for request security");
+  }
+
+  const requestSecurity = input.isProxyMode && adapterRes.config
+    ? deriveSecurityContext(adapterRes.config, {
+      // Hosted preview and production projects share a remote trust boundary.
+      // Only an actually local project keeps development defaults; process-wide
+      // environment flags cannot classify an individual proxy request.
+      productionDefaults: !adapterRes.isLocalProject,
+    })
+    : input.isProxyMode
+    ? {
+      // Config-optional control-plane routes authenticate their exact source in
+      // the signed handler, before project configuration is available.
+      securityConfig: null,
+      cspUserHeader: null,
+    }
+    : {
+      securityConfig: input.securityConfig,
+      cspUserHeader: input.cspUserHeader,
+    };
+
   const handlerContext = buildHandlerContext({
     projectDir: adapterRes.projectDir,
     adapter: adapterRes.adapter,
-    securityConfig: input.securityConfig,
-    cspUserHeader: input.cspUserHeader,
+    securityConfig: requestSecurity.securityConfig,
+    cspUserHeader: requestSecurity.cspUserHeader,
     debug: input.debug,
     config: adapterRes.config,
     parsedDomain: projectRes.parsedDomain,

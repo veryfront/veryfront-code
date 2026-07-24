@@ -293,6 +293,7 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
   projectDir: string,
   fs: FileSystem,
   userDeps: Map<string, string>,
+  options: { requireInstalledExactVersions?: boolean } = {},
 ): Promise<string> {
   const importedSpecifiers = new Set(
     (await parseImports(code))
@@ -309,13 +310,29 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
 
     const [name, version] = entry;
     let resolvedVersion = version;
+    let installedVersion: unknown;
     try {
       const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
       const pkgContent = await fs.readTextFile(pkgPath);
       const pkg = JSON.parse(pkgContent) as { version?: string };
-      if (pkg.version) resolvedVersion = pkg.version;
-    } catch (_) {
+      installedVersion = pkg.version;
+    } catch {
+      if (options.requireInstalledExactVersions) {
+        throw new TypeError(
+          `Prepared API route dependency "${name}" must be installed before worker execution`,
+        );
+      }
       /* expected: installed package.json may not exist, fall back to declared range */
+    }
+    if (options.requireInstalledExactVersions) {
+      if (typeof installedVersion !== "string" || !isExactNpmVersion(installedVersion)) {
+        throw new TypeError(
+          `Prepared API route dependency "${name}" does not expose an exact installed version`,
+        );
+      }
+      resolvedVersion = installedVersion;
+    } else if (typeof installedVersion === "string" && installedVersion) {
+      resolvedVersion = installedVersion;
     }
 
     const subpath = specifier.slice(name.length);
@@ -325,6 +342,76 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
   if (replacements.size === 0) return code;
 
   return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
+}
+
+const EXACT_NPM_VERSION_PATTERN =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function isExactNpmVersion(version: string): boolean {
+  return EXACT_NPM_VERSION_PATTERN.test(version);
+}
+
+function isExactNpmSpecifier(specifier: string): boolean {
+  const match = /^npm:(?:@[^/@]+\/[^/@]+|[^@/]+)@([^/]+)(?:\/.*)?$/.exec(specifier);
+  return match !== null && isExactNpmVersion(match[1]!);
+}
+
+/**
+ * Validate the import surface of a host-prepared worker module.
+ *
+ * Data-URL modules have no project-relative referrer. Installed dependencies
+ * must already use exact npm specifiers, framework imports are not available
+ * until the worker owns their graph, and file imports must remain in-project.
+ */
+export async function finalizePreparedWorkerImportsForRoute(
+  code: string,
+  projectDir: string,
+): Promise<string> {
+  const importedSpecifiers = new Set(
+    (await parseImports(code))
+      .map((specifier) => specifier.n)
+      .filter((specifier): specifier is string => typeof specifier === "string"),
+  );
+
+  for (const specifier of importedSpecifiers) {
+    if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
+      throw new TypeError(
+        `Prepared API route framework import "${specifier}" is unavailable until framework modules are snapshot-owned by the worker`,
+      );
+    }
+
+    if (specifier.startsWith("node:")) {
+      continue;
+    }
+    if (specifier.startsWith("file:")) {
+      let importedPath: string;
+      try {
+        importedPath = pathHelper.fromFileUrl(specifier);
+      } catch {
+        throw new TypeError(
+          `Prepared API route contains an invalid file import: ${specifier}`,
+        );
+      }
+      if (!isWithinDirectory(pathHelper.resolve(projectDir), pathHelper.resolve(importedPath))) {
+        throw new TypeError(
+          `Prepared API route file import escapes the project directory: ${specifier}`,
+        );
+      }
+      continue;
+    }
+    if (specifier.startsWith("npm:")) {
+      if (isExactNpmSpecifier(specifier)) continue;
+      throw new TypeError(
+        `Prepared API route npm import must use an exact installed version: ${specifier}`,
+      );
+    }
+
+    throw new TypeError(
+      `Prepared API route contains an unsupported unresolved import: ${specifier}`,
+    );
+  }
+
+  return code;
 }
 
 export function rewriteDenoNodeBuiltinsForRoute(code: string): string {
