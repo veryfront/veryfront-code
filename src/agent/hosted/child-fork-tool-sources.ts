@@ -4,10 +4,8 @@ import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
-  type ToolDefinition,
-  type ToolExecutionContext,
 } from "#veryfront/tool";
-import { AGENT_ERROR, PERMISSION_DENIED } from "#veryfront/errors";
+import { AGENT_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
@@ -31,9 +29,9 @@ import {
   buildDefaultHostedChildForkToolSet,
   type DefaultHostedChildForkToolAssemblySourceResult,
 } from "./child-requested-tools.ts";
+import { createMcpToolPolicyGate, wrapHostToolSetWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 import { createHostedMcpToolPolicySource } from "./project-remote-tool-source.ts";
-import type { AgentMcpToolPolicy } from "../types.ts";
 
 /** Public API contract for hosted child fork tool sources logger. */
 export type HostedChildForkToolSourcesLogger = {
@@ -85,56 +83,6 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
     ) => Promise<AgentServiceSandboxToolsResult>;
   };
 
-function isMcpToolAllowed(toolName: string, policy: AgentMcpToolPolicy | undefined): boolean {
-  if (policy?.deny?.includes(toolName)) {
-    return false;
-  }
-
-  return policy?.allow ? policy.allow.includes(toolName) : true;
-}
-
-function filterHostToolsByMcpPolicy(
-  tools: HostToolSet,
-  policy: AgentMcpToolPolicy | undefined,
-): HostToolSet {
-  if (!policy?.allow && !policy?.deny) {
-    return tools;
-  }
-
-  return Object.fromEntries(
-    Object.entries(tools)
-      .filter(([toolName]) => isMcpToolAllowed(toolName, policy))
-      .map(([toolName, toolDefinition]) => [
-        toolName,
-        {
-          ...toolDefinition,
-          execute: toolDefinition.execute
-            ? (toolInput: unknown, execOptions?: ToolExecutionContext) => {
-              if (!isMcpToolAllowed(toolName, policy)) {
-                throw PERMISSION_DENIED.create({
-                  detail: `Tool "${toolName}" is not allowed for this MCP server`,
-                });
-              }
-
-              return toolDefinition.execute?.(toolInput, execOptions);
-            }
-            : toolDefinition.execute,
-        },
-      ]),
-  );
-}
-
-function filterToolDefinitionsByMcpPolicy(
-  definitions: readonly ToolDefinition[],
-  policy: AgentMcpToolPolicy | undefined,
-): ToolDefinition[] {
-  if (!policy?.allow && !policy?.deny) {
-    return [...definitions];
-  }
-
-  return definitions.filter((definition) => isMcpToolAllowed(definition.name, policy));
-}
-
 /** Prepare default hosted child fork tool sources. */
 export async function prepareDefaultHostedChildForkToolSources(
   input: PrepareDefaultHostedChildForkToolSourcesInput,
@@ -163,7 +111,13 @@ export async function prepareDefaultHostedChildForkToolSources(
             ? { createRemoteToolSource: input.createRemoteToolSource }
             : {}),
         });
-        const policyTools = filterHostToolsByMcpPolicy(studioTools.tools, server.toolPolicy);
+        const policyTools = wrapHostToolSetWithMcpPolicy(
+          studioTools.tools,
+          server.toolPolicy,
+          {
+            deniedDetail: (toolName) => `Tool "${toolName}" is not allowed for this MCP server`,
+          },
+        );
         studioMcpTools = {
           ...studioMcpTools,
           ...policyTools,
@@ -191,9 +145,8 @@ export async function prepareDefaultHostedChildForkToolSources(
           projectId: input.getProjectId() ?? null,
         })
         : rawDefinitions;
-      const definitions = filterToolDefinitionsByMcpPolicy(
+      const definitions = createMcpToolPolicyGate(server.toolPolicy).filterDefinitions(
         accessFilteredDefinitions,
-        server.toolPolicy,
       );
       remoteMcpTools = {
         ...remoteMcpTools,
