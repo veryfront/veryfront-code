@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertThrows } from "#std/assert";
-import { createOAuthCallbackHandler } from "./callback-handler.ts";
+import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  createOAuthCallbackHandler as createRuntimeOAuthCallbackHandler,
+  type OAuthCallbackHandlerOptions,
+} from "./callback-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig, OAuthTokens, StoredOAuthState, TokenStore } from "../types.ts";
 
@@ -20,10 +24,25 @@ const ENV: Record<string, string> = {
   TEST_CLIENT_ID: "test-id",
   TEST_CLIENT_SECRET: "test-secret",
 };
+const APP_URL = "http://localhost:3000";
 const CODE_VERIFIER = "v".repeat(64);
+const TEST_ENV = createTestEnvironmentConfig({
+  veryfrontEnv: "test",
+  appUrl: APP_URL,
+});
+
+function createOAuthCallbackHandler(
+  config: OAuthServiceConfig,
+  options: OAuthCallbackHandlerOptions = {},
+): (request: Request) => Promise<Response> {
+  return createRuntimeOAuthCallbackHandler(config, {
+    env: TEST_ENV,
+    ...options,
+  });
+}
 
 function makeRequest(params: Record<string, string>): Request {
-  const url = new URL("http://localhost:3000/api/auth/test-provider/callback");
+  const url = new URL(`${APP_URL}/api/auth/test-provider/callback`);
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v);
   }
