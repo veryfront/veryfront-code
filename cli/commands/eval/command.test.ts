@@ -25,6 +25,7 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "../../../src/integrations/source-policy.ts";
 import { saveToken } from "../../auth/token-store.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
 import {
   applyGatewayBillingGroupFinalization,
   createAgentAdapter,
@@ -320,8 +321,71 @@ function completedAgentResponse(toolName = "search_docs"): AgentResponse {
   };
 }
 
+async function captureConsoleOutput(fn: () => Promise<unknown>): Promise<{
+  stdout: string[];
+  stderr: string[];
+}> {
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  console.log = (...args: unknown[]) => {
+    stdout.push(args.map(String).join(" "));
+  };
+  console.warn = (...args: unknown[]) => {
+    stderr.push(args.map(String).join(" "));
+  };
+  console.error = (...args: unknown[]) => {
+    stderr.push(args.map(String).join(" "));
+  };
+  try {
+    await fn();
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+  return { stdout, stderr };
+}
+
+function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }): string[] {
+  return [...output.stdout, ...output.stderr].filter((line) =>
+    line.startsWith("Eval ") ||
+    line.startsWith("Target: ") ||
+    line.startsWith("Result: ") ||
+    line.startsWith("Report directory: ") ||
+    line.startsWith("Report markdown: ") ||
+    line.startsWith("Report: ") ||
+    line.startsWith("JUnit: ") ||
+    line.startsWith("Baseline written: ") ||
+    line.startsWith("Suite report: ") ||
+    line.startsWith("Model: ") ||
+    line.startsWith("Recommendation: ") ||
+    line.startsWith("  - ") ||
+    line.startsWith("Comparison: ") ||
+    line.startsWith("Comparison markdown: ") ||
+    line.startsWith("Eval suite: ")
+  );
+}
+
+function parseLastJsonEnvelope(output: { stdout: string[] }): {
+  success: boolean;
+  command: string;
+  data: Record<string, unknown>;
+} {
+  const line = [...output.stdout].reverse().find((entry) => entry.trim().startsWith("{"));
+  if (!line) throw new Error("Expected JSON envelope output.");
+  return JSON.parse(line) as {
+    success: boolean;
+    command: string;
+    data: Record<string, unknown>;
+  };
+}
+
 describe("eval CLI command helpers", () => {
   afterEach(() => {
+    setJsonMode(false);
     restoreEnv();
   });
 
@@ -1111,6 +1175,263 @@ describe("eval CLI command helpers", () => {
         true,
       );
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("prints single, suite, and comparison eval output in CLI-owned order", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-output-order-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-output-order-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "expected",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const single = evalAgent({
+      id: "eval:single-output",
+      target: "agent:fixture",
+      dataset: [{ id: "single", input: "single" }],
+    });
+    const suite = evalAgent({
+      id: "eval:suite-output",
+      target: "agent:fixture",
+      dataset: [{ id: "suite", input: "suite" }],
+    });
+    single.source = { filePath: `${projectDir}/evals/single.eval.ts`, exportName: "default" };
+    suite.source = { filePath: `${projectDir}/evals/suite.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(single.id, single);
+    runtime.evals.set(suite.id, suite);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const singleOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            id: "single-output",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/single`,
+            report: `${projectDir}/single/report.json`,
+            junit: `${projectDir}/single/junit.xml`,
+            writeBaseline: `${projectDir}/single/baseline.json`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(exitCode, 0);
+      });
+      assertEquals(relevantEvalHumanLines(singleOutput), [
+        "Eval eval:single-output",
+        "Target: agent:fixture",
+        "Result: 1/1 passed (100%)",
+        `Report directory: ${projectDir}/single`,
+        `Report markdown: ${projectDir}/single/report.md`,
+        `Report: ${projectDir}/single/report.json`,
+        `JUnit: ${projectDir}/single/junit.xml`,
+        `Baseline written: ${projectDir}/single/baseline.json`,
+      ]);
+
+      const suiteOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/suite`,
+            junit: `${projectDir}/suite/junit.xml`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(typeof exitCode, "number");
+      });
+      assertEquals(relevantEvalHumanLines(suiteOutput), [
+        "Eval eval:single-output",
+        "Target: agent:fixture",
+        "Result: 1/1 passed (100%)",
+        `Report directory: ${projectDir}/suite/001-single-output`,
+        "Eval eval:suite-output",
+        "Target: agent:fixture",
+        "Result: 1/1 passed (100%)",
+        `Report directory: ${projectDir}/suite/002-suite-output`,
+        "Eval suite: 2/2 passed",
+        `Report directory: ${projectDir}/suite`,
+        `Suite report: ${projectDir}/suite/report.md`,
+        `JUnit: ${projectDir}/suite/junit.xml`,
+      ]);
+
+      const comparisonOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            id: "single-output",
+            list: false,
+            exporters: [],
+            debug: false,
+            baselineModel: "test/baseline",
+            candidateModels: ["test/candidate"],
+            projectDir,
+            reportDir: `${projectDir}/comparison`,
+            report: `${projectDir}/comparison/report.json`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(exitCode, 0);
+      });
+      const comparisonLines = relevantEvalHumanLines(comparisonOutput);
+      assertEquals(comparisonLines.slice(0, 8), [
+        "Model: test/baseline",
+        "Eval eval:single-output",
+        "Target: agent:fixture",
+        "Result: 1/1 passed (100%)",
+        "Model: test/candidate",
+        "Eval eval:single-output",
+        "Target: agent:fixture",
+        "Result: 1/1 passed (100%)",
+      ]);
+      assertStringIncludes(comparisonLines[8] ?? "", "Recommendation: ");
+      assertEquals(comparisonLines.slice(9, 11), [
+        "  - candidate has no quality regressions",
+        "  - groundedness was not measured",
+      ]);
+      assertStringIncludes(comparisonLines[11] ?? "", "  - ");
+      assertEquals(comparisonLines.slice(12), [
+        `Report directory: ${projectDir}/comparison`,
+        `Comparison: ${projectDir}/comparison/comparison.json`,
+        `Comparison markdown: ${projectDir}/comparison/comparison.md`,
+        `Report: ${projectDir}/comparison/report.json`,
+      ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("keeps eval JSON envelope data keys stable for single, suite, and comparison modes", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-json-keys-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-json-keys-auth-" });
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async () => ({
+        text: "expected",
+        messages: [],
+        status: "completed",
+        toolCalls: [],
+      } satisfies AgentResponse),
+    } as unknown as Agent;
+    const single = evalAgent({
+      id: "eval:json-single",
+      target: "agent:fixture",
+      dataset: [{ id: "single", input: "single" }],
+    });
+    const suite = evalAgent({
+      id: "eval:json-suite",
+      target: "agent:fixture",
+      dataset: [{ id: "suite", input: "suite" }],
+    });
+    single.source = { filePath: `${projectDir}/evals/json-single.eval.ts`, exportName: "default" };
+    suite.source = { filePath: `${projectDir}/evals/json-suite.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(single.id, single);
+    runtime.evals.set(suite.id, suite);
+    const baseline = {
+      ...createReport(),
+      definitionId: single.id,
+      target: single.target,
+      targetKind: single.targetKind,
+    };
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      await Deno.writeTextFile(`${projectDir}/baseline.json`, JSON.stringify(baseline));
+      setJsonMode(true);
+
+      const singleOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            id: "json-single",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/single-json`,
+            baseline: `${projectDir}/baseline.json`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(typeof exitCode, "number");
+      });
+      assertEquals(Object.keys(parseLastJsonEnvelope(singleOutput).data), [
+        "report",
+        "summary",
+        "baseline",
+        "artifacts",
+      ]);
+
+      const suiteOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/suite-json`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(exitCode, 0);
+      });
+      assertEquals(Object.keys(parseLastJsonEnvelope(suiteOutput).data), [
+        "suite",
+        "artifacts",
+      ]);
+
+      const comparisonOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            id: "json-single",
+            list: false,
+            exporters: [],
+            debug: false,
+            baselineModel: "test/baseline",
+            candidateModels: ["test/candidate"],
+            projectDir,
+            reportDir: `${projectDir}/comparison-json`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(exitCode, 0);
+      });
+      assertEquals(Object.keys(parseLastJsonEnvelope(comparisonOutput).data), [
+        "reports",
+        "comparison",
+        "artifacts",
+      ]);
+    } finally {
+      setJsonMode(false);
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }

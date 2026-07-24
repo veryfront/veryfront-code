@@ -38,7 +38,6 @@ import {
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 import {
   compareEvalModelReports,
-  compareEvalReports,
   createEvalModelComparisonMarkdown,
   createEvalRunId,
   EVAL_REPORT_SCHEMA_VERSION,
@@ -58,6 +57,7 @@ import {
   type ProjectAgentRuntimeDiscovery,
   runWithProjectAgentRuntime,
 } from "../../../src/agent/project/agent-runtime.ts";
+import { runEvalReport } from "../../../src/eval/run-report.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
@@ -1041,7 +1041,7 @@ export async function writeEvalArtifacts(
   await Deno.writeTextFile(paths.reportMarkdown, createEvalMarkdownReport(report, baseline));
 }
 
-async function readEvalReport(path: string): Promise<EvalReport> {
+async function _readEvalReport(path: string): Promise<EvalReport> {
   return JSON.parse(await Deno.readTextFile(path)) as EvalReport;
 }
 
@@ -1420,6 +1420,26 @@ export function createEvalCliExportConfig(
   };
 }
 
+function createEvalCliBaseExportConfig(
+  options: EvalOptions,
+  registry: EvalReportExporterRegistry,
+  config?: EvalRuntimeAuthConfig | null,
+): EvalReportExportConfig | undefined {
+  const exporterIds = resolveEvalExporterIds(options);
+  if (exporterIds.length === 0) return undefined;
+  const projectReference = resolveEvalRuntimeProjectSlug(config);
+
+  return {
+    registry,
+    exporterIds,
+    required: resolveEvalExportRequired(options),
+    context: {
+      ...(projectReference ? { projectReference } : {}),
+      redaction: resolveEvalExportRedactionFromEnv(),
+    },
+  };
+}
+
 type EvalModelComparisonConfig = {
   baselineModel: string;
   candidateModels: string[];
@@ -1607,7 +1627,7 @@ async function writeEvalModelComparisonArtifacts(
   await Deno.writeTextFile(paths.comparisonMarkdown, createEvalModelComparisonMarkdown(comparison));
 }
 
-async function runEvalModelComparison(input: {
+async function _runEvalModelComparison(input: {
   evalItem: DiscoveredEval;
   agent: Agent;
   options: EvalOptions;
@@ -1761,7 +1781,71 @@ async function outputEvalUsageError(message: string): Promise<2> {
   return 2;
 }
 
-async function runEvalSuite(input: {
+function createEvalReportCommandAdapters(input: {
+  options: EvalOptions;
+  config: EvalRuntimeAuthConfig | null | undefined;
+  projectRuntime: ProjectAgentRuntimeDiscovery;
+  modelComparisonAgent?: Agent;
+}) {
+  return {
+    targets: {
+      runEval: (evalItem: DiscoveredEval, options: {
+        baseDir: string;
+        runId: string;
+        targetKind: EvalReport["targetKind"];
+        targetAdapter: unknown;
+        metadata: EvalReport["metadata"];
+      }) =>
+        runEval(evalItem.definition, {
+          baseDir: options.baseDir,
+          runId: options.runId,
+          adapters: options.targetKind === "tool"
+            ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
+            : { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> },
+          metadata: options.metadata,
+        }),
+      resolveTarget: (evalItem: DiscoveredEval) => {
+        const agentId = evalItem.definition.targetKind === "agent"
+          ? resolveAgentTargetId(evalItem.definition.target)
+          : undefined;
+        const toolId = evalItem.definition.targetKind === "tool"
+          ? resolveToolTargetId(evalItem.definition.target)
+          : undefined;
+        const agent = agentId ? input.projectRuntime.agents.get(agentId) : undefined;
+        const tool = toolId ? input.projectRuntime.tools.get(toolId) : undefined;
+        if (agentId && !agent) throw new Error(`Agent "${agentId}" not found for eval target.`);
+        if (toolId && !tool) throw new Error(`Tool "${toolId}" not found for eval target.`);
+        return {
+          targetKind: evalItem.definition.targetKind,
+          target: evalItem.definition.target,
+          targetAdapter: evalItem.definition.targetKind === "tool"
+            ? createToolAdapter(tool!, createEvalToolExecutionContext(input.config))
+            : createAgentAdapter(agent!, input.options),
+        };
+      },
+      createModelTargetAdapter: (model: string) => {
+        const options = { ...input.options, model };
+        if (!input.modelComparisonAgent) {
+          throw new Error("Model comparison agent is not configured.");
+        }
+        return createAgentAdapter(input.modelComparisonAgent, options);
+      },
+    },
+    artifacts: {
+      readTextFile: (path: string) => Deno.readTextFile(path),
+      writeTextFileEnsuringDir,
+    },
+    billing: {
+      runWithGatewayBillingGroup: runEvalWithGatewayBillingGroup,
+    },
+    exporters: {
+      exportReport: (report: EvalReport, config?: EvalReportExportConfig) =>
+        exportEvalReportForCli(report, config),
+    },
+  };
+}
+
+async function _runEvalSuite(input: {
   evals: DiscoveredEval[];
   options: EvalOptions;
   projectDir: string;
@@ -1954,15 +2038,59 @@ export async function runEvalCommand(
       try {
         return await runWithProjectAgentRuntime(
           projectRuntime,
-          () =>
-            runEvalSuite({
-              evals,
-              options,
-              projectDir,
-              projectRuntime,
-              config,
-              exporterRegistry: extensionSetup.exporterRegistry,
-            }),
+          async () => {
+            const outcome = await runEvalReport(
+              {
+                kind: "suite",
+                projectDir,
+                frameworkVersion: VERSION,
+                ...(options.datasetBase ? { datasetBase: options.datasetBase } : {}),
+                ...(options.reportDir ? { reportDir: options.reportDir } : {}),
+                ...(options.junit ? { junit: options.junit } : {}),
+                exportConfig: createEvalCliBaseExportConfig(
+                  options,
+                  extensionSetup.exporterRegistry,
+                  config,
+                ),
+                provenance: await resolveEvalRunProvenance({
+                  projectDir,
+                  frameworkVersion: VERSION,
+                }),
+                evalItems: evals,
+              },
+              createEvalReportCommandAdapters({
+                options,
+                config,
+                projectRuntime,
+              }),
+            );
+
+            if (outcome.kind !== "suite") {
+              throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
+            }
+            if (isJsonMode()) {
+              await outputJson(createSuccessEnvelope("eval", {
+                suite: outcome.suite,
+                artifacts: outcome.artifacts,
+              }));
+            } else {
+              for (const child of outcome.outputHints.children ?? []) {
+                if (child.kind === "report") {
+                  printReport(child.report);
+                  cliLogger.info(`Report directory: ${child.reportDirectory}`);
+                } else {
+                  cliLogger.error(`Eval ${child.evalId}: ${child.error}`);
+                }
+              }
+              cliLogger.info(
+                `Eval suite: ${outcome.suite.passed}/${outcome.suite.total} passed`,
+              );
+              cliLogger.info(`Report directory: ${outcome.outputHints.reportDirectory}`);
+              cliLogger.info(`Suite report: ${outcome.outputHints.reportMarkdown}`);
+              if (outcome.outputHints.junit) cliLogger.info(`JUnit: ${outcome.outputHints.junit}`);
+            }
+            return outcome.exitCode;
+          },
         );
       } finally {
         await extensionSetup.loader.teardownAll();
@@ -2025,96 +2153,146 @@ export async function runEvalCommand(
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(
           projectRuntime,
-          () =>
-            runEvalModelComparison({
-              evalItem,
-              agent: agent!,
-              options,
-              projectDir,
-              config: modelComparisonConfig.config,
-              policy: modelComparisonConfig.policy,
-              exporterRegistry: extensionSetup.exporterRegistry,
-              projectReference: resolveEvalRuntimeProjectSlug(config),
-            }),
+          async () => {
+            const outcome = await runEvalReport(
+              {
+                kind: "model-comparison",
+                projectDir,
+                frameworkVersion: VERSION,
+                ...(options.datasetBase ? { datasetBase: options.datasetBase } : {}),
+                ...(options.reportDir ? { reportDir: options.reportDir } : {}),
+                ...(options.report ? { report: options.report } : {}),
+                exportConfig: createEvalCliBaseExportConfig(
+                  options,
+                  extensionSetup.exporterRegistry,
+                  config,
+                ),
+                provenance: await resolveEvalRunProvenance({
+                  projectDir,
+                  frameworkVersion: VERSION,
+                }),
+                evalItem,
+                target: evalItem.definition.target,
+                baselineModel: modelComparisonConfig.config.baselineModel,
+                candidateModels: modelComparisonConfig.config.candidateModels,
+                comparisonPolicy: modelComparisonConfig.policy,
+                ...(options.maxOutputTokens !== undefined
+                  ? { maxOutputTokens: options.maxOutputTokens }
+                  : {}),
+              },
+              createEvalReportCommandAdapters({
+                options,
+                config,
+                projectRuntime,
+                modelComparisonAgent: agent!,
+              }),
+            );
+
+            if (outcome.kind !== "model-comparison") {
+              throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
+            }
+            if (isJsonMode()) {
+              await outputJson(createSuccessEnvelope("eval", {
+                reports: outcome.reports,
+                comparison: outcome.comparison,
+                artifacts: outcome.artifacts,
+              }));
+            } else {
+              for (const model of outcome.outputHints.models ?? []) {
+                cliLogger.info(`Model: ${model.model}`);
+                printReport(model.report);
+              }
+              const recommendation = outcome.comparison.recommendation;
+              cliLogger.info(
+                `Recommendation: ${recommendation.decision}${
+                  recommendation.model ? ` (${recommendation.model})` : ""
+                }`,
+              );
+              for (const reason of recommendation.reasons) {
+                cliLogger.info(`  - ${reason}`);
+              }
+              cliLogger.info(`Report directory: ${outcome.outputHints.reportDirectory}`);
+              if (outcome.outputHints.comparisonJson) {
+                cliLogger.info(`Comparison: ${outcome.outputHints.comparisonJson}`);
+              }
+              if (outcome.outputHints.comparisonMarkdown) {
+                cliLogger.info(`Comparison markdown: ${outcome.outputHints.comparisonMarkdown}`);
+              }
+              if (outcome.outputHints.report) {
+                cliLogger.info(`Report: ${outcome.outputHints.report}`);
+              }
+            }
+            return outcome.exitCode;
+          },
         );
       }
 
-      const runId = createEvalRunId();
-      const artifactPaths = createEvalArtifactPaths(
-        options.reportDir ?? createDefaultEvalReportDir(runId, evalItem.id),
-      );
-      const provenance = await resolveEvalRunProvenance({
-        projectDir,
-        frameworkVersion: VERSION,
-      });
-      const billingGroupId = options.model
-        ? `${runId}_${sanitizeModelIdForPath(options.model)}`
-        : runId;
-      const exportConfig = createEvalCliExportConfig(
-        evalItem,
-        options,
-        projectDir,
-        artifactPaths,
-        extensionSetup.exporterRegistry,
-        config,
-      );
-      const finalizedReport = await runWithProjectAgentRuntime(
+      const targetAdapter = evalItem.definition.targetKind === "tool"
+        ? createToolAdapter(tool!, createEvalToolExecutionContext(config))
+        : createAgentAdapter(agent!, options);
+      const outcome = await runWithProjectAgentRuntime(
         projectRuntime,
-        () =>
-          runEvalWithGatewayBillingGroup(
-            billingGroupId,
-            () =>
-              runEval(evalItem.definition, {
-                baseDir: options.datasetBase ?? projectDir,
-                runId,
-                adapters: evalItem.definition.targetKind === "tool"
-                  ? { tool: createToolAdapter(tool!, createEvalToolExecutionContext(config)) }
-                  : { agent: createAgentAdapter(agent!, options) },
-                metadata: {
-                  provenance,
-                  ...(options.model ? { model: options.model } : {}),
-                },
+        async () =>
+          await runEvalReport(
+            {
+              kind: "single",
+              projectDir,
+              frameworkVersion: VERSION,
+              ...(options.datasetBase ? { datasetBase: options.datasetBase } : {}),
+              ...(options.reportDir ? { reportDir: options.reportDir } : {}),
+              ...(options.report ? { report: options.report } : {}),
+              ...(options.junit ? { junit: options.junit } : {}),
+              ...(options.baseline ? { baseline: options.baseline } : {}),
+              ...(options.writeBaseline ? { writeBaseline: options.writeBaseline } : {}),
+              baselinePolicy: createEvalBaselineComparisonPolicy(options),
+              exportConfig: createEvalCliBaseExportConfig(
+                options,
+                extensionSetup.exporterRegistry,
+                config,
+              ),
+              provenance: await resolveEvalRunProvenance({
+                projectDir,
+                frameworkVersion: VERSION,
               }),
+              evalItem,
+              targetKind: evalItem.definition.targetKind,
+              target: evalItem.definition.target,
+              targetAdapter,
+              ...(options.model ? { selectedModel: options.model } : {}),
+              ...(options.maxOutputTokens !== undefined
+                ? { maxOutputTokens: options.maxOutputTokens }
+                : {}),
+            },
+            createEvalReportCommandAdapters({
+              options,
+              config,
+              projectRuntime,
+            }),
           ),
       );
-      const report = await exportEvalReportForCli(finalizedReport, exportConfig);
 
-      const baseline = options.baseline
-        ? compareEvalReports(
-          report,
-          await readEvalReport(options.baseline),
-          createEvalBaselineComparisonPolicy(options),
-        )
-        : undefined;
-
-      await writeEvalArtifacts(report, artifactPaths, baseline);
-      if (options.report) {
-        await writeTextFileEnsuringDir(options.report, JSON.stringify(report, null, 2));
+      if (outcome.kind !== "single") {
+        throw new Error(`Unexpected eval report outcome: ${outcome.kind}`);
       }
-      if (options.junit) {
-        await writeTextFileEnsuringDir(options.junit, createJunitXml(report));
-      }
-      if (options.writeBaseline) {
-        await writeTextFileEnsuringDir(options.writeBaseline, JSON.stringify(report, null, 2));
-      }
-
       if (isJsonMode()) {
         await outputJson(createSuccessEnvelope("eval", {
-          report,
-          summary: summarizeReportForCli(report),
-          baseline,
-          artifacts: artifactPaths,
+          report: outcome.report,
+          summary: outcome.summary,
+          baseline: outcome.baseline,
+          artifacts: outcome.artifacts,
         }));
       } else {
-        printReport(report, baseline);
-        cliLogger.info(`Report directory: ${artifactPaths.directory}`);
-        cliLogger.info(`Report markdown: ${artifactPaths.reportMarkdown}`);
-        if (options.report) cliLogger.info(`Report: ${options.report}`);
-        if (options.junit) cliLogger.info(`JUnit: ${options.junit}`);
-        if (options.writeBaseline) cliLogger.info(`Baseline written: ${options.writeBaseline}`);
+        printReport(outcome.report, outcome.baseline);
+        cliLogger.info(`Report directory: ${outcome.outputHints.reportDirectory}`);
+        cliLogger.info(`Report markdown: ${outcome.outputHints.reportMarkdown}`);
+        if (outcome.outputHints.report) cliLogger.info(`Report: ${outcome.outputHints.report}`);
+        if (outcome.outputHints.junit) cliLogger.info(`JUnit: ${outcome.outputHints.junit}`);
+        if (outcome.outputHints.baselineWritten) {
+          cliLogger.info(`Baseline written: ${outcome.outputHints.baselineWritten}`);
+        }
       }
 
-      return createEvalExitCode(report, baseline, exportConfig?.required);
+      return outcome.exitCode;
     } finally {
       await extensionSetup.loader.teardownAll();
     }
