@@ -2,8 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __registerLogRecordEmitter,
   __registerTraceContextGetter,
   __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
   __resetTraceContextGetterForTests,
   createRunUserLogger,
   getBaseLogger,
@@ -16,6 +18,7 @@ import {
 import { type RequestContext, runWithRequestContextAsync } from "./request-context.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import { VERSION } from "../version.ts";
+import { LOG_PREVIEW_MAX_LENGTH_CHARS, MAX_STRING_DISPLAY_LENGTH } from "../constants/limits.ts";
 
 function captureConsoleLog(): { getOutput: () => string; reset: () => void; restore: () => void } {
   const originalLog = console.log;
@@ -362,6 +365,97 @@ describe("logger", () => {
       }
     });
 
+    it("scrubs every cookie value from JSON messages and errors", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info(
+            "upstream headers Cookie: session=json-first; admin=json-second",
+            {
+              error: new Error(
+                "response Set-Cookie: access=json-third; refresh=json-fourth; Path=/",
+              ),
+            },
+          );
+        });
+
+        const output = getOutput();
+        const entry = JSON.parse(output) as LogEntry;
+        for (
+          const secret of [
+            "json-first",
+            "json-second",
+            "json-third",
+            "json-fourth",
+          ]
+        ) {
+          assertEquals(output.includes(secret), false);
+        }
+        assertEquals(entry.message.includes("[REDACTED]"), true);
+        assertEquals(entry.error?.message?.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("bounds messages, errors, lifted fields, context keys, and context values after redaction", () => {
+      const { getOutput, restore } = captureConsoleLog();
+      const messageSecret = "json-message-secret";
+      const contextSecret = "json-context-secret";
+      const fieldSecret = "json-field-secret";
+      const errorSecret = "json-error-secret";
+      const longKey = `long-field-${"k".repeat(LOG_PREVIEW_MAX_LENGTH_CHARS * 4)}`;
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info(
+            `${"m".repeat(900)} token=${messageSecret} ${"m".repeat(900)}`,
+            {
+              note: `${"c".repeat(400)} token=${contextSecret} ${"c".repeat(900)}`,
+              project_id: `${"p".repeat(400)} token=${fieldSecret} ${"p".repeat(900)}`,
+              [longKey]: "bounded-key",
+              error: new Error(
+                `${"e".repeat(900)} token=${errorSecret} ${"e".repeat(900)}`,
+              ),
+            },
+          );
+        });
+
+        const output = getOutput();
+        const entry = JSON.parse(output) as LogEntry;
+        assertEquals(entry.message.length <= MAX_STRING_DISPLAY_LENGTH, true);
+        assertEquals(
+          (entry.context?.note as string).length <= LOG_PREVIEW_MAX_LENGTH_CHARS,
+          true,
+        );
+        assertEquals(
+          (entry.project_id?.length ?? 0) <= LOG_PREVIEW_MAX_LENGTH_CHARS,
+          true,
+        );
+        assertEquals(
+          Object.keys(entry.context ?? {}).every((key) =>
+            key.length <= LOG_PREVIEW_MAX_LENGTH_CHARS
+          ),
+          true,
+        );
+        assertEquals(
+          (entry.error?.message.length ?? 0) <= MAX_STRING_DISPLAY_LENGTH,
+          true,
+        );
+        assertEquals(
+          (entry.error?.stack?.length ?? 0) <= MAX_STRING_DISPLAY_LENGTH,
+          true,
+        );
+        for (const secret of [messageSecret, contextSecret, fieldSecret, errorSecret]) {
+          assertEquals(output.includes(secret), false);
+        }
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+      }
+    });
+
     it("scrubs URL credentials from every structured string representation", () => {
       const { getOutput, restore } = captureConsoleLog();
 
@@ -654,6 +748,180 @@ describe("logger", () => {
         assertEquals(output.includes("p4ss"), false);
         assertEquals(output.includes("[REDACTED]"), true);
       } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("neutralizes forged lines and terminal controls in untrusted text", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        const component = serverLogger.component(
+          "component\nFORGED\u001b[31mred\u001b[0m",
+        );
+        component.info("entry\r\nFORGED\u001b]0;owned\u0007", {
+          "key\nFORGED": "value\u009b31mred\u009b0m",
+          error: new Error("boom\nFORGED\u001b[2J"),
+        });
+
+        const output = getOutput();
+        assertEquals(output.split("\n").length, 2);
+        assertEquals(output.includes("\r"), false);
+        assertEquals(output.includes("\u001b"), false);
+        assertEquals(output.includes("\u0007"), false);
+        assertEquals(output.includes("\u009b"), false);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("scrubs raw authorization and secret assignments from free-form text", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info(
+          "Authorization: Bearer bearer-secret Basic basic-secret " +
+            "password=hunter2 api_key: key-secret",
+          {
+            note: "Authorization=Basic context-secret",
+            error: new Error("refresh_token: refresh-secret"),
+          },
+        );
+
+        const output = getOutput();
+        for (
+          const secret of [
+            "bearer-secret",
+            "basic-secret",
+            "hunter2",
+            "key-secret",
+            "context-secret",
+            "refresh-secret",
+          ]
+        ) {
+          assertEquals(output.includes(secret), false);
+        }
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("scrubs every cookie value from text messages, context, and errors", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info(
+          "request Cookie: session=text-first; admin=text-second",
+          {
+            note: "headers Set-Cookie: access=text-third; refresh=text-fourth; Path=/",
+            error: new Error(
+              "upstream Cookie: token=text-fifth; session=text-sixth",
+            ),
+          },
+        );
+
+        const output = getOutput();
+        for (
+          const secret of [
+            "text-first",
+            "text-second",
+            "text-third",
+            "text-fourth",
+            "text-fifth",
+            "text-sixth",
+          ]
+        ) {
+          assertEquals(output.includes(secret), false);
+        }
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("bounds sanitized text messages and context values", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+      const messageSecret = "text-message-secret";
+      const contextSecret = "text-context-secret";
+
+      try {
+        serverLogger.info(
+          `${"m".repeat(900)} token=${messageSecret} ${"m".repeat(900)}`,
+          {
+            note: `${"c".repeat(400)} token=${contextSecret} ${"c".repeat(1_500)}`,
+          },
+        );
+
+        const output = getOutput();
+        assertEquals(output.length < 2_000, true);
+        assertEquals(output.includes(messageSecret), false);
+        assertEquals(output.includes(contextSecret), false);
+        assertEquals(output.includes("[REDACTED]"), true);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("uses one redacted snapshot for the text sink and structured emitter", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+      const { getOutput, restore } = captureConsoleLog();
+      let serializationCount = 0;
+      let emittedEntry: LogEntry | undefined;
+
+      __registerLogRecordEmitter((entry) => {
+        emittedEntry = entry;
+      });
+
+      try {
+        serverLogger.info("Stateful context", {
+          state: {
+            toJSON() {
+              serializationCount++;
+              return { version: serializationCount };
+            },
+          },
+        });
+
+        assertEquals(serializationCount, 1);
+        assertEquals(getOutput().includes('"version":1'), true);
+        assertEquals(
+          (emittedEntry?.context?.state as { version?: number } | undefined)?.version,
+          1,
+        );
+      } finally {
+        __resetLogRecordEmitterForTests();
         restore();
         Deno.env.delete("LOG_FORMAT");
         Deno.env.delete("NO_COLOR");

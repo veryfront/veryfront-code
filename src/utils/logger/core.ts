@@ -45,6 +45,75 @@ export const LEVEL_COLORS: Record<LogLevelName, string> = {
 // Pure Formatting Functions (no dependencies)
 // ============================================================================
 
+function consumeControlSequence(value: string, start: number, kind: "csi" | "osc"): number {
+  if (kind === "csi") {
+    for (let index = start; index < value.length; index++) {
+      const code = value.charCodeAt(index);
+      if (code >= 0x40 && code <= 0x7e) return index + 1;
+    }
+    return value.length;
+  }
+
+  for (let index = start; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 0x07 || code === 0x9c) return index + 1;
+    if (code === 0x1b && value.charCodeAt(index + 1) === 0x5c) return index + 2;
+  }
+  return value.length;
+}
+
+/**
+ * Neutralize terminal control sequences and line-breaking control characters
+ * in untrusted log text before framework-owned ANSI styling is applied.
+ */
+export function sanitizeLogText(value: string): string {
+  let sanitized = "";
+
+  for (let index = 0; index < value.length;) {
+    const code = value.charCodeAt(index);
+
+    if (code === 0x1b) {
+      const next = value.charCodeAt(index + 1);
+      if (next === 0x5b) {
+        index = consumeControlSequence(value, index + 2, "csi");
+      } else if (next === 0x5d) {
+        index = consumeControlSequence(value, index + 2, "osc");
+      } else {
+        index += Number.isNaN(next) ? 1 : 2;
+      }
+      continue;
+    }
+    if (code === 0x9b) {
+      index = consumeControlSequence(value, index + 1, "csi");
+      continue;
+    }
+    if (code === 0x9d) {
+      index = consumeControlSequence(value, index + 1, "osc");
+      continue;
+    }
+
+    if (
+      (code >= 0x09 && code <= 0x0d) ||
+      code === 0x85 ||
+      code === 0x2028 ||
+      code === 0x2029
+    ) {
+      if (!sanitized.endsWith(" ")) sanitized += " ";
+      index++;
+      continue;
+    }
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      index++;
+      continue;
+    }
+
+    sanitized += value[index];
+    index++;
+  }
+
+  return sanitized;
+}
+
 /**
  * Pad or truncate a tag to fixed width for aligned output.
  */
@@ -73,7 +142,7 @@ export function colorize(text: string, color: string | undefined, enable: boolea
  * Normalize whitespace in text (collapse multiple spaces to single space).
  */
 export function normalizeText(value: string): string {
-  return value.replace(/\s+/g, " ");
+  return sanitizeLogText(value).replace(/\s+/g, " ");
 }
 
 /**
@@ -149,7 +218,7 @@ export function formatContextText(
 ): string {
   const entries = Object.entries(context)
     .filter(([_, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${formatValue(value)}`);
+    .map(([key, value]) => `${normalizeText(key)}=${formatValue(value)}`);
   if (error) entries.push(`err=${formatErrorText(error)}`);
   if (entries.length === 0) return "";
 

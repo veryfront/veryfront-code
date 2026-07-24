@@ -1,4 +1,5 @@
 import { unrefTimer } from "#veryfront/compat/process.ts";
+import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
 
 export interface SingleflightOptions {
   /** Last-resort age after which a never-settling leader may be replaced. */
@@ -65,8 +66,15 @@ export class Singleflight<T> {
     operation: (control: SingleflightControl) => Promise<T>,
     options: SingleflightOptions = {},
   ): Promise<T> {
-    if (options.staleAfterMs !== undefined && options.staleAfterMs <= 0) {
-      throw new RangeError("Singleflight staleAfterMs must be greater than zero");
+    if (
+      options.staleAfterMs !== undefined &&
+      (!Number.isInteger(options.staleAfterMs) ||
+        options.staleAfterMs <= 0 ||
+        options.staleAfterMs > MAX_TIMER_DELAY_MS)
+    ) {
+      throw new RangeError(
+        `Singleflight staleAfterMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`,
+      );
     }
 
     const existing = this.inflight.get(key);

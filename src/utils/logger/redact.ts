@@ -64,10 +64,16 @@ const SENSITIVE_KEY_PATTERNS = [
 ] as const;
 
 const SENSITIVE_KEY_CACHE_MAX_SIZE = 512;
+/** Avoid retaining attacker-controlled, oversized property names in the cache. */
+const SENSITIVE_KEY_CACHE_MAX_KEY_LENGTH = 128;
 const sensitiveKeyCache = new Map<string, boolean>();
 
 /** Stop traversing past this depth to keep the pass cheap and stack-safe. */
 const MAX_DEPTH = 16;
+/** Bound every individual array/object before allocating a redacted copy. */
+const MAX_CONTAINER_ENTRIES = 1_024;
+/** Bound aggregate work across an entire redaction call, not per branch. */
+const MAX_TRAVERSAL_NODES = 4_096;
 
 /**
  * Whether a context key names a credential and should have its value masked.
@@ -78,17 +84,22 @@ const MAX_DEPTH = 16;
  * normalizes to `author`, which contains none of the patterns.
  */
 export function isSensitiveKey(key: string): boolean {
-  const cached = sensitiveKeyCache.get(key);
-  if (cached !== undefined) return cached;
+  const cacheable = key.length <= SENSITIVE_KEY_CACHE_MAX_KEY_LENGTH;
+  if (cacheable) {
+    const cached = sensitiveKeyCache.get(key);
+    if (cached !== undefined) return cached;
+  }
 
   const normalized = normalizeToAlphanumeric(key);
   const sensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
 
-  if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
-    const oldestKey = sensitiveKeyCache.keys().next().value as string | undefined;
-    if (oldestKey !== undefined) sensitiveKeyCache.delete(oldestKey);
+  if (cacheable) {
+    if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
+      const oldestKey = sensitiveKeyCache.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) sensitiveKeyCache.delete(oldestKey);
+    }
+    sensitiveKeyCache.set(key, sensitive);
   }
-  sensitiveKeyCache.set(key, sensitive);
 
   return sensitive;
 }
@@ -102,6 +113,11 @@ export type RedactedValue =
   | { [key: string]: RedactedValue };
 
 type RedactionMode = "compatible" | "serialization";
+
+interface RedactionBudget {
+  remainingNodes: number;
+  exhausted: boolean;
+}
 
 /**
  * `Array.isArray` normally looks like a harmless classifier, but it throws for
@@ -121,7 +137,14 @@ function redactValue(
   depth: number,
   seen: Set<object>,
   mode: RedactionMode,
+  budget: RedactionBudget,
 ): unknown {
+  if (budget.remainingNodes <= 0) {
+    budget.exhausted = true;
+    return REDACTED;
+  }
+  budget.remainingNodes--;
+
   if (typeof value === "string") return sanitizeUrlCredentials(value);
   if (typeof value === "bigint") return mode === "serialization" ? value.toString() : value;
   if (typeof value === "number") {
@@ -141,10 +164,14 @@ function redactValue(
     try {
       const arrayValue = value as unknown[];
       const length = arrayValue.length;
+      if (!Number.isInteger(length) || length < 0 || length > MAX_CONTAINER_ENTRIES) {
+        return REDACTED;
+      }
       const redacted: unknown[] = mode === "compatible" ? new Array(length) : [];
       for (let index = 0; index < length; index++) {
         if (mode === "compatible" && !(index in arrayValue)) continue;
-        const item = redactValue(arrayValue[index], depth + 1, seen, mode);
+        const item = redactValue(arrayValue[index], depth + 1, seen, mode, budget);
+        if (budget.exhausted) return REDACTED;
         if (mode === "compatible") {
           redacted[index] = item;
         } else {
@@ -184,12 +211,12 @@ function redactValue(
     try {
       const serialized = Reflect.apply(toJSON, value, []);
       if (mode === "serialization") {
-        return redactValue(serialized, depth + 1, seen, mode);
+        return redactValue(serialized, depth + 1, seen, mode, budget);
       }
 
       if (serialized !== null && typeof serialized === "object") {
         if (classifyArray(serialized) === null) return REDACTED;
-        return redactValue(serialized, depth + 1, seen, mode);
+        return redactValue(serialized, depth + 1, seen, mode, budget);
       }
 
       return value;
@@ -205,14 +232,33 @@ function redactValue(
   seen.add(value);
   try {
     const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
+    const record = value as Record<string, unknown>;
+    let propertyCount = 0;
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
+      propertyCount++;
+      if (propertyCount > MAX_CONTAINER_ENTRIES) return REDACTED;
+
+      if (isSensitiveKey(key)) {
+        Object.defineProperty(out, key, {
+          configurable: true,
+          enumerable: true,
+          value: REDACTED,
+          writable: true,
+        });
+        continue;
+      }
+
+      const child = record[key];
       // Match JSON object semantics only for the explicit serialization API.
       // The generic compatibility API retains undefined own properties.
       if (mode === "serialization" && child === undefined) continue;
+      const redactedChild = redactValue(child, depth + 1, seen, mode, budget);
+      if (budget.exhausted) return REDACTED;
       Object.defineProperty(out, key, {
         configurable: true,
         enumerable: true,
-        value: isSensitiveKey(key) ? REDACTED : redactValue(child, depth + 1, seen, mode),
+        value: redactedChild,
         writable: true,
       });
     }
@@ -237,7 +283,10 @@ function redactValue(
  * functions, symbols, and custom `toJSON` implementations must be normalized.
  */
 export function redactSensitive<T>(context: T): T {
-  return redactValue(context, 0, new Set<object>(), "compatible") as T;
+  return redactValue(context, 0, new Set<object>(), "compatible", {
+    remainingNodes: MAX_TRAVERSAL_NODES,
+    exhausted: false,
+  }) as T;
 }
 
 /**
@@ -247,7 +296,10 @@ export function redactSensitive<T>(context: T): T {
  * closed. Objects with `toJSON` are snapshotted exactly once before redaction.
  */
 export function redactForSerialization(context: unknown): RedactedValue {
-  return redactValue(context, 0, new Set<object>(), "serialization") as RedactedValue;
+  return redactValue(context, 0, new Set<object>(), "serialization", {
+    remainingNodes: MAX_TRAVERSAL_NODES,
+    exhausted: false,
+  }) as RedactedValue;
 }
 
 /**
@@ -271,11 +323,16 @@ const SENSITIVE_URL_PARAMS = [
   "sig",
   "signature",
   "auth",
+  "x-amz-credential",
+  "x-amz-signature",
+  "x-amz-security-token",
+  "x-goog-credential",
+  "x-goog-signature",
 ] as const;
 
 const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(SENSITIVE_URL_PARAMS.map(normalizeToAlphanumeric));
 
-const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/?#@\s]+)@/gi;
+const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/|\/\/)([^/?#\s]+)@/gi;
 
 /**
  * Strip credentials from URL-shaped strings so they can be safely emitted in
@@ -324,6 +381,58 @@ export function sanitizeUrlCredentials(input: string): string {
     },
   );
 
+  // 3) Header-shaped authorization values and standalone auth schemes.
+  // Cookie headers can carry multiple independent credentials separated by
+  // semicolons (and Set-Cookie attributes can contain commas). Mask the entire
+  // header line before the generic assignment scanner can stop at the first
+  // delimiter and expose later values.
+  out = out.replace(
+    /(^|[^a-z0-9_-])((?:set-cookie|cookie)\s*:\s*)[^\r\n]*/gi,
+    (_match, boundary: string, prefix: string) => `${boundary}${prefix}${REDACTED}`,
+  );
+
+  // 4) Header-shaped authorization values and standalone auth schemes.
+  // Authorization schemes are extensible (AWS SigV4, Digest, custom proxy
+  // schemes, and others), so mask the complete line instead of trying to
+  // enumerate schemes or parse their credential-bearing parameters.
+  out = out.replace(
+    /\b(authorization\s*[:=]\s*)[^\r\n]*/gi,
+    (_match, prefix: string) => `${prefix}${REDACTED}`,
+  );
+  out = out.replace(
+    /\b(bearer|basic)(\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[a-z0-9._~+/=-]+)/gi,
+    (_match, scheme: string, whitespace: string) => `${scheme}${whitespace}${REDACTED}`,
+  );
+
+  // 5) Credential assignments embedded in free-form messages/errors. Match
+  // generic identifier-shaped keys and delegate classification to the same
+  // deny-list used for structured context. This keeps JSON snippets, header
+  // dumps, and ordinary `key=value` text from drifting to a weaker policy.
+  // Handle quoted JSON/object keys first and preserve their quoting so the
+  // sanitized text remains intelligible and structurally valid.
+  out = out.replace(
+    /(["'])([a-z][a-z0-9_.-]*)\1(\s*[:=]\s*)("(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;&#?}]+)/gi,
+    (
+      match: string,
+      keyQuote: string,
+      key: string,
+      separator: string,
+      value: string,
+    ) => {
+      if (!isSensitiveKey(key)) return match;
+      const valueQuote = value[0] === `"` || value[0] === "'" ? value[0] : "";
+      return `${keyQuote}${key}${keyQuote}${separator}${valueQuote}${REDACTED}${valueQuote}`;
+    },
+  );
+  out = out.replace(
+    /\b([a-z][a-z0-9_.-]*)(\s*[:=]\s*)("(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s,;&#?}]+)/gi,
+    (match: string, key: string, separator: string, value: string) => {
+      if (!isSensitiveKey(key)) return match;
+      const valueQuote = value[0] === `"` || value[0] === "'" ? value[0] : "";
+      return `${key}${separator}${valueQuote}${REDACTED}${valueQuote}`;
+    },
+  );
+
   return out;
 }
 
@@ -360,7 +469,16 @@ export function sanitizeUrlForSpan(input: string): string {
 
   try {
     const url = new URL(input);
+    if (url.protocol === "blob:") {
+      try {
+        const embeddedUrl = new URL(url.pathname);
+        return embeddedUrl.origin === "null" ? "blob:" : `blob:${embeddedUrl.origin}`;
+      } catch (_) {
+        return "blob:";
+      }
+    }
     if (url.origin !== "null") return `${url.origin}${url.pathname}`;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(input)) return url.protocol;
   } catch (_) {
     // Relative or malformed URL-shaped strings are handled by the fallback.
   }
@@ -374,17 +492,18 @@ export function sanitizeUrlForSpan(input: string): string {
 }
 
 /**
- * Apply {@link sanitizeUrlCredentials} to the `message` and `stack` of a
+ * Apply {@link sanitizeUrlCredentials} to the `name`, `message`, and `stack` of a
  * serialized-error-shaped object, returning a new object. Used by the logger's
  * JSON and text paths so errors carrying DSNs, Mongo URIs, or
  * `?access_token=`-bearing URLs do not leak credentials (the serialized error
  * bypasses the key-based redactor). Returns the input unchanged when falsy.
  */
 export function sanitizeSerializedError<
-  T extends { message?: unknown; stack?: unknown } | undefined,
+  T extends { name?: unknown; message?: unknown; stack?: unknown } | undefined,
 >(error: T): T {
   if (!error) return error;
-  const out: { message?: unknown; stack?: unknown } = { ...error };
+  const out: { name?: unknown; message?: unknown; stack?: unknown } = { ...error };
+  if (typeof out.name === "string") out.name = sanitizeUrlCredentials(out.name);
   if (typeof out.message === "string") out.message = sanitizeUrlCredentials(out.message);
   if (typeof out.stack === "string") out.stack = sanitizeUrlCredentials(out.stack);
   return out as T;

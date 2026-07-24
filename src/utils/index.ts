@@ -127,6 +127,7 @@ export {
 } from "./base64url.ts";
 
 export { sleep } from "./sleep.ts";
+export { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "./timer.ts";
 
 export { createSubscriberSet, type SubscriberSet } from "./subscriber-set.ts";
 

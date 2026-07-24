@@ -218,6 +218,26 @@ describe("file-discovery", () => {
     );
   });
 
+  it("rejects adapter entries that are not single safe basenames", async () => {
+    for (
+      const name of ["../escape.ts", "/absolute.ts", "nested/file.ts", "nested\\file.ts", "\0"]
+    ) {
+      const adapter = {
+        fs: {
+          async *readDir() {
+            yield { name, isFile: true, isDirectory: false, isSymlink: false };
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      await assertRejects(
+        () => collectFiles({ baseDir: "/root", adapter }),
+        TypeError,
+        "invalid directory entry name",
+      );
+    }
+  });
+
   it("does not revisit a directory through a symlink cycle", async () => {
     const entries = new Map<
       string,

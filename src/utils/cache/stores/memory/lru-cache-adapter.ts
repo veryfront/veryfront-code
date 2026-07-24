@@ -220,6 +220,12 @@ export class LRUCacheAdapter implements CacheAdapter {
     if (ttlMs !== undefined) requireCacheTtl(ttlMs, "ttlMs");
     const normalizedTags = normalizeTags(tags);
     const existingNode = this.store.get(key);
+    const valueSize = this.entryManager.estimateSize(value);
+    if (valueSize > this.maxSizeBytes) {
+      throw new RangeError(
+        `Cache entry size ${valueSize} exceeds maxSizeBytes ${this.maxSizeBytes}`,
+      );
+    }
 
     if (existingNode) {
       this.currentSize += this.entryManager.updateExistingEntry(
@@ -231,6 +237,7 @@ export class LRUCacheAdapter implements CacheAdapter {
         this.listManager,
         this.tagIndex,
         key,
+        valueSize,
       );
     } else {
       const [, size] = this.entryManager.createNewEntry(
@@ -241,6 +248,7 @@ export class LRUCacheAdapter implements CacheAdapter {
         this.defaultTtlMs,
         this.listManager,
         this.store,
+        valueSize,
       );
       this.currentSize += size;
     }
@@ -336,8 +344,10 @@ export class LRUCacheAdapter implements CacheAdapter {
     return cleaned;
   }
 
-  keys(): IterableIterator<string> {
-    return this.store.keys();
+  *keys(): IterableIterator<string> {
+    for (const [key, node] of this.store) {
+      if (!this.isExpired(node.entry)) yield key;
+    }
   }
 
   *entries<T>(): IterableIterator<[string, T]> {

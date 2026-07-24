@@ -29,3 +29,6 @@ export const MAX_URL_LENGTH_FOR_VALIDATION = 2048;
 
 /******** Batch limits ********/
 export const MAX_BATCH_SIZE = 100;
+
+/** Largest delay supported consistently by JavaScript timer implementations. */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;

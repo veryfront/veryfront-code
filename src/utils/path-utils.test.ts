@@ -93,6 +93,11 @@ describe("path-utils", () => {
     it("should return false for parent traversal outside the root", () => {
       assertEquals(isWithinDirectory("/root", "/root/../../etc/passwd"), false);
     });
+
+    it("rejects an empty root instead of matching absolute targets", () => {
+      assertEquals(isWithinDirectory("", "/etc/passwd"), false);
+      assertEquals(isWithinDirectory("", ""), false);
+    });
   });
 
   describe("getExtension", () => {
@@ -174,6 +179,11 @@ describe("path-utils", () => {
 
     it("should return false for no middle segment", () => {
       assertEquals(hasHashedFilename("file.js"), false);
+    });
+
+    it("does not treat a hash-like parent directory as a hashed filename", () => {
+      assertEquals(hasHashedFilename("/assets/cache.deadbeef.js/file.js"), false);
+      assertEquals(hasHashedFilename("C:\\assets\\cache.deadbeef.js\\file.js"), false);
     });
   });
 

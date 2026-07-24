@@ -48,6 +48,49 @@ describe("utils/import-map", () => {
     });
   });
 
+  it("rejects malformed import-map shapes without logging their contents", () => {
+    const malformedImportMaps = [
+      "null",
+      '["private-array-target"]',
+      '{"imports":"private-string-target"}',
+      '{"imports":{"react":42,"safe":"private-record-target"}}',
+    ];
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      for (const importMap of malformedImportMaps) {
+        assertEquals(parseImportMapImports(importMap), {});
+      }
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assertEquals(warnings.length, malformedImportMaps.length);
+    const serializedWarnings = JSON.stringify(warnings);
+    assertEquals(serializedWarnings.includes("private-array-target"), false);
+    assertEquals(serializedWarnings.includes("private-string-target"), false);
+    assertEquals(serializedWarnings.includes("private-record-target"), false);
+  });
+
+  it("rejects prefix mappings whose targets are not prefixes", () => {
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      assertEquals(
+        parseImportMapImports(
+          '{"imports":{"pkg/":"https://cdn.test/pkg","safe":"https://cdn.test/safe.js"}}',
+        ),
+        {},
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assertEquals(warnings.length, 1);
+  });
+
   it("reads the page import map from the document", () => {
     const doc = {
       querySelector: (selector: string) =>

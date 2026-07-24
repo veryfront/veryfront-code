@@ -10,6 +10,7 @@
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
 
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;
@@ -48,8 +49,6 @@ export function parallelMap<T, R>(
   return withSpan(
     "utils.parallelMap",
     async () => {
-      if (items.length === 0) return [];
-
       if (
         options.semaphore === undefined &&
         options.concurrency !== undefined &&
@@ -58,9 +57,20 @@ export function parallelMap<T, R>(
         throw new RangeError("parallelMap concurrency must be a positive integer");
       }
 
+      const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
+      if (
+        !Number.isInteger(timeoutMs) ||
+        timeoutMs < 0 ||
+        timeoutMs > MAX_TIMER_DELAY_MS
+      ) {
+        throw new RangeError(
+          `parallelMap timeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+        );
+      }
+      if (items.length === 0) return [];
+
       const semaphore = options.semaphore ??
         (options.concurrency === undefined ? apiSemaphore : new Semaphore(options.concurrency));
-      const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
       const results: R[] = new Array(items.length);
 
       await Promise.all(

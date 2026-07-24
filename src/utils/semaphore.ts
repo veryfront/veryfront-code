@@ -8,6 +8,7 @@
 
 import { SEMAPHORE_TIMEOUT } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
 
 /**
  * Thrown when a semaphore acquire exceeds its configured timeout.
@@ -50,10 +51,20 @@ export class Semaphore {
     if (!Number.isInteger(maxPermits) || maxPermits <= 0) {
       throw new RangeError("Semaphore maxPermits must be a positive integer");
     }
+    const acquireTimeoutMs = options.acquireTimeoutMs ?? 0;
+    if (
+      !Number.isInteger(acquireTimeoutMs) ||
+      acquireTimeoutMs < 0 ||
+      acquireTimeoutMs > MAX_TIMER_DELAY_MS
+    ) {
+      throw new RangeError(
+        `Semaphore acquireTimeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+      );
+    }
 
     this.maxPermits = maxPermits;
     this.permits = maxPermits;
-    this.acquireTimeoutMs = options.acquireTimeoutMs ?? 0;
+    this.acquireTimeoutMs = acquireTimeoutMs;
     this.semaphoreName = options.name ?? "default";
   }
 

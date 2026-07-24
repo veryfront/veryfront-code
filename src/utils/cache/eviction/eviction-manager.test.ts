@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { EvictionManager, type LRUTrackerInterface } from "./eviction-manager.ts";
 
@@ -31,6 +31,12 @@ describe("EvictionManager", () => {
     it("should return false when entry expiry is in the future", () => {
       const em = new EvictionManager();
       assertEquals(em.isExpired({ size: 1, expiry: 3000 }, undefined, 2000), false);
+    });
+
+    it("expires entries exactly at their expiry boundary", () => {
+      const em = new EvictionManager();
+      assertEquals(em.isExpired({ size: 1, expiry: 2000 }, undefined, 2000), true);
+      assertEquals(em.isExpired({ size: 1, timestamp: 1500 }, 500, 2000), true);
     });
 
     it("should use timestamp + ttl when no expiry", () => {
@@ -68,6 +74,15 @@ describe("EvictionManager", () => {
       assertEquals(em.evictLRU(cache, tracker), 0);
     });
 
+    it("evicts an empty-string cache key", () => {
+      const em = new EvictionManager();
+      const cache = new Map([["", { size: 5, value: "value" }]]);
+      const tracker = createMockTracker([""]);
+
+      assertEquals(em.evictLRU(cache, tracker), 5);
+      assertEquals(cache.size, 0);
+    });
+
     it("should call onEvict callback", () => {
       let evictedKey = "";
       const em = new EvictionManager({
@@ -81,9 +96,55 @@ describe("EvictionManager", () => {
       em.evictLRU(cache, tracker);
       assertEquals(evictedKey, "a");
     });
+
+    it("isolates errors thrown by onEvict callbacks", () => {
+      const em = new EvictionManager({
+        onEvict: () => {
+          throw new Error("observer failed");
+        },
+      });
+      const cache = new Map([["a", { size: 5, value: "value" }]]);
+
+      assertEquals(em.evictLRU(cache, createMockTracker(["a"])), 5);
+      assertEquals(cache.size, 0);
+    });
   });
 
   describe("evictIfNeeded", () => {
+    it("rejects invalid capacity and size inputs", () => {
+      const em = new EvictionManager();
+      const cache = new Map<string, { size: number }>();
+      const tracker = createMockTracker([]);
+
+      assertThrows(() => em.evictIfNeeded(cache, tracker, -1, 1, 1), RangeError);
+      assertThrows(() => em.evictIfNeeded(cache, tracker, 0, 0, 1), RangeError);
+      assertThrows(() => em.evictIfNeeded(cache, tracker, 0, 1, -1), RangeError);
+      assertThrows(
+        () => em.evictIfNeeded(cache, tracker, Number.NaN, 1, 1),
+        RangeError,
+      );
+    });
+
+    it("fails explicitly when the LRU tracker cannot make progress", () => {
+      const em = new EvictionManager();
+      const cache = new Map([["present", { size: 1 }]]);
+      let calls = 0;
+      const tracker: LRUTrackerInterface = {
+        getLRU() {
+          calls++;
+          if (calls === 1) return "missing";
+          throw new Error("tracker queried twice");
+        },
+        remove() {},
+      };
+
+      assertThrows(
+        () => em.evictIfNeeded(cache, tracker, 1, 1, 10),
+        Error,
+        "Unable to evict",
+      );
+    });
+
     it("should evict to make room by entry count", () => {
       const em = new EvictionManager();
       const cache = new Map([
@@ -123,6 +184,21 @@ describe("EvictionManager", () => {
       assertEquals(evicted, 1);
       assertEquals(cache.has("stale"), false);
       assertEquals(cache.has("fresh"), true);
+    });
+
+    it("notifies onEvict for expired entries without exposing observer failures", () => {
+      const evicted: string[] = [];
+      const em = new EvictionManager({
+        onEvict: (key) => {
+          evicted.push(key);
+          throw new Error("observer failed");
+        },
+      });
+      const cache = new Map([["stale", { size: 1, expiry: 0, value: "value" }]]);
+
+      assertEquals(em.evictExpired(cache, createMockTracker(["stale"]), 1000), 1);
+      assertEquals(evicted, ["stale"]);
+      assertEquals(cache.size, 0);
     });
 
     it("should return 0 when nothing expired", () => {

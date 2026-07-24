@@ -4,6 +4,29 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { hasBunRuntime, hasDenoRuntime, hasNodeProcess } from "./runtime-guards.ts";
 
 describe("runtime-guards", () => {
+  it("returns false instead of throwing for unreadable global objects", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+
+    assertEquals(hasDenoRuntime(revoked.proxy), false);
+    assertEquals(hasNodeProcess(revoked.proxy), false);
+    assertEquals(hasBunRuntime(revoked.proxy), false);
+
+    const guards: Array<[string, (value: unknown) => boolean]> = [
+      ["Deno", hasDenoRuntime],
+      ["process", hasNodeProcess],
+      ["Bun", hasBunRuntime],
+    ];
+    for (const [property, guard] of guards) {
+      const hostile = Object.defineProperty({}, property, {
+        get() {
+          throw new Error("unreadable runtime global");
+        },
+      });
+      assertEquals(guard(hostile), false);
+    }
+  });
+
   describe("hasDenoRuntime", () => {
     it("should return true for Deno-like global", () => {
       assertEquals(hasDenoRuntime({ Deno: { env: { get: () => undefined } } }), true);

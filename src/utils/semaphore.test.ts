@@ -10,6 +10,25 @@ describe("Semaphore", () => {
     }
   });
 
+  it("rejects acquire timeouts unsupported by JavaScript timers", () => {
+    for (
+      const acquireTimeoutMs of [
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        2_147_483_648,
+      ]
+    ) {
+      assertThrows(
+        () => new Semaphore(1, { acquireTimeoutMs }),
+        RangeError,
+      );
+    }
+
+    new Semaphore(1, { acquireTimeoutMs: 0 });
+  });
+
   it("should execute operation and return result", async () => {
     const sem = new Semaphore(2);
     const result = await sem.acquire(() => Promise.resolve(42));

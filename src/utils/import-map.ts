@@ -36,10 +36,35 @@ export function importMapOwnsSpecifier(
   return false;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function parseImportMapImports(json: string): ImportMapImports {
   try {
-    const parsed = JSON.parse(json) as { imports?: ImportMapImports } | null;
-    return parsed?.imports ?? {};
+    const parsed = JSON.parse(json) as unknown;
+    if (!isRecord(parsed)) throw new TypeError("Import map must be an object");
+    if (parsed.imports === undefined) return {};
+    if (!isRecord(parsed.imports)) {
+      throw new TypeError("Import map imports must be an object");
+    }
+
+    const imports: ImportMapImports = {};
+    for (const [specifier, target] of Object.entries(parsed.imports)) {
+      if (typeof target !== "string") {
+        throw new TypeError("Import map targets must be strings");
+      }
+      if (specifier.endsWith("/") && !target.endsWith("/")) {
+        throw new TypeError("Import map prefix targets must end with a slash");
+      }
+      Object.defineProperty(imports, specifier, {
+        configurable: true,
+        enumerable: true,
+        value: target,
+        writable: true,
+      });
+    }
+    return imports;
   } catch (error) {
     // A malformed import map silently flips the RSC client-module strategy.
     // This module is browser-bundled, so the server logger (which pulls in

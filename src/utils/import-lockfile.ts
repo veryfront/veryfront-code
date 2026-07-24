@@ -5,6 +5,10 @@ import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors/error-registry.ts"
 import { VERSION } from "./version-constant.ts";
 import { resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "./constants/buffers.ts";
+import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "./constants/http.ts";
+import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
+import { readResponseTextPrefix } from "./response-body.ts";
 
 const logger = serverLogger.component("lockfile");
 
@@ -193,7 +197,17 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   let cache: LockfileData | null = null;
   let readInFlight: Promise<LockfileData | null> | null = null;
   let revision = 0;
+  let stateMutationTail: Promise<void> = Promise.resolve();
   const pendingEntries = new Map<string, { entry: LockfileEntry; revision: number }>();
+
+  function withStateMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = stateMutationTail.then(operation);
+    stateMutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   function createToken(): string {
     return crypto.randomUUID();
@@ -271,7 +285,8 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   async function read(): Promise<LockfileData | null> {
-    return await load();
+    const data = await load();
+    return data === null ? null : normalizeLockfileData(data);
   }
 
   async function acquireProcessLock(): Promise<() => Promise<void>> {
@@ -343,13 +358,39 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     });
   }
 
-  async function write(data: LockfileData): Promise<void> {
-    const normalized = normalizeLockfileData(data);
+  function write(data: LockfileData): Promise<void> {
+    let normalized: LockfileData;
+    try {
+      normalized = normalizeLockfileData(data);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return withStateMutation(() => writeState(normalized));
+  }
+
+  async function writeState(normalized: LockfileData): Promise<void> {
+    const previousCache = cache;
+    const previousPendingEntries = new Map(pendingEntries);
     const writeRevision = ++revision;
     pendingEntries.clear();
     cache = normalized;
 
-    await mutateFile(() => writeAtomically(normalized));
+    let persisted = false;
+    try {
+      await mutateFile(async () => {
+        await writeAtomically(normalized);
+        persisted = true;
+      });
+    } catch (error) {
+      if (!persisted && revision === writeRevision) {
+        cache = previousCache;
+        pendingEntries.clear();
+        for (const [specifier, pending] of previousPendingEntries) {
+          pendingEntries.set(specifier, pending);
+        }
+      }
+      throw error;
+    }
     if (revision === writeRevision) cache = normalized;
     logger.debug(`Written ${Object.keys(normalized.imports).length} entries`);
   }
@@ -357,13 +398,19 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   async function get(url: string): Promise<LockfileEntry | null> {
     const data = await load();
     if (!data || !Object.hasOwn(data.imports, url)) return null;
-    return data.imports[url] ?? null;
+    const entry = data.imports[url];
+    return entry ? normalizeLockfileEntry(entry) : null;
   }
 
-  async function set(url: string, entry: LockfileEntry): Promise<void> {
+  function set(url: string, entry: LockfileEntry): Promise<void> {
     const normalizedEntry = normalizeLockfileEntry(entry);
-    if (!normalizedEntry) throw new TypeError(`Invalid lockfile entry for ${url}`);
+    if (!normalizedEntry) {
+      return Promise.reject(new TypeError(`Invalid lockfile entry for ${url}`));
+    }
+    return withStateMutation(() => setState(url, normalizedEntry));
+  }
 
+  async function setState(url: string, normalizedEntry: LockfileEntry): Promise<void> {
     const existing = await load();
     const data = existing ?? cache ?? createEmptyLockfile();
     const entryRevision = ++revision;
@@ -377,15 +424,33 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     return data !== null && Object.hasOwn(data.imports, url);
   }
 
-  async function clear(): Promise<void> {
+  function clear(): Promise<void> {
+    return withStateMutation(clearState);
+  }
+
+  async function clearState(): Promise<void> {
+    const previousCache = cache;
+    const previousPendingEntries = new Map(pendingEntries);
+    const clearRevision = ++revision;
     cache = createEmptyLockfile();
-    revision++;
     pendingEntries.clear();
 
-    await mutateFile(async () => {
-      if (!fs.remove) return;
-      await removeIfPresent(lockfilePath);
-    });
+    let persisted = false;
+    try {
+      await mutateFile(async () => {
+        if (fs.remove) await removeIfPresent(lockfilePath);
+        persisted = true;
+      });
+    } catch (error) {
+      if (!persisted && revision === clearRevision) {
+        cache = previousCache;
+        pendingEntries.clear();
+        for (const [specifier, pending] of previousPendingEntries) {
+          pendingEntries.set(specifier, pending);
+        }
+      }
+      throw error;
+    }
   }
 
   async function flush(): Promise<void> {
@@ -416,6 +481,12 @@ export interface FetchWithLockOptions {
   url: string;
   fetchFn?: typeof fetch;
   strict?: boolean;
+  /** Optional caller policy, applied to requested, cached, and redirected URLs. */
+  isUrlAllowed?: (url: URL) => boolean | Promise<boolean>;
+  /** Maximum time for the fetch and response body read. */
+  timeoutMs?: number;
+  /** Maximum decoded module source size measured in response bytes. */
+  maxResponseBytes?: number;
 }
 
 export interface FetchWithLockResult {
@@ -426,16 +497,219 @@ export interface FetchWithLockResult {
 }
 
 const USER_AGENT_HEADERS = { "user-agent": `Mozilla/5.0 Veryfront/${VERSION}` };
+const MAX_CONFIGURED_REMOTE_MODULE_BYTES = 64 * 1024 * 1024;
+const MAX_REMOTE_MODULE_REDIRECTS = 10;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+function cancelResponseBody(response: Response): void {
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation) void cancellation.catch(() => undefined);
+  } catch {
+    /* cancellation is best-effort cleanup */
+  }
+}
+
+function requireFetchLimit(
+  value: number,
+  name: string,
+  max: number,
+): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > max) {
+    throw new RangeError(`${name} must be a positive safe integer no greater than ${max}`);
+  }
+  return value;
+}
+
+async function authorizeRemoteModuleUrl(
+  candidate: string,
+  stage: "requested" | "cached" | "redirected",
+  isUrlAllowed: FetchWithLockOptions["isUrlAllowed"],
+): Promise<URL> {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch (cause) {
+    throw NETWORK_ERROR.create({
+      detail: `Remote module URL is invalid (${stage})`,
+      cause,
+    });
+  }
+
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username.length > 0 ||
+    url.password.length > 0
+  ) {
+    throw NETWORK_ERROR.create({
+      detail: `Remote module URL must use HTTP(S) without embedded credentials (${stage})`,
+    });
+  }
+
+  if (isUrlAllowed) {
+    let allowed = false;
+    try {
+      allowed = await isUrlAllowed(url);
+    } catch (cause) {
+      throw NETWORK_ERROR.create({
+        detail: `Remote module URL policy failed closed (${stage})`,
+        cause,
+      });
+    }
+    if (!allowed) {
+      throw NETWORK_ERROR.create({
+        detail: `Remote module URL rejected by policy (${stage})`,
+      });
+    }
+  }
+
+  return url;
+}
+
+async function readBoundedModuleText(
+  response: Response,
+  maxResponseBytes: number,
+  abortSignal: AbortSignal,
+): Promise<string> {
+  const rawContentLength = response.headers.get("content-length");
+  if (rawContentLength && /^\d+$/.test(rawContentLength)) {
+    const contentLength = Number(rawContentLength);
+    if (Number.isSafeInteger(contentLength) && contentLength > maxResponseBytes) {
+      cancelResponseBody(response);
+      throw NETWORK_ERROR.create({
+        detail: `Remote module exceeded ${maxResponseBytes} bytes`,
+      });
+    }
+  }
+
+  const result = await readResponseTextPrefix(
+    response,
+    maxResponseBytes + 1,
+    abortSignal,
+  );
+  if (
+    result.truncated ||
+    new TextEncoder().encode(result.text).byteLength > maxResponseBytes
+  ) {
+    throw NETWORK_ERROR.create({
+      detail: `Remote module exceeded ${maxResponseBytes} bytes`,
+    });
+  }
+  return result.text;
+}
+
+interface FetchedRemoteModule {
+  content: string | null;
+  response: Response;
+  resolvedUrl: URL;
+}
+
+async function fetchRemoteModule(
+  url: URL,
+  options: {
+    fetchFn: typeof fetch;
+    isUrlAllowed: FetchWithLockOptions["isUrlAllowed"];
+    maxResponseBytes: number;
+    timeoutMs: number;
+  },
+): Promise<FetchedRemoteModule> {
+  const controller = new AbortController();
+  const timeoutError = NETWORK_ERROR.create({
+    detail: `Remote module fetch timed out after ${options.timeoutMs}ms`,
+  });
+  const timeoutId = setTimeout(() => controller.abort(timeoutError), options.timeoutMs);
+
+  try {
+    let currentUrl = url;
+    for (let redirectCount = 0;; redirectCount++) {
+      const response = await options.fetchFn(currentUrl.toString(), {
+        headers: USER_AGENT_HEADERS,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const location = response.headers.get("location");
+        if (!location) {
+          cancelResponseBody(response);
+          return { content: null, response, resolvedUrl: currentUrl };
+        }
+        if (redirectCount >= MAX_REMOTE_MODULE_REDIRECTS) {
+          cancelResponseBody(response);
+          throw NETWORK_ERROR.create({
+            detail: `Remote module exceeded ${MAX_REMOTE_MODULE_REDIRECTS} redirects`,
+          });
+        }
+
+        cancelResponseBody(response);
+        currentUrl = await authorizeRemoteModuleUrl(
+          new URL(location, currentUrl).toString(),
+          "redirected",
+          options.isUrlAllowed,
+        );
+        continue;
+      }
+
+      let resolvedUrl: URL;
+      try {
+        resolvedUrl = await authorizeRemoteModuleUrl(
+          response.url || currentUrl.toString(),
+          "redirected",
+          options.isUrlAllowed,
+        );
+      } catch (error) {
+        cancelResponseBody(response);
+        throw error;
+      }
+      if (!response.ok) cancelResponseBody(response);
+      const content = response.ok
+        ? await readBoundedModuleText(
+          response,
+          options.maxResponseBytes,
+          controller.signal,
+        )
+        : null;
+      return { content, response, resolvedUrl };
+    }
+  } catch (cause) {
+    if (controller.signal.aborted) throw timeoutError;
+    throw cause;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 export async function fetchWithLock(options: FetchWithLockOptions): Promise<FetchWithLockResult> {
-  const { lockfile, url, fetchFn = fetch, strict = false } = options;
+  const {
+    lockfile,
+    url,
+    fetchFn = fetch,
+    strict = false,
+    isUrlAllowed,
+    timeoutMs = HTTP_MODULE_FETCH_TIMEOUT_MS,
+    maxResponseBytes = MAX_BUNDLE_CHUNK_SIZE_BYTES,
+  } = options;
+  requireFetchLimit(timeoutMs, "timeoutMs", MAX_TIMER_DELAY_MS);
+  requireFetchLimit(
+    maxResponseBytes,
+    "maxResponseBytes",
+    MAX_CONFIGURED_REMOTE_MODULE_BYTES,
+  );
+  const requestedUrl = await authorizeRemoteModuleUrl(url, "requested", isUrlAllowed);
 
   const entry = await lockfile.get(url);
 
   if (entry) {
     logger.debug(`Cache hit for ${url}`);
 
-    const res = await fetchFn(entry.resolved, { headers: USER_AGENT_HEADERS });
+    const cachedUrl = await authorizeRemoteModuleUrl(entry.resolved, "cached", isUrlAllowed);
+    const fetched = await fetchRemoteModule(cachedUrl, {
+      fetchFn,
+      isUrlAllowed,
+      maxResponseBytes,
+      timeoutMs,
+    });
+    const res = fetched.response;
 
     if (!res.ok) {
       if (strict) {
@@ -446,13 +720,13 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
       }
       logger.warn(`Cached URL ${entry.resolved} returned ${res.status}, refetching`);
     } else {
-      const content = await res.text();
+      const content = fetched.content!;
       const currentIntegrity = await computeIntegrity(content);
 
       if (currentIntegrity === entry.integrity) {
         return {
           content,
-          resolvedUrl: entry.resolved,
+          resolvedUrl: fetched.resolvedUrl.toString(),
           fromCache: true,
           integrity: entry.integrity,
         };
@@ -469,12 +743,18 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
   }
 
   logger.debug(`Fetching fresh: ${url}`);
-  const res = await fetchFn(url, { headers: USER_AGENT_HEADERS, redirect: "follow" });
+  const fetched = await fetchRemoteModule(requestedUrl, {
+    fetchFn,
+    isUrlAllowed,
+    maxResponseBytes,
+    timeoutMs,
+  });
+  const res = fetched.response;
 
   if (!res.ok) throw NETWORK_ERROR.create({ detail: `Failed to fetch ${url}: ${res.status}` });
 
-  const content = await res.text();
-  const resolvedUrl = res.url || url;
+  const content = fetched.content!;
+  const resolvedUrl = fetched.resolvedUrl.toString();
   const integrity = await computeIntegrity(content);
 
   await lockfile.set(url, {
