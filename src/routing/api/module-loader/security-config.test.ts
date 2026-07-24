@@ -7,7 +7,24 @@ import { loadSecurityConfig } from "./security-config.ts";
 
 function makeAdapter(): RuntimeAdapter {
   return {
-    env: { get: () => undefined },
+    id: "node",
+    name: "security-config-test",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: false,
+    },
+    env: {
+      get: () => undefined,
+      set: () => {},
+      toObject: () => ({}),
+    },
     fs: {
       readFile: () => Promise.resolve(""),
       writeFile: () => Promise.resolve(),
@@ -28,6 +45,14 @@ function makeAdapter(): RuntimeAdapter {
         close: () => {},
         [Symbol.asyncIterator]: async function* () {},
       }),
+    },
+    server: {
+      upgradeWebSocket() {
+        throw new Error("not implemented");
+      },
+    },
+    serve() {
+      throw new Error("not implemented");
     },
   };
 }

@@ -305,6 +305,346 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("blocks disallowed lockfile targets before issuing a request", async () => {
+      const originalFetch = globalThis.fetch;
+      const requestUrl = "https://esm.sh/yaml@2";
+      const privateSource = "export const privateValue = true;";
+      const lockfileEntry = {
+        resolved: "http://127.0.0.1/private.ts",
+        integrity: await computeIntegrity(privateSource),
+      };
+      const lockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: () => Promise.resolve(lockfileEntry),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(true),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.resolve(),
+      };
+      const requested: string[] = [];
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        lockfile,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async (input) => {
+          requested.push(String(input));
+          return new Response(privateSource, { status: 200 });
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: requestUrl,
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+        assertEquals(requested, []);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("blocks a disallowed redirect before following it", async () => {
+      const originalFetch = globalThis.fetch;
+      const requested: string[] = [];
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async (input) => {
+          requested.push(String(input));
+          return new Response(null, {
+            status: 302,
+            headers: { location: "http://127.0.0.1/private.ts" },
+          });
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
+        assertEquals(requested.length, 1);
+        assertEquals(requested[0]?.startsWith("https://esm.sh/"), true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not let stalled redirect cancellation block the next fetch", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      let cancellationStarted = false;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        timeoutMs: 25,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => {
+          fetchCalls++;
+          if (fetchCalls === 1) {
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                cancel: () => {
+                  cancellationStarted = true;
+                  return new Promise<void>(() => {});
+                },
+              }),
+              {
+                status: 302,
+                headers: { location: "https://esm.sh/resolved.ts" },
+              },
+            );
+          }
+          return new Response("export const ok = true;");
+        }) as typeof fetch;
+
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<"timed-out">((resolve) => {
+          timeoutId = setTimeout(() => resolve("timed-out"), 100);
+        });
+        try {
+          const outcome = await Promise.race([
+            loadHandler({
+              path: "https://esm.sh/yaml@2",
+              namespace: "http-url",
+              pluginData: undefined,
+              suffix: "",
+            }),
+            timeout,
+          ]);
+
+          assertEquals(outcome === "timed-out", false);
+          assertEquals(fetchCalls, 2);
+          assertEquals(cancellationStarted, true);
+        } finally {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects remote module bodies above the configured byte limit", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        maxResponseBytes: 4,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => new Response("12345")) as typeof fetch;
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("exceeded 4 bytes"), true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("cancels a response rejected by its oversized Content-Length", async () => {
+      const originalFetch = globalThis.fetch;
+      let cancelled = false;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        maxResponseBytes: 4,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-length": "100" },
+            },
+          )) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("exceeded 4 bytes"), true);
+        assertEquals(cancelled, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("cancels a terminal non-success response body", async () => {
+      const originalFetch = globalThis.fetch;
+      let cancelled = false;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { status: 404 },
+          )) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("404"), true);
+        assertEquals(cancelled, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("aborts stalled remote module bodies within the configured timeout", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        timeoutMs: 5,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      const fallbackTimer = setTimeout(() => {
+        try {
+          streamController?.close();
+        } catch {
+          // A bounded reader may already have cancelled the stream.
+        }
+      }, 25);
+      try {
+        globalThis.fetch = (async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                streamController = controller;
+              },
+            }),
+          )) as typeof fetch;
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("timed out"), true);
+      } finally {
+        clearTimeout(fallbackTimer);
+        globalThis.fetch = originalFetch;
+        try {
+          streamController?.close();
+        } catch {
+          // A bounded reader may already have cancelled the stream.
+        }
+      }
+    });
+
     it("serves a previously fetched remote module when the CDN later returns an error", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await Deno.makeTempDir();
@@ -389,6 +729,58 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
         assertEquals((result as { contents: string }).contents, "export const ok = true;");
         assertEquals(attempts, 3);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("cancels retryable response bodies before issuing the next request", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let cancellations = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => {
+          attempts += 1;
+          if (attempts === 3) {
+            return new Response("export const ok = true;", { status: 200 });
+          }
+
+          const responseAttempt = attempts;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancellations += 1;
+                if (responseAttempt === 1) {
+                  throw new Error("response cancellation failed");
+                }
+              },
+            }),
+            { status: 503 },
+          );
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals((result as { contents: string }).contents, "export const ok = true;");
+        assertEquals(attempts, 3);
+        assertEquals(cancellations, 2);
       } finally {
         globalThis.fetch = originalFetch;
       }
