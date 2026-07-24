@@ -279,4 +279,74 @@ describe("lifecycle run event adapter", () => {
     ]);
     assertEquals(emitted[1]?.delta, '{"path":"a.md"}');
   });
+
+  it("closes streamed tool input after ready while retaining provider input", () => {
+    const { emitted, adapter } = createCollector();
+    for (
+      const frame of frames([
+        {
+          event: {
+            type: "tool_input_start",
+            toolCallId: "native-1",
+            toolName: "web_search",
+            providerExecuted: true,
+          },
+        },
+        {
+          event: {
+            type: "tool_input_content",
+            toolCallId: "native-1",
+            delta: '{"query":"x"}',
+          },
+        },
+        {
+          event: {
+            type: "tool_input_ready",
+            toolCallId: "native-1",
+            toolName: "web_search",
+            input: { query: "x" },
+            providerExecuted: true,
+          },
+        },
+      ])
+    ) {
+      adapter.handleFrame(frame);
+    }
+
+    assertThrows(
+      () =>
+        adapter.handleFrame(
+          frames([{
+            event: {
+              type: "tool_input_content",
+              toolCallId: "native-1",
+              delta: "late",
+            },
+          }])[0]!,
+        ),
+      StreamProjectionInvariantError,
+    );
+
+    adapter.handleFrame(
+      frames([{
+        event: {
+          type: "provider_tool_result",
+          toolCallId: "native-1",
+          toolName: "web_search",
+          output: { answer: 42 },
+          isError: false,
+          providerExecuted: true,
+        },
+      }])[0]!,
+    );
+    adapter.dispose();
+
+    assertEquals(emitted.map((event) => event.type), [
+      "TOOL_CALL_START",
+      "TOOL_CALL_ARGS",
+      "TOOL_CALL_END",
+      "TOOL_CALL_RESULT",
+    ]);
+    assertEquals(emitted[3]?.input, { query: "x" });
+  });
 });

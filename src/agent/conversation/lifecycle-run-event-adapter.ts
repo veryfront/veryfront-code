@@ -252,6 +252,8 @@ export function createLifecycleRunEventAdapter(input: {
           type: conversationRunEventTypes.toolCallEnd,
           toolCallId: event.toolCallId,
         });
+        openToolCalls.delete(event.toolCallId);
+        streamedToolInputs.delete(event.toolCallId);
         return;
       case "tool_input_rejected": {
         if (event.reason === "unavailable") {
