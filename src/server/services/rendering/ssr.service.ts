@@ -8,6 +8,8 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { isDataControlResult } from "#veryfront/data/helpers.ts";
+import type { DataResult } from "#veryfront/data/types.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -94,6 +96,28 @@ interface RedirectResultContext {
     destination?: unknown;
     permanent?: unknown;
   };
+}
+
+/**
+ * Find a thrown `notFound()` / `redirect()` control result anywhere in the
+ * error's cause chain.
+ *
+ * `throw notFound()` is documented to work like `return notFound()`. The data
+ * loaders already recognise a thrown branded result (server-data-fetcher.ts),
+ * but a control result thrown from a page COMPONENT render surfaces here in the
+ * SSR error handler instead — where, unrecognised, it became a 500. Matching the
+ * brand lets it behave like the returned/loader form: a 404 (custom
+ * `not-found.tsx`) or a redirect. The check is on the brand, never the shape.
+ */
+function findThrownControlResult(error: unknown): DataResult | null {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    if (isDataControlResult(current)) return current as DataResult;
+    seen.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 function extractRedirectLocation(
@@ -259,6 +283,40 @@ export class SSRService implements SSRServiceLike {
     // be exposed outside a local project — including remote preview, which is
     // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
     const isDev = Boolean(ctx.isLocalProject);
+
+    // `throw notFound()` / `throw redirect()` from a page component surfaces here
+    // as a thrown control result. Recognise the brand and behave like the loader
+    // form: notFound → 404 (routed to the segment's custom not-found.tsx by the
+    // handler), redirect → 301/302. Otherwise it falls through to a 500.
+    const control = findThrownControlResult(error);
+    if (control?.redirect) {
+      logger.debug("SSR control-result redirect (thrown from component)", {
+        slug,
+        destination: control.redirect.destination,
+        permanent: control.redirect.permanent,
+        projectSlug: ctx.projectSlug,
+      });
+      return {
+        status: control.redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        error: errorObj,
+        errorType: "redirect",
+        redirectLocation: control.redirect.destination,
+        slug,
+      };
+    }
+    if (control?.notFound) {
+      logger.debug("SSR control-result notFound (thrown from component)", { slug });
+      return {
+        status: HTTP_NOT_FOUND,
+        html: ErrorPages.notFound(slug || "/"),
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        errorType: "not-found",
+        slug,
+      };
+    }
 
     if (error instanceof VeryfrontError && error.slug === "file-not-found") {
       logger.debug("Page not found", { slug, error: errorObj.message });
