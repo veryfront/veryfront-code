@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { retryWithBackoff } from "#veryfront/errors/error-handlers.ts";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import {
@@ -30,6 +31,14 @@ export interface RequestOptions {
 /** Default timeout for API requests (30 seconds) */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
+function logTimedOut(url: string, timeoutMs: number, attempt: number): void {
+  veryfrontApiClientLog.warn("Request timed out", {
+    url: url.replace(/token=[^&]+/, "token=***"),
+    timeoutMs,
+    attempt: attempt + 1,
+  });
+}
+
 export async function requestWithRetry(
   url: string,
   apiToken: string,
@@ -43,14 +52,9 @@ export async function requestWithRetry(
 
   // Note: We only trace the individual fetch attempts (HTTP_CLIENT_FETCH),
   // not the outer retry wrapper, to reduce span nesting and trace size.
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const result = await withSpan(
+  const result = await retryWithBackoff(
+    (signal, attempt) => {
+      return withSpan(
         SpanNames.HTTP_CLIENT_FETCH,
         async () => {
           const startTime = performance.now();
@@ -66,7 +70,7 @@ export async function requestWithRetry(
             method: options.method ?? "GET",
             headers,
             body: options.body,
-            signal: controller.signal,
+            signal,
           });
           const duration = performance.now() - startTime;
 
@@ -113,53 +117,41 @@ export async function requestWithRetry(
           "http.retry_attempt": attempt,
         },
       );
-
-      return result.data;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-
-      const isTimeout = lastError.name === "AbortError";
-      if (isTimeout) {
-        veryfrontApiClientLog.warn("Request timed out", {
-          url: url.replace(/token=[^&]+/, "token=***"),
-          timeoutMs,
-          attempt: attempt + 1,
-        });
-      }
-
-      if (error instanceof VeryfrontError && error.slug === "api-client-error") {
+    },
+    {
+      maxAttempts: maxRetries + 1,
+      initialDelay,
+      maxDelay,
+      timeoutMs,
+      shouldRetry: (error) => {
+        if (!(error instanceof VeryfrontError) || error.slug !== "api-client-error") return true;
         const status = error.status;
-        if (status && status >= 400 && status < 500 && status !== 429) {
-          throw error;
-        }
-      }
+        return !status || status < 400 || status >= 500 || status === 429;
+      },
+      onRetry: ({ error, attempt, delay, isTimeout }) => {
+        if (isTimeout) logTimedOut(url, timeoutMs, attempt);
 
-      if (attempt >= maxRetries) {
-        break;
-      }
+        recordApiRetry();
 
-      const delay = Math.min(initialDelay * 2 ** attempt, maxDelay);
+        veryfrontApiClientLog.warn("Request failed, retrying...", {
+          attempt: attempt + 1,
+          maxRetries,
+          delay,
+          error: error.message,
+          timeout: isTimeout,
+        });
+      },
+      wrapFinalError: (lastError, lastAttempt) => {
+        if (lastError.name === "AbortError") logTimedOut(url, timeoutMs, lastAttempt);
 
-      recordApiRetry();
+        return API_CLIENT_ERROR.create({
+          detail: `API request failed after ${maxRetries} retries: ${lastError.message}`,
+          cause: lastError,
+          context: { details: { originalError: lastError } },
+        });
+      },
+    },
+  );
 
-      veryfrontApiClientLog.warn("Request failed, retrying...", {
-        attempt: attempt + 1,
-        maxRetries,
-        delay,
-        error: lastError.message,
-        timeout: isTimeout,
-      });
-
-      // no cleanup needed: one-shot
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  throw API_CLIENT_ERROR.create({
-    detail: `API request failed after ${maxRetries} retries: ${lastError?.message}`,
-    cause: lastError ?? undefined,
-    context: { details: { originalError: lastError } },
-  });
+  return result.data;
 }

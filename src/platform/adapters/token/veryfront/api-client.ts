@@ -3,6 +3,7 @@ import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { type VeryfrontTokenConfig } from "./types.ts";
 import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { retryWithBackoff } from "#veryfront/errors/error-handlers.ts";
 
 const logger = baseLogger.component("token-storage-api-client");
 
@@ -190,72 +191,62 @@ export class TokenStorageApiClient {
     return TOKEN_STORAGE_ERROR.create({ detail: `${prefixMessage}: ${message}` });
   }
 
+  private logTimedOut(url: string, timeoutMs: number, attempt: number): void {
+    logger.warn("Request timed out", {
+      url: url.replace(/token=[^&]+/, "token=***"),
+      timeoutMs,
+      attempt: attempt + 1,
+    });
+  }
+
   private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
     const { maxRetries, initialDelay, maxDelay } = this.config.retry;
     const timeoutMs = this.config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    let lastError: Error | undefined;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
+    return retryWithBackoff(
+      (signal) => {
         const headers = new Headers(init.headers);
         injectContext(headers);
 
-        const response = await fetch(url, {
-          ...init,
-          headers,
-          signal: controller.signal,
-        });
+        return fetch(url, { ...init, headers, signal }).then((response) => {
+          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+            return response;
+          }
 
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          if (!response.ok && (response.status >= 500 || response.status === 429)) {
+            throw TOKEN_STORAGE_ERROR.create({
+              detail: `Server error: ${response.status}`,
+              status: response.status,
+            });
+          }
+
           return response;
-        }
-
-        if (!response.ok && (response.status >= 500 || response.status === 429)) {
-          throw TOKEN_STORAGE_ERROR.create({
-            detail: `Server error: ${response.status}`,
-            status: response.status,
-          });
-        }
-
-        return response;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        const isTimeout = error instanceof Error && error.name === "AbortError";
-        if (isTimeout) {
-          logger.warn("Request timed out", {
-            url: url.replace(/token=[^&]+/, "token=***"),
-            timeoutMs,
-            attempt: attempt + 1,
-          });
-        }
-
-        if (attempt >= maxRetries) {
-          break;
-        }
-
-        const delay = Math.min(initialDelay * Math.pow(2, attempt), maxDelay);
-
-        logger.warn("Request failed, retrying...", {
-          attempt: attempt + 1,
-          maxRetries,
-          delay,
-          error: lastError.message,
-          timeout: isTimeout,
         });
+      },
+      {
+        maxAttempts: maxRetries + 1,
+        initialDelay,
+        maxDelay,
+        timeoutMs,
+        onRetry: ({ error, attempt, delay, isTimeout }) => {
+          if (isTimeout) this.logTimedOut(url, timeoutMs, attempt);
 
-        // no cleanup needed: one-shot
-        await new Promise<void>((resolve) => setTimeout(resolve, delay));
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    }
+          logger.warn("Request failed, retrying...", {
+            attempt: attempt + 1,
+            maxRetries,
+            delay,
+            error: error.message,
+            timeout: isTimeout,
+          });
+        },
+        wrapFinalError: (lastError, lastAttempt) => {
+          if (lastError.name === "AbortError") this.logTimedOut(url, timeoutMs, lastAttempt);
 
-    throw TOKEN_STORAGE_ERROR.create({
-      detail: `Request failed after ${maxRetries} retries: ${lastError?.message}`,
-    });
+          return TOKEN_STORAGE_ERROR.create({
+            detail: `Request failed after ${maxRetries} retries: ${lastError.message}`,
+          });
+        },
+      },
+    );
   }
 }

@@ -1,17 +1,13 @@
 import { TIMEOUT_ERROR } from "#veryfront/errors";
-import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { RetryConfig, WorkflowNode } from "../../types.ts";
 import { parseDuration, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
+import { calculateRetryDelay, isRetryableWorkflowError } from "../retry-policy.ts";
 
-const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
-const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
-const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-const RETRYABLE_CODE_RE = /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
 
 interface CompositeNodeExecutionInput {
   node: WorkflowNode;
@@ -168,22 +164,5 @@ function withAttempt(result: NodeExecutionResult, attempt: number): NodeExecutio
 
 function isRetryableError(error: Error, config: RetryConfig | undefined): boolean {
   if (nonCooperativeErrors.has(error)) return false;
-  if (config?.retryIf) return config.retryIf(error);
-  if (isVeryfrontError(error)) return RETRYABLE_STATUSES.has(error.status);
-
-  const code = (error as { code?: unknown }).code;
-  const subject = typeof code === "string" ? code : error.message;
-  return RETRYABLE_CODE_RE.test(subject);
-}
-
-function calculateRetryDelay(attempt: number, config: RetryConfig | undefined): number {
-  const initialDelay = config?.initialDelay ?? DEFAULT_RETRY_INITIAL_DELAY_MS;
-  const maxDelay = config?.maxDelay ?? DEFAULT_RETRY_MAX_DELAY_MS;
-
-  let baseDelay = initialDelay;
-  if (config?.backoff === "exponential") baseDelay = initialDelay * Math.pow(2, attempt - 1);
-  else if (config?.backoff === "linear") baseDelay = initialDelay * attempt;
-
-  const jitter = baseDelay * 0.1 * (Math.random() * 2 - 1);
-  return Math.floor(Math.min(baseDelay + jitter, maxDelay));
+  return isRetryableWorkflowError(error, config);
 }
