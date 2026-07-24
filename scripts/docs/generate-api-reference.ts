@@ -86,7 +86,7 @@ interface TsType {
   array?: TsType;
   fnOrConstructor?: {
     constructor: boolean;
-    params: Array<{ name: string; optional?: boolean; tsType?: TsType }>;
+    params: FunctionParam[];
     tsType: TsType;
     typeParams?: unknown[];
   };
@@ -117,7 +117,9 @@ interface TsType {
 
 interface FunctionParam {
   kind: string;
-  name: string;
+  name?: string;
+  arg?: FunctionParam;
+  left?: FunctionParam;
   optional?: boolean;
   tsType?: TsType;
 }
@@ -815,7 +817,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/server": "Server runtime helpers.",
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
-  "veryfront/ui": "UI primitives - the base layer for veryfront/chat components.",
+  "veryfront/ui":
+    "UI primitives - the base layer for veryfront/chat components.",
   "veryfront/utils": "Runtime utilities.",
   "veryfront/workflow": "Workflows.",
 };
@@ -983,8 +986,20 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
   return { description, moduleName, examples };
 }
 
+function renderInlineJSDocLinks(text: string): string {
+  return text.replace(
+    /\{@(?:link|linkcode|linkplain)\s+([^\s|}]+)(?:\s*(?:\|\s*|\s+)([^}]+))?\}/g,
+    (_match, target: string, label: string | undefined) => {
+      const display = label?.trim() || target;
+      return /^https?:\/\//i.test(target)
+        ? `[${display}](${target})`
+        : `\`${display.replaceAll("`", "")}\``;
+    },
+  );
+}
+
 function normalizePublicDocText(text: string): string {
-  return text
+  return renderInlineJSDocLinks(text)
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
@@ -1270,13 +1285,51 @@ function normalizeProperties(properties: unknown): InterfaceProperty[] {
 
 function normalizeParams(params: unknown): FunctionParam[] {
   if (!Array.isArray(params)) return [];
-  return params.map((param) => {
-    const record = asRecord(param) ?? {};
-    return {
-      ...record,
-      tsType: normalizeTsType(record.tsType),
-    } as FunctionParam;
-  });
+  return params.map(normalizeParam);
+}
+
+function normalizeParam(param: unknown): FunctionParam {
+  const record = asRecord(param) ?? {};
+  const kind = typeof record.kind === "string" ? record.kind : "";
+  const arg = asRecord(record.arg) ? normalizeParam(record.arg) : undefined;
+  const left = asRecord(record.left) ? normalizeParam(record.left) : undefined;
+  const binding = kind === "rest" ? arg : kind === "assign" ? left : undefined;
+  const name = typeof record.name === "string" ? record.name : binding?.name;
+  const optional = typeof record.optional === "boolean"
+    ? record.optional
+    : binding?.optional;
+  const tsType = normalizeTsType(record.tsType) ?? binding?.tsType;
+
+  return {
+    ...record,
+    kind,
+    ...(arg ? { arg } : {}),
+    ...(left ? { left } : {}),
+    ...(name !== undefined ? { name } : {}),
+    ...(optional !== undefined ? { optional } : {}),
+    tsType,
+  } as FunctionParam;
+}
+
+function getFunctionParamMetadata(param: FunctionParam): {
+  name?: string;
+  optional?: boolean;
+  tsType?: TsType;
+} {
+  const binding = param.kind === "rest"
+    ? param.arg
+    : param.kind === "assign"
+    ? param.left
+    : undefined;
+  const nested = binding ? getFunctionParamMetadata(binding) : {};
+
+  return {
+    name: typeof param.name === "string" ? param.name : nested.name,
+    optional: typeof param.optional === "boolean"
+      ? param.optional
+      : nested.optional,
+    tsType: param.tsType ?? nested.tsType,
+  };
 }
 
 function normalizeTsType(type: unknown): TsType | undefined {
@@ -1354,10 +1407,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 // 4. Categorize doc nodes with source-owned descriptions
 // ---------------------------------------------------------------------------
 
-function categorizeNodes(
-  nodes: DocNode[],
-  importPath: string,
-): CategorizedExports {
+function categorizeNodes(nodes: DocNode[]): CategorizedExports {
   const result: CategorizedExports = {
     functions: [],
     types: [],
@@ -1541,8 +1591,9 @@ function renderType(t: TsType | undefined): string {
       const fn = t.fnOrConstructor;
       if (!fn) return t.repr || "Function";
       const params = fn.params.map((p) => {
-        const opt = p.optional ? "?" : "";
-        return `${p.name}${opt}: ${renderType(p.tsType)}`;
+        const metadata = getFunctionParamMetadata(p);
+        const opt = metadata.optional && p.kind !== "rest" ? "?" : "";
+        return `${renderParamName(p)}${opt}: ${renderType(metadata.tsType)}`;
       }).join(", ");
       return `(${params}) => ${renderType(fn.tsType)}`;
     }
@@ -2070,10 +2121,16 @@ function oneLineDoc(doc: string): string {
     lines.push(line);
   }
 
-  return lines.join(" ")
+  return renderInlineJSDocLinks(lines.join(" "))
     .replace(/[\u2014\u2013]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function renderParamName(param: FunctionParam): string {
+  const name = getFunctionParamMetadata(param).name;
+  if (!name) return "";
+  return param.kind === "rest" ? `...${name}` : name;
 }
 
 function renderPropertyTable(
@@ -2116,7 +2173,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
       }
 
       const fd = node.functionDef;
-      const paramStr = fd.params.map((p) => p.name).join(", ");
+      const paramStr = fd.params.map(renderParamName).join(", ");
       lines.push(`### \`${fnName}(${paramStr})\``);
       lines.push("");
 
@@ -2171,7 +2228,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
             hasContent = true;
           }
 
-          const paramNames = method.params.map((p) => p.name).join(", ");
+          const paramNames = method.params.map(renderParamName).join(", ");
           lines.push(
             `### \`${
               typeName.charAt(0).toLowerCase() + typeName.slice(1)
@@ -2242,7 +2299,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           }
 
           const fd = method.functionDef;
-          const paramNames = fd.params.map((p) => p.name).join(", ");
+          const paramNames = fd.params.map(renderParamName).join(", ");
           const instanceName = typeName.charAt(0).toLowerCase() +
             typeName.slice(1);
           const callTarget = method.isStatic ? typeName : instanceName;
@@ -2729,7 +2786,7 @@ async function main() {
       }
       nodes = await getDenoDoc(entry.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(nodes));
-      exports = categorizeNodes(nodes, entry.importPath);
+      exports = categorizeNodes(nodes);
     }
 
     indexData.push({ entry, jsdoc });
@@ -2746,7 +2803,7 @@ async function main() {
       }
       const deepNodes = await getDenoDoc(deep.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(deepNodes));
-      const deepExports = categorizeNodes(deepNodes, deep.importPath);
+      const deepExports = categorizeNodes(deepNodes);
       deepRenders.push({ deep, jsdoc: deepJsdoc, exports: deepExports });
     }
 
