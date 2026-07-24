@@ -118,12 +118,13 @@ export function reduceStreamSignal(
       break;
     case "reasoning_content": {
       closeText();
-      if (state.activeReasoningId !== signal.event.id) {
+      const { id, delta } = signal.event;
+      if (state.activeReasoningId !== id) {
         closeReasoning();
-        state.activeReasoningId = signal.event.id;
+        state.activeReasoningId = id;
         emit({
           class: "semantic",
-          event: { type: "reasoning_start", id: signal.event.id },
+          event: { type: "reasoning_start", id },
         });
         emit({
           class: "diagnostic",
@@ -131,14 +132,15 @@ export function reduceStreamSignal(
         });
       }
       const reasoning = [...state.snapshot.reasoning];
-      const index = reasoning.findIndex((part) => part.id === signal.event.id);
-      const prior = index >= 0 ? reasoning[index] : { id: signal.event.id, text: "" };
-      const updated = { ...prior, text: prior.text + signal.event.delta };
+      const index = reasoning.findIndex((part) => part.id === id);
+      const prior = (index >= 0 ? reasoning[index] : undefined) ??
+        { id, text: "" };
+      const updated = { ...prior, text: prior.text + delta };
       if (index >= 0) reasoning[index] = updated;
       else reasoning.push(updated);
       state.snapshot = { ...state.snapshot, reasoning };
       emit({ class: "semantic", event: signal.event });
-      if (signal.event.delta.length > 0) markProgress();
+      if (delta.length > 0) markProgress();
       break;
     }
     case "reasoning_end":
