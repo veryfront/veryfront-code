@@ -775,12 +775,10 @@ jobs:
             git push -u origin "${BRANCH}" || git push -u origin "${BRANCH}" --force-with-lease
 
             export GH_TOKEN="${HOMEBREW_TAP_TOKEN}"
-            PR_NUMBER=$(gh pr list \
-              --repo veryfront/homebrew-tap \
-              --state open \
-              --head "${BRANCH}" \
-              --base main \
-              --json number \
+            PR_NUMBER=$(gh api repos/veryfront/homebrew-tap/pulls \
+              -f state=open \
+              -f head="veryfront:${BRANCH}" \
+              -f base=main \
               --jq '.[0].number // empty')
 
             if [ -z "${PR_NUMBER}" ]; then
