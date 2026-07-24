@@ -342,9 +342,23 @@ function refreshStalePageData(
 }
 
 /**
+ * Only http(s) and root-relative destinations may be encoded for the client to
+ * follow. The client follows the destination with `window.location.href`, which
+ * would EXECUTE a `javascript:`/`data:` URL — unlike the full-page 302 path where
+ * the browser ignores such a Location. Protocol-relative `//host` is rejected too
+ * (it is easy to smuggle past a naive "starts with /" check). Blocked
+ * destinations fall through to normal error handling instead of being followed.
+ */
+function isFollowableRedirect(destination: string): boolean {
+  if (destination.startsWith("/") && !destination.startsWith("//")) return true;
+  return /^https?:\/\//i.test(destination);
+}
+
+/**
  * A redirect() from getServerData is thrown up the pipeline as a VeryfrontError
  * whose `context.redirect` holds the destination (mirrors extractRedirectLocation
- * in the SSR service). Returns null for any other error.
+ * in the SSR service). Returns null for any other error, or for a redirect whose
+ * destination is not safe to hand to the client to follow.
  */
 function extractRedirectFromError(
   error: unknown,
@@ -354,6 +368,7 @@ function extractRedirectFromError(
   })?.context;
   const redirect = context?.redirect;
   if (!redirect || typeof redirect.destination !== "string") return null;
+  if (!isFollowableRedirect(redirect.destination)) return null;
   return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 
