@@ -40,17 +40,9 @@ function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Result returned from safe JSON parse. */
-export type SafeJsonParseResult = { ok: true; value: unknown } | { ok: false; error: Error };
-
-/** Parse JSON safely without throwing. */
-export function safeJsonParse(value: string): SafeJsonParseResult {
-  try {
-    return { ok: true, value: JSON.parse(value) };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
-  }
-}
+import { safeJsonParse } from "../utils/json.ts";
+export { safeJsonParse };
+export type { SafeJsonParseResult } from "../utils/json.ts";
 
 function parseErrorJson(value: string): unknown | null {
   const parsed = safeJsonParse(value);
