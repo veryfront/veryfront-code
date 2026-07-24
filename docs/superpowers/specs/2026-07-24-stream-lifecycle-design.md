@@ -359,7 +359,10 @@ awaiting_first_progress
 ```
 
 Terminal phases are absorbing. No semantic frame is accepted after completion,
-failure, or cancellation.
+failure, or cancellation. At the version 1 `RuntimeStreamPart` boundary one
+provider attempt contains exactly one step, so the first step-finish event is
+terminal; message-start and step-start remain in the vocabulary for future
+multi-step Provider Adapters.
 
 Each local tool call follows this state machine inside one provider stream
 attempt:

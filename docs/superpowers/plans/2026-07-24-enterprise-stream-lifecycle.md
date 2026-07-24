@@ -26,6 +26,7 @@
 - Keep internal imports on `#veryfront/*` or relative paths inside the same module. Do not add a package export for the lifecycle module during these phases.
 - Do not begin a later gate until every command in the current gate passes and every shadow divergence has a named classification.
 - A lifecycle run covers one provider attempt. Local tool execution, finalization fallback, and external child progress are separate agent-loop event sources.
+- The `RuntimeStreamPart` boundary emits exactly one `finish` per provider attempt, so the reducer treats the first `step_finish` as terminal. `message_start` and `step_start` remain accepted for forward compatibility, and multi-step provider attempts are out of scope until a Provider Adapter emits intermediate step boundaries. This is a deliberate narrowing of the design's step vocabulary for version 1.
 - Gate 4 adds version 2 projection capability and fixtures but does not enable production version 2 writes. The current hosted contract exposes UI chunks, not lifecycle frames, and cannot perform a correct cutover by changing `processStream()` alone.
 - Phase 5 source-tagged agent-loop delivery, backend idempotency, persistent outbox, resumable cursor, cross-process recovery, retention enforcement, compaction, and storage measurement require a separate approved design and plan.
 
@@ -41,6 +42,9 @@ Create the lifecycle core:
 - `src/agent/streaming/lifecycle/tool-input.ts`: strict local tool-input parsing that distinguishes malformed input from a valid empty object.
 - `src/agent/streaming/lifecycle/deadlines.ts`: provider-wait accounting, phase wake-ups, status cadence, and absolute attempt deadline.
 - `src/agent/streaming/lifecycle/runner.ts`: lazy single-consumer provider iteration, cancellation, cleanup, frame sequencing, and exactly-once outcome settlement.
+- `src/agent/streaming/lifecycle/cancellation.ts`: source-tagged cancellation coordinator.
+- `src/agent/streaming/lifecycle/diagnostics.ts`: diagnostic policy gating and fail-open sink.
+- `src/agent/streaming/lifecycle/watchdog-compat-adapter.ts`: compatibility chunk-to-lifecycle-activity mapping for the exported watchdog (Gate 3).
 - `src/agent/streaming/lifecycle/runtime-provider-adapter.ts`: `RuntimeStreamPart` normalization only.
 - `src/agent/streaming/lifecycle/live-adapter.ts`: canonical frame to existing `ChatStreamEvent` mapping.
 - `src/agent/streaming/lifecycle/testing.ts`: manual monotonic clock and scripted Provider Adapter for tests only.
@@ -62,6 +66,8 @@ Modify existing owners only at their migration gate:
 - `src/agent/runtime/chat-stream-handler.ts`
 - `src/agent/runtime/chat-stream-handler.test.ts`
 - `src/agent/runtime/index.ts`
+- `src/agent/runtime/runtime-tool-types.ts`
+- `src/chat/protocol.ts`
 - `src/provider/runtime-loader/tool-input-status.ts`
 - `src/provider/runtime-loader.test.ts`
 - `extensions/ext-llm-openai/src/openai-provider.ts`
@@ -72,14 +78,11 @@ Modify existing owners only at their migration gate:
 - `src/agent/streaming/stream-outcome.ts`
 - `src/agent/hosted/stream-finalization.ts`
 - `src/agent/hosted/stream-finalization.test.ts`
-- `src/agent/conversation/run-events.ts`
-- `src/agent/conversation/run-events.test.ts`
+- `src/agent/hosted/chat-execution-runtime.ts`
+- `src/agent/hosted/chat-execution-runtime.test.ts`
 - `src/agent/conversation/run-event-preparation.ts`
 - `src/agent/conversation/run-event-preparation.test.ts`
 - `src/agent/conversation/durable-contracts.ts`
-- `src/agent/conversation/durable.ts`
-- `src/agent/ag-ui/browser-encoder.ts`
-- `src/agent/ag-ui/browser-encoder.test.ts`
 - `src/observability/metrics/types.ts`
 - `src/observability/instruments/instruments-factory.ts`
 - `src/observability/metrics/manager.ts`
@@ -170,8 +173,8 @@ export type StreamCancellationSource =
   | "consumer_stopped";
 
 export interface StreamUsage {
-  promptTokens: number;
-  completionTokens: number;
+  inputTokens: number;
+  outputTokens: number;
   totalTokens: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
@@ -519,23 +522,6 @@ describe("stream lifecycle reducer", () => {
     }
   });
 
-  it("records reducer-approved tool progress in the canonical snapshot", () => {
-    let state = createInitialReducerState();
-    state = reduceStreamSignal(state, protocol({
-      type: "tool_input_start",
-      toolCallId: "t1",
-      toolName: "create_file",
-    }), 1).state;
-    const reduced = reduceStreamSignal(state, protocol({
-      type: "tool_input_content",
-      toolCallId: "t1",
-      delta: '{"path":"a.md"}',
-    }), 2);
-
-    assertEquals(reduced.semanticProgress, true);
-    assertEquals(reduced.state.snapshot.hasSemanticProgress, true);
-    assertEquals(reduced.state.snapshot.phase, "awaiting_tool_input");
-  });
 });
 ```
 
@@ -585,7 +571,7 @@ export function createInitialReducerState(): StreamReducerState {
       reasoning: [],
       tools: [],
       finishReason: null,
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       hasStreamOutput: false,
       hasSemanticProgress: false,
     },
@@ -817,6 +803,24 @@ git commit -m "Make balanced stream content a reducer invariant" \
 Add these exact cases to `reducer.test.ts`:
 
 ```ts
+it("records reducer-approved tool progress in the canonical snapshot", () => {
+  let state = createInitialReducerState();
+  state = reduceStreamSignal(state, protocol({
+    type: "tool_input_start",
+    toolCallId: "t1",
+    toolName: "create_file",
+  }), 1).state;
+  const reduced = reduceStreamSignal(state, protocol({
+    type: "tool_input_content",
+    toolCallId: "t1",
+    delta: '{"path":"a.md"}',
+  }), 2);
+
+  assertEquals(reduced.semanticProgress, true);
+  assertEquals(reduced.state.snapshot.hasSemanticProgress, true);
+  assertEquals(reduced.state.snapshot.phase, "awaiting_tool_input");
+});
+
 it("keeps parallel tool inputs independent and hands off only valid local calls", () => {
   let state = createInitialReducerState();
   for (const event of [
@@ -1873,6 +1877,10 @@ import {
   createDefaultDiagnosticSink,
   reportLifecycleDiagnostic,
 } from "./diagnostics.ts";
+import {
+  hasCompletedStepSignal,
+  isLateProviderBodyReadError,
+} from "#veryfront/agent/streaming/stream-outcome.ts";
 
 export function runStreamLifecycle<TProviderPart>(
   input: StreamLifecycleInput<TProviderPart>,
@@ -2538,6 +2546,8 @@ Status cadence follows four exact rules:
 5. A due status tick.
 
 This makes the absolute attempt deadline win every tie with a cached provider part, while a provider read wins a tie with a provider-idle deadline. The wait promise uses the minimum of the attempt deadline, active provider deadline, and next status due time. It never calls `next()`.
+
+The runner owns one dispose controller created alongside the outcome deferred: `const disposeController = new AbortController()` with `const disposeSignal = disposeController.signal`. Abort it in the generator's `finally` block after `cleanup()` and from `deadlines.dispose()`, so no clock wait outlives the run. Construct the controller once per consumption: `const deadlines = createStreamDeadlineController({ clock: policy.clock, policy, attemptDeadlineMs, disposeSignal })`.
 
 Start the attempt wait once on first frame consumption. Its callback settles and aborts independently of generator demand, so it still fires while the consumer holds a yielded frame:
 
@@ -3343,7 +3353,7 @@ git commit -m "Measure lifecycle parity without changing stream behavior" \
 
 - [ ] **Step 1: Lock current SSE with a golden Adapter test**
 
-Use the existing `createSSECollector()` fixture and a canonical frame sequence containing text, reasoning, a local tool call, provider-executed output, usage, status telemetry, and finish. Assert the Adapter returns these current Data Stream Protocol shapes:
+Use the existing `createSSECollector()` fixture and a canonical frame sequence containing text, a local tool call, and status telemetry. Assert the Adapter returns these current Data Stream Protocol shapes:
 
 ```ts
 assertEquals(events, [
@@ -3358,6 +3368,8 @@ assertEquals(events, [
 ```
 
 Usage frames update callbacks and final state but do not create a live data event. Diagnostic frames never reach the Live Adapter.
+
+Add companion cases asserting reasoning frames map to `reasoning-start/delta/end`, a provider-executed result maps to `tool-output-available` with `providerExecuted: true`, and usage plus diagnostic frames encode to no events.
 
 - [ ] **Step 2: Run the Adapter test and verify it fails**
 
@@ -3791,7 +3803,7 @@ function snapshot(
     reasoning: [],
     tools: [],
     finishReason,
-    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     hasStreamOutput,
     hasSemanticProgress: hasStreamOutput || finishReason !== null,
   };
@@ -3872,6 +3884,7 @@ export interface ResolveStreamOutcomeInput {
   snapshot: StreamSnapshot;
   elapsedMs: number;
   cancellation?: StreamCancellationSource;
+  lifecycleError?: StreamLifecycleError;
   thrownError?: unknown;
   providerError?: StreamProviderError;
 }
@@ -3883,6 +3896,17 @@ export function resolveStreamOutcome(input: ResolveStreamOutcomeInput): StreamOu
       status: "cancelled",
       source: input.cancellation,
       publicMessage: "Stream was cancelled",
+      snapshot,
+      usage: snapshot.usage,
+      elapsedMs: input.elapsedMs,
+      phase: snapshot.phase,
+    };
+  }
+  if (input.lifecycleError) {
+    const snapshot = { ...input.snapshot, phase: "failed" as const };
+    return {
+      status: "failed",
+      error: input.lifecycleError,
       snapshot,
       usage: snapshot.usage,
       elapsedMs: input.elapsedMs,
@@ -4023,7 +4047,7 @@ Extend the matrix tests to assert that a known provider error yields `error.code
 
 - [ ] **Step 5: Make the runner and hosted finalizer consume the resolver**
 
-Delete runner-private terminal classification and call `resolveStreamOutcome()` from every settlement path. In `stream-finalization.ts`, replace `hasFinalStepCompletionSignal()` and `shouldFailStreamError()` with a compatibility snapshot passed to the same resolver:
+Delete runner-private terminal classification and call `resolveStreamOutcome()` from every settlement path. Deadline and reducer terminal failures pass their recorded `StreamLifecycleError` through `lifecycleError`; the resolver preserves that error's recorded phase and never downgrades it to a generic provider error. In `stream-finalization.ts`, replace `hasFinalStepCompletionSignal()` and `shouldFailStreamError()` with a compatibility snapshot passed to the same resolver:
 
 ```ts
 function readHostedFinishReason(finalStep: unknown): StreamSnapshot["finishReason"] {
@@ -4051,7 +4075,7 @@ function createHostedCompatibilitySnapshot(input: {
     reasoning: [],
     tools: [],
     finishReason: input.finishReason,
-    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     hasStreamOutput: input.hasOutput,
     hasSemanticProgress: input.hasOutput || input.finishReason !== null,
   };
@@ -4161,7 +4185,7 @@ git commit -m "Interpret provider stream endings in one place" \
 
 - [ ] **Step 1: Change tests to the approved hard-limit semantics**
 
-Keep tests for exported state shape, `AbortError`, `lastTimeoutState`, injected timer functions, and `dispose()`. Replace the test that allows configured long-running tools to run forever with:
+Keep tests for exported state shape, `AbortError`, `lastTimeoutState`, injected timer functions, and `dispose()`. The watchdog's existing defaults — `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` (120,000 ms) and `DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS` (300,000 ms) — remain its compatibility defaults; this task changes who owns the timer, not the configured values, so long-running tools keep their current 300-second budget unless callers configure otherwise. Replace the test that allows configured long-running tools to run forever with:
 
 ```ts
 it("keeps an absolute limit for configured long-running tools", () => {
