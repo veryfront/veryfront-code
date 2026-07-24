@@ -160,6 +160,36 @@ describe("cli/templates", () => {
     assertEquals(agent.includes("suggestions:"), true);
   });
 
+  it("keeps docs-agent consumer TypeScript configuration clean", async () => {
+    const files = await getTemplate("docs-agent");
+    assertExists(files);
+
+    const extensionImportOffenders = files
+      .filter((file) => file.path.endsWith(".ts") || file.path.endsWith(".tsx"))
+      .filter((file) => /from\s+["'][^"']+\.ts["']/.test(file.content))
+      .map((file) => file.path);
+
+    assertEquals(
+      extensionImportOffenders,
+      [],
+      `docs-agent local imports must not require allowImportingTsExtensions: ${
+        extensionImportOffenders.join(", ")
+      }`,
+    );
+
+    const globalTypes = files.find((file) => file.path === "globals.d.ts");
+    assertExists(globalTypes, "docs-agent should declare stylesheet imports for consumer tsc");
+    assertEquals(globalTypes.content.includes('declare module "*.css";'), true);
+
+    const layout = files.find((file) => file.path === "app/layout.tsx");
+    assertExists(layout);
+    assertEquals(
+      layout.content.includes("onValueChange={(value: string) =>"),
+      true,
+      "docs-agent should type the Tabs callback against published consumer declarations",
+    );
+  });
+
   it("integration token store fails closed instead of silently using memory in production", async () => {
     const tokenStorePath = new URL(
       "./integrations/_base/files/lib/token-store.ts",

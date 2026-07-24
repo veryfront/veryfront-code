@@ -36,7 +36,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }):
                 <div className="flex flex-1 justify-center">
                   <Tabs
                     value={activeTab}
-                    onValueChange={(value) => router.push(value === "uploads" ? "/uploads" : "/")}
+                    onValueChange={(value: string) =>
+                      router.push(value === "uploads" ? "/uploads" : "/")}
                   >
                     <TabsItem value="chat">Chat</TabsItem>
                     <TabsItem value="uploads">Uploads</TabsItem>

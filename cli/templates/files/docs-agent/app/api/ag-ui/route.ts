@@ -1,5 +1,5 @@
 import { createAgUiHandler } from "veryfront/agent";
-import { store } from "../../../store.ts";
+import { store } from "../../../store";
 
 export const POST = createAgUiHandler("rag", {
   beforeStream: async ({ lastUserText }) => {
