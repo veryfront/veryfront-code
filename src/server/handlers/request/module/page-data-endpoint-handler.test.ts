@@ -212,6 +212,34 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(await first.text(), await second.text());
   });
 
+  it("encodes a getServerData redirect() as a 200 payload instead of a 500", async () => {
+    // A redirect() from getServerData reaches the page-data endpoint as a thrown
+    // VeryfrontError carrying context.redirect. It must be encoded as a 200
+    // { redirect } payload so the SPA client can follow it — not misclassified as
+    // an internal error (500), which aborts client-side navigation.
+    setRendererInitializer(
+      createInitializer(() =>
+        Promise.reject(
+          Object.assign(new Error("Redirect to /target"), {
+            slug: "render-error",
+            context: { redirect: { destination: "/target", permanent: false } },
+          }),
+        )
+      ),
+    );
+
+    const ctx = makeCtx();
+    const res = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+      ctx,
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), {
+      redirect: { destination: "/target", permanent: false },
+    });
+  });
+
   it("keeps speculative prefetch work and cache state out of foreground page data", async () => {
     const producers: string[] = [];
     const prefetchGate = Promise.withResolvers<void>();
