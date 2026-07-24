@@ -41,10 +41,10 @@ export async function buildExtensionPackages(
 
     console.log(`📦 Building ${spec.packageName}...`);
     await build({
-      entryPoints: [{
-        name: ".",
-        path: `${options.rootDir}/${spec.entryPoint}`,
-      }],
+      entryPoints: spec.entryPoints.map((entryPoint) => ({
+        name: entryPoint.name,
+        path: `${options.rootDir}/${entryPoint.path}`,
+      })),
       outDir,
       test: false,
       scriptModule: false,

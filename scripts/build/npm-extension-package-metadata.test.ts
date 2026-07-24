@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   bareImportPackageNames,
@@ -102,10 +102,10 @@ describe("createExtensionPackageSpec", () => {
 
     assertEquals(spec.packageName, "@veryfront/ext-sandbox-shell-tools");
     assertEquals(spec.packageDirectoryName, "ext-sandbox-shell-tools");
-    assertEquals(
-      spec.entryPoint,
-      "extensions/ext-sandbox-shell-tools/src/index.ts",
-    );
+    assertEquals(spec.entryPoints, [{
+      name: ".",
+      path: "extensions/ext-sandbox-shell-tools/src/index.ts",
+    }]);
     assertEquals(spec.manifestDependencies, {
       "bash-tool": "1.3.16",
       "just-bash": "2.14.5",
@@ -138,6 +138,103 @@ describe("createExtensionPackageSpec", () => {
         },
       ],
     );
+  });
+
+  it("creates deterministic npm entry points for explicit extension subpaths", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-parser-babel",
+      exports: {
+        "./parser-only": "./src/parser-only.ts",
+        ".": "./src/index.ts",
+      },
+      veryfront: {
+        extension: true,
+        contracts: { provides: ["CodeParser"] },
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-parser-babel/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(spec.entryPoints, [
+      {
+        name: ".",
+        path: "extensions/ext-parser-babel/src/index.ts",
+      },
+      {
+        name: "./parser-only",
+        path: "extensions/ext-parser-babel/src/parser-only.ts",
+      },
+    ]);
+  });
+
+  it("rejects escaping, wildcard, and ambiguous extension entry points", () => {
+    const invalidExports: ExtensionManifest["exports"][] = [
+      "../outside.ts",
+      "./../outside.ts",
+      {
+        ".": "./src/index.ts",
+        "./../outside": "./src/outside.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./parser/*": "./src/*.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./parser-only": "./src\\parser-only.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./parser-only": "./src/../parser-only.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./%2e%2e/outside": "./src/outside.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./parser-only": "./src/%2E%2E/outside.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./node_modules/parser": "./src/parser.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./parser-only": "./src/node_modules/parser.ts",
+      },
+      {
+        ".": "./src/index.ts",
+        "./parser-only": "./src/node%5fmodules/parser.ts",
+      },
+    ];
+
+    for (const exports of invalidExports) {
+      assertThrows(
+        () =>
+          createExtensionPackageSpec({
+            manifestPath: "extensions/ext-parser-babel/deno.json",
+            manifest: {
+              name: "@veryfront/ext-parser-babel",
+              exports,
+              veryfront: { extension: true },
+            },
+            rootConfig,
+            rootDir: "/repo",
+            version: "0.1.985",
+            license: "Apache-2.0",
+          }),
+        Error,
+        "invalid package export",
+      );
+    }
   });
 
   it("externalizes public Veryfront contracts but not non-public helper imports", () => {
@@ -340,5 +437,59 @@ describe("normalizeExtensionPackageJson", () => {
     assertEquals(normalized.veryfront, manifest.veryfront);
     assertEquals("_generatedBy" in normalized, false);
     assertEquals("devDependencies" in normalized, false);
+  });
+
+  it("publishes declaration paths for every extension subpath", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-parser-babel",
+      exports: {
+        ".": "./src/index.ts",
+        "./parser-only": "./src/parser-only.ts",
+      },
+      veryfront: {
+        extension: true,
+        contracts: { provides: ["CodeParser"] },
+      },
+    };
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-parser-babel/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    const normalized = normalizeExtensionPackageJson({
+      spec,
+      version: "0.1.985",
+      packageJson: {
+        name: "@veryfront/ext-parser-babel",
+        module: "./esm/extensions/ext-parser-babel/src/index.js",
+        exports: {
+          ".": {
+            import: "./esm/extensions/ext-parser-babel/src/index.js",
+          },
+          "./parser-only": {
+            import: "./esm/extensions/ext-parser-babel/src/parser-only.js",
+          },
+        },
+      },
+    });
+
+    assertEquals(
+      normalized.types,
+      "./esm/extensions/ext-parser-babel/src/index.d.ts",
+    );
+    assertEquals(normalized.exports, {
+      ".": {
+        import: "./esm/extensions/ext-parser-babel/src/index.js",
+        types: "./esm/extensions/ext-parser-babel/src/index.d.ts",
+      },
+      "./parser-only": {
+        import: "./esm/extensions/ext-parser-babel/src/parser-only.js",
+        types: "./esm/extensions/ext-parser-babel/src/parser-only.d.ts",
+      },
+    });
   });
 });
