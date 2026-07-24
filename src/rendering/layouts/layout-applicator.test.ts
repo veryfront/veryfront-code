@@ -245,7 +245,7 @@ describe("LayoutApplicator helpers", () => {
     });
   });
 
-  it("publishes canonical frontmatter through the framework PageContext", async () => {
+  it("publishes detached parsed frontmatter through the framework PageContext", async () => {
     __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
 
     const applicator = new LayoutApplicator({
@@ -314,8 +314,9 @@ describe("LayoutApplicator helpers", () => {
     ).pageContext;
 
     assertEquals(pageContext.frontmatter, {
-      tags: ["release"],
-      date: "2026-07-24T08:30:00.000Z",
+      tags: "release",
+      date: new Date("2026-07-24T08:30:00.000Z"),
+      nested: { unsafe: true },
     });
   });
 
