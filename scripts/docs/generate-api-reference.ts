@@ -985,18 +985,23 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 }
 
 function normalizePublicDocText(text: string): string {
-  return text
-    .replace(
-      /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
-      (_match, rawTarget: string) => {
-        const target = rawTarget.trim();
-        const pipeIndex = target.indexOf("|");
-        const display = pipeIndex >= 0
-          ? target.slice(pipeIndex + 1).trim()
-          : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
-        return `\`${display.replace(/`/g, "\\`")}\``;
-      },
-    )
+  const withoutInlineJsDocLinks = text.replace(
+    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
+    (_match, rawTarget: string) => {
+      const target = rawTarget.trim();
+      const pipeIndex = target.indexOf("|");
+      const display = pipeIndex >= 0
+        ? target.slice(pipeIndex + 1).trim()
+        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
+      return `\`${display.replace(/`/g, "\\`")}\``;
+    },
+  );
+
+  return withoutInlineJsDocLinks
+    .replace(/`[^`]*`|[<>]/g, (token) => {
+      if (token.startsWith("`")) return token;
+      return token === "<" ? "&lt;" : "&gt;";
+    })
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\s+/g, " ")
     .trim();

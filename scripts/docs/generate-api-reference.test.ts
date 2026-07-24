@@ -1,5 +1,6 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
 describe("generate-api-reference", () => {
   it("documents alias re-exports from Deno doc reference declarations", async () => {
@@ -139,6 +140,13 @@ describe("generate-api-reference", () => {
         const markdown = await Deno.readTextFile(
           `${outputDir}/veryfront/${entry.name}`,
         );
+        try {
+          await compile(markdown);
+        } catch (error) {
+          throw new Error(`${entry.name} must compile as MDX`, {
+            cause: error,
+          });
+        }
         for (const line of markdown.split("\n")) {
           const description =
             line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
