@@ -599,6 +599,7 @@ describe("hydration-script-builder/templates/router", () => {
         "loadComponent",
         "setTimeout",
         "clearTimeout",
+        "getNavigationStore",
         getRouterScript() + "\nreturn { router, navigateSPA };",
       );
 
@@ -612,6 +613,7 @@ describe("hydration-script-builder/templates/router", () => {
         loadComponent,
         () => 0,
         () => {},
+        () => ({ setNavigator() {} }),
       ) as { router: RuntimeRouter; navigateSPA: RuntimeHandle["navigateSPA"] };
 
       return {

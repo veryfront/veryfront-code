@@ -1111,6 +1111,15 @@ export const getRouterScript = () => `
 
     window.__veryfrontRouter = router;
 
+    // Route useRouter().push/replace/navigate (from veryfront/router) through the
+    // same SPA navigator that intercepts <Link> clicks. Without this the shared
+    // navigation store has no navigator registered and its navigate() falls back
+    // to a full-page location.assign (finding #7: push() full-reloads).
+    getNavigationStore().setNavigator((href, options) => {
+      const mode = options && options.history;
+      return navigateSPA(href, mode !== 'replace' && mode !== 'none');
+    });
+
     // ============================================
     // Event handlers
     // ============================================
