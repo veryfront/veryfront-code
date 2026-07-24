@@ -10,7 +10,7 @@
  * for example `#veryfront/server/production-server.ts`.
  */
 
-import { walk } from "@std/fs";
+import { walk } from "#std/fs";
 
 const CLI_ROOT = "cli";
 const VALID_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
@@ -21,6 +21,9 @@ const SKIP_PATTERNS = [
 ];
 
 const DIRECT_INTERNAL_PREFIX = "#veryfront/";
+const PRIVATE_CLI_FRAMEWORK_PORTS = new Set([
+  "#veryfront/server-cli-startup",
+]);
 
 interface Violation {
   file: string;
@@ -63,7 +66,15 @@ function lineOf(source: string, index: number): number {
   return line;
 }
 
-function classifyViolation(specifier: string): string | null {
+/**
+ * Classify a CLI framework import without weakening the public-package rule.
+ *
+ * The startup port is an exact, private import-map capability. Prefix and
+ * deep-path variants remain forbidden so this cannot become a general escape
+ * hatch into server internals.
+ */
+export function classifyCliFrameworkImport(specifier: string): string | null {
+  if (PRIVATE_CLI_FRAMEWORK_PORTS.has(specifier)) return null;
   if (!specifier.startsWith(DIRECT_INTERNAL_PREFIX)) return null;
 
   // Explicitly call out deep .ts imports (requested policy).
@@ -74,41 +85,53 @@ function classifyViolation(specifier: string): string | null {
   return "Direct #veryfront/* import is forbidden in cli/. Use public `veryfront/*` exports.";
 }
 
-const violations: Violation[] = [];
+async function findViolations(): Promise<Violation[]> {
+  const violations: Violation[] = [];
 
-for await (
-  const entry of walk(CLI_ROOT, {
-    includeDirs: false,
-    exts: VALID_EXTENSIONS,
-  })
-) {
-  if (shouldSkip(entry.path)) continue;
+  for await (
+    const entry of walk(CLI_ROOT, {
+      includeDirs: false,
+      exts: VALID_EXTENSIONS,
+    })
+  ) {
+    if (shouldSkip(entry.path)) continue;
 
-  const source = await Deno.readTextFile(entry.path);
-  for (const { specifier, index } of findSpecifiers(source)) {
-    const reason = classifyViolation(specifier);
-    if (!reason) continue;
+    const source = await Deno.readTextFile(entry.path);
+    for (const { specifier, index } of findSpecifiers(source)) {
+      const reason = classifyCliFrameworkImport(specifier);
+      if (!reason) continue;
 
-    violations.push({
-      file: entry.path,
-      line: lineOf(source, index),
-      specifier,
-      reason,
-    });
+      violations.push({
+        file: entry.path,
+        line: lineOf(source, index),
+        specifier,
+        reason,
+      });
+    }
   }
+
+  return violations;
 }
 
-if (violations.length > 0) {
-  console.error("❌ CLI boundary violations found:\n");
-  for (const violation of violations) {
-    console.error(`  - ${violation.file}:${violation.line}`);
-    console.error(`    ${violation.specifier}`);
-    console.error(`    ${violation.reason}`);
+async function main(): Promise<void> {
+  const violations = await findViolations();
+
+  if (violations.length > 0) {
+    console.error("❌ CLI boundary violations found:\n");
+    for (const violation of violations) {
+      console.error(`  - ${violation.file}:${violation.line}`);
+      console.error(`    ${violation.specifier}`);
+      console.error(`    ${violation.reason}`);
+    }
+    console.error(
+      "\nAllowed framework imports from cli/: `veryfront`, `veryfront/*`, local `#cli/*` aliases, and the exact private `#veryfront/server-cli-startup` port.",
+    );
+    Deno.exit(1);
   }
-  console.error(
-    "\nAllowed framework imports from cli/: `veryfront`, `veryfront/*`, and local `#cli/*` aliases.",
-  );
-  Deno.exit(1);
+
+  console.log("✅ CLI boundary check passed.");
 }
 
-console.log("✅ CLI boundary check passed.");
+if (import.meta.main) {
+  await main();
+}

@@ -2,7 +2,13 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
-import { bootstrapProd, type BootstrapResult, createRetryableDisposer } from "./bootstrap.ts";
+import {
+  bootstrapLocalCliProxy,
+  bootstrapProd,
+  type BootstrapResult,
+  createRetryableDisposer,
+  validateProductionEnvironment,
+} from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -234,15 +240,87 @@ export interface StartProductionServerOptions extends ServerOptions {
   /**
    * Pre-computed bootstrap result to skip internal bootstrap. Ownership is
    * transferred to the returned handle; callers must not dispose it directly.
+   * Public startup still enforces hosted-environment validation.
    */
   bootstrapResult?: BootstrapResult;
 }
 
-/** Starts production server. */
-export function startProductionServer(
+type ProductionBootstrap = (
+  projectDir: string,
+  adapter: RuntimeAdapter,
+) => Promise<BootstrapResult>;
+
+/**
+ * Select or create the bootstrap generation owned by a production server.
+ *
+ * This helper does not establish startup trust. The server entrypoint must
+ * snapshot and validate any supplied result before calling it.
+ *
+ * @internal Exported for bootstrap-selection regression tests.
+ */
+export function resolveProductionBootstrap(
+  options: Pick<
+    StartProductionServerOptions,
+    "projectDir" | "bootstrapResult"
+  >,
+  adapter: RuntimeAdapter,
+  bootstrap: ProductionBootstrap = bootstrapProd,
+): Promise<BootstrapResult> {
+  return options.bootstrapResult
+    ? Promise.resolve(options.bootstrapResult)
+    : bootstrap(options.projectDir, adapter);
+}
+
+const LOCAL_CLI_PROXY_SERVER_AUTHORIZATION = Symbol(
+  "veryfront.local-cli-proxy-server",
+);
+
+type ProductionServerAuthorization =
+  | typeof LOCAL_CLI_PROXY_SERVER_AUTHORIZATION
+  | undefined;
+
+function bootstrapForAuthorization(
+  authorization: ProductionServerAuthorization,
+): ProductionBootstrap {
+  return authorization === LOCAL_CLI_PROXY_SERVER_AUTHORIZATION
+    ? bootstrapLocalCliProxy
+    : bootstrapProd;
+}
+
+async function startProductionServerWithAuthorization(
   options: StartProductionServerOptions,
+  authorization: ProductionServerAuthorization,
 ): Promise<ServerHandle> {
-  return withSpan(
+  // Snapshot every caller-controlled option before acquiring process ownership.
+  // Getters therefore cannot strand a live ownership generation, and later
+  // mutation cannot swap in an unvalidated bootstrap or inconsistent settings.
+  const {
+    projectDir,
+    port,
+    bindAddress = "0.0.0.0",
+    signal,
+    debug,
+    defaultProjectSlug,
+    defaultProjectId,
+    defaultReleaseId,
+    defaultEnvironment,
+    requestInterceptor,
+    discoveryConfig,
+    localProjects,
+    adapter: requestedAdapter,
+    bootstrapResult: suppliedBootstrap,
+  } = options;
+  const isAuthorizedLocalProxy = authorization === LOCAL_CLI_PROXY_SERVER_AUTHORIZATION;
+
+  // A supplied result skips bootstrapProd(), so the public path must perform
+  // the hosted validation here. The exact private symbol is the only bypass.
+  if (suppliedBootstrap && !isAuthorizedLocalProxy) {
+    validateProductionEnvironment();
+  }
+
+  const productionBootstrap = bootstrapForAuthorization(authorization);
+
+  return await withSpan(
     "server.startProductionServer",
     async () => {
       const releaseServerOwnership = productionServerOwnership.acquire();
@@ -255,7 +333,7 @@ export function startProductionServer(
       let hmrLifecycleReleased = true;
       let bootstrapDisposed = true;
       let serverOwnershipReleased = false;
-      let listeningPort = options.port;
+      let listeningPort = port;
       let ssrPortInstalledValue: number | undefined;
       let ssrFetchInstalled = false;
       let ssrClientOnlyInstalled = false;
@@ -343,29 +421,18 @@ export function startProductionServer(
       });
 
       try {
-        const {
-          projectDir,
-          port,
-          bindAddress = "0.0.0.0",
-          signal,
-          debug,
-          defaultProjectSlug,
-          defaultProjectId,
-          defaultReleaseId,
-          defaultEnvironment,
-          requestInterceptor,
-          bootstrapResult,
-          discoveryConfig,
-          localProjects,
-        } = options;
-
-        const baseAdapter = options.adapter ?? bootstrapResult?.adapter ?? (await runtime.get());
+        const baseAdapter = requestedAdapter ?? suppliedBootstrap?.adapter ??
+          (await runtime.get());
         const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
         ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
         memoryMonitoringStopped = !ownsMemoryMonitoring;
 
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        activeBootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        activeBootstrap = await resolveProductionBootstrap(
+          { projectDir, bootstrapResult: suppliedBootstrap },
+          baseAdapter,
+          productionBootstrap,
+        );
         bootstrapDisposed = false;
         const bootstrap = activeBootstrap;
         const adapter = bootstrap.adapter;
@@ -524,7 +591,31 @@ export function startProductionServer(
         throw error;
       }
     },
-    { "server.port": options.port, "server.bindAddress": options.bindAddress ?? "0.0.0.0" },
+    { "server.port": port, "server.bindAddress": bindAddress },
+  );
+}
+
+/** Starts a normal hosted or standalone production server. */
+export function startProductionServer(
+  options: StartProductionServerOptions,
+): Promise<ServerHandle> {
+  return startProductionServerWithAuthorization(options, undefined);
+}
+
+/**
+ * Starts the explicitly local CLI proxy through its private startup port.
+ *
+ * The authorization symbol never crosses the module boundary, so public
+ * callers cannot manufacture the exemption through an options object.
+ *
+ * @internal
+ */
+export function startLocalCliProxyProductionServer(
+  options: StartProductionServerOptions,
+): Promise<ServerHandle> {
+  return startProductionServerWithAuthorization(
+    options,
+    LOCAL_CLI_PROXY_SERVER_AUTHORIZATION,
   );
 }
 

@@ -32,7 +32,7 @@ import {
 import { getErrorMessage, INVALID_ARGUMENT } from "#veryfront/errors";
 import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { __registerLogRecordEmitter, logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -494,26 +494,33 @@ export async function orchestrateOrDisposeFS(
 
 let envLogged = false;
 
-async function ensureEnvLoaded(projectDir: string, adapter: RuntimeAdapter): Promise<void> {
+/**
+ * Load startup environment files before configuration is read.
+ *
+ * Missing files are handled by `loadEnv`, but malformed or unreadable files
+ * must reject startup so callers do not continue with partial configuration.
+ *
+ * @internal
+ */
+export async function ensureEnvLoaded(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<void> {
   if (hasEnvLoaded()) {
     logEnvConfig();
     return;
   }
 
   if (supportsEnvFiles()) {
-    try {
-      await loadEnv({
-        cwd: projectDir,
-        debug: isDebugEnabled(adapter.env),
-      });
-      refreshEnvironmentConfig();
-    } catch (error) {
-      bootstrapLog.warn("Failed to load .env files", {
-        error: getErrorMessage(error),
-      });
-    }
+    await loadEnv({
+      cwd: projectDir,
+      debug: isDebugEnabled(adapter.env),
+    });
+    refreshEnvironmentConfig();
+  } else {
+    markEnvLoaded();
   }
-  markEnvLoaded();
+
   logEnvConfig();
 }
 
@@ -545,15 +552,15 @@ export async function bootstrap(
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
   const releaseBootstrapOwnership = bootstrapOwnership.acquire();
-  bootstrapLog.debug("Starting framework initialization", {
-    projectDir,
-    runtime: adapter.id,
-  });
-
   let fileLog: FileLogHandle | null = null;
   let fsDispose: ResourceDisposer | undefined;
 
   try {
+    bootstrapLog.debug("Starting framework initialization", {
+      projectDir,
+      runtime: adapter.id,
+    });
+
     // Initialize esbuild early - extracts binary from VFS if running as deno compile
     // This must happen before any module imports esbuild
     await initializeEsbuild();
@@ -791,17 +798,24 @@ export async function bootstrapDev(
   return result;
 }
 
-export async function bootstrapProd(
+const LOCAL_CLI_PROXY_STARTUP_AUTHORIZATION = Symbol(
+  "veryfront.local-cli-proxy-startup",
+);
+
+type ProductionEnvironmentValidator = () => void;
+
+async function bootstrapProdWithValidation(
   projectDir: string,
   adapter: RuntimeAdapter,
+  validateEnvironment: ProductionEnvironmentValidator,
 ): Promise<BootstrapResult> {
   bootstrapProdLog.debug("Starting production mode initialization");
 
   await ensureEnvLoaded(projectDir, adapter);
 
-  // Validate NODE_ENV in proxy mode to prevent dev behavior in production
+  // Validate host-owned proxy configuration before tenant-aware bootstrap work.
   // @see plans/architecture-audit/014.1-node-env-missing.md
-  validateProductionEnvironment(adapter);
+  validateEnvironment();
 
   try {
     const result = await bootstrap(projectDir, adapter);
@@ -821,19 +835,72 @@ export async function bootstrapProd(
   }
 }
 
+/** Bootstrap a normal hosted or standalone production runtime. */
+export async function bootstrapProd(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<BootstrapResult> {
+  return await bootstrapProdWithValidation(
+    projectDir,
+    adapter,
+    validateProductionEnvironment,
+  );
+}
+
+/**
+ * Bootstrap the explicitly local CLI proxy.
+ *
+ * This function is reachable only through the private CLI startup port. The
+ * module-private symbol keeps the exemption out of caller-controlled options.
+ *
+ * @internal
+ */
+export function bootstrapLocalCliProxy(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<BootstrapResult> {
+  return bootstrapProdWithValidation(
+    projectDir,
+    adapter,
+    () =>
+      validateProductionEnvironmentForAuthorization(
+        LOCAL_CLI_PROXY_STARTUP_AUTHORIZATION,
+      ),
+  );
+}
+
 /**
  * Validates that critical environment variables are set correctly in production.
  * This prevents dev behavior from accidentally being enabled in production pods.
  *
  * @see plans/architecture-audit/014.1-node-env-missing.md
  */
-function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
-  const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
-  const proxyMode = getEnv("PROXY_MODE");
-  const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+export function validateProductionEnvironment(): void {
+  validateProductionEnvironmentForAuthorization(undefined);
+}
 
-  // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
-  if (proxyMode === "1") {
+function validateProductionEnvironmentForAuthorization(
+  authorization: typeof LOCAL_CLI_PROXY_STARTUP_AUTHORIZATION | undefined,
+): void {
+  const nodeEnv = getHostEnv("NODE_ENV") ?? getHostEnv("DENO_ENV");
+  const proxyMode = getHostEnv("PROXY_MODE");
+  const controlPlanePublicKey = getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+  const isAuthorizedLocalProxy = authorization === LOCAL_CLI_PROXY_STARTUP_AUTHORIZATION;
+
+  // Only a host-owned call site can authorize the local CLI exemption. Hosted
+  // proxy requirements never depend on NODE_ENV to decide whether they apply.
+  if (proxyMode === "1" && !isAuthorizedLocalProxy) {
+    if (!controlPlanePublicKey?.trim()) {
+      logger.error(
+        "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
+          "Hosted runtimes cannot verify control-plane requests without it.",
+      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in hosted proxy mode (PROXY_MODE=1)",
+      });
+    }
+
     if (!nodeEnv) {
       logger.error(
         "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
@@ -845,33 +912,25 @@ function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
     }
 
     if (nodeEnv !== "production") {
-      logger.warn(
-        "[Bootstrap:Prod] NODE_ENV is set to '%s' in proxy mode. " +
-          "Expected 'production'. This may enable dev features.",
-        nodeEnv,
-      );
-    }
-
-    if (!controlPlanePublicKey && nodeEnv === "development") {
-      logger.warn(
-        "[Bootstrap:Prod] CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set. " +
-          "Channel dispatch verification will be unavailable (local dev mode).",
-      );
-    } else if (!controlPlanePublicKey) {
       logger.error(
-        "[Bootstrap:Prod] CRITICAL: CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY is not set in proxy mode. " +
-          "Hosted runtimes cannot verify control-plane requests without it.",
+        `[Bootstrap:Prod] CRITICAL: NODE_ENV is set to '${nodeEnv}' in hosted proxy mode. ` +
+          "Expected 'production'.",
       );
       throw INVALID_ARGUMENT.create({
         detail:
-          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set when running in proxy mode (PROXY_MODE=1)",
+          "NODE_ENV must be set to 'production' when running in hosted proxy mode (PROXY_MODE=1)",
       });
     }
+  } else if (proxyMode === "1" && isAuthorizedLocalProxy) {
+    bootstrapProdLog.debug(
+      "Using explicitly authorized local CLI proxy startup context",
+    );
   }
 
   // Log effective configuration for debugging
   bootstrapProdLog.debug("Environment configuration", {
     nodeEnv: nodeEnv ?? "(unset)",
     proxyMode: proxyMode ?? "0",
+    startupKind: isAuthorizedLocalProxy ? "local-cli-proxy" : "hosted",
   });
 }

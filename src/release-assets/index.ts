@@ -31,6 +31,7 @@ export {
   type ReleaseAssetRouteEntry,
 } from "./manifest-schema.ts";
 export {
+  clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
