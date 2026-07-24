@@ -113,7 +113,8 @@ export function isFrontmatterRecord(
 
 /**
  * Copies a plain parsed record and removes values that violate known frontmatter
- * fields. Unknown fields are preserved for application-specific metadata.
+ * fields. Mutable known values such as tag arrays and dates are detached from
+ * their source. Unknown fields are preserved for application-specific metadata.
  */
 export function normalizeFrontmatter(value: unknown): Frontmatter {
   if (!isFrontmatterRecord(value)) return {};
@@ -142,19 +143,27 @@ export function normalizeFrontmatter(value: unknown): Frontmatter {
     (entry) => typeof entry === "string" || typeof entry === "boolean",
   );
   normalizeFrontmatterTags(normalized);
-  removeInvalidFrontmatterField(normalized, "date", isValidFrontmatterDate);
+  normalizeFrontmatterDate(normalized);
   removeInvalidFrontmatterField(normalized, "published", (entry) => typeof entry === "boolean");
   removeInvalidFrontmatterField(normalized, "isLayout", (entry) => typeof entry === "boolean");
   return normalized;
 }
 
-function isValidFrontmatterDate(value: unknown): boolean {
-  if (typeof value === "string") return true;
+function normalizeFrontmatterDate(frontmatter: Frontmatter): void {
+  const value = frontmatter.date;
+  if (value === undefined || typeof value === "string") return;
+
   try {
-    return Number.isFinite(Date.prototype.getTime.call(value));
+    const timestamp = Date.prototype.getTime.call(value);
+    if (Number.isFinite(timestamp)) {
+      frontmatter.date = new Date(timestamp);
+      return;
+    }
   } catch {
-    return false;
+    /* expected: non-Date values are removed below */
   }
+
+  delete frontmatter.date;
 }
 
 function normalizeFrontmatterTags(frontmatter: Frontmatter): void {

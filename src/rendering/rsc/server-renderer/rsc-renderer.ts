@@ -3,6 +3,7 @@ import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../types.ts";
 import { appendClientModuleVersion, buildClientModuleUrl } from "../client-module-strategy.ts";
+import { snapshotClientComponentMeta } from "../client-manifest-snapshot.ts";
 import type { RSCComponentProps } from "./component-detector.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
@@ -57,10 +58,11 @@ export class RSCRenderer {
   }
 
   private resolveClientManifest(
-    manifest: Map<string, ClientComponentMeta>,
+    manifest: ReadonlyMap<string, ClientComponentMeta>,
   ): Map<string, ClientComponentMeta> {
     const resolved = new Map<string, ClientComponentMeta>();
-    for (const [id, meta] of manifest) {
+    for (const [id, sourceMeta] of manifest) {
+      const meta = snapshotClientComponentMeta(sourceMeta);
       if (this.clientModuleStrategy === "fs") {
         resolved.set(id, {
           ...meta,

@@ -18,6 +18,7 @@ import type {
   PageContext,
   RenderResult,
   ScriptPageModule,
+  ScriptPageOutput,
 } from "#veryfront/types";
 import type { MDXFrontmatter as HTMLFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -31,11 +32,7 @@ import { toHTMLFrontmatter, toMDXFrontmatter } from "./frontmatter.ts";
 
 const logger = rendererLogger.component("script");
 
-type ScriptModuleOutput =
-  | string
-  | Response
-  | { html: string; frontmatter?: HTMLFrontmatter; meta?: HTMLFrontmatter }
-  | null;
+type ScriptModuleOutput = ScriptPageOutput | null;
 
 interface ScriptPageOptions {
   mode: string;

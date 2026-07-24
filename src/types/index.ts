@@ -84,11 +84,11 @@ export type {
 export type ComponentProps = Record<string, unknown>;
 
 /** React component that accepts generic Veryfront component props. */
-export type Component = React.ComponentType<ComponentProps>;
+export type Component<TProps extends object = ComponentProps> = React.ComponentType<TProps>;
 
 /** Function-form React component used by runtime renderers. */
-export type ComponentFunction = (
-  props: ComponentProps,
+export type ComponentFunction<TProps extends object = ComponentProps> = (
+  props: TProps,
 ) => React.ReactElement | null;
 
 /** MDX component overrides keyed by component name. */
@@ -217,22 +217,26 @@ export interface MDXModule {
   generateMetadata?: (ctx: PageContext) => MaybePromise<Record<string, unknown>>;
 }
 
+/** Render value accepted from either script-page function export. */
+export type ScriptPageOutput =
+  | string
+  | Response
+  | {
+    /** Rendered page HTML. */
+    html: string;
+    /** Frontmatter merged into the rendered page metadata. */
+    frontmatter?: MDXFrontmatter;
+    /** Legacy alias for returned page frontmatter. */
+    meta?: MDXFrontmatter;
+  }
+  | Record<string, unknown>;
+
 /** Exports accepted from a script-backed page module. */
 export interface ScriptPageModule {
   /** Renders the page to HTML or an HTTP response. */
-  render?: (
-    ctx: PageContext,
-  ) => MaybePromise<
-    | string
-    | Response
-    | {
-      html: string;
-      frontmatter?: MDXFrontmatter;
-      meta?: MDXFrontmatter;
-    }
-  >;
+  render?: (ctx: PageContext) => MaybePromise<ScriptPageOutput>;
   /** Default page renderer or static HTML string. */
-  default?: ((ctx: PageContext) => MaybePromise<string | Response>) | string;
+  default?: ((ctx: PageContext) => MaybePromise<ScriptPageOutput>) | string;
   /** Static HTML exported by the module. */
   html?: string;
   /** Generates metadata for one page render. */

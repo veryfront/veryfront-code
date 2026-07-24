@@ -145,8 +145,11 @@ export async function getEntityInfo(
           const underlyingAdapter = adapterFs.getUnderlyingAdapter();
 
           if (underlyingAdapter) {
-            const getEntityIdForPath = Reflect.get(underlyingAdapter, "getEntityIdForPath");
-            if (typeof getEntityIdForPath === "function") {
+            const getEntityIdForPath = findDataMethod(
+              underlyingAdapter,
+              "getEntityIdForPath",
+            );
+            if (getEntityIdForPath) {
               const resolvedEntityId = Reflect.apply(
                 getEntityIdForPath,
                 underlyingAdapter,
@@ -182,6 +185,30 @@ export async function getEntityInfo(
     },
     { "entity.extension": pathHelper.extname(filePath).toLowerCase() },
   );
+}
+
+function findDataMethod(
+  value: unknown,
+  key: string,
+): ((...args: unknown[]) => unknown) | undefined {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return undefined;
+  }
+
+  const visited = new Set<object>();
+  let current: object | null = value;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const descriptor = Reflect.getOwnPropertyDescriptor(current, key);
+    if (descriptor) {
+      return "value" in descriptor && typeof descriptor.value === "function"
+        ? descriptor.value as (...args: unknown[]) => unknown
+        : undefined;
+    }
+    current = Reflect.getPrototypeOf(current);
+  }
+
+  return undefined;
 }
 
 /**

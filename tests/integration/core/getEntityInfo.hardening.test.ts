@@ -151,6 +151,53 @@ describe("getEntityInfo", () => {
     assertEquals(result.entity.id, "entity:pages/page.mdx");
   });
 
+  it("does not invoke an accessor masquerading as the optional entity identifier hook", async () => {
+    let accessorReads = 0;
+    const underlyingAdapter = Object.defineProperty({}, "getEntityIdForPath", {
+      configurable: true,
+      get() {
+        accessorReads++;
+        throw new Error("entity identifier accessor must not run");
+      },
+    });
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        readFile: () => Promise.resolve("# Page"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const result = await getEntityInfo("pages/page.mdx", adapter);
+
+    assertExists(result);
+    assertEquals(result.entity.id, "pages/page.mdx");
+    assertEquals(accessorReads, 0);
+  });
+
+  it("propagates failures while inspecting the authoritative entity identifier hook", async () => {
+    const underlyingAdapter = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        throw new Error("entity identifier hook inspection failed");
+      },
+    });
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        readFile: () => Promise.resolve("# Page"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => getEntityInfo("pages/page.mdx", adapter),
+      Error,
+      "entity identifier hook inspection failed",
+    );
+  });
+
   it("rejects hosted entity identifiers containing control characters", async () => {
     const adapter = {
       fs: {

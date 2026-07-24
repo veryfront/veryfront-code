@@ -4,7 +4,7 @@ export interface ManifestData {
   version: 1;
   hash: string;
   components: Record<string, string>;
-  modules: Array<{ id: string; clientRef: string; exports: string[] }>;
+  modules: Array<{ id: string; clientRef: string; exports: readonly string[] }>;
   graphIds: {
     client: Array<{ id: string; path: string; rel: string }>;
     server: Array<{ id: string; path: string; rel: string }>;
@@ -21,7 +21,7 @@ export interface RSCHandlerConfig {
 }
 
 export interface RSCRendererConfig {
-  clientManifest: Map<string, ClientComponentMeta>;
+  clientManifest: ReadonlyMap<string, ClientComponentMeta>;
   projectDir: string;
   mode: "development" | "production";
 }
