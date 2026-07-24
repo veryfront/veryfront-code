@@ -6,7 +6,7 @@ import {
   type RemoteToolSource,
   toolRegistry,
 } from "#veryfront/tool";
-import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import type {
   AgentConfig,
   AgentHttpMcpServerConfig,
@@ -14,13 +14,14 @@ import type {
   AgentMcpServerConfig,
   AgentVeryfrontMcpServerConfig,
 } from "../types.ts";
-import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { ToolExecutionContext } from "#veryfront/tool";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import {
   getVeryfrontCloudHostBootstrap,
   type VeryfrontCloudBootstrap,
 } from "#veryfront/platform/cloud/resolver.ts";
 import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.ts";
+import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 
 export type RuntimeRemoteToolConfig = {
@@ -94,26 +95,6 @@ async function resolveHeaders(
   return await resolveValue(auth.headers, context);
 }
 
-function isToolAllowed(
-  toolName: string,
-  policy: AgentMcpServerConfig["toolPolicy"],
-): boolean {
-  if (policy?.allow && !policy.allow.includes(toolName)) {
-    return false;
-  }
-  if (policy?.deny?.includes(toolName)) {
-    return false;
-  }
-  return true;
-}
-
-function filterToolDefinitions(
-  definitions: ToolDefinition[],
-  policy: AgentMcpServerConfig["toolPolicy"],
-): ToolDefinition[] {
-  return definitions.filter((definition) => isToolAllowed(definition.name, policy));
-}
-
 function isHttpMcpServerConfig(server: AgentMcpServerConfig): server is AgentHttpMcpServerConfig {
   return "transport" in server;
 }
@@ -126,44 +107,19 @@ function createMcpServerToolSource(server: AgentHttpMcpServerConfig): RemoteTool
     ...(server.fetch ? { fetch: server.fetch } : {}),
   });
 
-  return {
-    id: source.id,
-    async listTools(context) {
-      return filterToolDefinitions(await source.listTools(context), server.toolPolicy);
-    },
-    executeTool(toolName, args, context) {
-      if (!isToolAllowed(toolName, server.toolPolicy)) {
-        throw PERMISSION_DENIED.create({
-          detail: `Tool "${toolName}" is not allowed for MCP server "${server.id}"`,
-        });
-      }
-      return source.executeTool(toolName, args, context);
-    },
-  };
+  return wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy, {
+    deniedDetail: (toolName) => `Tool "${toolName}" is not allowed for MCP server "${server.id}"`,
+  });
 }
 
 function createMcpToolPolicySource(
   source: RemoteToolSource,
   policy: AgentMcpServerConfig["toolPolicy"],
 ): RemoteToolSource {
-  if (!policy?.allow && !policy?.deny) {
-    return source;
-  }
-
-  return {
-    id: source.id,
-    async listTools(context) {
-      return filterToolDefinitions(await source.listTools(context), policy);
-    },
-    executeTool(toolName, args, context) {
-      if (!isToolAllowed(toolName, policy)) {
-        throw PERMISSION_DENIED.create({
-          detail: `Tool "${toolName}" is not allowed for MCP server "${source.id}"`,
-        });
-      }
-      return source.executeTool(toolName, args, context);
-    },
-  };
+  return wrapRemoteToolSourceWithMcpPolicy(source, policy, {
+    deniedDetail: (toolName, sourceId) =>
+      `Tool "${toolName}" is not allowed for MCP server "${sourceId}"`,
+  });
 }
 
 /** Carry an explicit remote-tool ceiling into nested execution. */
