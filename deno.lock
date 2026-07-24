@@ -65,6 +65,7 @@
     "npm:mdast-util-to-string@4.0.0": "4.0.0",
     "npm:node-fetch@3.3.2": "3.3.2",
     "npm:pdf-lib@1.17.1": "1.17.1",
+    "npm:protobufjs@7.6.5": "7.6.5",
     "npm:redis@5.11.0": "5.11.0",
     "npm:rehype-highlight@7.0.2": "7.0.2",
     "npm:rehype-raw@7.0.0": "7.0.0",
@@ -3161,7 +3162,7 @@
     "node-abi@3.94.0": {
       "integrity": "sha512-W5ZNO5KRPB5TkYmGVD9F6YqhsglXJzE6etpbmT+f6EQElhiX/UTG551cnsRGvLG3fyZEg9HwaDmNmj5nwJ4z9g==",
       "dependencies": [
-        "semver@7.8.5"
+        "semver"
       ]
     },
     "node-addon-api@8.9.0": {
@@ -3608,10 +3609,6 @@
     },
     "semver@7.7.2": {
       "integrity": "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA==",
-      "bin": true
-    },
-    "semver@7.8.5": {
-      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
       "bin": true
     },
     "setimmediate@1.0.5": {
@@ -4682,7 +4679,8 @@
           "npm:@opentelemetry/sdk-metrics@2.9.0",
           "npm:@opentelemetry/sdk-node@0.220.0",
           "npm:@opentelemetry/sdk-trace-base@2.9.0",
-          "npm:@opentelemetry/semantic-conventions@1.43.0"
+          "npm:@opentelemetry/semantic-conventions@1.43.0",
+          "npm:protobufjs@7.6.5"
         ]
       },
       "extensions/ext-parser-babel": {
