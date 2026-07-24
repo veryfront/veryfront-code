@@ -3,26 +3,19 @@
  * Vaul-style component). Same API shape for the parts we need: Root / Trigger /
  * Content (overlay + sheet + drag handle) / Title / Header / Body / Footer /
  * Close. Surface classes ported 1:1 from Studio (tokens remapped). Slides up
- * from the bottom; dismisses on `Escape` and overlay click.
- *
- * TODO(a11y): focus trap + restore, drag-to-dismiss / snap points, scroll-lock,
- * portal, enter/exit animation. Private to the chat module.
+ * from the bottom; dismisses on `Escape` and overlay click. A11y work tracked
+ * in modal-surface.tsx.
  *
  * @module react/components/ui/drawer
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
+import { createModalSurfaceParts } from "./modal-surface.tsx";
 
-const DrawerContext = React.createContext<
-  { open: boolean; setOpen: (open: boolean) => void } | null
->(null);
-
-function useDrawer() {
-  const ctx = React.useContext(DrawerContext);
-  if (!ctx) throw new Error("Drawer parts must be used within <Drawer>");
-  return ctx;
-}
+// Per-skin context + machinery -- distinct from Dialog's instance so a
+// DialogClose nested inside a Drawer cannot accidentally close the Drawer.
+const { ModalRoot: _Root, ModalTrigger: _Trigger, ModalClose: _Close, ModalContent: _Content } =
+  createModalSurfaceParts("Drawer");
 
 /** Props accepted by `<Drawer>`. */
 export interface DrawerProps {
@@ -33,47 +26,15 @@ export interface DrawerProps {
 }
 
 /** Drawer root — owns open state. */
-export function Drawer({
-  children,
-  open,
-  defaultOpen,
-  onOpenChange,
-}: DrawerProps): React.ReactElement {
-  const [internal, setInternal] = React.useState(defaultOpen ?? false);
-  const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internal;
-  const setOpen = React.useCallback((next: boolean) => {
-    if (!isControlled) setInternal(next);
-    onOpenChange?.(next);
-  }, [isControlled, onOpenChange]);
-  return (
-    <DrawerContext.Provider value={{ open: isOpen, setOpen }}>
-      {children}
-    </DrawerContext.Provider>
-  );
+export function Drawer(props: DrawerProps): React.ReactElement {
+  return <_Root {...props} />;
 }
 
 /** Trigger — opens the drawer. `asChild` merges onto the child element. */
-export function DrawerTrigger({
-  children,
-  asChild,
-  onClick,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
-  const ctx = useDrawer();
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx.setOpen(true);
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function DrawerTrigger(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+): React.ReactElement {
+  return <_Trigger {...props} />;
 }
 
 /** Bottom sheet — overlay + sliding surface with a drag handle. */
@@ -82,47 +43,22 @@ export function DrawerContent({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
-  const ctx = useDrawer();
-  const sheetRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!ctx.open) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ctx.setOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    const focusable = sheetRef.current?.querySelector<HTMLElement>(
-      'input:not([disabled]), textarea:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-    );
-    (focusable ?? sheetRef.current)?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [ctx.open]);
-
-  if (!ctx.open) return null;
   return (
-    <div className="fixed inset-0 z-50">
-      <div
-        className="fixed inset-0 bg-[var(--overlay)]"
-        onClick={() => ctx.setOpen(false)}
-      />
-      <div
-        ref={sheetRef}
-        role="dialog"
-        aria-modal="true"
-        tabIndex={-1}
-        className={cn(
-          "fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] w-full rounded-t-xl bg-[var(--drawer)] text-[var(--foreground)] outline-none",
-          className,
-        )}
-        {...props}
-      >
+    <_Content
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] w-full rounded-t-xl bg-[var(--drawer)] text-[var(--foreground)] outline-none",
+        className,
+      )}
+      lead={
         <div
           aria-hidden="true"
           className="mx-auto mt-3 h-[3px] w-[30px] shrink-0 rounded-full bg-[var(--outline-border)]"
         />
-        {children}
-      </div>
-    </div>
+      }
+      {...props}
+    >
+      {children}
+    </_Content>
   );
 }
 
@@ -174,24 +110,8 @@ export function DrawerFooter(
 }
 
 /** Closes the drawer. `asChild` merges onto the child element. */
-export function DrawerClose({
-  children,
-  asChild,
-  onClick,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
-  const ctx = useDrawer();
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx.setOpen(false);
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function DrawerClose(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+): React.ReactElement {
+  return <_Close {...props} />;
 }

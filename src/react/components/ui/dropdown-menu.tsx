@@ -3,26 +3,20 @@
  * shape (Root / Trigger / Content / Group / Item / ItemMeta / Separator /
  * Label). Classes are ported 1:1 from Studio's `DropdownMenu` (token names
  * remapped to veryfront's `[var(--token)]` vocabulary). Opens below the
- * trigger; dismisses on outside-click, `Escape`, and item select.
- *
- * TODO(a11y): roving focus + arrow-key navigation, typeahead, `Tab` handling,
- * portal + collision-aware positioning (flip/shift), `aria-activedescendant`,
- * RadioItem/CheckboxItem/Sub menus. Private to the chat module.
+ * trigger; dismisses on outside-click, `Escape`, and item select. A11y work
+ * tracked in anchored-surface.tsx.
  *
  * @module react/components/ui/dropdown-menu
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { Slot } from "./slot.tsx";
-import { Floating } from "./floating.tsx";
+import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
 
-const MenuContext = React.createContext<
-  {
-    open: boolean;
-    setOpen: (open: boolean) => void;
-    anchorRef: React.RefObject<HTMLElement | null>;
-  } | null
->(null);
+// Per-skin context + machinery -- distinct from Popover's instance so a
+// Popover nested inside a DropdownMenu cannot accidentally close the menu.
+const { Context: _ctx, AnchoredRoot: _Root, AnchoredTrigger: _Trigger, AnchoredContent: _Content } =
+  createAnchoredSurfaceParts();
 
 /** Props accepted by `<DropdownMenu>`. */
 export interface DropdownMenuProps {
@@ -33,52 +27,15 @@ export interface DropdownMenuProps {
 }
 
 /** DropdownMenu root — owns open state and the positioning anchor. */
-export function DropdownMenu({
-  children,
-  open,
-  defaultOpen,
-  onOpenChange,
-}: DropdownMenuProps): React.ReactElement {
-  const [internal, setInternal] = React.useState(defaultOpen ?? false);
-  const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internal;
-  const setOpen = React.useCallback((next: boolean) => {
-    if (!isControlled) setInternal(next);
-    onOpenChange?.(next);
-  }, [isControlled, onOpenChange]);
-  const anchorRef = React.useRef<HTMLElement | null>(null);
-  return (
-    <span ref={anchorRef} className="relative inline-block">
-      <MenuContext.Provider value={{ open: isOpen, setOpen, anchorRef }}>
-        {children}
-      </MenuContext.Provider>
-    </span>
-  );
+export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
+  return <_Root {...props} />;
 }
 
 /** Trigger — toggles the menu. `asChild` merges onto the child element. */
-export function DropdownMenuTrigger({
-  children,
-  asChild,
-  onClick,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
-  const ctx = React.useContext(MenuContext);
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      aria-haspopup="menu"
-      aria-expanded={ctx?.open}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx?.setOpen(!ctx.open);
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function DropdownMenuTrigger(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+): React.ReactElement {
+  return <_Trigger {...props} haspopup="menu" />;
 }
 
 /** Props accepted by `<DropdownMenuContent>`. */
@@ -94,23 +51,15 @@ export function DropdownMenuContent({
   align = "start",
   ...props
 }: DropdownMenuContentProps): React.ReactElement | null {
-  const ctx = React.useContext(MenuContext);
-  if (!ctx) return null;
   return (
-    <Floating
-      anchorRef={ctx.anchorRef}
-      open={ctx.open}
-      align={align}
-      onDismiss={() => ctx.setOpen(false)}
+    <_Content
       role="menu"
-      className={cn(
-        "z-50 min-w-[260px] overflow-hidden rounded-lg bg-[var(--popover)] p-2.5 shadow-sm outline-none",
-        className,
-      )}
+      align={align}
+      className={cn("min-w-[260px] p-2.5", className)}
       {...props}
     >
       {children}
-    </Floating>
+    </_Content>
   );
 }
 
@@ -143,7 +92,7 @@ export function DropdownMenuItem({
   asChild,
   ...props
 }: DropdownMenuItemProps): React.ReactElement {
-  const ctx = React.useContext(MenuContext);
+  const ctx = React.useContext(_ctx);
   const Comp = asChild ? Slot : "button";
   return (
     <Comp
