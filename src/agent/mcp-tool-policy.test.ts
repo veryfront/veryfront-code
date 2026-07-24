@@ -35,14 +35,14 @@ function hostToolSet(calls: string[] = []): HostToolSet {
   return {
     search_docs: {
       description: "Search docs",
-      execute: (input) => {
+      execute: (input: unknown) => {
         calls.push(`search_docs:${String((input as Record<string, unknown>).value)}`);
         return { ok: true, toolName: "search_docs" };
       },
     },
     delete_docs: {
       description: "Delete docs",
-      execute: (input) => {
+      execute: (input: unknown) => {
         calls.push(`delete_docs:${String((input as Record<string, unknown>).value)}`);
         return { ok: true, toolName: "delete_docs" };
       },
