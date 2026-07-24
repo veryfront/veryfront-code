@@ -1,7 +1,8 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { createRequestContext } from "../context/request-context.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { extractRequestHeaders } from "./project-resolution.ts";
+import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
 
 type AdapterEnvLike = {
@@ -23,6 +24,7 @@ export interface PrepareProjectRequestInput {
 
 type ProjectRequestHeaders = ReturnType<typeof extractRequestHeaders>;
 type ProjectRequestContext = ReturnType<typeof createRequestContext>;
+type ProjectIdentityResolution = Awaited<ReturnType<typeof resolveProject>>;
 
 export interface PreparedProjectRequest {
   url: URL;
@@ -34,6 +36,22 @@ export interface PreparedProjectRequest {
   loggerFacts: RequestContextFacts;
   trackingFacts: RequestTrackingFacts;
   proxyGuard?: ProxyGuardResult;
+}
+
+export interface ResolveProjectIdentityInput {
+  operation?: string;
+  req: Request;
+  url: URL;
+  headers: ProjectRequestHeaders;
+  requestContext: ProjectRequestContext;
+  config: VeryfrontConfig | undefined;
+  defaultProjectSlug: string | undefined;
+  defaultProjectId: string | undefined;
+  defaultReleaseId: string | undefined;
+  wsSlugOverride: string | undefined;
+  proxyTrust: {
+    proxyTrusted: boolean | undefined;
+  };
 }
 
 interface RequestContextFacts {
@@ -98,6 +116,24 @@ export async function prepareProjectRequest(
     },
     proxyGuard: createProxyGuard(req, url, isProxyMode, headers, proxyTrusted),
   };
+}
+
+export async function resolveProjectIdentity(
+  input: ResolveProjectIdentityInput,
+): Promise<ProjectIdentityResolution> {
+  if (input.operation && input.operation !== "identity") {
+    throw new Error(`Unsupported project runtime context operation: ${input.operation}`);
+  }
+
+  return await resolveProject(input.req, input.url, input.headers, {
+    config: input.config,
+    reqCtx: input.requestContext,
+    defaultProjectSlug: input.defaultProjectSlug,
+    defaultProjectId: input.defaultProjectId,
+    defaultReleaseId: input.defaultReleaseId,
+    wsSlugOverride: input.wsSlugOverride,
+    proxyTrusted: input.proxyTrust.proxyTrusted,
+  });
 }
 
 function createProxyGuard(

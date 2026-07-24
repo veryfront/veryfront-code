@@ -1,9 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { createRequestContext } from "../context/request-context.ts";
-import { extractRequestHeaders } from "./project-resolution.ts";
-import { prepareProjectRequest } from "./project-runtime-context.ts";
+import type { DomainLookupResult } from "../utils/domain-lookup.ts";
+import type { ParsedDomain } from "#veryfront/types";
+import { __injectDepsForTests, extractRequestHeaders } from "./project-resolution.ts";
+import { prepareProjectRequest, resolveProjectIdentity } from "./project-runtime-context.ts";
+
+const defaultParsedDomain: ParsedDomain = {
+  slug: null,
+  branch: null,
+  environment: null,
+  isVeryfrontDomain: false,
+  isDraft: false,
+  allowIframeEmbed: false,
+};
 
 async function assertJsonResponse(
   response: Response,
@@ -160,5 +172,204 @@ describe("prepareProjectRequest", () => {
     });
 
     assertEquals(prepared.proxyGuard, undefined);
+  });
+});
+
+describe("resolveProjectIdentity", () => {
+  it("rejects unsupported runtime context operations before Task 3", async () => {
+    const req = new Request("http://localhost/");
+    const url = new URL(req.url);
+
+    await assertRejects(
+      () =>
+        resolveProjectIdentity({
+          operation: "runtime-context",
+          req,
+          url,
+          headers: extractRequestHeaders(req, url),
+          requestContext: createRequestContext(req),
+          config: undefined,
+          defaultProjectSlug: undefined,
+          defaultProjectId: undefined,
+          defaultReleaseId: undefined,
+          wsSlugOverride: undefined,
+          proxyTrust: { proxyTrusted: undefined },
+        }),
+      Error,
+      "Unsupported project runtime context operation: runtime-context",
+    );
+  });
+
+  it("derives identity from forwarded host only when proxy trust is explicit true", async () => {
+    const req = new Request("http://localhost/", {
+      headers: { "x-forwarded-host": "forwarded-project.preview.lvh.me" },
+    });
+    const url = new URL(req.url);
+
+    const untrustedHeaders = extractRequestHeaders(req, url, false);
+    const untrusted = await resolveProjectIdentity({
+      req,
+      url,
+      headers: untrustedHeaders,
+      requestContext: createRequestContext(req, { proxyTrusted: false }),
+      config: undefined,
+      defaultProjectSlug: undefined,
+      defaultProjectId: undefined,
+      defaultReleaseId: undefined,
+      wsSlugOverride: undefined,
+      proxyTrust: { proxyTrusted: false },
+    });
+
+    assertEquals(untrusted.projectSlug, undefined);
+
+    const trustedHeaders = extractRequestHeaders(req, url, true);
+    const trusted = await resolveProjectIdentity({
+      req,
+      url,
+      headers: trustedHeaders,
+      requestContext: createRequestContext(req, { proxyTrusted: true }),
+      config: undefined,
+      defaultProjectSlug: undefined,
+      defaultProjectId: undefined,
+      defaultReleaseId: undefined,
+      wsSlugOverride: undefined,
+      proxyTrust: { proxyTrusted: true },
+    });
+
+    assertEquals(trusted.projectSlug, "forwarded-project");
+    assertEquals(trusted.parsedDomain.slug, "forwarded-project");
+    assertEquals(trusted.parsedDomain.environment, "preview");
+  });
+
+  it("preserves explicit slug and suppresses unrelated default project id", async () => {
+    __injectDepsForTests({
+      parseProjectDomain: () => defaultParsedDomain,
+      lookupProjectByDomain: () => Promise.resolve(null),
+      getEnvironmentType: () => undefined,
+    });
+    try {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-slug": "request-slug", "x-branch-id": "branch-1" },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+
+      const result = await resolveProjectIdentity({
+        req,
+        url,
+        headers,
+        requestContext: createRequestContext(req),
+        config: undefined,
+        defaultProjectSlug: "default-slug",
+        defaultProjectId: "default-id",
+        defaultReleaseId: undefined,
+        wsSlugOverride: "ws-slug",
+        proxyTrust: { proxyTrusted: undefined },
+      });
+
+      assertEquals(result.projectSlug, "request-slug");
+      assertEquals(result.projectId, undefined);
+    } finally {
+      __injectDepsForTests(null);
+    }
+  });
+
+  it("keeps header release ahead of default release and domain release lookup", async () => {
+    let lookupCount = 0;
+    __injectDepsForTests({
+      parseProjectDomain: () => ({
+        ...defaultParsedDomain,
+        slug: "prod-project",
+        environment: "production",
+        isVeryfrontDomain: true,
+        isDraft: false,
+      }),
+      lookupProjectByDomain: () => {
+        lookupCount += 1;
+        return Promise.resolve(
+          {
+            project_id: "domain-project-id",
+            project_slug: "prod-project",
+            project_name: "Prod Project",
+            environment: { id: "env-1", name: "Production" },
+            release_id: "domain-release",
+          } satisfies DomainLookupResult,
+        );
+      },
+      getEnvironmentType: () => "production",
+    });
+    try {
+      const config = {
+        fs: { veryfront: { apiToken: "test-token" } },
+      } as unknown as VeryfrontConfig;
+      const req = new Request("http://prod-project.veryfront.com/", {
+        headers: { "x-release-id": "header-release" },
+      });
+      const url = new URL(req.url);
+
+      const result = await resolveProjectIdentity({
+        req,
+        url,
+        headers: extractRequestHeaders(req, url),
+        requestContext: createRequestContext(req),
+        config,
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        defaultReleaseId: "default-release",
+        wsSlugOverride: undefined,
+        proxyTrust: { proxyTrusted: undefined },
+      });
+
+      assertEquals(result.releaseId, "header-release");
+      assertEquals(lookupCount, 0);
+    } finally {
+      __injectDepsForTests(null);
+    }
+  });
+
+  it("preserves custom domain lookup identity and proxy environment", async () => {
+    const lookupResult: DomainLookupResult = {
+      project_id: "proj-1",
+      project_slug: "looked-up-slug",
+      project_name: "Looked Up",
+      environment: { id: "env-1", name: "Production" },
+      release_id: "rel-99",
+    };
+    __injectDepsForTests({
+      parseProjectDomain: () => defaultParsedDomain,
+      lookupProjectByDomain: () => Promise.resolve(lookupResult),
+      getEnvironmentType: () => "production",
+    });
+    try {
+      const config = {
+        fs: { veryfront: { apiToken: "test-token", apiBaseUrl: "https://api.test.com" } },
+      } as unknown as VeryfrontConfig;
+      const req = new Request("http://custom-domain.example.com/", {
+        headers: { "x-token": "request-token" },
+      });
+      const url = new URL(req.url);
+
+      const result = await resolveProjectIdentity({
+        req,
+        url,
+        headers: extractRequestHeaders(req, url),
+        requestContext: createRequestContext(req),
+        config,
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        defaultReleaseId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrust: { proxyTrusted: undefined },
+      });
+
+      assertEquals(result.projectSlug, "looked-up-slug");
+      assertEquals(result.projectId, "proj-1");
+      assertEquals(result.releaseId, "rel-99");
+      assertEquals(result.environmentName, "Production");
+      assertEquals(result.proxyEnv, "production");
+      assertEquals(result.parsedDomain, defaultParsedDomain);
+    } finally {
+      __injectDepsForTests(null);
+    }
   });
 });

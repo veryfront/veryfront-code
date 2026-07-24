@@ -87,7 +87,6 @@ import {
   startRequestTracking,
   timeAsync,
 } from "./request-lifecycle.ts";
-import { resolveProject } from "./project-resolution.ts";
 import {
   checkRequestIsolation,
   completeIsolatedRequest,
@@ -115,7 +114,7 @@ import {
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { projectMiddlewareRuntime } from "./project-middleware.ts";
-import { prepareProjectRequest } from "./project-runtime-context.ts";
+import { prepareProjectRequest, resolveProjectIdentity } from "./project-runtime-context.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -491,14 +490,17 @@ export function createVeryfrontHandler(
           const projectRes = await profilePhase(
             "runtime.resolve_project",
             () =>
-              resolveProject(request, url, headers, {
+              resolveProjectIdentity({
+                req: request,
+                url,
+                headers,
                 config,
-                reqCtx,
+                requestContext: reqCtx,
                 defaultProjectSlug: opts.defaultProjectSlug,
                 defaultProjectId: opts.defaultProjectId,
                 defaultReleaseId: opts.defaultReleaseId,
                 wsSlugOverride,
-                proxyTrusted,
+                proxyTrust: { proxyTrusted },
               }),
           );
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
