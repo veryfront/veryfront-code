@@ -12,13 +12,22 @@ import { useStreaming } from "veryfront/chat";
 
 ## Signature
 
-The RFC keeps `useStreaming` **as today**: low-level stream state, existing documented signature, no reshape. The detailed signature is therefore not restated here; this RFC proposes no new public contract for this hook.
+The RFC keeps `useStreaming` **as today** — a low-level, app-agnostic streaming primitive (POST fetch, chunked text) and the generic escape hatch beneath the chat surface. No reshape; stated here in full so the page is self-contained:
 
 ```ts
-// Existing signature kept. This RFC does not restate or reshape it.
-function useStreaming(
-  ...args: Parameters<typeof currentUseStreaming>
-): ReturnType<typeof currentUseStreaming>;
+function useStreaming(options: {
+  url: string;
+  onChunk?: (chunk: string) => void;
+  onComplete?: (data: string) => void;
+  onError?: (error: Error) => void;
+}): {
+  data: string;
+  isStreaming: boolean;
+  error: Error | null;
+  start: (body?: unknown) => void;
+  stop: () => void;
+  reset: () => void;
+};
 ```
 
 ## Options

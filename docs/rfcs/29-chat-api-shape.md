@@ -262,10 +262,11 @@ assistant-ui viewport):
 - **`useReasoning` gets an explicit-input form** — `useReasoning({ text,
   isStreaming }?)` — so the L3 eject works without a `Reasoning.Root`
   (mirrors `useToolCall(part?)` / `useSources(message?)`).
-- **`StepIndicator` model:** per-boundary context reader — `useStepIndicator()`
-  → `{ stepIndex, state: 'pending' | 'active' | 'complete' }`, steps derived
-  from `step-start` parts; `active` = the latest boundary while the message
-  streams. One shape, both docs pages.
+- **`StepIndicator` model:** per-boundary reader — `useStepIndicator(step?)`
+  → `{ stepIndex, state: 'pending' | 'active' | 'complete' }` (boundary explicit
+  at L3, from context at L2; mirrors `useToolCall(part?)` / `useSources(message?)`),
+  steps derived from `step-start` parts; `active` = the latest boundary while the
+  message streams. One shape, both docs pages.
 - **Audit-settled details:** `AttachmentPill.Root` takes `upload?:
   UseUploadResult`, defaulting to the nearest `ChatInput` context's upload —
   that's how `.Retry`/`.Remove` route without handler props. `ChatSidebar`
@@ -653,7 +654,7 @@ generics) — blocks only state what's specific to them.
   `approval-requested | approval-responded | output-denied`) · `data-open`
   (auto-opens on completion).
 - **Hook:** `useToolCall<TTools>(part?)` — part explicit at L3, from context at
-  L2 → `{ part, state, input (partial while streaming), output, error, isOpen,
+  L2 → `{ part, state, input (partial while streaming), output, errorText, isOpen,
   toggle, getTriggerProps, getBodyProps }`.
   Rendering resolution: inline render fn → `tools` registry by name → default.
 

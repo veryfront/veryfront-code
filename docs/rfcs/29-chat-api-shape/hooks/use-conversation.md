@@ -15,10 +15,13 @@ import { useConversation } from "veryfront/chat";
 ## Signature
 
 ```ts
-function useConversation(id: string): UseConversationResult;
+function useConversation(
+  id: string,
+  options?: { store?: ConversationsStore; storageKey?: string },
+): UseConversationResult;
 
 interface UseConversationResult {
-  conversation: Conversation | undefined;
+  conversation: Conversation | null;
   isLoading: boolean;
   reload: () => void;
 }
@@ -28,7 +31,9 @@ interface UseConversationResult {
 
 | Argument | Type     | Description                  |
 | -------- | -------- | ---------------------------- |
-| `id`     | `string` | The conversation id to load. |
+| `id`       | `string` | The conversation id to load. |
+| `options.store` | `ConversationsStore` | Injectable store — keeps the hook backend-agnostic (defaults to the same store `useConversations` uses). |
+| `options.storageKey` | `string` | Storage key for the default store. |
 
 ## Returns
 
@@ -36,7 +41,7 @@ interface UseConversationResult {
 
 | Name           | Type                        | Description              |
 | -------------- | --------------------------- | ------------------------ |
-| `conversation` | `Conversation \| undefined` | The loaded conversation. |
+| `conversation` | `Conversation \| null` | The loaded conversation (`null`, never `undefined`, when absent — per the library-wide convention). |
 | `isLoading`    | `boolean`                   | Fetch in flight.         |
 
 ### Actions

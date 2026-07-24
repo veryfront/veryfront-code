@@ -31,11 +31,16 @@ The `ModelSelector` compound's context — the state that `.Trigger`, `.Search`,
   value?: string                 // selected "provider/model"
   selectedModel?: ModelOption    // resolved option (value match, else first model)
   onSelect: (value) => void      // select + close + onValueChange
+  query: string                  // search text (feeds `.Search`)
+  setQuery: (q: string) => void
+  resolvedModels: ModelOption[]  // models filtered by `query` (feeds `.List`)
   open: boolean
   setOpen: (open: boolean) => void
   disabled?: boolean
 }
 ```
+
+Search surface (`query` / `setQuery` / `resolvedModels`) mirrors [`useAgentPicker`](use-agent-picker.md) — the `.Search` and `.List` parts read from it.
 
 ## Example
 

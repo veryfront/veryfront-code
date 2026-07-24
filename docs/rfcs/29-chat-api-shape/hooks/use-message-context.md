@@ -33,7 +33,7 @@ interface UseMessageContextResult<TMessage extends ChatMessage> {
   copied: boolean;
   isEditing: boolean;
   // Actions
-  copy: () => void;
+  copy: () => Promise<void>;
   startEdit: () => void;
   cancelEdit: () => void;
   regenerate?: () => void; // assistant turns with reload only
@@ -62,7 +62,7 @@ This hook takes no options — it is a context reader. It must be called under a
 
 | Name         | Type                      | Description                                                                                                                           |
 | ------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `copy`       | `() => void`              | Copy `textContent` to the clipboard; sets `copied` transiently.                                                                       |
+| `copy`       | `() => Promise<void>`     | Copy `textContent` to the clipboard; sets `copied` transiently.                                                                       |
 | `regenerate` | `() => void` _(optional)_ | Regenerate this message (session `reload` from `ChatRoot` context). Present on assistant turns with `reload` only — absent otherwise. |
 | `startEdit`  | `() => void`              | Enter edit mode — render a `ChatInput` inside the message; it _is_ the edit form.                                                     |
 | `cancelEdit` | `() => void`              | Leave edit mode without submitting.                                                                                                   |
