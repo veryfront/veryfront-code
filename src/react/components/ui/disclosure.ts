@@ -1,5 +1,5 @@
 /**
- * useDisclosure — shared controlled/uncontrolled open state for overlay surfaces.
+ * useDisclosure: shared controlled/uncontrolled open state for overlay surfaces.
  * @module react/components/ui/disclosure
  */
 import * as React from "react";
@@ -15,13 +15,18 @@ export interface DisclosureOptions {
 export function useDisclosure({ open, defaultOpen, onOpenChange }: DisclosureOptions) {
   const [internal, setInternal] = React.useState(defaultOpen ?? false);
   const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internal;
+  const isOpen: boolean = open ?? internal;
+  // Latest-ref pattern: setOpen keeps a stable identity across parent renders
+  // (so effect consumers do not re-register listeners) while always invoking
+  // the caller's current onOpenChange.
+  const onOpenChangeRef = React.useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
   const setOpen = React.useCallback(
     (next: boolean) => {
       if (!isControlled) setInternal(next);
-      onOpenChange?.(next);
+      onOpenChangeRef.current?.(next);
     },
-    [isControlled, onOpenChange],
+    [isControlled],
   );
   return { open: isOpen, setOpen };
 }

@@ -1,7 +1,7 @@
 /**
  * Shared behavioral machinery for Popover and DropdownMenu.
  * TODO(a11y): focus trap, portal + collision-aware positioning (flip/shift),
- * aria-controls/aria-expanded, side/align offsets.
+ * aria-controls, side/align offsets.
  * DropdownMenu: roving focus, typeahead, Tab, aria-activedescendant, sub menus.
  * @module react/components/ui/anchored-surface
  */
