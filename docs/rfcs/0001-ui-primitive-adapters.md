@@ -177,8 +177,10 @@ through any specific engine's API.
 Tiered by how much behaviour (and how much of our `TODO(a11y)` debt) is at stake.
 
 **Tier 1 — adapter-backed (this RFC):** Dialog, Drawer/Sheet, Popover,
-DropdownMenu, Tooltip, Select. These map 1:1 onto the shared machinery modules
-and are where our forks are weakest.
+DropdownMenu, Tooltip, Select. These map onto the shared machinery modules and
+are where our forks are weakest. Drawer is a **skin over the Dialog contract**
+(§6.10), not a separate contract — so there are **five** adapter interfaces, not
+six.
 
 **Tier 2 — adapter-backed (follow-up):** Combobox/Command, Tabs, Accordion,
 Collapsible, Switch, Checkbox, Radio, Slider. Behaviour exists but is lower risk;
@@ -609,6 +611,85 @@ fewer runtime lookup.
 > These blocks are illustrative (final types live in code), but they are complete
 > enough to show the load-bearing claim: **one Skin, one call-site, three engines,
 > zero call-site changes.**
+
+### 6.10 Per-primitive walkthrough — every Tier-1 seam
+
+Popover (§6.9) is the anchored archetype. Here is each remaining Tier-1 primitive:
+its **contract parts**, the **builtin machinery** it wraps + the `TODO(a11y)` gap
+the adapters close, and the **specific per-engine normalization** the contract has
+to absorb. This is what "going through each" surfaces — the seams are not uniform.
+
+#### Dialog (modal archetype)
+
+- **Contract parts:** `Root(open, defaultOpen, onOpenChange, modal?)`, `Trigger`,
+  `Content` (portalled, focus-trapped, scroll-locked), `Title`, `Description`,
+  `Close`.
+- **Builtin wraps** `createModalSurfaceParts("Dialog")`. Gap it closes: today's
+  modal is **not portalled, has no focus trap, no scroll-lock, no
+  `aria-labelledby`** (`modal-surface.tsx` TODO). Every engine provides all four.
+- **Per-engine:** Radix `Root/Trigger/Portal/Overlay/Content/Title/Description/Close`
+  — near 1:1. Base UI renames `Overlay → Backdrop`, splits positioning, and its
+  `modal` accepts `'trap-focus'` (map our `modal:true`). React Aria:
+  `useOverlayTriggerState` + `useDialog` — the adapter must wire `titleProps` to
+  our `Title` for `aria-labelledby`, and `isOpen ⇄ open`.
+
+#### Drawer / Sheet — a *skin over the Dialog contract*, not its own contract
+
+- **Key simplification:** no engine ships a true drawer. So `Drawer` is our
+  **skin** (slide-from-`side` classes) over the **same `DialogParts`** contract,
+  with a `side: "left"|"right"|"top"|"bottom"` prop on `Content`. This drops the
+  Tier-1 contract count from 6 to 5.
+- **Builtin wraps** `createModalSurfaceParts("Drawer")` + the drag-handle `lead`.
+- **Intersection note (rule 6):** drag-to-dismiss / snap points (Vaul-style) are
+  **builtin-only** — no Radix/Base UI/React Aria equivalent — so they are *not* in
+  the contract. Under a third-party adapter, Drawer is a slide-animated modal
+  without drag. Documented, not silently dropped.
+
+#### DropdownMenu (anchored + roving focus + typeahead)
+
+- **Contract parts:** `Root`, `Trigger(haspopup="menu")`, `Content`, `Item`,
+  `Separator`, `Label`. (Submenu deferred to Tier-2 — builtin has none.)
+- **Builtin wraps** `createAnchoredSurfaceParts()` + `Floating`. Gap it closes:
+  **no roving focus, no typeahead, no `aria-activedescendant`, no submenus**
+  (`anchored-surface.tsx` TODO) — all free from the engines.
+- **Per-engine + the sharp constraint:** Radix `DropdownMenu.*`, Base UI `Menu.*`
+  (Positioner/Popup split). **React Aria menus reject arbitrary children** — only
+  `MenuItem`/`Section`/`Header` — so our `Item` maps to a role-tagged slot and
+  free-form content inside a menu is *out of the contract intersection*. Selection
+  normalizes to an `onSelect`/`onAction` per `Item`.
+
+#### Tooltip
+
+- **Contract parts:** `Root(delay?)`, `Trigger`, `Content`.
+- **Builtin wraps** `tooltip.tsx` (own portal + positioning). Gap it closes:
+  **`aria-describedby` wiring, open/close delay grouping, Escape dismissal**
+  (`tooltip.tsx` TODO).
+- **Per-engine:** Radix and Base UI need a **Provider** for cross-tooltip delay
+  grouping — the adapter mounts it internally so the Skin never sees it. **React
+  Aria tooltips attach only to focusable triggers** (intersection constraint) — the
+  adapter requires the `Trigger` child be focusable, matching our `asChild` button.
+
+#### Select (two state axes: open **and** value)
+
+- **Contract parts:** `Root(value, defaultValue, onValueChange, open?,
+  onOpenChange?)`, `Trigger`, `Value`, `Content`, `Item`, `ItemText`, `Group`,
+  `Label`, `Separator`. Note this is the one primitive with **selection state on
+  top of disclosure state** — the contract carries both.
+- **Builtin wraps** `select.tsx` (uses `Floating`). Gap it closes: **roving focus,
+  arrow/typeahead keyboard nav, `aria-activedescendant`** (`select.tsx` TODO).
+- **Per-engine:** Radix `Select.*` with a `Viewport` scroll container; Base UI
+  `Select.*` with Positioner/Popup. **React Aria is collection-based** —
+  `useSelectState` + `ListBox`/`ListBoxItem` — so our `Item` maps to a collection
+  item and the adapter bridges `value/onValueChange ⇄ selectedKey/onSelectionChange`.
+  Native `<form>` submission differs per engine; the adapter renders a hidden input
+  where the engine doesn't.
+
+**What the walkthrough proves:** the contract is not one-size — each primitive has
+a distinct seam (Dialog's `titleProps`, Menu's child-type restriction, Tooltip's
+delay Provider, Select's dual state, Drawer's non-portable drag). The `UIAdapter`
+interface is the sum of these per-primitive parts, and §6.3 rules 1–7 are exactly
+the tools each seam needs. It also shows the payoff concretely: **five of these
+list a builtin `TODO(a11y)` gap that a mature engine closes for free.**
 
 ## 7. Recommendation
 
