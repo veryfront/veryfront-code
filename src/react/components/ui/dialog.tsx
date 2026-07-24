@@ -11,14 +11,17 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { ScrollFade } from "./scroll-fade.tsx";
 import { Button, type ButtonProps, LoadingButton } from "./button.tsx";
-import { useDisclosure } from "./disclosure.ts";
-import {
-  ModalClose,
-  ModalContent,
-  ModalContext,
-  ModalTrigger,
-  useModal,
-} from "./modal-surface.tsx";
+import { createModalSurfaceParts } from "./modal-surface.tsx";
+
+// Per-skin context + machinery -- distinct from Drawer's instance so a
+// DrawerClose nested inside a Dialog cannot accidentally close the Dialog.
+const {
+  ModalRoot: _Root,
+  useModal: _hook,
+  ModalTrigger: _Trigger,
+  ModalClose: _Close,
+  ModalContent: _Content,
+} = createModalSurfaceParts("Dialog");
 
 /** Props accepted by `<Dialog>`. */
 export interface DialogProps {
@@ -29,26 +32,15 @@ export interface DialogProps {
 }
 
 /** Dialog root — owns open state. */
-export function Dialog({
-  children,
-  open,
-  defaultOpen,
-  onOpenChange,
-}: DialogProps): React.ReactElement {
-  const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
-  const ctx = React.useMemo(() => ({ open: isOpen, setOpen }), [isOpen, setOpen]);
-  return (
-    <ModalContext.Provider value={ctx}>
-      {children}
-    </ModalContext.Provider>
-  );
+export function Dialog(props: DialogProps): React.ReactElement {
+  return <_Root {...props} />;
 }
 
 /** Trigger — opens the dialog. `asChild` merges onto the child element. */
 export function DialogTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <ModalTrigger {...props} />;
+  return <_Trigger {...props} />;
 }
 
 /** Modal surface — overlay + centered panel, rendered while open. */
@@ -58,7 +50,7 @@ export function DialogContent({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
   return (
-    <ModalContent
+    <_Content
       className={cn(
         "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
         "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none overflow-hidden flex flex-col",
@@ -67,7 +59,7 @@ export function DialogContent({
       {...props}
     >
       {children}
-    </ModalContent>
+    </_Content>
   );
 }
 
@@ -174,7 +166,7 @@ export function DialogCancel({
   onClick,
   ...props
 }: ButtonProps): React.ReactElement {
-  const ctx = useModal("Dialog");
+  const ctx = _hook();
   return (
     <Button
       variant={variant}
@@ -193,5 +185,5 @@ export function DialogCancel({
 export function DialogClose(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <ModalClose {...props} />;
+  return <_Close {...props} />;
 }

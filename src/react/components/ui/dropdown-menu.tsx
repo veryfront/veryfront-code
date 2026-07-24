@@ -11,12 +11,12 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { Slot } from "./slot.tsx";
-import {
-  AnchoredContent,
-  AnchoredContext,
-  AnchoredRoot,
-  AnchoredTrigger,
-} from "./anchored-surface.tsx";
+import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+
+// Per-skin context + machinery -- distinct from Popover's instance so a
+// Popover nested inside a DropdownMenu cannot accidentally close the menu.
+const { Context: _ctx, AnchoredRoot: _Root, AnchoredTrigger: _Trigger, AnchoredContent: _Content } =
+  createAnchoredSurfaceParts();
 
 /** Props accepted by `<DropdownMenu>`. */
 export interface DropdownMenuProps {
@@ -28,14 +28,14 @@ export interface DropdownMenuProps {
 
 /** DropdownMenu root — owns open state and the positioning anchor. */
 export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
-  return <AnchoredRoot {...props} />;
+  return <_Root {...props} />;
 }
 
 /** Trigger — toggles the menu. `asChild` merges onto the child element. */
 export function DropdownMenuTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <AnchoredTrigger {...props} haspopup="menu" />;
+  return <_Trigger {...props} haspopup="menu" />;
 }
 
 /** Props accepted by `<DropdownMenuContent>`. */
@@ -52,14 +52,14 @@ export function DropdownMenuContent({
   ...props
 }: DropdownMenuContentProps): React.ReactElement | null {
   return (
-    <AnchoredContent
+    <_Content
       role="menu"
       align={align}
       className={cn("min-w-[260px] p-2.5", className)}
       {...props}
     >
       {children}
-    </AnchoredContent>
+    </_Content>
   );
 }
 
@@ -92,7 +92,7 @@ export function DropdownMenuItem({
   asChild,
   ...props
 }: DropdownMenuItemProps): React.ReactElement {
-  const ctx = React.useContext(AnchoredContext);
+  const ctx = React.useContext(_ctx);
   const Comp = asChild ? Slot : "button";
   return (
     <Comp

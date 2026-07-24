@@ -10,7 +10,12 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { AnchoredContent, AnchoredRoot, AnchoredTrigger } from "./anchored-surface.tsx";
+import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+
+// Per-skin context + machinery -- distinct from DropdownMenu's instance so
+// a DropdownMenu nested inside a Popover cannot accidentally close the Popover.
+const { AnchoredRoot: _Root, AnchoredTrigger: _Trigger, AnchoredContent: _Content } =
+  createAnchoredSurfaceParts();
 
 /** Props accepted by `<Popover>`. */
 export interface PopoverProps {
@@ -22,14 +27,14 @@ export interface PopoverProps {
 
 /** Popover root — owns open state and the positioning anchor. */
 export function Popover(props: PopoverProps): React.ReactElement {
-  return <AnchoredRoot {...props} />;
+  return <_Root {...props} />;
 }
 
 /** Trigger — toggles the popover. `asChild` merges onto the child element. */
 export function PopoverTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <AnchoredTrigger {...props} haspopup="dialog" />;
+  return <_Trigger {...props} haspopup="dialog" />;
 }
 
 /** Props accepted by `<PopoverContent>`. */
@@ -46,14 +51,14 @@ export function PopoverContent({
   ...props
 }: PopoverContentProps): React.ReactElement | null {
   return (
-    <AnchoredContent
+    <_Content
       role="dialog"
       align={align}
       className={cn("min-w-[220px]", className)}
       {...props}
     >
       {children}
-    </AnchoredContent>
+    </_Content>
   );
 }
 

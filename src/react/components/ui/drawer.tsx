@@ -10,8 +10,12 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { useDisclosure } from "./disclosure.ts";
-import { ModalClose, ModalContent, ModalContext, ModalTrigger } from "./modal-surface.tsx";
+import { createModalSurfaceParts } from "./modal-surface.tsx";
+
+// Per-skin context + machinery -- distinct from Dialog's instance so a
+// DialogClose nested inside a Drawer cannot accidentally close the Drawer.
+const { ModalRoot: _Root, ModalTrigger: _Trigger, ModalClose: _Close, ModalContent: _Content } =
+  createModalSurfaceParts("Drawer");
 
 /** Props accepted by `<Drawer>`. */
 export interface DrawerProps {
@@ -22,26 +26,15 @@ export interface DrawerProps {
 }
 
 /** Drawer root — owns open state. */
-export function Drawer({
-  children,
-  open,
-  defaultOpen,
-  onOpenChange,
-}: DrawerProps): React.ReactElement {
-  const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
-  const ctx = React.useMemo(() => ({ open: isOpen, setOpen }), [isOpen, setOpen]);
-  return (
-    <ModalContext.Provider value={ctx}>
-      {children}
-    </ModalContext.Provider>
-  );
+export function Drawer(props: DrawerProps): React.ReactElement {
+  return <_Root {...props} />;
 }
 
 /** Trigger — opens the drawer. `asChild` merges onto the child element. */
 export function DrawerTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <ModalTrigger {...props} />;
+  return <_Trigger {...props} />;
 }
 
 /** Bottom sheet — overlay + sliding surface with a drag handle. */
@@ -51,7 +44,7 @@ export function DrawerContent({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
   return (
-    <ModalContent
+    <_Content
       className={cn(
         "fixed inset-x-0 bottom-0 z-50 flex flex-col max-h-[85vh] w-full rounded-t-xl bg-[var(--drawer)] text-[var(--foreground)] outline-none",
         className,
@@ -65,7 +58,7 @@ export function DrawerContent({
       {...props}
     >
       {children}
-    </ModalContent>
+    </_Content>
   );
 }
 
@@ -120,5 +113,5 @@ export function DrawerFooter(
 export function DrawerClose(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <ModalClose {...props} />;
+  return <_Close {...props} />;
 }
