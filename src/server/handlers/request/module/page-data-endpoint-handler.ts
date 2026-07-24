@@ -1,7 +1,7 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
-import { getRendererForProject } from "../../../shared/renderer-factory.ts";
+import { getRendererForProject, type RendererAdapter } from "../../../shared/renderer-factory.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { markRequestProfilePhase } from "#veryfront/observability";
@@ -78,6 +78,30 @@ function isPageDataCacheEnabled(): boolean {
   return PAGE_DATA_CACHE_MAX_ENTRIES > 0;
 }
 
+async function resolvePageDataWithinDeadline(
+  renderer: RendererAdapter,
+  slug: string,
+  request: Request,
+  url: URL,
+): Promise<PageDataResponse> {
+  const controller = new AbortController();
+
+  try {
+    return await withTimeoutThrow(
+      renderer.resolvePageData(slug, {
+        request,
+        url,
+        abortSignal: controller.signal,
+      }),
+      PAGE_DATA_TIMEOUT_MS,
+      `resolvePageData for ${slug}`,
+    );
+  } catch (error) {
+    if (error instanceof TimeoutError) controller.abort(error);
+    throw error;
+  }
+}
+
 export function __clearPageDataEndpointCacheForTests(): void {
   pageDataCache.clear();
 }
@@ -109,18 +133,13 @@ export function handlePageDataEndpoint(
         const cachePolicy = cacheKey ? getPageDataCachePolicy(ctx) : null;
 
         const payload = cacheKey
-          ? await resolveCachedPageData(cacheKey, () =>
-            withTimeoutThrow(
-              renderer.resolvePageData(slug, { request: req, url }),
-              PAGE_DATA_TIMEOUT_MS,
-              `resolvePageData for ${slug}`,
-            ), cachePolicy!)
+          ? await resolveCachedPageData(
+            cacheKey,
+            () => resolvePageDataWithinDeadline(renderer, slug, req, url),
+            cachePolicy!,
+          )
           : await resolveUncachedPageData(() =>
-            withTimeoutThrow(
-              renderer.resolvePageData(slug, { request: req, url }),
-              PAGE_DATA_TIMEOUT_MS,
-              `resolvePageData for ${slug}`,
-            )
+            resolvePageDataWithinDeadline(renderer, slug, req, url)
           );
         const cacheStrategy = cacheKey
           ? {

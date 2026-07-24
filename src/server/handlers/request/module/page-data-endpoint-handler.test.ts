@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { FakeTime } from "#std/testing/time";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
@@ -385,6 +386,32 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
 
     assertEquals(calls, 2);
     assertEquals(first.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+  });
+
+  it("aborts underlying page-data work when the request deadline expires", async () => {
+    using time = new FakeTime();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer((_slug, _ctx, options) => {
+        observedSignal = options?.abortSignal;
+        started.resolve();
+        return new Promise<PageDataResponse>(() => {});
+      }),
+    );
+
+    const responsePromise = callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json"),
+      makeCtx(),
+    );
+    await started.promise;
+
+    await time.tickAsync(25_000);
+
+    const response = await responsePromise;
+    assertEquals(response.status, 504);
+    assertEquals(observedSignal?.aborted, true);
   });
 
   it("can disable the page-data cache with max entries set to zero", async () => {

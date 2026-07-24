@@ -696,20 +696,28 @@ export class Renderer {
 
     try {
       const services = this.createServicesForContext(ctx, options?.colorScheme);
-      const result = await withTimeoutThrow(
-        services.pipeline.renderPage(slug, {
-          ...options,
-          delivery: "string",
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-          environment: ctx.environment,
-          contentSourceId: ctx.contentSourceId,
-          skipCacheCheck: true,
-          skipCachePersist: true,
-        }),
-        RENDER_PIPELINE_TIMEOUT_MS,
-        `Render pipeline for ${ctx.projectId}:${slug}`,
-      );
+      const renderAbortController = new AbortController();
+      let result: RenderResult;
+      try {
+        result = await withTimeoutThrow(
+          services.pipeline.renderPage(slug, {
+            ...options,
+            abortSignal: renderAbortController.signal,
+            delivery: "string",
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            environment: ctx.environment,
+            contentSourceId: ctx.contentSourceId,
+            skipCacheCheck: true,
+            skipCachePersist: true,
+          }),
+          RENDER_PIPELINE_TIMEOUT_MS,
+          `Render pipeline for ${ctx.projectId}:${slug}`,
+        );
+      } catch (error) {
+        if (error instanceof TimeoutError) renderAbortController.abort(error);
+        throw error;
+      }
 
       if (cacheKey !== null) {
         await this.cache.persistResult(result, slug, ctx, options?.colorScheme, cacheKey);

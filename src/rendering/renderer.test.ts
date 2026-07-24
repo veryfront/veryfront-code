@@ -9,6 +9,7 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
@@ -1005,6 +1006,51 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(results.length, 11);
     assertEquals(renderCalls, 1);
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
+  });
+
+  it("aborts underlying render work when the pipeline deadline expires", async () => {
+    using time = new FakeTime();
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedSignal: AbortSignal | undefined;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedSignal = options?.abortSignal;
+          markStarted();
+          return new Promise<never>(() => {});
+        },
+      },
+    });
+
+    const render = renderer.renderPage("/deadline", makeRenderContext(), {
+      environment: "production",
+      releaseAssetManifest: null,
+    });
+    const rejected = assertRejects(
+      () => render,
+      Error,
+      "Render pipeline for proj-1:/deadline timed out after 60000ms",
+    );
+    await started;
+
+    await time.tickAsync(60_000);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
   });
 });
 

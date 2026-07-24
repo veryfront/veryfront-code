@@ -10,12 +10,6 @@
 /** Idle timeout for the module-loading stage. Any concrete module/transform progress resets it. */
 export const MODULE_LOAD_TIMEOUT_MS = 10_000;
 
-/**
- * Absolute module-loading stage cap. Progress is stage-wide, so a single wedged
- * module can still run until this hard cap while other modules report progress.
- */
-export const MODULE_LOAD_HARD_TIMEOUT_MS = 45_000;
-
 /** Timeout for data fetching (getStaticData, getServerData) */
 export const DATA_FETCH_TIMEOUT_MS = 15_000;
 

@@ -78,8 +78,11 @@ export interface EnvironmentConfig {
   veryfrontVersion: string | undefined;
 }
 
-/** Default timeout for incoming HTTP requests (used when REQUEST_TIMEOUT_MS is set but unparseable) */
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * Default incoming request deadline. This must remain above the renderer's
+ * 60-second pipeline deadline and below the proxy's 90-second upstream one.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 75_000;
 /** Default timeout for outgoing HTTP fetch calls (used when VF_HTTP_FETCH_TIMEOUT is set but unparseable) */
 const DEFAULT_HTTP_FETCH_TIMEOUT_MS = 30_000;
 

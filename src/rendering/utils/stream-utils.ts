@@ -18,7 +18,7 @@ export class TimeoutError extends Error {
 }
 
 export interface ProgressTimeoutControl {
-  /** Aborted when either the idle deadline or hard cap is reached. */
+  /** Aborted when a local deadline or the caller-owned signal is reached. */
   signal: AbortSignal;
   /** Reset the idle deadline after a concrete unit of work completes. */
   mark(label: string): void;
@@ -27,7 +27,10 @@ export interface ProgressTimeoutControl {
 export interface ProgressTimeoutOptions {
   label: string;
   idleTimeoutMs: number;
-  hardTimeoutMs: number;
+  /** Optional local hard cap. Omit when the caller already owns the total deadline. */
+  hardTimeoutMs?: number;
+  /** Optional deadline owned by the operation's caller. */
+  signal?: AbortSignal;
 }
 
 export async function withTimeout<T>(
@@ -76,26 +79,33 @@ export async function withTimeoutThrow<T>(
 }
 
 /**
- * Run an operation with a resettable idle deadline and a non-resettable hard cap.
+ * Run an operation with a resettable idle deadline and an optional hard cap.
  *
- * Callers must only call `mark` after meaningful progress. The hard cap keeps a
- * noisy or buggy progress source from extending work forever. The supplied
- * signal lets cooperative operations stop after either deadline.
+ * Callers must only call `mark` after meaningful progress. Use `hardTimeoutMs`
+ * when this helper owns the total deadline. Omit it when an outer operation
+ * already enforces that deadline. The supplied signal lets cooperative work
+ * stop after either configured deadline.
  */
 export async function withProgressTimeoutThrow<T>(
   operation: (control: ProgressTimeoutControl) => Promise<T>,
   options: ProgressTimeoutOptions,
 ): Promise<T> {
-  const { label, idleTimeoutMs, hardTimeoutMs } = options;
-  if (idleTimeoutMs <= 0 || hardTimeoutMs <= 0 || hardTimeoutMs < idleTimeoutMs) {
-    throw new RangeError("Progress timeout requires 0 < idleTimeoutMs <= hardTimeoutMs");
+  const { label, idleTimeoutMs, hardTimeoutMs, signal: parentSignal } = options;
+  if (
+    idleTimeoutMs <= 0 ||
+    (hardTimeoutMs !== undefined &&
+      (hardTimeoutMs <= 0 || hardTimeoutMs < idleTimeoutMs))
+  ) {
+    throw new RangeError(
+      "Progress timeout requires idleTimeoutMs > 0 and, when set, hardTimeoutMs >= idleTimeoutMs",
+    );
   }
 
   const controller = new AbortController();
   let idleTimeoutId: ReturnType<typeof setTimeout> | undefined;
   let active = true;
   let lastProgress = "operation started";
-  let rejectTimeout!: (error: TimeoutError) => void;
+  let rejectTimeout!: (error: unknown) => void;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     rejectTimeout = reject;
@@ -131,10 +141,28 @@ export async function withProgressTimeoutThrow<T>(
     },
   };
 
-  scheduleIdleTimeout();
-  const hardTimeoutId = setTimeout(() => fail("hard", hardTimeoutMs), hardTimeoutMs);
+  const abortFromParent = (): void => {
+    if (!active || !parentSignal) return;
+    active = false;
+    const reason = parentSignal.reason ??
+      new DOMException("The operation was aborted", "AbortError");
+    controller.abort(reason);
+    rejectTimeout(reason);
+  };
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  if (active) scheduleIdleTimeout();
+  const hardTimeoutId = !active || hardTimeoutMs === undefined
+    ? undefined
+    : setTimeout(() => fail("hard", hardTimeoutMs), hardTimeoutMs);
 
   try {
+    if (!active) return await timeoutPromise;
     return await Promise.race([
       Promise.resolve().then(() => operation(control)),
       timeoutPromise,
@@ -143,6 +171,7 @@ export async function withProgressTimeoutThrow<T>(
     active = false;
     if (idleTimeoutId) clearTimeout(idleTimeoutId);
     if (hardTimeoutId) clearTimeout(hardTimeoutId);
+    parentSignal?.removeEventListener("abort", abortFromParent);
   }
 }
 
