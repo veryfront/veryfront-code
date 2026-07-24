@@ -15,11 +15,11 @@ import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type {
   ComponentProps,
   EntityInfo,
-  MDXFrontmatter,
   PageContext,
   RenderResult,
   ScriptPageModule,
 } from "#veryfront/types";
+import type { MDXFrontmatter as HTMLFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { computeHash } from "./utils/index.ts";
@@ -27,13 +27,14 @@ import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { toHTMLFrontmatter, toMDXFrontmatter } from "./frontmatter.ts";
 
 const logger = rendererLogger.component("script");
 
 type ScriptModuleOutput =
   | string
   | Response
-  | { html: string; frontmatter?: MDXFrontmatter; meta?: MDXFrontmatter }
+  | { html: string; frontmatter?: HTMLFrontmatter; meta?: HTMLFrontmatter }
   | null;
 
 interface ScriptPageOptions {
@@ -101,14 +102,17 @@ async function collectModuleMetadata(
 
 function extractHtmlAndMetadata(output: ScriptModuleOutput): {
   htmlBody: string;
-  outputMetadata: Record<string, unknown>;
+  outputMetadata: unknown;
 } {
   if (typeof output === "string") return { htmlBody: output, outputMetadata: {} };
 
-  if (output && typeof output === "object" && "html" in output && typeof output.html === "string") {
+  const html = readOwnEnumerableDataProperty(output, "html");
+  if (typeof html === "string") {
+    const frontmatter = readOwnEnumerableDataProperty(output, "frontmatter");
+    const meta = readOwnEnumerableDataProperty(output, "meta");
     return {
-      htmlBody: output.html,
-      outputMetadata: output.frontmatter || output.meta || {},
+      htmlBody: html,
+      outputMetadata: frontmatter ?? meta ?? {},
     };
   }
 
@@ -116,7 +120,7 @@ function extractHtmlAndMetadata(output: ScriptModuleOutput): {
     // HTML-escape the serialized output: object values may contain user-controlled
     // strings with markup (e.g. "<script>"), which would otherwise be injected unescaped.
     return {
-      htmlBody: `<pre>${escapeHtml(JSON.stringify(output, null, 2))}</pre>`,
+      htmlBody: `<pre>${escapeHtml(JSON.stringify(toMDXFrontmatter(output), null, 2))}</pre>`,
       outputMetadata: {},
     };
   }
@@ -127,6 +131,16 @@ function extractHtmlAndMetadata(output: ScriptModuleOutput): {
       message: "Unsupported script page return type",
     }),
   );
+}
+
+function readOwnEnumerableDataProperty(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    return descriptor?.enumerable && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function buildPageContext(
@@ -142,7 +156,7 @@ function buildPageContext(
     query: url ? Object.fromEntries(url.searchParams) : {},
     slug,
     path: pageInfo.entity.path,
-    frontmatter: pageInfo.entity.frontmatter || {},
+    frontmatter: toMDXFrontmatter(pageInfo.entity.frontmatter),
   };
 }
 
@@ -155,11 +169,6 @@ async function resolveAppComponentPath(
     if (await adapter.fs.exists(candidate)) return candidate;
   }
   return undefined;
-}
-
-function getStringMeta(meta: Record<string, unknown>, key: string): string | undefined {
-  const value = meta[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 export async function handleScriptPage(
@@ -180,18 +189,17 @@ export async function handleScriptPage(
 
     const { htmlBody, outputMetadata } = extractHtmlAndMetadata(output);
 
-    const mergedFrontmatter = {
-      ...pageInfo.entity.frontmatter,
-      ...outputMetadata,
-      ...generatedMetadata,
-    } as MDXFrontmatter;
+    const publicFrontmatter = toMDXFrontmatter({
+      ...toMDXFrontmatter(pageInfo.entity.frontmatter),
+      ...toMDXFrontmatter(outputMetadata),
+      ...toMDXFrontmatter(generatedMetadata),
+    });
+    const htmlFrontmatter = toHTMLFrontmatter(publicFrontmatter);
 
     const appComponentPath = await resolveAppComponentPath(options.projectDir, options.adapter);
 
     const fullHtml = await generateFullHtml(htmlBody, {
-      mergedFrontmatter,
-      outputMetadata,
-      pageInfo,
+      htmlFrontmatter,
       slug,
       appComponentPath,
       options,
@@ -201,7 +209,7 @@ export async function handleScriptPage(
 
     return {
       html: fullHtml,
-      frontmatter: mergedFrontmatter,
+      frontmatter: publicFrontmatter,
       headings: [],
       nodeMap: undefined,
       stream: null,
@@ -220,18 +228,16 @@ export async function handleScriptPage(
 async function generateFullHtml(
   htmlBody: string,
   context: {
-    mergedFrontmatter: MDXFrontmatter;
-    outputMetadata: Record<string, unknown>;
-    pageInfo: EntityInfo;
+    htmlFrontmatter: HTMLFrontmatter;
     slug: string;
     appComponentPath: string | undefined;
     options: ScriptPageOptions;
   },
 ): Promise<string> {
-  const { mergedFrontmatter, outputMetadata, pageInfo, slug, appComponentPath, options } = context;
+  const { htmlFrontmatter, slug, appComponentPath, options } = context;
 
   if (isFullHTMLDocument(htmlBody)) {
-    const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);
+    const metadata = extractHTMLMetadata(htmlFrontmatter, undefined);
     return injectHTMLContent(htmlBody, "", metadata, {
       mode: options.mode,
       slug,
@@ -251,14 +257,10 @@ async function generateFullHtml(
   return wrapInHTMLShell(
     htmlBody,
     {
-      title: getStringMeta(outputMetadata, "title") ??
-        pageInfo.entity.frontmatter?.title ??
-        "Veryfront App",
-      description: getStringMeta(outputMetadata, "description") ??
-        pageInfo.entity.frontmatter?.description ??
-        "",
+      title: htmlFrontmatter.title ?? "Veryfront App",
+      description: htmlFrontmatter.description ?? "",
       slug,
-      frontmatter: mergedFrontmatter,
+      frontmatter: htmlFrontmatter,
       layoutFrontmatter: undefined,
       ssrHash: undefined,
     },

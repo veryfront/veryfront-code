@@ -9,7 +9,7 @@ import {
   isFullHTMLDocument,
 } from "#veryfront/html";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
-import type { MDXFrontmatter } from "#veryfront/types";
+import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
@@ -33,6 +33,7 @@ import {
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
+import { toHTMLFrontmatter } from "../frontmatter.ts";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
@@ -266,8 +267,8 @@ export class HTMLGenerator {
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
-      (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
-      (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
+      mergedFrontmatter,
+      toHTMLFrontmatter(context.layoutBundle?.frontmatter),
     );
 
     const pagePath = context.pageInfo.entity.path;
@@ -386,8 +387,6 @@ export class HTMLGenerator {
     projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
-    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
-    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
     const enrichedFrontmatter = {
       ...mergedFrontmatter,
       ...(head?.title && { title: head.title }),
@@ -396,11 +395,9 @@ export class HTMLGenerator {
 
     const { start, end } = await generateHTMLShellParts(
       {
-        title: effectiveTitle,
-        description: effectiveDescription,
         slug: context.slug,
         frontmatter: enrichedFrontmatter,
-        layoutFrontmatter: context.layoutBundle?.frontmatter,
+        layoutFrontmatter: toHTMLFrontmatter(context.layoutBundle?.frontmatter),
         ssrHash: context.ssrHash,
       },
       htmlOptions,

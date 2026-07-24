@@ -27,6 +27,7 @@ import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
+import { toMDXFrontmatter } from "../frontmatter.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -174,7 +175,7 @@ export class LayoutApplicator {
           path: pageFilePath,
           params: flatParams,
           query,
-          frontmatter: this.frontmatter ?? pageInfo.entity.frontmatter ?? {},
+          frontmatter: toMDXFrontmatter(this.frontmatter ?? pageInfo.entity.frontmatter),
           headings: headingsArray,
           mdxHeadings: headingsArray,
         };

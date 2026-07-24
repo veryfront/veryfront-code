@@ -11,7 +11,12 @@ export type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSOptimizerStats,
-} from "#veryfront/types";
+  CSSProcessingResult,
+  LightningCSSModule,
+  LightningCSSTransformOptions,
+  LightningCSSTransformResult,
+  SelectorExtractionResult,
+} from "./types/index.ts";
 
 export { CSSOptimizerService } from "./optimizer-service.ts";
 export { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
@@ -19,7 +24,7 @@ export { extractCriticalCSS } from "./critical-css.ts";
 export { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 export * as CSSUtils from "./utils.ts";
 
-import type { CriticalCSSResult, CSSBundle, CSSOptimizationOptions } from "#veryfront/types";
+import type { CriticalCSSResult, CSSBundle, CSSOptimizationOptions } from "./types/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";

@@ -1,4 +1,5 @@
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
+import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import {
@@ -19,6 +20,69 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+
+const MAX_INJECTION_INPUT_PROPERTIES = 128;
+
+function snapshotOwnDataRecord(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `${label} must be a plain object` });
+  }
+
+  let isArray: boolean;
+  let prototype: object | null;
+  let keys: PropertyKey[];
+  try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `${label} cannot be inspected` });
+  }
+  if (isArray || (prototype !== Object.prototype && prototype !== null)) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `${label} must be a plain object` });
+  }
+  if (keys.length > MAX_INJECTION_INPUT_PROPERTIES) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `${label} exceeds the property limit` });
+  }
+
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw INPUT_VALIDATION_FAILED.create({ detail: `${label} cannot be inspected` });
+    }
+    if (!descriptor) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: `${label} cannot be inspected` });
+    }
+    if (!descriptor.enumerable) continue;
+    if (
+      typeof key !== "string" || descriptor.get || descriptor.set ||
+      !("value" in descriptor)
+    ) {
+      throw INPUT_VALIDATION_FAILED.create({ detail: `${label} cannot be inspected` });
+    }
+    Object.defineProperty(snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    });
+  }
+  return snapshot;
+}
+
+function replaceLiteral(
+  source: string,
+  pattern: RegExp,
+  replacement: string,
+): string {
+  return source.replace(pattern, () => replacement);
+}
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -79,29 +143,59 @@ export function injectHTMLContent(
   metadata: HTMLMetadata,
   options: InjectHTMLContentOptions,
 ): string {
+  metadata = snapshotOwnDataRecord(metadata, "HTML metadata") as HTMLMetadata;
+  options = snapshotOwnDataRecord(
+    options,
+    "HTML injection options",
+  ) as unknown as InjectHTMLContentOptions;
+
   let html = template;
 
-  html = html.replace(/{{\s*content\s*}}/gi, content);
+  html = replaceLiteral(html, /{{\s*content\s*}}/gi, content);
   // Escape title and description: these come from user-authored frontmatter and
   // may appear in both text nodes and attribute values (e.g. <title> and <meta
   // content="">). escapeHTML handles &, <, >, ", and ' for both contexts.
-  html = html.replace(/{{\s*title\s*}}/gi, escapeHTML(metadata.title ?? ""));
-  html = html.replace(/{{\s*description\s*}}/gi, escapeHTML(metadata.description ?? ""));
+  html = replaceLiteral(
+    html,
+    /{{\s*title\s*}}/gi,
+    escapeHTML(metadata.title ?? ""),
+  );
+  html = replaceLiteral(
+    html,
+    /{{\s*description\s*}}/gi,
+    escapeHTML(metadata.description ?? ""),
+  );
 
   if (/{{\s*meta\s*}}/i.test(html)) {
-    html = html.replace(/{{\s*meta\s*}}/gi, generateMetaTags(metadata));
+    html = replaceLiteral(
+      html,
+      /{{\s*meta\s*}}/gi,
+      generateMetaTags(metadata),
+    );
   }
 
   if (/{{\s*links\s*}}/i.test(html)) {
-    html = html.replace(/{{\s*links\s*}}/gi, generateLinkTags(metadata));
+    html = replaceLiteral(
+      html,
+      /{{\s*links\s*}}/gi,
+      generateLinkTags(metadata),
+    );
   }
 
   if (/{{\s*scripts\s*}}/i.test(html)) {
-    html = html.replace(/{{\s*scripts\s*}}/gi, generateScriptTags(metadata));
+    html = replaceLiteral(
+      html,
+      /{{\s*scripts\s*}}/gi,
+      generateScriptTags(metadata, options.nonce),
+    );
   }
 
   if (/{{\s*styles\s*}}/i.test(html)) {
-    html = html.replace(/{{\s*styles\s*}}/gi, generateStyleTags(metadata));
+    html = replaceLiteral(
+      html,
+      /{{\s*styles\s*}}/gi,
+      generateStyleTags(metadata, options.nonce),
+    );
   }
 
   // Inject import map into <head> for ESM module resolution (must be before any module scripts)
@@ -110,19 +204,27 @@ export function injectHTMLContent(
     const importMapTag = `<script type="importmap"${nonceAttr}>\n${
       escapeInlineJsonText(options.importMapJson)
     }\n</script>`;
-    html = html.replace(/<\/head>/i, `${importMapTag}\n</head>`);
+    html = replaceLiteral(html, /<\/head>/i, `${importMapTag}\n</head>`);
   }
 
   if (options.projectStylesheetHref && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
     const projectStylesheetTag = `<link rel="stylesheet" href="${options.projectStylesheetHref}">`;
-    html = html.replace(/<\/head>/i, `${projectStylesheetTag}\n</head>`);
+    html = replaceLiteral(
+      html,
+      /<\/head>/i,
+      `${projectStylesheetTag}\n</head>`,
+    );
   }
 
   const shouldUsePreviewStylesheet = options.mode === "development" ||
     options.environment === "preview";
 
   if (shouldUsePreviewStylesheet && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
-    html = html.replace(/<\/head>/i, `${getPreviewStylesheetLink()}\n</head>`);
+    html = replaceLiteral(
+      html,
+      /<\/head>/i,
+      `${getPreviewStylesheetLink()}\n</head>`,
+    );
   }
 
   const hasBodyClose = /<\/body>/i.test(html);
@@ -146,35 +248,44 @@ export function injectHTMLContent(
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json"${nonceAttr}>${hydrationData}</script>`;
-    html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
+    html = replaceLiteral(html, /<\/body>/i, `${hydrationScript}</body>`);
   }
 
   if (options.mode === "development") {
     const hasDevScriptsPlaceholder = /{{\s*devScripts\s*}}/i.test(html);
 
     if (hasDevScriptsPlaceholder) {
-      html = html.replace(/{{\s*devScripts\s*}}/gi, getDevScripts(options.devPort, options.nonce));
+      html = replaceLiteral(
+        html,
+        /{{\s*devScripts\s*}}/gi,
+        getDevScripts(options.devPort, options.nonce),
+      );
     }
 
-    html = html.replace(/{{\s*devStyles\s*}}/gi, getDevStyles(options.nonce));
+    html = replaceLiteral(
+      html,
+      /{{\s*devStyles\s*}}/gi,
+      getDevStyles(options.nonce),
+    );
 
     if (!hasDevScriptsPlaceholder && hasBodyClose) {
-      html = html.replace(
+      html = replaceLiteral(
+        html,
         /<\/body>/i,
         `${getDevStyles(options.nonce)}${getDevScripts(options.devPort, options.nonce)}</body>`,
       );
     }
   } else {
-    html = html.replace(/{{\s*devScripts\s*}}/gi, "");
-    html = html.replace(/{{\s*devStyles\s*}}/gi, "");
+    html = replaceLiteral(html, /{{\s*devScripts\s*}}/gi, "");
+    html = replaceLiteral(html, /{{\s*devStyles\s*}}/gi, "");
 
     const prodScripts = getProdScripts(options.slug, options.nonce);
     const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
     if (hasProdScriptsPlaceholder) {
-      html = html.replace(/{{\s*prodScripts\s*}}/gi, prodScripts);
+      html = replaceLiteral(html, /{{\s*prodScripts\s*}}/gi, prodScripts);
     } else if (hasBodyClose) {
-      html = html.replace(/<\/body>/i, `${prodScripts}</body>`);
+      html = replaceLiteral(html, /<\/body>/i, `${prodScripts}</body>`);
     }
   }
 
@@ -187,7 +298,7 @@ export function injectHTMLContent(
       wsUrl: options.wsUrl,
       yjsGuid: options.yjsGuid,
     });
-    html = html.replace(/<\/body>/i, `${studioScripts}</body>`);
+    html = replaceLiteral(html, /<\/body>/i, `${studioScripts}</body>`);
   }
 
   return html;

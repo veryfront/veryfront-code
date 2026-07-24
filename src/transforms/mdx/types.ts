@@ -1,6 +1,6 @@
 import type React from "react";
 
-export type MDXComponents = Record<string, React.ComponentType<unknown>>;
+export type MDXComponents = Record<string, React.ElementType>;
 
 export interface MDXComponentProps {
   components?: MDXComponents;
@@ -13,8 +13,8 @@ export interface MDXFrontmatter {
   layout?: string | boolean;
   headings?: Array<{ text: string; level: number }>;
   metadata?: Record<string, unknown>;
-  og?: Record<string, string>;
-  twitter?: Record<string, string>;
+  og?: Record<string, string | number | boolean>;
+  twitter?: Record<string, string | number | boolean>;
   meta?: Array<{ name?: string; property?: string; content: string }>;
   links?: Array<{ rel: string; href: string; [key: string]: string }>;
   icons?: Array<{ href: string; rel?: string; sizes?: string; type?: string }>;

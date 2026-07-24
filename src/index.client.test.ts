@@ -1,4 +1,12 @@
 import { assertEquals } from "#std/assert";
+import type { MDXFrontmatterValue as ClientFrontmatterValue } from "./index.client.ts";
+import type { MDXFrontmatterValue as RootFrontmatterValue } from "./index.ts";
+
+const rootFrontmatterValue: RootFrontmatterValue = {
+  nested: [true, null, new Date("2026-07-23T00:00:00.000Z")],
+};
+const clientFrontmatterValue: ClientFrontmatterValue = rootFrontmatterValue;
+void clientFrontmatterValue;
 
 interface DenoDocNode {
   readonly kind: string;
@@ -39,6 +47,7 @@ const expectedRootExports = [
   "typeAlias:APIRoute",
   "typeAlias:DataContext",
   "typeAlias:InferGetServerDataProps",
+  "typeAlias:MDXFrontmatterValue",
   "typeAlias:StartServerOptions",
   "typeAlias:StaticPathsResult",
   "typeAlias:ValidatedHandlerFunction",

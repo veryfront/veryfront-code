@@ -11,6 +11,7 @@ import { getProjectReact } from "#veryfront/react";
 import { buildComponentCacheKey } from "#veryfront/cache/keys.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { toMDXFrontmatter } from "./frontmatter.ts";
 
 interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -110,7 +111,7 @@ export async function handleComponentPage(
 
     const pageBundle: PageBundle = {
       compiledCode: "",
-      frontmatter: pageInfo.entity.frontmatter ?? {},
+      frontmatter: toMDXFrontmatter(pageInfo.entity.frontmatter),
       globals: {},
       headings: [],
       nodeMap: new Map(),

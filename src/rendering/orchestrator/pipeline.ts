@@ -79,6 +79,7 @@ import {
   planClientPageIsland,
 } from "#veryfront/rendering/rsc/page-island.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import { toMDXFrontmatter } from "../frontmatter.ts";
 
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
@@ -705,10 +706,10 @@ export class RenderPipeline {
                 ? { ...hydrationOptions, clientPageIsland }
                 : hydrationOptions;
 
-              const mergedFrontmatter = {
-                ...pageInfo.entity.frontmatter,
-                ...(pageBundle as MdxBundle).frontmatter,
-              };
+              const mergedFrontmatter = toMDXFrontmatter({
+                ...toMDXFrontmatter(pageInfo.entity.frontmatter),
+                ...toMDXFrontmatter((pageBundle as MdxBundle).frontmatter),
+              });
 
               const headings = (pageBundle as PageBundle).headings || [];
 

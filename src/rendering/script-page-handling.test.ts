@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
 import { flattenRouteParams } from "#veryfront/routing";
@@ -80,11 +80,6 @@ function rewriteNpmImports(code: string): string {
     (result, { pattern, replacement }) => result.replace(pattern, replacement),
     code,
   );
-}
-
-function getStringMeta(meta: Record<string, unknown>, key: string): string | undefined {
-  const value = meta[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 const APP_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
@@ -263,22 +258,6 @@ describe("script-page-handling helpers", () => {
     });
   });
 
-  describe("getStringMeta", () => {
-    it("should return string values", () => {
-      assertEquals(getStringMeta({ title: "Hello" }, "title"), "Hello");
-    });
-
-    it("should return undefined for non-string values", () => {
-      assertEquals(getStringMeta({ count: 42 }, "count"), undefined);
-      assertEquals(getStringMeta({ flag: true }, "flag"), undefined);
-      assertEquals(getStringMeta({ obj: {} }, "obj"), undefined);
-    });
-
-    it("should return undefined for missing keys", () => {
-      assertEquals(getStringMeta({}, "missing"), undefined);
-    });
-  });
-
   describe("APP_COMPONENT_EXTENSIONS", () => {
     it("should include all expected extensions", () => {
       assertEquals(APP_COMPONENT_EXTENSIONS.includes(".tsx"), true);
@@ -335,6 +314,194 @@ describe("script-page-handling helpers", () => {
           true,
         );
         assertEquals(result.html.includes("/_veryfront/hydrate.js"), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("snapshots context, output, and generated metadata without changing public shapes", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-frontmatter-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          [
+            "export default function render(context) {",
+            "  if (context.frontmatter.tags !== 'source') throw new Error('scalar tags changed');",
+            "  if (context.frontmatter.nested?.safe !== true) throw new Error('nested metadata lost');",
+            "  return {",
+            "    html: '<main>Canonical</main>',",
+            "    frontmatter: { tags: 'output', outputFlag: true, nested: { output: true } },",
+            "  };",
+            "}",
+            "export function generateMetadata() {",
+            "  return {",
+            "    date: new Date('2026-07-24T08:30:00.000Z'),",
+            "    priority: 2,",
+            "    mixed: ['valid', 1],",
+            "  };",
+            "}",
+          ].join("\n"),
+        );
+
+        const result = await handleScriptPage(
+          {
+            entity: {
+              path: pagePath,
+              frontmatter: {
+                title: "Script boundary",
+                tags: "source",
+                nested: { safe: true },
+              },
+            },
+          } as never,
+          "script-page",
+          {
+            mode: "production",
+            config: {} as never,
+            projectDir,
+            adapter: {
+              fs: {
+                exists: async () => false,
+              },
+            } as unknown as RuntimeAdapter,
+          },
+        );
+
+        assertEquals(result.frontmatter, {
+          title: "Script boundary",
+          tags: "output",
+          outputFlag: true,
+          nested: { output: true },
+          date: new Date("2026-07-24T08:30:00.000Z"),
+          priority: 2,
+          mixed: ["valid", 1],
+        });
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("preserves rich HTML metadata in HTML and the public RenderResult", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-rich-metadata-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          [
+            "export default function render() {",
+            "  return {",
+            "    html: '<main>Rich metadata</main>',",
+            "    frontmatter: {",
+            "      title: 'Rich script page',",
+            "      tags: 'release',",
+            "      og: { title: 'OpenGraph script title' },",
+            "      links: [{ rel: 'canonical', href: 'https://example.com/script' }],",
+            "      scripts: [{ content: 'window.__SCRIPT_METADATA__ = true' }],",
+            "    },",
+            "  };",
+            "}",
+            "export function generateMetadata() {",
+            "  return {",
+            "    date: new Date('2026-07-24T08:30:00.000Z'),",
+            "    meta: [{ name: 'robots', content: 'index,follow' }],",
+            "    styles: [{ content: 'main { color: navy; }' }],",
+            "    nested: { unsafe: true },",
+            "  };",
+            "}",
+          ].join("\n"),
+        );
+
+        const result = await handleScriptPage(
+          {
+            entity: {
+              path: pagePath,
+              frontmatter: {},
+            },
+          } as never,
+          "script-page",
+          {
+            mode: "production",
+            config: {} as never,
+            projectDir,
+            adapter: {
+              fs: {
+                exists: async () => false,
+              },
+            } as unknown as RuntimeAdapter,
+          },
+        );
+
+        assertEquals(result.frontmatter, {
+          title: "Rich script page",
+          tags: "release",
+          og: { title: "OpenGraph script title" },
+          links: [{ rel: "canonical", href: "https://example.com/script" }],
+          scripts: [{ content: "window.__SCRIPT_METADATA__ = true" }],
+          date: new Date("2026-07-24T08:30:00.000Z"),
+          meta: [{ name: "robots", content: "index,follow" }],
+          styles: [{ content: "main { color: navy; }" }],
+          nested: { unsafe: true },
+        });
+        assertStringIncludes(
+          result.html,
+          'property="og:title" content="OpenGraph script title"',
+        );
+        assertStringIncludes(
+          result.html,
+          'rel="canonical" href="https://example.com/script"',
+        );
+        assertStringIncludes(result.html, 'name="robots" content="index,follow"');
+        assertStringIncludes(result.html, "window.__SCRIPT_METADATA__ = true");
+        assertStringIncludes(result.html, "main { color: navy; }");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not execute accessor or inherited script-output wrapper fields", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-wrapper-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          [
+            "export default function render() {",
+            "  const output = { html: '<main>Safe wrapper</main>' };",
+            "  Object.defineProperty(output, 'frontmatter', {",
+            "    enumerable: true,",
+            "    get() { throw new Error('frontmatter getter executed'); },",
+            "  });",
+            "  return output;",
+            "}",
+          ].join("\n"),
+        );
+
+        const result = await handleScriptPage(
+          {
+            entity: {
+              path: pagePath,
+              frontmatter: { title: "Safe title" },
+            },
+          } as never,
+          "script-page",
+          {
+            mode: "production",
+            config: {} as never,
+            projectDir,
+            adapter: {
+              fs: {
+                exists: async () => false,
+              },
+            } as unknown as RuntimeAdapter,
+          },
+        );
+
+        assertEquals(result.frontmatter, { title: "Safe title" });
+        assertStringIncludes(result.html, "Safe wrapper");
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildAttributes,
@@ -102,6 +102,36 @@ describe("html-escape", () => {
           "aria-label": 'Say "Hello"',
         }),
         'data-value="test &amp; value" aria-label="Say &quot;Hello&quot;"',
+      );
+    });
+
+    it("rejects malformed attribute names instead of emitting new attributes", () => {
+      for (const name of ['x" onload="alert(1)', "x onmouseover", "<script", "data-value="]) {
+        assertThrows(
+          () => buildAttributes({ [name]: "value" }),
+          TypeError,
+          "attribute name",
+        );
+      }
+    });
+
+    it("rejects excessive or accessor-backed attribute collections", () => {
+      const excessive = Object.fromEntries(
+        Array.from({ length: 129 }, (_, index) => [`data-value-${index}`, "value"]),
+      );
+      assertThrows(() => buildAttributes(excessive), Error, "entry limit");
+
+      const accessorBacked: Record<string, unknown> = {};
+      Object.defineProperty(accessorBacked, "title", {
+        enumerable: true,
+        get() {
+          throw new Error("attribute getter executed");
+        },
+      });
+      assertThrows(
+        () => buildAttributes(accessorBacked),
+        Error,
+        "value cannot be inspected",
       );
     });
   });

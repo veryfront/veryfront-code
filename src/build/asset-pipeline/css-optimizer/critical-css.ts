@@ -1,5 +1,5 @@
 import { logger } from "#veryfront/utils";
-import type { CriticalCSSResult, CSSOptimizationOptions } from "#veryfront/types";
+import type { CriticalCSSResult, CSSOptimizationOptions } from "./types/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { basicMinify, extractSelectorsFromHTML } from "./utils.ts";

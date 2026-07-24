@@ -1,4 +1,4 @@
-import type { ComponentProps, RenderMetadata } from "#veryfront/types";
+import type { ComponentProps } from "#veryfront/types";
 import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -27,7 +27,7 @@ import {
   getProdScripts,
 } from "./hydration-script-builder/index.ts";
 import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
-import { processMetadata } from "./metadata-builder.ts";
+import { type HTMLRenderMetadata, processMetadata } from "./metadata-builder.ts";
 import {
   extractCandidates,
   getDevStyles as getErrorOverlayStyles,
@@ -35,6 +35,56 @@ import {
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
+
+const MAX_HTML_SHELL_INPUT_FIELDS = 256;
+
+function snapshotShellInput<T extends object>(
+  value: T,
+  label: string,
+): T {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+
+  let prototype: object | null;
+  let keys: PropertyKey[];
+  try {
+    prototype = Object.getPrototypeOf(value);
+    keys = Reflect.ownKeys(value);
+  } catch {
+    throw new TypeError(`${label} cannot be inspected`);
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  if (keys.length > MAX_HTML_SHELL_INPUT_FIELDS) {
+    throw new TypeError(`${label} exceeds the field limit`);
+  }
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of keys) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    } catch {
+      throw new TypeError(`${label} cannot be inspected`);
+    }
+    if (!descriptor?.enumerable) continue;
+    if (
+      typeof key !== "string" || descriptor.get || descriptor.set ||
+      !("value" in descriptor)
+    ) {
+      throw new TypeError(`${label} must not contain accessor properties`);
+    }
+    Object.defineProperty(snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    });
+  }
+  return snapshot as T;
+}
 
 function pathToModuleUrl(
   path: string,
@@ -151,36 +201,38 @@ function generateModulePreloadHints(
   return hints.join("\n  ");
 }
 
-export function generateHTMLShellParts(
-  meta: RenderMetadata,
+export async function generateHTMLShellParts(
+  meta: HTMLRenderMetadata,
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   contentForTailwind?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<{ start: string; end: string }> {
-  return withSpan(
+  const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
+  const safeOptions = snapshotShellInput(options, "HTML shell options");
+  return await withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
     () =>
       generateHTMLShellPartsImpl(
-        meta,
-        options,
+        safeMeta,
+        safeOptions,
         params,
         props,
         contentForTailwind,
         projectCSSPromise,
       ),
     {
-      "html.slug": meta.slug || "",
+      "html.slug": safeMeta.slug || "",
       "html.has_content": !!contentForTailwind,
-      "html.mode": options.mode || "production",
-      "html.is_local_project": options.isLocalProject ?? false,
+      "html.mode": safeOptions.mode || "production",
+      "html.is_local_project": safeOptions.isLocalProject ?? false,
     },
   );
 }
 
 async function generateHTMLShellPartsImpl(
-  meta: RenderMetadata,
+  meta: HTMLRenderMetadata,
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
@@ -217,7 +269,7 @@ async function generateHTMLShellPartsImpl(
     styleTags,
     lang,
     bodyClass,
-  } = processMetadata(meta);
+  } = processMetadata(meta, options.nonce);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
 
@@ -454,21 +506,23 @@ mermaid.run();
   return { start, end };
 }
 
-export function wrapInHTMLShell(
+export async function wrapInHTMLShell(
   content: string,
-  meta: RenderMetadata,
+  meta: HTMLRenderMetadata,
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<string> {
-  return withSpan(
+  const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
+  const safeOptions = snapshotShellInput(options, "HTML shell options");
+  return await withSpan(
     SpanNames.HTML_WRAP_IN_SHELL,
     async () => {
       const cleanedContent = content.trim();
       const { start, end } = await generateHTMLShellParts(
-        meta,
-        options,
+        safeMeta,
+        safeOptions,
         params,
         props,
         cleanedContent,
@@ -477,7 +531,7 @@ export function wrapInHTMLShell(
       return `${start}${cleanedContent}${end}`;
     },
     {
-      "html.slug": meta.slug || "",
+      "html.slug": safeMeta.slug || "",
       "html.content_length": content.length,
     },
   );

@@ -61,7 +61,7 @@ export type {
   StaticPathsResult,
 } from "#veryfront/data";
 
-export type { MDXFrontmatter, PageContext } from "#veryfront/types";
+export type { MDXFrontmatter, MDXFrontmatterValue, PageContext } from "#veryfront/types";
 
 export {
   CommonSchemas,

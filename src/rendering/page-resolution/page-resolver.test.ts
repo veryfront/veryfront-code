@@ -20,6 +20,7 @@ function createMockAdapter(
   existingDirs: string[] = [],
 ): RuntimeAdapter {
   return {
+    id: "memory",
     fs: {
       readFile: async () => "",
       exists: async (path: string) => existingDirs.includes(path),
@@ -75,6 +76,7 @@ describe("rendering/page-resolution/page-resolver", () => {
         ["/project/src/content/[slug].tsx", "export default function Page() { return null; }"],
       ]);
       const adapter = {
+        id: "memory",
         fs: {
           readFile: async (path: string) => {
             const source = files.get(path);
@@ -128,6 +130,7 @@ describe("rendering/page-resolution/page-resolver", () => {
 
     it("keeps auto router detection aligned with the structural app router", async () => {
       const adapter = {
+        id: "memory",
         fs: {
           readFile: async (path: string) => {
             if (path === "/project/app/page.tsx") {
@@ -182,6 +185,7 @@ describe("rendering/page-resolution/page-resolver", () => {
       const resolveCalls: string[] = [];
       const readCalls: string[] = [];
       const adapter = {
+        id: "memory",
         fs: {
           readFile: async (path: string) => {
             readCalls.push(path);
@@ -248,6 +252,7 @@ describe("rendering/page-resolution/page-resolver", () => {
 
     it("does not poison auto router detection from a pages fallback", async () => {
       const adapter = {
+        id: "memory",
         fs: {
           readFile: async (path: string) => {
             if (path === "/project/pages/index.tsx") {

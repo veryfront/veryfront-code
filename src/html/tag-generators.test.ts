@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   generateLinkTags,
@@ -60,6 +60,53 @@ describe("tag-generators", () => {
       const result = generateMetaTags({ themeColor: "#ffffff" });
       assertStringIncludes(result, 'name="theme-color"');
       assertStringIncludes(result, 'content="#ffffff"');
+    });
+
+    it("bounds custom tag attributes", () => {
+      const attributes = Object.fromEntries(
+        Array.from({ length: 33 }, (_, index) => [`data-value-${index}`, "value"]),
+      );
+
+      assertThrows(
+        () =>
+          generateMetaTags({
+            meta: [{ name: "custom", content: "value", ...attributes }],
+          } as never),
+        Error,
+        "attribute limit",
+      );
+    });
+
+    it("does not execute metadata or attribute accessors", () => {
+      let metadataAccessorCalls = 0;
+      let attributeAccessorCalls = 0;
+      const metadata = Object.defineProperty({}, "description", {
+        enumerable: true,
+        get() {
+          metadataAccessorCalls++;
+          return "unsafe";
+        },
+      });
+      const attributes = Object.defineProperty({ name: "description" }, "content", {
+        enumerable: true,
+        get() {
+          attributeAccessorCalls++;
+          return "unsafe";
+        },
+      });
+
+      assertThrows(
+        () => generateMetaTags(metadata as never),
+        Error,
+        "cannot be inspected",
+      );
+      assertThrows(
+        () => generateMetaTags({ meta: [attributes] } as never),
+        Error,
+        "cannot be inspected",
+      );
+      assertEquals(metadataAccessorCalls, 0);
+      assertEquals(attributeAccessorCalls, 0);
     });
   });
 
@@ -124,6 +171,39 @@ describe("tag-generators", () => {
       assertStringIncludes(result, 'rel="apple-touch-icon"');
       assertStringIncludes(result, 'sizes="180x180"');
     });
+
+    it("omits event-handler attributes without invoking their accessors", () => {
+      let accessorCalls = 0;
+      const link = Object.defineProperty(
+        { rel: "stylesheet", href: "/safe.css" },
+        "onload",
+        {
+          enumerable: true,
+          get() {
+            accessorCalls++;
+            return "globalThis.pwned=1";
+          },
+        },
+      );
+      const result = generateLinkTags({
+        links: [link],
+        icons: [{ href: "/favicon.ico", onerror: "globalThis.pwned=1" }],
+      } as never);
+
+      assertStringIncludes(result, 'href="/safe.css"');
+      assertEquals(result.includes("onload"), false);
+      assertEquals(result.includes("onerror"), false);
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("emits exactly one rel attribute for each icon", () => {
+      const result = generateLinkTags({
+        icons: [{ href: "/favicon.ico", rel: "shortcut icon" }],
+      });
+
+      assertEquals(result.match(/\brel="/g)?.length, 1);
+      assertStringIncludes(result, 'rel="shortcut icon"');
+    });
   });
 
   describe("generateScriptTags", () => {
@@ -162,6 +242,34 @@ describe("tag-generators", () => {
         generateScriptTags({ scripts: [{ content: "alert(1);" }] }, "abc123"),
         'nonce="abc123"',
       );
+    });
+
+    it("applies the response nonce to inline and external scripts", () => {
+      const result = generateScriptTags(
+        {
+          scripts: [
+            { src: "/app.js", nonce: "metadata-nonce" },
+            { content: "globalThis.ready=true", nonce: "metadata-nonce" },
+          ],
+        },
+        "response-nonce",
+      );
+
+      assertEquals(result.match(/nonce="response-nonce"/g)?.length, 2);
+      assertEquals(result.includes("metadata-nonce"), false);
+    });
+
+    it("omits event-handler attributes from scripts", () => {
+      const result = generateScriptTags({
+        scripts: [{
+          src: "/app.js",
+          onload: "globalThis.pwned=1",
+          onerror: "globalThis.pwned=2",
+        }],
+      } as never);
+
+      assertEquals(result.includes("onload"), false);
+      assertEquals(result.includes("onerror"), false);
     });
 
     it("should prioritize src over content", () => {
@@ -221,6 +329,36 @@ describe("tag-generators", () => {
         ),
         'nonce="xyz789"',
       );
+    });
+
+    it("applies the response nonce to inline and external styles", () => {
+      const result = generateStyleTags(
+        {
+          styles: [
+            { href: "/styles.css", nonce: "metadata-nonce" },
+            { content: "body{color:red}", nonce: "metadata-nonce" },
+          ],
+        },
+        "response-nonce",
+      );
+
+      assertEquals(result.match(/nonce="response-nonce"/g)?.length, 2);
+      assertEquals(result.includes("metadata-nonce"), false);
+    });
+
+    it("enforces stylesheet rel and omits event-handler attributes", () => {
+      const result = generateStyleTags({
+        styles: [{
+          href: "/styles.css",
+          rel: "alternate",
+          onload: "globalThis.pwned=1",
+        }],
+      } as never);
+
+      assertEquals(result.match(/\brel="/g)?.length, 1);
+      assertStringIncludes(result, 'rel="stylesheet"');
+      assertEquals(result.includes("alternate"), false);
+      assertEquals(result.includes("onload"), false);
     });
 
     it("should handle media attribute", () => {

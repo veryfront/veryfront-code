@@ -68,6 +68,30 @@ describe("render-result-assembly", () => {
     assertEquals(persisted.result, result);
   });
 
+  it("canonicalizes PageBundle frontmatter at the RenderResult boundary", () => {
+    const result = assembleRenderResult({
+      slug: "/frontmatter",
+      ssrResult: {
+        fullHtml: "<html></html>",
+        finalStream: null,
+      },
+      pageBundle: {
+        compiledCode: "",
+        frontmatter: {
+          tags: "release",
+          date: new Date("2026-07-24T08:30:00.000Z"),
+          nested: { unsafe: true },
+        },
+      } as unknown as Parameters<typeof assembleRenderResult>[0]["pageBundle"],
+      shouldCache: false,
+    });
+
+    assertEquals(result.frontmatter, {
+      tags: ["release"],
+      date: "2026-07-24T08:30:00.000Z",
+    });
+  });
+
   it("skips persistence when cache persistence is disabled", () => {
     let persistCalls = 0;
 

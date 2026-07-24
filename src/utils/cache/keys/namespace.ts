@@ -1,6 +1,9 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "../../logger/logger.ts";
-import type { GlobalWithVeryFrontCache } from "#veryfront/types/global-guards.ts";
+
+interface GlobalWithVeryFrontCache {
+  __VF_CACHE_NAMESPACE__?: string;
+}
 
 const logger = serverLogger.component("cache");
 

@@ -245,6 +245,80 @@ describe("LayoutApplicator helpers", () => {
     });
   });
 
+  it("publishes canonical frontmatter through the framework PageContext", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const applicator = new LayoutApplicator({
+      projectDir: "/project",
+      projectId: "project",
+      projectSlug: "project",
+      contentSourceId: "preview-main",
+      adapter: {
+        fs: {
+          exists: async () => false,
+        },
+      } as unknown as RuntimeAdapter,
+      config: {
+        react: { version: "18.3.1" },
+      },
+      layoutCache: createLayoutComponentCache(),
+      mergedComponents: {},
+      mode: "production",
+      frontmatter: {
+        tags: "release",
+        date: new Date("2026-07-24T08:30:00.000Z"),
+        nested: { unsafe: true },
+      },
+    });
+
+    const mutableApplicator = applicator as unknown as {
+      applyLayoutsOnly: (
+        element: React.ReactElement,
+      ) => Promise<React.ReactElement>;
+      wrapWithAppComponent: (
+        element: React.ReactElement,
+      ) => Promise<React.ReactElement>;
+      loadFrameworkProviders: () => Promise<{
+        PageContextProvider: React.ComponentType<Record<string, unknown>>;
+        RouterProvider: React.ComponentType<Record<string, unknown>>;
+      }>;
+    };
+    mutableApplicator.applyLayoutsOnly = (element) => Promise.resolve(element);
+    mutableApplicator.wrapWithAppComponent = (element) => Promise.resolve(element);
+    mutableApplicator.loadFrameworkProviders = () =>
+      Promise.resolve({
+        PageContextProvider: () => null,
+        RouterProvider: () => null,
+      });
+
+    const result = await applicator.applyLayouts(
+      React.createElement("main"),
+      {
+        entity: {
+          id: "page",
+          path: "/project/pages/page.tsx",
+          slug: "page",
+          type: "page",
+          content: "",
+          frontmatter: {},
+        },
+      },
+      undefined,
+      [],
+    );
+    const pageContextElement = (result.props as { children: React.ReactElement }).children;
+    const pageContext = (
+      pageContextElement.props as {
+        pageContext: { frontmatter: Record<string, unknown> };
+      }
+    ).pageContext;
+
+    assertEquals(pageContext.frontmatter, {
+      tags: ["release"],
+      date: "2026-07-24T08:30:00.000Z",
+    });
+  });
+
   describe("ESM vs function-body layout mode detection", () => {
     it("should detect ESM mode from config", () => {
       const config: { experimental?: { esmLayouts?: boolean } } = {

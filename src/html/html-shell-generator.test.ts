@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import {
   clearAllManifests,
   recordSSRModules,
@@ -64,6 +69,45 @@ describe("html-generation/html-shell-generator", () => {
       );
 
       assertStringIncludes(result, "<h1>Hello World</h1>");
+    });
+
+    it("rejects shell input accessors without executing them", async () => {
+      let metadataAccessorCalls = 0;
+      const metadata: Record<string, unknown> = { title: "Test" };
+      Object.defineProperty(metadata, "slug", {
+        enumerable: true,
+        get() {
+          metadataAccessorCalls++;
+          return "unsafe";
+        },
+      });
+
+      await assertRejects(
+        () => wrapInHTMLShell("<p>content</p>", metadata as never, createOptions()),
+        TypeError,
+        "HTML shell metadata must not contain accessor properties",
+      );
+      assertEquals(metadataAccessorCalls, 0);
+
+      let optionAccessorCalls = 0;
+      const options: Record<string, unknown> = {
+        config: mockConfig,
+        projectId: "test-project",
+      };
+      Object.defineProperty(options, "mode", {
+        enumerable: true,
+        get() {
+          optionAccessorCalls++;
+          return "development";
+        },
+      });
+
+      await assertRejects(
+        () => wrapInHTMLShell("<p>content</p>", createMeta(), options as never),
+        TypeError,
+        "HTML shell options must not contain accessor properties",
+      );
+      assertEquals(optionAccessorCalls, 0);
     });
 
     it("should set title from metadata", async () => {
