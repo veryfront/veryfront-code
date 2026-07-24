@@ -121,6 +121,20 @@ describe("CommonSchemas", () => {
       assertEquals(result.data.limit, 20);
     });
 
+    it("should reject non-decimal numeric string spellings", () => {
+      for (const value of [" 3 ", "+3", "3.0", "1e2", "0x10"]) {
+        assertParseFailure(CommonSchemas.pagination.safeParse({ page: value }));
+        assertParseFailure(CommonSchemas.pagination.safeParse({ limit: value }));
+      }
+    });
+
+    it("should reject decimal digit strings longer than 16 characters", () => {
+      const overlong = "0".repeat(17);
+
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: overlong }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ limit: overlong }));
+    });
+
     it("should reject negative page numbers", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ page: -1 }));
     });

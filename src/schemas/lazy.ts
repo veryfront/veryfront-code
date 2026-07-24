@@ -1,8 +1,15 @@
+/**
+ * Lazy schema facade with contract validation and metadata forwarding.
+ *
+ * @module schemas/lazy
+ */
+
 import type {
   RefinementCtx,
   Schema,
   ValidationResult,
 } from "#veryfront/extensions/schema/index.ts";
+import { assertSchemaContract } from "./define.ts";
 
 function configurableDescriptor(descriptor: PropertyDescriptor): PropertyDescriptor {
   return { ...descriptor, configurable: true };
@@ -12,9 +19,16 @@ function copyOwnProperties(target: object, source: object): boolean {
   for (const prop of Reflect.ownKeys(source)) {
     if (Reflect.getOwnPropertyDescriptor(target, prop)) continue;
     const descriptor = Reflect.getOwnPropertyDescriptor(source, prop);
+    const targetDescriptor = descriptor && !("value" in descriptor)
+      ? {
+        ...descriptor,
+        get: descriptor.get?.bind(source),
+        set: descriptor.set?.bind(source),
+      }
+      : descriptor;
     if (
-      descriptor &&
-      !Reflect.defineProperty(target, prop, configurableDescriptor(descriptor))
+      targetDescriptor &&
+      !Reflect.defineProperty(target, prop, configurableDescriptor(targetDescriptor))
     ) {
       return false;
     }
@@ -24,7 +38,26 @@ function copyOwnProperties(target: object, source: object): boolean {
 
 export function lazySchema<T>(getSchema: () => Schema<T>): Schema<T> {
   let cached: Schema<T> | undefined;
-  const schema = () => cached ??= getSchema();
+  let materializing = false;
+  const schema = (): Schema<T> => {
+    if (cached !== undefined) return cached;
+    if (materializing) {
+      throw new Error("lazySchema getter recursively invoked its own facade");
+    }
+
+    materializing = true;
+    try {
+      const concreteSchema = getSchema();
+      assertSchemaContract<T>(
+        concreteSchema,
+        "lazySchema getter must return a Schema contract implementation",
+      );
+      cached = concreteSchema;
+      return concreteSchema;
+    } finally {
+      materializing = false;
+    }
+  };
   const facade: Schema<T> = {
     _output: undefined as unknown as T,
     optional: () => schema().optional(),
@@ -62,13 +95,17 @@ export function lazySchema<T>(getSchema: () => Schema<T>): Schema<T> {
 
   return new Proxy(facade, {
     get(target, prop, receiver) {
-      if (prop in target) {
+      if (Object.hasOwn(target, prop)) {
         return Reflect.get(target, prop, receiver);
       }
-      return Reflect.get(schema() as object, prop, receiver);
+      const concreteSchema = schema() as object;
+      if (prop in concreteSchema) {
+        return Reflect.get(concreteSchema, prop, concreteSchema);
+      }
+      return Reflect.get(target, prop, receiver);
     },
     has(target, prop) {
-      return prop in target || prop in (schema() as object);
+      return Object.hasOwn(target, prop) || prop in (schema() as object) || prop in target;
     },
     ownKeys(target) {
       if (!Reflect.isExtensible(target)) return Reflect.ownKeys(target);

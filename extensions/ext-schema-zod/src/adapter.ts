@@ -29,7 +29,7 @@ import type {
   ValidationIssue,
   ValidationResult,
 } from "veryfront/extensions/schema";
-import { isOptionalSchema, zodToJsonSchema } from "./json-schema.ts";
+import { isOptionalSchema, recordStaticJsonSchemaDefault, zodToJsonSchema } from "./json-schema.ts";
 
 // deno-lint-ignore no-explicit-any -- zod's chainable APIs return parametric types
 type AnyZodSchema = z.ZodType<any, any, any>;
@@ -51,8 +51,13 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
     optional: () => wrap<T | undefined>(zs.optional()),
     nullable: () => wrap<T | null>(zs.nullable()),
     nullish: () => wrap<T | null | undefined>(zs.nullish()),
-    default: (value: Exclude<T, undefined> | (() => Exclude<T, undefined>)) =>
-      wrap<Exclude<T, undefined>>(anyZs.default(value)),
+    default: (value: Exclude<T, undefined> | (() => Exclude<T, undefined>)) => {
+      const defaulted = anyZs.default(value);
+      if (typeof value !== "function") {
+        recordStaticJsonSchemaDefault(defaulted, value);
+      }
+      return wrap<Exclude<T, undefined>>(defaulted);
+    },
     describe: (description: string) => wrap<T>(zs.describe(description)),
     refine: (
       check: (value: T) => boolean,
@@ -129,9 +134,24 @@ function toZodShape(
 ): Record<string, AnyZodSchema> {
   const out: Record<string, AnyZodSchema> = {};
   for (const [key, value] of Object.entries(shape)) {
-    out[key] = toZod(value);
+    defineOwnDataProperty(out, key, toZod(value));
   }
   return out;
+}
+
+function defineOwnDataProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  // A data descriptor preserves keys such as `__proto__` as ordinary data
+  // without invoking inherited setters in runtimes that expose them.
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
 const coerce: SchemaValidatorCoerce = {
@@ -228,21 +248,6 @@ function serializedJsonTokenByteLength(value: string | number | boolean | null):
   return JSON_UTF8_ENCODER.encode(serialized).byteLength;
 }
 
-function defineCanonicalObjectValue(
-  target: Record<string, unknown>,
-  key: string,
-  value: unknown,
-): void {
-  // A data descriptor preserves keys such as `__proto__` as ordinary JSON
-  // data without invoking inherited setters on Object.prototype.
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
-}
-
 class JsonSchemaCanonicalizer {
   private readonly activeAncestors = new Set<object>();
   private readonly stack: CanonicalizationFrame[] = [];
@@ -315,22 +320,33 @@ class JsonSchemaCanonicalizer {
   }
 
   private visitArray(frame: CanonicalizationVisitFrame, current: unknown[]): void {
-    if (current.length > JSON_SCHEMA_MAX_NODES) {
+    const lengthDescriptor = Reflect.getOwnPropertyDescriptor(current, "length");
+    const length = lengthDescriptor && "value" in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined;
+    if (
+      typeof length !== "number" ||
+      !Number.isSafeInteger(length) ||
+      length < 0
+    ) {
+      throw new TypeError("JSON Schema arrays must have a non-negative integer data length");
+    }
+    if (length > JSON_SCHEMA_MAX_NODES) {
       throw new TypeError(`JSON Schema exceeds the maximum node count of ${JSON_SCHEMA_MAX_NODES}`);
     }
     const ownKeys = Reflect.ownKeys(current);
     if (
       ownKeys.some((key) => typeof key === "symbol") ||
-      ownKeys.length !== current.length + 1 ||
+      ownKeys.length !== length + 1 ||
       !ownKeys.includes("length")
     ) {
       throw new TypeError("JSON Schema arrays must be dense JSON arrays without extra properties");
     }
-    this.addSerializedBytes(2 + Math.max(0, current.length - 1));
+    this.addSerializedBytes(2 + Math.max(0, length - 1));
 
     const descriptors: PropertyDescriptor[] = [];
-    for (let index = 0; index < current.length; index++) {
-      const descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+    for (let index = 0; index < length; index++) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(current, String(index));
       if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
         throw new TypeError(
           "JSON Schema arrays must be dense data-only JSON arrays without accessors",
@@ -339,7 +355,7 @@ class JsonSchemaCanonicalizer {
       descriptors.push(descriptor);
     }
 
-    const canonical: unknown[] = new Array(current.length);
+    const canonical: unknown[] = new Array(length);
     this.assign(frame, canonical);
     this.activeAncestors.add(current);
     this.stack.push({ kind: "exit", value: current });
@@ -433,7 +449,7 @@ class JsonSchemaCanonicalizer {
       frame.parent[frame.key as number] = canonical;
       return;
     }
-    defineCanonicalObjectValue(frame.parent, frame.key as string, canonical);
+    defineOwnDataProperty(frame.parent, frame.key as string, canonical);
   }
 }
 

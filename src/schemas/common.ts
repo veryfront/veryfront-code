@@ -21,29 +21,39 @@ const MAX_SLUG_LENGTH = 100;
 const DEFAULT_PAGE_NUMBER = 1;
 const DEFAULT_PAGE_LIMIT = 10;
 const MAX_PAGE_LIMIT = 100;
+const MAX_SAFE_INTEGER_DIGITS = String(Number.MAX_SAFE_INTEGER).length;
+const DECIMAL_INTEGER_PATTERN = /^\d+$/;
 const STRONG_PASSWORD_MIN_LENGTH = 8;
 
-export const getEmailSchema = defineSchema((v) => v.string().email().max(MAX_EMAIL_LENGTH));
+export const getEmailSchema = defineSchema((v) => v.string().max(MAX_EMAIL_LENGTH).email());
 export const getUuidSchema = defineSchema((v) => v.string().uuid());
 export const getSlugSchema = defineSchema((v) =>
-  v.string().regex(SLUG_PATTERN).min(1).max(MAX_SLUG_LENGTH)
+  v.string().min(1).max(MAX_SLUG_LENGTH).regex(SLUG_PATTERN)
 );
 export const getUrlSchema = defineSchema((v) =>
-  v.string().url().max(MAX_URL_LENGTH_FOR_VALIDATION)
+  v.string().max(MAX_URL_LENGTH_FOR_VALIDATION).url()
 );
 export const getPhoneNumberSchema = defineSchema((v) =>
   v.string().regex(E164_PHONE_NUMBER_PATTERN)
 );
 
 export const getPaginationSchema = defineSchema((v) => {
-  const numericQueryParameter = () =>
-    v.union([v.string(), v.number()]).transform((value) => Number(value));
+  const numericQueryParameter = (numberSchema: Schema<number>) =>
+    v.union([
+      v
+        .string()
+        .max(MAX_SAFE_INTEGER_DIGITS)
+        .regex(DECIMAL_INTEGER_PATTERN)
+        .transform((value) => Number(value))
+        .pipe(numberSchema),
+      numberSchema,
+    ]);
+  const pageNumber = v.number().int().positive();
+  const pageLimit = v.number().int().positive().max(MAX_PAGE_LIMIT);
 
   return v.object({
-    page: numericQueryParameter().pipe(v.number().int().positive()).default(DEFAULT_PAGE_NUMBER),
-    limit: numericQueryParameter().pipe(v.number().int().positive().max(MAX_PAGE_LIMIT)).default(
-      DEFAULT_PAGE_LIMIT,
-    ),
+    page: numericQueryParameter(pageNumber).default(DEFAULT_PAGE_NUMBER),
+    limit: numericQueryParameter(pageLimit).default(DEFAULT_PAGE_LIMIT),
     sort: v.string().optional(),
     order: v.enum(["asc", "desc"]).optional(),
   });

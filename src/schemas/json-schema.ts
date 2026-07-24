@@ -10,8 +10,20 @@ import type {
   JsonSchema,
   JsonSchemaValidationFunction,
   Schema,
+  SchemaValidator,
 } from "#veryfront/extensions/schema/index.ts";
 import { resolveSchemaValidator } from "./define.ts";
+import { snapshotBoundedJsonValue } from "./json-value.ts";
+
+function snapshotBoundedJsonSchemaObject(value: unknown): JsonSchema | undefined {
+  const snapshot = snapshotBoundedJsonValue(value);
+  return snapshot.success &&
+      !!snapshot.value &&
+      typeof snapshot.value === "object" &&
+      !Array.isArray(snapshot.value)
+    ? snapshot.value
+    : undefined;
+}
 
 /**
  * Convert an opaque `Schema<T>` to a JSON Schema document.
@@ -21,7 +33,15 @@ import { resolveSchemaValidator } from "./define.ts";
  * by `defineSchema` or any other contract-aware builder.
  */
 export function schemaToJsonSchema(schema: Schema<unknown>): JsonSchema {
-  return resolveSchemaValidator().toJsonSchema(schema);
+  const jsonSchema = snapshotBoundedJsonSchemaObject(
+    resolveSchemaValidator().toJsonSchema(schema),
+  );
+  if (!jsonSchema) {
+    throw new TypeError(
+      "SchemaValidator.toJsonSchema() must return a bounded JSON Schema object",
+    );
+  }
+  return jsonSchema;
 }
 
 /**
@@ -31,7 +51,33 @@ export function schemaToJsonSchema(schema: Schema<unknown>): JsonSchema {
  * `isOptional` implementation.
  */
 export function isOptionalSchema(schema: Schema<unknown>): boolean {
-  return resolveSchemaValidator().isOptional(schema);
+  const optional = resolveSchemaValidator().isOptional(schema);
+  if (typeof optional !== "boolean") {
+    throw new TypeError("SchemaValidator.isOptional() must return a boolean");
+  }
+  return optional;
+}
+
+function compileWithValidator<T>(
+  validator: SchemaValidator,
+  compiler: NonNullable<SchemaValidator["compileJsonSchema"]>,
+  schema: JsonSchema,
+): JsonSchemaValidationFunction<T> {
+  const snapshot = snapshotBoundedJsonSchemaObject(schema);
+  if (!snapshot) {
+    throw new TypeError("JSON Schema must be a bounded JSON Schema object");
+  }
+
+  let compiled: JsonSchemaValidationFunction<T>;
+  try {
+    compiled = compiler.call(validator, snapshot) as JsonSchemaValidationFunction<T>;
+  } catch (cause) {
+    throw new Error("The registered SchemaValidator failed to compile JSON Schema", { cause });
+  }
+  if (typeof compiled !== "function") {
+    throw new TypeError("SchemaValidator.compileJsonSchema() must return a validation function");
+  }
+  return compiled;
 }
 
 /**
@@ -45,18 +91,15 @@ export function compileJsonSchemaValidator<T = unknown>(
   schema: JsonSchema,
 ): JsonSchemaValidationFunction<T> {
   const validator = resolveSchemaValidator();
-  if (!validator.compileJsonSchema) {
+  const compiler = validator.compileJsonSchema;
+  if (!compiler) {
     throw new Error(
       "The registered SchemaValidator cannot compile JSON Schema. " +
         "Use a validator extension that implements compileJsonSchema().",
     );
   }
 
-  try {
-    return validator.compileJsonSchema<T>(schema);
-  } catch (cause) {
-    throw new Error("The registered SchemaValidator failed to compile JSON Schema", { cause });
-  }
+  return compileWithValidator<T>(validator, compiler, schema);
 }
 
 /**
@@ -70,13 +113,9 @@ export function tryCompileJsonSchemaValidator<T = unknown>(
   schema: JsonSchema,
 ): JsonSchemaValidationFunction<T> | undefined {
   const validator = resolveSchemaValidator();
-  if (!validator.compileJsonSchema) return undefined;
-
-  try {
-    return validator.compileJsonSchema<T>(schema);
-  } catch (cause) {
-    throw new Error("The registered SchemaValidator failed to compile JSON Schema", { cause });
-  }
+  const compiler = validator.compileJsonSchema;
+  if (!compiler) return undefined;
+  return compileWithValidator<T>(validator, compiler, schema);
 }
 
 export type { JsonSchema };
