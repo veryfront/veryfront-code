@@ -33,7 +33,14 @@ export default function AboutPage() {
 }
 ```
 
-The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge. A **single-valued** tag (`<title>`, `<meta name="description">`, `<link rel="canonical">`, `og:title`, `robots`, `viewport`, and the other one-per-document tags) set by a page overrides the same tag from a layout, so you can define defaults in a layout and override them per page. **Repeatable** tags accumulate instead of overriding: `og:image` (and its `og:image:*` sub-tags), `og:video`, `og:audio`, `article:tag`, `article:author`, and `<link>` tags with a repeatable `rel` (`stylesheet`, `preload`, `modulepreload`, `prefetch`, `preconnect`, `dns-prefetch`, `icon`, `apple-touch-icon`, `alternate`).
+The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge:
+
+| Merge behavior | Tags |
+|---|---|
+| **Single-valued** (a page's tag overrides the same tag from a layout) | `<title>`, `<meta name="description">`, `<link rel="canonical">`, `og:title`, `robots`, `viewport`, and the other one-per-document tags |
+| **Repeatable** (tags accumulate instead of overriding) | `og:image` (and its `og:image:*` sub-tags), `og:video`, `og:audio`, `article:tag`, `article:author`, and `<link>` tags with a repeatable `rel`: `stylesheet`, `preload`, `modulepreload`, `prefetch`, `preconnect`, `dns-prefetch`, `icon`, `apple-touch-icon`, `alternate` |
+
+So you can define defaults in a layout and override the single-valued ones per page.
 
 Children may be grouped in a fragment (`<>…</>`) or produced with `.map()`; both are treated the same as direct children.
 
