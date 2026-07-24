@@ -178,7 +178,7 @@ export function buildServerTimingValue(
   totalMs: number,
   phases: Iterable<[string, number]>,
 ): string {
-  const metrics = [`${totalLabel};dur=${formatDuration(totalMs)}`];
+  const metrics = [`${sanitizeMetricName(totalLabel)};dur=${formatDuration(totalMs)}`];
   for (const [name, duration] of phases) {
     metrics.push(`${sanitizeMetricName(name)};dur=${formatDuration(duration)}`);
   }
