@@ -12,6 +12,8 @@ import { GoogleProvider } from "./google-provider.ts";
 
 const extGoogle: ExtensionFactory = () => {
   const provider = new GoogleProvider();
+  let registryRef: LLMProviderRegistry | undefined;
+  let registeredProvider = false;
   return {
     name: "ext-llm-google",
     version: "0.1.0",
@@ -22,11 +24,16 @@ const extGoogle: ExtensionFactory = () => {
     capabilities: [],
     setup(ctx) {
       const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
+      registeredProvider = !registry.has(provider.id);
       registry.register(provider);
+      ctx.provide("LLMProvider:google", registry.get(provider.id) ?? provider);
+      registryRef = registry;
       ctx.logger.info("[ext-llm-google] Google provider registered");
     },
     teardown() {
-      // No resources to release.
+      if (registeredProvider) registryRef?.unregister(provider.id);
+      registeredProvider = false;
+      registryRef = undefined;
     },
   };
 };
