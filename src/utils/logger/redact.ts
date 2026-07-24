@@ -204,6 +204,8 @@ const SENSITIVE_URL_PARAMS = [
   "auth",
 ] as const;
 
+const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(SENSITIVE_URL_PARAMS.map(normalizeToAlphanumeric));
+
 const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/?#@\s]+)@/gi;
 
 /**
@@ -239,8 +241,7 @@ export function sanitizeUrlCredentials(input: string): string {
   out = out.replace(
     /([?&;])([a-z0-9_.\-]+)=([^&#;\s]*)/gi,
     (match, sep: string, key: string, _val: string) => {
-      const normalized = normalizeToAlphanumeric(key);
-      const sensitive = SENSITIVE_URL_PARAMS.some((p) => normalized === normalizeToAlphanumeric(p));
+      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(key));
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
   );
