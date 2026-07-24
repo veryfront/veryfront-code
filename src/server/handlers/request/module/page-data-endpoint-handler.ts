@@ -192,6 +192,26 @@ export function handlePageDataEndpoint(
           );
         }
 
+        // A redirect() from getServerData surfaces here as a thrown
+        // VeryfrontError carrying context.redirect. The full-page render path
+        // converts this into a 302; the SPA page-data endpoint must encode it as
+        // a 200 payload so the client router can follow the redirect instead of
+        // treating it as an internal error (which 500s and aborts navigation).
+        const redirect = extractRedirectFromError(e);
+        if (redirect) {
+          return respond(
+            ResponseBuilder.json(
+              { redirect },
+              req,
+              {
+                securityConfig: ctx.securityConfig,
+                corsConfig: ctx.securityConfig?.cors,
+                status: 200,
+              },
+            ),
+          );
+        }
+
         const errorMessage = getErrorMessage(e);
         const lower = errorMessage.toLowerCase();
         const isNotFound = lower.includes("not found") ||
@@ -343,6 +363,22 @@ function refreshStalePageData(
       }
     },
   );
+}
+
+/**
+ * A redirect() from getServerData is thrown up the pipeline as a VeryfrontError
+ * whose `context.redirect` holds the destination (mirrors extractRedirectLocation
+ * in the SSR service). Returns null for any other error.
+ */
+function extractRedirectFromError(
+  error: unknown,
+): { destination: string; permanent: boolean } | null {
+  const context = (error as {
+    context?: { redirect?: { destination?: unknown; permanent?: unknown } };
+  })?.context;
+  const redirect = context?.redirect;
+  if (!redirect || typeof redirect.destination !== "string") return null;
+  return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 
 function buildPageDataCacheKey(ctx: HandlerContext, slug: string, url: URL): string {

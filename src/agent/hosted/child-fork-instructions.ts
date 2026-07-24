@@ -77,7 +77,7 @@ export function buildHostedChildForkInstructions(
 project_reference: "${projectId}"
 ${branchLine}
 
-Use project_reference only for tools whose schema requires project_reference. Some MCP tools use different identifiers; for example sandbox command tools use the sandbox session id returned by create_sandbox_session, and create_sandbox_session uses project_id when billing/project scope is needed.
+Use project_reference only for tools whose schema requires project_reference. Some MCP tools use different identifiers; for example sandbox command tools use the sandbox session id returned by create_sandbox_session, and create_sandbox_session uses project_reference when billing/project scope is needed.
 IMPORTANT: Also pass branch_id to file tools to ensure edits go to the correct branch.
 Do NOT guess or invent project references, always use the values above.
 </project_context>`);

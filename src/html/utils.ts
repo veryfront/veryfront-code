@@ -176,21 +176,40 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
 function buildCdnImportMapFromTemplates(
   versions: DetectedVersions,
   templates: CdnUrlTemplates,
-  includePlatformUtilities: boolean,
+  // Whether the AI/chat modules (chat/markdown/mdx/workflow) are also served
+  // locally instead of from the CDN. The CORE platform utilities
+  // (router/head/context/fonts) are ALWAYS served locally regardless of
+  // provider — they must share the same React context module instance as SSR,
+  // otherwise usePageContext() returns undefined and the browser fails to even
+  // resolve `veryfront/router`. CDN is for third-party deps (react) and,
+  // optionally, the AI modules — never the core runtime.
+  includeAiModulesLocally: boolean,
 ): Record<string, string> {
   const { react, veryfront } = versions;
 
+  // React is ALWAYS served from esm.sh, regardless of the configured CDN
+  // provider. esm.sh is the only CDN that serves React as real ESM; unpkg and
+  // jsdelivr only ship UMD globals (react/umd/react.production.min.js), which
+  // cannot be consumed through an import map at all — the browser rejects them
+  // with a module-resolution/CORS error and hydration never starts. Self-hosted
+  // mode already does exactly this. The `provider` only governs where the
+  // veryfront framework modules load from.
+  const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];
+
   return {
-    react: templates.react(react),
-    "react-dom": templates.reactDom(react),
-    "react-dom/client": templates.reactDomClient(react),
-    "react/jsx-runtime": templates.jsxRuntime(react),
-    "react/jsx-dev-runtime": templates.jsxDevRuntime(react),
+    react: reactTemplates.react(react),
+    "react-dom": reactTemplates.reactDom(react),
+    "react-dom/client": reactTemplates.reactDomClient(react),
+    "react/jsx-runtime": reactTemplates.jsxRuntime(react),
+    "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(react),
     "veryfront/chat": templates.veryfrontChat(veryfront),
     "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
     "veryfront/mdx": templates.veryfrontMdx(veryfront),
     "veryfront/workflow": templates.veryfrontWorkflow(veryfront),
-    ...(includePlatformUtilities ? PLATFORM_UTILITIES : {}),
+    // Core runtime utilities always resolve locally (see comment above).
+    ...CORE_PLATFORM_UTILITIES,
+    // AI modules only override the CDN entries when requested.
+    ...(includeAiModulesLocally ? AI_MODULE_UTILITIES : {}),
   };
 }
 
