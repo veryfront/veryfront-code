@@ -32,19 +32,23 @@ export class MiddlewarePipeline {
     return composeMiddleware(this.middlewares, this.registry);
   }
 
-  execute(
+  async execute(
     req: Request,
     env?: Record<string, unknown>,
     executionCtx?: ExecutionContext,
     adapter?: RuntimeAdapter,
   ): Promise<Response> {
-    return executeMiddlewarePipeline(
-      req,
-      this.compose(),
-      env,
-      executionCtx,
-      adapter,
-    );
+    try {
+      return await executeMiddlewarePipeline(
+        req,
+        this.compose(),
+        env,
+        executionCtx,
+        adapter,
+      );
+    } finally {
+      await this.runTeardownCallbacks();
+    }
   }
 
   /**
@@ -62,20 +66,47 @@ export class MiddlewarePipeline {
    * }
    * ```
    */
-  handle(
+  async handle(
     req: Request,
     handler: (req: Request) => Response | Promise<Response>,
   ): Promise<Response> {
-    return executeMiddlewarePipeline(
-      req,
-      this.compose(),
-      undefined,
-      undefined,
-      undefined,
-      handler,
-    );
+    try {
+      return await executeMiddlewarePipeline(
+        req,
+        this.compose(),
+        undefined,
+        undefined,
+        undefined,
+        handler,
+      );
+    } finally {
+      await this.runTeardownCallbacks();
+    }
   }
 
+  /**
+   * Run every registered teardown callback once, in registration order,
+   * without discarding them — so a module-scoped route pipeline fires them
+   * again on the next request. Called by {@link execute} and {@link handle}
+   * after the response is produced. Callback errors are logged and swallowed
+   * so cleanup failures never surface to the client.
+   */
+  private async runTeardownCallbacks(): Promise<void> {
+    for (const cb of this.teardownCallbacks) {
+      try {
+        await cb();
+      } catch (e) {
+        serverLogger.warn("middleware teardown failed", e);
+      }
+    }
+  }
+
+  /**
+   * Drain and discard all registered teardown callbacks. Unlike the
+   * per-request cleanup run by {@link execute} / {@link handle}, this clears
+   * the callbacks so they never run again — use it for one-shot lifecycle
+   * cleanup, e.g. draining a long-lived pipeline on server shutdown.
+   */
   async teardown(): Promise<void> {
     const callbacks = this.teardownCallbacks;
     this.teardownCallbacks = [];

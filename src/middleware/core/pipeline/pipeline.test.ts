@@ -152,6 +152,71 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
 
       assert(result === pipeline);
     });
+
+    it("should run teardown callbacks after handle() produces a response", async () => {
+      const pipeline = new MiddlewarePipeline();
+      const called: number[] = [];
+
+      pipeline.onTeardown(() => {
+        called.push(1);
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/"),
+        () => Response.json({ ok: true }),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(called, [1]);
+    });
+
+    it("should run teardown callbacks after execute() produces a response", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleaned = false;
+
+      pipeline.onTeardown(() => {
+        cleaned = true;
+      });
+
+      await pipeline.execute(new Request("http://localhost/"));
+
+      assertEquals(cleaned, true);
+    });
+
+    it("should run teardown callbacks on every request without discarding them", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let count = 0;
+
+      pipeline.onTeardown(() => {
+        count++;
+      });
+
+      const handler = () => Response.json({ ok: true });
+      await pipeline.handle(new Request("http://localhost/"), handler);
+      await pipeline.handle(new Request("http://localhost/"), handler);
+      await pipeline.handle(new Request("http://localhost/"), handler);
+
+      assertEquals(count, 3);
+    });
+
+    it("should still run teardown callbacks when the handler throws", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleaned = false;
+
+      pipeline.onTeardown(() => {
+        cleaned = true;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/"),
+        () => {
+          throw new Error("handler blew up");
+        },
+      );
+
+      assertEquals(response.status, 500);
+      assertEquals(cleaned, true);
+    });
   });
 
   describe("teardown", () => {

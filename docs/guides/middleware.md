@@ -135,13 +135,17 @@ For anything that must be correct across requests, instances, and deploys — ra
 
 ### Cleanup callbacks
 
-Register teardown logic that runs after the response is sent:
+Register teardown logic that runs once per request, after the pipeline has produced the response:
 
 ```ts
 pipeline.onTeardown(async () => {
   await flushMetrics();
 });
 ```
+
+`onTeardown` callbacks run at the end of every `handle()` and `execute()` call — including when the terminal handler throws — so a module-scoped route pipeline fires them on each request. Callback errors are logged and swallowed, never surfaced to the client. Keep the work cheap: it is awaited before the `handle()`/`execute()` promise resolves, so a slow callback delays the response.
+
+For long-lived pipelines that need one-shot cleanup on shutdown (rather than per request), call `pipeline.teardown()` explicitly. Unlike the per-request run, `teardown()` drains and discards the callbacks so they never fire again.
 
 ## Custom middleware
 
