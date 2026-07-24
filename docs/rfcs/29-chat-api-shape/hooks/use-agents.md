@@ -4,6 +4,8 @@ Fetches the list of available agents.
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): this hook is hard-wired to veryfront's `/api/agents` backend — fetch, envelope normalizers, and error registry — so it is **not generic as "signature kept" implies**. Move it to a veryfront adapter, or require an injected `transport`/`fetcher` and document the backend contract.
+
 ## Import
 
 ```tsx

@@ -4,6 +4,8 @@ Binds an agent to the session with lifecycle callbacks for tool activity and err
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): this POSTs veryfront's `/api/agents/:id` and returns veryfront agent-SDK types, and its role overlaps `useChat`'s transport. It belongs in the veryfront adapter, not the generic core — its place in a generic chat library is doubtful.
+
 ## Import
 
 ```tsx

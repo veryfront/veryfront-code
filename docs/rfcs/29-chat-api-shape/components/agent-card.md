@@ -4,6 +4,8 @@ A status card for one running agent: identity header, live status, reasoning, to
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): the presentation is baked to veryfront's six-value agent-status enum (`idle` / `thinking` / `tool_execution` / `streaming` / `completed` / `error`), making this a product-specific view. Generalize `status` to a caller-supplied string + presentation map, or move it to the veryfront adapter.
+
 ## Import
 
 ```tsx

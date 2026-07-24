@@ -4,6 +4,8 @@ A disclosure for one tool invocation — input, output, and the full lifecycle i
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `variant` auto-selects `compact` by **hardcoded veryfront tool names** (`load_skill`, `load_skill_reference`, `execute_skill_script`) via `isSkillToolPart` — "skill" is a veryfront concept. Default `variant="card"` for all tools; let consumers opt a tool into compact via the `tools` registry; keep the skill guard out of the generic public API.
+
 ## Import
 
 ```tsx

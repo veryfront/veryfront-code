@@ -4,6 +4,8 @@ A searchable popover for choosing a model — provider-logo trigger, provider-gr
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): the provider logo is hardcoded to `https://models.dev/logos/${key}.svg` with no override — an undocumented external network dependency baked into a "generic" component. Add a logo-source slot/override and document the dependency.
+
 ## Import
 
 ```tsx

@@ -4,6 +4,8 @@ The composer's actions menu — a dropdown of data-driven rows (attach, custom a
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `.Preset`'s `settings` submenu toggles (`autoSubmit` "Auto-send queue", `autoFixErrors` "Autofix errors") are veryfront agent-runtime features, not generic chat. Drop `settings` from the public reader; consumers compose a settings submenu from generic `.Item`s.
+
 ## Import
 
 ```tsx

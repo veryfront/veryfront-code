@@ -4,6 +4,8 @@ The zero-messages view: hero agent avatar, heading, and a wrapping row of typed 
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **⚠ Reusability flag** (see [generic core vs veryfront adapter](../../29-chat-api-shape.md)): `Avatar` defaults `alt="Veryfront Agent"` — a brand string a generic consumer would ship to screen readers. Use a neutral default (`"Agent"`), or make `alt` required with no brand default.
+
 ## Import
 
 ```tsx

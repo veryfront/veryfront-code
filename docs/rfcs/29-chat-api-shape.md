@@ -63,6 +63,25 @@ paint a box the library still owns. The only real answer is to **own the element
 — via `asChild` or prop getters. So the requirement isn't "expose more class
 hooks"; it's "never render an element the consumer can't supply themselves."
 
+## Reusability — generic core vs veryfront adapter (a hard requirement)
+
+**Every public hook and component must be reusable by ANY consumer to build ANY chat UI — not tied to the veryfront application.** This is non-negotiable. A full-surface review found the surface is overwhelmingly generic, but a small set of pieces are hard-wired to veryfront's backend/product and are currently documented as neutral "signature kept," hiding the coupling. Those must move behind a **veryfront adapter** (or gain injectable transport), leaving a clean generic core.
+
+| Coupled piece | Coupling (verified in `src/`) | Decouple path |
+| --- | --- | --- |
+| `useAgents` · `useAgentMetadata` · `useAgent` | hardcoded `fetch("/api/agents")`, veryfront envelope/normalizers, error registry, SDK types | move to the adapter, or require an injected `transport`/`fetcher` and document the backend contract |
+| `AgentCard` | baked to veryfront's six-value agent-status enum (`thinking` / `tool_execution` / …) | generalize `status` to a caller string + presentation map, or adapter |
+| `ToolCall` + `isSkillToolPart` | auto-compacts by hardcoded tool names (`load_skill`, `execute_skill_script`); "skill" is a veryfront concept | default `variant="card"`; opt a tool into compact via the `tools` registry; drop the skill guard from the public generic API |
+| `ChatEmptyState.Avatar` | default `alt="Veryfront Agent"` — brand string shipped to screen readers | neutral default (`"Agent"`) or make `alt` required |
+| `ChatActions.Preset` `settings` | `autoSubmit` / `autoFixErrors` are agent-runtime toggles | drop from the public reader; consumers compose a settings submenu from generic `.Item`s |
+| `ModelSelector` logo | provider logo hardcoded to `https://models.dev/logos/…`, no override | add a logo-source slot/override; document the external dependency |
+| `Message` defaults | default renderer reads hardcoded `metadata.agentName` / `agentId` / `agentAvatarUrl` / `model` | document as an override-able convention, not an implicit contract |
+| `markdown` | "Veryfront hardening pass" branding on a standard sanitize step | neutral wording |
+
+**Generic core** (stays in `veryfront/chat`): `Chat` / `ChatRoot` / `ChatInput` / `ChatMessageList` / `Message`, every reader, `AgentPicker`, `ModelSelector`, the composer / upload / voice primitives, and **editing + branching** (verified fully client-side — no app coupling; a standard chat UX that earns its place). **veryfront adapter** (moves out): the `/api/agents` fetch hooks, `ChatAgentPicker`, `AgentCard`, skill-tool guards, and the envelope normalizers.
+
+Individual pages flag their coupling inline; this table is the single source of truth for the split.
+
 ## Hard rules (what "clean" means here)
 
 1. **No `xxxClassName` / `xxxProps` bags. Ever.** One `className` targets one node.
