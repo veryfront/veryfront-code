@@ -6,7 +6,6 @@ import {
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
 } from "#veryfront/errors";
-import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
   ControlPlaneRequestError,
@@ -1444,7 +1443,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
     name: "ProjectRunExecuteHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
-      { pattern: CONTROL_PLANE_RUNS_PATH_PREFIX, prefix: true, method: "POST" },
+      { pattern: EXECUTE_PATH_REGEX, method: "POST" },
     ],
   };
 

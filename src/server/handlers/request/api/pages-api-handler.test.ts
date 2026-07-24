@@ -65,6 +65,8 @@ function createHandlerContext(
     projectSlug?: string;
     mode?: "preview" | "production";
     releaseId?: string;
+    environmentId?: string;
+    environmentName?: string;
   },
 ): HandlerContext {
   return {
@@ -76,6 +78,8 @@ function createHandlerContext(
     projectId: input.projectSlug ? `${input.projectSlug}-id` : undefined,
     resolvedEnvironment: input.mode ?? "preview",
     releaseId: input.releaseId,
+    environmentId: input.environmentId,
+    environmentName: input.environmentName,
     requestContext: {
       token: "test-token",
       slug: input.projectSlug ?? "test-project",
@@ -321,14 +325,80 @@ describe("server/handlers/request/api/pages-api-handler", () => {
       );
 
       assertEquals(cache.store.size, 2);
-      assertEquals(
-        [...cache.store.keys()].sort(),
-        [
-          "/project-dir:my-project:production:release-1",
-          "/project-dir:my-project:production:release-2",
-        ],
-      );
+      const keys = [...cache.store.keys()];
+      assertEquals(keys.every((key) => key.startsWith("api-handler-v2|")), true);
+      assertEquals(new Set(keys).size, 2);
       assertEquals(refreshCalls, 0);
+    });
+
+    it("does not reuse one release handler across distinct environments", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      __injectCacheForTests(cache as any);
+
+      const first = await getApiHandler(
+        createHandlerContext({
+          adapter,
+          projectSlug: "my-project",
+          mode: "production",
+          releaseId: "release-1",
+          environmentId: "environment-a",
+          environmentName: "staging",
+        }),
+      );
+      const second = await getApiHandler(
+        createHandlerContext({
+          adapter,
+          projectSlug: "my-project",
+          mode: "production",
+          releaseId: "release-1",
+          environmentId: "environment-b",
+          environmentName: "production",
+        }),
+      );
+
+      assertEquals(first === second, false);
+      assertEquals(cache.store.size, 2);
+    });
+
+    it("removes only the identical rejected initialization promise and retries", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-dir/pages/api/status.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectCacheForTests(cache as any);
+      let discoveryAttempts = 0;
+      __injectApiRouteDepsForTests({
+        discoverPagesRoutes: () => {
+          discoveryAttempts++;
+          if (discoveryAttempts === 1) {
+            return Promise.reject(new Error("transient route discovery failure"));
+          }
+          return Promise.resolve();
+        },
+      });
+      const ctx = createHandlerContext({
+        adapter,
+        projectSlug: "my-project",
+        mode: "production",
+        releaseId: "release-1",
+        environmentId: "environment-a",
+      });
+
+      const firstWave = await Promise.allSettled([
+        getApiHandler(ctx),
+        getApiHandler(ctx),
+      ]);
+      assertEquals(firstWave[0]?.status, "rejected");
+      assertEquals(firstWave[1]?.status, "rejected");
+      assertEquals(discoveryAttempts, 1);
+
+      const recovered = await getApiHandler(ctx);
+      assertExists(recovered);
+      assertEquals(discoveryAttempts, 2);
+      assertEquals(cache.store.size, 1);
     });
   });
 });

@@ -8,6 +8,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { registerTrustedProjectEnvSnapshot } from "#veryfront/platform/compat/process/env.ts";
 
 const projectEnvStorage = new AsyncLocalStorage<Record<string, string>>();
 
@@ -45,8 +46,11 @@ export function getProjectEnvSnapshot(): Record<string, string> | undefined {
   return projectEnvStorage.getStore();
 }
 
-// Register on globalThis so lower-layer code can access without upward imports.
-// process.ts is low-level (platform/compat), project-env is high-level (server/).
+registerTrustedProjectEnvSnapshot(getProjectEnvSnapshot);
+
+// Preserve the two legacy lookup bridges still consumed by lower-level
+// process compatibility code. Worker snapshotting uses the trusted
+// closure-registration bridge above and is never published as mutable global
+// state.
 (globalThis as Record<string, unknown>).__vfProjectEnvGetter = getProjectEnv;
 (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker = isProjectEnvActive;
-(globalThis as Record<string, unknown>).__vfProjectEnvSnapshotGetter = getProjectEnvSnapshot;

@@ -28,7 +28,14 @@ describe("method-validator", () => {
     it("should handle handler with no methods", () => {
       const response = createAppRouteMethodNotAllowed({});
       assertEquals(response.status, 405);
-      assertEquals(response.headers.get("Allow"), "");
+      assertEquals(response.headers.get("Allow"), "OPTIONS");
+    });
+
+    it("advertises framework OPTIONS with the executable GET/HEAD surface", () => {
+      const response = createAppRouteMethodNotAllowed({
+        GET: () => new Response("ok"),
+      });
+      assertEquals(response.headers.get("Allow"), "GET, HEAD, OPTIONS");
     });
 
     it("should detect all standard HTTP methods", () => {

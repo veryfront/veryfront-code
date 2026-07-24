@@ -1,26 +1,19 @@
 import { methodNotAllowed } from "#veryfront/http/responses";
-import type { HTTPMethod } from "./module-loader/types.ts";
-
-const HTTP_METHODS: HTTPMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+import { resolveExecutableRouteMethods } from "./route-methods.ts";
 
 function getAllowedMethods(
   handler: Record<string, unknown>,
-  methods: readonly string[],
-  exclude: (method: string) => boolean = () => false,
 ): string[] {
-  return methods.filter((method) => !exclude(method) && typeof handler[method] === "function");
+  // OPTIONS is framework-reachable for every matched API route, so RFC Allow
+  // must advertise it even when the project module does not export OPTIONS.
+  return resolveExecutableRouteMethods(handler);
 }
 
 export function createAppRouteMethodNotAllowed(handlerModule: Record<string, unknown>): Response {
-  const allowed = getAllowedMethods(handlerModule, HTTP_METHODS);
+  const allowed = getAllowedMethods(handlerModule);
   return methodNotAllowed(allowed);
 }
 
 export function createPagesRouteMethodNotAllowed(handler: Record<string, unknown>): Response {
-  const allowed = getAllowedMethods(
-    handler,
-    Object.keys(handler),
-    (method) => method === "default",
-  );
-  return methodNotAllowed(allowed);
+  return methodNotAllowed(getAllowedMethods(handler));
 }

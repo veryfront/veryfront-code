@@ -8,6 +8,33 @@ import type { SecurityConfig } from "./types.ts";
 const logger = serverLogger.component("security-headers");
 const warnedReservedCorsHeaderConfigs = new WeakSet<object>();
 
+/**
+ * Response headers whose values and omissions are owned by the centralized
+ * security policy. Server integrations must remove project-provided values
+ * before applying policy so development omissions remain authoritative.
+ */
+export const SECURITY_POLICY_RESPONSE_HEADER_NAMES = Object.freeze(
+  [
+    "content-security-policy",
+    "cross-origin-embedder-policy",
+    "cross-origin-opener-policy",
+    "cross-origin-resource-policy",
+    "referrer-policy",
+    "strict-transport-security",
+    "x-content-type-options",
+    "x-frame-options",
+    "x-xss-protection",
+  ] as const,
+);
+
+const SECURITY_POLICY_RESPONSE_HEADER_NAME_SET: ReadonlySet<string> = new Set(
+  SECURITY_POLICY_RESPONSE_HEADER_NAMES,
+);
+
+export function isSecurityPolicyResponseHeaderName(name: string): boolean {
+  return SECURITY_POLICY_RESPONSE_HEADER_NAME_SET.has(name.toLowerCase());
+}
+
 /** HSTS max-age default: 1 year in seconds */
 const HSTS_MAX_AGE_SECONDS = 31_536_000;
 

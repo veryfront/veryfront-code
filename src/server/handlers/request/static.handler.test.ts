@@ -23,6 +23,63 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 }
 
 describe("server/handlers/request/static.handler", () => {
+  it("never claims dotted project API routes as static assets", async () => {
+    const handler = new StaticHandler();
+    let staticLookupCount = 0;
+    (handler as any).staticService = {
+      resolveFile: async () => {
+        staticLookupCount++;
+        return null;
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/api/reports/latest.json"),
+      makeCtx(),
+    );
+
+    assertEquals(result.continue, true);
+    assertEquals(result.response, undefined);
+    assertEquals(staticLookupCount, 0);
+    assertEquals(
+      handler.metadata.patterns?.some((pattern) =>
+        pattern.pattern instanceof RegExp &&
+        pattern.pattern.test("/api/reports/latest.json")
+      ),
+      false,
+    );
+  });
+
+  it("still serves similarly prefixed non-API assets", async () => {
+    const handler = new StaticHandler();
+    let resolvedPath = "";
+    (handler as any).staticService = {
+      resolveFile: async (pathname: string) => {
+        resolvedPath = pathname;
+        return {
+          path: "/tmp/test-project/public/apix/static.json",
+          data: new TextEncoder().encode('{"ok":true}'),
+          etag: '"asset-etag"',
+          contentType: "application/json; charset=utf-8",
+          cacheStrategy: "medium",
+          source: "public",
+        };
+      },
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/apix/static.json"),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(resolvedPath, "/apix/static.json");
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.text(), '{"ok":true}');
+  });
+
   it("serves generated production build assets under /_veryfront", async () => {
     const handler = new StaticHandler();
     let resolvedPath = "";

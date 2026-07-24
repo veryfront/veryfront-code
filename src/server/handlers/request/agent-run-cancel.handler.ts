@@ -1,4 +1,3 @@
-import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
@@ -27,7 +26,7 @@ export class AgentRunCancelHandler extends BaseHandler {
     name: "AgentRunCancelHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
-      { pattern: CONTROL_PLANE_RUNS_PATH_PREFIX, prefix: true, method: "DELETE" },
+      { pattern: CANCEL_PATH_REGEX, method: "DELETE" },
     ],
   };
 

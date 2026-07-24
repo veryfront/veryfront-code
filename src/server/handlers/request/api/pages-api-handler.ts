@@ -17,6 +17,24 @@ import {
 import type { HandlerContext } from "../../types.ts";
 
 const logger = serverLogger.component("reset-api-handler");
+const apply = Reflect.apply;
+const randomUUID = crypto.randomUUID;
+const stringSlice = String.prototype.slice;
+const stringStartsWith = String.prototype.startsWith;
+const stringEndsWith = String.prototype.endsWith;
+const stringIncludes = String.prototype.includes;
+const promiseCatch = Promise.prototype.catch;
+const numberToString = Number.prototype.toString;
+const stringPadStart = String.prototype.padStart;
+const arrayJoin = Array.prototype.join;
+const NativeArray = Array;
+const NativeTextEncoder = TextEncoder;
+const NativeUint8Array = Uint8Array;
+const scopeTextEncoder = new NativeTextEncoder();
+const textEncoderEncode = NativeTextEncoder.prototype.encode;
+const subtleDigest = SubtleCrypto.prototype.digest;
+const nativeSubtleCrypto = crypto.subtle;
+const API_HANDLER_CACHE_KEY_VERSION = "api-handler-v2";
 
 export interface HandlerCache<T> {
   get(key: string): T | undefined;
@@ -108,6 +126,16 @@ function getApiHandlerCacheContext(ctx: HandlerContext) {
   return tryGetCacheKeyContext() ?? extractCacheKeyContext(ctx);
 }
 
+function frameCacheKeySegment(value: string | undefined | null): string {
+  if (value === undefined) return "u";
+  if (value === null) return "n";
+  return `s${value.length}:${value}`;
+}
+
+function projectCacheKeyPrefix(projectSlug: string): string {
+  return `${API_HANDLER_CACHE_KEY_VERSION}|${frameCacheKeySegment(projectSlug)}|`;
+}
+
 function getCacheKey(ctx: HandlerContext): string {
   if (!ctx.projectSlug) return ctx.projectDir;
 
@@ -115,7 +143,26 @@ function getCacheKey(ctx: HandlerContext): string {
   // No safe scoped key (e.g. production without a releaseId): fall back to the
   // project-specific dir key rather than a shared bucket.
   if (!cacheContext) return ctx.projectDir;
-  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}`;
+
+  const fields = [
+    ctx.projectDir,
+    ctx.projectId,
+    cacheContext.projectId,
+    cacheContext.mode,
+    cacheContext.versionId,
+    ctx.releaseId,
+    ctx.environmentId,
+    ctx.environmentName,
+    ctx.resolvedEnvironment,
+    ctx.requestContext?.mode,
+    ctx.requestContext?.branch,
+    ctx.parsedDomain?.branch,
+  ];
+  let key = projectCacheKeyPrefix(ctx.projectSlug);
+  for (let index = 0; index < fields.length; index++) {
+    key += `${frameCacheKeySegment(fields[index])}|`;
+  }
+  return key;
 }
 
 function shouldCacheApiHandler(ctx: HandlerContext): boolean {
@@ -134,10 +181,38 @@ async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> 
   await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
 }
 
-async function createApiHandler(ctx: HandlerContext): Promise<APIRouteHandler> {
+async function hashScopeMaterial(material: string): Promise<string> {
+  const bytes = apply(textEncoderEncode, scopeTextEncoder, [material]) as Uint8Array;
+  const digest = await apply(subtleDigest, nativeSubtleCrypto, [
+    "SHA-256",
+    bytes,
+  ]) as ArrayBuffer;
+  const digestBytes = new NativeUint8Array(digest);
+  const hex = new NativeArray<string>(digestBytes.byteLength);
+  for (let index = 0; index < digestBytes.byteLength; index++) {
+    const encoded = apply(numberToString, digestBytes[index]!, [16]) as string;
+    hex[index] = apply(stringPadStart, encoded, [2, "0"]) as string;
+  }
+  return apply(arrayJoin, hex, [""]) as string;
+}
+
+async function createApiHandler(
+  ctx: HandlerContext,
+  capturedScopeKey = getCacheKey(ctx),
+): Promise<APIRouteHandler> {
   await refreshPreviewSourceSnapshot(ctx);
 
-  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
+  const scopeDigest = await hashScopeMaterial(capturedScopeKey);
+  const executionScopeId = `api:${apply(stringSlice, scopeDigest, [0, 32])}:${
+    apply(randomUUID, crypto, [])
+  }`;
+
+  const handler = new APIRouteHandler(
+    ctx.projectDir,
+    ctx.adapter,
+    ctx.config,
+    executionScopeId,
+  );
   await handler.initialize();
   return handler;
 }
@@ -199,17 +274,26 @@ function retainHandler(promise: Promise<APIRouteHandler>): () => Promise<void> {
 function getApiHandlerPromise(
   ctx: HandlerContext,
 ): { promise: Promise<APIRouteHandler>; cached: boolean } {
+  const key = getCacheKey(ctx);
   if (!shouldCacheApiHandler(ctx)) {
-    return { promise: createApiHandler(ctx), cached: false };
+    return { promise: createApiHandler(ctx, key), cached: false };
   }
 
   const cache = getCache();
-  const key = getCacheKey(ctx);
 
   let promise = cache.get(key);
   if (!promise) {
-    promise = createApiHandler(ctx);
+    promise = createApiHandler(ctx, key);
     cache.set(key, promise);
+    const installed = promise;
+    void apply(promiseCatch, installed, [() => {
+      // A transient initialization failure must not poison this immutable
+      // release/environment key forever. Identity-check before deletion so a
+      // late rejection cannot remove a newer successful retry.
+      if (cache.get(key) !== installed) return;
+      cache.delete(key);
+      void destroyHandler(installed);
+    }]);
   }
 
   return { promise, cached: true };
@@ -269,7 +353,10 @@ export async function resetApiHandlerForProject(
 
   for (const [key, promise] of cache.entries()) {
     if (
-      key === projectSlug || key.endsWith(`:${projectSlug}`) || key.includes(`:${projectSlug}:`)
+      key === projectSlug ||
+      apply(stringStartsWith, key, [projectCacheKeyPrefix(projectSlug)]) ||
+      apply(stringEndsWith, key, [`:${projectSlug}`]) ||
+      apply(stringIncludes, key, [`:${projectSlug}:`])
     ) {
       cache.delete(key);
       toDestroy.push(promise);

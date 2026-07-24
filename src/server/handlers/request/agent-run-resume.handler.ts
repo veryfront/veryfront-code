@@ -1,4 +1,3 @@
-import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
@@ -31,7 +30,7 @@ export class AgentRunResumeHandler extends BaseHandler {
     name: "AgentRunResumeHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
-      { pattern: CONTROL_PLANE_RUNS_PATH_PREFIX, prefix: true, method: "POST" },
+      { pattern: RESUME_PATH_REGEX, method: "POST" },
     ],
   };
 

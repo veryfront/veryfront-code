@@ -9,7 +9,11 @@ import { computeHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
-import { getWorkerPool, isSSRIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
+import {
+  getWorkerPool,
+  isSSRIsolationEnabled,
+  type WorkerPool,
+} from "#veryfront/security/sandbox/worker-pool.ts";
 import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
 import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
@@ -31,6 +35,12 @@ export interface SSRRenderingResult {
   fullHtml: string;
   finalStream: ReadableStream | null;
   ssrHash: string;
+}
+
+/** @internal Construction seam for isolated-rendering lifecycle tests. */
+export interface SSROrchestratorDependencies {
+  getWorkerPool?: () => Pick<WorkerPool, "execute" | "executeStream">;
+  isSSRIsolationEnabled?: () => boolean;
 }
 
 /**
@@ -60,10 +70,17 @@ function getElementTypeName(el: React.ReactElement | null | undefined): string {
 }
 
 export class SSROrchestrator {
-  private config: SSROrchestratorConfig;
+  private readonly config: SSROrchestratorConfig;
+  private readonly resolveWorkerPool: () => Pick<WorkerPool, "execute" | "executeStream">;
+  private readonly isolationEnabled: () => boolean;
 
-  constructor(config: SSROrchestratorConfig) {
+  constructor(
+    config: SSROrchestratorConfig,
+    dependencies: SSROrchestratorDependencies = {},
+  ) {
     this.config = config;
+    this.resolveWorkerPool = dependencies.getWorkerPool ?? getWorkerPool;
+    this.isolationEnabled = dependencies.isSSRIsolationEnabled ?? isSSRIsolationEnabled;
   }
 
   async performSSRRendering(
@@ -74,7 +91,7 @@ export class SSROrchestrator {
   ): Promise<SSRRenderingResult> {
     // Isolated SSR path: render in per-project Worker
     if (
-      isSSRIsolationEnabled() &&
+      this.isolationEnabled() &&
       isolationOptions?.pageModulePath &&
       isolationOptions?.projectDir
     ) {
@@ -185,26 +202,29 @@ export class SSROrchestrator {
     isolation: SSRIsolationOptions,
   ): Promise<SSRRenderingResult> {
     const wantsStream = options?.delivery === "stream";
-    const pool = getWorkerPool();
+    const pool = this.resolveWorkerPool();
     const requestId = crypto.randomUUID();
 
     return withSpan(
       "ssr.isolated_render",
       async () => {
-        const worker = pool.getOrCreateWorker(isolation.projectDir, [isolation.projectDir]);
-
         if (wantsStream) {
-          // Streaming mode: get a ReadableStream of chunks from the Worker
-          const stream = worker.executeStream({
-            type: "render-ssr",
-            id: requestId,
-            pageModulePath: isolation.pageModulePath,
-            layoutModulePaths: isolation.layoutModulePaths,
-            pageProps: isolation.pageProps,
-            layoutProps: isolation.layoutProps,
-            delivery: "stream",
-            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-          });
+          // Admission and stream execution are one pool lifecycle operation, so
+          // capacity eviction cannot land between acquiring and starting work.
+          const stream = pool.executeStream(
+            isolation.projectDir,
+            [isolation.projectDir],
+            {
+              type: "render-ssr",
+              id: requestId,
+              pageModulePath: isolation.pageModulePath,
+              layoutModulePaths: isolation.layoutModulePaths,
+              pageProps: isolation.pageProps,
+              layoutProps: isolation.layoutProps,
+              delivery: "stream",
+              sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
+            },
+          );
 
           const ssrHash = `stream-isolated-${Date.now()}`;
 
@@ -220,16 +240,20 @@ export class SSROrchestrator {
         }
 
         // String mode: render to HTML in Worker, get result back
-        const workerResponse: WorkerResponse = await worker.execute({
-          type: "render-ssr",
-          id: requestId,
-          pageModulePath: isolation.pageModulePath,
-          layoutModulePaths: isolation.layoutModulePaths,
-          pageProps: isolation.pageProps,
-          layoutProps: isolation.layoutProps,
-          delivery: "string",
-          sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-        });
+        const workerResponse: WorkerResponse = await pool.execute(
+          isolation.projectDir,
+          [isolation.projectDir],
+          {
+            type: "render-ssr",
+            id: requestId,
+            pageModulePath: isolation.pageModulePath,
+            layoutModulePaths: isolation.layoutModulePaths,
+            pageProps: isolation.pageProps,
+            layoutProps: isolation.layoutProps,
+            delivery: "string",
+            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
+          },
+        );
 
         if (workerResponse.type === "error") {
           const err = new Error(workerResponse.error.message);

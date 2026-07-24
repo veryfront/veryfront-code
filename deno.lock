@@ -76,6 +76,7 @@
     "npm:remark-gfm@4.0.1": "4.0.1",
     "npm:remark-parse@11.0.0": "11.0.0",
     "npm:remark-rehype@11.1.2": "11.1.2",
+    "npm:semver@7.7.2": "7.7.2",
     "npm:tailwindcss@4.2.2": "4.2.2",
     "npm:undici@7.28.0": "7.28.0",
     "npm:unified@11.0.5": "11.0.5",
@@ -3160,7 +3161,7 @@
     "node-abi@3.94.0": {
       "integrity": "sha512-W5ZNO5KRPB5TkYmGVD9F6YqhsglXJzE6etpbmT+f6EQElhiX/UTG551cnsRGvLG3fyZEg9HwaDmNmj5nwJ4z9g==",
       "dependencies": [
-        "semver"
+        "semver@7.8.5"
       ]
     },
     "node-addon-api@8.9.0": {
@@ -3603,6 +3604,10 @@
       "dependencies": [
         "commander"
       ],
+      "bin": true
+    },
+    "semver@7.7.2": {
+      "integrity": "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA==",
       "bin": true
     },
     "semver@7.8.5": {

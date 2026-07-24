@@ -84,6 +84,28 @@ export function getHostEnv(key: string): string | undefined {
 // re-check globalThis on every call to avoid permanently caching the fallback.
 let _getProjectEnv: ((key: string) => string | undefined) | null = null;
 let _isProjectEnvActive: (() => boolean) | null = null;
+let _trustedProjectEnvSnapshot: (() => Record<string, string> | undefined) | null = null;
+
+/**
+ * Register the server-owned project environment snapshot bridge.
+ *
+ * Kept out of the public process barrel so project code cannot replace the
+ * callback through a supported package export. Re-registering a different
+ * function is rejected rather than silently widening an isolation boundary.
+ */
+export function registerTrustedProjectEnvSnapshot(
+  getter: () => Record<string, string> | undefined,
+): void {
+  if (_trustedProjectEnvSnapshot && _trustedProjectEnvSnapshot !== getter) {
+    throw new Error("Project environment snapshot bridge is already registered");
+  }
+  _trustedProjectEnvSnapshot = getter;
+}
+
+/** Return the active server-owned project env snapshot, if registered. */
+export function getTrustedProjectEnvSnapshot(): Record<string, string> | undefined {
+  return _trustedProjectEnvSnapshot?.();
+}
 
 function getProjectEnvSafe(key: string): string | undefined {
   if (_getProjectEnv === null) {

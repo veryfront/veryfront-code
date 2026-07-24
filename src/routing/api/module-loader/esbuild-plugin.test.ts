@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeIntegrity, type LockfileManager } from "#veryfront/utils";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -734,6 +734,59 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("does not coerce hostile remote-fetch rejections", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let messageReads = 0;
+      let conversions = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const hostile = Object.defineProperties({}, {
+        message: {
+          get() {
+            messageReads += 1;
+            throw new Error("message getter must not run");
+          },
+        },
+        [Symbol.toPrimitive]: {
+          value() {
+            conversions += 1;
+            throw new Error("conversion hook must not run");
+          },
+        },
+      });
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => {
+          attempts += 1;
+          throw hostile;
+        }) as typeof fetch;
+
+        const result = await loadHandler({
+          path: "https://esm.sh/yaml@2",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        }) as { errors: Array<{ text: string }> };
+
+        assertEquals(result.errors[0]?.text, "Failed to fetch https://esm.sh/yaml@2: 599");
+        assertEquals(attempts, 3);
+        assertEquals(messageReads, 0);
+        assertEquals(conversions, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("cancels retryable response bodies before issuing the next request", async () => {
       const originalFetch = globalThis.fetch;
       let attempts = 0;
@@ -889,6 +942,139 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("does not invoke or misclassify Error proxies from lockfile persistence", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      let trapCalls = 0;
+      const hostile = new Proxy(
+        new Error("Read-only file system (os error 30): must not be inspected"),
+        {
+          get(target, property, receiver) {
+            trapCalls++;
+            return Reflect.get(target, property, receiver);
+          },
+          getOwnPropertyDescriptor(target, property) {
+            trapCalls++;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+          getPrototypeOf(target) {
+            trapCalls++;
+            return Reflect.getPrototypeOf(target);
+          },
+          ownKeys(target) {
+            trapCalls++;
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+      const failingLockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(false),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.reject(hostile),
+      };
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        lockfile: failingLockfile,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+      const handler = loadHandler;
+      let caught: unknown;
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response("export const parsed = true;")) as typeof fetch;
+        try {
+          await handler({
+            path: "https://esm.sh/yaml@2",
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          });
+        } catch (error) {
+          caught = error;
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      assert(caught === hostile);
+      assertEquals(trapCalls, 0);
+    });
+
+    it("does not invoke Error accessors while classifying lockfile failures", async () => {
+      const originalFetch = globalThis.fetch;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      let accessorReads = 0;
+      const hostile = new Error("must not escape");
+      for (const property of ["message", "name", "code", "cause"] as const) {
+        Object.defineProperty(hostile, property, {
+          configurable: true,
+          get() {
+            accessorReads++;
+            return property === "message"
+              ? "Read-only file system (os error 30): must not be inspected"
+              : undefined;
+          },
+        });
+      }
+      const failingLockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(false),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.reject(hostile),
+      };
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        lockfile: failingLockfile,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+      const handler = loadHandler;
+      let caught: unknown;
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response("export const parsed = true;")) as typeof fetch;
+        try {
+          await handler({
+            path: "https://esm.sh/yaml@2",
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          });
+        } catch (error) {
+          caught = error;
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      assert(caught === hostile);
+      assertEquals(accessorReads, 0);
+    });
+
     it("propagates lockfile set failures", async () => {
       const originalFetch = globalThis.fetch;
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
@@ -982,6 +1168,73 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
           Error,
           "disk quota exceeded",
         );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not coerce hostile lockfile flush rejections during classification", async () => {
+      const originalFetch = globalThis.fetch;
+      let messageReads = 0;
+      let conversions = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const hostile = Object.defineProperties({}, {
+        message: {
+          get() {
+            messageReads += 1;
+            throw new Error("message getter must not run");
+          },
+        },
+        [Symbol.toPrimitive]: {
+          value() {
+            conversions += 1;
+            throw new Error("conversion hook must not run");
+          },
+        },
+      });
+      const failingLockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(false),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.reject(hostile),
+      };
+
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh"],
+        lockfile: failingLockfile,
+      });
+      plugin.setup(
+        createMockBuild(
+          () => {},
+          (_opts, fn) => {
+            loadHandler = fn;
+          },
+        ),
+      );
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response("export const parsed = true;")) as typeof fetch;
+
+        let caught: unknown;
+        try {
+          await loadHandler({
+            path: "https://esm.sh/yaml@2",
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          });
+        } catch (error) {
+          caught = error;
+        }
+
+        assert(caught === hostile);
+        assertEquals(messageReads, 0);
+        assertEquals(conversions, 0);
       } finally {
         globalThis.fetch = originalFetch;
       }

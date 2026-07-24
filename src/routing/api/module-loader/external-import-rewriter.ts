@@ -5,6 +5,7 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");
@@ -495,6 +496,7 @@ export async function rewriteDenoNpmDependencyImports(
   projectDir: string,
   fs: FileSystem,
   userDeps: Map<string, string>,
+  options: { requireInstalledExactVersions?: boolean } = {},
 ): Promise<string> {
   const importedSpecifiers = new Set(
     (await parseImports(code))
@@ -511,13 +513,29 @@ export async function rewriteDenoNpmDependencyImports(
 
     const [name, version] = entry;
     let resolvedVersion = version;
+    let installedVersion: unknown;
     try {
       const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
       const pkgContent = await fs.readTextFile(pkgPath);
       const pkg = JSON.parse(pkgContent) as { version?: string };
-      if (pkg.version) resolvedVersion = pkg.version;
-    } catch (_) {
+      installedVersion = pkg.version;
+    } catch {
+      if (options.requireInstalledExactVersions) {
+        throw new TypeError(
+          `Prepared API route dependency "${name}" must be installed before worker execution`,
+        );
+      }
       /* expected: installed package.json may not exist, fall back to declared range */
+    }
+    if (options.requireInstalledExactVersions) {
+      if (typeof installedVersion !== "string" || !isExactNpmVersion(installedVersion)) {
+        throw new TypeError(
+          `Prepared API route dependency "${name}" does not expose an exact installed version`,
+        );
+      }
+      resolvedVersion = installedVersion;
+    } else if (typeof installedVersion === "string" && installedVersion) {
+      resolvedVersion = installedVersion;
     }
 
     const subpath = specifier.slice(name.length);
@@ -527,6 +545,78 @@ export async function rewriteDenoNpmDependencyImports(
   if (replacements.size === 0) return code;
 
   return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
+}
+
+const EXACT_NPM_VERSION_PATTERN =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function isExactNpmVersion(version: string): boolean {
+  return EXACT_NPM_VERSION_PATTERN.test(version);
+}
+
+function isExactNpmSpecifier(specifier: string): boolean {
+  const match = /^npm:(?:@[^/@]+\/[^/@]+|[^@/]+)@([^/]+)(?:\/.*)?$/.exec(specifier);
+  return match !== null && isExactNpmVersion(match[1]!);
+}
+
+/**
+ * Finalize and validate the import surface of a host-prepared worker module.
+ *
+ * Data-URL modules do not have a project-relative referrer. Installed npm
+ * dependencies must already have been rewritten to exact npm specifiers, and
+ * framework imports remain unavailable until their graph is snapshot-owned.
+ * Any other unresolved external is rejected during preparation instead of
+ * falling through to runtime resolution in the project worker.
+ */
+export async function finalizePreparedWorkerImports(
+  code: string,
+  projectDir: string,
+): Promise<string> {
+  const importedSpecifiers = new Set(
+    (await parseImports(code))
+      .map((specifier) => specifier.n)
+      .filter((specifier): specifier is string => typeof specifier === "string"),
+  );
+
+  for (const specifier of importedSpecifiers) {
+    if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
+      throw new TypeError(
+        `Prepared API route framework import "${specifier}" is unavailable until framework modules are snapshot-owned by the worker`,
+      );
+    }
+
+    if (specifier.startsWith("node:")) {
+      continue;
+    }
+    if (specifier.startsWith("file:")) {
+      let importedPath: string;
+      try {
+        importedPath = pathHelper.fromFileUrl(specifier);
+      } catch {
+        throw new TypeError(
+          `Prepared API route contains an invalid file import: ${specifier}`,
+        );
+      }
+      if (!isWithinDirectory(pathHelper.resolve(projectDir), pathHelper.resolve(importedPath))) {
+        throw new TypeError(
+          `Prepared API route file import escapes the project directory: ${specifier}`,
+        );
+      }
+      continue;
+    }
+    if (specifier.startsWith("npm:")) {
+      if (isExactNpmSpecifier(specifier)) continue;
+      throw new TypeError(
+        `Prepared API route npm import must use an exact installed version: ${specifier}`,
+      );
+    }
+
+    throw new TypeError(
+      `Prepared API route contains an unsupported unresolved import: ${specifier}`,
+    );
+  }
+
+  return code;
 }
 
 export function rewriteDenoNodeBuiltinImports(code: string): string {
@@ -552,6 +642,10 @@ export async function rewriteExternalImports(
   projectDir: string,
   fs: FileSystem,
   userDeps: Map<string, string> = new Map(),
+  options: {
+    preparedWorker?: boolean;
+    requireInstalledExactVersions?: boolean;
+  } = {},
 ): Promise<string> {
   let transformed = code;
 
@@ -559,7 +653,7 @@ export async function rewriteExternalImports(
     try {
       transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
     } catch (e) {
-      logger.warn(`Failed to import node:module: ${e}`);
+      logger.warn(`Failed to import node:module: ${snapshotThrowableDiagnostic(e)}`);
     }
   }
 
@@ -576,7 +670,13 @@ export async function rewriteExternalImports(
       const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
       transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps, esmDeps);
     } else {
-      transformed = await rewriteDenoNpmDependencyImports(transformed, projectDir, fs, userDeps);
+      transformed = await rewriteDenoNpmDependencyImports(
+        transformed,
+        projectDir,
+        fs,
+        userDeps,
+        { requireInstalledExactVersions: options.requireInstalledExactVersions },
+      );
     }
 
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
@@ -584,6 +684,10 @@ export async function rewriteExternalImports(
     if (isCompiledBinary()) {
       transformed = rewriteCompiledBinaryVeryfrontImports(transformed);
     }
+  }
+
+  if (options.preparedWorker) {
+    transformed = await finalizePreparedWorkerImports(transformed, projectDir);
   }
 
   return transformed;

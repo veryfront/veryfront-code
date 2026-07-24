@@ -1,4 +1,4 @@
-import { serverLogger } from "#veryfront/utils";
+import { isCompiledBinary, serverLogger } from "#veryfront/utils";
 import type { BuildResult, ModuleLexer, Plugin } from "veryfront/extensions/bundler";
 import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -9,13 +9,12 @@ import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory, validatePath } from "#veryfront/security/path-validation.ts";
 import {
@@ -24,6 +23,16 @@ import {
   readProjectDependencies,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
+import {
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
+  snapshotThrowableDiagnostic,
+} from "#veryfront/errors/safe-diagnostics.ts";
+import {
+  MAX_WORKER_MODULE_SOURCE_BYTES,
+  type PreparedWorkerModule,
+} from "#veryfront/security/sandbox/worker-types.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -38,8 +47,128 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+const apply = Reflect.apply;
+const NativeArray = Array;
+const NativeTextEncoder = TextEncoder;
+const NativeUint8Array = Uint8Array;
+const utf8Encoder = new NativeTextEncoder();
+const textEncoderEncode = NativeTextEncoder.prototype.encode;
+const subtleDigest = SubtleCrypto.prototype.digest;
+const numberToString = Number.prototype.toString;
+const stringPadStart = String.prototype.padStart;
+const arrayJoin = Array.prototype.join;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
+const MAX_NOT_FOUND_CAUSE_DEPTH = 16;
+const denoNotFoundPrototype = (
+  globalThis as typeof globalThis & {
+    Deno?: { errors?: { NotFound?: { prototype: object } } };
+  }
+).Deno?.errors?.NotFound?.prototype;
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
+
+async function hashPreparedSource(bytes: Uint8Array): Promise<string> {
+  const digest = await apply(subtleDigest, crypto.subtle, ["SHA-256", bytes]) as ArrayBuffer;
+  const digestBytes = new NativeUint8Array(digest);
+  const hex = new NativeArray<string>(digestBytes.byteLength);
+  for (let index = 0; index < digestBytes.byteLength; index++) {
+    const encoded = apply(numberToString, digestBytes[index]!, [16]) as string;
+    hex[index] = apply(stringPadStart, encoded, [2, "0"]) as string;
+  }
+  return apply(arrayJoin, hex, [""]) as string;
+}
+
+/**
+ * Build and rewrite a route for worker execution without evaluating project
+ * code in the host process.
+ */
+export function prepareHandlerModule(
+  options: LoadModuleOptions,
+): Promise<PreparedWorkerModule> {
+  return withSpan(
+    "api.prepareHandlerModule",
+    async () => {
+      const { projectDir, modulePath, adapter, config } = options;
+
+      if (isDeno && isCompiledBinary()) {
+        throw toError(
+          createError({
+            type: "not_supported",
+            message:
+              "Worker-isolated API routes are unavailable in compiled binaries until framework runtime shims are worker-owned",
+            feature: "compiled-binary worker API isolation",
+          }),
+        );
+      }
+
+      if (isVirtualFilesystem(adapter.fs)) {
+        throw toError(
+          createError({
+            type: "not_supported",
+            message:
+              "Worker-isolated API routes cannot prepare remote virtual-filesystem sources until dependency, lockfile, and runtime filesystem capabilities are snapshot-owned",
+            feature: "virtual-filesystem worker API isolation",
+          }),
+        );
+      }
+
+      validateModulePath(modulePath, projectDir);
+
+      const fs = createFileSystem();
+      try {
+        const built = await buildModule({
+          modulePath,
+          projectDir,
+          adapter,
+          fs,
+          config,
+          strictRemoteImports: true,
+        });
+        const preparedDependencies = new Map(built.userDeps);
+        // zod remains external to the bundle, so strict preparation must pin
+        // its installed version just like a project-declared dependency. The
+        // declared value is intentionally unused in strict mode.
+        preparedDependencies.set("zod", "");
+        const source = await rewriteExternalImports(
+          built.code,
+          built.projectDir,
+          fs,
+          preparedDependencies,
+          {
+            preparedWorker: true,
+            requireInstalledExactVersions: true,
+          },
+        );
+        const sourceBytes = apply(textEncoderEncode, utf8Encoder, [source]) as Uint8Array;
+        if (sourceBytes.byteLength > MAX_WORKER_MODULE_SOURCE_BYTES) {
+          throw toError(
+            createError({
+              type: "api",
+              message:
+                `Prepared API route exceeds worker source limit (${sourceBytes.byteLength} bytes, limit ${MAX_WORKER_MODULE_SOURCE_BYTES} bytes)`,
+            }),
+          );
+        }
+
+        return {
+          source,
+          sha256: await hashPreparedSource(sourceBytes),
+        };
+      } catch (error) {
+        const errorMsg = snapshotThrowableDiagnostic(error);
+        logger.error(`Failed to prepare isolated API handler ${modulePath}: ${errorMsg}`);
+        throw toError(
+          createError({
+            type: "api",
+            message: `Failed to prepare isolated API handler: ${errorMsg}`,
+          }),
+        );
+      }
+    },
+    { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir },
+  );
+}
 
 export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   return withSpan(
@@ -54,8 +183,8 @@ export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute 
         const module = await loadModule({ modulePath, projectDir, adapter, fs, config });
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(`Failed to load API handler ${modulePath}:`, error);
+        const errorMsg = snapshotThrowableDiagnostic(error);
+        logger.error(`Failed to load API handler ${modulePath}: ${errorMsg}`);
         throw toError(
           createError({
             type: "api",
@@ -76,14 +205,52 @@ async function loadModule(args: {
   config?: VeryfrontConfig;
 }): Promise<APIRoute> {
   const { modulePath, projectDir, adapter, fs, config } = args;
-  const resolved = await resolveLocalModuleLocation(modulePath, projectDir, fs);
-  return loadAndTranspileModule(
-    resolved.modulePath,
-    resolved.projectDir,
+  const built = await buildModule({
+    modulePath,
+    projectDir,
     adapter,
     fs,
     config,
+  });
+  return loadModuleFromCode(
+    built.code,
+    built.projectDir,
+    fs,
+    built.userDeps,
   );
+}
+
+interface BuiltHandlerModule {
+  readonly code: string;
+  readonly projectDir: string;
+  readonly userDeps: Map<string, string>;
+}
+
+async function buildModule(args: {
+  modulePath: string;
+  projectDir: string;
+  adapter: RuntimeAdapter;
+  fs: FileSystem;
+  config?: VeryfrontConfig;
+  strictRemoteImports?: boolean;
+}): Promise<BuiltHandlerModule> {
+  const resolved = await resolveLocalModuleLocation(
+    args.modulePath,
+    args.projectDir,
+    args.fs,
+  );
+  const built = await buildAndTranspileModule(
+    resolved.modulePath,
+    resolved.projectDir,
+    args.adapter,
+    args.fs,
+    args.config,
+    args.strictRemoteImports,
+  );
+  return {
+    ...built,
+    projectDir: resolved.projectDir,
+  };
 }
 
 /**
@@ -221,8 +388,8 @@ function createNamespaceOnLoadHandler(options: {
         resolveDir: pathHelper.dirname(filePath),
       };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to load ${errorLabel}: ${args.path}`, error);
+      const msg = snapshotThrowableDiagnostic(error);
+      logger.error(`Failed to load ${errorLabel}: ${args.path}: ${msg}`);
       return { errors: [{ text: `Failed to load: ${msg}` }] };
     }
   });
@@ -407,15 +574,16 @@ async function assertNoUnresolvedDynamicImports(code: string): Promise<void> {
   );
 }
 
-function loadAndTranspileModule(
+function buildAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
-): Promise<APIRoute> {
+  strictRemoteImports = false,
+): Promise<Omit<BuiltHandlerModule, "projectDir">> {
   return withSpan(
-    "api.loadAndTranspileModule",
+    "api.buildAndTranspileModule",
     async () => {
       const { filePath: resolvedPath, contents: source } = await readFileWithExtensions(
         adapter,
@@ -507,7 +675,7 @@ function loadAndTranspileModule(
           createImportMapPlugin(projectDir, adapter, config),
           createProjectAliasPlugin(adapter, projectDir),
           createAdapterResolvePlugin(adapter, projectDir),
-          createHTTPPlugin({ allowedHosts, projectDir }),
+          createHTTPPlugin({ allowedHosts, projectDir, strict: strictRemoteImports }),
           createProjectBoundaryPlugin(await resolveProjectRoots(projectDir)),
         ],
       });
@@ -527,7 +695,7 @@ function loadAndTranspileModule(
       await assertNoUnresolvedDynamicImports(js);
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return loadModuleFromCode(js, projectDir, fs, userDeps);
+      return { code: js, userDeps };
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
@@ -563,7 +731,14 @@ async function readFileWithExtensions(
       const contents = await adapter.fs.readFile(readPath);
       return { filePath: readPath, contents };
     } catch (error) {
-      if (!isNotFoundError(error)) throw error;
+      if (!isSafeNotFoundError(error)) {
+        throw toError(
+          createError({
+            type: "api",
+            message: snapshotThrowableDiagnostic(error),
+          }),
+        );
+      }
       /* expected: trying next file extension candidate */
     }
   }
@@ -574,6 +749,59 @@ async function readFileWithExtensions(
       message: `File not found: ${basePath}`,
     }),
   );
+}
+
+function isSafeNotFoundError(
+  error: unknown,
+  seen: Set<unknown> = new Set(),
+  depth = 0,
+): boolean {
+  if (
+    error === null ||
+    (typeof error !== "object" && typeof error !== "function") ||
+    depth >= MAX_NOT_FOUND_CAUSE_DEPTH ||
+    seen.has(error) ||
+    isProxyWithoutHooks(error)
+  ) {
+    return false;
+  }
+  seen.add(error);
+
+  try {
+    const code = getOwnPropertyDescriptor(error, "code");
+    if (code !== undefined && "value" in code && code.value === "ENOENT") {
+      return true;
+    }
+
+    if (!isNativeErrorWithoutHooks(error)) return false;
+    if (
+      denoNotFoundPrototype !== undefined &&
+      getPrototypeOf(error) === denoNotFoundPrototype
+    ) {
+      return true;
+    }
+
+    const name = getOwnPropertyDescriptor(error, "name");
+    const slug = getOwnPropertyDescriptor(error, "slug");
+    if (
+      name !== undefined &&
+      "value" in name &&
+      name.value === "VeryfrontError" &&
+      slug !== undefined &&
+      "value" in slug &&
+      slug.value === "file-not-found"
+    ) {
+      return true;
+    }
+
+    const cause = getOwnPropertyDescriptor(error, "cause");
+    return cause !== undefined &&
+      "value" in cause &&
+      cause.value !== undefined &&
+      isSafeNotFoundError(cause.value, seen, depth + 1);
+  } catch {
+    return false;
+  }
 }
 
 /** @internal Exported for cross-runtime path-boundary regression tests. */
@@ -662,9 +890,9 @@ async function loadModuleFromCode(
     importUrl.searchParams.set("v", Date.now().toString());
     return await import(importUrl.href);
   } catch (e: unknown) {
-    const errorMessage = e instanceof Error && e.stack ? e.stack : String(e);
+    const errorMessage = snapshotThrowableDiagnostic(e);
     logger.error(`dynamic import failed ${tempFile}: ${errorMessage}`);
-    throw e;
+    throw toError(createError({ type: "api", message: errorMessage }));
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
@@ -742,7 +970,9 @@ async function registerVfModules(subpaths: Set<string>): Promise<void> {
       modules[subpath] = await import(specifier) as Record<string, unknown>;
       logger.debug(`[API] Registered module ${specifier} on globalThis`);
     } catch (e) {
-      logger.warn(`[API] Failed to register veryfront/${subpath}: ${e}`);
+      logger.warn(
+        `[API] Failed to register veryfront/${subpath}: ${snapshotThrowableDiagnostic(e)}`,
+      );
     }
   }
 

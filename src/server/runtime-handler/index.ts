@@ -14,7 +14,7 @@ import { getConfig } from "#veryfront/config/loader.ts";
 import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
-import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
+import { deriveSecurityContext, SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -119,6 +119,7 @@ import {
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
 import { projectMiddlewareRuntime } from "./project-middleware.ts";
+import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -615,13 +616,42 @@ export function createVeryfrontHandler(
           updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
 
           const skipRenderEnrichedContext = shouldSkipEnrichedContext(url.pathname);
+          const configIntentionallyDeferred = isConfigOptionalControlPlaneRunRequest(
+            request.method,
+            url.pathname,
+          );
+          if (isProxyMode && !adapterRes.config && !configIntentionallyDeferred) {
+            throw new Error("Proxy project config is unavailable for request security");
+          }
+
+          const requestSecurity = isProxyMode && adapterRes.config
+            ? deriveSecurityContext(adapterRes.config, {
+              // Hosted preview and production projects share the same remote
+              // trust boundary and therefore receive the production CSRF
+              // default. Only an actually local project keeps development
+              // defaults; process-global NODE_ENV/VERYFRONT_ENV is not a
+              // trustworthy classifier for an individual proxy request.
+              productionDefaults: !adapterRes.isLocalProject,
+            })
+            : isProxyMode
+            ? {
+              // Config-optional control-plane routes authenticate the exact
+              // source inside their signed handlers. Do not invent a project
+              // CSRF/auth policy before that trust boundary has loaded it.
+              securityConfig: null,
+              cspUserHeader: null,
+            }
+            : {
+              securityConfig: securityLoader.getSecurityConfig(),
+              cspUserHeader: securityLoader.getCspUserHeader(),
+            };
 
           // Build handler context
           const ctx = buildHandlerContext({
             projectDir: adapterRes.projectDir,
             adapter: adapterRes.adapter,
-            securityConfig: securityLoader.getSecurityConfig(),
-            cspUserHeader: securityLoader.getCspUserHeader(),
+            securityConfig: requestSecurity.securityConfig,
+            cspUserHeader: requestSecurity.cspUserHeader,
             debug: opts.debug,
             config: adapterRes.config,
             parsedDomain: projectRes.parsedDomain,

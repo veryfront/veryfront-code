@@ -8,6 +8,7 @@
  */
 
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { ErrorCategory } from "#veryfront/errors";
 
 /**
  * Serialized request data that can cross the Worker boundary via postMessage.
@@ -50,9 +51,22 @@ export interface SerializedError {
   message: string;
   name: string;
   stack?: string;
-  /** RFC 9457 fields if the error originated from VFError */
+  /** Detached, sanitized registered-error identity for the host boundary. */
+  problem?: {
+    slug: string;
+    category: ErrorCategory;
+    status: number;
+    title: string;
+    suggestion?: string;
+    detail?: string;
+    cause?: string;
+    instance?: string;
+  };
+  /** @deprecated Legacy transport fields; never trusted by the host boundary. */
   type?: string;
+  /** @deprecated Legacy transport fields; never trusted by the host boundary. */
   status?: number;
+  /** @deprecated Legacy transport fields; never trusted by the host boundary. */
   detail?: string;
 }
 
@@ -83,15 +97,30 @@ export interface SerializedDataResult {
 // Worker Request / Response Protocol
 // ---------------------------------------------------------------------------
 
+/**
+ * Immutable, host-prepared JavaScript sent across the worker boundary.
+ *
+ * `sha256` is the exact lowercase hexadecimal SHA-256 digest of the UTF-8
+ * encoded `source`. Workers rehash before importing and key their module cache
+ * by this content identity.
+ */
+export interface PreparedWorkerModule {
+  source: string;
+  sha256: string;
+}
+
 export type WorkerRequest =
   | ExecuteAppRouteRequest
   | ExecutePagesRouteRequest
+  | InspectApiRouteMethodsRequest
   | FetchDataRequest
   | RenderSSRRequest;
 
 export interface ExecuteAppRouteRequest {
   type: "execute-app-route";
   id: string;
+  module: PreparedWorkerModule;
+  /** Required logical route identity and bounded diagnostic; never imported by the worker. */
   modulePath: string;
   method: string;
   request: SerializedRequest;
@@ -106,6 +135,8 @@ export interface ExecuteAppRouteRequest {
 export interface ExecutePagesRouteRequest {
   type: "execute-pages-route";
   id: string;
+  module: PreparedWorkerModule;
+  /** Required logical route identity and bounded diagnostic; never imported by the worker. */
   modulePath: string;
   method: string;
   context: SerializedPagesContext;
@@ -113,6 +144,21 @@ export interface ExecutePagesRouteRequest {
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Per-project env var overlay for multi-tenant proxy mode */
+  projectEnv?: Record<string, string>;
+}
+
+export interface InspectApiRouteMethodsRequest {
+  type: "inspect-api-route-methods";
+  id: string;
+  module: PreparedWorkerModule;
+  /** Required logical route identity and bounded diagnostic; never imported by the worker. */
+  modulePath: string;
+  /** Optional custom-method probe used for default-export capability parity. */
+  requestedMethod?: string;
+  projectDir: string;
+  /** Exact source-owned integration policy for this project execution. */
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  /** Per-project env var overlay for multi-tenant proxy mode. */
   projectEnv?: Record<string, string>;
 }
 
@@ -159,8 +205,10 @@ export interface WorkerStreamEnd {
 
 export type WorkerResponse =
   | WorkerResultResponse
+  | WorkerRouteMethodsResponse
   | WorkerDataResultResponse
   | WorkerSSRResultResponse
+  | WorkerPreparedModuleCapacityResponse
   | WorkerErrorResponse;
 
 export interface WorkerSSRResultResponse {
@@ -175,6 +223,12 @@ export interface WorkerResultResponse {
   response: SerializedResponse;
 }
 
+export interface WorkerRouteMethodsResponse {
+  type: "api-route-methods";
+  id: string;
+  methods: string[];
+}
+
 export interface WorkerDataResultResponse {
   type: "data-result";
   id: string;
@@ -185,6 +239,19 @@ export interface WorkerErrorResponse {
   type: "error";
   id: string;
   error: SerializedError;
+}
+
+/**
+ * Internal pre-execution rollover signal.
+ *
+ * The worker emits this only when a prepared API module cannot be reserved
+ * within the current worker generation's retained-module limits. No project
+ * module has been imported or executed for this request. The pool retires the
+ * generation and may retry the request once in a fresh generation.
+ */
+export interface WorkerPreparedModuleCapacityResponse {
+  type: "prepared-module-capacity";
+  id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,12 +271,27 @@ export interface WorkerPoolConfig {
   maxRequestsPerWorker: number;
   /** Maximum age of a worker in ms before recycling (default: 600_000 = 10 minutes) */
   maxWorkerAgeMs: number;
-  /** Per-worker memory budget in MB (default: 64). Workers exceeding this are evicted. */
+  /**
+   * Legacy/advisory compatibility value (default: 64 MB).
+   *
+   * Same-process Workers cannot enforce a hard per-worker memory boundary:
+   * retained ESM and top-level project allocations are process memory. Strong
+   * containment requires process or container isolation.
+   */
   memoryBudgetMb: number;
 }
 
 /** Maximum request body size for worker isolation (10 MB) */
 export const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
+
+/** Maximum UTF-8 size of one prepared API route module (4 MiB). */
+export const MAX_WORKER_MODULE_SOURCE_BYTES = 4 * 1024 * 1024;
+
+/** Maximum aggregate source retained by content-addressed API modules (16 MiB). */
+export const MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES = 16 * 1024 * 1024;
+
+/** Maximum number of distinct logical-route/source module identities per worker. */
+export const MAX_WORKER_RETAINED_MODULES = 128;
 
 export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   maxPoolSize: 20,

@@ -7,6 +7,7 @@ import {
   buildCSP,
   generateNonce,
   getSecurityHeader,
+  SECURITY_POLICY_RESPONSE_HEADER_NAMES,
 } from "./security-handler.ts";
 import type { SecurityConfig } from "./types.ts";
 
@@ -505,6 +506,17 @@ describe("security/http/response/security-handler", () => {
   });
 
   describe("applySecurityHeaders", () => {
+    it("keeps the canonical policy-owned header list aligned with production output", () => {
+      const headers = applyHeaders({
+        adapter: createMockAdapter({ VERYFRONT_COEP: "require-corp" }),
+      });
+
+      assertEquals(
+        [...headers.keys()].sort(),
+        [...SECURITY_POLICY_RESPONSE_HEADER_NAMES].sort(),
+      );
+    });
+
     it("should set X-Content-Type-Options", () => {
       const headers = applyHeaders();
       assertEquals(headers.get("X-Content-Type-Options"), "nosniff");
