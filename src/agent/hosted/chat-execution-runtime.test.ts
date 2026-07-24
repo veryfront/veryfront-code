@@ -188,6 +188,35 @@ function createTracer() {
 }
 
 describe("agent/hosted-chat-execution-runtime", () => {
+  it("keeps public compatibility shims exported from the agent barrel", async () => {
+    const script = `
+      const publicAgent = await import("./src/agent/index.ts");
+      const names = [
+        "toHostedChatExecutionFinalState",
+        "cleanupAfterHostedChatExecutionFinalization",
+        "createHostedChatStreamFinalizationHooks",
+        "createHostedChatFinalizeResponseBuildState",
+        "createHostedChatFinalizeDetachedBuildState",
+        "finalizeHostedResponse",
+        "finalizeHostedDetached",
+      ];
+      const missing = names.filter((name) => typeof publicAgent[name] !== "function");
+      if (missing.length > 0) {
+        throw new Error("Missing public compatibility shim exports: " + missing.join(", "));
+      }
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", script],
+      stderr: "piped",
+    }).output();
+
+    assertEquals(
+      output.code,
+      0,
+      new TextDecoder().decode(output.stderr),
+    );
+  });
+
   it("does not inject fallback model metadata for finalization-only states", () => {
     assertEquals(toHostedChatExecutionFinalState({ status: "completed" }), {
       status: "completed",
@@ -237,6 +266,18 @@ describe("agent/hosted-chat-execution-runtime", () => {
         metadata: { error: "cleanup failed" },
       },
     ]);
+  });
+
+  it("runs cleanup during finalization when cleanup succeeds", async () => {
+    let cleanupCount = 0;
+
+    await cleanupAfterHostedChatExecutionFinalization({
+      cleanup: async () => {
+        cleanupCount += 1;
+      },
+    });
+
+    assertEquals(cleanupCount, 1);
   });
 
   it("resolves aborted terminal state before incomplete tool state", () => {
