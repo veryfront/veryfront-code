@@ -20,6 +20,12 @@ import {
   rewriteDenoNpmDependencyImports,
 } from "#veryfront/routing/api/module-loader/external-import-rewriter.ts";
 import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
+import {
+  pickPackageExportEntry,
+  resolveContainedPackagePath,
+  resolvePackageExportPath,
+  splitPackageSubpath,
+} from "./package-resolution.ts";
 
 describe("import rewrite compatibility golden tests", () => {
   it("preserves transform query and attribute output", async () => {
@@ -154,6 +160,82 @@ describe("import edit core", () => {
     assertEquals(
       out,
       `const u = "https://example.com/a";\nimport m from "./b.json" with { type: "json" };\n`,
+    );
+  });
+});
+
+describe("package resolution core", () => {
+  it("splits scoped and unscoped package subpaths", () => {
+    assertEquals(splitPackageSubpath("react"), {
+      name: "react",
+      subpath: ".",
+    });
+    assertEquals(splitPackageSubpath("react/jsx-runtime"), {
+      name: "react",
+      subpath: "./jsx-runtime",
+    });
+    assertEquals(splitPackageSubpath("@scope/pkg"), {
+      name: "@scope/pkg",
+      subpath: ".",
+    });
+    assertEquals(splitPackageSubpath("@scope/pkg/sub/path"), {
+      name: "@scope/pkg",
+      subpath: "./sub/path",
+    });
+  });
+
+  it("resolves exact, conditional, array, and glob export entries", () => {
+    const exportsMap = {
+      ".": [{ import: "./esm.js" }, "./fallback.js"],
+      "./jsx-runtime": { import: "./jsx-runtime.js" },
+      "./*": "./*.js",
+    };
+
+    assertEquals(resolvePackageExportPath(exportsMap, "."), "./esm.js");
+    assertEquals(resolvePackageExportPath(exportsMap, "./jsx-runtime"), "./jsx-runtime.js");
+    assertEquals(resolvePackageExportPath(exportsMap, "./debounce"), "./debounce.js");
+  });
+
+  it("preserves node conditional preference and rejects unsupported conditions", () => {
+    assertEquals(
+      pickPackageExportEntry({ node: "./node.js", default: "./default.js" }),
+      "./node.js",
+    );
+    assertEquals(pickPackageExportEntry({ browser: "./browser.js" }), null);
+  });
+
+  it("uses the longest matching glob export pattern", () => {
+    const exportsMap = {
+      "./*": "./root/*.js",
+      "./features/*": "./features/*.mjs",
+    };
+
+    assertEquals(
+      resolvePackageExportPath(exportsMap, "./features/router"),
+      "./features/router.mjs",
+    );
+  });
+
+  it("rejects package paths that escape the package directory", () => {
+    assertEquals(
+      resolveContainedPackagePath("/app/node_modules/pkg", "./index.js"),
+      "/app/node_modules/pkg/index.js",
+    );
+    assertEquals(resolveContainedPackagePath("/app/node_modules/pkg", "../../secret.js"), null);
+  });
+
+  it("contains trailing separators but rejects sibling prefixes and parent escapes", () => {
+    assertEquals(
+      resolveContainedPackagePath("/app/node_modules/pkg/", "./index.js"),
+      "/app/node_modules/pkg/index.js",
+    );
+    assertEquals(
+      resolveContainedPackagePath("/app/node_modules/pkg", "../pkg-evil/index.js"),
+      null,
+    );
+    assertEquals(
+      resolveContainedPackagePath("/app/node_modules/pkg", "./sub/../../../secret.js"),
+      null,
     );
   });
 });

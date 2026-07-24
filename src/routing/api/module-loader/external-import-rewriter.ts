@@ -4,7 +4,7 @@ import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
-import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { resolveContainedPackagePath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");
@@ -261,8 +261,8 @@ export async function resolveEsmUserDependencies(
       // package directory so a crafted package.json cannot turn into a file://
       // import that escapes node_modules. This mirrors the containment guard the
       // CJS loader shim enforces via __vf_assertContained.
-      const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
-      if (!isWithinDirectory(packageDir, entryPath)) {
+      const entryPath = resolveContainedPackagePath(packageDir, entry);
+      if (!entryPath) {
         logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
         continue;
       }
@@ -408,8 +408,8 @@ export function rewriteCompiledBinaryUserDependencyImports(
       // (e.g. "pkg/../../secret") by leaving the import untouched so it fails to
       // resolve rather than reading outside node_modules.
       const subpathUrl = (subpath: string, original: string): string | null => {
-        const target = pathHelper.resolve(pathHelper.join(esm.packageDir, subpath));
-        if (!isWithinDirectory(esm.packageDir, target)) {
+        const target = resolveContainedPackagePath(esm.packageDir, "." + subpath);
+        if (!target) {
           logger.warn(`Skipping ESM subpath import that escapes package directory: ${original}`);
           return null;
         }
