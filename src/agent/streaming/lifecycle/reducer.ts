@@ -657,3 +657,43 @@ export function resolveLocalToolDeadline(
     code: receivedInput ? "TOOL_INPUT_INCOMPLETE" : "TOOL_INPUT_TIMEOUT",
   };
 }
+
+/**
+ * Close any open read-projection segments. This is a projection-only
+ * finalizer: it does not set a provider finish reason, settle a Stream
+ * Outcome, or change lifecycle terminal meaning.
+ */
+export function finalizeStreamProjection(
+  current: StreamReducerState,
+  elapsedMs: number,
+): StreamReduction {
+  const state = cloneReducerState(current);
+  const frames: StreamLifecycleFrame[] = [];
+  const emit: FrameEmitter = (frame) => {
+    frames.push(
+      { ...frame, sequence: ++state.sequence, elapsedMs } as StreamLifecycleFrame,
+    );
+  };
+  closeOpenContentForProjection(state, emit);
+  return { state, frames, semanticProgress: false };
+}
+
+function closeOpenContentForProjection(
+  state: StreamReducerState,
+  emit: FrameEmitter,
+): void {
+  if (state.activeReasoningId !== null) {
+    emit({
+      class: "semantic",
+      event: { type: "reasoning_end", id: state.activeReasoningId },
+    });
+    state.activeReasoningId = null;
+  }
+  if (state.activeTextId !== null) {
+    emit({
+      class: "semantic",
+      event: { type: "text_end", id: state.activeTextId },
+    });
+    state.activeTextId = null;
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "metadata": null,
+  "events": [
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "legacy-message",
+      "contentId": "legacy-content",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "legacy-message",
+      "contentId": "legacy-content",
+      "delta": "first"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "legacy-message",
+      "contentId": "legacy-content"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "legacy-message",
+      "contentId": "legacy-content",
+      "delta": "second"
+    }
+  ]
+}
