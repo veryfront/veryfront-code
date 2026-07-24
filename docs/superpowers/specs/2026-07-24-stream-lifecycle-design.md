@@ -190,6 +190,7 @@ export interface StreamLifecycleInput<TProviderPart> {
   policy?: Partial<StreamLifecyclePolicy>;
   cancellations?: readonly StreamCancellationInput[];
   diagnostics?: StreamDiagnosticPolicy;
+  diagnosticSink?: StreamDiagnosticSink;
 }
 
 export interface StreamLifecycleRun {
@@ -207,6 +208,10 @@ export interface StreamDiagnosticPolicy {
   redact(
     candidate: StreamRawDiagnosticCandidate,
   ): StreamSafeDiagnosticEvent | null;
+}
+
+export interface StreamDiagnosticSink {
+  report(event: StreamDiagnosticEvent): void;
 }
 
 export interface StreamProviderAdapter<TProviderPart> {
@@ -407,8 +412,8 @@ validation. The core reducer does not silently invent state.
 - Text and reasoning are not active at the same time.
 - A transition to tool input closes open text and reasoning first.
 - Content requires an open segment.
-- A Provider Adapter may repair a missing start from a documented legacy shape,
-  but it must emit a diagnostic repair frame.
+- The Provider Adapter or lifecycle reducer may apply a documented missing-start
+  compatibility repair, but the lifecycle must emit a diagnostic repair frame.
 - Content after an end creates a new internal content identifier. It cannot
   resume the closed identifier.
 - End events are idempotent only when they repeat without new content. Any other
@@ -557,6 +562,17 @@ export interface StreamOutcomeBase {
   phase: StreamLifecyclePhase;
 }
 
+export interface StreamCommittedToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+  inputDeltas: readonly string[];
+  inputAnnounced: boolean;
+  inputAvailable: true;
+  providerExecuted?: false;
+  dynamic?: boolean;
+}
+
 export type StreamOutcome =
   | (StreamOutcomeBase & {
     status: "completed";
@@ -584,6 +600,7 @@ export interface StreamLifecycleError {
   source: "provider" | "runtime" | "tool";
   retryable: boolean;
   publicMessage: string;
+  providerCode?: string;
   diagnosticId?: string;
 }
 ```
@@ -630,8 +647,10 @@ being duplicated.
 - Cancellation source is recorded before abort propagation.
 - The provider request receives the internally composed signal.
 - `iterator.return()` is requested at most once.
-- Cleanup failure emits a diagnostic frame but cannot replace an already
-  committed terminal outcome.
+- Cleanup failure reports a sanitized `provider_cleanup_failed` diagnostic but
+  cannot replace an already committed terminal outcome. When frame iteration is
+  still open it may be sequenced as a diagnostic frame; after frame delivery is
+  closed it goes only to the restricted lifecycle diagnostic sink.
 - Explicit user cancellation remains distinct from client transport loss.
 - A durable detached run may continue after its live client disconnects.
 - A foreground compatibility Adapter may map client disconnect to cancellation
@@ -741,6 +760,41 @@ secondary cleanup evidence. It must not replace the delivery error with
 `consumer_stopped`, and it must not rewrite an outcome that was already
 committed before delivery failed.
 
+### Agent-loop and hosted delivery boundary
+
+Stream Lifecycle owns one provider attempt, not the whole agent loop. One agent
+run can contain several provider attempts separated by local tool execution.
+Local tool results, child-run progress, and finalization fallback events are
+runtime events outside the provider-attempt lifecycle and still belong in
+canonical run history.
+
+The current hosted path receives serialized Data Stream output through
+`HostedChatRuntimeStreamResult.toUIMessageStream()`. It does not expose
+`StreamLifecycleFrame` or Stream Outcome, and its durable mirror consumes
+`ChatUiMessageChunk`. Therefore changing `processStream()` alone cannot make
+the hosted Durable Adapter or AG-UI Adapter direct consumers of lifecycle
+frames. A projection Adapter with no production frame transport is testable,
+but it is not a production cutover.
+
+The production cutover requires the Phase 5 Stream Delivery design to define:
+
+- A source-tagged envelope for lifecycle frames, local tool execution,
+  finalization fallback, and external child progress.
+- Stable run, attempt, and per-source sequence identity across multiple
+  provider attempts.
+- One fan-out path that prevents a lifecycle-owned event from also being
+  persisted from its compatibility UI chunk.
+- Bounded frame and byte backpressure with an explicit required versus
+  best-effort delivery policy.
+- Backend deduplication by idempotency key for ambiguous append outcomes.
+- Terminal ordering that flushes required durable events before run
+  finalization without rewriting Stream Outcome.
+
+Until that contract is implemented end to end, production runs remain on
+stream protocol version 1. Phase 4 may add and verify version 2 projection
+Adapters, client/server metadata capability, and legacy reads, but it must not
+write `metadata.stream_protocol_version: 2` from the hosted production path.
+
 ## Compatibility
 
 Existing public exports and event shapes remain available during migration.
@@ -761,9 +815,11 @@ Existing public exports and event shapes remain available during migration.
 - Existing run event names remain unchanged unless a separately versioned public
   contract is approved.
 
-New runs record `metadata.stream_protocol_version: 2`. Runs without that field
-use a legacy read Adapter that tolerates and repairs known historical framing
-defects. The rollout does not rewrite old events.
+After the Phase 5 delivery cutover, new runs record
+`metadata.stream_protocol_version: 2`. Runs without that field use a legacy
+read Adapter that tolerates and repairs known historical framing defects. The
+rollout does not rewrite old events, and Phase 4 capability work alone does not
+enable version 2 production writes.
 
 ## Migration strategy
 
@@ -809,17 +865,27 @@ tool input idle, and local handoff timing.
 
 ### Phase 4: Projection consolidation
 
-- Make durable and AG-UI encoders consume validated frames.
+- Add durable and AG-UI Adapters that consume validated frames directly.
 - Add the legacy read Adapter for old runs.
-- Remove duplicate text, reasoning, and tool lifecycle repair from projections.
+- Prove the versioned projection contracts and balanced fixtures without
+  routing hosted production writes through an unversioned UI-chunk transport.
+- Keep production writes on version 1 until Phase 5 provides the agent-loop
+  delivery envelope and backend deduplication contract.
 
-Exit condition: all new projection fixtures are balanced, and a checked-in
+Exit condition: all version 2 projection fixtures are balanced, a checked-in
 legacy fixture containing content after text end renders one complete message
-without rewriting the source events.
+without rewriting the source events, and no production caller can select
+version 2 before the Phase 5 capability gate.
 
 ### Phase 5: Durable delivery follow-up
 
+- Transport lifecycle frames, Stream Outcomes, local tool execution, fallback
+  projection, and external progress through one source-tagged agent-loop
+  delivery envelope.
+- Cut hosted durable and AG-UI production projections over to that envelope
+  without double-writing compatibility UI chunks.
 - Add the persistent outbox, resumable cursor, and cross-process recovery.
+- Enforce backend idempotency keys for ambiguous append results.
 - Introduce retention policy enforcement and compacted historical projection.
 - Measure event count, append latency, replay latency, and storage reduction.
 
@@ -1017,6 +1083,8 @@ AbortController.
     for a valid tool call blocked by policy or authorization.
 20. All Stream Outcome variants expose lifecycle phase, and delivery-triggered
     `consumer_stopped` remains secondary to the primary delivery failure.
+21. Production version 2 writes remain disabled until the hosted agent-loop
+    delivery envelope and backend idempotency contract are deployed together.
 
 ## Risks and mitigations
 
