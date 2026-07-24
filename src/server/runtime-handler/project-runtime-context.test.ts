@@ -716,6 +716,50 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(standaloneProduction.handlerContext.releaseId, "standalone-dev");
   });
 
+  it("returns production environment errors before reading source policy config", async () => {
+    let sourcePolicyReads = 0;
+    const config = {} as VeryfrontConfig;
+    Object.defineProperty(config, "integrations", {
+      get: () => {
+        sourcePolicyReads += 1;
+        throw new Error("source policy must not be read");
+      },
+    });
+    const req = new Request("http://remote-project.production.veryfront.com/page", {
+      headers: {
+        "x-project-slug": "remote-project",
+        "x-project-id": "proj-remote",
+      },
+    });
+    const url = new URL(req.url);
+
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      config,
+      headers: extractRequestHeaders(req, url),
+      requestContext: createRequestContext(req),
+      isProxyMode: true,
+      projectIdentity: {
+        projectSlug: "remote-project",
+        projectId: "proj-remote",
+        releaseId: undefined,
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(result.environment.errorResponse?.status, 404);
+    assertEquals(result.handlerContext, undefined);
+    assertEquals(result.rawEnvVars, {});
+    assertEquals(result.sourceIntegrationPolicy, {
+      schemaVersion: 1,
+      mode: "unrestricted",
+    });
+    assertEquals(sourcePolicyReads, 0);
+  });
+
   it("notifies environment resolution before source policy access and later failures", async () => {
     const events: string[] = [];
     const config = {} as VeryfrontConfig;

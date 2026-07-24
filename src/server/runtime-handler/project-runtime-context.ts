@@ -234,17 +234,13 @@ export async function resolveProjectRuntimeContext(
   });
   input.onEnvironmentResolved?.(envRes);
 
-  const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
-    adapterRes.config?.integrations,
-  );
-
   if (envRes.errorResponse) {
     return {
       adapter: adapterRes,
       environment: envRes,
       handlerContext: undefined,
       rawEnvVars: {},
-      sourceIntegrationPolicy,
+      sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
     };
   }
 
@@ -293,6 +289,10 @@ export async function resolveProjectRuntimeContext(
       count: Object.keys(rawEnvVars).length,
     });
   }
+
+  const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
+    adapterRes.config?.integrations,
+  );
 
   return {
     adapter: adapterRes,
