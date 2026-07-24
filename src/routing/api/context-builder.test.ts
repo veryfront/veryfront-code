@@ -486,3 +486,44 @@ describe("createContext: ctx.json writes, ctx.body reads", () => {
     assertEquals(await read(), { isolated: true });
   });
 });
+
+describe("createContext: null-body statuses drop the body instead of throwing", () => {
+  function ctxFor(request: Request): APIContext {
+    return createContext(request, { params: {} } as RouteMatch, mockFs);
+  }
+
+  it("builds a 204 from ctx.text('', { status: 204 }) without throwing", async () => {
+    // `new Response("", { status: 204 })` throws — 204 is a null-body status and
+    // the empty string is still a (non-null) body. The helper must send `null`.
+    const ctx = ctxFor(new Request("http://localhost/api/text-204"));
+    const response = ctx.text("", { status: 204 });
+
+    assertEquals(response.status, 204);
+    assertEquals(response.body, null);
+    assertEquals(await response.text(), "");
+  });
+
+  it("builds a 204 from ctx.json(data, { status: 204 }) without throwing", () => {
+    const ctx = ctxFor(new Request("http://localhost/api/json-204"));
+    const response = ctx.json({ ignored: true }, { status: 204 });
+
+    assertEquals(response.status, 204);
+    assertEquals(response.body, null);
+  });
+
+  it("drops the body on a 304 too", () => {
+    const ctx = ctxFor(new Request("http://localhost/api/cached"));
+    const response = ctx.text("stale", { status: 304 });
+
+    assertEquals(response.status, 304);
+    assertEquals(response.body, null);
+  });
+
+  it("still returns the body for a normal 200 from ctx.text", async () => {
+    const ctx = ctxFor(new Request("http://localhost/api/hello"));
+    const response = ctx.text("hello", { status: 200 });
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "hello");
+  });
+});

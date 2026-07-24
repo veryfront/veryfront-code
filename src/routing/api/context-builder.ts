@@ -33,12 +33,22 @@ export interface APIContext {
   fs: FileSystemAdapter;
 }
 
+/**
+ * Statuses that the Fetch spec forbids from carrying a body. Constructing
+ * `new Response(body, { status })` with a non-null `body` (an empty string
+ * still counts) throws `Response with null body status cannot have body`, so
+ * the helpers below must send `null` for these.
+ */
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
 function createResponse(
   body: BodyInit,
   contentType: string,
   init?: ResponseInit,
 ): Response {
-  return new Response(body, {
+  const status = init?.status;
+  const hasNullBodyStatus = status !== undefined && NULL_BODY_STATUSES.has(status);
+  return new Response(hasNullBodyStatus ? null : body, {
     ...init,
     headers: {
       "Content-Type": contentType,
