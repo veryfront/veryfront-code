@@ -46,6 +46,7 @@ import {
   hasSourceMiss,
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
+import { findFirstExistingFile } from "./fs-probe.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -82,38 +83,6 @@ const FRAMEWORK_EXTENSIONS = [
   ".jsx",
   ".js", // Regular sources for dev mode
 ] as const;
-
-async function findFirstSecureFile(
-  secureFs: ReturnType<typeof createSecureFs>,
-  paths: string[],
-): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
-    try {
-      const stat = await secureFs.stat(path);
-      return stat.isFile ? path : null;
-    } catch {
-      return null;
-    }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
-}
-
-async function findFirstPlatformFile(
-  platformFs: ReturnType<typeof createFileSystem>,
-  paths: string[],
-): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
-    try {
-      const stat = await platformFs.stat(path);
-      return stat.isFile ? path : null;
-    } catch {
-      return null;
-    }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
-}
 
 export interface BatchHandlerOptions {
   projectDir: string;
@@ -341,7 +310,7 @@ async function loadAndTransformModule(
   });
   if (hasSourceMiss(missCacheKey)) return null;
 
-  const sourcePath = await findFirstSecureFile(
+  const sourcePath = await findFirstExistingFile(
     secureFs,
     EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
   );
@@ -359,7 +328,7 @@ async function loadAndTransformModule(
 
   const platformFs = createFileSystem();
   for (const lookupDir of frameworkLookupDirs) {
-    const frameworkPath = await findFirstPlatformFile(
+    const frameworkPath = await findFirstExistingFile(
       platformFs,
       FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
     );

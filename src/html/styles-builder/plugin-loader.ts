@@ -7,7 +7,7 @@
  * @module html/styles-builder/plugin-loader
  */
 
-import { encodeBase64, serverLogger } from "#veryfront/utils";
+import { encodeBase64Bytes, serverLogger } from "#veryfront/utils";
 import {
   type ErrorSlug,
   getErrorBySlug,
@@ -99,7 +99,11 @@ export function rewriteEsmShRootRelativeImports(code: string): string {
 
 async function importBundledModule(code: string): Promise<unknown> {
   if (!isDeno) {
-    const dataUrl = `data:text/javascript;base64,${encodeBase64(code)}`;
+    // Encode as UTF-8 bytes: the data: URL importer decodes UTF-8, and btoa on
+    // the raw string would emit Latin-1 bytes for chars in [0x80, 0xFF].
+    const dataUrl = `data:text/javascript;base64,${
+      encodeBase64Bytes(new TextEncoder().encode(code))
+    }`;
     return await import(dataUrl);
   }
 
