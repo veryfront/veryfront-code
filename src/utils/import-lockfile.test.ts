@@ -251,6 +251,99 @@ describe("import-lockfile", () => {
       assertEquals(entry?.integrity, "sha256-abc");
     });
 
+    it("snapshots set input before a same-tick caller mutation", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const dependency = "https://cdn.com/dependency.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+      const entry = {
+        resolved: url,
+        integrity: "sha256-original",
+        dependencies: [dependency],
+      };
+
+      const pendingSet = mgr.set(url, entry);
+      entry.resolved = "https://attacker.example/mutated.ts";
+      entry.integrity = "sha256-mutated";
+      entry.dependencies.push("https://attacker.example/injected.ts");
+      await pendingSet;
+
+      assertEquals(await mgr.get(url), {
+        resolved: url,
+        integrity: "sha256-original",
+        dependencies: [dependency],
+      });
+    });
+
+    it("snapshots write input before a same-tick caller mutation", async () => {
+      const url = "https://cdn.com/mod.ts";
+      const fs = createMockFS();
+      const mgr = createLockfileManager("/project", fs);
+      const data = {
+        version: 1 as const,
+        imports: {
+          [url]: {
+            resolved: url,
+            integrity: "sha256-original",
+          },
+        },
+      };
+
+      const pendingWrite = mgr.write(data);
+      data.imports[url]!.resolved = "https://attacker.example/mutated.ts";
+      data.imports[url]!.integrity = "sha256-mutated";
+      Object.defineProperty(data.imports, "https://attacker.example/injected.ts", {
+        enumerable: true,
+        value: {
+          resolved: "https://attacker.example/injected.ts",
+          integrity: "sha256-injected",
+        },
+      });
+      await pendingWrite;
+
+      assertEquals(await mgr.read(), {
+        version: 1,
+        imports: {
+          [url]: {
+            resolved: url,
+            integrity: "sha256-original",
+          },
+        },
+      });
+    });
+
+    it("returns detached snapshots from get and read", async () => {
+      const specifier = "https://cdn.com/mod.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+      await mgr.set(specifier, {
+        resolved: specifier,
+        integrity: "sha256-original",
+        dependencies: ["https://cdn.com/dependency.ts"],
+      });
+
+      const entry = await mgr.get(specifier);
+      assertExists(entry);
+      entry.integrity = "sha256-mutated";
+      entry.dependencies?.push("https://cdn.com/injected.ts");
+
+      const snapshot = await mgr.read();
+      assertExists(snapshot);
+      snapshot.imports[specifier]!.resolved = "https://attacker.example/mod.ts";
+      Object.defineProperty(snapshot.imports, "injected", {
+        enumerable: true,
+        value: {
+          resolved: "https://attacker.example/injected.ts",
+          integrity: "sha256-injected",
+        },
+      });
+
+      assertEquals(await mgr.get(specifier), {
+        resolved: specifier,
+        integrity: "sha256-original",
+        dependencies: ["https://cdn.com/dependency.ts"],
+      });
+      assertEquals(await mgr.has("injected"), false);
+    });
+
     it("should report has correctly", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
       const specifier = "https://cdn.com/mod.ts";
@@ -389,6 +482,173 @@ describe("import-lockfile", () => {
         "https://cdn.com/new.ts",
         "https://cdn.com/original.ts",
       ]);
+    });
+
+    it("rolls back the cached replacement when write fails", async () => {
+      const original = {
+        version: 1 as const,
+        imports: {
+          "https://cdn.com/original.ts": {
+            resolved: "https://cdn.com/original.ts",
+            integrity: "sha256-original",
+          },
+        },
+      };
+      const { adapter, failRename } = createAtomicMockFS({
+        "/project/veryfront.lock": JSON.stringify(original),
+      });
+      const mgr = createLockfileManager("/project", adapter);
+      assertEquals(await mgr.read(), original);
+      failRename.value = true;
+
+      await assertRejects(
+        () =>
+          mgr.write({
+            version: 1,
+            imports: {
+              "https://cdn.com/replacement.ts": {
+                resolved: "https://cdn.com/replacement.ts",
+                integrity: "sha256-replacement",
+              },
+            },
+          }),
+        Error,
+        "rename failed",
+      );
+
+      assertEquals(await mgr.read(), original);
+    });
+
+    it("preserves earlier pending entries when a write fails beside a concurrent set", async () => {
+      const store = new Map<string, string>();
+      let releaseWrite: (() => void) | undefined;
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      let notifyWriteStarted: (() => void) | undefined;
+      const writeStarted = new Promise<void>((resolve) => {
+        notifyWriteStarted = resolve;
+      });
+      let writeAttempts = 0;
+      const fs: FSAdapter = {
+        readFile: (path) => Promise.resolve(store.get(path)!),
+        exists: (path) => Promise.resolve(store.has(path)),
+        writeFile: async (path, content) => {
+          writeAttempts++;
+          if (writeAttempts === 1) {
+            notifyWriteStarted?.();
+            await writeGate;
+            throw new Error("write failed");
+          }
+          store.set(path, content);
+        },
+      };
+      const mgr = createLockfileManager("/project", fs);
+      const firstUrl = "https://cdn.com/first.ts";
+      const laterUrl = "https://cdn.com/later.ts";
+      const replacementUrl = "https://cdn.com/replacement.ts";
+      await mgr.set(firstUrl, {
+        resolved: firstUrl,
+        integrity: "sha256-first",
+      });
+
+      const failedWrite = mgr.write({
+        version: 1,
+        imports: {
+          [replacementUrl]: {
+            resolved: replacementUrl,
+            integrity: "sha256-replacement",
+          },
+        },
+      });
+      await writeStarted;
+      const concurrentSet = mgr.set(laterUrl, {
+        resolved: laterUrl,
+        integrity: "sha256-later",
+      });
+      await Promise.resolve();
+      releaseWrite?.();
+
+      await assertRejects(() => failedWrite, Error, "write failed");
+      await concurrentSet;
+      await mgr.flush();
+
+      const written = JSON.parse(store.get("/project/veryfront.lock")!);
+      assertEquals(Object.keys(written.imports), [firstUrl, laterUrl]);
+      assertEquals(Object.hasOwn(written.imports, replacementUrl), false);
+    });
+
+    it("rolls back cached clearing when file removal fails", async () => {
+      const original = {
+        version: 1 as const,
+        imports: {
+          "https://cdn.com/original.ts": {
+            resolved: "https://cdn.com/original.ts",
+            integrity: "sha256-original",
+          },
+        },
+      };
+      const fs = createMockFS({
+        "/project/veryfront.lock": JSON.stringify(original),
+      });
+      fs.remove = () => Promise.reject(new Error("remove failed"));
+      const mgr = createLockfileManager("/project", fs);
+      assertEquals(await mgr.read(), original);
+
+      await assertRejects(() => mgr.clear(), Error, "remove failed");
+
+      assertEquals(await mgr.read(), original);
+    });
+
+    it("preserves earlier pending entries when clear fails beside a concurrent set", async () => {
+      const lockfilePath = "/project/veryfront.lock";
+      const store = new Map<string, string>([
+        [lockfilePath, JSON.stringify(createEmptyLockfile())],
+      ]);
+      let releaseRemove: (() => void) | undefined;
+      const removeGate = new Promise<void>((resolve) => {
+        releaseRemove = resolve;
+      });
+      let notifyRemoveStarted: (() => void) | undefined;
+      const removeStarted = new Promise<void>((resolve) => {
+        notifyRemoveStarted = resolve;
+      });
+      const fs: FSAdapter = {
+        readFile: (path) => Promise.resolve(store.get(path)!),
+        exists: (path) => Promise.resolve(store.has(path)),
+        writeFile: (path, content) => {
+          store.set(path, content);
+          return Promise.resolve();
+        },
+        remove: async () => {
+          notifyRemoveStarted?.();
+          await removeGate;
+          throw new Error("remove failed");
+        },
+      };
+      const mgr = createLockfileManager("/project", fs);
+      const firstUrl = "https://cdn.com/first.ts";
+      const laterUrl = "https://cdn.com/later.ts";
+      await mgr.set(firstUrl, {
+        resolved: firstUrl,
+        integrity: "sha256-first",
+      });
+
+      const failedClear = mgr.clear();
+      await removeStarted;
+      const concurrentSet = mgr.set(laterUrl, {
+        resolved: laterUrl,
+        integrity: "sha256-later",
+      });
+      await Promise.resolve();
+      releaseRemove?.();
+
+      await assertRejects(() => failedClear, Error, "remove failed");
+      await concurrentSet;
+      await mgr.flush();
+
+      const written = JSON.parse(store.get(lockfilePath)!);
+      assertEquals(Object.keys(written.imports), [firstUrl, laterUrl]);
     });
 
     it("coordinates independent managers through the production filesystem adapter", async () => {
@@ -622,6 +882,258 @@ describe("import-lockfile", () => {
         Error,
         "Integrity mismatch",
       );
+    });
+
+    it("rejects non-HTTP URLs and embedded credentials before fetching", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let fetchCalls = 0;
+      const fetchFn = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch;
+
+      for (
+        const url of [
+          "file:///private/module.ts",
+          "https://user:secret@cdn.example/module.ts",
+        ]
+      ) {
+        await assertRejects(
+          () => fetchWithLock({ lockfile: mgr, url, fetchFn }),
+          Error,
+          "Remote module URL",
+        );
+      }
+
+      assertEquals(fetchCalls, 0);
+    });
+
+    it("applies a caller policy to cached and final redirected URLs", async () => {
+      const requestedUrl = "https://cdn.example/module.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+      await mgr.set(requestedUrl, {
+        resolved: "http://127.0.0.1/private.ts",
+        integrity: await computeIntegrity("private"),
+      });
+      let fetchCalls = 0;
+      const isUrlAllowed = (url: URL) => url.origin === "https://cdn.example";
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: requestedUrl,
+            isUrlAllowed,
+            fetchFn: (() => {
+              fetchCalls++;
+              return Promise.resolve(new Response("unexpected"));
+            }) as typeof fetch,
+          }),
+        Error,
+        "rejected by policy",
+      );
+      assertEquals(fetchCalls, 0);
+
+      await mgr.clear();
+      const redirectedResponse = new Response(null, {
+        status: 302,
+        headers: {
+          location: "https://disallowed.example/module.ts",
+        },
+      });
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: requestedUrl,
+            isUrlAllowed,
+            fetchFn: () => Promise.resolve(redirectedResponse),
+          }),
+        Error,
+        "rejected by policy",
+      );
+      assertEquals(await mgr.get(requestedUrl), null);
+    });
+
+    it("does not let stalled redirect cancellation block the next fetch", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let fetchCalls = 0;
+      let cancellationStarted = false;
+      const fetchFn = (() => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                cancel: () => {
+                  cancellationStarted = true;
+                  return new Promise<void>(() => {});
+                },
+              }),
+              {
+                status: 302,
+                headers: { location: "https://cdn.example/resolved.ts" },
+              },
+            ),
+          );
+        }
+        return Promise.resolve(new Response("export const ok = true;"));
+      }) as typeof fetch;
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<"timed-out">((resolve) => {
+        timeoutId = setTimeout(() => resolve("timed-out"), 100);
+      });
+      try {
+        const outcome = await Promise.race([
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            fetchFn,
+            timeoutMs: 25,
+          }),
+          timeout,
+        ]);
+
+        assertEquals(outcome === "timed-out", false);
+        assertEquals(fetchCalls, 2);
+        assertEquals(cancellationStarted, true);
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
+    });
+
+    it("rejects oversized remote modules without consuming the full body", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            maxResponseBytes: 4,
+            fetchFn: () => Promise.resolve(new Response("12345")),
+          }),
+        Error,
+        "exceeded 4 bytes",
+      );
+    });
+
+    it("cancels a response rejected by its oversized Content-Length", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let cancelled = false;
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-length": "100" },
+        },
+      );
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            maxResponseBytes: 4,
+            fetchFn: () => Promise.resolve(response),
+          }),
+        Error,
+        "exceeded 4 bytes",
+      );
+      assertEquals(cancelled, true);
+    });
+
+    it("cancels a terminal non-success response body", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let cancelled = false;
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 404 },
+      );
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            fetchFn: () => Promise.resolve(response),
+          }),
+        Error,
+        "404",
+      );
+      assertEquals(cancelled, true);
+    });
+
+    it("aborts remote fetches that exceed the configured timeout", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            timeoutMs: 5,
+            fetchFn: ((_input, init) => {
+              const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+              return new Promise<Response>((_resolve, reject) => {
+                signal?.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+            }) as typeof fetch,
+          }),
+        Error,
+        "timed out",
+      );
+    });
+
+    it("aborts stalled response bodies within the same timeout", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }),
+      );
+      const fallbackTimer = setTimeout(() => {
+        try {
+          streamController?.close();
+        } catch {
+          // A bounded reader may already have cancelled the stream.
+        }
+      }, 25);
+
+      try {
+        await assertRejects(
+          () =>
+            fetchWithLock({
+              lockfile: mgr,
+              url: "https://cdn.example/module.ts",
+              timeoutMs: 5,
+              fetchFn: () => Promise.resolve(response),
+            }),
+          Error,
+          "timed out",
+        );
+      } finally {
+        clearTimeout(fallbackTimer);
+        try {
+          streamController?.close();
+        } catch {
+          // A bounded reader may already have cancelled the stream.
+        }
+      }
     });
   });
 });

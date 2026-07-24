@@ -126,6 +126,32 @@ function isNotFoundError(error: unknown): boolean {
   return error.name === "NotFound" || error.name === "NotFoundError";
 }
 
+function hasUnsafeDirectoryEntryCharacter(name: string): boolean {
+  for (let index = 0; index < name.length; index++) {
+    const code = name.charCodeAt(index);
+    if (
+      name[index] === "/" ||
+      name[index] === "\\" ||
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function assertSafeDirectoryEntryName(name: string): void {
+  if (
+    name.length === 0 ||
+    name === "." ||
+    name === ".." ||
+    hasUnsafeDirectoryEntryCharacter(name)
+  ) {
+    throw new TypeError("File discovery received an invalid directory entry name");
+  }
+}
+
 async function* readDirectoryEntries(
   adapter: RuntimeAdapter,
   dir: string,
@@ -238,6 +264,7 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
   }
 
   for await (const entry of readDirectoryEntries(adapter, dir)) {
+    assertSafeDirectoryEntryName(entry.name);
     if (shouldIgnore(entry.name, ignorePatterns)) continue;
 
     const fullPath = join(dir, entry.name);
@@ -320,7 +347,6 @@ export async function collectFiles(options: FileDiscoveryOptions): Promise<FileD
       return results;
     },
     {
-      "discovery.baseDir": options.baseDir,
       "discovery.recursive": options.recursive ?? true,
       "discovery.extensions": options.extensions?.join(",") ?? "*",
     },
@@ -335,7 +361,6 @@ export async function hasMatchingFiles(options: FileDiscoveryOptions): Promise<b
       return false;
     },
     {
-      "discovery.baseDir": options.baseDir,
       "discovery.patterns": options.patterns?.join(",") ?? "*",
     },
   );
@@ -348,9 +373,6 @@ export async function countFiles(options: FileDiscoveryOptions): Promise<number>
       let count = 0;
       for await (const _file of discoverFiles(options)) count++;
       return count;
-    },
-    {
-      "discovery.baseDir": options.baseDir,
     },
   );
 }

@@ -18,6 +18,25 @@ describe("Singleflight", () => {
     assertEquals(await follower, 42);
   });
 
+  it("rejects stale windows unsupported by JavaScript timers", async () => {
+    const sf = new Singleflight<number>();
+    for (
+      const staleAfterMs of [
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        2_147_483_648,
+      ]
+    ) {
+      await assertRejects(
+        () => sf.do("key", () => Promise.resolve(1), { staleAfterMs }),
+        RangeError,
+      );
+    }
+  });
+
   it("should execute operation and return result", async () => {
     const sf = new Singleflight<number>();
     const result = await sf.do("key", () => Promise.resolve(42));

@@ -3,14 +3,17 @@ import { LRUNode } from "./lru-node.ts";
 import type { LRUListManager } from "./lru-list-manager.ts";
 
 export class EntryManager {
-  constructor(private readonly estimateSizeOf: (value: unknown) => number) {}
+  constructor(private readonly sizeEstimator: (value: unknown) => number) {}
 
-  private estimateValidSize(value: unknown): number {
-    const size = this.estimateSizeOf(value);
+  private requireValidSize(size: number): number {
     if (!Number.isSafeInteger(size) || size < 0) {
       throw new RangeError("estimateSizeOf must return a finite non-negative integer");
     }
     return size;
+  }
+
+  estimateSize(value: unknown): number {
+    return this.requireValidSize(this.sizeEstimator(value));
   }
 
   updateExistingEntry<T>(
@@ -22,9 +25,12 @@ export class EntryManager {
     listManager: LRUListManager<unknown>,
     tagIndex: Map<string, Set<string>>,
     key: string,
+    precomputedSize?: number,
   ): number {
     const oldSize = node.entry.size;
-    const newSize = this.estimateValidSize(value);
+    const newSize = precomputedSize === undefined
+      ? this.estimateSize(value)
+      : this.requireValidSize(precomputedSize);
     const expiry = this.calculateExpiry(ttlMs, defaultTtlMs);
 
     if (node.entry.tags?.length) this.cleanupTags(node.entry.tags, key, tagIndex);
@@ -50,8 +56,11 @@ export class EntryManager {
     defaultTtlMs: number | undefined,
     listManager: LRUListManager<unknown>,
     store: Map<string, LRUNode<unknown>>,
+    precomputedSize?: number,
   ): [LRUNode<unknown>, number] {
-    const size = this.estimateValidSize(value);
+    const size = precomputedSize === undefined
+      ? this.estimateSize(value)
+      : this.requireValidSize(precomputedSize);
     const expiry = this.calculateExpiry(ttlMs, defaultTtlMs);
 
     const entry: LRUEntry<unknown> = {

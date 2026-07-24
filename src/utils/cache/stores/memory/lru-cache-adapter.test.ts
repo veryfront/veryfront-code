@@ -120,6 +120,21 @@ describe("LRUCacheAdapter", () => {
       expect(keys).toContain("key1");
       expect(keys).toContain("key2");
     });
+
+    it("does not expose expired entries through key iteration", () => {
+      const originalDateNow = Date.now;
+      let now = originalDateNow();
+      Date.now = () => now;
+      try {
+        cache.set("expired", "value", 10);
+        cache.set("fresh", "value", 100);
+        now += 10;
+
+        expect([...cache.keys()]).toEqual(["fresh"]);
+      } finally {
+        Date.now = originalDateNow;
+      }
+    });
   });
 
   describe("LRU eviction", () => {
@@ -262,12 +277,70 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should evict entries when maxSizeBytes exceeded", () => {
-      const smallCache = new LRUCacheAdapter({ maxEntries: 100, maxSizeBytes: 50 });
+      const smallCache = new LRUCacheAdapter({ maxEntries: 100, maxSizeBytes: 100 });
 
       smallCache.set("a", "12345678901234567890");
       smallCache.set("b", "12345678901234567890");
 
-      expect(smallCache.getStats().sizeBytes).toBeLessThanOrEqual(50);
+      expect(smallCache.get("a")).toBeUndefined();
+      expect(smallCache.get("b")).toBe("12345678901234567890");
+      expect(smallCache.getStats().sizeBytes).toBeLessThanOrEqual(100);
+    });
+
+    it("rejects an oversized insertion without evicting retained entries", () => {
+      const evicted: string[] = [];
+      const bounded = new LRUCacheAdapter({
+        maxEntries: 10,
+        maxSizeBytes: 10,
+        estimateSizeOf: (value) => value as number,
+        onEvict: (key) => evicted.push(key),
+      });
+      bounded.set("a", 3, undefined, ["retained-a"]);
+      bounded.set("b", 3, undefined, ["retained-b"]);
+
+      assertThrows(
+        () => bounded.set("oversized", 20, undefined, ["oversized-tag"]),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+
+      expect(bounded.get("a")).toBe(3);
+      expect(bounded.get("b")).toBe(3);
+      expect(bounded.has("oversized")).toBe(false);
+      expect(bounded.getStats()).toEqual({
+        entries: 2,
+        sizeBytes: 6,
+        maxEntries: 10,
+        maxSizeBytes: 10,
+        tags: 2,
+      });
+      expect(evicted).toEqual([]);
+    });
+
+    it("rejects an oversized update without mutating value, tags, or LRU state", () => {
+      const evicted: string[] = [];
+      const bounded = new LRUCacheAdapter({
+        maxEntries: 2,
+        maxSizeBytes: 10,
+        estimateSizeOf: (value) => value as number,
+        onEvict: (key) => evicted.push(key),
+      });
+      bounded.set("a", 3, undefined, ["original-tag"]);
+      bounded.set("b", 3);
+
+      assertThrows(
+        () => bounded.set("a", 20, undefined, ["replacement-tag"]),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+
+      expect(bounded.get("a")).toBe(3);
+      expect(bounded.get("b")).toBe(3);
+      expect(bounded.getStats().sizeBytes).toBe(6);
+      expect(bounded.getStats().tags).toBe(1);
+      expect(evicted).toEqual([]);
+      expect(bounded.invalidateTag("replacement-tag")).toBe(0);
+      expect(bounded.invalidateTag("original-tag")).toBe(1);
     });
 
     it("accounts for Map, Set, and SharedArrayBuffer contents", () => {

@@ -74,7 +74,10 @@ export function getReactJSXDevRuntimeCDNUrl(
 }
 
 /** Default value for allowed cdn hosts. */
-export const DEFAULT_ALLOWED_CDN_HOSTS = [ESM_CDN_BASE, DENO_STD_BASE];
+export const DEFAULT_ALLOWED_CDN_HOSTS: readonly string[] = Object.freeze([
+  ESM_CDN_BASE,
+  DENO_STD_BASE,
+]);
 
 export const DENO_STD_VERSION = "0.220.0";
 

@@ -1,11 +1,28 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { parallelAll, parallelMap } from "./parallel.ts";
 
 describe("parallel", () => {
   describe("parallelMap", () => {
+    it("rejects timeout values unsupported by JavaScript timers", async () => {
+      for (
+        const timeoutMs of [
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          2_147_483_648,
+        ]
+      ) {
+        await assertRejects(
+          () => parallelMap([1], async (value) => value, { timeoutMs }),
+          RangeError,
+        );
+      }
+    });
+
     it("should return empty array for empty input", async () => {
       const result = await parallelMap([], async (x) => x);
       assertEquals(result, []);

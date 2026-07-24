@@ -80,4 +80,128 @@ describe("utils/response-body", () => {
     assertEquals(result, { text: "exact", truncated: true });
     assertEquals(cancelled, true);
   });
+
+  it("does not await stalled cancellation after an exact-limit read, even if abort follows", async () => {
+    let cancellationStarted = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("exact"));
+        },
+        cancel() {
+          cancellationStarted = true;
+          return new Promise<void>(() => {});
+        },
+      }),
+    );
+    const abortController = new AbortController();
+    const laterAbort = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        abortController.abort(new Error("later abort"));
+        resolve();
+      }, 5);
+    });
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timed-out">((resolve) => {
+      timeoutId = setTimeout(() => resolve("timed-out"), 100);
+    });
+
+    try {
+      const outcome = await Promise.race([
+        readResponseTextPrefix(response, 5, abortController.signal),
+        timeout,
+      ]);
+
+      assertEquals(outcome === "timed-out", false);
+      if (outcome === "timed-out") return;
+      assertEquals(outcome, { text: "exact", truncated: true });
+      assertEquals(cancellationStarted, true);
+      await laterAbort;
+      assertEquals(abortController.signal.aborted, true);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+  });
+
+  it("aborts a stalled body read and cancels the unread stream", async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+    const abortController = new AbortController();
+    const fallbackTimer = setTimeout(() => {
+      try {
+        streamController?.close();
+      } catch {
+        // The implementation may already have cancelled the stream.
+      }
+    }, 25);
+    const read = readResponseTextPrefix(response, 100, abortController.signal);
+    abortController.abort(new Error("body read timed out"));
+
+    try {
+      await assertRejects(() => read, Error, "body read timed out");
+      assertEquals(cancelled, true);
+    } finally {
+      clearTimeout(fallbackTimer);
+      try {
+        streamController?.close();
+      } catch {
+        // The implementation should already have cancelled the stream.
+      }
+    }
+  });
+
+  it("does not let a stalled cancellation defeat an aborted body read", async () => {
+    let cancellationStarted = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull: () => new Promise<void>(() => {}),
+        cancel: () => {
+          cancellationStarted = true;
+          return new Promise<void>(() => {});
+        },
+      }),
+    );
+    const abortController = new AbortController();
+    const read = readResponseTextPrefix(response, 100, abortController.signal);
+    abortController.abort(new Error("body read timed out"));
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timed-out">((resolve) => {
+      timeoutId = setTimeout(() => resolve("timed-out"), 100);
+    });
+
+    try {
+      const outcome = await Promise.race([
+        read.then(
+          () => ({ status: "fulfilled" as const }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        ),
+        timeout,
+      ]);
+
+      assertEquals(outcome === "timed-out", false);
+      if (outcome === "timed-out") return;
+      assertEquals(outcome.status, "rejected");
+      assertEquals(
+        outcome.status === "rejected" &&
+          outcome.error instanceof Error &&
+          outcome.error.message,
+        "body read timed out",
+      );
+      assertEquals(cancellationStarted, true);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+  });
 });

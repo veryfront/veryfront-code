@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { SCANNER_PATH_PATTERN } from "./security.ts";
+import { FORBIDDEN_PATH_PATTERNS, SCANNER_PATH_PATTERN } from "./security.ts";
 
 describe("constants/security", () => {
+  it("exposes immutable forbidden-path defaults", () => {
+    assertEquals(Object.isFrozen(FORBIDDEN_PATH_PATTERNS), true);
+  });
+
   describe("SCANNER_PATH_PATTERN", () => {
     it("matches common scanner probe paths", () => {
       assertEquals(SCANNER_PATH_PATTERN.test("/wp-admin"), true);

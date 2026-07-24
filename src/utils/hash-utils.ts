@@ -27,7 +27,11 @@ export interface BundleCode {
 
 /** Compute code hash. */
 export function computeCodeHash(code: BundleCode): Promise<string> {
-  return computeHash(`${code.code}${code.css ?? ""}${code.sourceMap ?? ""}`);
+  return computeHash(JSON.stringify([
+    code.code,
+    code.css ?? "",
+    code.sourceMap ?? "",
+  ]));
 }
 
 /** Create simple hash. */
@@ -57,8 +61,8 @@ export async function shortHash(content: string): Promise<string> {
 export function fnv1aHash(input: string): string {
   let hash = HASH_SEED_FNV1A >>> 0;
 
-  for (const char of input) {
-    hash ^= char.charCodeAt(0);
+  for (let index = 0; index < input.length; index++) {
+    hash ^= input.charCodeAt(index);
     hash = Math.imul(hash, FNV1A_PRIME_32);
   }
 

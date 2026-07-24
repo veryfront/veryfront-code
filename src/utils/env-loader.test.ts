@@ -1,8 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { __resetEnvLoaderForTests, loadEnv, supportsEnvFiles } from "./env-loader.ts";
+import {
+  deleteEnv,
+  getEnv,
+  getEnvOverlayStorage,
+  setEnv,
+} from "#veryfront/platform/compat/process.ts";
+import {
+  __resetEnvLoaderForTests,
+  getEnvSource,
+  hasEnvLoaded,
+  loadEnv,
+  supportsEnvFiles,
+} from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/index.ts";
 
 describe("env-loader", () => {
@@ -156,6 +167,24 @@ describe("env-loader", () => {
       cleanupKeys(key);
     });
 
+    it("should expand from the authoritative host value when a file assignment is skipped", async () => {
+      const hostKey = createKey("EXPANSION_HOST");
+      const derivedKey = createKey("EXPANSION_DERIVED");
+      setEnv(hostKey, "from_host");
+      await writeEnvFile(
+        ".env",
+        `${hostKey}=from_file\n${derivedKey}=\${${hostKey}}_derived`,
+      );
+
+      try {
+        await loadEnv({ cwd: tempDir });
+        assertEquals(getEnv(hostKey), "from_host");
+        assertEquals(getEnv(derivedKey), "from_host_derived");
+      } finally {
+        cleanupKeys(hostKey, derivedKey);
+      }
+    });
+
     it("should not print environment values in debug logs", async () => {
       const key = createKey("SECRET_LOG");
       const secret = "highly-sensitive-value";
@@ -216,6 +245,235 @@ describe("env-loader", () => {
       assertEquals(getEnv(key), "from_local");
 
       cleanupKeys(key);
+    });
+
+    it("should apply file precedence by default without overriding the host environment", async () => {
+      const loadedKey = createKey("DEFAULT_PRECEDENCE");
+      const hostKey = createKey("HOST_PRECEDENCE");
+      const mode = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
+      setEnv(hostKey, "from_host");
+
+      try {
+        await writeEnvFile(
+          ".env",
+          `${loadedKey}=from_env\n${hostKey}=from_env`,
+        );
+        await writeEnvFile(
+          `.env.${mode}`,
+          `${loadedKey}=from_mode\n${hostKey}=from_mode`,
+        );
+        await writeEnvFile(
+          ".env.local",
+          `${loadedKey}=from_local\n${hostKey}=from_local`,
+        );
+
+        await loadEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(loadedKey), "from_local");
+        assertEquals(getEnv(hostKey), "from_host");
+        assertEquals(getEnvSource(loadedKey), {
+          source: "env-file",
+          file: `${tempDir}/.env.local`,
+        });
+        assertEquals(getEnvSource(hostKey), { source: "process" });
+      } finally {
+        cleanupKeys(loadedKey, hostKey);
+      }
+    });
+
+    it("should join concurrent first loads to the first caller's transaction", async () => {
+      const secondDir = await Deno.makeTempDir({ prefix: "env-loader-second-" });
+      const firstKey = createKey("CONCURRENT_FIRST");
+      const secondKey = createKey("CONCURRENT_SECOND");
+
+      try {
+        await writeEnvFile(".env", `${firstKey}=from_first`);
+        await Deno.writeTextFile(`${secondDir}/.env`, `${secondKey}=from_second`);
+
+        const firstLoad = loadEnv({ cwd: tempDir, override: true });
+        const joinedLoad = loadEnv({ cwd: secondDir, override: true });
+        await Promise.all([firstLoad, joinedLoad]);
+
+        assertEquals(getEnv(firstKey), "from_first");
+        assertEquals(getEnv(secondKey), undefined);
+        assertEquals(getEnvSource(firstKey), {
+          source: "env-file",
+          file: `${tempDir}/.env`,
+        });
+        assertEquals(getEnvSource(secondKey), { source: "unset" });
+      } finally {
+        cleanupKeys(firstKey, secondKey);
+        await Deno.remove(secondDir, { recursive: true });
+      }
+    });
+
+    it("should reject joined callers and allow retry after the first transaction fails", async () => {
+      const secondDir = await Deno.makeTempDir({ prefix: "env-loader-retry-" });
+      const invalidKey = createKey("CONCURRENT_INVALID");
+      const retryKey = createKey("CONCURRENT_RETRY");
+
+      try {
+        await writeEnvFile(".env", `${invalidKey}="unterminated`);
+        await Deno.writeTextFile(`${secondDir}/.env`, `${retryKey}=recovered`);
+
+        const results = await Promise.allSettled([
+          loadEnv({ cwd: tempDir, override: true }),
+          loadEnv({ cwd: secondDir, override: true }),
+        ]);
+
+        assertEquals(results.map((result) => result.status), [
+          "rejected",
+          "rejected",
+        ]);
+        assertEquals(getEnv(invalidKey), undefined);
+        assertEquals(getEnv(retryKey), undefined);
+        assertEquals(hasEnvLoaded(), false);
+
+        await loadEnv({ cwd: secondDir, override: true });
+        assertEquals(getEnv(retryKey), "recovered");
+        assertEquals(hasEnvLoaded(), true);
+      } finally {
+        cleanupKeys(invalidKey, retryKey);
+        await Deno.remove(secondDir, { recursive: true });
+      }
+    });
+
+    it("should reject a test reset while an environment load is in progress", async () => {
+      const key = createKey("RESET_IN_FLIGHT");
+      await writeEnvFile(".env", `${key}=loaded`);
+
+      const loadPromise = loadEnv({ cwd: tempDir, override: true });
+      let resetError: unknown;
+      try {
+        __resetEnvLoaderForTests();
+      } catch (error) {
+        resetError = error;
+      }
+      await loadPromise;
+
+      assertEquals(resetError instanceof Error, true);
+      assertEquals(getEnv(key), "loaded");
+      cleanupKeys(key);
+    });
+
+    it("should not expand inherited record property names", async () => {
+      const constructorKey = createKey("INHERITED_CONSTRUCTOR");
+      const prototypeKey = createKey("INHERITED_PROTO");
+
+      try {
+        await writeEnvFile(
+          ".env",
+          `${constructorKey}=\${constructor}\n${prototypeKey}=\${__proto__}`,
+        );
+
+        await loadEnv({ cwd: tempDir, override: true });
+
+        assertEquals(getEnv(constructorKey), "");
+        assertEquals(getEnv(prototypeKey), "");
+      } finally {
+        cleanupKeys(constructorKey, prototypeKey);
+      }
+    });
+
+    it("should reject invalid keys before applying any file values", async () => {
+      const validKey = createKey("BEFORE_INVALID_KEY");
+      const invalidKey = `${createKey("INVALID")}-NAME`;
+
+      try {
+        await writeEnvFile(
+          ".env",
+          `${validKey}=must_not_apply\n${invalidKey}=invalid`,
+        );
+
+        await assertRejects(() => loadEnv({ cwd: tempDir, override: true }));
+
+        assertEquals(getEnv(validKey), undefined);
+        assertEquals(getEnv(invalidKey), undefined);
+        assertEquals(hasEnvLoaded(), false);
+      } finally {
+        cleanupKeys(validKey, invalidKey);
+      }
+    });
+
+    it("should reject empty keys before applying any file values", async () => {
+      const validKey = createKey("BEFORE_EMPTY_KEY");
+
+      try {
+        await writeEnvFile(".env", `${validKey}=must_not_apply\n=value`);
+
+        await assertRejects(() => loadEnv({ cwd: tempDir, override: true }));
+
+        assertEquals(getEnv(validKey), undefined);
+        assertEquals(hasEnvLoaded(), false);
+      } finally {
+        cleanupKeys(validKey);
+      }
+    });
+
+    it("should roll back parsed files and remain retryable after an unterminated quote", async () => {
+      const baseKey = createKey("PARSE_ROLLBACK_BASE");
+      const localKey = createKey("PARSE_ROLLBACK_LOCAL");
+
+      try {
+        await writeEnvFile(".env", `${baseKey}=base`);
+        await writeEnvFile(".env.local", `${localKey}="unterminated`);
+
+        await assertRejects(() => loadEnv({ cwd: tempDir, override: true }));
+
+        assertEquals(getEnv(baseKey), undefined);
+        assertEquals(getEnv(localKey), undefined);
+        assertEquals(getEnvSource(baseKey), { source: "unset" });
+        assertEquals(hasEnvLoaded(), false);
+
+        await writeEnvFile(".env.local", `${localKey}=recovered`);
+        await loadEnv({ cwd: tempDir, override: true });
+
+        assertEquals(getEnv(baseKey), "base");
+        assertEquals(getEnv(localKey), "recovered");
+        assertEquals(hasEnvLoaded(), true);
+      } finally {
+        cleanupKeys(baseKey, localKey);
+      }
+    });
+
+    it("should roll back process mutations when applying a value fails", async () => {
+      const appliedKey = createKey("APPLY_ROLLBACK");
+      const failingKey = createKey("APPLY_FAILURE");
+      const storage = getEnvOverlayStorage();
+      if (!storage?.enterWith) {
+        throw new Error("Environment overlay storage is unavailable");
+      }
+
+      const previousStore = storage.getStore();
+      let shouldFail = true;
+      const failingStore = new Map<string, string | null>();
+      const setValue = failingStore.set.bind(failingStore);
+      failingStore.set = (key: string, value: string | null): typeof failingStore => {
+        if (key === failingKey && value !== null && shouldFail) {
+          shouldFail = false;
+          throw new Error("Injected environment write failure");
+        }
+        setValue(key, value);
+        return failingStore;
+      };
+
+      storage.enterWith(failingStore);
+      try {
+        await writeEnvFile(
+          ".env",
+          `${appliedKey}=must_be_rolled_back\n${failingKey}=fails`,
+        );
+
+        await assertRejects(() => loadEnv({ cwd: tempDir, override: true }));
+
+        assertEquals(getEnv(appliedKey), undefined);
+        assertEquals(getEnv(failingKey), undefined);
+        assertEquals(getEnvSource(appliedKey), { source: "unset" });
+        assertEquals(hasEnvLoaded(), false);
+      } finally {
+        storage.enterWith(previousStore);
+        cleanupKeys(appliedKey, failingKey);
+      }
     });
 
     it("should handle lines without equals sign", async () => {

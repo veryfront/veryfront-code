@@ -19,7 +19,15 @@ export function joinPath(a: string, b: string): string {
   return `${left}/${right}`;
 }
 
+/**
+ * Checks lexical containment after path normalization.
+ *
+ * This does not resolve symlinks. Callers authorizing access to an existing
+ * filesystem object must compare adapter-provided real paths as well.
+ */
 export function isWithinDirectory(root: string, target: string): boolean {
+  if (!root) return false;
+
   const normalizedRoot = stripTrailingSlash(normalizePath(root));
   const normalizedTarget = stripTrailingSlash(normalizePath(target));
 
@@ -57,7 +65,8 @@ export function getDirectory(path: string): string {
 }
 
 export function hasHashedFilename(path: string): boolean {
-  return /\.[a-f0-9]{8,}\./.test(path);
+  const lastSeparator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return /\.[a-f0-9]{8,}\./.test(path.slice(lastSeparator + 1));
 }
 
 const EXTENSION_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js"> = {

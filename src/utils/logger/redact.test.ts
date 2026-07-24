@@ -78,6 +78,12 @@ describe("logger/redact", () => {
       assertEquals(isSensitiveKey("token"), true);
       assertEquals(isSensitiveKey("requestId0"), false);
     });
+
+    it("classifies oversized keys without relying on cache retention", () => {
+      const prefix = "x".repeat(16_384);
+      assertEquals(isSensitiveKey(`${prefix}Token`), true);
+      assertEquals(isSensitiveKey(`${prefix}RequestId`), false);
+    });
   });
 
   describe("redactSensitive", () => {
@@ -305,6 +311,44 @@ describe("logger/redact", () => {
         },
       );
     });
+
+    it("fails closed on sparse arrays wider than the per-container budget", () => {
+      const sparse: unknown[] = [];
+      sparse.length = 1_025;
+      sparse[1_024] = { token: "must-not-leak" };
+
+      assertEquals(redactSensitive(sparse) as unknown, REDACTED);
+      assertEquals(redactForSerialization(sparse), REDACTED);
+    });
+
+    it("bounds maximally sparse arrays without iterating their declared length", () => {
+      const sparse: unknown[] = [];
+      sparse.length = 0xffff_ffff;
+      sparse[0xffff_fffe] = { token: "must-not-leak" };
+
+      assertEquals(redactSensitive(sparse) as unknown, REDACTED);
+      assertEquals(redactForSerialization(sparse), REDACTED);
+    });
+
+    it("fails closed on objects wider than the per-container budget", () => {
+      const wide: Record<string, unknown> = {};
+      for (let index = 0; index < 1_025; index++) {
+        wide[`field${index}`] = index;
+      }
+
+      assertEquals(redactSensitive(wide) as unknown, REDACTED);
+      assertEquals(redactForSerialization(wide), REDACTED);
+    });
+
+    it("shares a cumulative traversal budget across nested containers", () => {
+      const manyNodes = Array.from(
+        { length: 65 },
+        () => Array.from({ length: 65 }, () => "safe"),
+      );
+
+      assertEquals(redactSensitive(manyNodes) as unknown, REDACTED);
+      assertEquals(redactForSerialization(manyNodes), REDACTED);
+    });
   });
 
   describe("sanitizeUrlCredentials", () => {
@@ -319,6 +363,20 @@ describe("logger/redact", () => {
       assertEquals(
         sanitizeUrlCredentials("https://t0ken@api.example.com/path"),
         `https://${REDACTED}@api.example.com/path`,
+      );
+    });
+
+    it("masks passwords containing an unescaped at sign", () => {
+      assertEquals(
+        sanitizeUrlCredentials("postgres://user:p@ss@db.host:5432/app"),
+        `postgres://user:${REDACTED}@db.host:5432/app`,
+      );
+    });
+
+    it("masks protocol-relative URL userinfo", () => {
+      assertEquals(
+        sanitizeUrlCredentials("//user:secret@example.test/path"),
+        `//user:${REDACTED}@example.test/path`,
       );
     });
 
@@ -349,6 +407,125 @@ describe("logger/redact", () => {
         sanitizeUrlCredentials("https://app.example.test/?access%5Ftoken=secret&page=2"),
         `https://app.example.test/?access%5Ftoken=${REDACTED}&page=2`,
       );
+    });
+
+    it("masks AWS and Google signed-URL credential parameters", () => {
+      const sanitized = sanitizeUrlCredentials(
+        "https://storage.example.test/object" +
+          "?X-Amz-Credential=aws-credential" +
+          "&X-Amz-Signature=aws-signature" +
+          "&X-Amz-Security-Token=aws-session-token" +
+          "&X-Goog-Credential=google-credential" +
+          "&X-Goog-Signature=google-signature",
+      );
+
+      for (
+        const secret of [
+          "aws-credential",
+          "aws-signature",
+          "aws-session-token",
+          "google-credential",
+          "google-signature",
+        ]
+      ) {
+        assertEquals(sanitized.includes(secret), false);
+      }
+    });
+
+    it("masks raw authorization values and secret assignments", () => {
+      const sanitized = sanitizeUrlCredentials(
+        "Authorization: Bearer bearer-secret Basic basic-secret " +
+          "password=hunter2 api_key: key-secret",
+      );
+
+      for (const secret of ["bearer-secret", "basic-secret", "hunter2", "key-secret"]) {
+        assertEquals(sanitized.includes(secret), false);
+      }
+    });
+
+    it("masks complete non-Basic authorization header values", () => {
+      const sanitized = sanitizeUrlCredentials(
+        "Authorization: AWS4-HMAC-SHA256 " +
+          "Credential=AKIAEXAMPLE/20260724/eu-north-1/service/aws4_request, " +
+          "SignedHeaders=host;x-amz-date, Signature=super-secret-signature",
+      );
+
+      for (
+        const secret of [
+          "AWS4-HMAC-SHA256",
+          "AKIAEXAMPLE",
+          "aws4_request",
+          "x-amz-date",
+          "super-secret-signature",
+        ]
+      ) {
+        assertEquals(sanitized.includes(secret), false);
+      }
+      assertEquals(sanitized, `Authorization: ${REDACTED}`);
+    });
+
+    it("masks complete Cookie and Set-Cookie header lines", () => {
+      const sanitized = sanitizeUrlCredentials(
+        [
+          "Cookie: session=first-secret; admin=second-secret; theme=dark",
+          "X-Request-Id: safe-request-id",
+          "sEt-CoOkIe: access=third-secret; refresh=fourth-secret; Path=/; HttpOnly",
+          "Content-Type: application/json",
+        ].join("\n"),
+      );
+
+      for (
+        const secret of [
+          "first-secret",
+          "second-secret",
+          "third-secret",
+          "fourth-secret",
+        ]
+      ) {
+        assertEquals(sanitized.includes(secret), false);
+      }
+      assertEquals(sanitized.includes(`Cookie: ${REDACTED}`), true);
+      assertEquals(sanitized.includes(`sEt-CoOkIe: ${REDACTED}`), true);
+      assertEquals(sanitized.includes("X-Request-Id: safe-request-id"), true);
+      assertEquals(sanitized.includes("Content-Type: application/json"), true);
+    });
+
+    it("masks quoted JSON-style credential assignments", () => {
+      const sanitized = sanitizeUrlCredentials(
+        `request failed: {"password":"super-secret-password","api_key":"super-secret-key"}`,
+      );
+
+      assertEquals(sanitized.includes("super-secret-password"), false);
+      assertEquals(sanitized.includes("super-secret-key"), false);
+      assertEquals(
+        sanitized,
+        `request failed: {"password":"${REDACTED}","api_key":"${REDACTED}"}`,
+      );
+    });
+
+    it("applies the complete sensitive-key deny-list to free-form assignments", () => {
+      const secrets = [
+        "credential-value",
+        "signature-value",
+        "private-key-value",
+        "access-key-value",
+        "connection-string-value",
+        "jwt-value",
+        "session-value",
+      ];
+      const sanitized = sanitizeUrlCredentials(
+        `request failed: {"credential":"${secrets[0]}",` +
+          `"signature":"${secrets[1]}",` +
+          `"privateKey":"${secrets[2]}",` +
+          `"accessKey":"${secrets[3]}",` +
+          `"connectionString":"${secrets[4]}",` +
+          `"jwt":"${secrets[5]}",` +
+          `"sessionId":"${secrets[6]}",` +
+          `"status":"safe-value"}`,
+      );
+
+      for (const secret of secrets) assertEquals(sanitized.includes(secret), false);
+      assertEquals(sanitized.includes(`"status":"safe-value"`), true);
     });
 
     it("leaves non-URL strings untouched", () => {
@@ -407,6 +584,19 @@ describe("logger/redact", () => {
         "//example.com/path",
       );
     });
+
+    it("omits opaque and local URL payloads from span attributes", () => {
+      assertEquals(sanitizeUrlForSpan("data:text/plain,private-payload"), "data:");
+      assertEquals(sanitizeUrlForSpan("file:///private/local/path"), "file:");
+      assertEquals(sanitizeUrlForSpan("mailto:private@example.test"), "mailto:");
+    });
+
+    it("omits blob object identifiers while retaining the embedded origin", () => {
+      assertEquals(
+        sanitizeUrlForSpan("blob:https://example.com/private-object-id"),
+        "blob:https://example.com",
+      );
+    });
   });
 
   describe("sanitizeSerializedError", () => {
@@ -419,6 +609,16 @@ describe("logger/redact", () => {
       assertEquals(sanitized.message.includes("p4ss"), false);
       assertEquals(sanitized.stack?.includes("SECRET"), false);
       assertEquals(sanitized.name, "Error");
+    });
+
+    it("scrubs credentials from an error name", () => {
+      const sanitized = sanitizeSerializedError({
+        name: "postgres://user:secret@db.host/app",
+        message: "connection failed",
+      });
+
+      assertEquals(sanitized.name.includes("secret"), false);
+      assertEquals(sanitized.name.includes(REDACTED), true);
     });
 
     it("returns undefined unchanged", () => {

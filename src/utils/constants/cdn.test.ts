@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  DEFAULT_ALLOWED_CDN_HOSTS,
   DENO_STD_BASE,
   ESM_CDN_BASE,
   getDenoStdNodeBase,
@@ -44,6 +45,10 @@ describe("constants/cdn — React default version drift guard", () => {
 });
 
 describe("constants/cdn", () => {
+  it("exposes immutable default allowed hosts", () => {
+    assertEquals(Object.isFrozen(DEFAULT_ALLOWED_CDN_HOSTS), true);
+  });
+
   describe("getDenoStdNodeBase", () => {
     it("should return a URL starting with DENO_STD_BASE", () => {
       const url = getDenoStdNodeBase();

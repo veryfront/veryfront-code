@@ -11,8 +11,10 @@ import {
   LEVEL_GLYPHS,
   type LogLevelName,
   padTag,
+  sanitizeLogText,
   type SerializedError,
   serializeError,
+  truncateText,
 } from "./core.ts";
 import {
   REDACTED,
@@ -20,6 +22,7 @@ import {
   sanitizeSerializedError,
   sanitizeUrlCredentials,
 } from "./redact.ts";
+import { LOG_PREVIEW_MAX_LENGTH_CHARS, MAX_STRING_DISPLAY_LENGTH } from "../constants/limits.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -120,6 +123,14 @@ type ConsoleLoggerOptions = {
 };
 
 type LogRecordEmitter = (entry: LogEntry) => void;
+
+interface LogSnapshot {
+  timestamp: string;
+  message: string;
+  component?: string;
+  context: Record<string, unknown>;
+  error?: SerializedError;
+}
 
 // ---- Config helpers (must be declared before the eager init below) ----
 
@@ -341,6 +352,83 @@ function extractAliasToEntryField(
   delete context[sourceKey];
 }
 
+function sanitizeAndLimitText(value: string, maxLength: number): string {
+  return truncateText(
+    sanitizeLogText(sanitizeUrlCredentials(value)),
+    maxLength,
+  );
+}
+
+function sanitizeAndLimitStructuredString(value: string, maxLength: number): string {
+  return truncateText(sanitizeUrlCredentials(value), maxLength);
+}
+
+/**
+ * Bound an already-redacted structured value without observing caller-owned
+ * objects again. Key collisions introduced by truncation fail closed because
+ * silently overwriting one field with another would make the snapshot
+ * nondeterministic.
+ */
+function limitStructuredLogValue(value: unknown, maxLength: number): unknown {
+  if (typeof value === "string") {
+    return sanitizeAndLimitStructuredString(value, maxLength);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => limitStructuredLogValue(item, maxLength));
+  }
+  if (!isRecord(value)) return value;
+
+  const bounded: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    const boundedKey = sanitizeAndLimitStructuredString(key, maxLength);
+    if (Object.hasOwn(bounded, boundedKey)) return REDACTED;
+    Object.defineProperty(bounded, boundedKey, {
+      configurable: true,
+      enumerable: true,
+      value: limitStructuredLogValue(child, maxLength),
+      writable: true,
+    });
+  }
+  return bounded;
+}
+
+function limitSerializedError(error: SerializedError | undefined): SerializedError | undefined {
+  if (!error) return undefined;
+  return {
+    name: sanitizeAndLimitStructuredString(error.name, LOG_PREVIEW_MAX_LENGTH_CHARS),
+    message: sanitizeAndLimitStructuredString(error.message, MAX_STRING_DISPLAY_LENGTH),
+    ...(error.stack
+      ? {
+        stack: sanitizeAndLimitStructuredString(
+          error.stack,
+          MAX_STRING_DISPLAY_LENGTH,
+        ),
+      }
+      : {}),
+  };
+}
+
+function limitLogEntry(entry: LogEntry): LogEntry {
+  for (const [key, value] of Object.entries(entry)) {
+    if (typeof value !== "string") continue;
+    const maxLength = key === "message" ? MAX_STRING_DISPLAY_LENGTH : LOG_PREVIEW_MAX_LENGTH_CHARS;
+    entry[key as keyof LogEntry] = sanitizeAndLimitStructuredString(
+      value,
+      maxLength,
+    ) as never;
+  }
+
+  if (entry.context) {
+    const boundedContext = limitStructuredLogValue(
+      entry.context,
+      LOG_PREVIEW_MAX_LENGTH_CHARS,
+    );
+    entry.context = isRecord(boundedContext) ? boundedContext : { unreadable_context: REDACTED };
+  }
+  if (entry.error) entry.error = limitSerializedError(entry.error);
+  return entry;
+}
+
 class ConsoleLogger implements Logger {
   private boundContext: Record<string, unknown>;
   private componentName?: string;
@@ -368,19 +456,41 @@ class ConsoleLogger implements Logger {
     return new ConsoleLogger(this.prefix, { ...this.boundContext }, name, this.options);
   }
 
-  private createEntry(level: LogEntry["level"], message: string, args: unknown[]): LogEntry {
+  private createSnapshot(message: string, args: unknown[]): LogSnapshot {
     const { context, error } = extractContext(args);
     const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
+    const redactedContext = redactForSerialization(mergedContext);
+    const boundedContext = limitStructuredLogValue(
+      redactedContext,
+      LOG_PREVIEW_MAX_LENGTH_CHARS,
+    );
 
-    const entry: LogEntry = {
+    return {
       timestamp: new Date().toISOString(),
+      message: sanitizeAndLimitText(message, MAX_STRING_DISPLAY_LENGTH),
+      ...(this.componentName
+        ? {
+          component: sanitizeAndLimitText(
+            this.componentName,
+            LOG_PREVIEW_MAX_LENGTH_CHARS,
+          ),
+        }
+        : {}),
+      context: isRecord(boundedContext) ? boundedContext : { unreadable_context: REDACTED },
+      error: limitSerializedError(sanitizeSerializedError(error)),
+    };
+  }
+
+  private createEntry(level: LogEntry["level"], snapshot: LogSnapshot): LogEntry {
+    const mergedContext: Record<string, unknown> = { ...snapshot.context };
+    const entry: LogEntry = {
+      timestamp: snapshot.timestamp,
       level,
       service: this.prefix.toLowerCase(),
       veryfrontVersion: RUNTIME_VERSION,
-      message: sanitizeUrlCredentials(message),
+      message: snapshot.message,
+      ...(snapshot.component ? { component: snapshot.component } : {}),
     };
-
-    if (this.componentName) entry.component = this.componentName;
 
     // Extract known fields to top level for easier Grafana filtering
     extractToEntryField(entry, mergedContext, "requestId", (v) => String(v));
@@ -462,55 +572,50 @@ class ConsoleLogger implements Logger {
       entry.conversation_id = entry.conversationId;
     }
 
-    // Redact credential-like keys from the free-form context bag before
-    // serialization (the deliberate top-level fields above are already
-    // extracted out of mergedContext, so they are unaffected).
     if (Object.keys(mergedContext).length > 0) {
-      const redactedContext = redactForSerialization(mergedContext);
-      entry.context = isRecord(redactedContext)
-        ? redactedContext
-        : { unreadable_context: REDACTED };
+      entry.context = mergedContext;
     }
-    // The serialized error (name/message/stack) bypasses the key-based
-    // redactor; scrub credentials embedded in its message/stack (DSNs, Mongo
-    // URIs, ?access_token= URLs, userinfo) before emission (#1989).
-    if (error) entry.error = sanitizeSerializedError(error);
+    if (snapshot.error) entry.error = snapshot.error;
 
     // Apply one final value-level pass after lifting well-known fields so every
     // structured string (including custom scalar `toJSON` values) follows the
     // same credential-scrubbing contract as free-form context.
     const redactedEntry = redactForSerialization(entry);
     return isRecord(redactedEntry)
-      ? redactedEntry as unknown as LogEntry
+      ? limitLogEntry(redactedEntry as unknown as LogEntry)
       : { ...entry, context: { unreadable_context: REDACTED } };
   }
 
-  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
-    const entry = this.createEntry(level, message, args);
-    return JSON.stringify(entry);
-  }
-
-  private formatTextLine(level: LogEntry["level"], message: string, args: unknown[]): string {
-    const { context, error } = extractContext(args);
-    const mergedContext = { ...this.boundContext, ...context };
+  private formatTextLine(level: LogEntry["level"], snapshot: LogSnapshot): string {
     const enableColor = shouldUseColor();
 
-    const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
-    const tag = colorize(padTag(this.prefix), TAG_COLORS[this.prefix] ?? ANSI.cyan, enableColor);
+    const timestamp = colorize(
+      formatTimestamp(new Date(snapshot.timestamp)),
+      ANSI.dim,
+      enableColor,
+    );
+    const tag = colorize(
+      padTag(sanitizeLogText(this.prefix)),
+      TAG_COLORS[this.prefix] ?? ANSI.cyan,
+      enableColor,
+    );
     const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
-    const componentTag = this.componentName
-      ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
+    const componentTag = snapshot.component
+      ? ` ${
+        colorize(
+          `[${snapshot.component}]`,
+          ANSI.dim,
+          enableColor,
+        )
+      }`
       : "";
-    const redactedContext = redactForSerialization(mergedContext);
     const contextText = formatContextText(
-      isRecord(redactedContext) ? redactedContext : { unreadable_context: REDACTED },
-      sanitizeSerializedError(error),
+      snapshot.context,
+      snapshot.error,
       enableColor,
     );
 
-    return `${timestamp}  ${tag} ${glyph}${componentTag} ${
-      sanitizeUrlCredentials(message)
-    }${contextText}`;
+    return `${timestamp}  ${tag} ${glyph}${componentTag} ${snapshot.message}${contextText}`;
   }
 
   private log(
@@ -523,17 +628,18 @@ class ConsoleLogger implements Logger {
     const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
     if (resolvedLevel > logLevel) return;
 
+    const snapshot = this.createSnapshot(message, args);
     let entry: LogEntry | undefined;
     const line = resolvedFormat === "json"
       ? (() => {
-        entry = this.createEntry(level, message, args);
+        entry = this.createEntry(level, snapshot);
         return JSON.stringify(entry);
       })()
-      : this.formatTextLine(level, message, args);
+      : this.formatTextLine(level, snapshot);
 
     if (logRecordEmitter) {
       try {
-        logRecordEmitter(entry ?? this.createEntry(level, message, args));
+        logRecordEmitter(entry ?? this.createEntry(level, snapshot));
       } catch (_) {
         /* do not let telemetry export failures affect application logging */
       }

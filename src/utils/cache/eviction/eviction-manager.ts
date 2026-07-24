@@ -41,6 +41,17 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     this.onEvict = options.onEvict;
   }
 
+  private notifyEviction(key: string, value: unknown): void {
+    try {
+      this.onEvict?.(key, value);
+    } catch (error) {
+      logger.warn("onEvict callback threw during eviction", {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   evictIfNeeded(
     cache: Map<string, TEntry>,
     lruTracker: LRUTrackerInterface,
@@ -48,23 +59,51 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     maxSize: number,
     maxMemory: number,
   ): void {
+    if (!Number.isSafeInteger(newEntrySize) || newEntrySize < 0) {
+      throw new RangeError("newEntrySize must be a non-negative safe integer");
+    }
+    if (!Number.isSafeInteger(maxSize) || maxSize <= 0) {
+      throw new RangeError("maxSize must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(maxMemory) || maxMemory < 0) {
+      throw new RangeError("maxMemory must be a non-negative safe integer");
+    }
+    if (newEntrySize > maxMemory) {
+      throw new RangeError("newEntrySize cannot exceed maxMemory");
+    }
+
     while (cache.size >= maxSize) {
+      const previousSize = cache.size;
       this.evictLRU(cache, lruTracker);
+      if (cache.size >= previousSize) {
+        throw new Error("Unable to evict an entry from the LRU tracker");
+      }
     }
 
     let memoryUsed = 0;
     for (const entry of cache.values()) {
+      if (!Number.isSafeInteger(entry.size) || entry.size < 0) {
+        throw new RangeError("Cache entry sizes must be non-negative safe integers");
+      }
       memoryUsed += entry.size;
+      if (!Number.isSafeInteger(memoryUsed)) {
+        throw new RangeError("Cache memory usage exceeds the safe integer range");
+      }
     }
 
     while (memoryUsed + newEntrySize > maxMemory && cache.size > 0) {
-      memoryUsed -= this.evictLRU(cache, lruTracker);
+      const previousSize = cache.size;
+      const evictedSize = this.evictLRU(cache, lruTracker);
+      if (cache.size >= previousSize) {
+        throw new Error("Unable to evict an entry from the LRU tracker");
+      }
+      memoryUsed -= evictedSize;
     }
   }
 
   evictLRU(cache: Map<string, TEntry>, lruTracker: LRUTrackerInterface): number {
     const keyToEvict = lruTracker.getLRU();
-    if (!keyToEvict) return 0;
+    if (keyToEvict === undefined) return 0;
 
     const entry = cache.get(keyToEvict);
     const size = entry?.size ?? 0;
@@ -72,9 +111,7 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     cache.delete(keyToEvict);
     lruTracker.remove(keyToEvict);
 
-    if (entry) {
-      this.onEvict?.(keyToEvict, entry.value);
-    }
+    if (entry) this.notifyEviction(keyToEvict, entry.value);
 
     return size;
   }
@@ -96,14 +133,7 @@ export class EvictionManager<TEntry extends EvictableEntry> {
       this.cleanupTags(tags, node.key, tagIndex);
     }
 
-    try {
-      this.onEvict?.(node.key, node.entry.value);
-    } catch (error) {
-      logger.warn("onEvict callback threw during eviction", {
-        key: node.key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    this.notifyEviction(node.key, node.entry.value);
 
     return currentSize - node.entry.size;
   }
@@ -146,6 +176,7 @@ export class EvictionManager<TEntry extends EvictableEntry> {
 
       cache.delete(key);
       lruTracker.remove(key);
+      this.notifyEviction(key, entry.value);
       evicted++;
     }
 
@@ -155,12 +186,12 @@ export class EvictionManager<TEntry extends EvictableEntry> {
   isExpired(entry: TEntry, ttl?: number, now: number = Date.now()): boolean {
     const expiry = entry.expiry;
     if (typeof expiry === "number") {
-      return now > expiry;
+      return now >= expiry;
     }
 
     const timestamp = entry.timestamp;
     if (typeof timestamp === "number" && typeof ttl === "number") {
-      return now - timestamp > ttl;
+      return now - timestamp >= ttl;
     }
 
     return false;
