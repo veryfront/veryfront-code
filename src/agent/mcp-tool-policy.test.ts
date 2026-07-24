@@ -1,10 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { AgentMcpToolPolicy } from "./types.ts";
@@ -66,6 +61,16 @@ function assertPermissionDenied(error: unknown, detail: string) {
   assertEquals(error.slug, "permission-denied");
   assertEquals(error.message, detail);
   assertEquals(error.detail, detail);
+}
+
+function captureThrown(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+
+  throw new Error("Expected function to throw");
 }
 
 describe("agent/mcp-tool-policy", () => {
@@ -140,7 +145,7 @@ describe("agent/mcp-tool-policy", () => {
       ["write_docs"],
     );
 
-    const error = assertThrows(() => gate.assertAllowed("search_docs"));
+    const error = captureThrown(() => gate.assertAllowed("search_docs"));
     assertPermissionDenied(error, "Denied search_docs");
   });
 
@@ -205,7 +210,7 @@ describe("agent/mcp-tool-policy", () => {
 
     policy.deny = ["search_docs"];
 
-    const error = await assertRejects(() => wrapped.search_docs!.execute!({ value: "second" }));
+    const error = captureThrown(() => wrapped.search_docs!.execute!({ value: "second" }));
     assertPermissionDenied(error, "Host tool search_docs denied");
     assertEquals(calls, ["search_docs:first"]);
   });
@@ -216,7 +221,7 @@ describe("agent/mcp-tool-policy", () => {
       deniedDetail: () => detail,
     });
 
-    const error = assertThrows(() => gate.assertAllowed("delete_docs"));
+    const error = captureThrown(() => gate.assertAllowed("delete_docs"));
 
     assertPermissionDenied(error, detail);
   });
