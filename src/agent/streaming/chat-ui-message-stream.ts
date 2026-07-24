@@ -19,6 +19,7 @@ import {
   normalizeChatMessageMetadata,
   normalizeChatUiMessageStream,
 } from "../../chat/chat-ui-message-helpers.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "../../chat/knowledge-source-document.ts";
 
 /** Public API contract for chat UI message stream finish part. */
 export type ChatUiMessageStreamFinishPart = {
@@ -100,6 +101,13 @@ type DataPart = {
   value: unknown;
 };
 
+type OrderedSourceDocumentPart =
+  & Extract<
+    ChatUiMessage["parts"][number],
+    { type: "source-document" }
+  >
+  & { order: number };
+
 type PendingToolDelta = {
   inputText: string;
   chunks: string[];
@@ -109,6 +117,7 @@ type FrameworkUiMessageState = {
   textBlocks: Map<string, OrderedTextBlock>;
   reasoningBlocks: Map<string, OrderedTextBlock>;
   toolParts: Map<string, ToolPart>;
+  sourceDocumentParts: Map<string, OrderedSourceDocumentPart>;
   dataParts: DataPart[];
   pendingToolDeltas: Map<string, PendingToolDelta>;
   nextOrder: number;
@@ -119,6 +128,7 @@ function createFrameworkUiMessageState(): FrameworkUiMessageState {
     textBlocks: new Map(),
     reasoningBlocks: new Map(),
     toolParts: new Map(),
+    sourceDocumentParts: new Map(),
     dataParts: [],
     pendingToolDeltas: new Map(),
     nextOrder: 0,
@@ -361,6 +371,21 @@ function observeChatStreamEvent(input: {
       state.nextOrder += 1;
       return;
     }
+    case "source-document": {
+      if (state.sourceDocumentParts.has(event.sourceId)) {
+        return;
+      }
+      state.sourceDocumentParts.set(event.sourceId, {
+        type: "source-document",
+        sourceId: event.sourceId,
+        mediaType: event.mediaType,
+        title: event.title,
+        ...(event.filename ? { filename: event.filename } : {}),
+        order: state.nextOrder,
+      });
+      state.nextOrder += 1;
+      return;
+    }
     default: {
       if (!event.type.startsWith("data-")) {
         return;
@@ -476,6 +501,11 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
     });
   }
 
+  for (const sourceDocumentPart of state.sourceDocumentParts.values()) {
+    const { order, ...part } = sourceDocumentPart;
+    orderedParts.push({ order, part });
+  }
+
   for (const dataPart of state.dataParts) {
     orderedParts.push({
       order: dataPart.order,
@@ -579,15 +609,34 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         const chatEvents = chatEventEncoder.encode(event);
         finishReason = chatEventEncoder.state.finishReason;
         for (const chatEvent of chatEvents) {
+          const isDuplicateSourceDocument = chatEvent.type === "source-document" &&
+            state.sourceDocumentParts.has(chatEvent.sourceId);
           observeChatStreamEvent({
             event: chatEvent,
             responseMessageId,
             state,
           });
           const chunk = toUiChunk(chatEvent);
-          if (chunk) {
+          if (chunk && !isDuplicateSourceDocument) {
             yield chunk;
           }
+
+          if (chatEvent.type !== "tool-output-available") {
+            continue;
+          }
+          const sourceChunk = deriveKnowledgeSourceDocumentChunk({
+            toolName: state.toolParts.get(chatEvent.toolCallId)?.toolName,
+            output: chatEvent.output,
+          });
+          if (!sourceChunk || state.sourceDocumentParts.has(sourceChunk.sourceId)) {
+            continue;
+          }
+          observeChatStreamEvent({
+            event: sourceChunk,
+            responseMessageId,
+            state,
+          });
+          yield sourceChunk;
         }
       }
 

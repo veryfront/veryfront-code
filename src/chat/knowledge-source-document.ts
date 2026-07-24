@@ -1,4 +1,4 @@
-import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
 import { lookup as lookupMediaType } from "#veryfront/platform/compat/media-types.ts";
 
 const GET_FILE_TOOL_NAME = "get_file";
@@ -40,10 +40,12 @@ export function deriveKnowledgeSourceDocumentChunk(input: {
 
   const output = resolveStructuredOutput(input.output);
   const path = output?.path;
+  const content = output?.content;
   if (
     typeof path !== "string" ||
     path.length === 0 ||
-    !path.startsWith(KNOWLEDGE_PATH_PREFIX)
+    !path.startsWith(KNOWLEDGE_PATH_PREFIX) ||
+    typeof content !== "string"
   ) {
     return null;
   }

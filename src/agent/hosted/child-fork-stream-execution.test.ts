@@ -188,6 +188,77 @@ describe("hosted child fork stream execution", () => {
     assertStringIncludes(streamState.finalText, "<function_calls>");
   });
 
+  it("mirrors the same knowledge source document only once", async () => {
+    const chunks: unknown[] = [];
+    const streamState = { finalText: "" };
+    const knowledgePath = "knowledge/product/limits.md";
+
+    const result = await executeHostedChildForkStream({
+      streamResult: {
+        fullStream: partsStream([
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "get_file",
+            input: { path: knowledgePath },
+            output: { path: knowledgePath, content: "# Limits" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-2",
+            toolName: "get_file",
+            input: { path: knowledgePath },
+            output: { path: knowledgePath, content: "# Limits" },
+          },
+        ]),
+        steps: Promise.resolve([createStep({ text: "" })]),
+        totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
+      },
+      abortForkStream: () => undefined,
+      description: "Read knowledge",
+      kind: "invoke_agent",
+      durableRunMirror: true,
+      durableMessageId: "msg-1",
+      durableReasoningMessageId: "reasoning-1",
+      durableMirrorState: { reasoningStarted: false, textStarted: false },
+      appendDurableMirrorChunk: (chunk) => {
+        chunks.push(chunk);
+        return Promise.resolve();
+      },
+      closeDurableMirrorReasoning: () => Promise.resolve(),
+      closeDurableMirrorText: () => Promise.resolve(),
+      markDurableStepStarted: () => undefined,
+      durableMirrorHasEmittedProgress: () => true,
+      pendingToolLifecycle: createPendingToolLifecycle(chunks),
+      toolCalls: [],
+      toolResults: [],
+      streamState,
+      maxSteps: 10,
+      startTime: Date.now(),
+      finalizationTimeoutMs: 100,
+      idleTimeoutMs: 1_000,
+      activeToolTimeoutMs: 1_000,
+      postToolIdleTimeoutMs: 1_000,
+    });
+
+    assertEquals(result.success, true);
+    assertEquals(
+      chunks.filter((chunk) =>
+        typeof chunk === "object" &&
+        chunk !== null &&
+        "type" in chunk &&
+        chunk.type === "source-document"
+      ),
+      [{
+        type: "source-document",
+        sourceId: knowledgePath,
+        mediaType: "text/markdown",
+        title: knowledgePath,
+        filename: knowledgePath,
+      }],
+    );
+  });
+
   it("builds failure result and snapshot for child fork errors", async () => {
     const writeLogs: unknown[] = [];
     const snapshots: unknown[] = [];

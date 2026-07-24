@@ -1,5 +1,6 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
 describe("generate-api-reference", () => {
   it("documents alias re-exports from Deno doc reference declarations", async () => {
@@ -43,12 +44,27 @@ describe("generate-api-reference", () => {
       const rootReference = await Deno.readTextFile(
         `${outputDir}/veryfront/index.md`,
       );
+      const clientReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/index.client.md`,
+      );
+      const uiReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/ui.md`,
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
         ),
         false,
         "generated reference pages must not duplicate the frontmatter description as body copy",
+      );
+      assertEquals(
+        clientReference.includes("#veryfront/"),
+        false,
+        "generated client reference must not expose internal import specifiers",
+      );
+      assertStringIncludes(
+        uiReference,
+        "| `AppShellProps` | Props accepted by `AppShell`. |",
       );
       assertStringIncludes(
         routerReference,
@@ -124,6 +140,13 @@ describe("generate-api-reference", () => {
         const markdown = await Deno.readTextFile(
           `${outputDir}/veryfront/${entry.name}`,
         );
+        try {
+          await compile(markdown);
+        } catch (error) {
+          throw new Error(`${entry.name} must compile as MDX`, {
+            cause: error,
+          });
+        }
         for (const line of markdown.split("\n")) {
           const description =
             line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
@@ -168,6 +191,11 @@ describe("generate-api-reference", () => {
           markdown.includes("#L0"),
           false,
           `${entry.name} must not contain invalid source line anchors`,
+        );
+        assertEquals(
+          markdown.includes("{@"),
+          false,
+          `${entry.name} must not contain raw inline JSDoc tags`,
         );
       }
     } finally {

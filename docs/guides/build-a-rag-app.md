@@ -162,6 +162,10 @@ export const POST = createAgUiHandler("rag", {
 Veryfront wraps retrieved context before it reaches the model. Treat retrieved
 documents as reference data, not instructions.
 
+Studio Knowledge Q&A agents use native source citations. When you build inside
+Studio, keep citation display enabled so answers point back to the retrieved
+documents that supported them.
+
 ## Add the chat UI
 
 Use the app-mode `Chat` component with `useUploadsRegistry()` and
