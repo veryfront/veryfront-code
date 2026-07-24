@@ -17,6 +17,10 @@ import {
   MAX_CORS_TOKEN_COUNT,
   MAX_CORS_TOKEN_LENGTH,
 } from "#veryfront/utils/cors-policy-limits.ts";
+import {
+  MAX_REMOTE_HOST_COUNT,
+  MAX_REMOTE_HOST_URL_LENGTH,
+} from "#veryfront/utils/remote-host-policy-limits.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 
@@ -352,7 +356,10 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             )
             .optional(),
           csp: v.record(v.string(), v.array(v.string())).optional(),
-          remoteHosts: v.array(v.string().url()).optional(),
+          remoteHosts: v
+            .array(v.string().max(MAX_REMOTE_HOST_URL_LENGTH).url())
+            .max(MAX_REMOTE_HOST_COUNT)
+            .optional(),
           cors: getCorsSchema().optional(),
           /**
            * CSRF protection using the double-submit cookie pattern.

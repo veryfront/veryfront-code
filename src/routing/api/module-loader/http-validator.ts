@@ -1,18 +1,22 @@
 import { createError, toError } from "#veryfront/errors";
 
+const apply = Reflect.apply;
+const arraySome = Array.prototype.some;
+const NativeURL = URL;
+
 export function isAllowedRemoteHost(url: URL, allowedHosts: string[]): boolean {
-  return allowedHosts.some((host) => {
-    try {
-      return new URL(host).origin === url.origin;
-    } catch (_) {
-      return false;
-    }
-  });
+  return apply(arraySome, allowedHosts, [
+    (host: string) => {
+      try {
+        return new NativeURL(host).origin === url.origin;
+      } catch (_) {
+        return false;
+      }
+    },
+  ]) as boolean;
 }
 
 export function validateHTTPImports(source: string, allowedHosts: string[]): void {
-  if (!allowedHosts?.length) return;
-
   const importRegex = /import\s+(?:[\w\s{},*]+\s+from\s+)?['"]https?:\/\/[^'"]+['"]/g;
   const dynamicImportRegex = /import\s*\(['"]https?:\/\/[^'"]+['"]\)/g;
 
