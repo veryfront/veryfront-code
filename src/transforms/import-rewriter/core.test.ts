@@ -21,6 +21,11 @@ import {
 } from "#veryfront/routing/api/module-loader/external-import-rewriter.ts";
 import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
 import { rewriteWithImportRewriteCore } from "./core.ts";
+import {
+  rewriteCompiledVeryfrontImportsForRoute,
+  rewriteDenoNodeBuiltinsForRoute,
+  rewriteDenoNpmDependencyImportsForRoute,
+} from "./route-adapter.ts";
 import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
 import {
   pickPackageExportEntry,
@@ -329,6 +334,55 @@ describe("import rewrite core runner", () => {
     });
 
     assertEquals(out, `const x = "handled";`);
+  });
+});
+
+describe("route import Adapter", () => {
+  it("preserves route compiled Veryfront shim parity with the facade", () => {
+    const code = `const a = import("veryfront/react/head");`;
+
+    assertEquals(
+      rewriteCompiledVeryfrontImportsForRoute(code),
+      rewriteCompiledBinaryVeryfrontImports(code),
+    );
+    assertEquals(
+      rewriteCompiledVeryfrontImportsForRoute(code),
+      `const a = import("./_vf_react_head.mjs");`,
+    );
+  });
+
+  it("preserves route Deno builtin parity with the facade", () => {
+    const code = `const p = import("path");`;
+
+    assertEquals(rewriteDenoNodeBuiltinsForRoute(code), rewriteDenoNodeBuiltinImports(code));
+    assertEquals(rewriteDenoNodeBuiltinsForRoute(code), `const p = import("node:path");`);
+  });
+
+  it("preserves route regex scope for import-looking strings", () => {
+    const code = `const source = 'import x from "veryfront/react/head"; import("path");';`;
+
+    assertEquals(
+      rewriteDenoNodeBuiltinsForRoute(rewriteCompiledVeryfrontImportsForRoute(code)),
+      `const source = 'import x from "./_vf_react_head.mjs"; import("node:path");';`,
+    );
+  });
+
+  it("preserves Deno npm installed-version fallback to the declared range", async () => {
+    const fs = createFileSystem();
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-route-adapter-" });
+    try {
+      assertEquals(
+        await rewriteDenoNpmDependencyImportsForRoute(
+          `import merge from "lodash/merge";`,
+          projectDir,
+          fs,
+          new Map([["lodash", "^4"]]),
+        ),
+        `import merge from "npm:lodash@^4/merge";`,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 
