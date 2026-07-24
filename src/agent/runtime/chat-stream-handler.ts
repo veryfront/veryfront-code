@@ -27,6 +27,12 @@ import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import type { StreamLifecycleMode } from "./stream-lifecycle-mode.ts";
+import {
+  createStreamLifecycleShadow,
+  type StreamLifecycleShadowDivergence,
+  type StreamLifecycleShadowReport,
+} from "./stream-lifecycle-shadow.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import {
   redactSensitive,
@@ -137,6 +143,8 @@ export interface ChatStreamCallbacks {
   availableToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
+  streamLifecycleMode?: StreamLifecycleMode;
+  onLifecycleShadowReport?: (report: StreamLifecycleShadowReport) => void;
   traceSpanName?: string;
   traceAttributes?: Record<string, TraceAttributeValue>;
 }
@@ -326,6 +334,14 @@ export function createStreamState(): ChatStreamState {
  * - tool-call → tool-input-available SSE (accumulated input)
  * - finish → captures finishReason and usage
  */
+interface ProcessStreamInternals {
+  createShadow: typeof createStreamLifecycleShadow;
+}
+
+const defaultProcessStreamInternals: ProcessStreamInternals = {
+  createShadow: createStreamLifecycleShadow,
+};
+
 export function processStream(
   result: RuntimeStreamResult,
   state: ChatStreamState,
@@ -334,6 +350,28 @@ export function processStream(
   textPartId: string | undefined,
   callbacks?: ChatStreamCallbacks,
   abortSignal?: AbortSignal,
+): Promise<void> {
+  return processStreamInternal(
+    result,
+    state,
+    controller,
+    encoder,
+    textPartId,
+    callbacks,
+    abortSignal,
+    defaultProcessStreamInternals,
+  );
+}
+
+export function processStreamInternal(
+  result: RuntimeStreamResult,
+  state: ChatStreamState,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  textPartId: string | undefined,
+  callbacks: ChatStreamCallbacks | undefined,
+  abortSignal: AbortSignal | undefined,
+  internals: ProcessStreamInternals,
 ): Promise<void> {
   const traceAttributes = {
     "gen_ai.operation.name": "chat",
@@ -344,6 +382,13 @@ export function processStream(
 
   const process = async () => {
     let eventCount = 0;
+    let shadowLifecycle = callbacks?.streamLifecycleMode === "shadow"
+      ? internals.createShadow({
+        availableToolNames: callbacks?.availableToolNames ?? [],
+        providerExecutedToolNames: callbacks?.providerExecutedToolNames ?? [],
+      })
+      : null;
+    let shadowLifecycleFailed = false;
     let textOpen = false;
     let activeReasoningId: string | null = null;
     const reasoningParts = new Map<string, StreamingReasoningPart>();
@@ -611,6 +656,12 @@ export function processStream(
 
       const part = next.value;
       throwIfAborted(abortSignal);
+      try {
+        shadowLifecycle?.observePart(part);
+      } catch {
+        shadowLifecycleFailed = true;
+        shadowLifecycle = null;
+      }
       eventCount++;
 
       if (!isRecord(part) || typeof part.type !== "string") {
@@ -1068,6 +1119,28 @@ export function processStream(
     }
 
     throwIfAborted(abortSignal);
+
+    if (callbacks?.streamLifecycleMode === "shadow") {
+      let observed: StreamLifecycleShadowReport = { count: 0, categories: [] };
+      try {
+        observed = shadowLifecycle?.compareLegacySnapshot(state) ?? observed;
+      } catch {
+        shadowLifecycleFailed = true;
+      }
+      const categories = new Set<StreamLifecycleShadowDivergence>(
+        observed.categories,
+      );
+      if (shadowLifecycleFailed) categories.add("shadow_error");
+      const report: StreamLifecycleShadowReport = {
+        count: categories.size,
+        categories: [...categories].sort(),
+      };
+      callbacks.onLifecycleShadowReport?.(report);
+      setActiveSpanAttributes({
+        "stream.lifecycle_shadow.divergence_count": report.count,
+        "stream.lifecycle_shadow.divergence_categories": [...report.categories],
+      });
+    }
 
     setActiveSpanAttributes({
       "stream.event_count": eventCount,

@@ -459,13 +459,15 @@ function normalizeRuntimeUsage(
     Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"]
   >,
 ): StreamUsage {
+  const inputTokens = usage.inputTokens ?? 0;
+  const outputTokens = usage.outputTokens ?? 0;
+  const cachedInputTokens = usage.cachedInputTokens ??
+    usage.cacheReadInputTokens;
   return {
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-    totalTokens: usage.totalTokens ?? 0,
-    ...(usage.cachedInputTokens !== undefined
-      ? { cachedInputTokens: usage.cachedInputTokens }
-      : {}),
+    inputTokens,
+    outputTokens,
+    totalTokens: usage.totalTokens ?? inputTokens + outputTokens,
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(usage.cacheCreationInputTokens !== undefined
       ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
       : {}),

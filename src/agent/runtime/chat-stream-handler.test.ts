@@ -13,8 +13,13 @@ import { createMockResult, createSSECollector } from "./chat-stream-handler.test
 import {
   createStreamState,
   processStream,
+  processStreamInternal,
   summarizeProviderToolDebugValue,
 } from "./chat-stream-handler.ts";
+import {
+  type createStreamLifecycleShadow,
+  type StreamLifecycleShadowReport,
+} from "./stream-lifecycle-shadow.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -1771,5 +1776,83 @@ describe("chat-stream-handler", () => {
         { type: "text-end", id: "t" },
       ]);
     });
+  });
+});
+
+describe("stream lifecycle shadow mode", () => {
+  type FixtureProcess = typeof processStream;
+
+  async function runTextFixture(input: {
+    mode: "legacy" | "shadow";
+    process?: FixtureProcess;
+  }) {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    let report: StreamLifecycleShadowReport | undefined;
+    await (input.process ?? processStream)(
+      createMockResult([
+        { type: "text-delta", text: "hello" },
+        { type: "finish", finishReason: "stop" },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: input.mode,
+        onLifecycleShadowReport: (next) => report = next,
+      },
+      undefined,
+    );
+    return { events, state, report };
+  }
+
+  it("keeps SSE and state identical when the shadow observer throws", async () => {
+    const throwingShadowFactory: typeof createStreamLifecycleShadow = () => ({
+      observePart() {
+        throw new Error("shadow-only failure");
+      },
+      compareLegacySnapshot() {
+        return { count: 1, categories: ["shadow_error"] };
+      },
+    });
+
+    const legacy = await runTextFixture({ mode: "legacy" });
+    const shadow = await runTextFixture({
+      mode: "shadow",
+      process: (
+        result,
+        state,
+        controller,
+        encoder,
+        textPartId,
+        callbacks,
+        abortSignal,
+      ) =>
+        processStreamInternal(
+          result,
+          state,
+          controller,
+          encoder,
+          textPartId,
+          callbacks,
+          abortSignal,
+          { createShadow: throwingShadowFactory },
+        ),
+    });
+
+    assertEquals(shadow.events, legacy.events);
+    assertEquals(shadow.state, legacy.state);
+    assertEquals(shadow.report, { count: 1, categories: ["shadow_error"] });
+  });
+
+  it("reports zero divergences for a matching text stream", async () => {
+    const shadow = await runTextFixture({ mode: "shadow" });
+    assertEquals(shadow.report, { count: 0, categories: [] });
+  });
+
+  it("does not build a shadow or report in legacy mode", async () => {
+    const legacy = await runTextFixture({ mode: "legacy" });
+    assertEquals(legacy.report, undefined);
   });
 });

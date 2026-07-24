@@ -130,6 +130,7 @@ export {
 } from "./provider-tool-compat.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
+import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -1532,6 +1533,7 @@ export class AgentRuntime {
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
         availableToolNames: runtimeToolNames,
+        streamLifecycleMode: resolveStreamLifecycleModeFromEnv(),
         traceSpanName: `chat ${effectiveModel}`,
         traceAttributes: {
           ...(genAiProviderName ? { "gen_ai.provider.name": genAiProviderName } : {}),
