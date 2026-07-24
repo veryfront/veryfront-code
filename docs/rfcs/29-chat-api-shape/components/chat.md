@@ -371,10 +371,6 @@ Today's `icon` prop falls to the **icon-slot ban**; `retryLabel` becomes childre
   ...UseChatResult,          // messages, status, error, streamingMessageId, sendMessage, stop, reload, …
   isEmpty: boolean           // derived — the selector field the RFC examples use
   ready: boolean             // ChatRoot reads activeReady from the nearest ConversationsProvider; standalone: true
-  isEmpty: boolean
-  ready: boolean
-  hasError: boolean
-  isStreaming: boolean
 }
 ```
 

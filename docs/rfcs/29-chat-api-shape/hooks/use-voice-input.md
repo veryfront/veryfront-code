@@ -47,12 +47,12 @@ interface UseVoiceInputResult {
 
 ### State
 
-| Name          | Type      | Description                                              |
-| ------------- | --------- | -------------------------------------------------------- |
-| `isSupported` | `boolean` | Whether speech recognition is available in this browser. |
-| `isListening` | `boolean` | Dictation currently active.                              |
-| `transcript`  | `string`  | Recognized text so far.                                  |
-| `error`       | —         | Recognition error, if any.                               |
+| Name          | Type            | Description                                              |
+| ------------- | --------------- | -------------------------------------------------------- |
+| `isSupported` | `boolean`       | Whether speech recognition is available in this browser. |
+| `isListening` | `boolean`       | Dictation currently active.                              |
+| `transcript`  | `string`        | Recognized text so far.                                  |
+| `error`       | `Error \| null` | Recognition error, if any.                               |
 
 ### Actions
 

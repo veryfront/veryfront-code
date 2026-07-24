@@ -101,7 +101,7 @@ Messages are typed `ChatMessage<TMetadata, TDataParts, TTools>` (AI SDK v5 `UIMe
 
 ### Prop getters
 
-None — `useChat` owns session state, not interactive nodes. Getters live on the hooks that own elements ([`useChatInput`](#), [`useChatScroll`](./use-chat-scroll.md), …).
+None — `useChat` owns session state, not interactive nodes. Getters live on the hooks that own elements ([`useChatInput`](./use-chat-input.md), [`useChatScroll`](./use-chat-scroll.md), …).
 
 ### Not here (by design)
 

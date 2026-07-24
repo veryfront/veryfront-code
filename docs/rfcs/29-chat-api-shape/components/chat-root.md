@@ -109,10 +109,6 @@ Today `ChatRootProps` threads **25 individual props** plus native div attributes
   isEmpty: boolean      // derived; used by Chat.If selectors
   ready: boolean        // ChatRoot reads activeReady from the nearest
                         // ConversationsProvider; standalone: true
-  isEmpty: boolean
-  ready: boolean
-  hasError: boolean
-  isStreaming: boolean
 }
 ```
 

@@ -15,11 +15,15 @@ import { useUpload } from "veryfront/chat";
 ```ts
 function useUpload(options: {
   api?: string; // one of api | transport
-  transport?: Transport;
+  transport?: UploadTransport;
   accept?: string;
   maxSize?: number;
   maxFiles?: number;
 }): UseUploadResult;
+
+interface UploadTransport {
+  upload(files: File[]): Promise<AttachmentInfo[]>;
+}
 
 interface UseUploadResult {
   attachments: AttachmentInfo[];
@@ -34,12 +38,13 @@ interface UseUploadResult {
 
 ## Options
 
-| Option               | Type                         | Description                                   |
-| -------------------- | ---------------------------- | --------------------------------------------- |
-| `api` \| `transport` | `string` \| transport object | Where uploads go — endpoint URL or transport. |
-| `accept`             | `string`                     | Accepted file types.                          |
-| `maxSize`            | `number`                     | Maximum file size.                            |
-| `maxFiles`           | `number`                     | Maximum number of pending files.              |
+| Option      | Type              | Description                                           |
+| ----------- | ----------------- | ----------------------------------------------------- |
+| `api`       | `string`          | Upload endpoint. Provide either `api` or `transport`. |
+| `transport` | `UploadTransport` | Custom upload transport, as an alternative to `api`.  |
+| `accept`    | `string`          | Accepted file types.                                  |
+| `maxSize`   | `number`          | Maximum file size.                                    |
+| `maxFiles`  | `number`          | Maximum number of pending files.                      |
 
 ## Returns
 

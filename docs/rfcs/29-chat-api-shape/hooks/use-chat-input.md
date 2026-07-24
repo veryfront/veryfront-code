@@ -70,12 +70,12 @@ Options are the `ChatInput.Root` props minus the DOM props.
 
 ### Actions
 
-| Name     | Type              | Description                                              |
-| -------- | ----------------- | -------------------------------------------------------- |
-| `submit` | `() => void`      | Fold attachments → guard while uploading → send → clear. |
-| `stop`   | `() => void`      | Abort the in-flight response.                            |
-| `clear`  | `() => void`      | Clear the input value.                                   |
-| `attach` | `(files: FileList | File[]) => void`                                         |
+| Name     | Type                                  | Description                                              |
+| -------- | ------------------------------------- | -------------------------------------------------------- |
+| `submit` | `() => void`                          | Fold attachments → guard while uploading → send → clear. |
+| `stop`   | `() => void`                          | Abort the in-flight response.                            |
+| `clear`  | `() => void`                          | Clear the input value.                                   |
+| `attach` | `(files: FileList \| File[]) => void` | Add files to the pending upload set.                     |
 
 ### Prop getters
 
