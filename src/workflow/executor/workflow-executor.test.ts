@@ -264,6 +264,37 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(observedPolicy, expectedPolicy);
   });
 
+  it("activates and calls onStart before resolving dynamic workflow nodes", async () => {
+    const backend = new MemoryBackend();
+    const events: string[] = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      onStart: () => {
+        events.push("onStart");
+      },
+    });
+    executor.register(
+      workflow({
+        id: "dynamic-node-resolution-failure",
+        steps: () => {
+          events.push("resolveNodes");
+          throw new Error("dynamic steps exploded");
+        },
+      }).definition,
+    );
+
+    const handle = await executor.start("dynamic-node-resolution-failure", {});
+    await handle.settled();
+
+    const failedRun = await backend.getRun(handle.runId);
+    assertExists(failedRun);
+    assertEquals(events, ["onStart", "resolveNodes"]);
+    assertEquals(failedRun.status, "failed");
+    assertEquals(failedRun.error?.message, "dynamic steps exploded");
+    assertEquals(failedRun.startedAt instanceof Date, true);
+  });
+
   it("does not complete a run after worker ownership changes during execution", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });

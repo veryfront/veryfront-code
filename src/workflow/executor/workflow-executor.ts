@@ -376,14 +376,6 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
-    const nodes = this.resolveNodes(workflow, run.context);
-    const runWithTenantContext: WorkflowRun = run._tenant
-      ? {
-        ...run,
-        context: { ...run.context, _tenant: run._tenant },
-      }
-      : run;
-
     await executeWorkflowRunControl({
       backend: this.config.backend,
       run,
@@ -402,8 +394,16 @@ export class WorkflowExecutor {
         }
       },
       isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
-      execute: ({ controller, signal, ownership }) =>
-        runWithWorkflowTenant(run._tenant, () =>
+      execute: ({ controller, signal, ownership }) => {
+        const nodes = this.resolveNodes(workflow, run.context);
+        const runWithTenantContext: WorkflowRun = run._tenant
+          ? {
+            ...run,
+            context: { ...run.context, _tenant: run._tenant },
+          }
+          : run;
+
+        return runWithWorkflowTenant(run._tenant, () =>
           this.executeWithTimeout(
             () =>
               this.dagExecutor.execute(
@@ -415,7 +415,8 @@ export class WorkflowExecutor {
               ),
             workflow.timeout,
             controller,
-          )),
+          ));
+      },
       onStart: (startedRun) => {
         this.config.onStart?.(startedRun);
       },
