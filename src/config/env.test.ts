@@ -58,8 +58,10 @@ const BASE_MOCK_ENV: EnvironmentConfig = {
   disableLruInterval: false,
   appUrl: undefined,
   port: 3000,
+  portSource: "environment",
   requestTimeoutMs: undefined,
   httpFetchTimeoutMs: undefined,
+  extensionSetupTimeoutMs: undefined,
   ssrMaxConcurrentTransforms: 3,
   otelEnabled: false,
   otelServiceName: undefined,
@@ -118,10 +120,10 @@ describe("config/env", () => {
       );
     });
 
-    it("should return default when env value is 0", () => {
+    it("should preserve 0 so callers can disable the concurrency limit", () => {
       assertEquals(
         getSsrMaxConcurrentTransformsEnv(50, createMockEnv({ ssrMaxConcurrentTransforms: 0 })),
-        50,
+        0,
       );
     });
   });

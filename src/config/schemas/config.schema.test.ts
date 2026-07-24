@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
@@ -13,6 +14,140 @@ describe("configSchema", () => {
 
     assertEquals(cfg.router, "app");
     assertEquals(findUnknownTopLevelKeys({ foo: 1, router: "pages" }), ["foo"]);
+  });
+
+  it("rejects unknown top-level keys through the public validator", () => {
+    const error = assertThrows(() =>
+      validateVeryfrontConfig({
+        title: "Typo",
+        buid: { outDir: "dist" },
+      })
+    );
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, "config-validation-failed");
+    assertEquals(
+      (error as Error).message,
+      "Unknown config keys: buid. Check for typos in veryfront.config.",
+    );
+  });
+
+  it("rejects unknown keys in closed nested configuration objects", () => {
+    const github = { token: "token", owner: "owner", repo: "repo" };
+    for (
+      const [config, path] of [
+        [{ dev: { potr: 4444 } }, "dev"],
+        [{ build: { outDri: "dist" } }, "build"],
+        [{ fs: { type: "github", github: { ...github, cach: {} } } }, "fs.github"],
+        [{ ai: { tools: { discovery: { pahts: [] } } } }, "ai.tools.discovery"],
+      ] as const
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig(config),
+        Error,
+        `Invalid veryfront.config at ${path}:`,
+      );
+    }
+  });
+
+  it("preserves values in intentional dynamic extension points", () => {
+    const config = validateVeryfrontConfig({
+      theme: { colors: { brand: "#123456" } },
+      resolve: {
+        importMap: {
+          imports: { package: "https://example.com/package.ts" },
+          scopes: { "/feature/": { package: "https://example.com/scoped.ts" } },
+        },
+      },
+      ai: {
+        providers: {
+          custom: {
+            apiKey: "key",
+            providerSpecificOption: { mode: "strict" },
+          },
+        },
+      },
+      tailwind: {
+        theme: {
+          extend: { spacing: { wide: "42rem" } },
+        },
+      },
+    });
+
+    assertEquals(config.theme?.colors?.brand, "#123456");
+    assertEquals(
+      config.resolve?.importMap?.scopes?.["/feature/"]?.package,
+      "https://example.com/scoped.ts",
+    );
+    assertEquals(
+      config.ai?.providers?.custom?.providerSpecificOption,
+      { mode: "strict" },
+    );
+    assertEquals(config.tailwind?.theme?.extend?.spacing, { wide: "42rem" });
+  });
+
+  it("rejects empty configured authentication credentials", () => {
+    for (
+      const auth of [
+        { basic: { username: "", password: "password" } },
+        { basic: { username: "user", password: "" } },
+        { bearer: { token: "" } },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { auth } }),
+        Error,
+        "Invalid veryfront.config at security.auth",
+      );
+    }
+  });
+
+  it("rejects ambiguous authentication modes", () => {
+    assertThrows(
+      () =>
+        validateVeryfrontConfig({
+          security: {
+            auth: {
+              basic: { username: "user", password: "password" },
+              bearer: { token: "token" },
+            },
+          },
+        }),
+      Error,
+      "Configure either basic or bearer authentication, not both",
+    );
+  });
+
+  it("rejects filesystem options that do not match the selected backend", () => {
+    const github = { token: "token", owner: "owner", repo: "repo" };
+    const veryfront = { apiBaseUrl: "https://api.veryfront.com" };
+
+    for (
+      const fs of [
+        { github },
+        { type: "local", github },
+        { type: "github" },
+        { type: "github", github, local: { baseDir: "/tmp" } },
+        { type: "veryfront-api" },
+        { type: "veryfront-api", veryfront, memory: { files: {} } },
+        { type: "memory", veryfront },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ fs }),
+        Error,
+        "Filesystem options must belong to the selected backend type",
+      );
+    }
+
+    assertEquals(
+      validateVeryfrontConfig({ fs: { type: "github", github } }).fs?.type,
+      "github",
+    );
+    assertEquals(
+      validateVeryfrontConfig({ fs: { type: "veryfront-api", veryfront } }).fs?.type,
+      "veryfront-api",
+    );
   });
 
   it("accepts build.ssg as a boolean", () => {
@@ -34,12 +169,107 @@ describe("configSchema", () => {
     );
   });
 
+  it("returns registered validation errors without retaining the full config", () => {
+    const input = {
+      dev: { port: "invalid" },
+      security: { auth: { bearer: { token: "secret-token" } } },
+    };
+
+    const error = assertThrows(() => validateVeryfrontConfig(input));
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, "config-validation-failed");
+    assertEquals((error as VeryfrontError).context, {
+      field: "dev.port",
+      expected: "Invalid input: expected number, received string",
+    });
+  });
+
+  it("bounds every configured server port", () => {
+    for (
+      const input of [
+        { dev: { port: 0 } },
+        { dev: { port: 65536 } },
+        { dev: { hmrPort: 1.5 } },
+        { dev: { hmrPort: 65536 } },
+        { ai: { mcp: { port: 0 } } },
+        { ai: { mcp: { port: 65536 } } },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig(input),
+        Error,
+        "Invalid veryfront.config at",
+      );
+    }
+
+    const config = validateVeryfrontConfig({
+      dev: { port: 1, hmrPort: 65535 },
+      ai: { mcp: { port: 3001 } },
+    });
+    assertEquals(config.dev?.port, 1);
+    assertEquals(config.dev?.hmrPort, 65535);
+    assertEquals(config.ai?.mcp?.port, 3001);
+  });
+
   it("gives helpful error for invalid cors", () => {
-    assertThrows(
+    const error = assertThrows(
       () => validateVeryfrontConfig({ security: { cors: { origin: 123 } } }),
       Error,
       "Invalid veryfront.config at security.cors:",
     );
+    assertStringIncludes(
+      error.message,
+      "Expected boolean or a CORS object with origin, credentials, methods, allowedHeaders, exposedHeaders, or maxAge.",
+    );
+  });
+
+  it("accepts the complete runtime CORS configuration contract", () => {
+    const origin = (requestOrigin: string) => requestOrigin === "https://example.com";
+    const cors = {
+      origin,
+      credentials: true,
+      methods: ["GET", "POST"],
+      allowedHeaders: ["Authorization"],
+      exposedHeaders: ["X-Request-Id"],
+      maxAge: 3600,
+    };
+
+    assertEquals(validateVeryfrontConfig({ security: { cors } }).security?.cors, cors);
+    assertEquals(
+      validateVeryfrontConfig({
+        security: { cors: { origin: ["https://example.com"] } },
+      }).security?.cors,
+      { origin: ["https://example.com"] },
+    );
+  });
+
+  it("rejects unsafe or malformed CORS configuration", () => {
+    for (
+      const cors of [
+        { origin: "*", credentials: true },
+        { origin: [] },
+        { origin: [""] },
+        { methods: [] },
+        { methods: [""] },
+        { methods: ["GET, POST"] },
+        { methods: ["GET\nInjected"] },
+        { allowedHeaders: [] },
+        { allowedHeaders: ["X Invalid"] },
+        { exposedHeaders: [] },
+        { exposedHeaders: ["X-Valid\r\nInjected"] },
+        { maxAge: -1 },
+        { maxAge: 1.5 },
+        { maxAge: Number.MAX_SAFE_INTEGER + 1 },
+        { headers: ["Authorization"] },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { cors } }),
+        Error,
+        "Invalid veryfront.config at security.cors",
+      );
+    }
   });
 
   it("rejects unsupported bundle manifest backends during validation", () => {
@@ -171,7 +401,13 @@ describe("configSchema", () => {
         render: { ttl: 0.5 },
       },
       fs: {
+        type: "veryfront-api",
         veryfront: { cache: { ttl: 1, maxSize: 2, maxMemory: 3 } },
+      },
+    });
+    const validGithub = validateVeryfrontConfig({
+      fs: {
+        type: "github",
         github: {
           token: "token",
           owner: "owner",
@@ -183,6 +419,7 @@ describe("configSchema", () => {
     assertEquals(valid.cache?.bundleManifest?.ttl, 0);
     assertEquals(valid.cache?.render?.ttl, 0.5);
     assertEquals(valid.fs?.veryfront?.cache?.maxMemory, 3);
+    assertEquals(validGithub.fs?.github?.cache?.ttl, 1);
 
     for (const ttl of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
       assertThrows(
@@ -209,7 +446,10 @@ describe("configSchema", () => {
 
     for (const ttl of [0, -1, 0.5, MAX_CACHE_TTL_MILLISECONDS + 1]) {
       assertThrows(
-        () => validateVeryfrontConfig({ fs: { veryfront: { cache: { ttl } } } }),
+        () =>
+          validateVeryfrontConfig({
+            fs: { type: "veryfront-api", veryfront: { cache: { ttl } } },
+          }),
         Error,
         "Invalid veryfront.config at fs.veryfront.cache.ttl:",
       );
@@ -217,6 +457,7 @@ describe("configSchema", () => {
         () =>
           validateVeryfrontConfig({
             fs: {
+              type: "github",
               github: { token: "token", owner: "owner", repo: "repo", cache: { ttl } },
             },
           }),
@@ -232,14 +473,20 @@ describe("configSchema", () => {
       ]
     ) {
       assertThrows(
-        () => validateVeryfrontConfig({ fs: { veryfront: { cache } } }),
+        () =>
+          validateVeryfrontConfig({
+            fs: { type: "veryfront-api", veryfront: { cache } },
+          }),
         Error,
         "Invalid veryfront.config at fs.veryfront.cache.",
       );
       assertThrows(
         () =>
           validateVeryfrontConfig({
-            fs: { github: { token: "token", owner: "owner", repo: "repo", cache } },
+            fs: {
+              type: "github",
+              github: { token: "token", owner: "owner", repo: "repo", cache },
+            },
           }),
         Error,
         "Invalid veryfront.config at fs.github.cache.",

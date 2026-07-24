@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
@@ -16,6 +16,7 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { setEnv } from "#veryfront/platform/compat/process.ts";
 
 function setup() {
   clearConfigCache();
@@ -58,8 +59,8 @@ export default config as const;
       await stopEsbuild();
     });
 
-    it("rewrites bare veryfront specifiers to a loadable shim", () => {
-      const rewritten = rewriteBareVeryfrontConfigImports(
+    it("rewrites bare veryfront specifiers to a loadable shim", async () => {
+      const rewritten = await rewriteBareVeryfrontConfigImports(
         'import { defineConfig } from "veryfront";\nexport default defineConfig({});',
       );
 
@@ -67,8 +68,8 @@ export default config as const;
       assert(rewritten.includes("data:text/javascript,"), "specifier must point at the shim");
     });
 
-    it("handles single quotes and leaves other specifiers untouched", () => {
-      const rewritten = rewriteBareVeryfrontConfigImports(
+    it("handles single quotes and leaves other specifiers untouched", async () => {
+      const rewritten = await rewriteBareVeryfrontConfigImports(
         "import { defineConfig } from 'veryfront';\nimport other from './local.ts';\nimport 'veryfront';",
       );
 
@@ -76,10 +77,23 @@ export default config as const;
       assert(rewritten.includes("./local.ts"), "relative imports must stay untouched");
     });
 
-    it("does not rewrite veryfront subpath or lookalike specifiers", () => {
+    it("does not rewrite veryfront subpath or lookalike specifiers", async () => {
       const source =
         'import { a } from "veryfront/head";\nimport { b } from "not-veryfront";\nconst s = "veryfront";';
-      assertEquals(rewriteBareVeryfrontConfigImports(source), source);
+      assertEquals(await rewriteBareVeryfrontConfigImports(source), source);
+    });
+
+    it("does not rewrite import-like text outside module declarations", async () => {
+      const source = [
+        "const quoted = 'from \"veryfront\"';",
+        "const sideEffect = 'import \"veryfront\"';",
+        'const pattern = /from "veryfront"/;',
+        'const template = `import "veryfront"`;',
+        '// import "veryfront"',
+        '/* export { defineConfig } from "veryfront" */',
+      ].join("\n");
+
+      assertEquals(await rewriteBareVeryfrontConfigImports(source), source);
     });
 
     it("produces a module whose defineConfig behaves as identity end to end", async () => {
@@ -89,7 +103,7 @@ export default config as const;
       ].join("\n");
 
       const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
-      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
+      const rewritten = await rewriteBareVeryfrontConfigImports(transpiled);
       const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
         default: { projectSlug: string; title: string };
       };
@@ -105,12 +119,28 @@ export default config as const;
       ].join("\n");
 
       const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
-      const rewritten = rewriteBareVeryfrontConfigImports(transpiled);
+      const rewritten = await rewriteBareVeryfrontConfigImports(transpiled);
       const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
         default: { title: string };
       };
 
       assert(module.default.title.startsWith("env:"), "factory must receive an env name");
+    });
+
+    it("bridges getEnv through the active environment scope", async () => {
+      setEnv("VERYFRONT_CONFIG_SHIM_TEST", "scoped-value");
+      const source = [
+        'import { defineConfig, getEnv } from "veryfront";',
+        'export default defineConfig({ title: getEnv("VERYFRONT_CONFIG_SHIM_TEST") });',
+      ].join("\n");
+
+      const transpiled = await transpileConfigSourceForImport(source, "/app/veryfront.config.ts");
+      const rewritten = await rewriteBareVeryfrontConfigImports(transpiled);
+      const module = await import(`data:application/javascript;base64,${btoa(rewritten)}`) as {
+        default: { title: string };
+      };
+
+      assertEquals(module.default.title, "scoped-value");
     });
   });
 
@@ -132,6 +162,31 @@ export default config as const;
       const config3 = await getConfig("/test-project", adapter);
       assert(config3 !== null);
       assert(config3 !== config1, "Expected new object after cache clear");
+    });
+
+    it("does not repopulate the cache from a load invalidated in flight", async () => {
+      const adapter = setup();
+      const projectDir = "/in-flight-clear";
+      const started = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      let firstCheck = true;
+
+      adapter.fs.exists = async () => {
+        if (firstCheck) {
+          firstCheck = false;
+          started.resolve();
+          await resume.promise;
+        }
+        return false;
+      };
+
+      const pending = getConfig(projectDir, adapter);
+      await started.promise;
+      clearConfigCache();
+      resume.resolve();
+      await pending;
+
+      assertEquals(getCachedConfigSync(projectDir), null);
     });
   });
 
@@ -207,6 +262,23 @@ export default config as const;
 
         const config = await getConfig(projectDir, adapter);
         assertEquals(config.title, "JS Project");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("loads config paths containing URL-significant characters", async () => {
+      const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf config #project-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { title: "Encoded Path Project" };';
+
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const config = await getConfig(projectDir, adapter);
+        assertEquals(config.title, "Encoded Path Project");
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -460,6 +532,26 @@ export default config as const;
       assertEquals(getCachedConfigSync("/broken-project"), null);
     });
 
+    it("preserves schema validation errors instead of relabeling them as parse failures", async () => {
+      const adapter = setup();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-invalid-" });
+      const configPath = `${projectDir}/veryfront.config.js`;
+      const source = 'export default { dev: { port: "not-a-port" } };';
+
+      try {
+        await Deno.writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+
+        const error = await assertRejects(() => getConfig(projectDir, adapter));
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "config-validation-failed");
+        assertEquals(getCachedConfigSync(projectDir), null);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("should produce fresh defaults per call after cache clear", async () => {
       const adapter = setup();
 
@@ -514,6 +606,80 @@ export default config as const;
   });
 
   describe("mergeConfigs deep merge", () => {
+    it("does not invent inactive filesystem backend configuration", () => {
+      const merged = mergeConfigs({});
+
+      assertEquals(merged.fs, { type: "local" });
+    });
+
+    it("keeps only the selected filesystem backend outside proxy mode", () => {
+      const merged = mergeConfigs({
+        fs: {
+          type: "github",
+          github: { token: "token", owner: "owner", repo: "repo" },
+        },
+      });
+
+      assertEquals(merged.fs, {
+        type: "github",
+        github: { token: "token", owner: "owner", repo: "repo" },
+      });
+    });
+
+    it("rejects project filesystem overrides when proxy mode owns the backend", () => {
+      setEnv("PROXY_MODE", "1");
+      setEnv("VERYFRONT_API_BASE_URL", "https://api.example.com");
+
+      assertThrows(
+        () => mergeConfigs({ fs: { type: "local" } }),
+        VeryfrontError,
+        "platform-managed in proxy mode",
+      );
+
+      assertEquals(mergeConfigs({}).fs, {
+        type: "veryfront-api",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          proxyMode: true,
+          cache: { enabled: true, ttl: 60_000 },
+          retry: { maxRetries: 3, initialDelay: 500, maxDelay: 5_000 },
+        },
+      });
+    });
+
+    it("fails closed when proxy mode has no valid platform API URL", () => {
+      setEnv("PROXY_MODE", "1");
+
+      for (
+        const apiBaseUrl of [
+          "",
+          "not-a-url",
+          "https://token@example.com",
+          "https://api.example.com/api?target=other",
+          "https://api.example.com/api#fragment",
+        ]
+      ) {
+        setEnv("VERYFRONT_API_BASE_URL", apiBaseUrl);
+        assertThrows(
+          () => mergeConfigs({}),
+          VeryfrontError,
+          apiBaseUrl
+            ? "must be an HTTP(S) base URL without credentials, query, or fragment"
+            : "requires VERYFRONT_API_BASE_URL",
+        );
+      }
+    });
+
+    it("canonicalizes the platform API base URL before consumers concatenate paths", () => {
+      setEnv("PROXY_MODE", "1");
+      setEnv("VERYFRONT_API_BASE_URL", " https://api.example.com/api/// ");
+
+      assertEquals(
+        mergeConfigs({}).fs?.veryfront?.apiBaseUrl,
+        "https://api.example.com/api",
+      );
+    });
+
     it("keeps default cache.render when user overrides only cache.dir", () => {
       const merged = mergeConfigs({ cache: { dir: "/custom" } });
       assertEquals(merged.cache?.dir, "/custom");

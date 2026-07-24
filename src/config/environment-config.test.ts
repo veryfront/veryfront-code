@@ -14,8 +14,10 @@ import {
   getEnvironmentConfig,
   initEnvironmentConfig,
   isEnvironmentConfigInitialized,
+  refreshEnvironmentConfig,
 } from "./environment-config.ts";
 import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
 
 describe("EnvironmentConfig", () => {
   beforeEach(_resetEnvironmentConfig);
@@ -89,6 +91,7 @@ describe("EnvironmentConfig", () => {
       const env = createTestEnvironmentConfig();
 
       expect(env.nodeEnv).toBe("test");
+      expect(env.veryfrontEnv).toBe("test");
       expect(env.debug).toBe(false);
       expect(env.ci).toBe(false);
       expect(env.denoTesting).toBe(false);
@@ -122,6 +125,39 @@ describe("EnvironmentConfig", () => {
       const env = createTestEnvironmentConfig({ nodeEnv: "production" });
 
       expect(env.nodeEnv).toBe("production");
+    });
+
+    it("allows explicit test environment names without inheriting host values", async () => {
+      await withEnv(
+        {
+          NODE_ENV: "production",
+          VERYFRONT_ENV: "production",
+          VERYFRONT_API_TOKEN: "host-api-token",
+          OPENAI_API_KEY: "host-openai-key",
+          REDIS_URL: "redis://host.example:6379",
+          OTEL_EXPORTER_OTLP_ENDPOINT: "https://host-collector.example",
+          HOME: "/host/home",
+        },
+        async () => {
+          _resetEnvironmentConfig();
+
+          const defaultEnv = createTestEnvironmentConfig();
+          const overriddenEnv = createTestEnvironmentConfig({
+            nodeEnv: "development",
+            veryfrontEnv: "preview",
+          });
+
+          expect(defaultEnv.nodeEnv).toBe("test");
+          expect(defaultEnv.veryfrontEnv).toBe("test");
+          expect(overriddenEnv.nodeEnv).toBe("development");
+          expect(overriddenEnv.veryfrontEnv).toBe("preview");
+          expect(defaultEnv.apiToken).toBeUndefined();
+          expect(defaultEnv.openaiApiKey).toBeUndefined();
+          expect(defaultEnv.redisUrl).toBeUndefined();
+          expect(defaultEnv.otelEndpoint).toBeUndefined();
+          expect(defaultEnv.homeDir).toBeUndefined();
+        },
+      );
     });
   });
 
@@ -238,8 +274,10 @@ describe("EnvironmentConfig", () => {
         "disableLruInterval",
         "appUrl",
         "port",
+        "portSource",
         "requestTimeoutMs",
         "httpFetchTimeoutMs",
+        "extensionSetupTimeoutMs",
         "ssrMaxConcurrentTransforms",
         "otelEnabled",
         "otelServiceName",
@@ -248,6 +286,7 @@ describe("EnvironmentConfig", () => {
         "otelMetricsEndpoint",
         "otelTracesExporter",
         "otelMetricsExporter",
+        "otelHeaders",
         "otelMetricsEnabled",
         "openaiApiKey",
         "openaiBaseUrl",
@@ -268,6 +307,81 @@ describe("EnvironmentConfig", () => {
       for (const prop of expectedProps) {
         expect(prop in env).toBe(true);
       }
+    });
+
+    it("parses bounded integer environment values without truncation", async () => {
+      await withEnv(
+        {
+          PORT: " 65535 ",
+          REQUEST_TIMEOUT_MS: "1234",
+          VF_HTTP_FETCH_TIMEOUT: "2345",
+          VF_EXTENSION_SETUP_TIMEOUT_MS: "0",
+          SSR_MAX_CONCURRENT_TRANSFORMS: "0",
+          V8_MAX_OLD_SPACE_SIZE: "4096",
+        },
+        async () => {
+          _resetEnvironmentConfig();
+          const env = refreshEnvironmentConfig();
+
+          expect(env.port).toBe(65535);
+          expect(env.portSource).toBe("environment");
+          expect(env.requestTimeoutMs).toBe(1234);
+          expect(env.httpFetchTimeoutMs).toBe(2345);
+          expect(env.extensionSetupTimeoutMs).toBe(0);
+          expect(env.ssrMaxConcurrentTransforms).toBe(0);
+          expect(env.v8MaxOldSpaceSize).toBe(4096);
+        },
+      );
+    });
+
+    it("falls back safely for malformed or out-of-range integer values", async () => {
+      await withEnv(
+        {
+          PORT: "65536",
+          REQUEST_TIMEOUT_MS: "30000ms",
+          VF_HTTP_FETCH_TIMEOUT: "1.5",
+          VF_EXTENSION_SETUP_TIMEOUT_MS: "2147483648",
+          SSR_MAX_CONCURRENT_TRANSFORMS: "1e2",
+          V8_MAX_OLD_SPACE_SIZE: "-1",
+        },
+        async () => {
+          _resetEnvironmentConfig();
+          const env = refreshEnvironmentConfig();
+
+          expect(env.port).toBe(3000);
+          expect(env.portSource).toBe("default");
+          expect(env.requestTimeoutMs).toBe(30000);
+          expect(env.httpFetchTimeoutMs).toBe(30000);
+          expect(env.extensionSetupTimeoutMs).toBe(30000);
+          expect(env.ssrMaxConcurrentTransforms).toBe(3);
+          expect(env.v8MaxOldSpaceSize).toBeUndefined();
+        },
+      );
+    });
+
+    it("uses standard presence and truth-value semantics for CI and color flags", async () => {
+      await withEnv(
+        {
+          CI: "true",
+          CONTINUOUS_INTEGRATION: "0",
+          NO_COLOR: "",
+          FORCE_COLOR: "0",
+        },
+        async () => {
+          _resetEnvironmentConfig();
+          const env = refreshEnvironmentConfig();
+
+          expect(env.ci).toBe(true);
+          expect(env.continuousIntegration).toBe(false);
+          expect(env.noColor).toBe(true);
+          expect(env.forceColor).toBe(false);
+        },
+      );
+
+      await withEnv({ FORCE_COLOR: "2" }, async () => {
+        _resetEnvironmentConfig();
+        expect(refreshEnvironmentConfig().forceColor).toBe(true);
+      });
     });
   });
 });

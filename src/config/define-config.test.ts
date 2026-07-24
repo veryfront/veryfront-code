@@ -121,6 +121,14 @@ describe("define-config", () => {
       expect(result.title).toBe("App-production");
     });
 
+    it("accepts the minimal environment contract it reads", () => {
+      const result = defineConfigWithEnv(
+        (env) => ({ title: `App-${env}` }),
+        { nodeEnv: "production" },
+      );
+      expect(result.title).toBe("App-production");
+    });
+
     it("should allow environment-specific configuration", () => {
       const testEnv = createTestEnvironmentConfig({ nodeEnv: "production" });
       const result = defineConfigWithEnv(
@@ -261,6 +269,14 @@ describe("define-config", () => {
       await expect(validateConfig({ dev: { port: 99999 } })).rejects.toThrow(
         "dev.port must be a number between",
       );
+    });
+
+    it("should reject non-finite and fractional dev.port values", async () => {
+      for (const port of [1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(validateConfig({ dev: { port } })).rejects.toThrow(
+          "dev.port must be a number between",
+        );
+      }
     });
 
     it("should reject non-number dev.port", async () => {

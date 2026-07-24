@@ -1,12 +1,14 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
 import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
 import { validateLegacyRenderRedisCacheKeyPrefix } from "#veryfront/cache/backends/redis-keyspace.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
+const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
   try {
@@ -18,22 +20,59 @@ function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
 }
 
 // Sub-schemas
+type CorsOriginValidator = (
+  origin: string,
+) => boolean | string;
+
+const getCorsOriginSchema = defineSchema((v) =>
+  v.union([
+    v.string().min(1),
+    v.array(v.string().min(1)).min(1),
+    v.custom<CorsOriginValidator>(
+      (value) => typeof value === "function",
+      "Expected a CORS origin, origin list, or origin validator",
+    ),
+  ])
+);
+
 const getCorsSchema = defineSchema((v) =>
-  v.union([v.boolean(), v.object({ origin: v.string().optional() }).strict()])
+  v.union([
+    v.boolean(),
+    v.object({
+      origin: getCorsOriginSchema().optional(),
+      credentials: v.boolean().optional(),
+      methods: v
+        .array(v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP method"))
+        .min(1)
+        .optional(),
+      allowedHeaders: v
+        .array(v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name"))
+        .min(1)
+        .optional(),
+      exposedHeaders: v
+        .array(v.string().regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name"))
+        .min(1)
+        .optional(),
+      maxAge: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    }).strict().refine(
+      (cors) => !(cors.origin === "*" && cors.credentials),
+      "Cannot use credentials with wildcard origin (*)",
+    ),
+  ])
 );
 
 const getBasicAuthSchema = defineSchema((v) =>
   v.object({
-    username: v.string(),
-    password: v.string(),
+    username: v.string().min(1),
+    password: v.string().min(1),
     realm: v.string().optional(),
-  })
+  }).strict()
 );
 
 const getBearerAuthSchema = defineSchema((v) =>
   v.object({
-    token: v.string(),
-  })
+    token: v.string().min(1),
+  }).strict()
 );
 
 const getEmbeddingDimensionSchema = defineSchema((v) =>
@@ -44,6 +83,22 @@ const getEmbeddingDimensionSchema = defineSchema((v) =>
     v.literal(3072),
     v.literal(4096),
   ])
+);
+
+const getAiDiscoveryContainerSchema = defineSchema((v) =>
+  v
+    .object({
+      discovery: v
+        .object({
+          enabled: v.boolean().optional(),
+          paths: v.array(v.string()).optional(),
+        })
+        .partial()
+        .strict()
+        .optional(),
+    })
+    .partial()
+    .strict()
 );
 
 // Main config schema
@@ -59,6 +114,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           version: v.string().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       directories: v
         .object({
@@ -68,6 +124,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           ai: v.string().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       experimental: v
         .object({
@@ -76,13 +133,18 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           rsc: v.boolean().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       router: v.enum(["app", "pages"]).optional(),
       /** Path to the layout component (e.g., 'components/layout.tsx'), or false to disable */
       layout: v.union([v.string(), v.literal(false)]).optional(),
       /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */
       app: v.union([v.string(), v.literal(false)]).optional(),
-      theme: v.object({ colors: v.record(v.string(), v.string()).optional() }).partial().optional(),
+      theme: v
+        .object({ colors: v.record(v.string(), v.string()).optional() })
+        .partial()
+        .strict()
+        .optional(),
       build: v
         .object({
           outDir: v.string().optional(),
@@ -99,9 +161,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               worker: v.boolean().optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
       cache: v
         .object({
@@ -138,7 +202,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   varyHeaders: v
                     .array(
                       v.string().regex(
-                        /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/,
+                        HTTP_TOKEN_PATTERN,
                         "Expected a valid HTTP header name",
                       ),
                     )
@@ -199,18 +263,20 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           ]).optional(),
         })
         .partial()
+        .strict()
         .optional(),
       dev: v
         .object({
-          port: v.number().int().positive().optional(),
+          port: v.number().int().min(MIN_PORT).max(MAX_PORT).optional(),
           host: v.string().optional(),
           open: v.boolean().optional(),
           hmr: v.boolean().optional(),
-          hmrPort: v.number().optional(),
+          hmrPort: v.number().int().min(MIN_PORT).max(MAX_PORT).optional(),
           components: v.array(v.string()).optional(),
           moduleServerUrl: v.string().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       resolve: v
         .object({
@@ -220,9 +286,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               scopes: v.record(v.string(), v.record(v.string(), v.string())).optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
       security: v
         .object({
@@ -232,6 +300,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               bearer: getBearerAuthSchema().optional(),
             })
             .partial()
+            .strict()
+            .refine(
+              (auth) => !(auth.basic && auth.bearer),
+              "Configure either basic or bearer authentication, not both",
+            )
             .optional(),
           csp: v.record(v.string(), v.array(v.string())).optional(),
           remoteHosts: v.array(v.string().url()).optional(),
@@ -268,12 +341,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           allowedImportDirs: v.array(v.string()).optional(),
         })
         .partial()
+        .strict()
         .optional(),
       middleware: v
         .object({
           custom: v.array(v.any()).optional(),
         })
         .partial()
+        .strict()
         .optional(),
       theming: v
         .object({
@@ -281,6 +356,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           logoHtml: v.string().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       assetPipeline: v
         .object({
@@ -295,6 +371,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               preserveOriginal: v.boolean().optional(),
             })
             .partial()
+            .strict()
             .optional(),
           css: v
             .object({
@@ -310,9 +387,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               sourceMap: v.boolean().optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
       observability: v
         .object({
@@ -325,6 +404,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               sampleRate: v.number().min(0).max(1).optional(),
             })
             .partial()
+            .strict()
             .optional(),
           metrics: v
             .object({
@@ -335,6 +415,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               collectInterval: v.number().int().positive().optional(),
             })
             .partial()
+            .strict()
             .optional(),
           logging: v
             .object({
@@ -348,12 +429,15 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   format: v.enum(["json", "text"]).optional(),
                 })
                 .partial()
+                .strict()
                 .optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
       search: v
         .object({
@@ -367,6 +451,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               batchSize: v.number().int().positive().optional(),
             })
             .partial()
+            .strict()
             .optional(),
           chunking: v
             .object({
@@ -376,15 +461,21 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               exclude: v.array(v.string()).optional(),
             })
             .partial()
+            .strict()
             .optional(),
           autoIndex: v.boolean().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       fs: v
         .object({
           type: v.enum(["local", "veryfront-api", "memory", "github"]).optional(),
-          local: v.object({ baseDir: v.string().optional() }).partial().optional(),
+          local: v
+            .object({ baseDir: v.string().optional() })
+            .partial()
+            .strict()
+            .optional(),
           veryfront: v
             .object({
               apiBaseUrl: v.string().url(),
@@ -404,6 +495,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   maxMemory: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
                 })
                 .partial()
+                .strict()
                 .optional(),
               retry: v
                 .object({
@@ -412,9 +504,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   maxDelay: v.number().int().positive().optional(),
                 })
                 .partial()
+                .strict()
                 .optional(),
             })
             .partial()
+            .strict()
             .optional(),
           memory: v
             .object({
@@ -422,6 +516,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 .optional(),
             })
             .partial()
+            .strict()
             .optional(),
           github: v
             .object({
@@ -441,6 +536,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   maxMemory: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
                 })
                 .partial()
+                .strict()
                 .optional(),
               retry: v
                 .object({
@@ -449,11 +545,40 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   maxDelay: v.number().int().positive().optional(),
                 })
                 .partial()
+                .strict()
                 .optional(),
             })
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
+        .refine(
+          (config) => {
+            const type = config.type ?? "local";
+            if (type === "local") {
+              return config.veryfront === undefined &&
+                config.memory === undefined &&
+                config.github === undefined;
+            }
+            if (type === "veryfront-api") {
+              return config.veryfront !== undefined &&
+                config.local === undefined &&
+                config.memory === undefined &&
+                config.github === undefined;
+            }
+            if (type === "memory") {
+              return config.local === undefined &&
+                config.veryfront === undefined &&
+                config.github === undefined;
+            }
+            return config.github !== undefined &&
+              config.local === undefined &&
+              config.veryfront === undefined &&
+              config.memory === undefined;
+          },
+          "Filesystem options must belong to the selected backend type",
+        )
         .optional(),
       ai: v
         .object({
@@ -467,148 +592,29 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               organization: v.string().optional(),
             }).passthrough(),
           ).optional(),
-          tools: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          agents: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          skills: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          resources: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          prompts: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          workflows: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          work: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          tasks: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          schedules: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          webhooks: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
-          evals: v
-            .object({
-              discovery: v
-                .object({
-                  enabled: v.boolean().optional(),
-                  paths: v.array(v.string()).optional(),
-                })
-                .partial()
-                .optional(),
-            })
-            .partial()
-            .optional(),
+          tools: getAiDiscoveryContainerSchema().optional(),
+          agents: getAiDiscoveryContainerSchema().optional(),
+          skills: getAiDiscoveryContainerSchema().optional(),
+          resources: getAiDiscoveryContainerSchema().optional(),
+          prompts: getAiDiscoveryContainerSchema().optional(),
+          workflows: getAiDiscoveryContainerSchema().optional(),
+          work: getAiDiscoveryContainerSchema().optional(),
+          tasks: getAiDiscoveryContainerSchema().optional(),
+          schedules: getAiDiscoveryContainerSchema().optional(),
+          webhooks: getAiDiscoveryContainerSchema().optional(),
+          evals: getAiDiscoveryContainerSchema().optional(),
           mcp: v
             .object({
               enabled: v.boolean().optional(),
-              port: v.number().optional(),
+              port: v.number().int().min(MIN_PORT).max(MAX_PORT).optional(),
               expose: v.array(v.string()).optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
       client: v
         .object({
@@ -625,14 +631,16 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   v.object({
                     react: v.string().optional(),
                     veryfront: v.string().optional(),
-                  }),
+                  }).strict(),
                 ])
                 .optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
       /** CLI generate command preferences */
       generate: v
@@ -641,6 +649,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           preferredRouter: v.enum(["app-router", "pages-router"]).optional(),
         })
         .partial()
+        .strict()
         .optional(),
       tailwind: v
         .object({
@@ -655,11 +664,13 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               extend: v.record(v.string(), v.unknown()).optional(),
             })
             .partial()
+            .strict()
             .optional(),
           /** Custom CSS content to add (for @layer, @apply directives, etc.) */
           customCSS: v.string().optional(),
         })
         .partial()
+        .strict()
         .optional(),
       /**
        * Optional source-owned integration restrictions.
@@ -727,6 +738,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               docs: v.string().optional(),
             })
             .partial()
+            .strict()
             .optional(),
           /** MCP integration configuration */
           mcp: v
@@ -739,12 +751,15 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
               toolPrefix: v.string().optional(),
             })
             .partial()
+            .strict()
             .optional(),
         })
         .partial()
+        .strict()
         .optional(),
     })
     .partial()
+    .strict()
 );
 export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
@@ -763,6 +778,19 @@ export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrati
 
 // Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const unknown = findUnknownTopLevelKeys(input as Record<string, unknown>);
+    if (unknown.length > 0) {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
+        context: {
+          field: unknown.join(", "),
+          expected: "known top-level configuration keys",
+        },
+      });
+    }
+  }
+
   const result = veryfrontConfigSchema.safeParse(input);
   if (result.success) return result.data as VeryfrontConfig;
 
@@ -771,23 +799,19 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   const path = first?.path?.length ? first.path.join(".") : "<root>";
   const expected = first?.message ?? String(first);
   const corsHint = path.includes("security.cors")
-    ? " Expected boolean or { origin?: string }."
+    ? " Expected boolean or a CORS object with origin, credentials, methods, allowedHeaders, exposedHeaders, or maxAge."
     : "";
   const expectedWithHint = expected + corsHint;
 
-  const context: ConfigContext = {
+  const context = {
     field: path,
     expected: expectedWithHint,
-    value: input,
   };
 
-  throw toError(
-    createError({
-      type: "config",
-      message: `Invalid veryfront.config at ${path}: ${expectedWithHint}.`,
-      context,
-    }),
-  );
+  throw CONFIG_VALIDATION_FAILED.create({
+    detail: `Invalid veryfront.config at ${path}: ${expectedWithHint}.`,
+    context,
+  });
 }
 
 /**

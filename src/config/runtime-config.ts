@@ -10,6 +10,7 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import { createTestEnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
+import { DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils/constants/network.ts";
 
 /** Maximum entries in the default render cache */
 const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
@@ -53,7 +54,21 @@ export interface RuntimeConfig extends VeryfrontConfig {
  * Default configuration values.
  * Used when no config file is found.
  */
-export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
+function deepFreezeDefaults<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object") return value;
+
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    deepFreezeDefaults(child, seen);
+  }
+
+  return Object.freeze(value);
+}
+
+export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = deepFreezeDefaults({
   title: "Veryfront App",
   description: "Built with Veryfront",
   experimental: {
@@ -77,11 +92,11 @@ export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
     },
   },
   dev: {
-    port: 3001,
+    port: DEFAULT_DEV_SERVER_PORT,
     host: "localhost",
     open: false,
   },
-};
+});
 
 function createRuntimeInfo(env: EnvironmentConfig): RuntimeInfo {
   return {
@@ -116,6 +131,7 @@ function mergeObservabilityConfig(
   }
 
   return {
+    ...fileConfig.observability,
     tracing: {
       ...fileConfig.observability?.tracing,
       enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
@@ -152,10 +168,53 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: EnvironmentConfig)
 
     dev: {
       ...fileConfig.dev,
-      port: env.port || fileConfig.dev?.port,
+      port: env.portSource === "default" ? fileConfig.dev?.port : env.port,
     },
 
     observability: mergeObservabilityConfig(fileConfig, env),
+  };
+}
+
+function mergeConfigWithDefaults(fileConfig: VeryfrontConfig): VeryfrontConfig {
+  const mergedBuild: NonNullable<VeryfrontConfig["build"]> = {
+    ...DEFAULT_CONFIG.build,
+    ...fileConfig.build,
+  };
+  if (DEFAULT_CONFIG.build?.esbuild || fileConfig.build?.esbuild) {
+    mergedBuild.esbuild = {
+      ...DEFAULT_CONFIG.build?.esbuild,
+      ...fileConfig.build?.esbuild,
+    };
+  }
+
+  return {
+    ...DEFAULT_CONFIG,
+    ...fileConfig,
+    experimental: {
+      ...DEFAULT_CONFIG.experimental,
+      ...fileConfig.experimental,
+    },
+    theme: {
+      ...DEFAULT_CONFIG.theme,
+      ...fileConfig.theme,
+      colors: {
+        ...DEFAULT_CONFIG.theme?.colors,
+        ...fileConfig.theme?.colors,
+      },
+    },
+    build: mergedBuild,
+    cache: {
+      ...DEFAULT_CONFIG.cache,
+      ...fileConfig.cache,
+      render: {
+        ...DEFAULT_CONFIG.cache?.render,
+        ...fileConfig.cache?.render,
+      },
+    },
+    dev: {
+      ...DEFAULT_CONFIG.dev,
+      ...fileConfig.dev,
+    },
   };
 }
 
@@ -163,7 +222,7 @@ export function createRuntimeConfig(
   fileConfig: VeryfrontConfig = {},
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): RuntimeConfig {
-  const mergedConfig = mergeConfigWithEnv({ ...DEFAULT_CONFIG, ...fileConfig }, env);
+  const mergedConfig = mergeConfigWithEnv(mergeConfigWithDefaults(fileConfig), env);
 
   return {
     ...mergedConfig,
@@ -217,9 +276,7 @@ export function createTestConfig(
   const { runtime: runtimeOverrides, ...configOverrides } = overrides;
 
   const testEnv = createTestEnvironmentConfig(runtimeOverrides?.env);
-  const fileConfig = { ...DEFAULT_CONFIG, ...configOverrides };
-
-  return createRuntimeConfig(fileConfig, testEnv);
+  return createRuntimeConfig(configOverrides, testEnv);
 }
 
 export function _setRuntimeConfigForTesting(

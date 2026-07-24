@@ -18,14 +18,20 @@ User-defined configuration from `veryfront.config.ts` in the project root.
 import { defineConfig } from "veryfront";
 
 export default defineConfig({
-  app: { name: "My App" },
-  build: { target: "es2022" },
-  router: { trailingSlash: false },
-  // ... other settings
+  title: "My App",
+  app: "components/app.tsx",
+  build: { outDir: "dist", trailingSlash: false },
+  router: "app",
 });
 ```
 
 **Key properties:** `app`, `build`, `cache`, `dev`, `router`, `theme`, `security`, `middleware`, etc.
+
+In shared proxy mode (`PROXY_MODE=1`), the runtime owns the filesystem backend
+and requires `VERYFRONT_API_BASE_URL` to be a credential-free HTTP(S) base URL
+without a query or fragment. Project configuration must not override `fs`; an
+attempted override is rejected instead of producing a mixed backend
+configuration.
 
 ## Environment Config (`EnvironmentConfig`)
 
@@ -36,7 +42,7 @@ import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 const env = getEnvironmentConfig();
 console.log(env.apiBaseUrl); // from VERYFRONT_API_BASE_URL
-console.log(env.debug); // from DEBUG
+console.log(env.debug); // from VERYFRONT_DEBUG
 ```
 
 **Key properties:**
@@ -55,7 +61,7 @@ The merged configuration used at runtime. Combines project config with environme
 import { getRuntimeConfig } from "#veryfront/config";
 
 const config = getRuntimeConfig();
-console.log(config.build.target); // from VeryfrontConfig
+console.log(config.build?.outDir); // from VeryfrontConfig
 console.log(config.runtime.isDevelopment); // computed from env
 console.log(config.runtime.env.apiToken); // from EnvironmentConfig
 ```
@@ -86,7 +92,7 @@ src/config/
 ├── define-config.ts            # defineConfig() helper
 ├── defaults.ts                 # Default values
 ├── network-defaults.ts         # Network-related defaults
-├── schemas/                    # Zod schemas for validation
+├── schemas/                    # Runtime schemas for validation
 │   └── index.ts
 ├── env.ts                      # Environment accessor helpers
 └── *.test.ts                   # Tests

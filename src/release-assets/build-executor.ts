@@ -16,16 +16,21 @@
  */
 
 import {
-  findUnknownTopLevelKeys,
+  defineConfig,
+  defineConfigWithEnv,
+  type EnvironmentConfig,
+  mergeConfigs as mergeProjectConfigs,
   validateVeryfrontConfig,
   type VeryfrontConfig,
+  type VeryfrontConfigInput,
 } from "#veryfront/config";
 import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
-import { mergeConfigs } from "#veryfront/config/loader.ts";
+import { createConfigShimModule } from "#veryfront/config/config-shim.ts";
+import { mergeConfigs as mergeLoadedConfig } from "#veryfront/config/loader.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { dirname, join, normalize, toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
@@ -1854,25 +1859,23 @@ function validateAndMergeReleaseConfig(userConfig: unknown): VeryfrontConfig {
     throw new Error(`Expected object from veryfront.config, received ${typeof userConfig}`);
   }
 
-  validateVeryfrontConfig(userConfig);
-  const unknownKeys = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
-  if (unknownKeys.length > 0) {
-    throw new Error(
-      `Unknown config keys: ${unknownKeys.join(", ")}. Check for typos in veryfront.config.`,
-    );
-  }
-
-  return mergeConfigs(userConfig as Partial<VeryfrontConfig>);
+  const validatedConfig = validateVeryfrontConfig(userConfig);
+  return mergeLoadedConfig(validatedConfig);
 }
 
-const VERYFRONT_CONFIG_SHIM_MODULE = `
-export const defineConfig = (config) => config;
-export const defineConfigWithEnv = (factory, envConfig) =>
-  factory(envConfig?.nodeEnv ?? globalThis.Deno?.env?.get?.("NODE_ENV") ??
-    globalThis.process?.env?.NODE_ENV ?? "production");
-export const mergeConfigs = (...configs) => Object.assign({}, ...configs);
-export default { defineConfig, defineConfigWithEnv, mergeConfigs };
-`;
+const defineReleaseConfigWithEnv: typeof defineConfigWithEnv = <
+  const T extends VeryfrontConfigInput,
+>(
+  factory: (env: string) => T,
+  envConfig: Pick<EnvironmentConfig, "nodeEnv"> = { nodeEnv: "production" },
+): T => defineConfigWithEnv(factory, envConfig);
+
+const releaseConfigShim = createConfigShimModule("release-assets", {
+  defineConfig,
+  defineConfigWithEnv: defineReleaseConfigWithEnv,
+  getEnv,
+  mergeConfigs: mergeProjectConfigs,
+});
 
 const RELEASE_CONFIG_SHIM_NAMESPACE = "veryfront-release-config-shim";
 
@@ -1884,7 +1887,7 @@ const releaseConfigVeryfrontPlugin: Plugin = {
       namespace: RELEASE_CONFIG_SHIM_NAMESPACE,
     }));
     build.onLoad({ filter: /.*/, namespace: RELEASE_CONFIG_SHIM_NAMESPACE }, () => ({
-      contents: VERYFRONT_CONFIG_SHIM_MODULE,
+      contents: releaseConfigShim.source,
       loader: "js",
     }));
   },
@@ -1986,7 +1989,7 @@ async function resolveReleaseConfigFromSourceFiles(
     hasConfigFile: !!configFile,
   });
 
-  if (!configFile || typeof source !== "string") return mergeConfigs({});
+  if (!configFile || typeof source !== "string") return mergeLoadedConfig({});
 
   const userConfig = await loadReleaseConfigModule(tempDir, configFile, source);
   return validateAndMergeReleaseConfig(userConfig);
