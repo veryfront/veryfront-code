@@ -19,6 +19,7 @@ import {
   rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
 } from "#veryfront/routing/api/module-loader/external-import-rewriter.ts";
+import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
 
 describe("import rewrite compatibility golden tests", () => {
   it("preserves transform query and attribute output", async () => {
@@ -141,5 +142,18 @@ describe("import rewrite compatibility golden tests", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+});
+
+describe("import edit core", () => {
+  it("edits specifiers while preserving HTTP strings and attributes", async () => {
+    const code =
+      `const u = "https://example.com/a";\nimport m from "./a.json" with { type: "json" };\n`;
+    const parsed = await parseImportEdits(code);
+    const out = applyImportEdits(parsed, new Map([[0, { specifier: "./b.json" }]]));
+    assertEquals(
+      out,
+      `const u = "https://example.com/a";\nimport m from "./b.json" with { type: "json" };\n`,
+    );
   });
 });

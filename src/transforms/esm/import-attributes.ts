@@ -10,6 +10,7 @@
  */
 
 import { type ImportSpecifier, parseMaskedImports } from "./lexer.ts";
+import { importAttributeRange } from "../import-rewriter/import-edit.ts";
 
 const ASSERT_KEYWORD = "assert";
 
@@ -40,15 +41,7 @@ const JSON_TYPE_ATTRIBUTE = /^\{\s*(["']?)type\1\s*:\s*(["'])json\2\s*,?\s*\}$/;
  *
  * The range is empty when the import declares no attributes.
  */
-function attributeRange(imp: ImportSpecifier): { start: number; end: number } {
-  // Static: `e` indexes the closing quote and `se` ends the statement before
-  // any semicolon, so the clause and its keyword lie between them.
-  if (imp.d === -1) return { start: imp.e + 1, end: imp.se };
-
-  // Dynamic: `e` is already past the closing quote and `se` is past the
-  // closing paren, so the comma and the options argument lie between them.
-  return { start: imp.e, end: imp.se - 1 };
-}
+const attributeRange = importAttributeRange;
 
 /** Whether the declared attributes are exactly a JSON module type. */
 function declaresJsonTypeOnly(clause: string, isDynamic: boolean): boolean {
