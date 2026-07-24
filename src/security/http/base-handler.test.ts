@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
@@ -28,6 +28,14 @@ class TestHandler extends BaseHandler {
     return this.continue();
   }
 
+  testShouldHandle(req: Request, ctx: HandlerContext): boolean {
+    return this.shouldHandle(req, ctx);
+  }
+
+  testGetErrorMessage(error: unknown): string {
+    return this.getErrorMessage(error);
+  }
+
   // Expose withProxyContext for testing
   testWithProxyContext<T>(
     ctx: HandlerContext,
@@ -51,6 +59,72 @@ function createMinimalCtx(
     ...overrides,
   } as unknown as HandlerContext;
 }
+
+describe("BaseHandler route matching", () => {
+  it("treats exact: false as the documented legacy prefix form", () => {
+    const handler = new TestHandler();
+    handler.metadata.patterns = [{ pattern: "/api", exact: false }];
+    const ctx = createMinimalCtx();
+
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api/items"), ctx),
+      true,
+    );
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/other"), ctx),
+      false,
+    );
+  });
+
+  it("lets an explicit prefix option override the legacy exact alias", () => {
+    const handler = new TestHandler();
+    const ctx = createMinimalCtx();
+
+    handler.metadata.patterns = [{ pattern: "/api", exact: false, prefix: false }];
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api/items"), ctx),
+      false,
+    );
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api"), ctx),
+      true,
+    );
+
+    handler.metadata.patterns = [{ pattern: "/api", exact: true, prefix: true }];
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api/items"), ctx),
+      true,
+    );
+  });
+
+  it("matches global and sticky regular expressions deterministically", () => {
+    const ctx = createMinimalCtx();
+    for (const pattern of [/^\/api/g, /^\/api/y]) {
+      const handler = new TestHandler();
+      handler.metadata.patterns = [{ pattern }];
+      const request = new Request("http://localhost/api");
+
+      assertEquals(handler.testShouldHandle(request, ctx), true);
+      assertEquals(handler.testShouldHandle(request, ctx), true);
+      assertEquals(pattern.lastIndex, 0);
+    }
+  });
+});
+
+describe("BaseHandler error boundaries", () => {
+  it("returns a stable fallback for unreadable thrown values", () => {
+    const unreadableError = new Proxy({}, {
+      get() {
+        throw new Error("error fields must not be read directly");
+      },
+      getPrototypeOf() {
+        throw new Error("error prototype must not be read directly");
+      },
+    });
+
+    assertEquals(new TestHandler().testGetErrorMessage(unreadableError), "Unknown error");
+  });
+});
 
 describe("BaseHandler.withProxyContext", () => {
   afterEach(() => {
@@ -166,6 +240,25 @@ describe("BaseHandler.withProxyContext", () => {
     );
 
     assertEquals(called, true, "fn should run with proxyToken");
+  });
+
+  it("rejects an incomplete multi-project filesystem adapter explicitly", async () => {
+    const handler = new TestHandler();
+    const ctx = createMinimalCtx({
+      projectSlug: "my-project",
+      proxyToken: "vf_proxy_token",
+      adapter: {
+        fs: {
+          isMultiProjectMode: () => true,
+        },
+      } as unknown as HandlerContext["adapter"],
+    });
+
+    await assertRejects(
+      () => handler.testWithProxyContext(ctx, () => Promise.resolve("unused")),
+      TypeError,
+      "requires a runWithContext adapter method",
+    );
   });
 
   it("emits metrics with project and environment labels in multi-project request context", async () => {

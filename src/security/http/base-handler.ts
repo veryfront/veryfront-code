@@ -10,6 +10,7 @@ import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api
 import type { VerifiedControlPlaneRequestClaims } from "#veryfront/internal-agents/control-plane-auth.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
+import { getErrorMessage as formatErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { serverLogger } from "#veryfront/utils";
 import { ResponseBuilder } from "./response/index.ts";
 
@@ -22,6 +23,21 @@ export interface HandlerHelpers {
   logDebug: (message: string, extra?: Record<string, unknown>, ctx?: HandlerContext) => void;
   getErrorMessage: (error: unknown) => string;
   continue: () => HandlerResult;
+}
+
+/** Match a request pathname against one runtime route pattern. */
+export function matchesRoutePathname(pathname: string, routePattern: RoutePattern): boolean {
+  const pattern = routePattern.pattern;
+
+  if (typeof pattern === "string") {
+    const isPrefixMatch = routePattern.prefix ?? routePattern.exact === false;
+    return isPrefixMatch ? pathname.startsWith(pattern) : pathname === pattern;
+  }
+
+  if (!pattern.global && !pattern.sticky) return pattern.test(pathname);
+
+  const statelessMatcher = new RegExp(pattern.source, pattern.flags);
+  return statelessMatcher.test(pathname);
 }
 
 export abstract class BaseHandler implements Handler {
@@ -57,15 +73,7 @@ export abstract class BaseHandler implements Handler {
       if (!methods.includes(method)) return false;
     }
 
-    const routePattern = pattern.pattern;
-
-    if (typeof routePattern === "string") {
-      return pattern.prefix ? pathname.startsWith(routePattern) : pathname === routePattern;
-    }
-
-    if (routePattern instanceof RegExp) return routePattern.test(pathname);
-
-    return false;
+    return matchesRoutePathname(pathname, pattern);
   }
 
   protected createResponseBuilder(
@@ -97,8 +105,7 @@ export abstract class BaseHandler implements Handler {
   }
 
   protected getErrorMessage(error: unknown): string {
-    if (error instanceof Error) return error.message;
-    return String(error);
+    return formatErrorMessage(error);
   }
 
   protected continue(): HandlerResult {
@@ -109,6 +116,8 @@ export abstract class BaseHandler implements Handler {
     response: Response | WebSocketUpgradeResponse,
     metadata?: Record<string, unknown>,
   ): HandlerResult {
+    // HandlerResult deliberately remains HTTP-only. Runtime dispatch recognizes
+    // the explicit non-DOM WebSocket signal before using normal Response APIs.
     return { response: response as Response, continue: false, metadata };
   }
 
@@ -178,6 +187,14 @@ export abstract class BaseHandler implements Handler {
     }
 
     if (fsWrapper.isMultiProjectMode?.()) {
+      if (typeof fsWrapper.runWithContext !== "function") {
+        return Promise.reject(
+          new TypeError(
+            "Multi-project filesystem mode requires a runWithContext adapter method",
+          ),
+        );
+      }
+
       const isProduction = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
       const branch = ctx.parsedDomain?.branch ?? null;
 
@@ -192,7 +209,7 @@ export abstract class BaseHandler implements Handler {
         ctx,
       );
 
-      return fsWrapper.runWithContext!(
+      return fsWrapper.runWithContext(
         ctx.projectSlug,
         effectiveToken,
         fn,
