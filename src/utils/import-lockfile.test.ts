@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
@@ -953,6 +954,35 @@ describe("import-lockfile", () => {
         "rejected by policy",
       );
       assertEquals(await mgr.get(requestedUrl), null);
+    });
+
+    it("wraps malformed absolute and protocol-relative redirect locations", async () => {
+      const requestedUrl = "https://cdn.example/module.ts";
+      const mgr = createLockfileManager("/project", createMockFS());
+
+      for (const location of ["http://[bad", "//[bad"]) {
+        const error = await assertRejects(() =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: requestedUrl,
+            fetchFn: () =>
+              Promise.resolve(
+                new Response(null, {
+                  status: 302,
+                  headers: { location },
+                }),
+              ),
+          })
+        );
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "network-error");
+        assertEquals((error as VeryfrontError).status, 502);
+        assertEquals(
+          (error as VeryfrontError).message,
+          "Remote module URL is invalid (redirected)",
+        );
+      }
     });
 
     it("does not let stalled redirect cancellation block the next fetch", async () => {

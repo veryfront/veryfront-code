@@ -4,8 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FORBIDDEN_PATH_PATTERNS, SCANNER_PATH_PATTERN } from "./security.ts";
 
 describe("constants/security", () => {
-  it("exposes immutable forbidden-path defaults", () => {
-    assertEquals(Object.isFrozen(FORBIDDEN_PATH_PATTERNS), true);
+  it("preserves the mutable public forbidden-pattern array contract", () => {
+    const mutablePatterns: RegExp[] = FORBIDDEN_PATH_PATTERNS;
+    assertEquals(Object.isFrozen(mutablePatterns), false);
   });
 
   describe("SCANNER_PATH_PATTERN", () => {

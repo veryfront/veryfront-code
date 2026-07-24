@@ -1,7 +1,7 @@
 /** Maximum value for path traversal depth. */
 export const MAX_PATH_TRAVERSAL_DEPTH = 10;
 /** Shared forbidden path patterns value. */
-export const FORBIDDEN_PATH_PATTERNS: readonly RegExp[] = Object.freeze([/\0/]);
+export const FORBIDDEN_PATH_PATTERNS = [/\0/];
 
 /**
  * Fast-match pattern for common vulnerability scanner probe paths.

@@ -566,6 +566,17 @@ async function authorizeRemoteModuleUrl(
   return url;
 }
 
+function resolveRemoteModuleRedirect(location: string, currentUrl: URL): string {
+  try {
+    return new URL(location, currentUrl).toString();
+  } catch (cause) {
+    throw NETWORK_ERROR.create({
+      detail: "Remote module URL is invalid (redirected)",
+      cause,
+    });
+  }
+}
+
 async function readBoundedModuleText(
   response: Response,
   maxResponseBytes: number,
@@ -643,7 +654,7 @@ async function fetchRemoteModule(
 
         cancelResponseBody(response);
         currentUrl = await authorizeRemoteModuleUrl(
-          new URL(location, currentUrl).toString(),
+          resolveRemoteModuleRedirect(location, currentUrl),
           "redirected",
           options.isUrlAllowed,
         );
