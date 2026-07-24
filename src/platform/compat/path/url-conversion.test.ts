@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl, toFileUrl } from "./url-conversion.ts";
 
@@ -23,6 +23,14 @@ describe("url-conversion", () => {
         "/path/to/\u65E5\u672C\u8A9E.ts",
       );
     });
+
+    it("rejects non-file URL schemes", () => {
+      assertThrows(
+        () => fromFileUrl("https://example.com/file.ts"),
+        TypeError,
+        "scheme file",
+      );
+    });
   });
 
   describe("toFileUrl", () => {
@@ -43,6 +51,34 @@ describe("url-conversion", () => {
     it("should handle paths with spaces", () => {
       const result = toFileUrl("/path/with spaces/file.ts");
       assertEquals(result.href.includes("spaces"), true);
+    });
+
+    it("should round-trip URL-significant path characters", () => {
+      const path = "/path/with #hash ?query %percent/file.ts";
+      const result = toFileUrl(path);
+
+      assertEquals(result.hash, "");
+      assertEquals(result.search, "");
+      assertEquals(fromFileUrl(result), path);
+    });
+
+    it("preserves literal backslashes in POSIX paths", () => {
+      if (Deno.build.os === "windows") return;
+      const path = "/tmp/literal\\backslash.ts";
+      assertEquals(fromFileUrl(toFileUrl(path)), path);
+    });
+
+    it("round-trips Windows drive and UNC paths on Windows", () => {
+      if (Deno.build.os !== "windows") return;
+
+      for (
+        const path of [
+          String.raw`C:\workspace\file.ts`,
+          String.raw`\\server\share\file.ts`,
+        ]
+      ) {
+        assertEquals(fromFileUrl(toFileUrl(path)), path);
+      }
     });
 
     it("should handle relative path by resolving", () => {

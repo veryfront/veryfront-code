@@ -1,6 +1,8 @@
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import { DEFAULT_DEV_SERVER_PORT, MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
 
@@ -43,6 +45,11 @@ export interface EnvironmentConfig {
   appUrl: string | undefined;
 
   port: number;
+  /**
+   * Whether `port` came from a valid `PORT` value or the built-in default.
+   * Omitted values from custom callers retain the legacy env-override behavior.
+   */
+  portSource?: "default" | "environment";
   requestTimeoutMs: number | undefined;
   httpFetchTimeoutMs: number | undefined;
   extensionSetupTimeoutMs: number | undefined;
@@ -85,10 +92,9 @@ export interface EnvironmentConfig {
 export const DEFAULT_REQUEST_TIMEOUT_MS = 75_000;
 /** Default timeout for outgoing HTTP fetch calls (used when VF_HTTP_FETCH_TIMEOUT is set but unparseable) */
 const DEFAULT_HTTP_FETCH_TIMEOUT_MS = 30_000;
-
 const DEFAULTS = {
   apiBaseUrl: "https://api.veryfront.com",
-  port: 3001,
+  port: DEFAULT_DEV_SERVER_PORT,
   ssrMaxConcurrentTransforms: 3,
 } as const;
 
@@ -96,110 +102,149 @@ let _environmentConfig: EnvironmentConfig | null = null;
 let envConfigInitializedBeforeEnvLoad = false;
 let warnedEarlyEnvConfig = false;
 
-function parseNumber(value: string | undefined, defaultVal: number): number {
-  if (!value) return defaultVal;
+function parseBoundedIntegerValue(
+  value: string | undefined,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number | undefined {
+  if (value === undefined) return undefined;
 
-  const parsed = parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : defaultVal;
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return undefined;
+
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max ? parsed : undefined;
 }
 
-function readEnvSnapshot(): EnvironmentConfig {
-  const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
-  const veryfrontEnv = getEnv("VERYFRONT_ENV") ?? nodeEnv;
+function parseBoundedInteger(
+  value: string | undefined,
+  defaultVal: number,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  return parseBoundedIntegerValue(value, min, max) ?? defaultVal;
+}
 
-  const requestTimeoutRaw = getEnv("REQUEST_TIMEOUT_MS");
-  const httpFetchTimeoutRaw = getEnv("VF_HTTP_FETCH_TIMEOUT");
-  const extensionSetupTimeoutRaw = getEnv("VF_EXTENSION_SETUP_TIMEOUT_MS");
-  const v8MaxOldSpaceSizeRaw = getEnv("V8_MAX_OLD_SPACE_SIZE");
+type EnvReader = (key: string) => string | undefined;
+const readEmptyEnv: EnvReader = () => undefined;
 
-  const apiUrl = getEnv("VERYFRONT_API_URL") || undefined;
+function readEnvSnapshot(
+  readEnv: EnvReader = getEnv,
+  readHostEnv: EnvReader = getHostEnv,
+  readTelemetryEnv: EnvReader = getHostTelemetryEnv,
+): EnvironmentConfig {
+  const nodeEnv = readEnv("NODE_ENV") ?? readEnv("DENO_ENV") ?? "development";
+  const veryfrontEnv = readEnv("VERYFRONT_ENV") ?? nodeEnv;
+
+  const requestTimeoutRaw = readEnv("REQUEST_TIMEOUT_MS");
+  const httpFetchTimeoutRaw = readEnv("VF_HTTP_FETCH_TIMEOUT");
+  const extensionSetupTimeoutRaw = readEnv("VF_EXTENSION_SETUP_TIMEOUT_MS");
+  const v8MaxOldSpaceSizeRaw = readEnv("V8_MAX_OLD_SPACE_SIZE");
+  const forceColorRaw = readEnv("FORCE_COLOR");
+  const portOverride = parseBoundedIntegerValue(readEnv("PORT"), MIN_PORT, MAX_PORT);
+
+  const apiUrl = readEnv("VERYFRONT_API_URL") || undefined;
 
   return {
     nodeEnv,
     veryfrontEnv,
-    veryfrontMode: getEnv("VERYFRONT_MODE") ?? "development",
-    proxyMode: getHostEnv("PROXY_MODE") === "1",
+    veryfrontMode: readEnv("VERYFRONT_MODE") ?? "development",
+    proxyMode: readHostEnv("PROXY_MODE") === "1",
 
-    debug: isTruthyEnvValue(getEnv("VERYFRONT_DEBUG")),
-    ci: getEnv("CI") === "1",
-    denoTesting: getEnv("DENO_TESTING") === "1",
-    perfEnabled: getEnv("VERYFRONT_PERF") === "1",
+    debug: isTruthyEnvValue(readEnv("VERYFRONT_DEBUG")),
+    ci: isTruthyEnvValue(readEnv("CI")),
+    denoTesting: readEnv("DENO_TESTING") === "1",
+    perfEnabled: readEnv("VERYFRONT_PERF") === "1",
 
-    apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
+    apiBaseUrl: readEnv("VERYFRONT_API_BASE_URL") ||
       apiUrl?.replace("/graphql", "/api") ||
       DEFAULTS.apiBaseUrl,
-    publicApiBaseUrl: getEnv("VERYFRONT_PUBLIC_API_BASE_URL") ||
+    publicApiBaseUrl: readEnv("VERYFRONT_PUBLIC_API_BASE_URL") ||
       DEFAULTS.apiBaseUrl,
     apiUrl,
-    apiToken: getEnv("VERYFRONT_API_TOKEN") || undefined,
-    projectSlug: getEnv("VERYFRONT_PROJECT_SLUG") || undefined,
+    apiToken: readEnv("VERYFRONT_API_TOKEN") || undefined,
+    projectSlug: readEnv("VERYFRONT_PROJECT_SLUG") || undefined,
 
-    homeDir: getEnv("HOME") || getEnv("USERPROFILE") || undefined,
-    xdgConfigHome: getEnv("XDG_CONFIG_HOME") || undefined,
+    homeDir: readEnv("HOME") || readEnv("USERPROFILE") || undefined,
+    xdgConfigHome: readEnv("XDG_CONFIG_HOME") || undefined,
 
-    continuousIntegration: !!getEnv("CONTINUOUS_INTEGRATION"),
-    sshClient: getEnv("SSH_CLIENT") || undefined,
-    sshTty: getEnv("SSH_TTY") || undefined,
-    display: getEnv("DISPLAY") || undefined,
-    waylandDisplay: getEnv("WAYLAND_DISPLAY") || undefined,
-    cursorSession: getEnv("CURSOR_SESSION") || undefined,
-    serverStartTime: getEnv("VERYFRONT_SERVER_START_TIME") || undefined,
-    vcr: getEnv("VCR") || undefined,
+    continuousIntegration: isTruthyEnvValue(readEnv("CONTINUOUS_INTEGRATION")),
+    sshClient: readEnv("SSH_CLIENT") || undefined,
+    sshTty: readEnv("SSH_TTY") || undefined,
+    display: readEnv("DISPLAY") || undefined,
+    waylandDisplay: readEnv("WAYLAND_DISPLAY") || undefined,
+    cursorSession: readEnv("CURSOR_SESSION") || undefined,
+    serverStartTime: readEnv("VERYFRONT_SERVER_START_TIME") || undefined,
+    vcr: readEnv("VCR") || undefined,
 
-    experimentalRsc: getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1",
+    experimentalRsc: readEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1",
 
-    redisUrl: getEnv("REDIS_URL") || undefined,
-    cacheDir: getEnv("VERYFRONT_CACHE_DIR") || getEnv("VF_CACHE_DIR") || undefined,
-    disableLruInterval: getEnv("VF_DISABLE_LRU_INTERVAL") === "1",
+    redisUrl: readEnv("REDIS_URL") || undefined,
+    cacheDir: readEnv("VERYFRONT_CACHE_DIR") || readEnv("VF_CACHE_DIR") || undefined,
+    disableLruInterval: readEnv("VF_DISABLE_LRU_INTERVAL") === "1",
 
-    appUrl: getEnv("APP_URL") || getEnv("NEXT_PUBLIC_APP_URL") || undefined,
+    appUrl: readEnv("APP_URL") || readEnv("NEXT_PUBLIC_APP_URL") || undefined,
 
-    port: parseNumber(getEnv("PORT"), DEFAULTS.port),
+    port: portOverride ?? DEFAULTS.port,
+    portSource: portOverride === undefined ? "default" : "environment",
     requestTimeoutMs: requestTimeoutRaw
-      ? parseNumber(requestTimeoutRaw, DEFAULT_REQUEST_TIMEOUT_MS)
+      ? parseBoundedInteger(
+        requestTimeoutRaw,
+        DEFAULT_REQUEST_TIMEOUT_MS,
+        1,
+        MAX_TIMER_DELAY_MS,
+      )
       : undefined,
     httpFetchTimeoutMs: httpFetchTimeoutRaw
-      ? parseNumber(httpFetchTimeoutRaw, DEFAULT_HTTP_FETCH_TIMEOUT_MS)
+      ? parseBoundedInteger(
+        httpFetchTimeoutRaw,
+        DEFAULT_HTTP_FETCH_TIMEOUT_MS,
+        1,
+        MAX_TIMER_DELAY_MS,
+      )
       : undefined,
     extensionSetupTimeoutMs: extensionSetupTimeoutRaw
-      ? parseNumber(extensionSetupTimeoutRaw, 30_000)
+      ? parseBoundedInteger(extensionSetupTimeoutRaw, 30_000, 0, MAX_TIMER_DELAY_MS)
       : undefined,
-    ssrMaxConcurrentTransforms: parseNumber(
-      getEnv("SSR_MAX_CONCURRENT_TRANSFORMS"),
+    ssrMaxConcurrentTransforms: parseBoundedInteger(
+      readEnv("SSR_MAX_CONCURRENT_TRANSFORMS"),
       DEFAULTS.ssrMaxConcurrentTransforms,
+      0,
     ),
 
-    otelEnabled: isTruthyEnvValue(getHostTelemetryEnv("VERYFRONT_OTEL")) ||
-      isTruthyEnvValue(getHostTelemetryEnv("OTEL_TRACES_ENABLED")),
-    otelServiceName: getHostTelemetryEnv("OTEL_SERVICE_NAME") || undefined,
-    otelEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || undefined,
-    otelTracesEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") || undefined,
-    otelMetricsEndpoint: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") || undefined,
-    otelTracesExporter: getHostTelemetryEnv("OTEL_TRACES_EXPORTER") || undefined,
-    otelMetricsExporter: getHostTelemetryEnv("OTEL_METRICS_EXPORTER") || undefined,
-    otelHeaders: getHostTelemetryEnv("OTEL_EXPORTER_OTLP_HEADERS") || undefined,
-    otelMetricsEnabled: isTruthyEnvValue(getHostTelemetryEnv("OTEL_METRICS_ENABLED")),
+    otelEnabled: isTruthyEnvValue(readTelemetryEnv("VERYFRONT_OTEL")) ||
+      isTruthyEnvValue(readTelemetryEnv("OTEL_TRACES_ENABLED")),
+    otelServiceName: readTelemetryEnv("OTEL_SERVICE_NAME") || undefined,
+    otelEndpoint: readTelemetryEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || undefined,
+    otelTracesEndpoint: readTelemetryEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") || undefined,
+    otelMetricsEndpoint: readTelemetryEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") || undefined,
+    otelTracesExporter: readTelemetryEnv("OTEL_TRACES_EXPORTER") || undefined,
+    otelMetricsExporter: readTelemetryEnv("OTEL_METRICS_EXPORTER") || undefined,
+    otelHeaders: readTelemetryEnv("OTEL_EXPORTER_OTLP_HEADERS") || undefined,
+    otelMetricsEnabled: isTruthyEnvValue(readTelemetryEnv("OTEL_METRICS_ENABLED")),
 
-    openaiApiKey: getEnv("OPENAI_API_KEY") || undefined,
-    openaiBaseUrl: getEnv("OPENAI_BASE_URL") || undefined,
-    anthropicApiKey: getEnv("ANTHROPIC_API_KEY") || undefined,
-    anthropicBaseUrl: getEnv("ANTHROPIC_BASE_URL") || undefined,
-    googleApiKey: getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY") || undefined,
+    openaiApiKey: readEnv("OPENAI_API_KEY") || undefined,
+    openaiBaseUrl: readEnv("OPENAI_BASE_URL") || undefined,
+    anthropicApiKey: readEnv("ANTHROPIC_API_KEY") || undefined,
+    anthropicBaseUrl: readEnv("ANTHROPIC_BASE_URL") || undefined,
+    googleApiKey: readEnv("GOOGLE_API_KEY") ||
+      readEnv("GOOGLE_GENERATIVE_AI_API_KEY") ||
+      undefined,
 
-    githubToken: getEnv("GITHUB_TOKEN") || undefined,
-    githubOwner: getEnv("GITHUB_OWNER") || undefined,
-    githubRepo: getEnv("GITHUB_REPO") || undefined,
-    githubRef: getEnv("GITHUB_REF") || undefined,
+    githubToken: readEnv("GITHUB_TOKEN") || undefined,
+    githubOwner: readEnv("GITHUB_OWNER") || undefined,
+    githubRepo: readEnv("GITHUB_REPO") || undefined,
+    githubRef: readEnv("GITHUB_REF") || undefined,
 
-    noColor: !!getEnv("NO_COLOR"),
-    forceColor: !!getEnv("FORCE_COLOR"),
+    noColor: readEnv("NO_COLOR") !== undefined,
+    forceColor: forceColorRaw !== undefined && forceColorRaw !== "" && forceColorRaw !== "0",
 
-    denoV8Flags: getEnv("DENO_V8_FLAGS") ?? "",
+    denoV8Flags: readEnv("DENO_V8_FLAGS") ?? "",
     v8MaxOldSpaceSize: v8MaxOldSpaceSizeRaw
-      ? parseNumber(v8MaxOldSpaceSizeRaw, 0) || undefined
+      ? parseBoundedInteger(v8MaxOldSpaceSizeRaw, 0, 1) || undefined
       : undefined,
 
-    veryfrontVersion: getEnv("VERYFRONT_VERSION") || getEnv("RELEASE_VERSION") || undefined,
+    veryfrontVersion: readEnv("VERYFRONT_VERSION") || readEnv("RELEASE_VERSION") || undefined,
   };
 }
 
@@ -261,21 +306,28 @@ export function isEnvironmentConfigInitialized(): boolean {
 export function createTestEnvironmentConfig(
   overrides: Partial<EnvironmentConfig> = {},
 ): EnvironmentConfig {
-  const base = _environmentConfig ?? readEnvSnapshot();
+  const base = readEnvSnapshot(readEmptyEnv, readEmptyEnv, readEmptyEnv);
+  const portSource = overrides.portSource ??
+    (Object.hasOwn(overrides, "port") ? "environment" : base.portSource);
 
   return {
     ...base,
     nodeEnv: "test",
+    veryfrontEnv: "test",
     debug: false,
     ci: false,
     denoTesting: false,
     ...overrides,
+    portSource,
   };
 }
 
 export function _setEnvironmentConfigForTesting(env: Partial<EnvironmentConfig>): void {
-  const base = _environmentConfig ?? readEnvSnapshot();
-  _environmentConfig = Object.freeze({ ...base, ...env });
+  const base = _environmentConfig ??
+    readEnvSnapshot(readEmptyEnv, readEmptyEnv, readEmptyEnv);
+  const portSource = env.portSource ??
+    (Object.hasOwn(env, "port") ? "environment" : base.portSource);
+  _environmentConfig = Object.freeze({ ...base, ...env, portSource });
 }
 
 export function _resetEnvironmentConfig(): void {

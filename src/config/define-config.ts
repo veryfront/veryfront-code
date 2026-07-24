@@ -10,7 +10,7 @@ export function defineConfig<const T extends VeryfrontConfigInput>(config: T): T
 /** Define a Veryfront project configuration from the current environment name. */
 export function defineConfigWithEnv<const T extends VeryfrontConfigInput>(
   factory: (env: string) => T,
-  envConfig: EnvironmentConfig = getEnvironmentConfig(),
+  envConfig: Pick<EnvironmentConfig, "nodeEnv"> = getEnvironmentConfig(),
 ): T {
   return factory(envConfig.nodeEnv);
 }
@@ -43,7 +43,10 @@ async function validatePort(cfg: Record<string, unknown>): Promise<void> {
   if (port === undefined) return;
 
   const { MIN_PORT, MAX_PORT } = await import("../utils/constants/index.ts");
-  if (typeof port === "number" && port >= MIN_PORT && port <= MAX_PORT) return;
+  if (
+    typeof port === "number" && Number.isInteger(port) &&
+    port >= MIN_PORT && port <= MAX_PORT
+  ) return;
 
   throw toError(
     createError({

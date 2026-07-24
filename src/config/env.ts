@@ -44,7 +44,7 @@ export function getSsrMaxConcurrentTransformsEnv(
   defaultValue = 3,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): number {
-  return env.ssrMaxConcurrentTransforms || defaultValue;
+  return env.ssrMaxConcurrentTransforms ?? defaultValue;
 }
 
 export function getRedisUrlEnv(

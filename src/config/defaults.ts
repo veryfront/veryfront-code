@@ -9,60 +9,66 @@ export const DATA_FETCH_TIMEOUT_MS = 10000;
 
 export const DEFAULT_CACHE_MAX_SIZE = 100;
 
-export const DURATION_HISTOGRAM_BOUNDARIES_MS = [
-  5,
-  10,
-  25,
-  50,
-  75,
-  100,
-  250,
-  500,
-  750,
-  1000,
-  2500,
-  5000,
-  7500,
-  10000,
-] as const;
+export const DURATION_HISTOGRAM_BOUNDARIES_MS = Object.freeze(
+  [
+    5,
+    10,
+    25,
+    50,
+    75,
+    100,
+    250,
+    500,
+    750,
+    1000,
+    2500,
+    5000,
+    7500,
+    10000,
+  ] as const,
+);
 
-export const SIZE_HISTOGRAM_BOUNDARIES_KB = [
-  1,
-  5,
-  10,
-  25,
-  50,
-  100,
-  250,
-  500,
-  1000,
-  2500,
-  5000,
-  10000,
-] as const;
+export const SIZE_HISTOGRAM_BOUNDARIES_KB = Object.freeze(
+  [
+    1,
+    5,
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1000,
+    2500,
+    5000,
+    10000,
+  ] as const,
+);
 
-export const defaultConfig = {
-  server: {
-    port: DEFAULT_PORT,
-    hostname: "0.0.0.0",
-  },
-  timeouts: {
-    default: DEFAULT_TIMEOUT_MS,
-    api: 30000,
-    ssr: SSR_TIMEOUT_MS,
-    hmr: 30000,
-    sandbox: SANDBOX_TIMEOUT_MS,
-  },
-  cache: {
-    jit: {
-      maxSize: DEFAULT_CACHE_MAX_SIZE,
-      tempDirPrefix: "vf-bundle-",
-    },
-  },
-  metrics: {
-    ssrBoundaries: DURATION_HISTOGRAM_BOUNDARIES_MS,
-  },
-} as const;
+export const defaultConfig = Object.freeze(
+  {
+    server: Object.freeze({
+      port: DEFAULT_PORT,
+      hostname: "0.0.0.0",
+    }),
+    timeouts: Object.freeze({
+      default: DEFAULT_TIMEOUT_MS,
+      api: 30000,
+      ssr: SSR_TIMEOUT_MS,
+      hmr: 30000,
+      sandbox: SANDBOX_TIMEOUT_MS,
+    }),
+    cache: Object.freeze({
+      jit: Object.freeze({
+        maxSize: DEFAULT_CACHE_MAX_SIZE,
+        tempDirPrefix: "vf-bundle-",
+      }),
+    }),
+    metrics: Object.freeze({
+      ssrBoundaries: DURATION_HISTOGRAM_BOUNDARIES_MS,
+    }),
+  } as const,
+);
 
 export const DEFAULT_PREFETCH_DELAY_MS = 100;
 export const DEFAULT_METRICS_COLLECT_INTERVAL_MS = 60000;

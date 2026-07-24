@@ -1489,11 +1489,12 @@ export default defineConfig({ tailwind: { stylesheet: "globals.css" }, typoKey: 
 
   it("loads release config that uses framework config helpers", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    setEnv("VERYFRONT_RELEASE_CONFIG_STYLESHEET", "src/styles/helper.css");
     const files = [
       {
         path: "veryfront.config.ts",
-        content: `import { defineConfigWithEnv, mergeConfigs } from "veryfront";
-const shared = { tailwind: { stylesheet: "src/styles/helper.css" } };
+        content: `import { defineConfigWithEnv, getEnv, mergeConfigs } from "veryfront";
+const shared = { tailwind: { stylesheet: getEnv("VERYFRONT_RELEASE_CONFIG_STYLESHEET") } };
 export default defineConfigWithEnv((env) =>
   mergeConfigs(shared, { react: { version: env === "production" ? "19.2.8" : "19.2.9" } })
 );`,
