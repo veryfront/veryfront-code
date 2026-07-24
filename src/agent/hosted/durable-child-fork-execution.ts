@@ -2,7 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
-import { parseProviderError } from "../../chat/provider-errors.ts";
+import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import {
   buildChildRunResultSummary,
   type ChildRunResultMode,
@@ -194,24 +194,6 @@ export function buildHostedDurableChildInvokeTerminalFailureResult(
     childRunId: input.identifiers.childRunId,
     childMessageId: input.identifiers.childMessageId,
   });
-}
-
-function resolveKnownProviderTerminalError(error: unknown): {
-  code: string;
-  message: string;
-} | null {
-  const parsedError = parseProviderError(error);
-  if (
-    parsedError.code === "EXTERNAL_SERVICE_ERROR" &&
-    parsedError.message === "LLM provider service error"
-  ) {
-    return null;
-  }
-
-  return {
-    code: parsedError.code,
-    message: parsedError.message,
-  };
 }
 
 /** Result returned from build hosted durable child invoke success. */

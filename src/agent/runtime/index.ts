@@ -1136,6 +1136,7 @@ export class AgentRuntime {
             toolCalls,
             status: this.status,
             usage: totalUsage,
+            metadata: response.finishReason ? { finishReason: response.finishReason } : undefined,
           };
         }
 
