@@ -83,7 +83,7 @@ function installWorkerExitNotifier(): void {
   }
   if (typeof Deno.exit === "function") {
     const exitWorker = Deno.exit.bind(Deno);
-    Deno.exit = ((code?: number): never => {
+    const controlledExit = ((code?: number): never => {
       try {
         notifyExit();
       } catch {
@@ -91,6 +91,11 @@ function installWorkerExitNotifier(): void {
       }
       return exitWorker(code);
     }) as typeof Deno.exit;
+    Object.defineProperty(Deno, "exit", {
+      configurable: false,
+      writable: false,
+      value: controlledExit,
+    });
   }
   exitNotifierInstalled = true;
 }

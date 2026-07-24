@@ -228,7 +228,20 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             } catch {}
           `,
         ],
-        ["deno-exit", "Deno.exit(0)", ""],
+        [
+          "deno-exit",
+          "Deno.exit(0)",
+          `
+            try { Deno.exit = () => {}; } catch {}
+            try {
+              Object.defineProperty(Deno, "exit", {
+                configurable: true,
+                writable: true,
+                value: () => {},
+              });
+            } catch {}
+          `,
+        ],
       ]
     ) {
       const projectDir = await Deno.makeTempDir();
