@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  PROJECT_ENV_SNAPSHOT_LIMITS as PLATFORM_PROJECT_ENV_SNAPSHOT_LIMITS,
+} from "#veryfront/platform/compat/process/project-env-contract.ts";
 import {
   createProjectEnvSnapshot,
   PROJECT_ENV_SNAPSHOT_LIMITS,
@@ -233,6 +236,10 @@ describe("server/project-env/snapshot", () => {
   });
 
   it("keeps its fixed limits immutable", () => {
+    assertStrictEquals(
+      PROJECT_ENV_SNAPSHOT_LIMITS,
+      PLATFORM_PROJECT_ENV_SNAPSHOT_LIMITS,
+    );
     assertEquals(Object.isFrozen(PROJECT_ENV_SNAPSHOT_LIMITS), true);
     assertThrows(
       () =>
