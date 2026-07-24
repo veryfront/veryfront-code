@@ -29,7 +29,7 @@ export const PRODUCTION_BUILD_REQUIRED = defineError({
   category: "DEPLOY",
   status: 400,
   title: "Production build required",
-  suggestion: "Run 'vf build' before deploying",
+  suggestion: "Run 'veryfront build' before deploying",
 });
 
 /** Registry fragment for DEPLOY errors (slug → definition). */

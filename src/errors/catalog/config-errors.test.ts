@@ -64,6 +64,23 @@ describe("errors/catalog/config-errors", () => {
       assertEquals((solution?.tips?.length ?? 0) > 0, true);
     });
 
+    it("should give accurate configuration recovery guidance", () => {
+      const guidance = JSON.stringify(CONFIG_ERROR_CATALOG).toLowerCase();
+
+      for (
+        const filename of [
+          "veryfront.config.js",
+          "veryfront.config.ts",
+          "veryfront.config.mjs",
+        ]
+      ) {
+        assertEquals(guidance.includes(filename), true);
+      }
+      assertEquals(guidance.includes("veryfront init"), false);
+      assertEquals(guidance.includes("vf init"), false);
+      assertEquals(guidance.includes("remove any trailing comma"), false);
+    });
+
     it("config-invalid should have example", () => {
       assertHasExample("config-invalid");
     });
@@ -74,6 +91,30 @@ describe("errors/catalog/config-errors", () => {
 
     it("cors-config-invalid should have example", () => {
       assertHasExample("cors-config-invalid");
+    });
+
+    it("cors-config-invalid should name the supported configuration keys", () => {
+      const solution = CONFIG_ERROR_CATALOG["cors-config-invalid"];
+      assertEquals(
+        solution?.steps?.includes(
+          "Or provide an object with origin, methods, allowedHeaders, exposedHeaders, credentials, or maxAge",
+        ),
+        true,
+      );
+      assertEquals(
+        solution?.steps?.includes("Or provide an object with origin, methods, headers"),
+        false,
+      );
+      assertEquals(
+        solution?.steps?.includes(
+          "Use a non-empty origin string, a non-empty string array, or a synchronous validator function",
+        ),
+        true,
+      );
+      assertEquals(
+        solution?.steps?.some((step) => step.includes("not an array")),
+        false,
+      );
     });
   });
 });

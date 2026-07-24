@@ -1,7 +1,7 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
-export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
+export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "unknown-error": createSimpleError(
     "unknown-error",
     "Unknown error",
@@ -68,4 +68,4 @@ export const GENERAL_ERROR_CATALOG: PartialErrorCatalog = {
       "Check for very large files",
     ],
   ),
-};
+});

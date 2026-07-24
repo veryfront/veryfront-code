@@ -36,6 +36,26 @@ describe("factory", () => {
       expect(solution.docs).toBe("https://veryfront.com/docs/errors/build-failed");
     });
 
+    it("should detach and freeze mutable configuration arrays", () => {
+      const steps = ["Original step"];
+      const tips = ["Original tip"];
+      const solution = createErrorSolution("build-failed", {
+        title: "Build failed",
+        message: "The build process encountered errors",
+        steps,
+        tips,
+      });
+
+      steps[0] = "Mutated step";
+      tips[0] = "Mutated tip";
+
+      expect(solution.steps).toEqual(["Original step"]);
+      expect(solution.tips).toEqual(["Original tip"]);
+      expect(Object.isFrozen(solution)).toBe(true);
+      expect(Object.isFrozen(solution.steps)).toBe(true);
+      expect(Object.isFrozen(solution.tips)).toBe(true);
+    });
+
     it("should create error solution with example", () => {
       const example = "export default { port: 3000 }";
       const solution = createErrorSolution("config-invalid", {
@@ -374,11 +394,11 @@ describe("factory", () => {
     it("should handle real-world error scenarios", () => {
       const configError = createErrorSolution("config-not-found", {
         title: "Configuration file not found",
-        message: "Veryfront could not find veryfront.config.js in your project root",
+        message: "Veryfront could not find a supported configuration file in your project root",
         steps: [
-          "Create veryfront.config.js in your project root",
-          'Run "veryfront init" to generate a default configuration',
-          "Or specify a custom config path with --config flag",
+          "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in your project root",
+          "Export a configuration object as the file's default export",
+          "Confirm the command is running from the intended project root",
         ],
         example: 'export default { port: 3000, mode: "development" }',
         tips: ["Make sure you are in the correct directory", "Check file permissions"],

@@ -1,7 +1,7 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
-export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
+export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "deployment-error": createSimpleError(
     "deployment-error",
     "Deployment failed",
@@ -41,4 +41,4 @@ export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
       "Verify build completed successfully",
     ],
   ),
-};
+});

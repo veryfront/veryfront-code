@@ -7,6 +7,7 @@
 import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
 import type { VeryfrontError } from "./types.ts";
+import { sanitizeDiagnosticText, snapshotErrorForBoundary } from "./safe-diagnostics.ts";
 
 /**
  * Attach error metadata to an OpenTelemetry span
@@ -19,8 +20,8 @@ import type { VeryfrontError } from "./types.ts";
  * - error.category: Error category (CONFIG, BUILD, RUNTIME, etc.)
  * - error.status: HTTP status code
  *
- * Span status: Set to ERROR with error title as message
- * Span event: "error" event with slug and detail
+ * Span status: Set to ERROR with the stable error slug as message
+ * Span event: "error" event with non-sensitive identity metadata
  *
  * @param error - The VeryfrontError to attach
  * @param span - The OpenTelemetry span to attach to
@@ -36,24 +37,28 @@ import type { VeryfrontError } from "./types.ts";
  * ```
  */
 export function attachErrorToSpan(error: VeryfrontError, span: Span): void {
+  const snapshot = snapshotErrorForBoundary(error);
+  const slug = sanitizeDiagnosticText(snapshot.slug);
+
   // Set span status to ERROR
   span.setStatus({
     code: SpanStatusCode.ERROR,
-    message: error.title,
+    message: slug,
   });
 
   // Set error attributes for filtering and grouping
   span.setAttributes({
-    "error.slug": error.slug,
-    "error.category": error.category,
-    "error.status": error.status,
+    "error.slug": slug,
+    "error.category": snapshot.category,
+    "error.status": snapshot.status,
   });
 
-  // Add error event with details
+  // Diagnostic text may contain credentials or internal payloads. Keep span
+  // events limited to the same stable, non-sensitive identity fields.
   span.addEvent("error", {
-    "error.slug": error.slug,
-    "error.detail": error.detail ?? "",
-    "error.suggestion": error.suggestion ?? "",
+    "error.slug": slug,
+    "error.category": snapshot.category,
+    "error.status": snapshot.status,
   });
 }
 

@@ -1,296 +1,192 @@
-# Error Handling Module
+# Error Handling
 
-## Purpose
+`src/errors` owns Veryfront's typed error identity, RFC 9457 problem responses,
+boundary adapters, retry helpers, diagnostic logging, tracing metadata, and
+user-facing troubleshooting guidance.
 
-The error-handling module provides a structured error management system for Veryfront, including slug-based error identity, RFC 9457 compliance, categorization, user-friendly messages, and developer debugging tools.
+## Sources of truth
 
-## Scope
+The module has three intentionally distinct representations:
 
-### What this module does:
+1. `error-registry.ts` is the canonical source of throwable errors. Each
+   registered definition has a stable slug, category, HTTP error status, title,
+   suggestion, and `.create()` factory.
+2. `catalog/` is a partial troubleshooting catalog keyed by canonical registry
+   slugs. Not every registered error needs a long-form solution.
+3. `VeryfrontErrorData` in `veryfront-error.ts` is the legacy serializable data
+   union used by adapters. It is not the throwable `VeryfrontError` class.
 
-- Slug-based error registry and lookup
-- RFC 9457 (Problem Details for HTTP APIs) compliance
-- Error categorization (config, build, runtime, etc.)
-- User-friendly error messages
-- Error solutions and troubleshooting guides
-- Stack trace parsing and formatting
-- Error documentation URL generation
+`user-friendly/` preserves older solution keys for compatibility. Its
+identifier maps canonical `VeryfrontError` slugs to those keys before falling
+back to message heuristics.
 
-### What this module does NOT do:
+Registered definitions, composed registries, catalog entries, and catalog maps
+are immutable. Canonical registry composition validates its slugs, categories,
+titles, and HTTP error statuses at runtime. The generic `defineError()` and
+`VeryfrontError` APIs retain custom slug and status support for integrations.
 
-- Error catching/boundary logic (see `components/ErrorBoundary`)
-- HTTP error responses (see `server/handlers/response/`)
-- Logging infrastructure (see `observability/logging/`)
+## Defining and throwing an error
 
-## Architecture
+Add a definition to the appropriate file under `error-registry/`, then include
+it in that file's category registry.
 
-```
-errors/
-├── catalog/                # Error catalog and solutions
-│   ├── factory.ts         # Error solution creation
-│   ├── types.ts           # Catalog type definitions
-│   └── index.ts          # Slug → solution mapping
-├── user-friendly/         # User-facing error messages
-│   ├── formatter.ts       # Message formatting
-│   └── suggestions.ts     # Contextual suggestions
-├── error-registry.ts      # Slug-based error registry (source of truth)
-├── types.ts               # Core types and VeryfrontError class
-├── http-error.ts          # RFC 9457 HTTP response utilities
-└── index.ts              # Module exports
-```
-
-## Slug-Based Error System
-
-Veryfront uses slug-based error identity for stable, human-readable error identification:
-
-### Error Categories
-
-- **CONFIG**: Configuration errors (e.g., `config-not-found`, `config-invalid`)
-- **BUILD**: Build errors (e.g., `build-failed`, `bundle-error`)
-- **RUNTIME**: Runtime errors (e.g., `hydration-mismatch`, `render-error`)
-- **ROUTE**: Route errors (e.g., `route-not-found`, `invalid-route`)
-- **MODULE**: Import/Module errors (e.g., `module-not-found`, `import-error`)
-- **SERVER**: Server errors (e.g., `port-in-use`, `server-start-error`)
-- **BOUNDARY**: RSC/Client boundary errors (e.g., `rsc-payload-error`)
-- **DEV**: Development errors (e.g., `hmr-error`, `hot-reload-failed`)
-- **DEPLOY**: Deployment errors (e.g., `deploy-failed`, `asset-upload-error`)
-- **AGENT**: AI agent errors (e.g., `agent-error`, `agent-timeout`)
-- **GENERAL**: General errors (e.g., `unknown-error`, `internal-error`)
-
-## Key Exports
-
-### Error Registry
-
-```typescript
-import { CONFIG_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors";
-
-// Create an error instance
-const error = CONFIG_NOT_FOUND.create({
-  detail: "Could not find veryfront.config.js in /path/to/project",
-  context: { projectDir: "/path/to/project" },
-});
-
-// Access error properties
-console.log(error.slug); // "config-not-found"
-console.log(error.category); // "CONFIG"
-console.log(error.status); // 500
-console.log(error.title); // "Configuration not found"
-console.log(error.suggestion); // "Create veryfront.config.js..."
-```
-
-### VeryfrontError Class
-
-```typescript
-import { CONFIG_NOT_FOUND } from "#veryfront/errors";
-
-// Preferred: use .create() from registry
-const error = CONFIG_NOT_FOUND.create({
-  detail: "Could not find config file",
-  context: { projectDir: "/path/to/project" },
-});
-
-// Convert to RFC 9457 format
-const response = error.toRFC9457();
-// {
-//   type: "https://veryfront.com/docs/errors/config-not-found",
-//   title: "Configuration not found",
-//   status: 404,
-//   detail: "Could not find config file",
-//   category: "CONFIG",
-//   suggestion: "Create veryfront.config.js..."
-// }
-
-// Get documentation URL
-console.log(error.getDocsUrl());
-// "https://veryfront.com/docs/errors/config-not-found"
-```
-
-### Defining New Errors
-
-```typescript
+```ts
 import { defineError } from "#veryfront/errors";
 
-export const MY_NEW_ERROR = defineError({
-  slug: "my-new-error",
+export const PROJECT_LOAD_FAILED = defineError({
+  slug: "project-load-failed",
   category: "RUNTIME",
   status: 500,
-  title: "My new error occurred",
-  suggestion: "Try doing X instead of Y",
+  title: "Project load failed",
+  suggestion: "Check the project files and retry",
 });
 
-// Use it
-throw MY_NEW_ERROR.create({
-  detail: "Specific details about what went wrong",
-  context: { additionalInfo: "value" },
-});
-```
-
-### RFC 9457 HTTP Responses
-
-```typescript
-import { createErrorResponse, createProblemResponse } from "#veryfront/errors";
-
-// From a VeryfrontError
-const response = createErrorResponse(error);
-
-// Direct problem response
-const problemResponse = createProblemResponse({
-  slug: "validation-error",
-  status: 400,
-  title: "Validation failed",
-  detail: "Email field is required",
+throw PROJECT_LOAD_FAILED.create({
+  detail: "The project manifest could not be parsed",
+  context: { projectId: "project-123" },
 });
 ```
 
-## Error Catalog
+Canonical registry slugs use lowercase kebab-case. Their status values and
+definition status values must be integer HTTP error statuses from 400 through
+599. Registry composition enforces those invariants without restricting generic
+errors or per-instance status overrides created by integrations. HTTP boundary
+serializers fall back to `unknown-error` when a custom status cannot be emitted
+as a valid response.
 
-The error catalog provides solutions and troubleshooting guidance:
+Use `cause` for provenance and `context` for structured diagnostics. Do not put
+credentials, raw authorization headers, request bodies, or private
+infrastructure details in user-facing fields.
 
-```typescript
-import { ERROR_CATALOG, getErrorSolution } from "#veryfront/errors";
+## RFC 9457 responses
 
-// Get solution by slug
-const solution = getErrorSolution("config-not-found");
-if (solution) {
-  console.log(solution.title);
-  console.log(solution.message);
-  console.log(solution.steps); // Array of fix steps
-  console.log(solution.docs); // Documentation URL
-}
+`VeryfrontError.toRFC9457()` returns the problem-details object. The
+`type` field is the stable documentation URL:
 
-// Search for errors
-import { searchErrors } from "#veryfront/errors";
-const results = searchErrors("config");
+```text
+https://veryfront.com/docs/errors/<slug>
 ```
 
-## User-Friendly Formatting
+Choose the response helper based on the boundary:
 
-```typescript
-import { formatUserError, identifyError } from "#veryfront/errors";
+- `errorToRFC9457Response()` is the environment-aware HTTP boundary serializer.
+  It includes stacks only for local projects, removes `cause` in production,
+  and also removes `detail` from production 5xx responses.
+- `errorToResponse()` is the safe generic serializer. It removes `cause` from
+  every response, removes `detail` from every 5xx response, and never mutates
+  the source error.
+- `createErrorResponse()` and `createProblemResponse()` are explicit low-level
+  serializers. Callers are responsible for passing only response-safe fields.
+
+```ts
+import { errorToResponse } from "#veryfront/errors";
 
 try {
-  await buildProject();
+  await loadProject();
 } catch (error) {
-  const friendly = formatUserError(error);
-
-  console.error(friendly.title);
-  console.error(friendly.message);
-
-  if (friendly.steps) {
-    console.error("\nHow to fix:");
-    friendly.steps.forEach((step, i) => {
-      console.error(`  ${i + 1}. ${step}`);
-    });
-  }
-
-  if (friendly.docs) {
-    console.error(`\nLearn more: ${friendly.docs}`);
-  }
+  return errorToResponse(error, "/api/projects/project-123");
 }
 ```
 
-## Best Practices
+HTTP problem responses use `application/problem+json`.
 
-### 1. Use the Error Registry
+Custom error slugs are credential-scrubbed and encoded as one documentation URL
+path segment. Separators, query and fragment markers, percent signs, and
+malformed Unicode cannot escape that segment. Exact `.` and `..` slugs fall back
+to `unknown-error` so URL normalization cannot leave the error documentation
+path.
 
-```typescript
-// Good - uses registry for consistent error identity
-import { CONFIG_NOT_FOUND } from "#veryfront/errors";
-throw CONFIG_NOT_FOUND.create({ detail: "Config file missing" });
+Diagnostic fields, stacks, structured context, serialized problem responses,
+production log records, and terminal renderings use shared size limits.
+Credential redaction runs before truncation so a cut cannot expose a credential
+prefix. Oversized structured outputs remain valid JSON.
 
-// Bad - raw Error without structure
-throw new Error("Config file missing");
+## Boundaries
+
+Use `httpErrorBoundary()` or `wrapHandlerWithErrorBoundary()` for server
+handlers. They normalize unknown throws, record stable metrics and trace
+metadata, and return RFC 9457 responses.
+
+Use `cliErrorBoundary()` for CLI entry points. CLI output may include local
+diagnostic details and development stack frames.
+
+`wrapUnknownError()` retains an existing `VeryfrontError` or creates the
+canonical `unknown-error`. `wrapWithContext()` creates a new error and preserves
+the original error as provenance.
+
+## Logging and tracing
+
+`logError()` emits a human-readable development record or structured production
+JSON. Structured context is copied through the shared fail-closed redactor, and
+credentials embedded in URLs, authorization values, API-key assignments, and
+cookie assignments are removed from diagnostic text.
+
+Tracing exports only stable identity fields:
+
+- `error.slug`
+- `error.category`
+- `error.status`
+
+Raw detail, suggestions, stacks, and causes are not attached to spans.
+
+## Troubleshooting catalogs
+
+Use canonical catalog lookup when the slug is known:
+
+```ts
+import { getErrorSolution, searchErrors } from "#veryfront/errors";
+
+const solution = getErrorSolution("config-not-found");
+const matches = searchErrors("configuration");
 ```
 
-### 2. Provide Context
+`searchErrors()` trims the query, normalizes spaces and underscores for slug
+matching, and returns no results for an empty query.
 
-```typescript
-import { BUILD_FAILED } from "#veryfront/errors";
+Use `formatErrorBox()` or `formatUserError()` for CLI-friendly strings. Unknown
+errors include stack frames only outside production.
 
-throw BUILD_FAILED.create({
-  detail: "TypeScript compilation failed",
-  context: {
-    file: "/path/to/problematic/file.tsx",
-    line: 42,
-    column: 10,
-  },
-});
+When adding a long-form solution:
+
+1. Add it to the matching file under `catalog/`.
+2. Keep the key and `slug` identical to the canonical registry slug.
+3. Use public CLI commands and public documentation URLs.
+4. Do not include internal endpoints, deployment names, tokens, or operational
+   runbooks.
+
+## Retry helpers
+
+`retryWithBackoff()` uses zero-based attempt numbers. `maxAttempts` includes the
+first call. Delays and timeouts must be finite, non-negative numbers no greater
+than `2_147_483_647` milliseconds. Fractional values round up to the next whole
+millisecond, and `onRetry` receives the normalized delay that will be scheduled.
+
+The timeout is cooperative: the attempt stops only when the callback observes
+the supplied `AbortSignal`. Its timer is cleared as soon as the attempt settles,
+before retry hooks or backoff work runs.
+
+`onRetry` and `wrapFinalError` receive a detached Error snapshot so repeated
+diagnostic reads cannot re-enter a hostile proxy. Without `wrapFinalError`, a
+terminal Error is rethrown with its original identity and subclass; non-Error
+throws are normalized to Error.
+
+## Tests
+
+Run every module test:
+
+```sh
+VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text deno test \
+  --preload=src/schemas/_test-setup.ts \
+  --no-check --parallel --allow-all \
+  --unstable-worker-options --unstable-net \
+  $(find src/errors -name '*.test.ts' -print)
 ```
 
-### 3. Check Error Types by Slug
+Before merging, also run scoped formatting, linting, and type checking for every
+changed TypeScript file.
 
-```typescript
-import { VeryfrontError } from "#veryfront/errors";
+## Related documentation
 
-if (error instanceof VeryfrontError && error.slug === "file-not-found") {
-  // Handle file not found specifically
-}
-```
-
-### 4. Use RFC 9457 for HTTP Responses
-
-```typescript
-import { createErrorHandler } from "#veryfront/errors";
-
-const handler = createErrorHandler({ isDev: true });
-
-app.use((error, req, res, next) => {
-  const response = handler(error);
-  res.status(response.status).json(response);
-});
-```
-
-## Testing
-
-```bash
-# Run error handling tests
-deno task test src/errors/
-
-# Test registry
-deno task test src/errors/error-registry.test.ts
-
-# Test catalog
-deno task test src/errors/catalog/
-```
-
-## Adding New Errors
-
-1. Add to `error-registry.ts` using `defineError()`
-2. Create solution in appropriate `catalog/*.ts` file
-3. Add tests
-4. Document in error guide
-
-```typescript
-// In error-registry.ts
-export const MY_ERROR = defineError({
-  slug: "my-error",
-  category: "RUNTIME",
-  status: 500,
-  title: "My error title",
-  suggestion: "How to fix this error",
-});
-
-// In catalog/runtime-errors.ts
-"my-error": createErrorSolution({
-  slug: "my-error",
-  title: "My Error Title",
-  message: "Detailed explanation",
-  steps: ["Step 1", "Step 2"],
-}),
-```
-
-## Maintainer
-
-**Team:** Platform Team
-**Code Owners:** See CODEOWNERS file
-
-## Related Modules
-
-- [`observability/`](../observability/README.md) - Error logging and tracing
-- [`server/`](../server/README.md) - HTTP error responses
-
-## References
-
-- [RFC 9457 - Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457)
-- [Error Handling Best Practices](https://veryfront.dev/docs/errors)
-- [Troubleshooting Guide](https://veryfront.com/docs/troubleshooting)
+- [Configuration guide](../../docs/guides/configuration.md)
+- [Observability architecture](../../docs/architecture/13-observability.md)
+- [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)

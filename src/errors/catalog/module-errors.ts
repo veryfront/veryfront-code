@@ -1,27 +1,7 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const MODULE_ERROR_CATALOG: PartialErrorCatalog = {
-  "cache-path-mismatch": createErrorSolution("cache-path-mismatch", {
-    title: "Cache path mismatch",
-    message: "Cached code contains file paths from a different environment.",
-    steps: [
-      "This is a distributed cache issue - cached code has paths like 'file:///app/...' but local expects different paths",
-      "Clear the project transform cache (see command below)",
-      "If widespread, restart renderer pods to clear all caches",
-      "This happens when local dev hits production cache or vice versa",
-    ],
-    example: `# Clear project cache:
-curl -X DELETE "https://api.veryfront.com/internal/cache/project/{projectId}/transforms" \\
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-
-# Or restart pods:
-kubectl rollout restart deployment/veryfront-server -n veryfront-production
-
-# To reproduce locally with production cache:
-VERYFRONT_PROXY_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start`,
-  }),
-
+export const MODULE_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "module-not-found": createErrorSolution("module-not-found", {
     title: "Module not found",
     message: "Cannot find the imported module.",
@@ -31,7 +11,7 @@ VERYFRONT_PROXY_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task st
       "Add missing module to import map",
       "Check for typos in import statement",
     ],
-    example: `// Add to veryfront.config.js
+    example: `// Add to veryfront.config.ts
 resolve: {
   importMap: {
     imports: {
@@ -103,4 +83,4 @@ resolve: {
       "Update dependencies to compatible versions",
     ],
   ),
-};
+});

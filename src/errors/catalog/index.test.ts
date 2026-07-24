@@ -1,8 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ErrorSlug } from "../error-registry.ts";
-import { composeErrorCatalog, ERROR_CATALOG, getErrorSolution, searchErrors } from "./index.ts";
+import { ERROR_REGISTRY, type ErrorSlug } from "../error-registry.ts";
+import {
+  BUILD_ERROR_CATALOG,
+  composeErrorCatalog,
+  CONFIG_ERROR_CATALOG,
+  DEPLOYMENT_ERROR_CATALOG,
+  DEV_ERROR_CATALOG,
+  ERROR_CATALOG,
+  GENERAL_ERROR_CATALOG,
+  getErrorSolution,
+  MODULE_ERROR_CATALOG,
+  ROUTE_ERROR_CATALOG,
+  RSC_ERROR_CATALOG,
+  RUNTIME_ERROR_CATALOG,
+  searchErrors,
+  SERVER_ERROR_CATALOG,
+} from "./index.ts";
 import { createSimpleError } from "./factory.ts";
 
 describe("errors/catalog/index", () => {
@@ -10,6 +25,36 @@ describe("errors/catalog/index", () => {
     it("should be a non-empty object", () => {
       assertEquals(typeof ERROR_CATALOG, "object");
       assertEquals(Object.keys(ERROR_CATALOG).length > 0, true);
+    });
+
+    it("should expose an immutable composed catalog", () => {
+      assertEquals(Object.isFrozen(ERROR_CATALOG), true);
+      assertEquals(Object.getPrototypeOf(ERROR_CATALOG), null);
+    });
+
+    it("should keep catalog fragments aligned with registry categories", () => {
+      const categorizedCatalogs = {
+        BUILD: BUILD_ERROR_CATALOG,
+        CONFIG: CONFIG_ERROR_CATALOG,
+        DEPLOY: DEPLOYMENT_ERROR_CATALOG,
+        DEV: DEV_ERROR_CATALOG,
+        GENERAL: GENERAL_ERROR_CATALOG,
+        MODULE: MODULE_ERROR_CATALOG,
+        ROUTE: ROUTE_ERROR_CATALOG,
+        BOUNDARY: RSC_ERROR_CATALOG,
+        RUNTIME: RUNTIME_ERROR_CATALOG,
+        SERVER: SERVER_ERROR_CATALOG,
+      } as const;
+
+      for (const [expectedCategory, catalog] of Object.entries(categorizedCatalogs)) {
+        for (const slug of Object.keys(catalog) as ErrorSlug[]) {
+          assertEquals(
+            ERROR_REGISTRY[slug].category,
+            expectedCategory,
+            `${slug} is published from the wrong catalog fragment`,
+          );
+        }
+      }
     });
 
     it("rejects duplicate slugs while composing catalog fragments", () => {
@@ -45,6 +90,12 @@ describe("errors/catalog/index", () => {
   describe("getErrorSolution", () => {
     it("should return null for unknown slug", () => {
       assertEquals(getErrorSolution("unknown-nonexistent-slug" as ErrorSlug), null);
+    });
+
+    it("should not return inherited object properties as solutions", () => {
+      for (const slug of ["toString", "constructor", "__proto__"]) {
+        assertEquals(getErrorSolution(slug as ErrorSlug), null);
+      }
     });
 
     it("should return solution for known slug", () => {
@@ -125,6 +176,12 @@ describe("errors/catalog/index", () => {
           `Expected normalized slug query to match: ${query}`,
         );
       }
+    });
+
+    it("should trim text searches and reject empty queries", () => {
+      const trimmed = searchErrors("  Configuration  ");
+      assertEquals(trimmed.some((error) => error.slug === "config-not-found"), true);
+      assertEquals(searchErrors("   "), []);
     });
   });
 });

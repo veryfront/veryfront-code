@@ -5,6 +5,8 @@ import {
   DEFAULT_RETRY_MAX_ATTEMPTS,
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+import { isErrorInstance, snapshotErrorAsError } from "./veryfront-error.ts";
 const logger = serverLogger.component("errors");
 
 function safeLog(logFn: () => void): void {
@@ -58,14 +60,18 @@ export interface RetryWithBackoffOptions {
   logger?: typeof serverLogger;
   /**
    * Per-attempt timeout: aborts the attempt's AbortSignal with an AbortError.
-   * Cooperative — the attempt only stops if `fn` observes the signal it is given.
+   * Cooperative - the attempt only stops if `fn` observes the signal it is given.
    */
   timeoutMs?: number;
   /** Return false to rethrow immediately without further attempts (default: always retry). */
   shouldRetry?: (error: unknown, attempt: number) => boolean;
   /** Override the exponential backoff delay for the wait after `attempt`. */
   computeDelay?: (attempt: number, error: unknown) => number;
-  /** Called before each backoff wait; replaces the default warn log. */
+  /**
+   * Called before each backoff wait; replaces the default warn log.
+   * `isTimeout` reports whether this helper's per-attempt timer aborted the
+   * signal, independent of the error type ultimately thrown by `fn`.
+   */
   onRetry?: (info: { error: Error; attempt: number; delay: number; isTimeout: boolean }) => void;
   /**
    * Wrap the terminal error once all attempts are exhausted. Default: rethrow
@@ -95,19 +101,30 @@ export async function retryWithBackoff<T>(
       `retryWithBackoff requires an integer maxAttempts >= 1, got ${maxAttempts}`,
     );
   }
+  const normalizedInitialDelay = normalizeTimerDurationMs(initialDelay, "initialDelay");
+  const normalizedMaxDelay = normalizeTimerDurationMs(maxDelay, "maxDelay");
+  const normalizedTimeoutMs = timeoutMs === undefined
+    ? undefined
+    : normalizeTimerDurationMs(timeoutMs, "timeoutMs");
 
   let lastError: Error | undefined;
+  let lastThrown: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const controller = timeoutMs === undefined ? undefined : new AbortController();
+    const controller = normalizedTimeoutMs === undefined ? undefined : new AbortController();
     const timeoutId = controller === undefined
       ? undefined
-      : setTimeout(() => controller.abort(), timeoutMs);
+      : setTimeout(() => controller.abort(), normalizedTimeoutMs);
 
     try {
-      return await fn(controller?.signal, attempt);
+      try {
+        return await fn(controller?.signal, attempt);
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+      lastThrown = error;
+      lastError = snapshotErrorAsError(error);
 
       if (shouldRetry && !shouldRetry(error, attempt)) {
         throw error;
@@ -117,10 +134,14 @@ export async function retryWithBackoff<T>(
         break;
       }
 
-      const delay = computeDelay
+      const requestedDelay = computeDelay
         ? computeDelay(attempt, error)
-        : Math.min(initialDelay * 2 ** attempt, maxDelay);
-      const isTimeout = lastError.name === "AbortError";
+        : Math.min(normalizedInitialDelay * 2 ** attempt, normalizedMaxDelay);
+      const delay = normalizeTimerDurationMs(
+        requestedDelay,
+        computeDelay ? "computeDelay result" : "retry delay",
+      );
+      const isTimeout = controller?.signal.aborted === true;
 
       if (onRetry) {
         onRetry({ error: lastError, attempt, delay, isTimeout });
@@ -129,11 +150,12 @@ export async function retryWithBackoff<T>(
       }
 
       await sleep(delay);
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 
   const finalError = lastError ?? new Error("Retry failed without capturing an error");
-  throw wrapFinalError ? wrapFinalError(finalError, Math.max(0, maxAttempts - 1)) : finalError;
+  if (wrapFinalError) {
+    throw wrapFinalError(finalError, Math.max(0, maxAttempts - 1));
+  }
+  throw isErrorInstance(lastThrown) ? lastThrown : finalError;
 }

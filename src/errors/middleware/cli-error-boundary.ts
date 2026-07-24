@@ -7,13 +7,16 @@
  * @module errors/middleware/cli-error-boundary
  */
 
-import { trace } from "#veryfront/observability/tracing/api-shim.ts";
 import { VeryfrontError } from "../types.ts";
-import { UNKNOWN_ERROR } from "../error-registry.ts";
-import { getErrorMessage } from "../veryfront-error.ts";
-import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
-import { attachErrorToActiveSpan } from "../tracing.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
+import {
+  buildErrorDocsUrl,
+  limitRenderedErrorOutput,
+  sanitizeTerminalDiagnosticText,
+  snapshotErrorForBoundary,
+} from "../safe-diagnostics.ts";
+import { observeBoundaryErrorBestEffort } from "./boundary-observability.ts";
+import { detachBoundaryError } from "./wrap-unknown.ts";
 
 /**
  * Color formatting functions (compatible with CLI colors)
@@ -89,42 +92,52 @@ function createColorFormatters(): ColorFormatter {
  *   Docs: https://veryfront.com/docs/errors/{slug}
  *   (Stack trace in dev mode)
  */
-function formatVeryfrontError(error: VeryfrontError, colors: ColorFormatter): string {
+function formatVeryfrontError(error: unknown, colors: ColorFormatter): string {
+  const snapshot = snapshotErrorForBoundary(error);
+  const slug = sanitizeTerminalDiagnosticText(snapshot.slug);
+  const title = sanitizeTerminalDiagnosticText(snapshot.title);
+  const docsUrl = buildErrorDocsUrl(snapshot.slug);
   const lines: string[] = [];
 
   // Header: [slug] title
   lines.push("");
   lines.push(
-    colors.red(colors.bold(`✖ [${error.slug}]`)) + " " + colors.bold(error.title),
+    colors.red(colors.bold(`✖ [${slug}]`)) + " " + colors.bold(title),
   );
   lines.push("");
 
   // Detail
-  if (error.detail) {
-    lines.push(colors.dim("  Detail: ") + error.detail);
+  if (snapshot.detail) {
+    lines.push(colors.dim("  Detail: ") + sanitizeTerminalDiagnosticText(snapshot.detail));
   }
 
   // Suggestion
-  if (error.suggestion) {
-    lines.push(colors.yellow("  💡 Suggestion: ") + error.suggestion);
+  if (snapshot.suggestion) {
+    lines.push(
+      colors.yellow("  💡 Suggestion: ") +
+        sanitizeTerminalDiagnosticText(snapshot.suggestion),
+    );
   }
 
   // Docs link
-  lines.push(colors.dim("  📚 Docs: ") + colors.cyan(error.getDocsUrl()));
+  lines.push(
+    colors.dim("  📚 Docs: ") +
+      colors.cyan(docsUrl),
+  );
 
   // Stack trace in dev mode
-  if (isDevelopment() && error.stack) {
+  if (isDevelopment() && snapshot.stack) {
     lines.push("");
     lines.push(colors.dim("  Stack trace:"));
-    const stackLines = error.stack.split("\n").slice(1, 6); // First 5 lines
+    const stackLines = snapshot.stack.split(/\r\n?|\n/).slice(1, 6);
     for (const line of stackLines) {
-      lines.push(colors.dim(`    ${line.trim()}`));
+      lines.push(colors.dim(`    ${sanitizeTerminalDiagnosticText(line).trim()}`));
     }
   }
 
   lines.push("");
 
-  return lines.join("\n");
+  return limitRenderedErrorOutput(lines.join("\n"));
 }
 
 /**
@@ -132,20 +145,7 @@ function formatVeryfrontError(error: VeryfrontError, colors: ColorFormatter): st
  */
 export function formatCLIError(error: unknown): string {
   const colors = createColorFormatters();
-
-  // Handle VeryfrontError
-  if (error instanceof VeryfrontError) {
-    return formatVeryfrontError(error, colors);
-  }
-
-  // Wrap unknown errors
-  const message = getErrorMessage(error);
-  const unknownError = UNKNOWN_ERROR.create({
-    detail: message,
-    cause: error instanceof Error ? error : undefined,
-  });
-
-  return formatVeryfrontError(unknownError, colors);
+  return formatVeryfrontError(error, colors);
 }
 
 /**
@@ -171,25 +171,13 @@ export async function cliErrorBoundary(
     await handler();
   } catch (error) {
     // Convert error to VeryfrontError
-    const vfError = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
-      detail: getErrorMessage(error),
-      cause: error instanceof Error ? error : undefined,
-    });
-
-    // Record error metrics
-    recordErrorCount({
-      slug: vfError.slug,
-      category: vfError.category,
-      status: String(vfError.status),
-    });
-
-    // Attach error to active OpenTelemetry span
-    attachErrorToActiveSpan(vfError, trace);
+    const vfError = detachBoundaryError(error);
+    observeBoundaryErrorBestEffort(vfError);
 
     if (options.onError) {
       await options.onError(error, vfError);
     } else {
-      console.log(formatCLIError(error));
+      console.log(formatCLIError(vfError));
     }
     exit(options.getExitCode?.(error, vfError) ?? 1);
   }
@@ -205,22 +193,10 @@ export function cliErrorBoundarySync(
     handler();
   } catch (error) {
     // Convert error to VeryfrontError
-    const vfError = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
-      detail: getErrorMessage(error),
-      cause: error instanceof Error ? error : undefined,
-    });
+    const vfError = detachBoundaryError(error);
+    observeBoundaryErrorBestEffort(vfError);
 
-    // Record error metrics
-    recordErrorCount({
-      slug: vfError.slug,
-      category: vfError.category,
-      status: String(vfError.status),
-    });
-
-    // Attach error to active OpenTelemetry span
-    attachErrorToActiveSpan(vfError, trace);
-
-    console.log(formatCLIError(error));
+    console.log(formatCLIError(vfError));
     exit(1);
   }
 }

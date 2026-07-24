@@ -32,6 +32,15 @@ describe("error-registry-helpers", () => {
     );
   });
 
+  it("does not return inherited object properties as registry entries", () => {
+    for (const slug of ["toString", "constructor", "__proto__"]) {
+      assertEquals(
+        getRegistryEntry(TEST_REGISTRY, slug as keyof typeof TEST_REGISTRY),
+        undefined,
+      );
+    }
+  });
+
   it("filters registry entries by category", () => {
     assertEquals(getRegistryEntriesByCategory(TEST_REGISTRY, "CONFIG"), [
       TEST_REGISTRY["config-problem"],
@@ -41,6 +50,19 @@ describe("error-registry-helpers", () => {
 
   it("returns registry slugs with preserved order", () => {
     assertEquals(getRegistrySlugs(TEST_REGISTRY), ["config-problem", "server-problem"]);
+  });
+
+  it("returns an immutable composed registry", () => {
+    const registry = composeErrorRegistry(TEST_REGISTRY);
+
+    assertEquals(Object.isFrozen(registry), true);
+    assertEquals(Object.getPrototypeOf(registry), null);
+    assertThrows(
+      () => {
+        (registry as Record<string, unknown>)["new-error"] = TEST_REGISTRY["config-problem"];
+      },
+      TypeError,
+    );
   });
 
   it("rejects duplicate slugs while composing registry fragments", () => {
@@ -74,6 +96,38 @@ describe("error-registry-helpers", () => {
       () => composeErrorRegistry(mismatchedRegistry),
       Error,
       'Error registry key "registry-key" does not match entry slug "definition-slug"',
+    );
+  });
+
+  it("rejects malformed definitions only when composing the internal registry", () => {
+    const malformed = {
+      "invalid error": defineError({
+        slug: "invalid error",
+        category: "GENERAL",
+        status: 200,
+        title: "Invalid",
+      }),
+    } as const;
+
+    assertThrows(
+      () => composeErrorRegistry(malformed),
+      TypeError,
+      "Registered error slug",
+    );
+
+    const invalidStatus = {
+      "invalid-status": defineError({
+        slug: "invalid-status",
+        category: "GENERAL",
+        status: 200,
+        title: "Invalid status",
+      }),
+    } as const;
+
+    assertThrows(
+      () => composeErrorRegistry(invalidStatus),
+      RangeError,
+      "Registered error status",
     );
   });
 });

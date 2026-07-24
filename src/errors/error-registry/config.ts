@@ -5,7 +5,8 @@ export const CONFIG_NOT_FOUND = defineError({
   category: "CONFIG",
   status: 404,
   title: "Configuration file not found",
-  suggestion: "Run 'vf init' to create a configuration file",
+  suggestion:
+    "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in the project root",
 });
 
 export const CONFIG_INVALID = defineError({
@@ -13,7 +14,7 @@ export const CONFIG_INVALID = defineError({
   category: "CONFIG",
   status: 400,
   title: "Invalid configuration format",
-  suggestion: "Check your veryfront.config.ts for syntax errors",
+  suggestion: "Check the reported configuration path and validation details",
 });
 
 export const CONFIG_PARSE_ERROR = defineError({
@@ -21,7 +22,7 @@ export const CONFIG_PARSE_ERROR = defineError({
   category: "CONFIG",
   status: 400,
   title: "Failed to parse configuration",
-  suggestion: "Ensure your configuration file is valid TypeScript/JSON",
+  suggestion: "Ensure your configuration file contains valid JavaScript or TypeScript",
 });
 
 /** Schema-level config validation (e.g. Zod schema mismatch at runtime) */

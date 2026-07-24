@@ -5,10 +5,15 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
-import { wrapUnknownError, wrapWithContext } from "./wrap-unknown.ts";
+import { detachBoundaryError, wrapUnknownError, wrapWithContext } from "./wrap-unknown.ts";
 import { isVeryfrontError } from "../http-error.ts";
 import { VeryfrontError } from "../types.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
+
+function getContext(error: VeryfrontError): Record<string, unknown> {
+  assertExists(error.context);
+  return error.context as Record<string, unknown>;
+}
 
 describe("wrap-unknown", () => {
   describe("wrapUnknownError", () => {
@@ -29,6 +34,22 @@ describe("wrap-unknown", () => {
 
       assertEquals(wrapped, error);
       assertEquals(wrapped.slug, "config-not-found");
+    });
+
+    it("should safely replace hostile VeryfrontError proxies", () => {
+      const source = CONFIG_NOT_FOUND.create();
+      const hostile = new Proxy(source, {
+        get(target, property, receiver): unknown {
+          if (property === "slug") throw new Error("blocked");
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const wrapped = wrapUnknownError(hostile);
+
+      assertEquals(wrapped.slug, "unknown-error");
+      assertEquals(wrapped.detail, "Unknown error");
+      assertEquals(wrapped.cause, undefined);
     });
 
     it("should wrap string error", () => {
@@ -60,12 +81,30 @@ describe("wrap-unknown", () => {
       assertExists(wrapped.detail);
     });
 
+    it("should wrap hostile thrown values without throwing", () => {
+      const hostile = new Proxy({}, {
+        getPrototypeOf(): never {
+          throw new Error("blocked");
+        },
+        get(): never {
+          throw new Error("blocked");
+        },
+      });
+
+      const wrapped = wrapUnknownError(hostile);
+
+      assertEquals(wrapped.slug, "unknown-error");
+      assertEquals(wrapped.detail, "Unknown error");
+      assertEquals(wrapped.cause, undefined);
+    });
+
     it("should add context when provided", () => {
       const error = new Error("Test");
       const wrapped = wrapUnknownError(error, { userId: 123, action: "fetch" });
+      const context = getContext(wrapped);
 
-      assertEquals(wrapped.context?.userId, 123);
-      assertEquals(wrapped.context?.action, "fetch");
+      assertEquals(context.userId, 123);
+      assertEquals(context.action, "fetch");
     });
 
     it("should preserve Error cause", () => {
@@ -79,6 +118,26 @@ describe("wrap-unknown", () => {
       const wrapped = wrapUnknownError("string");
 
       assertEquals(wrapped.cause, undefined);
+    });
+
+    it("should detach stateful errors once for boundary consumers", () => {
+      let statusReads = 0;
+      const source = CONFIG_NOT_FOUND.create({ detail: "Missing file" });
+      const stateful = new Proxy(source, {
+        get(target, property, receiver): unknown {
+          if (property === "status") {
+            statusReads++;
+            return [404, 503, 418][statusReads - 1] ?? 418;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const detached = detachBoundaryError(stateful);
+
+      assertEquals(detached.status, 404);
+      assertEquals(detached.status, 404);
+      assertEquals(statusReads, 1);
     });
   });
 
@@ -104,6 +163,16 @@ describe("wrap-unknown", () => {
     it("should return false for undefined", () => {
       assertEquals(isVeryfrontError(undefined), false);
     });
+
+    it("should return false for values that throw during inspection", () => {
+      const hostile = new Proxy({}, {
+        getPrototypeOf(): never {
+          throw new Error("blocked");
+        },
+      });
+
+      assertEquals(isVeryfrontError(hostile), false);
+    });
   });
 
   describe("wrapWithContext", () => {
@@ -123,11 +192,34 @@ describe("wrap-unknown", () => {
       assertEquals(wrapped.detail, "Build failed: Missing file");
     });
 
+    it("should derive all wrapped fields from one VeryfrontError snapshot", () => {
+      let messageReads = 0;
+      const source = CONFIG_NOT_FOUND.create({ detail: "Missing file" });
+      const stateful = new Proxy(source, {
+        get(target, property, receiver): unknown {
+          if (property === "message") {
+            messageReads++;
+            if (messageReads > 1) throw new Error("message reread");
+            return "Missing file";
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const wrapped = wrapWithContext(stateful, "Build failed");
+
+      assertEquals(wrapped.slug, "config-not-found");
+      assertEquals(wrapped.category, "CONFIG");
+      assertEquals(wrapped.status, 404);
+      assertEquals(wrapped.detail, "Build failed: Missing file");
+      assertEquals(messageReads, 1);
+    });
+
     it("should add context to wrapped error", () => {
       const error = new Error("Test");
       const wrapped = wrapWithContext(error, "Operation failed", { step: "init" });
 
-      assertEquals(wrapped.context?.step, "init");
+      assertEquals(getContext(wrapped).step, "init");
     });
 
     it("should preserve existing context in VeryfrontError", () => {
@@ -140,18 +232,20 @@ describe("wrap-unknown", () => {
       });
 
       const wrapped = wrapWithContext(error, "Wrapped", { added: true });
+      const context = getContext(wrapped);
 
-      assertEquals(wrapped.context?.original, true);
-      assertEquals(wrapped.context?.added, true);
+      assertEquals(context.original, true);
+      assertEquals(context.added, true);
     });
 
     it("should store original error information in context", () => {
       const error = CONFIG_NOT_FOUND.create();
       const wrapped = wrapWithContext(error, "Wrapper");
+      const context = getContext(wrapped);
 
-      assertExists(wrapped.context?.originalError);
+      assertExists(context.originalError);
       assertEquals(
-        (wrapped.context?.originalError as { slug?: string })?.slug,
+        (context.originalError as { slug?: string })?.slug,
         "config-not-found",
       );
     });

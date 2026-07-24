@@ -1,15 +1,15 @@
 import type { ErrorSlug } from "../error-registry.ts";
 
 export interface ErrorSolution {
-  slug: ErrorSlug;
-  title: string;
-  message: string;
-  steps?: string[];
-  example?: string;
-  docs?: string;
-  relatedErrors?: ErrorSlug[];
-  tips?: string[];
+  readonly slug: ErrorSlug;
+  readonly title: string;
+  readonly message: string;
+  readonly steps?: readonly string[];
+  readonly example?: string;
+  readonly docs?: string;
+  readonly relatedErrors?: readonly ErrorSlug[];
+  readonly tips?: readonly string[];
 }
 
-export type ErrorCatalog = Record<ErrorSlug, ErrorSolution>;
-export type PartialErrorCatalog = Partial<ErrorCatalog>;
+export type ErrorCatalog = Readonly<Record<ErrorSlug, ErrorSolution>>;
+export type PartialErrorCatalog = Readonly<Partial<Record<ErrorSlug, ErrorSolution>>>;
