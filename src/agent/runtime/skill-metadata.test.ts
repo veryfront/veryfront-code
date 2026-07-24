@@ -5,6 +5,7 @@ import {
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
   parseRuntimeSkillMetadata,
+  resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
 
 Deno.test("parseRuntimeSkillMetadata parses valid frontmatter", () => {
@@ -72,6 +73,42 @@ Deno.test("buildRuntimeSkillDefinition builds a bare skill", () => {
   assertExists(skill);
   assertEquals(skill.id, "bare");
   assertEquals(skill.name, "bare");
+});
+
+Deno.test("resolveRuntimeSkillsForAgent applies owner visibility and short-name precedence", () => {
+  const globalCite = buildRuntimeSkillDefinition({
+    id: "cite",
+    content: "---\ndescription: Global citations\n---\nUse global citations.",
+  })!;
+  const ownedCite = buildRuntimeSkillDefinition({
+    id: "researcher--helper",
+    content: "---\ndescription: Research citations\n---\nUse research citations.",
+    ownerAgentId: "researcher",
+    shortName: "cite",
+  })!;
+  const otherOwned = buildRuntimeSkillDefinition({
+    id: "writer--style",
+    content: "---\ndescription: Writer style\n---\nUse writer style.",
+    ownerAgentId: "writer",
+    shortName: "style",
+  })!;
+
+  assertEquals(
+    resolveRuntimeSkillsForAgent({
+      skills: [globalCite, ownedCite, otherOwned],
+      agentId: "researcher",
+      selector: ["cite"],
+    }).map((skill) => skill.id),
+    ["researcher--helper"],
+  );
+  assertEquals(
+    resolveRuntimeSkillsForAgent({
+      skills: [globalCite, ownedCite, otherOwned],
+      agentId: "researcher",
+      selector: true,
+    }).map((skill) => skill.id),
+    ["cite", "researcher--helper"],
+  );
 });
 
 Deno.test("buildRuntimeSkillDefinition includes optional runtime fields", () => {
@@ -233,7 +270,7 @@ allowed-tools: read_file, write_file, shell
 Write carefully.`,
     nextStep: "Continue after loading.",
     messages: loadedSkillMessages,
-    availableToolNames: ["read_file", "write_file"],
+    availableToolNames: ["read_file", "write_file", "invoke_agent"],
   });
 
   assertEquals(response.allowedTools, ["read_file", "write_file"]);
@@ -243,7 +280,7 @@ Write carefully.`,
   assertEquals(response.delegationNote, "Delegate unavailable tools.");
 });
 
-Deno.test("buildRuntimeLoadedSkillResponse returns empty allowedTools when declared tools have no current run overlap", () => {
+Deno.test("buildRuntimeLoadedSkillResponse omits delegation note when no delegate tools are available", () => {
   const response = buildRuntimeLoadedSkillResponse({
     skillId: "write",
     instructions: `---
@@ -260,6 +297,50 @@ Write carefully.`,
   assertEquals(response.delegationTools, ["shell"]);
   assertEquals(response.unavailableCurrentRunTools, ["shell"]);
   assertEquals(response.note, "No direct tools are available.");
+  assertEquals(response.delegationNote, undefined);
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse treats an explicit empty tool surface as no tools", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "research",
+    instructions: `---
+allowed-tools:
+  - read_file
+model: sonnet
+max-steps: 8
+---
+Research carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: [],
+  });
+
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.delegationTools, ["read_file"]);
+  assertEquals(response.unavailableCurrentRunTools, ["read_file"]);
+  assertEquals(response.note, "No direct tools are available.");
+  assertEquals(response.delegationNote, undefined);
+  assertEquals(response.model, "sonnet");
+  assertEquals(response.maxSteps, 8);
+  assertEquals(response.overrideNote, undefined);
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse keeps delegation note for scoped delegate tools", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "write",
+    instructions: `---
+allowed-tools:
+  - shell
+---
+Write carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["agent_writer", "read_file"],
+  });
+
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
+  assertEquals(response.delegationNote, "Delegate unavailable tools.");
 });
 
 Deno.test("buildRuntimeLoadedSkillResponse preserves runtime overrides and references", () => {
@@ -282,6 +363,24 @@ Research carefully.`,
   assertEquals(response.overrideNote, "Forward overrides.");
   assertEquals(response.references, ["references/guide.md"]);
   assertEquals(response.referenceNote, "Load references separately.");
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse omits override forwarding without legacy invoke_agent", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "research",
+    instructions: `---
+model: sonnet
+max-steps: 8
+---
+Research carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["agent_researcher", "read_file"],
+  });
+
+  assertEquals(response.model, "sonnet");
+  assertEquals(response.maxSteps, 8);
+  assertEquals(response.overrideNote, undefined);
 });
 
 Deno.test("buildRuntimeLoadedSkillResponse logs invalid metadata and returns a base response", () => {

@@ -1,4 +1,5 @@
 import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { ENV_VAR_MISSING } from "#veryfront/errors";
 import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd as getProcessCwd } from "#veryfront/platform/compat/process.ts";
 import { type LiveEvalApiContext } from "../live-evals/api-client.ts";
@@ -54,10 +55,10 @@ export async function runDurableRunCanaryCli(
     createTimestampedReportPath({ cwd, directory: "durable-run-staging-canaries" });
 
   if (!authToken) {
-    throw new Error("Missing VERYFRONT_TOKEN");
+    throw ENV_VAR_MISSING.create({ detail: "Missing VERYFRONT_TOKEN" });
   }
   if (!projectId) {
-    throw new Error("Missing AG_UI_EVAL_PROJECT_ID");
+    throw ENV_VAR_MISSING.create({ detail: "Missing AG_UI_EVAL_PROJECT_ID" });
   }
 
   const context: LiveEvalApiContext = {

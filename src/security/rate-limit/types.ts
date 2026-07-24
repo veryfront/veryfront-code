@@ -14,6 +14,19 @@ export interface RateLimitConfig {
   trustProxy?: boolean;
 }
 
+/** Options accepted by preconfigured rate limiters. */
+export interface RateLimitPresetOptions {
+  /** Storage backend. Existing callers can also pass the store directly. */
+  store?: RateLimitStore;
+  /** Function to derive a stable client key from the request. */
+  keyGenerator?: (request: Request) => string;
+  /**
+   * Trust X-Forwarded-For and X-Real-IP for client identification.
+   * Enable this only behind a trusted reverse proxy.
+   */
+  trustProxy?: boolean;
+}
+
 export interface RateLimitStore {
   increment(key: string, windowMs?: number): Promise<number>;
   get(key: string): Promise<number>;

@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "#veryfront/observability";
+import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-policy.ts";
 import type { SecurityConfig } from "./types.ts";
 
 /** HSTS max-age default: 1 year in seconds */
@@ -27,13 +28,7 @@ export function generateNonce(): string {
  * clickjacking). Dev hosts (`veryfront.dev`) are omitted because dev mode
  * skips the default CSP entirely.
  */
-const VERYFRONT_FRAME_ANCESTORS = [
-  "'self'",
-  "https://veryfront.com",
-  "https://studio.veryfront.com",
-  "https://veryfront.org",
-  "https://studio.veryfront.org",
-];
+const VERYFRONT_FRAME_ANCESTORS = ["'self'", ...HOSTED_STUDIO_ORIGINS];
 
 /**
  * Build a default CSP that works for typical veryfront apps.

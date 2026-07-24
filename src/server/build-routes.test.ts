@@ -3,6 +3,10 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { collectAppRoutes, collectPagesRoutes } from "./build-routes.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLogRecordEmitterForTests,
+} from "#veryfront/utils/logger/logger.ts";
 
 // ---------- In-memory filesystem mock ----------
 
@@ -185,6 +189,45 @@ describe("server/build-routes", () => {
       const routes = await collectPagesRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
       assertEquals(routes[0]!.slug, "api");
+    });
+
+    it("excludes api directory descendants while preserving root /api pages", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/api.tsx": "export default () => <div />",
+        "/project/pages/api/user.ts": "export default function handler() {}",
+        "/project/pages/api/admin/index.ts": "export default function handler() {}",
+        "/project/pages/about.tsx": "export default () => <div />",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      const paths = routes.map((r) => r.path).sort();
+      assertEquals(paths, ["/about", "/api"]);
+    });
+
+    it("excludes Pages Router layout files from static page routes", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/index.tsx": "export default () => <div />",
+        "/project/pages/layout.tsx": "export default ({ children }) => children",
+        "/project/pages/admin/Layout.tsx": "export default ({ children }) => children",
+        "/project/pages/chat/index.tsx": "export default () => <div />",
+        "/project/pages/chat/layout.tsx": "export default ({ children }) => children",
+        "/project/pages/docs/index.mdx": "# Docs",
+        "/project/pages/docs/layout.mdx": "# Docs layout",
+      });
+
+      const routes = await collectPagesRoutes(adapter, "/project");
+
+      assertEquals(routes.map((route) => route.path).sort(), ["/", "/chat", "/docs"]);
+    });
+
+    it("excludes dynamic Pages Router routes from static generation", async () => {
+      const adapter = createMockAdapter({
+        "/project/pages/index.tsx": "export default () => <div />",
+        "/project/pages/jobs/[id].tsx": "export default () => <div />",
+        "/project/pages/docs/[...slug].tsx": "export default () => <div />",
+        "/project/pages/blog/index.tsx": "export default () => <div />",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.map((route) => route.path).sort(), ["/", "/blog"]);
     });
 
     it("converts file paths to slugs by stripping extensions", async () => {

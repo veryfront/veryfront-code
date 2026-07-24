@@ -12,6 +12,11 @@ import {
 import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
+  isRequestBodyTooLargeError,
+  readBodyWithLimit,
+} from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import {
   type HostedRuntimeSourceIdentity,
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
@@ -31,7 +36,7 @@ export type HostedChatProjectAccessError = {
 
 /** Result returned from hosted chat project access. */
 export type HostedChatProjectAccessResult =
-  | { success: true }
+  | { success: true; projectSlug?: string }
   | { success: false; error: HostedChatProjectAccessError };
 
 /** Request payload for parsed hosted chat. */
@@ -73,8 +78,27 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
     runtimeSource: HostedRuntimeSourceIdentity | undefined;
   };
 
-async function parseRequestJson(request: Request): Promise<unknown> {
-  return await request.json().catch((): null => null);
+async function parseRequestJson(request: Request): Promise<unknown | Response> {
+  let body: string;
+  try {
+    body = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
+  } catch (error) {
+    if (isRequestBodyTooLargeError(error)) {
+      return Response.json(
+        {
+          errorCode: "REQUEST_TOO_LARGE",
+          message: `Request body exceeds ${DEFAULT_MAX_BODY_SIZE_BYTES} bytes`,
+        },
+        { status: 413 },
+      );
+    }
+    return null;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
 }
 
 function createValidationErrorResponse(input: {
@@ -94,13 +118,23 @@ function getValidationErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "validation failed";
 }
 
+function normalizeProjectSlug(projectSlug: string | undefined): string | undefined {
+  const normalized = projectSlug?.trim();
+  return normalized || undefined;
+}
+
+function isBlankProjectSlug(projectSlug: string | undefined): boolean {
+  return projectSlug !== undefined && !normalizeProjectSlug(projectSlug);
+}
+
 async function verifyHostedChatProjectAccess(input: {
   projectId: string | null;
   authToken: string;
+  requestedProjectSlug?: string;
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
-}): Promise<Response | undefined> {
+}): Promise<{ projectSlug?: string } | Response> {
   if (!input.projectId || !input.verifyProjectAccess) {
-    return undefined;
+    return { projectSlug: normalizeProjectSlug(input.requestedProjectSlug) };
   }
 
   const access = await input.verifyProjectAccess({
@@ -108,7 +142,22 @@ async function verifyHostedChatProjectAccess(input: {
     authToken: input.authToken,
   });
   if (access.success) {
-    return undefined;
+    const requestedProjectSlug = normalizeProjectSlug(input.requestedProjectSlug);
+    const verifiedProjectSlug = normalizeProjectSlug(access.projectSlug);
+    if (
+      requestedProjectSlug &&
+      verifiedProjectSlug &&
+      requestedProjectSlug !== verifiedProjectSlug
+    ) {
+      return Response.json(
+        {
+          errorCode: "FORBIDDEN",
+          message: "Project slug does not match verified project access",
+        },
+        { status: 403 },
+      );
+    }
+    return { projectSlug: verifiedProjectSlug };
   }
 
   return Response.json(
@@ -139,6 +188,20 @@ export async function buildParsedHostedChatRequest(input: {
   const projectSlug = chatContext.projectSlug;
   const conversationId = chatContext.conversationId;
 
+  if (isBlankProjectSlug(projectSlug)) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid request",
+      validationMessage: "context.projectSlug cannot be blank",
+    });
+  }
+
+  if (input.verifyProjectAccess && !projectId && normalizeProjectSlug(projectSlug)) {
+    return createValidationErrorResponse({
+      messagePrefix: "Invalid request",
+      validationMessage: "context.projectSlug requires verified context.projectId",
+    });
+  }
+
   if (input.agentConfig && input.agentId && input.agentConfig.id !== input.agentId) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
@@ -146,23 +209,29 @@ export async function buildParsedHostedChatRequest(input: {
     });
   }
 
-  const accessError = await verifyHostedChatProjectAccess({
+  const access = await verifyHostedChatProjectAccess({
     projectId,
     authToken: input.authToken,
+    requestedProjectSlug: projectSlug,
     verifyProjectAccess: input.verifyProjectAccess,
   });
-  if (accessError) {
-    return accessError;
+  if (access instanceof Response) {
+    return access;
   }
+  const verifiedProjectSlug = access.projectSlug;
+  const validatedContext: ChatRequestContext = {
+    ...chatContext,
+    projectSlug: verifiedProjectSlug,
+  };
 
   return {
     agentId: input.agentId,
     userId: input.userId,
     authToken: input.authToken,
     messages: messages as ChatUiMessage[],
-    validatedContext: chatContext,
+    validatedContext,
     projectId,
-    projectSlug,
+    projectSlug: verifiedProjectSlug,
     conversationId,
     parentRunId: durableRootRun?.runId,
     upstreamParentConversationId: durableRootRun?.parentConversationId,
@@ -188,7 +257,10 @@ export async function parseHostedChatRequestFromRequest(
     return authenticatedRequest;
   }
 
-  const parsed = hostedChatRequestSchema.safeParse(await parseRequestJson(request));
+  const requestBody = await parseRequestJson(request);
+  if (requestBody instanceof Response) return requestBody;
+
+  const parsed = hostedChatRequestSchema.safeParse(requestBody);
   if (!parsed.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid request",
@@ -214,7 +286,10 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
-  const invocation = RuntimeAgentRunInvocationSchema.safeParse(await parseRequestJson(request));
+  const requestBody = await parseRequestJson(request);
+  if (requestBody instanceof Response) return requestBody;
+
+  const invocation = RuntimeAgentRunInvocationSchema.safeParse(requestBody);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",

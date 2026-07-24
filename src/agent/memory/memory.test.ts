@@ -155,6 +155,34 @@ describe("SummaryMemory", () => {
     assertEquals(text.split("Discussed:").length > 2, true);
   });
 
+  it("keeps the rolling summary bounded across repeated resummarizations", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
+    for (let i = 1; i <= 300; i++) {
+      await memory.add(userMessage(String(i), `topic ${i} ${"x".repeat(50)}`));
+    }
+
+    const summaryMessage = (await memory.getMessages())[0]!;
+    const text = (summaryMessage.parts as Array<{ text?: string }>)[0]?.text ?? "";
+    const summary = text.slice(text.indexOf("\n") + 1);
+
+    assertEquals(summary.length <= 4_000, true);
+    assertEquals(summary.includes("topic 1"), true);
+    assertEquals(summary.includes("topic 298"), true);
+  });
+
+  it("enforces maxTokens across the summary and retained message tail", async () => {
+    const memory = new SummaryMemory({ type: "summary", maxMessages: 4, maxTokens: 40 });
+    for (let i = 1; i <= 8; i++) {
+      await memory.add(userMessage(String(i), `topic ${i} ${"x".repeat(70)}`));
+    }
+
+    const messages = await memory.getMessages();
+    const stats = await memory.getStats();
+
+    assertEquals(stats.estimatedTokens <= 40, true);
+    assertEquals(messages.some((message) => message.id === "8"), true);
+  });
+
   it("reports stats including summary tokens and clears fully", async () => {
     const memory = new SummaryMemory({ type: "summary", maxMessages: 2 });
     for (let i = 1; i <= 6; i++) await memory.add(userMessage(String(i), `topic ${i}`));

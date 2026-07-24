@@ -10,7 +10,7 @@
  * @module server/runtime-handler/project-resolution
  */
 
-import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { type ParsedDomain, parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
@@ -18,6 +18,7 @@ import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -72,8 +73,16 @@ interface RequestHeaders {
   projectPath: string | undefined;
 }
 
-function getEffectiveHost(req: Request, url: URL): string {
-  return getEffectiveRequestHost(req, url);
+function trustForwardedHeaders(): boolean {
+  return getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+}
+
+function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
+  // x-forwarded-host is client-controlled and only trustworthy behind a trusted
+  // upstream proxy. Honour it only after the operator opt-in or a verified
+  // dispatch JWS, matching createRequestContext; otherwise fall back to Host.
+  // The runtime handler performs async verification and passes the result here.
+  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
 /**
@@ -84,10 +93,23 @@ function getEffectiveHost(req: Request, url: URL): string {
  * domain parsing. This allows proxy-forwarded requests to resolve
  * project context from the hostname alone.
  */
-export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
-  const host = getEffectiveHost(req, url);
+export function extractRequestHeaders(
+  req: Request,
+  url: URL,
+  proxyTrusted?: boolean,
+): RequestHeaders {
+  const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+  // The WebSocket endpoint uses this query parameter for its existing HMR
+  // handshake. Other routes must not let client-controlled query/header values
+  // override the host-derived environment unless a trusted proxy supplied them.
+  const websocketEnvironment = url.pathname === "/_ws"
+    ? url.searchParams.get("x-environment") ?? undefined
+    : undefined;
+  const environment = (proxyTrusted ?? trustForwardedHeaders())
+    ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
+    : websocketEnvironment;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
@@ -95,8 +117,7 @@ export function extractRequestHeaders(req: Request, url: URL): RequestHeaders {
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: req.headers.get("x-branch-id") ?? undefined,
     branchName: req.headers.get("x-branch-name") ?? undefined,
-    environment: req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ??
-      undefined,
+    environment,
     environmentId: req.headers.get("x-environment-id") ?? undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
@@ -137,6 +158,8 @@ interface ProjectResolutionOptions {
   defaultReleaseId?: string | undefined;
   /** WS slug override from query param */
   wsSlugOverride: string | undefined;
+  /** Whether the request has already passed the proxy trust check. */
+  proxyTrusted?: boolean;
 }
 
 /**
@@ -155,7 +178,7 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const host = getEffectiveHost(req, url);
+  const host = getEffectiveHost(req, url, opts.proxyTrusted);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);

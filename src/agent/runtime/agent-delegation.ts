@@ -1,7 +1,7 @@
-import type { Tool } from "../../tool/types.ts";
+import type { Tool, ToolExecutionContext } from "../../tool/types.ts";
 import type { Agent } from "../types.ts";
 import { agentAsTool, getAgent } from "../composition/index.ts";
-import { getAgentToolInputSchema } from "../schemas/index.ts";
+import { type AgentToolInput, getAgentToolInputSchema } from "../schemas/index.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId } from "./agent-delegation-names.ts";
 import { markRuntimeLocalTool } from "./local-tool.ts";
 
@@ -9,6 +9,14 @@ export { AGENT_DELEGATE_TOOL_PREFIX, isProviderSafeDelegateId };
 
 /** Resolves a registered agent by id (defaults to the global registry). */
 export type DelegateAgentResolver = (id: string) => Agent | undefined;
+
+/** Fixed-target delegate execution used by hosts with their own child-run lifecycle. */
+export type DelegateAgentExecutor = (input: {
+  delegateId: string;
+  agent: Agent;
+  toolInput: AgentToolInput;
+  context?: ToolExecutionContext;
+}) => Promise<unknown>;
 
 /** Input payload for build agent delegate tools. */
 export type BuildAgentDelegateToolsInput = {
@@ -18,11 +26,14 @@ export type BuildAgentDelegateToolsInput = {
   selfId?: string;
   /** Override the agent resolver (testing / custom registries). */
   resolveAgent?: DelegateAgentResolver;
+  /** Override execution while keeping the delegate id fixed by the tool wrapper. */
+  executeDelegate?: DelegateAgentExecutor;
 };
 
 function createLazyDelegateTool(
   delegateId: string,
   resolveAgent: DelegateAgentResolver,
+  executeDelegate?: DelegateAgentExecutor,
 ): Tool {
   return markRuntimeLocalTool({
     id: `${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`,
@@ -37,6 +48,15 @@ function createLazyDelegateTool(
           text: `Delegate agent "${delegateId}" is not available.`,
           toolCalls: 0,
           status: "error",
+        });
+      }
+
+      if (executeDelegate) {
+        return executeDelegate({
+          delegateId,
+          agent: target,
+          toolInput: input,
+          context,
         });
       }
 
@@ -57,8 +77,9 @@ function createLazyDelegateTool(
  * `delegates` runs with no orchestration.
  *
  * Delegation chains are intentionally not cycle-detected here. Each delegated
- * call is a separate agent run with its own maxSteps budget; keep delegate
- * graphs acyclic until a runtime chain-depth cap exists.
+ * call is a separate agent run with its own maxSteps budget; hosted nested
+ * invocation metadata enforces a runtime depth cap, but authors should still
+ * keep delegate graphs acyclic so cycles do not burn the available depth.
  */
 export function buildAgentDelegateTools(
   input: BuildAgentDelegateToolsInput,
@@ -76,7 +97,11 @@ export function buildAgentDelegateTools(
       continue;
     }
     seen.add(id);
-    tools[`${AGENT_DELEGATE_TOOL_PREFIX}${id}`] = createLazyDelegateTool(id, resolveAgent);
+    tools[`${AGENT_DELEGATE_TOOL_PREFIX}${id}`] = createLazyDelegateTool(
+      id,
+      resolveAgent,
+      input.executeDelegate,
+    );
   }
 
   return tools;

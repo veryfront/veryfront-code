@@ -7,9 +7,9 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/http-fetcher
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteVeryfrontImports } from "./import-rewriter.ts";

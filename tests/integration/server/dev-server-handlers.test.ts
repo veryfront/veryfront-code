@@ -99,13 +99,16 @@ const BROWSER_CSP_SAFE_MODULE_PATHS = [
   "/_vf_modules/_veryfront/rendering/rsc/client-dom.js",
   "/_vf_modules/_veryfront/routing/client/page-loader.js",
   "/_vf_modules/_veryfront/client/spa/ClientApp.js",
+  "/_vf_modules/_veryfront/utils/logger/logger.js",
+  "/_vf_modules/_veryfront/utils/version.js",
 ];
 
 async function fetchServedFrameworkModule(
   port: number,
   modulePath: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<{ body: string; specifiers: string[] }> {
-  const response = await fetch(`http://127.0.0.1:${port}${modulePath}`);
+  const response = await fetchImpl(`http://127.0.0.1:${port}${modulePath}`);
   assertEquals(response.status, 200, `Expected ${modulePath} to be served`);
 
   const body = await response.text();
@@ -119,7 +122,8 @@ function assertBrowserSafeFrameworkModule(
   body: string,
   specifiers: string[],
 ): void {
-  const errorSpecifiers = specifiers.filter((specifier) =>
+  const specifierPaths = specifiers.map((specifier) => specifier.replace(/[?#].*$/, ""));
+  const errorSpecifiers = specifierPaths.filter((specifier) =>
     specifier.startsWith("/_vf_modules/_veryfront/errors/")
   );
 
@@ -128,21 +132,52 @@ function assertBrowserSafeFrameworkModule(
     `${modulePath} should not use unsafe-eval`,
   );
   assert(
-    !specifiers.includes("/_vf_modules/_veryfront/errors/index.js"),
+    !specifierPaths.includes("/_vf_modules/_veryfront/errors/index.js"),
     `${modulePath} should not import the heavyweight errors barrel`,
   );
   assert(
-    !specifiers.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
+    !specifierPaths.includes("/_vf_modules/_veryfront/platform/compat/process.js"),
     `${modulePath} should not import process compat`,
   );
   assert(
-    !specifiers.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
+    !specifierPaths.includes("/_vf_modules/_veryfront/platform/compat/dynamic-import.js"),
     `${modulePath} should not import dynamic-import compat`,
   );
   assert(
     errorSpecifiers.every((specifier) => BROWSER_SAFE_ERROR_MODULES.has(specifier)),
     `${modulePath} should only import narrow browser-safe error modules`,
   );
+}
+
+async function assertBrowserSafeFrameworkGraph(
+  port: number,
+  entryPath: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<void> {
+  const pending = [entryPath];
+  const visited = new Set<string>();
+  let nextIndex = 0;
+
+  while (nextIndex < pending.length) {
+    const modulePath = pending[nextIndex++];
+    if (!modulePath || visited.has(modulePath)) continue;
+    visited.add(modulePath);
+
+    const { body, specifiers } = await fetchServedFrameworkModule(port, modulePath, fetchImpl);
+    assertBrowserSafeFrameworkModule(modulePath, body, specifiers);
+
+    for (const specifier of specifiers) {
+      const resolved = new URL(specifier, `http://127.0.0.1:${port}${modulePath}`);
+      const resolvedModulePath = `${resolved.pathname}${resolved.search}`;
+      if (
+        resolved.origin === `http://127.0.0.1:${port}` &&
+        resolved.pathname.startsWith("/_vf_modules/_veryfront/") &&
+        !visited.has(resolvedModulePath)
+      ) {
+        pending.push(resolvedModulePath);
+      }
+    }
+  }
 }
 
 describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -444,6 +479,39 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
         await stopServer(server);
       });
+    });
+
+    it("serves the complete chat module graph without unsafe-eval dependencies", async () => {
+      await withTestContext("dev-server-framework-chat-graph-csp", async (context) => {
+        const { server, port } = await createTestDevServer(context);
+        await assertBrowserSafeFrameworkGraph(port, "/_vf_modules/_veryfront/chat/index.js");
+        await stopServer(server);
+      });
+    });
+
+    it("preserves query strings while walking browser framework module variants", async () => {
+      const requestedPaths: string[] = [];
+      const fetchModule = (async (input: string | URL | Request) => {
+        const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+        const modulePath = `${url.pathname}${url.search}`;
+        requestedPaths.push(modulePath);
+
+        const body = modulePath === "/_vf_modules/_veryfront/entry.js"
+          ? 'import "/_vf_modules/_veryfront/child.js?v=browser";'
+          : "export const child = true;";
+        return new Response(body, { status: 200 });
+      }) as typeof fetch;
+
+      await assertBrowserSafeFrameworkGraph(
+        4173,
+        "/_vf_modules/_veryfront/entry.js",
+        fetchModule,
+      );
+
+      assertEquals(requestedPaths, [
+        "/_vf_modules/_veryfront/entry.js",
+        "/_vf_modules/_veryfront/child.js?v=browser",
+      ]);
     });
   });
 

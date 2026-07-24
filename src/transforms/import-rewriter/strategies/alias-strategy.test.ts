@@ -190,6 +190,53 @@ describe("AliasStrategy", () => {
         // This is "correct" given the input, but may not match the expected module structure
         assertEquals(result.specifier, "../lib/utils.js");
       });
+
+      it("should rewrite an explicit .ts extension to .js", () => {
+        // A browser cannot execute a module served as application/typescript, so
+        // source extensions must never survive into an emitted specifier.
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/constants.ts"),
+          makeCtx({ filePath: "/project/pages/test/b-ts-ext-lib.tsx" }),
+        );
+        assertEquals(result.specifier, "../../lib/constants.js");
+      });
+
+      it("should rewrite an explicit .tsx extension to .js", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/components/Badge.tsx"),
+          makeCtx({ filePath: "/project/pages/test/c-tsx-ext-component.tsx" }),
+        );
+        assertEquals(result.specifier, "../../components/Badge.js");
+      });
+
+      // Guard, not a regression: `jsx?` in the extension guard has always
+      // matched a bare `.js`, so this has never produced `.js.js`. The test
+      // holds that behaviour in place.
+      it("should leave an explicit .js extension alone", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/legacy.js"),
+          makeCtx({ filePath: "/project/pages/index.tsx" }),
+        );
+        assertEquals(result.specifier, "../lib/legacy.js");
+      });
+    });
+
+    describe("source extensions in moduleServerUrl and ssr targets", () => {
+      it("should rewrite .ts to .js with moduleServerUrl", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/lib/constants.ts"),
+          makeCtx({ moduleServerUrl: "/_vf_modules" }),
+        );
+        assertEquals(result.specifier, "/_vf_modules/lib/constants.js");
+      });
+
+      it("should rewrite .tsx to .js for ssr", () => {
+        const result = aliasStrategy.rewrite(
+          makeInfo("@/components/Badge.tsx"),
+          makeCtx({ target: "ssr" }),
+        );
+        assertEquals(result.specifier, "/_vf_modules/components/Badge.js");
+      });
     });
   });
 });

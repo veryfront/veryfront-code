@@ -1,5 +1,4 @@
-import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { INPUT_VALIDATION_FAILED, VeryfrontError } from "#veryfront/errors";
 
 export { INPUT_VALIDATION_FAILED, VeryfrontError };
 

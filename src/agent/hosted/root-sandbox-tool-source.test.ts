@@ -16,12 +16,16 @@ function createSandboxTools(): HostToolSet {
     bash: {
       description: "Run shell commands",
       inputSchema: defineSchema((v) => v.object({ command: v.string() }))(),
-      execute: ({ command }) => ({ command }),
+      execute: (input: unknown) => ({
+        command: (input as { command: string }).command,
+      }),
     },
     get_background_command: {
       description: "Get a background command",
       inputSchema: defineSchema((v) => v.object({ commandId: v.string() }))(),
-      execute: ({ commandId }) => ({ commandId }),
+      execute: (input: unknown) => ({
+        commandId: (input as { commandId: string }).commandId,
+      }),
     },
   };
 }
@@ -140,7 +144,11 @@ Deno.test("createHostedRootLocalToolRuntime merges sandbox tools and owns their 
     apiUrl: "https://api.example.com",
     authToken: "token-1",
     createBashTool,
-    buildBaseTools: () => ({ sleep: createSandboxTools().bash }),
+    buildBaseTools: () => {
+      const bash = createSandboxTools().bash;
+      if (!bash) throw new Error("Expected bash mock tool");
+      return { sleep: bash };
+    },
     createAgentServiceSandboxTools: (input) => {
       factoryCalls += 1;
       getProjectId = input.getProjectId;

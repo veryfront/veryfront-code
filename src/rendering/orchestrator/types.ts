@@ -33,7 +33,11 @@ export interface RenderOptions {
   props?: Record<string, unknown>;
   delivery?: "string" | "stream";
   request?: Request;
+  /** Internal signal for the render owner's total deadline. */
+  abortSignal?: AbortSignal;
   url?: URL;
+  /** Restrict data fetching to static hooks, even when a request context exists. */
+  staticDataOnly?: boolean;
   /** Optional cache key override; defaults to slug + normalized query params (without page/theme prefix) */
   cacheKey?: string;
   nonce?: string;

@@ -18,7 +18,7 @@ import {
   setJsonMode,
   setOutputPath,
 } from "./shared/json-output.ts";
-import { detectCI, setNonInteractive } from "./shared/interactive.ts";
+import { detectCI, setAutoConfirm, setNonInteractive } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
 type CommandHandler = (args: ParsedArgs) => Promise<void>;
@@ -161,7 +161,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   if (typeof args.output === "string") setOutputPath(args.output);
   else if (typeof args.o === "string") setOutputPath(args.o as string);
 
-  if (args.yes || args.y || detectCI()) setNonInteractive(true);
+  const autoConfirm = args.yes === true || args.y === true;
+  setNonInteractive(autoConfirm || detectCI());
+  setAutoConfirm(autoConfirm);
 
   if (args["no-animation"]) {
     const { setAnimationDisabled } = await import("./shared/animation.ts");

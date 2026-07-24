@@ -1,6 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
-import { parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
+import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -221,7 +221,7 @@ export function normalizeAgUiBrowserRuntimeRequest(
 
 /** Request payload for parse AG-UI runtime. */
 export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRuntimeRequest> {
-  return getAgUiRuntimeRequestSchema().parse(await request.json());
+  return getAgUiRuntimeRequestSchema().parse(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse AG-UI runtime request or. */

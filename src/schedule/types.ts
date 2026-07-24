@@ -2,6 +2,11 @@ import type { TriggerTarget } from "#veryfront/trigger/target.ts";
 
 export type ScheduleConcurrencyPolicy = "Allow" | "Forbid" | "Replace";
 
+/** Marks a schedule unhealthy when it has not succeeded within the given budget. */
+export interface ScheduleHealth {
+  maxStalenessSeconds: number;
+}
+
 export interface ScheduleIntegrationResourceIdentity {
   kind: string;
   id: string;
@@ -35,6 +40,7 @@ export interface ScheduleDefinition {
   backoffLimit?: number;
   concurrencyPolicy?: ScheduleConcurrencyPolicy;
   maxRuns?: number;
+  health?: ScheduleHealth;
   integrationRequirements?: ScheduleIntegrationRequirement[];
 }
 
@@ -52,8 +58,20 @@ export function isScheduleDefinition(value: unknown): value is ScheduleDefinitio
     typeof definition.schedule === "string" &&
     definition.target !== null &&
     typeof definition.target === "object" &&
+    isScheduleHealth(definition.health) &&
     isScheduleIntegrationRequirements(definition.integrationRequirements)
   );
+}
+
+function isScheduleHealth(value: unknown): value is ScheduleHealth {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const record = value as Record<string, unknown>;
+  return hasOnlyKeys(record, ["maxStalenessSeconds"]) &&
+    typeof record.maxStalenessSeconds === "number" &&
+    Number.isInteger(record.maxStalenessSeconds) &&
+    record.maxStalenessSeconds > 0;
 }
 
 function isScheduleIntegrationRequirements(

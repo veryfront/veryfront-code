@@ -13,7 +13,7 @@
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import { mkdir, readDir, remove, stat, writeTextFile } from "#veryfront/compat/fs.ts";
+import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { buildProduction } from "../../../../src/build/production-build/index.ts";
 import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
@@ -27,15 +27,6 @@ async function ensurePagesDir(projectDir: string): Promise<string> {
   const pagesDir = join(projectDir, "pages");
   await mkdir(pagesDir, { recursive: true });
   return pagesDir;
-}
-
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -75,7 +66,7 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
-    it("with --no-ssg produces no HTML", async () => {
+    it("with --no-ssg fails instead of reporting an empty build as success", async () => {
       await withTestContext("build-no-ssg", async (context) => {
         const outputDir = join(context.projectDir, "dist");
 
@@ -84,24 +75,19 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
         const pagesDir = await ensurePagesDir(context.projectDir);
         await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
 
-        const stats = await buildProduction({
-          projectDir: context.projectDir,
-          outputDir,
-          enableSplitting: false,
-          enableCompression: false,
-          enablePrefetch: false,
-          ssg: false,
-        });
-
-        assertExists(stats);
-
-        if (!(await dirExists(outputDir))) return;
-
-        let htmlCount = 0;
-        for await (const e of readDir(outputDir)) {
-          if (e.isFile && e.name.endsWith(".html")) htmlCount++;
-        }
-        assertEquals(htmlCount, 0);
+        await assertRejects(
+          () =>
+            buildProduction({
+              projectDir: context.projectDir,
+              outputDir,
+              enableSplitting: false,
+              enableCompression: false,
+              enablePrefetch: false,
+              ssg: false,
+            }),
+          Error,
+          "static site generation is disabled",
+        );
       });
     });
 
@@ -156,24 +142,53 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
-    it("handles empty project", async () => {
+    it("honors build.ssg from veryfront.config.ts when the caller omits ssg", async () => {
+      await withTestContext("build-config-ssg-off", async (context) => {
+        const outputDir = join(context.projectDir, "dist");
+
+        await removeAppDir(context.projectDir);
+
+        const pagesDir = await ensurePagesDir(context.projectDir);
+        await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
+        await writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { build: { ssg: false } };`,
+        );
+
+        await assertRejects(
+          () =>
+            buildProduction({
+              projectDir: context.projectDir,
+              outputDir,
+              enableSplitting: false,
+              enableCompression: false,
+              enablePrefetch: false,
+            }),
+          Error,
+          "static site generation is disabled",
+        );
+      });
+    });
+
+    it("fails for an empty project instead of emitting nothing", async () => {
       await withTestContext("build-empty", async (context) => {
         const outputDir = join(context.projectDir, "dist");
 
         await removeAppDir(context.projectDir);
         await remove(join(context.projectDir, "pages"), { recursive: true });
 
-        const stats = await buildProduction({
-          projectDir: context.projectDir,
-          outputDir,
-          enableSplitting: false,
-          enableCompression: false,
-          enablePrefetch: false,
-        });
-
-        assertExists(stats);
-        assertEquals(stats.pages, 0);
-        assertEquals(stats.assets, 0);
+        await assertRejects(
+          () =>
+            buildProduction({
+              projectDir: context.projectDir,
+              outputDir,
+              enableSplitting: false,
+              enableCompression: false,
+              enablePrefetch: false,
+            }),
+          Error,
+          "no routes were found",
+        );
       });
     });
 

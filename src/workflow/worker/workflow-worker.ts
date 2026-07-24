@@ -5,7 +5,7 @@
  * Enables distributed workflow execution across multiple pods.
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger, sleep } from "#veryfront/utils";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { hasWorkerSupport } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
@@ -31,8 +31,8 @@ export interface WorkflowWorkerConfig {
   /** Backend for workflow persistence (must support worker features) */
   backend: WorkflowBackend;
 
-  /** Function to resume a workflow run */
-  resumeFn: (runId: string) => Promise<void>;
+  /** Function to resume a workflow run under the worker that claimed it */
+  resumeFn: (runId: string, expectedWorkerId?: string) => Promise<void>;
 
   /** Interval between poll cycles (ms) */
   pollInterval?: number;
@@ -80,7 +80,7 @@ export interface WorkerStats {
  * ```typescript
  * const worker = new WorkflowWorker({
  *   backend: redisBackend,
- *   resumeFn: (runId) => client.resume(runId),
+ *   resumeFn: (runId, expectedWorkerId) => client.resume(runId, expectedWorkerId),
  *   pollInterval: 5000,
  *   stalledThreshold: 60000,
  * });
@@ -113,7 +113,8 @@ export class WorkflowWorker {
       throw CONFIG_INVALID.create({
         detail: "Backend does not support worker features. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, releaseLock, " +
-          "findStalledRuns, claimStalledRun. " +
+          "findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker. " +
           "Use RedisBackend with worker support enabled.",
       });
     }
@@ -192,7 +193,7 @@ export class WorkflowWorker {
           `[WorkflowWorker] Waiting for ${this.activeResumes.size} active resumes to complete`,
         );
       }
-      await this.sleep(1000);
+      await sleep(1000);
     }
 
     this.status = "stopped";
@@ -315,7 +316,7 @@ export class WorkflowWorker {
 
         await runWithWorkflowSourceIntegrationPolicy(
           run,
-          () => this.config.resumeFn(run.id),
+          () => this.config.resumeFn(run.id, this.config.workerId),
         );
 
         this.stats.resumeCount++;
@@ -330,14 +331,6 @@ export class WorkflowWorker {
         this.activeResumes.delete(run.id);
       }
     })();
-  }
-
-  /**
-   * Sleep for specified milliseconds
-   */
-  private sleep(ms: number): Promise<void> {
-    // no cleanup needed: one-shot
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

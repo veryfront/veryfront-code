@@ -21,6 +21,8 @@ export interface StreamingToolCall {
   state: ChatToolState;
   /** Whether this is a dynamic tool (MCP, user-defined, etc.) */
   dynamic?: boolean;
+  /** Whether the provider executed this tool instead of the client/runtime. */
+  providerExecuted?: boolean;
 }
 
 export interface StreamingReasoning {

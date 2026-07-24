@@ -431,7 +431,7 @@ describe("agent/agent-service-auth", () => {
   });
 
   it("checks project access against the configured API origin", async () => {
-    const fetchMock = createFetchMock(new Response("{}", { status: 200 }));
+    const fetchMock = createFetchMock(Response.json({ slug: "verified-project" }));
     const auth = createHostedServiceAuth({
       fetch: fetchMock.fetch,
       projectAccessTimeoutMs: 1_000,
@@ -446,6 +446,7 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.success, true);
     if (!result.success) throw new Error("Expected project access to succeed");
     assertEquals(result.projectId, "project-1");
+    assertEquals(result.projectSlug, "verified-project");
     const call = getOnlyFetchCall(fetchMock.calls);
     assertEquals(String(call.input), "https://api.example.test/projects/project-1");
     assertEquals(call.init?.method, "GET");

@@ -69,7 +69,7 @@ workflowClient.register(contentPipeline);
 if (process.env.WORKER_ENABLED !== "false") {
   const worker = new WorkflowWorker({
     backend,
-    resumeFn: (runId) => workflowClient.resume(runId),
+    resumeFn: (runId, expectedWorkerId) => workflowClient.resume(runId, expectedWorkerId),
     pollInterval: 5000,
     stalledThreshold: 30000, // 30s for dev (faster detection)
   });
@@ -264,12 +264,19 @@ client.register(myWorkflow);
 // Optional: Start worker (if not using CLI)
 const worker = new WorkflowWorker({
   backend,
-  resumeFn: (runId) => client.resume(runId),
+  resumeFn: (runId, expectedWorkerId) => client.resume(runId, expectedWorkerId),
   pollInterval: 5000,
   stalledThreshold: 60000,
 });
 worker.start();
 ```
+
+Custom backends used by `WorkflowWorker` must implement the queue, lock, and stalled-run methods in
+`WorkflowBackend`. They must also implement `updateRunIfStatusAndWorker`,
+`saveCheckpointIfStatusAndWorker`, and `savePendingApprovalIfStatusAndWorker`. Each of these methods
+must compare the run status and worker ID atomically with its write. `WorkflowWorker` rejects a
+backend that omits these owner-fencing operations because an older worker could otherwise overwrite
+a replacement worker's progress.
 
 ### Redis schema cutovers
 

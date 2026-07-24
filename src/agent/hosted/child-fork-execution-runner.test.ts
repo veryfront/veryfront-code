@@ -92,6 +92,7 @@ Deno.test("executeHostedChildForkWithPreparedTools executes a prepared child for
     kind: "invoke_agent",
     provider: "anthropic",
     forkModel: "anthropic/claude-sonnet-4",
+    temperature: 0.2,
     maxSteps: 4,
     effectivePrompt: "Do the work.",
     forkContext: {
@@ -130,6 +131,7 @@ Deno.test("executeHostedChildForkWithPreparedTools executes a prepared child for
     },
     runStep: async (input) => {
       assertEquals(input.model, "anthropic/claude-sonnet-4");
+      assertEquals(input.temperature, 0.2);
       assertEquals(input.forkToolNames, ["noop"]);
       assertEquals(input.providerOptions, undefined);
       assertEquals(input.system.includes('project_reference: "project-1"'), true);
@@ -286,9 +288,10 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       description: "Review checkout",
       prompt: "Review the checkout flow.",
       context: {},
-      project_id: "project-2",
+      project_reference: "project-two",
       tools: ["noop"],
       model: "sonnet",
+      temperature: 0.4,
       thinking: 256,
       max_steps: 120,
     },
@@ -298,6 +301,10 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
     contextModel: "opus",
     onRequestedProjectId: (projectId) => {
       callbacks.push(`project:${projectId}`);
+    },
+    resolveProjectReference: ({ projectReference }) => {
+      assertEquals(projectReference, "project-two");
+      return Promise.resolve({ projectId: "project-2", slug: "project-two" });
     },
     resolveModelId: (modelId) => `resolved-${modelId}`,
     resolveProvider: (modelId) => `provider-${modelId}`,
@@ -314,6 +321,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       assertEquals(runtimeConfig.description, "Review checkout");
       assertEquals(runtimeConfig.forkModel, "resolved-sonnet");
       assertEquals(runtimeConfig.provider, "provider-resolved-sonnet");
+      assertEquals(runtimeConfig.temperature, 0.4);
       assertEquals(runtimeConfig.maxSteps, 120);
       assertEquals(runtimeConfig.thinkingConfig, { enabled: true, budgetTokens: 256 });
       assertEquals(runtimeConfig.effectivePrompt.includes("Review the checkout flow."), true);
@@ -346,6 +354,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
     startRuntime: (input) => {
       callbacks.push(`start:${input.forkModel}`);
       assertEquals(input.provider, "provider-resolved-sonnet");
+      assertEquals(input.temperature, 0.4);
       assertEquals(input.maxSteps, 120);
       assertEquals(input.providerOptions, {
         forkModel: "resolved-sonnet",
@@ -453,8 +462,19 @@ Deno.test("executeHostedChildForkToolInput preserves root invocation context for
     authToken: "token",
     apiUrl: "https://api.example.com",
     projectId: "project-1",
+    parentConversationId: "conversation-parent-2",
     conversationId: "conversation-parent-2",
     parentRunId: "run-parent-2",
+    parentMessageId: "message-parent-2",
+    trustedInvocationContext: {
+      root_conversation_id: "conversation-root-1",
+      parent_conversation_id: "conversation-parent-1",
+      root_run_id: "run-root-1",
+      parent_run_id: "run-parent-1",
+      parent_message_id: "message-parent-1",
+      tool_call_id: "tool-call-parent",
+      delegation_depth: 1,
+    },
     kind: "invoke_agent",
     forkInput: {
       description: "Review nested handoff",
@@ -491,6 +511,11 @@ Deno.test("executeHostedChildForkToolInput preserves root invocation context for
         runtimeConfig.effectivePrompt.includes('"parent_run_id":"run-parent-2"'),
         true,
       );
+      assertEquals(
+        runtimeConfig.effectivePrompt.includes('"parent_message_id":"message-parent-2"'),
+        true,
+      );
+      assertEquals(runtimeConfig.effectivePrompt.includes('"delegation_depth":2'), true);
       assertEquals(runtimeConfig.effectivePrompt.includes('"tool_call_id":"tool-call-2"'), true);
       assertEquals(runtimeConfig.effectivePrompt.includes('"tool-call-parent"'), false);
       return {

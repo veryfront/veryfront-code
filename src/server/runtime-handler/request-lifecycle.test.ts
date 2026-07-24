@@ -230,6 +230,38 @@ describe("server/runtime-handler/request-lifecycle", () => {
       assertEquals(response.status, 200);
       assertEquals(requestTracker.getInFlightCount(), beforeCount);
     });
+
+    it("should keep timed-out work in flight until the handler settles", async () => {
+      const beforeCount = requestTracker.getInFlightCount();
+      let settleHandler!: () => void;
+      const handlerSettled = new Promise<void>((resolve) => {
+        settleHandler = resolve;
+      });
+      startRequestTracking(
+        "lifecycle-timeout-settlement",
+        "slug",
+        "/api/slow",
+        "POST",
+        "production",
+        "rel-1",
+      );
+
+      const response = completeRequestTrackingOnResponseEnd(
+        "lifecycle-timeout-settlement",
+        new Response("Request timeout", { status: 504 }),
+        true,
+        null,
+        handlerSettled,
+      );
+
+      assertEquals(response.status, 504);
+      assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+
+      settleHandler();
+      await handlerSettled;
+      await Promise.resolve();
+      assertEquals(requestTracker.getInFlightCount(), beforeCount);
+    });
   });
 
   describe("startContentMetrics / endContentMetrics", () => {

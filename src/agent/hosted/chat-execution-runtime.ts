@@ -3,6 +3,7 @@ import {
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
 import { getLastStreamStep } from "../../chat/final-step-fallback.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
 import {
@@ -56,6 +57,7 @@ import {
 } from "../../chat/stream-watchdog.ts";
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -229,7 +231,10 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
 const HOSTED_LONG_RUNNING_TOOL_NAMES = ["invoke_agent"] as const;
 
 function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
-  return createChatStreamWatchdog({ longRunningToolNames: HOSTED_LONG_RUNNING_TOOL_NAMES });
+  return createChatStreamWatchdog({
+    longRunningToolNames: HOSTED_LONG_RUNNING_TOOL_NAMES,
+    longRunningToolPrefixes: [AGENT_DELEGATE_TOOL_PREFIX],
+  });
 }
 
 function resolveStreamBootstrapKeepaliveIntervalMs(intervalMs: number | undefined): number {
@@ -298,7 +303,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   const cleanup = createHostedChatExecutionCleanup(input.cleanup);
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
 
   const rootStreamWatchdog = input.createRootStreamWatchdog
@@ -690,7 +695,7 @@ function resolveStreamingMessageId(input: {
 }): string | null {
   const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
   if (input.conversationId && !streamingMessageId) {
-    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+    throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
 
   if (streamingMessageId) {

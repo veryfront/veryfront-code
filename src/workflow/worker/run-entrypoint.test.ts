@@ -16,6 +16,7 @@ const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(
 
 const ENV_KEYS = [
   "WORKFLOW_RUN_ID",
+  "RUN_EXECUTION_ID",
   "VERYFRONT_TASK_ENV_JSON",
   "VERYFRONT_PROJECT_API_URL",
   "TENANT_TOKEN",
@@ -291,6 +292,57 @@ describe("runWorkflowRun", () => {
     assertEquals(updatedRun.error?.message, "EXECUTION_ERROR: boom");
   });
 
+  it("uses the immutable execution ID when persisted ownership has changed", async () => {
+    rememberEnv();
+
+    const backend = new MemoryBackend();
+    const run: WorkflowRun = {
+      id: "run-stale-execution",
+      workflowId: "test-workflow",
+      status: "running",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      workerId: "run-execution:new-owner",
+    };
+    await backend.createRun(run);
+
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+    Deno.env.set("RUN_EXECUTION_ID", "old-owner");
+    Deno.env.set(
+      "VERYFRONT_TASK_ENV_JSON",
+      JSON.stringify({ SHOULD_NOT_BE_PERSISTED: "stale" }),
+    );
+
+    let observedWorkerId: string | undefined;
+    const exitCode = await runWorkflowRun({
+      backend,
+      executor: {
+        resume: async (
+          _runId: string,
+          _fromCheckpoint?: string,
+          expectedWorkerId?: string,
+        ) => {
+          observedWorkerId = expectedWorkerId;
+          throw new Error("stale execution");
+        },
+      } as never,
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(exitCode, EXIT_CODES.WORKFLOW_FAILED);
+    assertEquals(observedWorkerId, "run-execution:old-owner");
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, "run-execution:new-owner");
+    assertEquals(persisted?.error, undefined);
+    assertEquals(persisted?.context.env, undefined);
+  });
+
   it("executes workflow runs already marked running by the run manager", async () => {
     rememberEnv();
 
@@ -324,6 +376,7 @@ describe("runWorkflowRun", () => {
     await backend.createRun(run);
 
     Deno.env.set("WORKFLOW_RUN_ID", run.id);
+    Deno.env.set("RUN_EXECUTION_ID", "run-exec-1");
 
     const exitCode = await runWorkflowRun({
       backend,
@@ -398,6 +451,7 @@ describe("runWorkflowRun", () => {
     });
 
     Deno.env.set("WORKFLOW_RUN_ID", run.id);
+    Deno.env.set("RUN_EXECUTION_ID", "run-exec-2");
 
     const exitCode = await runWorkflowRun({
       backend,

@@ -9,6 +9,7 @@ import {
   importMapOwnsSpecifier,
 } from "#veryfront/utils/import-map.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX } from "./constants.ts";
+import { rscLogger } from "../client/browser-logger.ts";
 
 export type ClientModuleStrategy = "fs" | "rsc-module";
 
@@ -61,7 +62,7 @@ export function readHydrationData(
     if (!el) return null;
     return JSON.parse(el.textContent || "{}") as ClientRuntimeHydrationData;
   } catch (e) {
-    console.debug?.("[RSC] hydration data parse failed", e);
+    rscLogger.debug("hydration data parse failed", e);
     return null;
   }
 }

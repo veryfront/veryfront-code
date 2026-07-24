@@ -1,4 +1,8 @@
 export const BROWSER_SAFE_EXPORTS = [
+  // Client/SSR-safe mirror of the root barrel (server bootstrap surface removed).
+  // The import rewriter redirects `veryfront` here for browser/ssr; it must ship
+  // in the npm package (built to esm/src/index.client.js) or that redirect 404s.
+  "./index.client",
   "./head",
   "./router",
   "./context",
@@ -31,6 +35,8 @@ export const BROWSER_SAFE_CLIENT_MODULES = [
   "src/react/components/chat/chat/components/inline-citation.js",
   "src/react/components/chat/chat/components/message-actions.js",
   "src/react/components/chat/chat/components/reasoning.js",
+  "src/react/components/ui/color-mode.js",
+  "src/react/runtime/core.js",
   "src/security/client/html-sanitizer.js",
   "src/platform/compat/runtime.js",
   "src/workflow/react/index.js",

@@ -1,8 +1,37 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { BuildContext } from "veryfront/extensions/bundler";
+import { join } from "#veryfront/compat/path/index.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  makeTempDir,
+  mkdir,
+  readDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
+import { type BuildContext, stop } from "veryfront/extensions/bundler";
 import { CodeSplitter, rebuildAndDispose } from "./splitter.ts";
+
+async function readJsOutputs(dir: string): Promise<string> {
+  let contents = "";
+
+  for await (const entry of readDir(dir)) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory) {
+      contents += await readJsOutputs(path);
+      continue;
+    }
+
+    if (entry.isFile && entry.name.endsWith(".js")) {
+      contents += await readTextFile(path);
+      contents += "\n";
+    }
+  }
+
+  return contents;
+}
 
 describe("build/bundler/code-splitter/splitter", () => {
   describe("CodeSplitter constructor", () => {
@@ -105,6 +134,63 @@ describe("build/bundler/code-splitter/splitter", () => {
       );
 
       assertEquals(error, rebuildError);
+    });
+
+    it("strips server-only page dependencies before building production browser chunks", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-splitter-project-" });
+      const outDir = await makeTempDir({ prefix: "vf-splitter-out-" });
+      const previousCodeParser = tryResolve<unknown>("CodeParser");
+      unregister("CodeParser");
+
+      try {
+        await mkdir(join(projectDir, "app"), { recursive: true });
+        const pagePath = join(projectDir, "app/page.tsx");
+        await writeTextFile(
+          pagePath,
+          [
+            `import { notFound } from "veryfront";`,
+            `import { hashSecret } from "./server-helper.ts";`,
+            `export async function getServerData() {`,
+            `  if (!hashSecret("candidate")) notFound();`,
+            `  return { props: { ok: true } };`,
+            `}`,
+            `export default function Page() { return "browser page"; }`,
+          ].join("\n"),
+        );
+        await writeTextFile(
+          join(projectDir, "app/server-helper.ts"),
+          [
+            `import { createHash } from "node:crypto";`,
+            `export function hashSecret(value: string): string {`,
+            `  return createHash("sha256").update(value).digest("hex");`,
+            `}`,
+          ].join("\n"),
+        );
+
+        const splitter = new CodeSplitter({
+          projectDir,
+          outDir,
+          mode: "production",
+          routes: [{ path: "/", file: pagePath, name: "index" }],
+          moduleResolution: "bundled",
+        });
+
+        await splitter.split();
+        assertEquals(tryResolve("CodeParser") !== undefined, true);
+        const browserOutputs = await readJsOutputs(outDir);
+
+        assertEquals(browserOutputs.includes("browser page"), true);
+        assertEquals(browserOutputs.includes("node:crypto"), false);
+        assertEquals(browserOutputs.includes("createHash"), false);
+        assertEquals(browserOutputs.includes("hashSecret"), false);
+        assertEquals(browserOutputs.includes("notFound"), false);
+      } finally {
+        await stop();
+        if (previousCodeParser) register("CodeParser", previousCodeParser);
+        else unregister("CodeParser");
+        await remove(projectDir, { recursive: true });
+        await remove(outDir, { recursive: true });
+      }
     });
   });
 });

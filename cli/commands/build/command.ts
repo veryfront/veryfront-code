@@ -70,7 +70,9 @@ export function buildCommand(options: BuildOptions): Promise<void> {
             enableSplitting: options.splitting ?? true,
             enableCompression: options.compress ?? true,
             enablePrefetch: options.prefetch ?? true,
-            ssg: options.ssg ?? false,
+            // Tri-state: buildProduction resolves an omitted flag against
+            // build.ssg in veryfront.config.ts, then defaults to enabled.
+            ssg: options.ssg,
             include: options.include,
             exclude: options.exclude,
             dryRun,

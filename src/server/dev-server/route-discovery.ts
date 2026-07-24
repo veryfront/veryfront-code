@@ -163,7 +163,9 @@ export class RouteDiscovery {
       // is not recognizable as ENOENT) and floods normal dev startup. Surfacing a
       // genuine adapter failure distinctly needs not-found detection that sees
       // through the fallback wrapper — tracked as a follow-up.
-      logger.debug("Directory check failed", { path, error: String(error) });
+      logger.debug("Directory check failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       return false;
     }
   }

@@ -4,12 +4,19 @@ import { HASH_SEED_FNV1A } from "./constants/hash.ts";
 /** Number of hex characters kept by shortHash (8 hex chars = 32 bits) */
 const SHORT_HASH_LENGTH = 8;
 
-/** Compute hash. */
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Compute the lowercase hex SHA-256 digest of a UTF-8 string. */
 export async function computeHash(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return toHex(await crypto.subtle.digest("SHA-256", data));
+}
 
-  return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
+/** Compute the lowercase hex SHA-256 digest of raw bytes. */
+export async function computeHashBytes(bytes: BufferSource): Promise<string> {
+  return toHex(await crypto.subtle.digest("SHA-256", bytes));
 }
 /** Source bundle content used for hash computation. */
 export interface BundleCode {

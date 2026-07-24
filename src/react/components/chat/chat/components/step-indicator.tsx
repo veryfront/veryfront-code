@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckCircleIcon } from "../../../ui/icons/index.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Props accepted by step indicator. */
 export interface StepIndicatorProps
@@ -34,23 +34,11 @@ export interface StepIndicatorContextValue {
   icon?: React.ReactNode;
 }
 
-const StepIndicatorContext = React.createContext<
-  StepIndicatorContextValue | null
->(null);
-
-/**
- * Read the enclosing `StepIndicator` state. Throws when used outside a
- * `StepIndicator`.
- */
-export function useStepIndicator(): StepIndicatorContextValue {
-  const ctx = React.useContext(StepIndicatorContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useStepIndicator must be used within a StepIndicator",
-    });
-  }
-  return ctx;
-}
+const [StepIndicatorContext, useStepIndicator] = createStrictContext<StepIndicatorContextValue>(
+  "useStepIndicator",
+  "a StepIndicator",
+);
+export { useStepIndicator };
 
 /**
  * `StepIndicator.Root` — context provider + the flex container. No children

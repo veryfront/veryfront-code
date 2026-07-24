@@ -72,8 +72,12 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront eval` | Discover and run eval definitions |
 | `veryfront issues` | File-based issue tracking (SDLC conventions) |
 | `veryfront mcp` | Start MCP server for coding agents |
+| `veryfront schedule` | Run a source-defined schedule locally |
+| `veryfront schedules` | List source-defined schedules |
 | `veryfront skills` | List and inspect available agent skills |
 | `veryfront task` | Run a task from the tasks/ directory |
+| `veryfront webhook` | Run a source-defined webhook locally with a fixture payload |
+| `veryfront webhooks` | List source-defined webhooks |
 | `veryfront worker` | Start workflow run worker |
 | `veryfront workflow` | Run a workflow from the workflows directory |
 
@@ -83,4 +87,4 @@ The CLI groups commands by category. Each command supports `--help` for its full
 |---------|-------------|
 | `veryfront login` | Authenticate with Veryfront |
 | `veryfront logout` | Clear stored authentication credentials |
-| `veryfront whoami` | Show current authenticated user |
+| `veryfront whoami` | Show the current authenticated identity |

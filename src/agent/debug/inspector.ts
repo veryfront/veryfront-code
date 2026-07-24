@@ -8,7 +8,7 @@
 
 import type { Agent, Message } from "../types.ts";
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 
 export interface InspectionReport {
   agent: {

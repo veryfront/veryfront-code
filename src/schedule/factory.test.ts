@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { schedule } from "./factory.ts";
 import { isScheduleDefinition } from "./types.ts";
 
@@ -53,6 +54,40 @@ describe("schedule/factory", () => {
       concurrencyPolicy: "Forbid",
     });
     assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("normalizes schedule health configuration", () => {
+    const definition = schedule({
+      id: "triage-sweep",
+      schedule: "0 */6 * * *",
+      target: { kind: "task", id: "run-triage-sweep" },
+      health: { maxStalenessSeconds: 1_800 },
+    });
+
+    assertEquals(definition.health, { maxStalenessSeconds: 1_800 });
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("rejects malformed schedule health configuration", () => {
+    for (
+      const health of [
+        {},
+        { maxStalenessSeconds: 0 },
+        { maxStalenessSeconds: 1.5 },
+        { maxStalenessSeconds: 60, unexpected: true },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          schedule({
+            id: "triage-sweep",
+            schedule: "0 */6 * * *",
+            target: { kind: "task", id: "run-triage-sweep" },
+            health: health as never,
+          }),
+        Error,
+      );
+    }
   });
 
   it("preserves integration requirements", () => {
@@ -125,7 +160,7 @@ describe("schedule/factory", () => {
           cron: "0 8 * * 1-5",
           target: { kind: "workflow", id: "escalate-ticket" },
         }),
-      Error,
+      VeryfrontError,
       "Schedule id must start",
     );
 
@@ -136,7 +171,7 @@ describe("schedule/factory", () => {
           cron: "0 8 * * 1-5",
           target: { kind: "queue", id: "priority" } as never,
         }),
-      Error,
+      VeryfrontError,
       "Schedule target",
     );
   });
@@ -150,7 +185,7 @@ describe("schedule/factory", () => {
           target: { kind: "task", id: "sync-helpdesk" },
           input: { now: new Date() },
         }),
-      Error,
+      VeryfrontError,
       "Schedule input.now must be JSON-serializable.",
     );
   });
@@ -314,6 +349,16 @@ describe("schedule/factory", () => {
   });
 
   it("does not treat malformed integration requirements as schedule definitions", () => {
+    assertEquals(
+      isScheduleDefinition({
+        id: "triage-sweep",
+        schedule: "0 */6 * * *",
+        target: { kind: "task", id: "run-triage-sweep" },
+        health: { maxStalenessSeconds: 0 },
+      }),
+      false,
+    );
+
     assertEquals(
       isScheduleDefinition({
         id: "slack-digest",

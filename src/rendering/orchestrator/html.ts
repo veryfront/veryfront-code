@@ -20,7 +20,7 @@ import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manife
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
-import { profilePhase, profileSyncPhase } from "#veryfront/observability/request-profiler.ts";
+import { profilePhase, profileSyncPhase } from "#veryfront/observability";
 import {
   extractProjectClassesForRoute,
   type ProjectCSSResult,

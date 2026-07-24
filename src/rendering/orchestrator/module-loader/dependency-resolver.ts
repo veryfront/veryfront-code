@@ -2,6 +2,7 @@ import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parallelMap, rendererLogger } from "#veryfront/utils";
 import {
+  findDynamicImportSpans,
   findStaticImportFromSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
@@ -10,8 +11,21 @@ import { findSourceFile } from "../file-resolver/index.ts";
 
 const logger = rendererLogger.component("module-loader");
 
-type AliasImport = { full: string; path: string; start: number; end: number };
-type RelativeImport = { full: string; path: string; fromDir: string; start: number; end: number };
+type AliasImport = {
+  full: string;
+  path: string;
+  start: number;
+  end: number;
+  isDynamic: boolean;
+};
+type RelativeImport = {
+  full: string;
+  path: string;
+  fromDir: string;
+  start: number;
+  end: number;
+  isDynamic: boolean;
+};
 
 /** Resolved local module dependency discovered in a source module. */
 export type ResolvedModuleDependency = {
@@ -22,6 +36,8 @@ export type ResolvedModuleDependency = {
   relativePath: string;
   depFilePath: string | null;
   isLocalLib: boolean;
+  /** True when discovered inside `import("…")` rather than a static import. */
+  isDynamic: boolean;
 };
 
 /** Resolved dependency after its source module has been transformed to a temp file. */
@@ -37,30 +53,41 @@ export interface ResolveModuleDependenciesInput {
   adapter: RuntimeAdapter;
 }
 
+const matchAlias = (specifier: string) => specifier.startsWith("@/") ? specifier : null;
+const matchRelative = (specifier: string) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1];
+
 function collectAliasImports(fileContent: string): AliasImport[] {
-  return findStaticImportFromSpans(
-    fileContent,
-    (specifier) => specifier.startsWith("@/") ? specifier : null,
-  ).map(({ original, path, start, end }) => ({
-    full: original,
-    path,
-    start,
-    end,
-  }));
+  const toAlias = (isDynamic: boolean) =>
+  (
+    { original, path, start, end }: {
+      original: string;
+      path: string;
+      start: number;
+      end: number;
+    },
+  ): AliasImport => ({ full: original, path, start, end, isDynamic });
+
+  return [
+    ...findStaticImportFromSpans(fileContent, matchAlias).map(toAlias(false)),
+    ...findDynamicImportSpans(fileContent, matchAlias).map(toAlias(true)),
+  ];
 }
 
 function collectRelativeImports(fileContent: string, fileDir: string): RelativeImport[] {
-  return findStaticImportFromSpans(
-    fileContent,
-    (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
-  )
-    .map(({ original, path, start, end }) => ({
-      full: original,
-      path,
-      fromDir: fileDir,
-      start,
-      end,
-    }))
+  const toRelative = (isDynamic: boolean) =>
+  (
+    { original, path, start, end }: {
+      original: string;
+      path: string;
+      start: number;
+      end: number;
+    },
+  ): RelativeImport => ({ full: original, path, fromDir: fileDir, start, end, isDynamic });
+
+  return [
+    ...findStaticImportFromSpans(fileContent, matchRelative).map(toRelative(false)),
+    ...findDynamicImportSpans(fileContent, matchRelative).map(toRelative(true)),
+  ]
     // Ignore already-transformed file:// imports.
     .filter((imp) => !imp.path.includes("file://"));
 }
@@ -128,6 +155,7 @@ async function resolveRelativeImport(
     relativePath: imp.path,
     depFilePath,
     isLocalLib: false,
+    isDynamic: imp.isDynamic,
   };
 }
 
@@ -168,7 +196,9 @@ export function rewriteResolvedDependencyImports(
     start: dep.start,
     end: dep.end,
     expected: dep.full,
-    replacement: `from "file://${dep.depTempPath}"`,
+    // A dynamic span covers only the quoted specifier; a static one covers the
+    // whole `from "…"` clause.
+    replacement: dep.isDynamic ? `"file://${dep.depTempPath}"` : `from "file://${dep.depTempPath}"`,
   }));
   return replaceSourceSpans(fileContent, replacements);
 }

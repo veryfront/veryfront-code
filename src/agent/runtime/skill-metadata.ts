@@ -97,6 +97,45 @@ export function isRuntimeSkillVisibleTo(
   return definition.ownerAgentId === undefined || definition.ownerAgentId === scope?.agentId;
 }
 
+/**
+ * Resolve the runtime skills advertised to an agent.
+ *
+ * Explicit selectors use the same rule as the local skill registry: resolve
+ * the agent's own short name first, then an exact visible skill id.
+ */
+export function resolveRuntimeSkillsForAgent(input: {
+  skills: readonly RuntimeSkillDefinition[];
+  agentId: string;
+  selector: true | false | string[] | undefined;
+}): RuntimeSkillDefinition[] {
+  const visibleSkills = input.skills.filter((skill) =>
+    isRuntimeSkillVisibleTo(skill, { agentId: input.agentId })
+  );
+  if (input.selector === false) {
+    return [];
+  }
+  if (input.selector === undefined || input.selector === true) {
+    return visibleSkills;
+  }
+
+  const byId = new Map(visibleSkills.map((skill) => [skill.id, skill]));
+  const ownByShortName = new Map(
+    visibleSkills
+      .filter((skill) => skill.ownerAgentId === input.agentId && skill.shortName !== undefined)
+      .map((skill) => [skill.shortName as string, skill]),
+  );
+  const selectedSkills = new Map<string, RuntimeSkillDefinition>();
+
+  for (const requested of input.selector) {
+    const skill = ownByShortName.get(requested) ?? byId.get(requested);
+    if (skill) {
+      selectedSkills.set(skill.id, skill);
+    }
+  }
+
+  return [...selectedSkills.values()];
+}
+
 /** Public API contract for runtime loaded skill response messages. */
 export type RuntimeLoadedSkillResponseMessages = {
   allowedToolsNote: string;
@@ -128,6 +167,25 @@ export type RuntimeLoadedSkillResponse = {
 export type RuntimeSkillMetadataLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
+
+function getAvailableScopedDelegateToolNames(
+  availableToolNameSet: ReadonlySet<string> | null,
+): string[] {
+  if (!availableToolNameSet) {
+    return [];
+  }
+
+  return [...availableToolNameSet].filter((toolName) => toolName.startsWith("agent_")).sort();
+}
+
+function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
+  return availableToolNameSet === null || availableToolNameSet.has("invoke_agent");
+}
+
+function hasAvailableDelegationTool(availableToolNameSet: ReadonlySet<string> | null): boolean {
+  return availableToolNameSet === null || canUseLegacyInvokeAgent(availableToolNameSet) ||
+    getAvailableScopedDelegateToolNames(availableToolNameSet).length > 0;
+}
 
 /** Public API contract for parsed runtime skill document. */
 export type ParsedRuntimeSkillDocument = {
@@ -256,7 +314,7 @@ export function buildRuntimeLoadedSkillResponse(input: {
 }): RuntimeLoadedSkillResponse {
   const metadata = parseRuntimeSkillMetadata(input.instructions, { logger: input.logger });
   const declaredAllowedTools = metadata?.allowedTools ?? [];
-  const availableToolNameSet = input.availableToolNames && input.availableToolNames.length > 0
+  const availableToolNameSet = input.availableToolNames !== undefined
     ? new Set(input.availableToolNames)
     : null;
   const currentRunAllowedTools = availableToolNameSet
@@ -285,13 +343,15 @@ export function buildRuntimeLoadedSkillResponse(input: {
     ...(unavailableCurrentRunTools.length > 0
       ? {
         unavailableCurrentRunTools,
-        delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote,
+        ...(hasAvailableDelegationTool(availableToolNameSet)
+          ? { delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote }
+          : {}),
       }
       : {}),
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
     ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
-    ...(hasOverrides
+    ...(hasOverrides && canUseLegacyInvokeAgent(availableToolNameSet)
       ? {
         overrideNote: input.messages.overrideNote,
       }

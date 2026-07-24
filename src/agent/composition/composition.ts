@@ -9,13 +9,16 @@
 
 import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
+import { setActiveSpanAttributes } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
 import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 
 /** Agent as tool helper. */
 async function runAgentAsStreamingTool(
@@ -31,12 +34,24 @@ async function runAgentAsStreamingTool(
         finalResponse = response;
       },
     });
-    await stream.toDataStreamResponse().arrayBuffer();
-
-    if (!finalResponse) {
-      throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
+    let streamError: string | undefined;
+    const response = stream.toDataStreamResponse();
+    if (response.body) {
+      for await (const event of streamDataStreamEvents(response.body)) {
+        if (event.type !== "error") continue;
+        streamError = typeof event.errorText === "string"
+          ? event.errorText
+          : typeof event.error === "string"
+          ? event.error
+          : "Child agent stream failed";
+      }
     }
 
+    if (!finalResponse) {
+      throw AGENT_ERROR.create({
+        detail: streamError ?? `Agent "${agent.id}" stream completed without a final response.`,
+      });
+    }
     return finalResponse;
   };
 

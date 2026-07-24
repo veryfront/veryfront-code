@@ -1,3 +1,5 @@
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+
 /**
  * Source-span replacement helpers for import rewrites.
  *
@@ -48,7 +50,9 @@ export function replaceSourceSpans(
     }
 
     if (expected !== undefined && source.slice(start, end) !== expected) {
-      throw new Error(`Source replacement span did not match expected text: ${expected}`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Source replacement span did not match expected text: ${expected}`,
+      });
     }
 
     result = result.slice(0, start) + replacement + result.slice(end);
@@ -107,6 +111,26 @@ function skipIgnored(source: string, index: number): number {
 function skipWhitespace(source: string, index: number): number {
   let cursor = index;
   while (/\s/.test(source[cursor] ?? "")) cursor++;
+  return cursor;
+}
+
+// Comments are legal wherever whitespace is, so a dynamic import can carry a
+// bundler hint between the keyword, the parentheses and the specifier. Treating
+// the comment as an unexpected character would leave the specifier unresolved.
+function skipWhitespaceAndComments(source: string, index: number): number {
+  let cursor = index;
+
+  while (cursor < source.length) {
+    const afterWhitespace = skipWhitespace(source, cursor);
+    const char = source[afterWhitespace];
+    const next = source[afterWhitespace + 1];
+    if (char === "/" && (next === "/" || next === "*")) {
+      cursor = skipIgnored(source, afterWhitespace);
+      continue;
+    }
+    return afterWhitespace;
+  }
+
   return cursor;
 }
 
@@ -224,6 +248,77 @@ export function findStaticImportFromSpans(
     }
 
     cursor = nextStatementCursor(source, afterKeyword);
+  }
+
+  return spans;
+}
+
+/**
+ * Find `import("…")` expressions with a literal specifier.
+ *
+ * The returned span covers the quoted specifier itself (quotes included), not
+ * the surrounding `import(...)`, so a replacement is a bare quoted string.
+ * Dynamic imports whose argument is not a string literal are skipped, since
+ * their target is only known at runtime. That includes an argument the literal
+ * merely starts: rewriting the `"./foo"` in `import("./foo" + suffix)` would
+ * build a path out of a resolved prefix and an unresolved tail.
+ */
+export function findDynamicImportSpans(
+  source: string,
+  matcher: SpecifierMatcher,
+): StaticImportSpan[] {
+  const spans: StaticImportSpan[] = [];
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const skipped = skipIgnored(source, cursor);
+    if (skipped !== cursor) {
+      cursor = skipped;
+      continue;
+    }
+
+    // `import` used as an expression: not preceded by an identifier char or a
+    // dot (which would make it `foo.import` or part of a longer word).
+    if (
+      !source.startsWith("import", cursor) ||
+      isIdentifierChar(source[cursor - 1]) ||
+      source[cursor - 1] === "." ||
+      isIdentifierChar(source[cursor + "import".length])
+    ) {
+      cursor++;
+      continue;
+    }
+
+    const parenIndex = skipWhitespaceAndComments(source, cursor + "import".length);
+    if (source[parenIndex] !== "(") {
+      cursor++;
+      continue;
+    }
+
+    const quoteIndex = skipWhitespaceAndComments(source, parenIndex + 1);
+    const quoted = readQuotedSpecifier(source, quoteIndex);
+    if (!quoted) {
+      cursor = parenIndex + 1;
+      continue;
+    }
+
+    // The literal must be the whole first argument. `)` closes the call and `,`
+    // starts the import-attributes argument; anything else (`+`, a template
+    // continuation, a ternary) means the runtime specifier is not this string.
+    const afterSpecifier = skipWhitespaceAndComments(source, quoted.end);
+    const isWholeArgument = source[afterSpecifier] === ")" || source[afterSpecifier] === ",";
+
+    const matchedPath = isWholeArgument ? matcher(quoted.specifier) : null;
+    if (matchedPath) {
+      spans.push({
+        original: source.slice(quoteIndex, quoted.end),
+        path: matchedPath,
+        start: quoteIndex,
+        end: quoted.end,
+      });
+    }
+
+    cursor = quoted.end;
   }
 
   return spans;

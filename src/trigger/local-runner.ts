@@ -1,5 +1,10 @@
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { runWithProjectAgentRuntime } from "#veryfront/agent/project/agent-runtime.ts";
+import {
+  TRIGGER_EXECUTION_FAILED,
+  TRIGGER_NOT_SUPPORTED,
+  TRIGGER_TARGET_NOT_FOUND,
+} from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
@@ -19,6 +24,8 @@ export interface RunTriggerTargetOptions {
   projectId?: string;
   target: TriggerTarget;
   input?: unknown;
+  agentInput?: string;
+  agentContext?: Record<string, unknown>;
   debug?: boolean;
 }
 
@@ -53,7 +60,10 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
   const discovery = await discoverRuntimeOrThrow(options);
   const task = findProjectRuntimeTask(discovery, options.target.id);
   if (!task) {
-    throw new Error(`Task target "${options.target.id}" not found.`);
+    throw TRIGGER_TARGET_NOT_FOUND.create({
+      detail: `Task target "${options.target.id}" not found.`,
+      context: { targetId: options.target.id },
+    });
   }
 
   const result = await runWithProjectAgentRuntime(
@@ -68,7 +78,10 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
   );
 
   if (!result.success) {
-    throw new Error(result.error ?? `Task target "${options.target.id}" failed.`);
+    throw TRIGGER_EXECUTION_FAILED.create({
+      detail: result.error ?? `Task target "${options.target.id}" failed.`,
+      context: { targetId: options.target.id },
+    });
   }
 
   return {
@@ -87,7 +100,10 @@ async function runWorkflowTarget(
 
   const workflow = discovery.workflows.get(options.target.id);
   if (!workflow) {
-    throw new Error(`Workflow target "${options.target.id}" not found.`);
+    throw TRIGGER_TARGET_NOT_FOUND.create({
+      detail: `Workflow target "${options.target.id}" not found.`,
+      context: { targetId: options.target.id },
+    });
   }
 
   return await runWithProjectAgentRuntime(discovery, async () => {
@@ -117,6 +133,49 @@ async function runWorkflowTarget(
   });
 }
 
+async function runAgentTarget(options: RunTriggerTargetOptions): Promise<TriggerTargetRunResult> {
+  const agentInput = options.agentInput;
+  if (agentInput === undefined) {
+    throw TRIGGER_NOT_SUPPORTED.create({
+      detail: "Local agent trigger runs require an explicit agent input.",
+    });
+  }
+
+  const start = Date.now();
+  const discovery = await discoverRuntimeOrThrow(options);
+  const agent = agentRegistry.get(options.target.id);
+  if (!agent) {
+    throw TRIGGER_TARGET_NOT_FOUND.create({
+      detail: `Agent target "${options.target.id}" not found.`,
+      context: { targetId: options.target.id },
+    });
+  }
+
+  return await runWithProjectAgentRuntime(discovery, async () => {
+    const response = await agent.generate({
+      input: agentInput,
+      ...(options.agentContext === undefined ? {} : { context: options.agentContext }),
+    });
+    if (response.status === "error") {
+      throw TRIGGER_EXECUTION_FAILED.create({
+        detail: `Agent target "${options.target.id}" failed.`,
+        context: { targetId: options.target.id },
+      });
+    }
+
+    return {
+      kind: "agent",
+      id: options.target.id,
+      output: {
+        text: response.text,
+        status: response.status,
+        toolCalls: response.toolCalls.length,
+      },
+      durationMs: Date.now() - start,
+    };
+  });
+}
+
 export async function runTriggerTarget(
   options: RunTriggerTargetOptions,
 ): Promise<TriggerTargetRunResult> {
@@ -128,7 +187,5 @@ export async function runTriggerTarget(
     return await runWorkflowTarget(options);
   }
 
-  throw new Error(
-    "Agent trigger targets are Cloud-only for this milestone. Use a workflow or task for local trigger runs.",
-  );
+  return await runAgentTarget(options);
 }

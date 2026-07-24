@@ -85,9 +85,9 @@ export function wrapHostedChildProjectSwitchTool(
     execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
       const result = await originalExecute(toolInput, execOptions);
-      const projectId = normalizedToolInput.project_id;
-      const confirmedProjectId = typeof projectId === "string"
-        ? getConfirmedProjectContextSwitchId(result, projectId)
+      const projectReference = normalizedToolInput.project_reference;
+      const confirmedProjectId = typeof projectReference === "string"
+        ? getConfirmedProjectContextSwitchId(result, projectReference)
         : null;
       if (confirmedProjectId) {
         await input.onConfirmedProjectSwitch(confirmedProjectId);

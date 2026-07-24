@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
 import { ChevronDownIcon } from "../../../ui/icons/index.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { Shimmer } from "./animations.tsx";
 
 // ---------------------------------------------------------------------------
@@ -22,18 +22,11 @@ export interface ReasoningContextValue {
   toggle: () => void;
 }
 
-const ReasoningContext = React.createContext<ReasoningContextValue | null>(null);
-
-/** Read the enclosing `Reasoning` state. Throws when used outside a `Reasoning`. */
-export function useReasoning(): ReasoningContextValue {
-  const ctx = React.useContext(ReasoningContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useReasoning must be used within a Reasoning",
-    });
-  }
-  return ctx;
-}
+const [ReasoningContext, useReasoning] = createStrictContext<ReasoningContextValue>(
+  "useReasoning",
+  "a Reasoning",
+);
+export { useReasoning };
 
 /** Props accepted by `Reasoning` / `Reasoning.Root`. */
 export interface ReasoningProps {

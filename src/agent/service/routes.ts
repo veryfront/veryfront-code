@@ -94,6 +94,7 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   verifyProjectAccess: (projectId: string, authToken: string) => Promise<
     {
       success: true;
+      projectSlug?: string;
     } | {
       success: false;
       error: { errorCode: string; message: string; statusCode: number };

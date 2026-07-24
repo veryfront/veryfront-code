@@ -148,7 +148,7 @@ export function bundleBrowserModuleWithMetadata(
         write: false,
         format: "esm",
         platform: "browser",
-        target: "es2020",
+        target: "es2022",
         jsx: "automatic",
         jsxImportSource: "react",
         external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],

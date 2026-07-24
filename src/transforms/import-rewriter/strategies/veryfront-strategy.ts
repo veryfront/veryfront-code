@@ -27,6 +27,15 @@ import {
  */
 const REACT_ONLY_MODULE_OVERRIDES: Record<string, string> = {
   "veryfront/workflow": "/_vf_modules/_veryfront/workflow/react/index.js",
+  // The root barrel re-exports the server bootstrap surface from
+  // `#veryfront/server`, which transitively pulls `server/production-server.ts`
+  // (module top-level await → cannot transform to the es2020 browser target →
+  // HTTP 500, aborting hydration). A *used* value import from the barrel (e.g.
+  // `import { getEnv } from "veryfront"`) survives dead-code stripping and drags
+  // the whole server graph into the client. Redirect to a client/SSR-safe mirror
+  // barrel that omits only the server bootstrap value export. See
+  // `src/index.client.ts`.
+  "veryfront": "/_vf_modules/_veryfront/index.client.js",
 };
 
 export class VeryfrontStrategy implements ImportRewriteStrategy {
@@ -45,9 +54,10 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
     const specifier = info.specifier;
 
-    // Handle #deno-config — Deno import-map alias that doesn't exist in browsers.
-    // Rewrite to a JS module (not JSON) because esbuild strips `with { type: "json" }`
-    // at es2020 target and browsers reject JSON MIME without the assertion.
+    // Handle #deno-config, a Deno import-map alias that doesn't exist in
+    // browsers. Rewrite to a JS module (not JSON): a browser refuses a JSON
+    // module unless the importer carries `with { type: "json" }`, so serving JS
+    // keeps the rewrite independent of import attribute support in the browser.
     if (specifier === "#deno-config") {
       return { specifier: "/_vf_modules/_veryfront/_deno-config.js" };
     }

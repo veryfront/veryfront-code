@@ -1,5 +1,6 @@
 import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { base64urlEncodeBytes } from "#veryfront/utils";
 import type {
   ProxyRoutingInvalidationEvent,
   ProxyRoutingInvalidationPublisher,
@@ -115,11 +116,6 @@ function signatureInput(domain: SignatureDomain, issuedAtMs: number, payload: st
   return encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
 }
 
-function base64UrlEncode(bytes: ArrayBuffer): string {
-  const binary = Array.from(new Uint8Array(bytes), (byte) => String.fromCharCode(byte)).join("");
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
-}
-
 function base64UrlDecode(value: string): ArrayBuffer | null {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
   const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(
@@ -149,8 +145,10 @@ async function signPayload(
   issuedAtMs: number,
   payload: string,
 ): Promise<string> {
-  return base64UrlEncode(
-    await crypto.subtle.sign("HMAC", key, signatureInput(domain, issuedAtMs, payload)),
+  return base64urlEncodeBytes(
+    new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, signatureInput(domain, issuedAtMs, payload)),
+    ),
   );
 }
 

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { FakeTime } from "#std/testing/time";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TaskStore } from "./task-store.ts";
 
@@ -89,34 +90,56 @@ describe("mcp/task-store", () => {
     assertEquals(store.getResult(task.taskId), undefined);
   });
 
-  it("evicts expired terminal tasks on get", () => {
+  it("evicts terminal tasks after their post-terminal TTL", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
-    // Terminal tasks expire; TTL is measured from completion.
     const task = store.create(1);
     store.complete(task.taskId, { ok: true });
-    // Small delay to ensure expiry
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
+
+    time.tick(2);
+
     assertEquals(store.get(task.taskId), undefined);
   });
 
-  it("does not expire a still-running task past its TTL", () => {
+  it("keeps an active task visible past its TTL", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
-    // A 'working' task must not be deleted mid-flight even after its TTL,
-    // otherwise its in-progress tool execution is dropped.
-    const running = store.create(1);
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
-    assertExists(store.get(running.taskId));
+    const task = store.create(1);
+
+    time.tick(2);
+
+    assertExists(store.get(task.taskId));
+  });
+
+  it("retains an overdue task result for one TTL after completion", () => {
+    using time = new FakeTime();
+    const store = new TaskStore();
+    const task = store.create(60_000);
+
+    time.tick(90_000);
+    assertExists(store.get(task.taskId));
+
+    store.complete(task.taskId, { ok: true });
+    assertEquals(store.getResult(task.taskId), { ok: true });
+
+    time.tick(60_000);
+    assertExists(store.get(task.taskId));
+    assertEquals(store.getResult(task.taskId), { ok: true });
+
+    time.tick(1);
+    assertEquals(store.get(task.taskId), undefined);
+    assertEquals(store.getResult(task.taskId), undefined);
   });
 
   it("returns undefined for expired terminal task via get", () => {
+    using time = new FakeTime();
     const store = new TaskStore();
     const expired = store.create(1);
     store.complete(expired.taskId, { ok: true });
     const alive = store.create(60000);
-    const start = Date.now();
-    while (Date.now() - start < 5) { /* spin */ }
+
+    time.tick(2);
+
     assertEquals(store.get(expired.taskId), undefined);
     assertExists(store.get(alive.taskId));
   });
@@ -126,5 +149,49 @@ describe("mcp/task-store", () => {
     store.create(60000);
     store.clear();
     assertEquals(store.list().length, 0);
+  });
+
+  it("rejects new live tasks when the store reaches capacity", () => {
+    const store = new TaskStore();
+    for (let i = 0; i < 1000; i++) {
+      store.create(60_000);
+    }
+
+    assertThrows(
+      () => store.create(60_000),
+      Error,
+      "Task store capacity reached",
+    );
+    assertEquals(store.list().length, 1000);
+  });
+
+  it("does not reclaim active tasks at capacity just because their TTL elapsed", () => {
+    const store = new TaskStore();
+    for (let i = 0; i < 1000; i++) {
+      store.create(1);
+    }
+    const start = Date.now();
+    while (Date.now() - start < 5) { /* spin */ }
+
+    assertThrows(
+      () => store.create(60_000),
+      Error,
+      "Task store capacity reached",
+    );
+    assertEquals(store.list().length, 1000);
+  });
+
+  it("evicts a terminal task at capacity before accepting new work", () => {
+    const store = new TaskStore();
+    const oldest = store.create(60_000);
+    store.complete(oldest.taskId, { ok: true });
+    for (let i = 1; i < 1000; i++) {
+      store.create(60_000);
+    }
+
+    store.create(60_000);
+
+    assertEquals(store.get(oldest.taskId), undefined);
+    assertEquals(store.list().length, 1000);
   });
 });

@@ -9,7 +9,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { rendererLogger } from "#veryfront/utils/logger/logger.ts";
+import { rendererLogger } from "#veryfront/utils";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { asLocalModuleCode } from "./http-cache-invariants.ts";

@@ -60,12 +60,12 @@ export class WorkflowClient {
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
-          userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId);
           return;
         }
 
         if (input.type !== "approval") {
-          userOnWaiting?.(run, nodeId);
+          await userOnWaiting?.(run, nodeId);
           return;
         }
 
@@ -81,9 +81,10 @@ export class WorkflowClient {
           logger.debug("Created approval for node", { nodeId });
         } catch (error) {
           logger.error("Failed to create approval", error);
+          throw error;
         }
 
-        userOnWaiting?.(run, nodeId);
+        await userOnWaiting?.(run, nodeId);
       },
     });
 
@@ -113,8 +114,8 @@ export class WorkflowClient {
     return this.executor.start<TInput, TOutput>(workflowId, input, options);
   }
 
-  resume(runId: string): Promise<void> {
-    return this.executor.resume(runId);
+  resume(runId: string, expectedWorkerId?: string): Promise<void> {
+    return this.executor.resume(runId, undefined, expectedWorkerId);
   }
 
   cancel(runId: string): Promise<void> {

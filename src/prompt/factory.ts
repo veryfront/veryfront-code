@@ -1,5 +1,5 @@
 import type { Prompt, PromptConfig } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS } from "#veryfront/agent/middleware/index.ts";
 
 type PromptGenerateFn = (variables: Record<string, unknown>) => string | Promise<string>;

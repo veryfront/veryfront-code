@@ -7,6 +7,7 @@ import { getVeryfrontCloudProviderFromModelId } from "#veryfront/provider";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
 import type { HostedChatExecutionRuntimeLogger } from "./chat-execution-runtime.ts";
 import type { PreparedHostedChatExecutionRuntimeOptions } from "./prepared-chat-execution.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 
 /** Environment key for hosted chat stream idle timeout. */
 export const VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_ENV = "VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS";
@@ -101,6 +102,7 @@ export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
           // timeout; the shared watchdog no longer defaults this product-specific
           // exemption, so pass it explicitly for hosted runs.
           longRunningToolNames: ["invoke_agent"],
+          longRunningToolPrefixes: [AGENT_DELEGATE_TOOL_PREFIX],
           setTimeoutFn: globalThis.setTimeout,
           clearTimeoutFn: globalThis.clearTimeout,
         })),

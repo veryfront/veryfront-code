@@ -17,6 +17,7 @@
  * @module react/components/ui/tabs
  */
 import * as React from "react";
+import { createStrictContext } from "../create-strict-context.ts";
 import { cx as cn } from "./cva.ts";
 
 type TabsSize = "default" | "sm";
@@ -27,7 +28,7 @@ interface TabsContextValue {
   size: TabsSize;
 }
 
-const TabsContext = React.createContext<TabsContextValue | null>(null);
+const [TabsContext, useTabs] = createStrictContext<TabsContextValue>("TabsItem", "Tabs");
 
 /** Props accepted by `<Tabs>` (the tablist container). */
 export interface TabsProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
@@ -82,8 +83,7 @@ export const TabsItem = React.forwardRef<HTMLButtonElement, TabsItemProps>(
     { value, href, children, className, onClick, ...props },
     ref,
   ): React.ReactElement {
-    const ctx = React.useContext(TabsContext);
-    if (!ctx) throw new Error("TabsItem must be used within Tabs");
+    const ctx = useTabs();
 
     const isActive = ctx.value === value;
     const Comp = (href ? "a" : "button") as React.ElementType;

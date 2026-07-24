@@ -47,11 +47,12 @@ import { register, tryResolve } from "../extensions/contracts.ts";
 import type { Plugin } from "veryfront/extensions/bundler";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
+import { validatePathSync } from "#veryfront/security/path-validation.ts";
 import {
   collectCssImportPaths,
   CSS_IMPORTING_SOURCE_EXTENSIONS,
 } from "#veryfront/html/styles-builder/css-import-extraction.ts";
-import { sha256HexBytes } from "./hash.ts";
+import { computeHashBytes } from "#veryfront/utils";
 import {
   RELEASE_ASSET_BASE_PATH,
   RELEASE_ASSET_CONTENT_TYPES,
@@ -633,6 +634,26 @@ function isPathInsideRoot(filePath: string, rootPath: string): boolean {
   return file === root || file.startsWith(`${root}/`) || file.startsWith(`${root}\\`);
 }
 
+function resolveMaterializedReleasePath(tempDir: string, filePath: string): string {
+  const result = validatePathSync(filePath, {
+    baseDir: tempDir,
+    level: "strict",
+    allowAbsolute: false,
+  });
+  const resolvedPath = result.canonicalPath ? normalize(result.canonicalPath) : null;
+
+  if (
+    !result.valid ||
+    !resolvedPath ||
+    resolvedPath === normalize(tempDir) ||
+    !isPathInsideRoot(resolvedPath, tempDir)
+  ) {
+    throw new Error("Release file path must stay within the build directory");
+  }
+
+  return resolvedPath;
+}
+
 async function collectLocalHttpDependencyModules(
   code: string,
   dependencies: Map<string, DependencyModule>,
@@ -1142,7 +1163,7 @@ async function addPreparedJavaScriptAsset(
   const bytes = new TextEncoder().encode(code) as Uint8Array<ArrayBuffer>;
   if (bytes.byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) return null;
 
-  const contentHash = await sha256HexBytes(bytes);
+  const contentHash = await computeHashBytes(bytes);
   const entry: PreparedAsset = {
     logicalPath,
     contentHash,
@@ -1487,8 +1508,8 @@ async function runBuildInner(
 
   for (const file of files) {
     if (typeof file.content !== "string") continue;
+    const abs = resolveMaterializedReleasePath(tempDir, file.path);
     sourceByPath.set(file.path, file.content);
-    const abs = join(tempDir, file.path);
     await fs.mkdir(dirname(abs), { recursive: true });
     await fs.writeTextFile(abs, file.content);
   }
@@ -1691,7 +1712,7 @@ async function runBuildInner(
       });
       if (compiled && compiled.css) {
         const bytes = new TextEncoder().encode(compiled.css) as Uint8Array<ArrayBuffer>;
-        const contentHash = await sha256HexBytes(bytes);
+        const contentHash = await computeHashBytes(bytes);
         css.push({
           contentHash,
           size: bytes.byteLength,
@@ -1775,7 +1796,7 @@ async function runBuildInner(
   }
 
   // 6. Assemble and PUT the manifest.
-  const sourceContentHash = await sha256HexBytes(
+  const sourceContentHash = await computeHashBytes(
     new TextEncoder().encode([...sourceByPath.keys()].sort().join("\n")) as Uint8Array<ArrayBuffer>,
   );
   const manifest: ReleaseAssetManifest = {
@@ -1944,7 +1965,7 @@ async function releaseFileSetSignature(sourceByPath: Map<string, string>): Promi
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, content]) => `${path}${separator}${content}`)
     .join(separator);
-  return await sha256HexBytes(new TextEncoder().encode(serialized) as Uint8Array<ArrayBuffer>);
+  return await computeHashBytes(new TextEncoder().encode(serialized) as Uint8Array<ArrayBuffer>);
 }
 
 async function resolveReleaseConfigFromSourceFiles(

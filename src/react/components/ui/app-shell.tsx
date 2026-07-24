@@ -18,6 +18,7 @@
  * @module react/components/ui/app-shell
  */
 import * as React from "react";
+import { createStrictContext } from "../create-strict-context.ts";
 import { cx as cn } from "./cva.ts";
 import { DesignTokenStyle } from "./tokens.tsx";
 import { UI_SCOPE_ATTRS } from "./design-tokens.ts";
@@ -43,14 +44,12 @@ interface AppShellContextValue {
   sidebarId: (side: AppShellSide) => string;
 }
 
-const AppShellContext = React.createContext<AppShellContextValue | null>(null);
-
+const [AppShellContext, useAppShell] = createStrictContext<AppShellContextValue>(
+  "AppShell parts",
+  "<AppShell>",
+);
 /** Access the enclosing {@link AppShell}'s state (external triggers, etc.). */
-export function useAppShell(): AppShellContextValue {
-  const ctx = React.useContext(AppShellContext);
-  if (!ctx) throw new Error("AppShell parts must be used within <AppShell>");
-  return ctx;
-}
+export { useAppShell };
 
 /** Reactive `< sm` viewport check (matches Tailwind `max-sm`). SSR-safe. */
 function useIsMobile(): boolean {

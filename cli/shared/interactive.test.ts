@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { detectCI, isInteractive, resetInteractiveMode, setNonInteractive } from "./interactive.ts";
+import {
+  detectCI,
+  isAutoConfirmEnabled,
+  isInteractive,
+  resetInteractiveMode,
+  setAutoConfirm,
+  setNonInteractive,
+} from "./interactive.ts";
 
 describe("interactive", () => {
   describe("isInteractive", () => {
@@ -36,22 +43,25 @@ describe("interactive", () => {
   });
 
   describe("confirmPrompt in non-interactive mode", () => {
-    it("returns true when --yes is set (auto-confirm)", async () => {
+    it("rejects confirmation without explicit --yes", async () => {
       const { confirmPrompt } = await import("../utils/index.ts");
       setNonInteractive(true);
       try {
-        // Even with defaultValue=false, --yes should auto-confirm
-        const result = await confirmPrompt("Delete everything?", false);
-        assertEquals(result, true);
+        await assertRejects(
+          () => confirmPrompt("Delete everything?", false),
+          Error,
+          "requires explicit confirmation",
+        );
       } finally {
         resetInteractiveMode();
       }
     });
 
-    it("returns true regardless of defaultValue", async () => {
+    it("returns true when --yes enables auto-confirm", async () => {
       const { confirmPrompt } = await import("../utils/index.ts");
-      setNonInteractive(true);
+      setAutoConfirm(true);
       try {
+        assertEquals(isAutoConfirmEnabled(), true);
         assertEquals(await confirmPrompt("Proceed?", true), true);
         assertEquals(await confirmPrompt("Proceed?", false), true);
       } finally {

@@ -47,6 +47,20 @@ export class MemoryCacheBackend implements CacheBackend {
     return Promise.resolve(entry.value);
   }
 
+  getRemainingTtlSeconds(key: string): Promise<number | null> {
+    const entry = this.store.get(key);
+    if (!entry) return Promise.resolve(null);
+
+    const remainingMs = entry.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      this.currentSizeBytes -= entry.sizeBytes;
+      this.store.delete(key);
+      return Promise.resolve(null);
+    }
+
+    return Promise.resolve(remainingMs / 1000);
+  }
+
   getBatch(keys: string[]): Promise<Map<string, string | null>> {
     const now = Date.now();
 

@@ -12,6 +12,7 @@
  * @module react/components/ui/select
  */
 import * as React from "react";
+import { createStrictContext } from "../create-strict-context.ts";
 import { cx as cn } from "./cva.ts";
 import { cva, type VariantProps } from "./cva.ts";
 import { CheckIcon, ChevronDownIcon } from "./icons/index.ts";
@@ -48,13 +49,10 @@ interface SelectContextValue {
   anchorRef: React.RefObject<HTMLElement | null>;
 }
 
-const SelectContext = React.createContext<SelectContextValue | null>(null);
-
-function useSelect(): SelectContextValue {
-  const ctx = React.useContext(SelectContext);
-  if (!ctx) throw new Error("Select components must be used within <Select>");
-  return ctx;
-}
+const [SelectContext, useSelect] = createStrictContext<SelectContextValue>(
+  "Select components",
+  "<Select>",
+);
 
 /** Props accepted by `<Select>`. */
 export interface SelectProps {

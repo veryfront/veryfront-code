@@ -2,7 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
-import { parseProviderError } from "../../chat/provider-errors.ts";
+import { resolveKnownProviderTerminalError } from "../streaming/stream-outcome.ts";
 import {
   buildChildRunResultSummary,
   type ChildRunResultMode,
@@ -28,9 +28,14 @@ import {
 import {
   buildHostedChildForkEffectivePrompt,
   type HostedChildForkToolInput,
+  type HostedChildInvocationContext,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 import { isChildRunAbortError, throwIfChildRunAborted } from "../child-run/execution-support.ts";
+import {
+  type HostedProjectReferenceResolver,
+  resolveHostedProjectReference,
+} from "./project-reference-resolver.ts";
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
@@ -193,24 +198,6 @@ export function buildHostedDurableChildInvokeTerminalFailureResult(
     childRunId: input.identifiers.childRunId,
     childMessageId: input.identifiers.childMessageId,
   });
-}
-
-function resolveKnownProviderTerminalError(error: unknown): {
-  code: string;
-  message: string;
-} | null {
-  const parsedError = parseProviderError(error);
-  if (
-    parsedError.code === "EXTERNAL_SERVICE_ERROR" &&
-    parsedError.message === "LLM provider service error"
-  ) {
-    return null;
-  }
-
-  return {
-    code: parsedError.code,
-    message: parsedError.message,
-  };
 }
 
 /** Result returned from build hosted durable child invoke success. */
@@ -449,11 +436,13 @@ export type ExecuteHostedDurableChildForkInput<
   parentConversationId?: string;
   parentRunId?: string;
   parentMessageId?: string;
+  trustedInvocationContext?: HostedChildInvocationContext;
   getProjectId: () => string | null | undefined;
   getRuntimeTargetKind?: () => ConversationRunTargets["runtimeTargetKind"] | undefined;
   getRuntimeTargetEnvironmentId?: () => string | null | undefined;
   getBranchId?: () => string | null | undefined;
   getContextModel?: () => string | undefined;
+  resolveProjectReference?: HostedProjectReferenceResolver;
   defaultModel: string;
   resolveModelId: (model: string) => string;
   resolveProvider: (modelId: string) => string;
@@ -509,6 +498,10 @@ async function defaultRunBootstrap<T>(operation: () => Promise<T>): Promise<T> {
   return operation();
 }
 
+function getRequestedProjectReference(forkInput: HostedChildForkToolInput): string | null {
+  return forkInput.project_reference ?? null;
+}
+
 async function prepareHostedDurableChildBootstrapContext<
   TResult,
   TLocalResult extends ChildRunExecutionResult,
@@ -519,8 +512,16 @@ async function prepareHostedDurableChildBootstrapContext<
     parentMessageId: string;
   },
 ): Promise<HostedDurableChildBootstrapContext> {
-  if (input.forkInput.project_id) {
-    await input.onRequestedProjectId?.(input.forkInput.project_id);
+  const requestedProjectReference = getRequestedProjectReference(input.forkInput);
+  if (requestedProjectReference) {
+    const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
+    const resolvedProject = await resolver({
+      projectReference: requestedProjectReference,
+      authToken: input.authToken,
+      apiUrl: input.apiUrl,
+      abortSignal: input.executionOptions.abortSignal,
+    });
+    await input.onRequestedProjectId?.(resolvedProject.projectId);
   }
 
   const targets = resolveConversationRunTargets({
@@ -554,9 +555,12 @@ async function bootstrapHostedDurableChildFork<
   return runBootstrap(async () => {
     await input.bootstrap?.onBootstrapStart?.(input.bootstrapContext);
     const forkInput = withHostedChildInvocationContext(input.forkInput, {
+      parentConversationId: input.bootstrapContext.parentConversationId,
       conversationId: input.bootstrapContext.parentConversationId,
       parentRunId: input.bootstrapContext.parentRunId,
+      parentMessageId: input.bootstrapContext.parentMessageId,
       toolCallId: input.executionOptions.toolCallId,
+      trustedInvocationContext: input.trustedInvocationContext,
     });
 
     const bootstrapChildRun = input.runtime?.bootstrapChildRun ?? bootstrapHostedChildRun;
@@ -564,7 +568,11 @@ async function bootstrapHostedDurableChildFork<
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       ensureProjectId: input.getProjectId() ?? undefined,
-      runProjectId: input.runProjectId !== undefined ? input.runProjectId : undefined,
+      runProjectId: getRequestedProjectReference(input.forkInput)
+        ? input.getProjectId() ?? undefined
+        : input.runProjectId !== undefined
+        ? input.runProjectId
+        : input.getProjectId() ?? undefined,
       parentConversationId: input.bootstrapContext.parentConversationId,
       parentRunId: input.bootstrapContext.parentRunId,
       parentMessageId: input.bootstrapContext.parentMessageId,

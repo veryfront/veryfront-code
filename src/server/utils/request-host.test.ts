@@ -27,7 +27,7 @@ describe("server/utils/request-host", () => {
   });
 
   describe("getEffectiveRequestHost", () => {
-    it("prefers x-forwarded-host over host and url host", () => {
+    it("ignores x-forwarded-host by default (untrusted) and uses the host header", () => {
       const req = new Request("http://127.0.0.1:3000/test", {
         headers: {
           "x-forwarded-host": "preview.veryfront.me:3000, proxy.internal",
@@ -35,7 +35,23 @@ describe("server/utils/request-host", () => {
         },
       });
 
-      assertEquals(getEffectiveRequestHost(req), "preview.veryfront.me:3000");
+      // Default is untrusted: a client-supplied x-forwarded-host must not be
+      // honoured (would allow Host/origin spoofing). Fall back to Host header.
+      assertEquals(getEffectiveRequestHost(req), "localhost:3000");
+    });
+
+    it("prefers x-forwarded-host over host and url host when proxy is trusted", () => {
+      const req = new Request("http://127.0.0.1:3000/test", {
+        headers: {
+          "x-forwarded-host": "preview.veryfront.me:3000, proxy.internal",
+          "host": "localhost:3000",
+        },
+      });
+
+      assertEquals(
+        getEffectiveRequestHost(req, undefined, true),
+        "preview.veryfront.me:3000",
+      );
     });
 
     it("falls back to host when x-forwarded-host is absent", () => {

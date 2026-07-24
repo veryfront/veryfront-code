@@ -8,7 +8,7 @@
  * @module
  */
 
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { validateAllowedToolPatterns } from "./allowed-tools.ts";
 import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_REGEX, type SkillMetadata } from "./types.ts";
 

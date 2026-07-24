@@ -241,6 +241,24 @@ describe(
       assertEquals(owned.importMapHash === unowned.importMapHash, false);
     });
 
+    it("accepts top-level await in browser modules", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/Counter.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        [
+          '"use client";',
+          'const marker = await Promise.resolve("BROWSER_TLA_MARKER");',
+          "export default marker;",
+        ].join("\n"),
+      );
+
+      const output = await bundleBrowserModule(entryPath, { adapter, projectDir });
+
+      assertStringIncludes(output, 'await Promise.resolve("BROWSER_TLA_MARKER")');
+    });
+
     it("uses only project-relative identities for source files and spans", () => {
       assertEquals(
         getSafeBrowserModuleIdentity(

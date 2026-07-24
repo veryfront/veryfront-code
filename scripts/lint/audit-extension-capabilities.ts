@@ -91,6 +91,7 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
         {
           type: "env:read",
           keys: [
+            "MLFLOW_ARTIFACTS_PORT",
             "MLFLOW_ARTIFACTS_URI",
             "MLFLOW_EXPERIMENT_NAME",
             "MLFLOW_RUN_NAME",
@@ -98,6 +99,15 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
             "MLFLOW_TRACKING_TOKEN",
             "MLFLOW_TRACKING_URI",
             "MLFLOW_TRACKING_USERNAME",
+            "MLFLOW_OAUTH_TOKEN_URL",
+            "MLFLOW_OAUTH_CLIENT_ID",
+            "MLFLOW_OAUTH_CLIENT_SECRET",
+            "MLFLOW_OAUTH_SCOPE",
+            "MLFLOW_EXPORT_ARTIFACTS",
+            "MLFLOW_REQUEST_TIMEOUT_MS",
+            "MLFLOW_RETRY_ATTEMPTS",
+            "MLFLOW_RETRY_DELAY_MS",
+            "MLFLOW_RUN_URL_TEMPLATE",
           ],
         },
       ],

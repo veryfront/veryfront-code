@@ -29,7 +29,11 @@ import {
   createIgnoreChecker,
   loadIgnorePatterns,
 } from "../../sync/ignore.ts";
-import { readPushReceipt, writePushReceipt } from "../../shared/deployment-provenance.ts";
+import {
+  computeSourceDigest,
+  readPushReceipt,
+  writePushReceipt,
+} from "../../shared/deployment-provenance.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -993,6 +997,71 @@ describe("push failure ordering", () => {
 
         assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
         assertEquals(await readPushReceipt(projectDir), null);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+});
+
+describe("push deletion ownership", () => {
+  it("does not delete remote files protected by .vfignore", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/.vfignore`, "inbox/**\nsubmissions/**\n");
+        await runGit("add", ".vfignore");
+        await runGit("commit", "--quiet", "-m", "protect runtime files");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "stale app" },
+                { path: "stale.ts", content: "stale source" },
+                { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
+                { path: "submissions/submitted/runtime.md", content: "runtime\n" },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") return Response.json({});
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", force: true, quiet: true });
+
+        assertEquals(deleted, ["stale.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
+            { path: "submissions/submitted/runtime.md", content: "runtime\n" },
+          ]),
+        );
       });
     } finally {
       globalThis.fetch = originalFetch;

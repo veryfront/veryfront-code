@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { FakeTime } from "#std/testing/time";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
@@ -212,6 +213,92 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(await first.text(), await second.text());
   });
 
+  it("encodes a getServerData redirect() as a 200 payload instead of a 500", async () => {
+    // A redirect() from getServerData reaches the page-data endpoint as a thrown
+    // VeryfrontError carrying context.redirect. It must be encoded as a 200
+    // { redirect } payload so the SPA client can follow it — not misclassified as
+    // an internal error (500), which aborts client-side navigation.
+    setRendererInitializer(
+      createInitializer(() =>
+        Promise.reject(
+          Object.assign(new Error("Redirect to /target"), {
+            slug: "render-error",
+            context: { redirect: { destination: "/target", permanent: false } },
+          }),
+        )
+      ),
+    );
+
+    const ctx = makeCtx();
+    const res = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+      ctx,
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), {
+      redirect: { destination: "/target", permanent: false },
+    });
+  });
+
+  it("keeps speculative prefetch work and cache state out of foreground page data", async () => {
+    const producers: string[] = [];
+    const prefetchGate = Promise.withResolvers<void>();
+    const prefetchStarted = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer(async (slug, _ctx, options) => {
+        const producer = options?.request?.headers.get("x-veryfront-prefetch") === "1"
+          ? "prefetch"
+          : "foreground";
+        producers.push(producer);
+        if (producers.length === 1) {
+          prefetchStarted.resolve();
+          await prefetchGate.promise;
+        }
+
+        return {
+          ...createPageData(slug, producers.length),
+          frontmatter: { producer },
+        };
+      }),
+    );
+
+    const ctx = makeCtx({
+      projectDir: "/tmp/prefetch-page-data",
+      projectSlug: "prefetch-page-data",
+      projectId: "proj-prefetch-page-data",
+      releaseId: "rel-prefetch-page-data",
+    });
+    const url = "http://localhost/_veryfront/page-data/index.json";
+    const prefetchResponsePromise = callPageDataEndpoint(
+      new Request(url, { headers: { "x-veryfront-prefetch": "1" } }),
+      ctx,
+    );
+    await prefetchStarted.promise;
+
+    const foregroundResponsePromise = callPageDataEndpoint(new Request(url), ctx);
+    prefetchGate.resolve();
+
+    const [prefetchResponse, foregroundResponse] = await Promise.all([
+      prefetchResponsePromise,
+      foregroundResponsePromise,
+    ]);
+    const cachedForegroundResponse = await callPageDataEndpoint(new Request(url), ctx);
+
+    assertEquals(producers, ["prefetch", "foreground"]);
+    assertEquals(JSON.parse(await prefetchResponse.text()).frontmatter.producer, "prefetch");
+    assertEquals(JSON.parse(await foregroundResponse.text()).frontmatter.producer, "foreground");
+    assertEquals(
+      JSON.parse(await cachedForegroundResponse.text()).frontmatter.producer,
+      "foreground",
+    );
+    assertEquals(
+      prefetchResponse.headers.get("cache-control"),
+      "no-cache, no-store, must-revalidate",
+    );
+  });
+
   it("shares page-data cache entries across tracking and cache-busting query params", async () => {
     let calls = 0;
     setRendererInitializer(
@@ -327,6 +414,128 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
 
     assertEquals(calls, 2);
     assertEquals(first.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+  });
+
+  it("aborts underlying page-data work when the request deadline expires", async () => {
+    using time = new FakeTime();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer((_slug, _ctx, options) => {
+        observedSignal = options?.abortSignal;
+        started.resolve();
+        return new Promise<PageDataResponse>((_, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+
+    const responsePromise = callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json"),
+      makeCtx(),
+    );
+    await started.promise;
+
+    await time.tickAsync(25_000);
+
+    const response = await responsePromise;
+    assertEquals(response.status, 504);
+    assertEquals(observedSignal?.aborted, true);
+  });
+
+  it("propagates caller cancellation into page-data work", async () => {
+    using time = new FakeTime();
+    const caller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer((_slug, _ctx, options) => {
+        observedSignal = options?.abortSignal;
+        started.resolve();
+        return new Promise<PageDataResponse>((_, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+
+    const responsePromise = callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json", {
+        headers: { cookie: "session=caller" },
+        signal: caller.signal,
+      }),
+      makeCtx(),
+    );
+    await started.promise;
+
+    const reason = new Error("client disconnected");
+    caller.abort(reason);
+    await time.tickAsync(0);
+
+    const response = await responsePromise;
+    assertEquals(response.status, 500);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, reason);
+  });
+
+  it("detaches a cancelled request without aborting a shared page-data fill", async () => {
+    const caller = new AbortController();
+    const resolveStarted = Promise.withResolvers<void>();
+    const resolveGate = Promise.withResolvers<void>();
+    let calls = 0;
+    let observedSignal: AbortSignal | undefined;
+    let observedRequestSignal: AbortSignal | undefined;
+
+    setRendererInitializer(
+      createInitializer((slug, _ctx, options) => {
+        calls++;
+        observedSignal = options?.abortSignal;
+        observedRequestSignal = options?.request?.signal;
+        resolveStarted.resolve();
+        return new Promise<PageDataResponse>((resolve, reject) => {
+          const onAbort = () => reject(options?.abortSignal?.reason);
+          options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+          resolveGate.promise.then(() => {
+            options?.abortSignal?.removeEventListener("abort", onAbort);
+            resolve(createPageData(slug, calls));
+          });
+        });
+      }),
+    );
+
+    const ctx = makeCtx();
+    const url = "http://localhost/_veryfront/page-data/index.json";
+    const cancelledResponse = callPageDataEndpoint(
+      new Request(url, { signal: caller.signal }),
+      ctx,
+    );
+    await resolveStarted.promise;
+
+    const followerResponse = callPageDataEndpoint(new Request(url), ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    caller.abort(new Error("client disconnected"));
+    assertEquals((await cancelledResponse).status, 500);
+    assertEquals(observedSignal?.aborted, false);
+    assertEquals(observedRequestSignal?.aborted, false);
+
+    resolveGate.resolve();
+    const response = await followerResponse;
+    assertEquals(response.status, 200);
+    assertEquals(calls, 1);
+
+    const cached = await callPageDataEndpoint(new Request(url), ctx);
+    assertEquals(cached.status, 200);
+    assertEquals(calls, 1);
   });
 
   it("can disable the page-data cache with max entries set to zero", async () => {

@@ -1,7 +1,7 @@
 import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
+import { errorToRFC9457Response } from "#veryfront/errors";
 
 const logger = serverLogger.component("route-registry");
 

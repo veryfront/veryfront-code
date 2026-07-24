@@ -318,6 +318,58 @@ describe("mirrored-tool-chunk-state", () => {
     assertEquals(mirroredOutput, true);
   });
 
+  it("emits one exact source document for repeated successful knowledge file reads", async () => {
+    const path =
+      "knowledge/knowledge-ingest-20260723131451088-6d16440c-veryfront-equity-story-13july26.md";
+    const sourceChunks: Chunk[] = [
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      { type: "tool-output-available", toolCallId: "tc-1", output: { path } },
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-2",
+        toolName: "get_file",
+        input: { path },
+      },
+      { type: "tool-output-available", toolCallId: "tc-2", output: { path } },
+    ];
+    const appendedChunks: Chunk[] = [];
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: streamChunks(sourceChunks),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+      }),
+    );
+    const expectedSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+
+    assertEquals(outputChunks, [
+      sourceChunks[0],
+      sourceChunks[1],
+      expectedSource,
+      sourceChunks[2],
+      sourceChunks[3],
+    ]);
+    assertEquals(appendedChunks, outputChunks);
+  });
+
   it("closes open mirrored tool calls when the source stream aborts", async () => {
     const sourceChunks: Chunk[] = [
       { type: "tool-input-available", toolCallId: "tc-1", toolName: "edit_file", input: {} },

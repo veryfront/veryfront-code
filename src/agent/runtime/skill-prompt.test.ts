@@ -48,6 +48,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   const block = buildRuntimeAvailableSkillsPromptBlock([
     createSkill({
       id: "build-ui",
+      name: "Build UI guidance",
       description: "Build UI",
       allowedTools: ["bash", "writeFile"],
     }),
@@ -61,7 +62,7 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   assertStringIncludes(block, "Keep the root assistant visibly owning the work.");
   assertStringIncludes(
     block,
-    "When delegating, use the platform orchestration tool `invoke_agent`.",
+    "When delegating, use an available scoped `agent_<id>` tool; use `invoke_agent` only when that exact legacy tool is present.",
   );
   assertStringIncludes(
     block,
@@ -69,7 +70,47 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock renders skills and delegation 
   );
   assertStringIncludes(block, "Pass through any returned model, thinking, or maxSteps overrides");
   assertStringIncludes(block, "Do not mention child agents, delegation, or tool/process narration");
-  assertStringIncludes(block, "- build-ui: Build UI (tools: bash, writeFile)");
+  assertStringIncludes(
+    block,
+    "- Build UI guidance (`build-ui`): Build UI (tools: bash, writeFile)",
+  );
+});
+
+Deno.test("buildRuntimeAvailableSkillsPromptBlock names exact scoped delegate tools", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({ id: "research", description: "Research" }),
+  ], {
+    availableToolNames: ["agent_researcher", "agent_writer", "read_file"],
+  });
+
+  assertStringIncludes(
+    block,
+    "When delegating, use only these available scoped delegation tools: `agent_researcher`, `agent_writer`.",
+  );
+  assertEquals(block.includes("invoke_agent"), false);
+  assertEquals(block.includes("Pass through any returned model"), false);
+});
+
+Deno.test("buildRuntimeAvailableSkillsPromptBlock omits delegation guidance without delegate tools", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({ id: "solo", description: "Solo" }),
+  ], {
+    availableToolNames: ["read_file", "load_skill"],
+  });
+
+  assertEquals(block.includes("When delegating"), false);
+  assertEquals(block.includes("invoke_agent"), false);
+  assertEquals(block.includes("Delegate only when"), false);
+  assertStringIncludes(block, "Do NOT attempt tools that are absent from the current run");
+});
+
+Deno.test("buildRuntimeAvailableSkillsPromptBlock does not repeat an id-only name", () => {
+  const block = buildRuntimeAvailableSkillsPromptBlock([
+    createSkill({ id: "code-review", description: "Review code" }),
+  ]);
+
+  assertStringIncludes(block, "- code-review: Review code");
+  assertEquals(block.includes("code-review (`code-review`)"), false);
 });
 
 Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", () => {
@@ -97,5 +138,9 @@ Deno.test("buildRuntimeAvailableSkillsPromptBlock truncates long skill lists", (
     ),
     false,
   );
-  assertStringIncludes(block, "(2 more skills available — use load_skill to discover)");
+  assertStringIncludes(
+    block,
+    "(2 more skill summaries omitted from this prompt; use an ID from the load_skill tool schema)",
+  );
+  assertEquals(block.includes("use load_skill to discover"), false);
 });

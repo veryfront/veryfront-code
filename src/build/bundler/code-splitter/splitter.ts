@@ -6,8 +6,9 @@ import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
 import { createEntryPoints } from "./entry-points.ts";
 import { createBuildContext } from "./build-context.ts";
 import { buildManifest, getChunkInfo, writeManifest } from "./manifest-builder.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
 
 /** @internal */
 export async function rebuildAndDispose(buildContext: BuildContext): Promise<BundleResult> {
@@ -46,6 +47,7 @@ export class CodeSplitter {
         });
 
         await ensureDir(this.options.outDir);
+        await ensureDefaultParserContracts();
 
         const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
         const buildContext = await createBuildContext(this.options, entryPoints);

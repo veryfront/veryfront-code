@@ -11,11 +11,14 @@
 import { serverLogger } from "#veryfront/utils";
 import { isCompiledBinary } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
+import { INVALID_ARGUMENT, TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   isInternalEgressOverrideEnabled,
+  type ResolveWorkerHost,
+  startWorkerEgressBroker,
   WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
+  type WorkerEgressBroker,
 } from "./worker-egress-guard.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
 import type {
@@ -27,13 +30,15 @@ import type {
 
 const logger = serverLogger.component("project-worker");
 const textEncoder = new TextEncoder();
-const WORKER_ALLOW_INTERNAL_EGRESS_PARAM = "allowInternalEgress";
 
 // Intersection with the DOM `WorkerOptions` so the value is assignable to the
 // `Worker` constructor without suppression — Deno reads the extra `deno` field
 // at runtime even though the DOM lib type doesn't declare it.
+type ScopedWorkerPermissions = Omit<WorkerPermissions, "net"> & {
+  net: string[] | boolean;
+};
 type ExtendedWorkerOptions = WorkerOptions & {
-  deno?: { permissions: WorkerPermissions };
+  deno?: { permissions: ScopedWorkerPermissions };
 };
 
 export interface ProjectWorkerOptions {
@@ -41,6 +46,8 @@ export interface ProjectWorkerOptions {
   permissions: WorkerPermissions;
   requestTimeoutMs: number;
   workerScriptUrl?: string;
+  /** Override for deterministic egress resolution tests. */
+  egressResolveHost?: ResolveWorkerHost;
 }
 
 interface PendingRequest {
@@ -69,6 +76,8 @@ export class ProjectWorker {
   private requestTimeoutMs: number;
   private permissions: WorkerPermissions;
   private workerScriptUrl?: string;
+  private egressResolveHost?: ResolveWorkerHost;
+  private egressBroker: WorkerEgressBroker | null = null;
   private _requestCount = 0;
   private _lastActivityAt = Date.now();
   private _status: WorkerStatus = "idle";
@@ -78,6 +87,7 @@ export class ProjectWorker {
     this.permissions = options.permissions;
     this.requestTimeoutMs = options.requestTimeoutMs;
     this.workerScriptUrl = options.workerScriptUrl;
+    this.egressResolveHost = options.egressResolveHost;
   }
 
   get status(): WorkerStatus {
@@ -101,30 +111,75 @@ export class ProjectWorker {
    */
   start(): void {
     if (this.worker) return;
-
-    const workerUrl = this.getWorkerScriptUrl();
-
-    const workerOptions: ExtendedWorkerOptions = {
-      type: "module",
-      name: `project-worker-${this.projectId}`,
-      deno: { permissions: this.permissions },
-    };
-
-    this.worker = new Worker(workerUrl, workerOptions);
-    this._status = "idle";
-
-    this.worker.onmessage = (event: MessageEvent) => {
-      this.handleMessage(event.data);
-    };
-
-    this.worker.onerror = (event) => {
-      logger.error("Worker error", {
-        projectId: this.projectId,
-        error: event.message ?? String(event),
+    if (this.workerScriptUrl && this.permissions.net) {
+      throw INVALID_ARGUMENT.create({
+        message: "Custom project worker scripts cannot use unrestricted network permissions",
       });
-      this._status = "crashed";
-      this.rejectAllPending("Worker crashed");
-    };
+    }
+
+    const allowInternalEgress = isInternalEgressOverrideEnabled(
+      getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV),
+    );
+    let workerPermissions: ScopedWorkerPermissions = this.permissions;
+    if (this.permissions.net === true) {
+      this.egressBroker = startWorkerEgressBroker({
+        allowInternalEgress,
+        resolveHost: this.egressResolveHost,
+      });
+      workerPermissions = {
+        ...this.permissions,
+        net: this.egressBroker.config.netAllowlist,
+      };
+    }
+
+    try {
+      const workerUrl = this.getWorkerScriptUrl();
+      const workerOptions: ExtendedWorkerOptions = {
+        type: "module",
+        name: `project-worker-${this.projectId}`,
+        deno: { permissions: workerPermissions },
+      };
+
+      this.worker = new Worker(workerUrl, workerOptions);
+      this._status = "idle";
+
+      this.worker.onmessage = (event: MessageEvent) => {
+        this.handleMessage(event.data);
+      };
+
+      this.worker.onerror = (event) => {
+        logger.error("Worker error", {
+          projectId: this.projectId,
+          error: event.message ?? String(event),
+        });
+        this._status = "crashed";
+        this.egressBroker?.close();
+        this.egressBroker = null;
+        this.rejectAllPending("Worker crashed");
+      };
+
+      if (!this.workerScriptUrl) {
+        this.worker.postMessage({
+          type: "initialize-egress",
+          options: {
+            allowInternalEgress,
+            socksProxy: this.egressBroker?.config.socksProxy,
+            httpBroker: this.egressBroker?.config.httpBroker,
+          },
+        });
+      }
+    } catch (error) {
+      try {
+        this.worker?.terminate();
+      } catch {
+        // Preserve the startup error while still closing the egress broker.
+      }
+      this.worker = null;
+      this.egressBroker?.close();
+      this.egressBroker = null;
+      this._status = "terminated";
+      throw error;
+    }
 
     logger.debug("Worker started", { projectId: this.projectId });
   }
@@ -333,6 +388,8 @@ export class ProjectWorker {
     }
 
     this.worker = null;
+    this.egressBroker?.close();
+    this.egressBroker = null;
     logger.debug("Worker terminated", { projectId: this.projectId });
   }
 
@@ -353,21 +410,7 @@ export class ProjectWorker {
 
     // Use import.meta.resolve to get the absolute URL of the worker script.
     // This works in both `deno run` and `deno compile` contexts.
-    return this.withEgressPolicy(import.meta.resolve("./worker-script.ts"));
-  }
-
-  private withEgressPolicy(workerScriptUrl: string): string {
-    if (!isInternalEgressOverrideEnabled(getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV))) {
-      return workerScriptUrl;
-    }
-
-    try {
-      const url = new URL(workerScriptUrl);
-      url.searchParams.set(WORKER_ALLOW_INTERNAL_EGRESS_PARAM, "1");
-      return url.toString();
-    } catch {
-      return workerScriptUrl;
-    }
+    return import.meta.resolve("./worker-script.ts");
   }
 
   private handleMessage(
@@ -375,8 +418,14 @@ export class ProjectWorker {
       | WorkerResponse
       | WorkerStreamChunk
       | WorkerStreamEnd
+      | { type: "worker-exit" }
       | { type: "pong"; id: string },
   ): void {
+    if (data.type === "worker-exit") {
+      this.terminate();
+      return;
+    }
+
     if (data.type === "pong") {
       const pending = this.pending.get((data as { id: string }).id);
       if (pending) {

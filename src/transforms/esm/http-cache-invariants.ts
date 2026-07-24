@@ -20,7 +20,7 @@ import {
   CACHE_INVARIANT_VIOLATION,
   hasHardcodedCachePaths as baseHasHardcodedCachePaths,
 } from "#veryfront/cache/paths.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 const logger = rendererLogger.component("http-cache");
 

@@ -1,5 +1,6 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 
 /**
  * Extracts embedding-ready text or Markdown from upload formats.
@@ -35,10 +36,10 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
   // directly from `loadUpload()` rather than through a spawned Worker.
   const extractor = tryResolve<DocumentExtractor>("DocumentExtractor");
   if (!extractor?.extractInWorker) {
-    throw new Error(
-      "Document extraction requires a DocumentExtractor extension. " +
+    throw INITIALIZATION_ERROR.create({
+      detail: "Document extraction requires a DocumentExtractor extension. " +
         "Install @veryfront/ext-document-kreuzberg and add it to your extensions configuration.",
-    );
+    });
   }
   return extractor.extractInWorker(buffer, mimeType);
 }

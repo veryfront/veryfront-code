@@ -35,6 +35,13 @@ export default function Dashboard({ user }: { user: { name: string } }) {
 
 Run `veryfront dev` and open [http://localhost:3000/dashboard?name=Grace](http://localhost:3000/dashboard?name=Grace). The page should render `Welcome, Grace`.
 
+`getServerData`, `getStaticData`, and `getStaticPaths` are reserved server data
+export names in browser project modules. Veryfront strips their bodies from
+browser bundles, and imports used exclusively by those stripped hooks are removed
+entirely, including their top-level side effects. Put client initialization in a
+separate client-referenced module or a bare side-effect import that is not only
+used by a server data hook.
+
 The `DataContext` provides:
 
 | Property  | Type                     | Description                                 |
@@ -92,6 +99,27 @@ export async function getServerData({ params }: DataContext) {
 ```ts
 redirect("/new-url", true); // 301 permanent redirect
 ```
+
+Throwing works the same way. `throw notFound()` and `throw redirect(...)` behave exactly like returning them, which is useful inside a helper that has no clean way to return to the data function:
+
+```tsx
+import { type DataContext, notFound } from "veryfront";
+
+const posts = [{ slug: "hello", title: "Hello" }];
+
+function requirePost(slug: string) {
+  const post = posts.find((item) => item.slug === slug);
+  if (!post) throw notFound();
+
+  return post;
+}
+
+export function getServerData({ params }: DataContext) {
+  return { props: { post: requirePost(String(params.slug)) } };
+}
+```
+
+Only the objects `notFound()` and `redirect()` produce are read as control flow. Every other thrown value is an error, including an object that happens to carry a `notFound` property, such as a parsed error body from an upstream API.
 
 ## Client-side fetching
 

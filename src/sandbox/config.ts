@@ -1,4 +1,4 @@
-import { CONFIG_INVALID } from "#veryfront/errors/error-registry.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { SandboxOptions } from "./types.ts";

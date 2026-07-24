@@ -1,5 +1,5 @@
 import denoConfig from "#deno-config" with { type: "json" };
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import { VERSION } from "./version-constant.ts";
 export { VERSION } from "./version-constant.ts";
 

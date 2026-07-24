@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { Agent, AgentMessage } from "#veryfront/agent";
+import { type Agent, agent as createAgent, type AgentMessage } from "#veryfront/agent";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -16,10 +16,11 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
+import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
 
 class RecordingSpan implements Span {
   readonly attributes: Record<string, AttributeValue> = {};
@@ -126,6 +127,148 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
+    skillRegistry.clearAll();
+  });
+
+  it("includes skill infrastructure for tools: true agents without a skills selector", () => {
+    toolRegistry.clearAll();
+    try {
+      const runtimeAgent = createAgent({
+        id: "universal-skill-agent",
+        system: "Use available skills.",
+        tools: true,
+      });
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        new AgentRunSessionManager(),
+      );
+
+      assertEquals(Object.keys(mergedTools ?? {}).sort(), [
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ]);
+    } finally {
+      toolRegistry.clearAll();
+    }
+  });
+
+  it("forwards the scheduled output-token cap to the internal runtime", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedMaxOutputTokens: number | undefined;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "test",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: { maxOutputTokens: 1200 },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, _callbacks, _modelOverride, maxOutputTokens) => {
+          capturedMaxOutputTokens = maxOutputTokens;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    assertEquals(capturedMaxOutputTokens, 1200);
+  });
+
+  it("composes the runtime system prompt with project, environment, and tool context", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAgent: Agent | undefined;
+    const agent = {
+      id: "custom",
+      config: {
+        id: "custom",
+        model: "openai/gpt-5.4-nano",
+        system: "You are Custom Agent.",
+        tools: { create_file: { id: "create_file", type: "function", execute: () => "" } },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "custom",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [
+        {
+          type: "json",
+          title: "studio_context",
+          data: {
+            projectId: "ignored-when-sandbox-set",
+            branchId: null,
+            environmentContext: "<layout_context>\nVisible panels: [chat]\n</layout_context>",
+          },
+        },
+      ],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["outlook__send_email"],
+          integrationToolDefinitions: [
+            {
+              name: "outlook__send_email",
+              description: "Send an Outlook email",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      projectAgentSandbox: { projectId: "project-1" },
+      createRuntime: (runtimeAgent) => {
+        capturedAgent = runtimeAgent;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    const system = capturedAgent?.config.system;
+    assertEquals(typeof system, "function");
+    const prompt = await (system as () => Promise<string>)();
+    assertStringIncludes(prompt, "You are Custom Agent.");
+    assertStringIncludes(prompt, 'project_reference: "project-1"');
+    assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
+    assertStringIncludes(prompt, "<environment_context>");
+    assertStringIncludes(prompt, "Visible panels: [chat]");
+    assertStringIncludes(prompt, '<runtime_info>\nmodel: "openai/gpt-5.4-nano"\n</runtime_info>');
+    assertStringIncludes(prompt, "Current run tool inventory:");
+    assertStringIncludes(prompt, "- create_file");
+    assertStringIncludes(prompt, "- outlook__send_email");
   });
 
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
@@ -467,7 +610,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
-  it("preserves skill runtime tools for skill-enabled agents under toolAllowlist", async () => {
+  it("preserves skill runtime tools for every agent under toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -477,7 +620,6 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        skills: true,
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
@@ -688,6 +830,7 @@ describe("internal-agents/run-stream", () => {
   it("does not treat forwarded integration defs as grants without allowedTools", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: unknown;
 
     const agent = {
       id: "ops-agent",
@@ -713,7 +856,6 @@ describe("internal-agents/run-stream", () => {
           // The caller forwarded a definition for gmail__list_emails, so the
           // runtime can render metadata if it is otherwise granted, but the
           // definition itself is not the grant channel.
-          toolAllowlist: ["gmail__list_emails"],
           integrationToolDefinitions: [
             {
               name: "gmail__list_emails",
@@ -731,6 +873,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
           capturedAllowedRemoteTools = (
             runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
           ).__vfAllowedRemoteTools;
@@ -746,12 +889,16 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    assertEquals(capturedAllowedRemoteTools, []);
+    assertEquals(capturedAllowedRemoteTools, undefined);
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(prompt.includes("- gmail__list_emails"), false);
   });
 
   it("keeps allowlisted forwarded integration tools granted by allowedTools", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
+    let runtimeSystem: unknown;
 
     const agent = {
       id: "ops-agent",
@@ -782,6 +929,11 @@ describe("internal-agents/run-stream", () => {
               description: "List emails",
               parameters: { type: "object", properties: {} },
             },
+            {
+              name: "gmail__delete_email",
+              description: "Delete an email",
+              parameters: { type: "object", properties: {} },
+            },
           ],
         },
       },
@@ -793,6 +945,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
           capturedAllowedRemoteTools = (
             runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
           ).__vfAllowedRemoteTools;
@@ -809,6 +962,10 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertStringIncludes(prompt, "- gmail__list_emails");
+    assertEquals(prompt.includes("- gmail__delete_email"), false);
   });
 
   it("allows a toolAllowlist subset of declared remote-source tools named like integrations", async () => {
@@ -972,7 +1129,104 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedProviderTools, []);
   });
 
-  it("preserves invoke_agent delegation for skill-enabled agents under toolAllowlist", async () => {
+  it("omits provider tools unsupported by the configured model from the inventory", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeSystem: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "openai/gpt-5.4-nano",
+        system: "test",
+        providerTools: ["web_search"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(prompt.includes("- web_search"), false);
+  });
+
+  it("keeps local tools required without protecting remote placeholders from provider caps", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const remoteToolNames = Array.from(
+      { length: 150 },
+      (_, index) => `remote_${String(index).padStart(3, "0")}`,
+    );
+    let runtimeSystem: unknown;
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "openai/gpt-5.4-nano",
+        system: "test",
+        tools: Object.fromEntries([
+          ...remoteToolNames.map((toolName) => [toolName, true] as const),
+          ["zzz_local", { description: "Keep this local tool available" }],
+        ]),
+        __vfAllowedRemoteTools: [...remoteToolNames, "zzz_local"],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        runtimeSystem = runtimeAgent.config.system;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertStringIncludes(prompt, "- zzz_local");
+    assertEquals(prompt.includes("- remote_127"), false);
+  });
+
+  it("withholds invoke_agent delegation for default-skilled agents with no visible skills", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
 
@@ -982,7 +1236,66 @@ describe("internal-agents/run-stream", () => {
         id: "ops-agent",
         model: "anthropic/claude-opus-4-6",
         system: "test",
-        skills: true,
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
+  it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
+    registerSkill("handoff", {
+      id: "handoff",
+      metadata: { name: "handoff", description: "Delegate safely" },
+      rootPath: "/test/skills/handoff",
+    });
+
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        skills: [],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
           create_issue: { description: "File a GitHub issue" },
@@ -1024,9 +1337,6 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    // Documented semantics (see applyRuntimeToolAllowlist): delegation tools
-    // survive the allowlist for skill-enabled agents, and child runs are NOT
-    // capped by this run's allowlist.
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
   });
 
@@ -1096,10 +1406,16 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(JSON.stringify(capturedMessages), "Continue and finish the diagram.");
   });
 
-  it("materializes explicitly configured sandbox bash before constructing the runtime", async () => {
+  it("materializes explicitly configured sandbox tools before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];
     let capturedToolNames: string[] = [];
+    let capturedTools: Agent["config"]["tools"];
+    const inputSchemaJson = {
+      type: "object" as const,
+      properties: {},
+      additionalProperties: true,
+    };
 
     const agent = {
       id: "builder-agent",
@@ -1109,6 +1425,8 @@ describe("internal-agents/run-stream", () => {
         system: "test",
         tools: {
           bash: true,
+          sandbox_read_file: true,
+          sandbox_write_file: true,
           missing_tool: true,
         },
         sandbox: {
@@ -1144,11 +1462,18 @@ describe("internal-agents/run-stream", () => {
             tools: {
               bash: {
                 description: "Run bash",
+                inputSchemaJson,
                 execute: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
               },
               sandbox_read_file: {
                 description: "Read sandbox file",
+                inputSchemaJson,
                 execute: async () => "",
+              },
+              sandbox_write_file: {
+                description: "Write sandbox file",
+                inputSchemaJson,
+                execute: async () => undefined,
               },
             },
             sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
@@ -1156,6 +1481,7 @@ describe("internal-agents/run-stream", () => {
           });
         },
         createRuntime: (_agent, mergedTools) => {
+          capturedTools = mergedTools;
           capturedToolNames = Object.keys(mergedTools ?? {}).sort();
           return {
             stream: async () =>
@@ -1169,7 +1495,26 @@ describe("internal-agents/run-stream", () => {
       },
     );
 
-    assertEquals(capturedToolNames, ["bash"]);
+    assertEquals(capturedToolNames, ["bash", "sandbox_read_file", "sandbox_write_file"]);
+    if (!capturedTools || capturedTools === true) {
+      throw new Error("Expected materialized sandbox tools");
+    }
+    for (const toolName of ["bash", "sandbox_read_file", "sandbox_write_file"]) {
+      const runtimeTool = capturedTools[toolName];
+      if (!runtimeTool || runtimeTool === true) {
+        throw new Error(`Expected materialized ${toolName}`);
+      }
+      assertEquals(runtimeTool.type, "dynamic");
+    }
+    const bash = capturedTools.bash;
+    if (!bash || bash === true || !bash.execute) {
+      throw new Error("Expected executable bash tool");
+    }
+    assertEquals(await bash.execute({}, { toolCallId: "bash-call" }), {
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
     assertEquals(
       sandboxInputs.map((sandboxInput) => ({
         apiUrl: sandboxInput.apiUrl,

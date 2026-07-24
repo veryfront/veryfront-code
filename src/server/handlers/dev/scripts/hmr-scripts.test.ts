@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getHMRScript } from "./hmr-scripts.ts";
 
@@ -33,5 +33,16 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     const script = getHMRScript(3000);
     assertStringIncludes(script, "case 'ping':");
     assertStringIncludes(script, "type: 'pong'");
+  });
+
+  it("targets Studio notifications at a validated parent origin", () => {
+    const script = getHMRScript(3000);
+    assertStringIncludes(script, "function vfStudioTargetOrigin()");
+    assertStringIncludes(script, "vfStudioTargetOrigin(),");
+    assertStringIncludes(script, '"https://veryfront.com"');
+    assertEquals(script.includes('"https://studio.veryfront.com"'), false);
+    assertEquals(script.includes("endsWith('.veryfront"), false);
+    assertEquals(script.includes(".veryfront.dev"), false);
+    assertEquals(script.includes("}, '*')"), false);
   });
 });

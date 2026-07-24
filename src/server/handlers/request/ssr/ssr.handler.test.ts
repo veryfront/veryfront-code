@@ -1,3 +1,4 @@
+import { RENDER_ERROR } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -433,7 +434,43 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - server error with dev overlay", () => {
-    it("skips custom error fallback when showDevOverlay is true", async () => {
+    function ctxWithRecordedStats(): { ctx: ReturnType<typeof makeCtx>; statted: string[] } {
+      const statted: string[] = [];
+      const adapter = createMockAdapter();
+      const inner = adapter.fs.stat;
+      adapter.fs.stat = (path: string) => {
+        statted.push(path);
+        return inner(path);
+      };
+      return { ctx: makeCtx({ adapter }), statted };
+    }
+
+    for (const errorType of ["server-error", "runtime"] as const) {
+      it(`looks for a custom error page for ${errorType} even with the dev overlay`, async () => {
+        const mockService = createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 500,
+              html: "<html>dev overlay</html>",
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              errorType,
+              showDevOverlay: true,
+              error: new Error("Oops"),
+              slug: "page",
+            }),
+        });
+        const { ctx, statted } = ctxWithRecordedStats();
+        const handler = new SSRHandler(mockService);
+
+        const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+        assertEquals(statted.some((path) => path.endsWith("/pages")), true);
+        assertEquals(result.response!.status, 500);
+      });
+    }
+
+    it("falls back to the dev overlay when no custom error page exists", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
           Promise.resolve({
@@ -645,5 +682,90 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       });
       assertEquals(isProductionMode(ctx), true);
     });
+  });
+});
+
+describe("handle - build errors bypass the custom error page", () => {
+  // A compile or import failure is a developer-facing bug, never something a
+  // project's 500.tsx should present to a visitor. Masking one behind a
+  // friendly page in dev hides the message that says how to fix it.
+  function moduleLoadFailureService(buildFailure: boolean) {
+    return createMockSSRService({
+      renderPage: () =>
+        Promise.resolve({
+          status: 500,
+          html: "<html>dev overlay</html>",
+          isStreaming: false,
+          cacheStrategy: "no-cache" as const,
+          errorType: "runtime" as const,
+          showDevOverlay: true,
+          error: RENDER_ERROR.create({
+            detail: "Critical page module(s) failed to load",
+            context: {
+              criticalFailures: [{ path: "pages/test/y.tsx", error: "bad import", buildFailure }],
+              buildFailure,
+            },
+          }),
+          slug: "page",
+        }),
+    });
+  }
+
+  function buildFailureService() {
+    return moduleLoadFailureService(true);
+  }
+
+  function ctxRecordingStats(): { ctx: ReturnType<typeof makeCtx>; statted: string[] } {
+    const statted: string[] = [];
+    const adapter = createMockAdapter();
+    const inner = adapter.fs.stat;
+    adapter.fs.stat = (path: string) => {
+      statted.push(path);
+      return inner(path);
+    };
+    return { ctx: makeCtx({ adapter }), statted };
+  }
+
+  it("does not look for a custom error page when the module never compiled", async () => {
+    const { ctx, statted } = ctxRecordingStats();
+    const handler = new SSRHandler(buildFailureService());
+
+    const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+    assertEquals(statted.some((path) => path.endsWith("/pages")), false);
+    assertEquals(result.response!.status, 500);
+  });
+
+  it("still uses the custom error page when the module ran and threw", async () => {
+    // A page module that compiled and threw at module scope (a missing
+    // environment variable, say) also fails to load, but it is an application
+    // error, not a build failure, so pages/500.tsx must still present it.
+    const { ctx, statted } = ctxRecordingStats();
+    const handler = new SSRHandler(moduleLoadFailureService(false));
+
+    await handler.handle(new Request("http://localhost/page"), ctx);
+
+    assertEquals(statted.some((path) => path.endsWith("/pages")), true);
+  });
+
+  it("still uses the custom error page for an ordinary thrown Error", async () => {
+    const { ctx, statted } = ctxRecordingStats();
+    const handler = new SSRHandler(createMockSSRService({
+      renderPage: () =>
+        Promise.resolve({
+          status: 500,
+          html: "<html>dev overlay</html>",
+          isStreaming: false,
+          cacheStrategy: "no-cache" as const,
+          errorType: "runtime" as const,
+          showDevOverlay: true,
+          error: new Error("intentional test error from getServerData"),
+          slug: "page",
+        }),
+    }));
+
+    await handler.handle(new Request("http://localhost/page"), ctx);
+
+    assertEquals(statted.some((path) => path.endsWith("/pages")), true);
   });
 });

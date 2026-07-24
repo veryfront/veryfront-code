@@ -39,6 +39,9 @@ Deno.test("getForwardedHostedRuntimeOverrides parses non-empty forwarded runtime
   assertEquals(getForwardedHostedRuntimeOverrides({ runtimeOverrides: { thinking: 1000 } }), {
     thinking: 1000,
   });
+  assertEquals(getForwardedHostedRuntimeOverrides({ maxOutputTokens: 1200 }), {
+    maxOutputTokens: 1200,
+  });
 });
 
 Deno.test("resolveHostedRuntimeThinkingOverride applies optional thinking override", () => {
@@ -123,6 +126,37 @@ Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max s
   });
 });
 
+Deno.test("resolveHostedRuntimeRequestConfig honors configured thinking before model defaults", () => {
+  const resolveModelThinking = (model: string | undefined) =>
+    model === "veryfront-cloud/anthropic/claude-sonnet-4-6"
+      ? { enabled: true, budgetTokens: 2048 }
+      : undefined;
+
+  const disabledResult = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: { enabled: false },
+    }),
+    resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
+    resolveModelThinking,
+  });
+
+  assertEquals(disabledResult.requestedThinking, { enabled: false });
+
+  const omittedResult = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: undefined,
+    }),
+    resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
+    resolveModelThinking,
+  });
+
+  assertEquals(omittedResult.requestedThinking, { enabled: true, budgetTokens: 2048 });
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when request overrides are absent", () => {
   const result = resolveHostedRuntimeRequestConfig({
     request: {
@@ -131,14 +165,20 @@ Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when reque
           allowedTools: ["read_file"],
           maxSteps: 8,
         },
+        maxOutputTokens: 1200,
       },
     },
     agentConfig: createAgentConfig({ maxSteps: 12 }),
     resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
   });
 
-  assertEquals(result.effectiveRuntimeOverrides, { allowedTools: ["read_file"], maxSteps: 8 });
+  assertEquals(result.effectiveRuntimeOverrides, {
+    allowedTools: ["read_file"],
+    maxSteps: 8,
+    maxOutputTokens: 1200,
+  });
   assertEquals(result.requestedMaxSteps, 8);
+  assertEquals(result.requestedMaxOutputTokens, 1200);
 });
 
 Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools", () => {
@@ -146,6 +186,7 @@ Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools"
     request: {},
     agentConfig: createAgentConfig({
       tools: ["get_agent", "get_agent_source", "update_agent"],
+      delegates: ["writer"],
       providerTools: ["web_search"],
     }),
     resolveModelId: (model) => model,
@@ -155,12 +196,13 @@ Deno.test("resolveHostedRuntimeRequestConfig defaults to configured agent tools"
     "get_agent",
     "get_agent_source",
     "update_agent",
+    "agent_writer",
   ]);
   assertEquals(result.requestedAllowedProviderTools, ["web_search"]);
   assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, true);
 });
 
-Deno.test("resolveHostedRuntimeRequestConfig keeps explicit tool overrides ahead of configured tools", () => {
+Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides narrow configured tools", () => {
   const resolve = (allowedTools: string[]) => {
     const result = resolveHostedRuntimeRequestConfig({
       request: { runtimeOverrides: { allowedTools } },
@@ -170,15 +212,16 @@ Deno.test("resolveHostedRuntimeRequestConfig keeps explicit tool overrides ahead
       }),
       resolveModelId: (model) => model,
     });
-    assertEquals(result.requestedAllowedProviderTools, allowedTools);
+    assertEquals(
+      result.requestedAllowedProviderTools,
+      allowedTools.includes("web_search") ? ["web_search"] : [],
+    );
     assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, false);
     return result.requestedAllowedTools;
   };
 
   assertEquals(resolve(["unbound_tool", "update_agent", "web_search"]), [
-    "unbound_tool",
     "update_agent",
-    "web_search",
   ]);
   assertEquals(resolve([]), []);
 });

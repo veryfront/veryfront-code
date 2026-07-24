@@ -1,9 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { Singleflight } from "./singleflight.ts";
+import { FakeTime } from "#std/testing/time";
+import { Singleflight, waitForSharedPromise } from "./singleflight.ts";
 
 describe("Singleflight", () => {
+  it("lets one waiter detach without cancelling shared work", async () => {
+    const controller = new AbortController();
+    const shared = Promise.withResolvers<number>();
+    const detached = waitForSharedPromise(shared.promise, controller.signal);
+    const follower = waitForSharedPromise(shared.promise);
+
+    controller.abort(new Error("caller stopped waiting"));
+    await assertRejects(() => detached, Error, "caller stopped waiting");
+
+    shared.resolve(42);
+    assertEquals(await follower, 42);
+  });
+
   it("should execute operation and return result", async () => {
     const sf = new Singleflight<number>();
     const result = await sf.do("key", () => Promise.resolve(42));
@@ -115,5 +129,69 @@ describe("Singleflight", () => {
 
     assertEquals(r1, 1);
     assertEquals(r2, 2);
+  });
+
+  it("evicts only the exact leader that exceeds its stale window", async () => {
+    using time = new FakeTime();
+    const sf = new Singleflight<number>();
+    let resolveStale!: (value: number) => void;
+    let resolveReplacement!: (value: number) => void;
+    let staleIsCurrent!: () => boolean;
+    let replacementIsCurrent!: () => boolean;
+    let staleEvictions = 0;
+
+    const stale = sf.do(
+      "key",
+      (control) => {
+        staleIsCurrent = control.isCurrent;
+        return new Promise<number>((resolve) => resolveStale = resolve);
+      },
+      { staleAfterMs: 1_000, onStaleEvicted: () => staleEvictions++ },
+    );
+
+    await time.tickAsync(1_000);
+    assertEquals(sf.has("key"), false);
+    assertEquals(staleEvictions, 1);
+    assertEquals(staleIsCurrent(), false);
+
+    const replacement = sf.do(
+      "key",
+      (control) => {
+        replacementIsCurrent = control.isCurrent;
+        return new Promise<number>((resolve) => resolveReplacement = resolve);
+      },
+      { staleAfterMs: 1_000 },
+    );
+    resolveStale(1);
+    assertEquals(await stale, 1);
+    assertEquals(sf.has("key"), true);
+    assertEquals(replacementIsCurrent(), true);
+
+    resolveReplacement(2);
+    assertEquals(await replacement, 2);
+    assertEquals(sf.has("key"), false);
+  });
+
+  it("isolates errors thrown by stale-eviction observers", async () => {
+    using time = new FakeTime();
+    const sf = new Singleflight<number>();
+    let resolveOperation!: (value: number) => void;
+
+    const operation = sf.do(
+      "key",
+      () => new Promise<number>((resolve) => resolveOperation = resolve),
+      {
+        staleAfterMs: 1_000,
+        onStaleEvicted: () => {
+          throw new Error("observer failed");
+        },
+      },
+    );
+
+    await time.tickAsync(1_000);
+    assertEquals(sf.has("key"), false);
+
+    resolveOperation(1);
+    assertEquals(await operation, 1);
   });
 });

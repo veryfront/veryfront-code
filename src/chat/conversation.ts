@@ -197,8 +197,6 @@ export interface ReasoningPartLike {
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
-const PROVIDER_NATIVE_WEB_TOOL_NAMES = new Set(["web_fetch", "web_search"]);
-
 /** Shared UUID pattern value. */
 export const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
@@ -305,7 +303,6 @@ export function getUiToolName(part: ToolUiPart): string | undefined {
 }
 
 function isProviderOwnedInputAvailableTool(input: {
-  toolName?: string;
   state: string;
   providerExecuted?: unknown;
 }): boolean {
@@ -313,8 +310,7 @@ function isProviderOwnedInputAvailableTool(input: {
     return false;
   }
 
-  return input.providerExecuted === true ||
-    (typeof input.toolName === "string" && PROVIDER_NATIVE_WEB_TOOL_NAMES.has(input.toolName));
+  return input.providerExecuted === true;
 }
 
 /** Push tool parts. */
@@ -333,7 +329,6 @@ export function pushToolParts(
   const input = toRecord(part.input);
   const isErroredState = state === "output-error" || state === "error" || state === "output-denied";
   const isProviderOwnedAvailable = isProviderOwnedInputAvailableTool({
-    toolName,
     state,
     providerExecuted: part.providerExecuted,
   });
@@ -473,7 +468,6 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
 function isToolComplete(part: ToolUiPart): boolean {
   if (
     isProviderOwnedInputAvailableTool({
-      toolName: getUiToolName(part),
       state: part.state,
       providerExecuted: part.providerExecuted,
     })

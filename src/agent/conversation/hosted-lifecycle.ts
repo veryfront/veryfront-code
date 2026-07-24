@@ -16,6 +16,7 @@ import type {
   HostedChildLifecycleTerminalState,
 } from "../hosted/child-lifecycle.ts";
 import type { HostedLifecycleAdapter, HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /** Input payload for conversation hosted lifecycle finalize. */
 export interface ConversationHostedLifecycleFinalizeInput {
@@ -83,7 +84,18 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
     appendEvents: options.mapChunkToEvents
       ? (run, chunk) => {
         const result = appendChain.then(() => appendChunkEvents(run, chunk));
-        appendChain = result.catch(() => {});
+        // The chain must not turn an append failure into an unhandled
+        // rejection, but a silently swallowed failure would let the run keep
+        // appending against a broken durable store. The caller still awaits
+        // `result` (and sees the rejection); here we only keep the chain alive
+        // and surface the failure so it is observable.
+        appendChain = result.catch((error) => {
+          agentLogger.error("Durable conversation run append failed", {
+            conversationId: run.conversationId,
+            runId: run.runId,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        });
         return result;
       }
       : undefined,

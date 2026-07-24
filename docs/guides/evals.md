@@ -4,8 +4,8 @@ description: "Define and run quality checks for agents."
 order: 40
 ---
 
-Evals are project-defined quality checks in `evals/`. Run them locally with
-`veryfront eval <eval-id>` and store report artifacts in CI.
+Evals are project-defined quality checks in `evals/`. Use `veryfront eval` to
+run every discovered eval, or `veryfront eval <eval-id>` to run one.
 
 ## Prerequisites
 
@@ -40,7 +40,13 @@ export default evalAgent({
 });
 ```
 
-Run it:
+Run every discovered eval:
+
+```bash
+veryfront eval
+```
+
+Run one eval:
 
 ```bash
 veryfront eval deep-research
@@ -59,6 +65,27 @@ Each run writes `summary.json` and `results.jsonl` to the report directory. If
 `--report-dir` is omitted, Veryfront writes them under
 `.veryfront/evals/<run-id>/`. Use `--report` only when CI also needs the full
 raw report in one JSON file.
+
+An all-eval run creates one suite directory and one child directory per eval.
+The suite directory contains the summary, one JSONL result per eval, and the
+markdown report. Use `--junit` to add a suite-level JUnit report. Evals run
+sequentially, so a failing eval does not prevent the remaining discovered evals
+from running.
+
+```text
+.veryfront/evals/<suite-run-id>/
+  summary.json
+  results.jsonl
+  report.md
+  junit.xml
+  001-deep-research/
+    summary.json
+    results.jsonl
+    report.md
+```
+
+`--report`, baselines, model overrides, and model comparison are single-eval
+options. Name the eval when using them.
 
 The report and summary artifacts include `schemaVersion`. New reports also
 include dataset metadata with the dataset kind, optional path, example count,
@@ -255,6 +282,8 @@ metrics.answer.regex({ pattern: "Paris|paris" }).gate();
 metrics.answer.jsonMatch({ expected: { city: "Paris" } }).gate();
 ```
 
+`jsonMatch` compares JSON values, so object key order and insignificant whitespace do not affect the result. Agent text outputs and their string references are parsed only when the entire string is valid JSON; Markdown fences and surrounding prose are not accepted. Direct tool outputs are already values and are compared without reparsing.
+
 Use agent and operational metrics for tool and budget quality:
 
 ```ts
@@ -447,6 +476,59 @@ export default evalAgent({
 });
 ```
 
+## Mock tools for local agent evals
+
+Use `mockTools` when a local `evalAgent` should run the real agent while
+replacing its configured tools with deterministic eval doubles. The agent still
+produces the answer and trace; `mockTools` only changes the request-scoped tool
+set passed to `agent.generate({ tools })`.
+
+```ts
+import { datasets, evalAgent, metrics } from "veryfront/eval";
+import { defineSchema } from "veryfront/schemas";
+import { tool } from "veryfront/tool";
+
+const searchDocs = tool({
+  id: "search_docs",
+  description: "Search docs fixture",
+  inputSchema: defineSchema((v) => v.object({ query: v.string().optional() }))(),
+  execute: async (input) => ({ input, passages: ["Refunds require verification."] }),
+});
+
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([{ id: "refund", input: "Can you refund order A1049?" }]),
+  mockTools: { search_docs: searchDocs },
+  metrics: [metrics.agent.calledTool("search_docs").gate()],
+});
+```
+
+`mockTools` can also be a resolver. The local CLI calls it once for each
+example repetition so each record can receive fresh state:
+
+```ts
+export default evalAgent({
+  target: "agent:support",
+  dataset: datasets.inline([{ id: "refund", input: "Refund order A1049." }]),
+  repetitions: 3,
+  mockTools: ({ example, repetition }) => ({
+    search_docs: createFixtureSearchTool({ exampleId: example.id, repetition }),
+  }),
+});
+```
+
+Mock tools are strict and local-only. When present, no configured agent tools,
+remote tools, provider tools, MCP tools, or sandbox tools are advertised or used
+unless they are explicitly included in the `mockTools` result. Skills agents keep
+only the read-only skill loader tools, `load_skill` and
+`load_skill_reference`, so a skills agent can inspect skill instructions during a
+mocked eval; `execute_skill_script` is not retained unless `mockTools` supplies
+it explicitly. Loaded-skill allowed-tool policies and delegation overrides are
+disabled while mock tools are active; the mock tool map is the complete tool
+allowlist for that `generate()` request. There is no `stream()` equivalent for
+request-scoped mock tools. Live AG-UI agent-service evals reject definitions
+with `mockTools` before sending a request to the hosted endpoint.
+
 ## Live agent-service evals
 
 Use the `veryfront/eval/agent-service` subpath, documented under
@@ -494,7 +576,7 @@ them, and puts the parsed text at `record.output.text`.
 Projects with existing live AG-UI suites can also import reusable CLI, API, and
 durable canary helpers from `veryfront/eval/agent-service`. Use those helpers
 for product-specific canaries that are not yet expressed as `evalAgent`
-definitions. Do not import `veryfront/agent/testing`; that legacy testing path
+definitions. Do not import from `veryfront/agent/testing`; that legacy testing path
 is intentionally absent.
 
 ## Export reports
@@ -631,8 +713,8 @@ OpenTelemetry export.
 
 Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
-`MLFLOW_TRACKING_URI` to activate the extension, then select the fixed exporter
-id `mlflow` for the run.
+`MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
+exporter for the run.
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
@@ -641,24 +723,40 @@ veryfront eval deep-research --export mlflow
 
 For authenticated MLflow Tracking servers, keep credentials out of
 `MLFLOW_TRACKING_URI`. Use `MLFLOW_TRACKING_TOKEN` for bearer auth or
-`MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth.
+`MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for basic auth. Standard
+OAuth client credentials are also supported through
+`MLFLOW_OAUTH_TOKEN_URL`, `MLFLOW_OAUTH_CLIENT_ID`,
+`MLFLOW_OAUTH_CLIENT_SECRET`, and an optional `MLFLOW_OAUTH_SCOPE`.
 
-Use `VERYFRONT_EVAL_EXPORTERS=mlflow` when CI should select the same exporter
-for every eval command without repeating `--export`:
+When `MLFLOW_TRACKING_URI` is configured, `veryfront eval` automatically exports
+every completed eval report to MLflow. Set `VERYFRONT_EVAL_EXPORTERS=mlflow`
+explicitly when CI should make that selection visible in its environment:
 
 ```bash
 MLFLOW_TRACKING_URI=http://localhost:5001 \
 VERYFRONT_EVAL_EXPORTERS=mlflow \
+VERYFRONT_EVAL_EXPORT_REQUIRED=true \
 veryfront eval deep-research
 ```
 
 `--export` wins over `VERYFRONT_EVAL_EXPORTERS` when both are set. The legacy
 singular `VERYFRONT_EVAL_EXPORT` is used only when
-`VERYFRONT_EVAL_EXPORTERS` is unset.
+`VERYFRONT_EVAL_EXPORTERS` is unset. Without either selector,
+`MLFLOW_TRACKING_URI` selects the fixed `mlflow` exporter automatically.
 
 From the CLI, pass comma-separated exporter ids. Export failures are reported in
 the JSON report and do not prevent local report or JUnit files from being
-written.
+written. That best-effort behavior is the local default. CI can make a selected
+export a quality gate with `--require-export` or
+`VERYFRONT_EVAL_EXPORT_REQUIRED=true`; artifacts are still written before the
+command exits non-zero.
+
+Remote MLflow endpoints, OAuth token endpoints, artifact proxies, and optional
+run URL templates must use HTTPS. Plain HTTP remains supported only for local
+`localhost` or loopback MLflow development servers. Requests use bounded
+timeouts and retry only safe operations. The exporter does not blindly retry a
+run creation; it recovers a lost create response using the deterministic
+`veryfront.export_id` run tag.
 
 ```bash
 veryfront eval deep-research \
@@ -670,11 +768,25 @@ veryfront eval deep-research \
 ```
 
 MLflow artifact uploads support HTTP(S) run artifact roots directly. For
-proxied artifact roots such as `mlflow-artifacts:/...` or object-store-backed
-roots, configure an explicit HTTP(S) MLflow artifact server URI with
-`MLFLOW_ARTIFACTS_URI`. v1 does not upload directly to local filesystem roots or
-backend-specific schemes such as `dbfs://`, `gs://`, `wasbs://`, or similar
-URIs.
+`mlflow-artifacts:/...` roots use the tracking server itself by default, so a
+normal local `mlflow server --serve-artifacts` setup needs only
+`MLFLOW_TRACKING_URI`. For a distinct artifact server or object-store-backed
+root, configure `MLFLOW_ARTIFACTS_URI`; `MLFLOW_ARTIFACTS_PORT` derives it from
+`MLFLOW_TRACKING_URI` for a local server on another port. v1 does not upload
+directly to local filesystem roots or backend-specific schemes such as `dbfs://`,
+`gs://`, `wasbs://`, or similar URIs. After upload, the exporter makes a
+best-effort retrieval check through
+MLflow `artifacts/list` for the `veryfront-eval` path and stores only the
+sanitized `verified`/`missing` paths in the export receipt. The check is
+non-fatal: because `artifacts/list` responses vary across MLflow deployments, a
+mismatch or a failing listing endpoint is logged as a warning rather than
+failing an export whose uploads already succeeded.
+
+When a tracking service provides no HTTP(S) artifact proxy, set
+`MLFLOW_EXPORT_ARTIFACTS=false`. Veryfront still sends the MLflow run's
+aggregate metrics, parameters, and tags, then skips report-artifact upload
+without relying on a backend-specific storage API. This is not needed for a
+normal local `mlflow server --serve-artifacts` setup.
 
 The MLflow exporter logs generic aggregate metrics from the normalized
 `EvalReport`; it does not know project-specific label formats. If a project
@@ -761,7 +873,13 @@ List discovered evals:
 veryfront eval --list
 ```
 
-Run the eval locally:
+Run every discovered eval locally:
+
+```bash
+veryfront eval
+```
+
+Run one eval locally:
 
 ```bash
 veryfront eval deep-research

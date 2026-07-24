@@ -7,7 +7,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
@@ -77,18 +77,10 @@ export interface ChatContextValue {
   theme: ChatTheme;
 }
 
-const ChatContext = React.createContext<ChatContextValue | null>(null);
-
-/** Context for use chat. */
-export function useChatContext(): ChatContextValue {
-  const context = React.useContext(ChatContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useChatContext must be used within a ChatRoot or Chat component",
-    });
-  }
-  return context;
-}
+const [ChatContext, useChatContext] = createStrictContext<ChatContextValue>(
+  "useChatContext",
+  "a ChatRoot or Chat component",
+);
 
 /** React hook for chat context optional. */
 export function useChatContextOptional(): ChatContextValue | null {
@@ -97,3 +89,4 @@ export function useChatContextOptional(): ChatContextValue | null {
 
 /** Render chat context provider. */
 export const ChatContextProvider = ChatContext.Provider;
+export { useChatContext };

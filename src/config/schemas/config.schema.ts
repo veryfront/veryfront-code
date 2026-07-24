@@ -76,6 +76,12 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .object({
           outDir: v.string().optional(),
           trailingSlash: v.boolean().optional(),
+          /**
+           * Generate static HTML for all routes during `veryfront build`.
+           * Defaults to true; disabling it produces no pages, so only turn it
+           * off for builds that intentionally skip static generation.
+           */
+          ssg: v.boolean().optional(),
           esbuild: v
             .object({
               wasmURL: v.string().url().optional(),

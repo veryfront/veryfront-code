@@ -67,13 +67,14 @@ describe("auditExtensionCapabilities", () => {
     ]);
   });
 
-  it("requires MLflow export capabilities without the legacy exporter-id env key", () => {
+  it("requires MLflow export capabilities and forbids the exporter-id env key", () => {
     const manifestPath = "extensions/ext-eval-report-mlflow/deno.json";
     const allowedCapabilities = [
       { type: "net:outbound", hosts: ["*"] },
       {
         type: "env:read",
         keys: [
+          "MLFLOW_ARTIFACTS_PORT",
           "MLFLOW_ARTIFACTS_URI",
           "MLFLOW_EXPERIMENT_NAME",
           "MLFLOW_RUN_NAME",
@@ -81,6 +82,15 @@ describe("auditExtensionCapabilities", () => {
           "MLFLOW_TRACKING_TOKEN",
           "MLFLOW_TRACKING_URI",
           "MLFLOW_TRACKING_USERNAME",
+          "MLFLOW_OAUTH_TOKEN_URL",
+          "MLFLOW_OAUTH_CLIENT_ID",
+          "MLFLOW_OAUTH_CLIENT_SECRET",
+          "MLFLOW_OAUTH_SCOPE",
+          "MLFLOW_EXPORT_ARTIFACTS",
+          "MLFLOW_REQUEST_TIMEOUT_MS",
+          "MLFLOW_RETRY_ATTEMPTS",
+          "MLFLOW_RETRY_DELAY_MS",
+          "MLFLOW_RUN_URL_TEMPLATE",
         ],
       },
     ];
@@ -96,6 +106,9 @@ describe("auditExtensionCapabilities", () => {
       [],
     );
 
+    // The exporter id is fixed (see #2918), so reading VERYFRONT_EVAL_MLFLOW_EXPORTER_ID
+    // is forbidden — registering it must be flagged, and the required scoped keys
+    // (including MLFLOW_ARTIFACTS_PORT) are still reported as missing.
     const forbiddenCapabilities = [
       { type: "net:outbound", hosts: ["*"] },
       {
@@ -117,7 +130,7 @@ describe("auditExtensionCapabilities", () => {
     assertEquals(issues.map((issue) => issue.message), [
       "extensions/ext-eval-report-mlflow/deno.json manifest capabilities must not register forbidden env key VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
       "extensions/ext-eval-report-mlflow/deno.json factory capabilities must not register forbidden env key VERYFRONT_EVAL_MLFLOW_EXPORTER_ID",
-      'extensions/ext-eval-report-mlflow/deno.json sensitive extension "eval report MLflow export" is missing capability {"keys":["MLFLOW_ARTIFACTS_URI","MLFLOW_EXPERIMENT_NAME","MLFLOW_RUN_NAME","MLFLOW_TRACKING_PASSWORD","MLFLOW_TRACKING_TOKEN","MLFLOW_TRACKING_URI","MLFLOW_TRACKING_USERNAME"],"type":"env:read"}',
+      'extensions/ext-eval-report-mlflow/deno.json sensitive extension "eval report MLflow export" is missing capability {"keys":["MLFLOW_ARTIFACTS_PORT","MLFLOW_ARTIFACTS_URI","MLFLOW_EXPERIMENT_NAME","MLFLOW_EXPORT_ARTIFACTS","MLFLOW_OAUTH_CLIENT_ID","MLFLOW_OAUTH_CLIENT_SECRET","MLFLOW_OAUTH_SCOPE","MLFLOW_OAUTH_TOKEN_URL","MLFLOW_REQUEST_TIMEOUT_MS","MLFLOW_RETRY_ATTEMPTS","MLFLOW_RETRY_DELAY_MS","MLFLOW_RUN_NAME","MLFLOW_RUN_URL_TEMPLATE","MLFLOW_TRACKING_PASSWORD","MLFLOW_TRACKING_TOKEN","MLFLOW_TRACKING_URI","MLFLOW_TRACKING_USERNAME"],"type":"env:read"}',
     ]);
   });
 });

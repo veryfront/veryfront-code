@@ -22,10 +22,27 @@ const DEFAULT_EXPORTER_ID = "mlflow";
 const ENV_TRACKING_URI = "MLFLOW_TRACKING_URI";
 const ENV_EXPERIMENT_NAME = "MLFLOW_EXPERIMENT_NAME";
 const ENV_RUN_NAME = "MLFLOW_RUN_NAME";
+const ENV_ARTIFACTS_PORT = "MLFLOW_ARTIFACTS_PORT";
 const ENV_ARTIFACTS_URI = "MLFLOW_ARTIFACTS_URI";
 const ENV_TRACKING_TOKEN = "MLFLOW_TRACKING_TOKEN";
 const ENV_TRACKING_USERNAME = "MLFLOW_TRACKING_USERNAME";
 const ENV_TRACKING_PASSWORD = "MLFLOW_TRACKING_PASSWORD";
+const ENV_OAUTH_TOKEN_URL = "MLFLOW_OAUTH_TOKEN_URL";
+const ENV_OAUTH_CLIENT_ID = "MLFLOW_OAUTH_CLIENT_ID";
+const ENV_OAUTH_CLIENT_SECRET = "MLFLOW_OAUTH_CLIENT_SECRET";
+const ENV_OAUTH_SCOPE = "MLFLOW_OAUTH_SCOPE";
+const ENV_EXPORT_ARTIFACTS = "MLFLOW_EXPORT_ARTIFACTS";
+const ENV_REQUEST_TIMEOUT_MS = "MLFLOW_REQUEST_TIMEOUT_MS";
+const ENV_RETRY_ATTEMPTS = "MLFLOW_RETRY_ATTEMPTS";
+const ENV_RETRY_DELAY_MS = "MLFLOW_RETRY_DELAY_MS";
+const ENV_RUN_URL_TEMPLATE = "MLFLOW_RUN_URL_TEMPLATE";
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_RETRY_ATTEMPTS = 2;
+const DEFAULT_RETRY_DELAY_MS = 250;
+const MAX_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_RETRY_ATTEMPTS = 5;
+const MAX_RETRY_DELAY_MS = 5_000;
 
 const EXTENSION_METADATA = {
   contracts: {
@@ -36,6 +53,7 @@ const EXTENSION_METADATA = {
     {
       type: "env:read",
       keys: [
+        "MLFLOW_ARTIFACTS_PORT",
         "MLFLOW_ARTIFACTS_URI",
         "MLFLOW_EXPERIMENT_NAME",
         "MLFLOW_RUN_NAME",
@@ -43,6 +61,15 @@ const EXTENSION_METADATA = {
         "MLFLOW_TRACKING_TOKEN",
         "MLFLOW_TRACKING_URI",
         "MLFLOW_TRACKING_USERNAME",
+        "MLFLOW_OAUTH_TOKEN_URL",
+        "MLFLOW_OAUTH_CLIENT_ID",
+        "MLFLOW_OAUTH_CLIENT_SECRET",
+        "MLFLOW_OAUTH_SCOPE",
+        "MLFLOW_EXPORT_ARTIFACTS",
+        "MLFLOW_REQUEST_TIMEOUT_MS",
+        "MLFLOW_RETRY_ATTEMPTS",
+        "MLFLOW_RETRY_DELAY_MS",
+        "MLFLOW_RUN_URL_TEMPLATE",
       ],
     },
   ],
@@ -99,18 +126,58 @@ interface ClassificationMetricSet {
 
 export interface EvalReportMlflowExtensionConfig {
   trackingUri?: string;
+  artifactsPort?: string | number;
   artifactsUri?: string;
   experimentName?: string;
   runName?: string;
   trackingToken?: string;
   trackingUsername?: string;
   trackingPassword?: string;
+  oauthTokenUrl?: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthScope?: string;
+  exportArtifacts?: boolean;
+  /** Bounded per-request timeout. Defaults to 10 seconds. */
+  requestTimeoutMs?: number;
+  /** Number of retries for safe requests. Defaults to 2 (three total attempts). */
+  retryAttempts?: number;
+  /** Initial retry delay. Defaults to 250 ms and uses exponential backoff. */
+  retryDelayMs?: number;
+  /**
+   * Optional web UI URL template. It must include `{experimentId}` and
+   * `{runId}` and may include `{trackingUri}`.
+   */
+  runUrlTemplate?: string;
   fetch?: EvalReportMlflowFetch;
+}
+
+interface MlflowOAuthClientCredentialsConfig {
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scope?: string;
+}
+
+interface MlflowRequestOptions {
+  timeoutMs: number;
+  retryAttempts: number;
+  retryDelayMs: number;
 }
 
 export interface MlflowArtifactUploadResult {
   artifactPath: string;
   uploadUrl: string;
+}
+
+interface MlflowArtifactVerification {
+  method: "artifacts/list";
+  /** Whether every uploaded artifact was confirmed present by `artifacts/list`. */
+  verified: boolean;
+  /** The artifact paths the upload calls reported writing. */
+  artifacts: string[];
+  /** Uploaded paths that `artifacts/list` did not report (empty when fully verified). */
+  missing: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,6 +197,9 @@ function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {
   if (!isRecord(config)) return {};
   return {
     ...(typeof config.trackingUri === "string" ? { trackingUri: config.trackingUri } : {}),
+    ...(typeof config.artifactsPort === "string" || typeof config.artifactsPort === "number"
+      ? { artifactsPort: config.artifactsPort }
+      : {}),
     ...(typeof config.artifactsUri === "string" ? { artifactsUri: config.artifactsUri } : {}),
     ...(typeof config.experimentName === "string" ? { experimentName: config.experimentName } : {}),
     ...(typeof config.runName === "string" ? { runName: config.runName } : {}),
@@ -140,8 +210,28 @@ function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {
     ...(typeof config.trackingPassword === "string"
       ? { trackingPassword: config.trackingPassword }
       : {}),
+    ...(typeof config.oauthTokenUrl === "string" ? { oauthTokenUrl: config.oauthTokenUrl } : {}),
+    ...(typeof config.oauthClientId === "string" ? { oauthClientId: config.oauthClientId } : {}),
+    ...(typeof config.oauthClientSecret === "string"
+      ? { oauthClientSecret: config.oauthClientSecret }
+      : {}),
+    ...(typeof config.oauthScope === "string" ? { oauthScope: config.oauthScope } : {}),
+    ...(typeof config.exportArtifacts === "boolean"
+      ? { exportArtifacts: config.exportArtifacts }
+      : {}),
+    ...(typeof config.requestTimeoutMs === "number"
+      ? { requestTimeoutMs: config.requestTimeoutMs }
+      : {}),
+    ...(typeof config.retryAttempts === "number" ? { retryAttempts: config.retryAttempts } : {}),
+    ...(typeof config.retryDelayMs === "number" ? { retryDelayMs: config.retryDelayMs } : {}),
+    ...(typeof config.runUrlTemplate === "string" ? { runUrlTemplate: config.runUrlTemplate } : {}),
     ...(typeof config.fetch === "function" ? { fetch: config.fetch as EvalReportMlflowFetch } : {}),
   };
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" ||
+    hostname === "::1" || hostname === "[::1]";
 }
 
 function normalizeHttpUri(uri: string, label: string): string {
@@ -153,14 +243,123 @@ function normalizeHttpUri(uri: string, label: string): string {
         `MLflow ${label} must not include credentials. Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.`,
       );
     }
-    if (url.protocol === "http:" || url.protocol === "https:") return trimmed;
+    if (url.protocol === "https:") return trimmed;
+    if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return trimmed;
+    if (url.protocol === "http:") {
+      throw new Error(
+        `MLflow ${label} must use HTTPS unless its host is localhost or a loopback IP.`,
+      );
+    }
   } catch (error) {
-    if (error instanceof Error && error.message.includes("must not include credentials")) {
+    if (
+      error instanceof Error &&
+      (error.message.includes("must not include credentials") ||
+        error.message.includes("must use HTTPS"))
+    ) {
       throw error;
     }
     // Use the consistent message below.
   }
   throw new Error(`MLflow ${label} must be an HTTP(S) URI: ${uri}`);
+}
+
+function normalizeInteger(
+  value: number,
+  label: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`MLflow ${label} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function readIntegerEnv(
+  name: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  const value = readEnv(name);
+  if (value === undefined) return undefined;
+  return normalizeInteger(Number(value), name, minimum, maximum);
+}
+
+function resolveMlflowRequestOptions(
+  config: Pick<
+    EvalReportMlflowExtensionConfig,
+    "requestTimeoutMs" | "retryAttempts" | "retryDelayMs"
+  >,
+): MlflowRequestOptions {
+  return {
+    timeoutMs: normalizeInteger(
+      config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      "requestTimeoutMs",
+      1,
+      MAX_REQUEST_TIMEOUT_MS,
+    ),
+    retryAttempts: normalizeInteger(
+      config.retryAttempts ?? DEFAULT_RETRY_ATTEMPTS,
+      "retryAttempts",
+      0,
+      MAX_RETRY_ATTEMPTS,
+    ),
+    retryDelayMs: normalizeInteger(
+      config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+      "retryDelayMs",
+      0,
+      MAX_RETRY_DELAY_MS,
+    ),
+  };
+}
+
+function normalizeRunUrlTemplate(template: string): string {
+  const normalized = template.trim();
+  if (!normalized.includes("{experimentId}") || !normalized.includes("{runId}")) {
+    throw new Error(
+      "MLflow runUrlTemplate must include {experimentId} and {runId}.",
+    );
+  }
+  const preview = normalized
+    .replaceAll("{trackingUri}", "https://tracking.example.test")
+    .replaceAll("{experimentId}", "experiment-id")
+    .replaceAll("{runId}", "run-id");
+  normalizeHttpUri(preview, "runUrlTemplate");
+  return normalized;
+}
+
+function normalizeArtifactsPort(value: string | number | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`MLflow artifactsPort must be a TCP port: ${value}`);
+  }
+  const port = Number(normalized);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`MLflow artifactsPort must be a TCP port: ${value}`);
+  }
+  return String(port);
+}
+
+function deriveArtifactsUriFromPort(
+  trackingUri: string,
+  artifactsPort: string | number | undefined,
+): string | undefined {
+  const port = normalizeArtifactsPort(artifactsPort);
+  if (!port) return undefined;
+  const url = new URL(trackingUri);
+  url.port = port;
+  url.pathname = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+function resolveArtifactsUri(
+  config: Pick<EvalReportMlflowExtensionConfig, "artifactsPort" | "artifactsUri">,
+  trackingUri: string,
+): string | undefined {
+  return config.artifactsUri ?? deriveArtifactsUriFromPort(trackingUri, config.artifactsPort);
 }
 
 function stableHash(value: string): string {
@@ -206,18 +405,191 @@ function createTrackingAuthHeaders(
   return {};
 }
 
+function requestMethod(init: RequestInit | undefined): string {
+  return init?.method?.toUpperCase() ?? "GET";
+}
+
+function requestUrl(input: string | URL | Request): string {
+  return input instanceof Request ? input.url : String(input);
+}
+
+function isRetryableMlflowRequest(
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+): boolean {
+  const method = requestMethod(init);
+  if (method === "GET" || method === "PUT") return true;
+  if (method !== "POST") return false;
+  const pathname = new URL(requestUrl(input)).pathname;
+  // run updates replace the same state and are safe to repeat. `runs/search`
+  // is read-only despite the MLflow REST API using POST for it.
+  return pathname.endsWith("/runs/update") || pathname.endsWith("/runs/search");
+}
+
+function isTransientMlflowResponse(response: Response): boolean {
+  return response.status === 408 || response.status === 429 || response.status >= 500;
+}
+
+function retryDelayMs(options: MlflowRequestOptions, attempt: number): number {
+  return Math.min(
+    MAX_RETRY_DELAY_MS,
+    options.retryDelayMs * 2 ** attempt,
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms === 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  fetchImpl: EvalReportMlflowFetch,
+  input: string | URL | Request,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`MLflow request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      fetchImpl(input, { ...init, signal: controller.signal }),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+function createMlflowFetchWithPolicy(
+  fetchImpl: EvalReportMlflowFetch,
+  options: MlflowRequestOptions,
+): EvalReportMlflowFetch {
+  return async (input, init) => {
+    const retryable = isRetryableMlflowRequest(input, init);
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= options.retryAttempts; attempt += 1) {
+      try {
+        const response = await fetchWithTimeout(fetchImpl, input, init, options.timeoutMs);
+        if (
+          !retryable || !isTransientMlflowResponse(response) ||
+          attempt === options.retryAttempts
+        ) {
+          return response;
+        }
+      } catch (error) {
+        lastError = error;
+        if (!retryable || attempt === options.retryAttempts) throw error;
+      }
+
+      await sleep(retryDelayMs(options, attempt));
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("MLflow request failed.");
+  };
+}
+
+function readBooleanEnv(name: string): boolean | undefined {
+  const value = readEnv(name)?.toLowerCase();
+  if (value === undefined) return undefined;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  throw new Error(`MLflow ${name} must be true or false.`);
+}
+
+function resolveOAuthClientCredentials(
+  config: Pick<
+    EvalReportMlflowExtensionConfig,
+    "oauthClientId" | "oauthClientSecret" | "oauthScope" | "oauthTokenUrl"
+  >,
+): MlflowOAuthClientCredentialsConfig | undefined {
+  const configured = [
+    config.oauthTokenUrl,
+    config.oauthClientId,
+    config.oauthClientSecret,
+  ].some((value) => value !== undefined && value.length > 0);
+  if (!configured) return undefined;
+
+  if (!config.oauthTokenUrl || !config.oauthClientId || !config.oauthClientSecret) {
+    throw new Error(
+      "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
+    );
+  }
+
+  return {
+    tokenUrl: normalizeHttpUri(config.oauthTokenUrl, "OAuth token URL"),
+    clientId: config.oauthClientId,
+    clientSecret: config.oauthClientSecret,
+    ...(config.oauthScope ? { scope: config.oauthScope } : {}),
+  };
+}
+
+async function createOAuthTrackingAuthHeaders(
+  fetchImpl: EvalReportMlflowFetch,
+  config: MlflowOAuthClientCredentialsConfig,
+): Promise<Record<string, string>> {
+  const body = new URLSearchParams({ grant_type: "client_credentials" });
+  if (config.scope) body.set("scope", config.scope);
+  const response = await fetchImpl(config.tokenUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Basic ${btoa(`${config.clientId}:${config.clientSecret}`)}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  const payload = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    throw new Error(`MLflow OAuth token request failed (${response.status}).`);
+  }
+  if (!isRecord(payload) || typeof payload.access_token !== "string" || !payload.access_token) {
+    throw new Error("MLflow OAuth token response did not include an access_token.");
+  }
+  return { authorization: `Bearer ${payload.access_token}` };
+}
+
 function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
+    artifactsPort: config.artifactsPort ?? readEnv(ENV_ARTIFACTS_PORT),
     artifactsUri: config.artifactsUri ?? readEnv(ENV_ARTIFACTS_URI),
     experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
     runName: config.runName ?? readEnv(ENV_RUN_NAME),
     trackingToken: config.trackingToken ?? readEnv(ENV_TRACKING_TOKEN),
     trackingUsername: config.trackingUsername ?? readEnv(ENV_TRACKING_USERNAME),
     trackingPassword: config.trackingPassword ?? readEnv(ENV_TRACKING_PASSWORD),
+    oauthTokenUrl: config.oauthTokenUrl ?? readEnv(ENV_OAUTH_TOKEN_URL),
+    oauthClientId: config.oauthClientId ?? readEnv(ENV_OAUTH_CLIENT_ID),
+    oauthClientSecret: config.oauthClientSecret ?? readEnv(ENV_OAUTH_CLIENT_SECRET),
+    oauthScope: config.oauthScope ?? readEnv(ENV_OAUTH_SCOPE),
+    exportArtifacts: config.exportArtifacts ?? readBooleanEnv(ENV_EXPORT_ARTIFACTS),
+    requestTimeoutMs: config.requestTimeoutMs ?? readIntegerEnv(
+      ENV_REQUEST_TIMEOUT_MS,
+      1,
+      MAX_REQUEST_TIMEOUT_MS,
+    ),
+    retryAttempts: config.retryAttempts ?? readIntegerEnv(
+      ENV_RETRY_ATTEMPTS,
+      0,
+      MAX_RETRY_ATTEMPTS,
+    ),
+    retryDelayMs: config.retryDelayMs ?? readIntegerEnv(
+      ENV_RETRY_DELAY_MS,
+      0,
+      MAX_RETRY_DELAY_MS,
+    ),
+    runUrlTemplate: config.runUrlTemplate ?? readEnv(ENV_RUN_URL_TEMPLATE),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   };
 }
@@ -284,6 +656,15 @@ function runName(
   return config.runName ?? `${report.definitionId}-${report.runId}`;
 }
 
+/**
+ * Eval run ids are generated once by the runner and persist in local report
+ * artifacts. Reusing this value lets a create-run response loss recover the
+ * already-created MLflow run without guessing from display names.
+ */
+function exportIdentity(report: EvalReport): string {
+  return report.runId;
+}
+
 function createRunTags(
   config: EvalReportMlflowExtensionConfig,
   report: EvalReport,
@@ -297,6 +678,7 @@ function createRunTags(
     tag("eval.target", report.target),
     tag("eval.target_kind", report.targetKind),
     tag("eval.run_id", report.runId),
+    tag("veryfront.export_id", exportIdentity(report)),
     tag("eval.status", report.summary.failed === 0 ? "passed" : "failed"),
     tag("eval.source_path", context.sourcePath),
     tag("eval.report_path", context.reportPath),
@@ -309,6 +691,21 @@ function createRunTags(
     tag("trace.id", context.trace?.traceId),
     tag("trace.span_id", context.trace?.spanId),
   ]);
+}
+
+function createMlflowRunUrl(input: {
+  trackingUri: string;
+  experimentId: string;
+  runId: string;
+  runUrlTemplate?: string;
+}): string {
+  const template = input.runUrlTemplate ??
+    `${input.trackingUri}/#/experiments/{experimentId}/runs/{runId}`;
+  const url = template
+    .replaceAll("{trackingUri}", input.trackingUri)
+    .replaceAll("{experimentId}", encodeURIComponent(input.experimentId))
+    .replaceAll("{runId}", encodeURIComponent(input.runId));
+  return normalizeHttpUri(url, "run URL");
 }
 
 function createRunParams(
@@ -794,7 +1191,7 @@ function buildMlflowArtifactUploadUrl(input: {
   const artifactRootPath = extractArtifactRootPath(input.runArtifactUri);
   if (!input.artifactsUri) {
     throw new Error(
-      `MLflow artifactsUri is required for non-HTTP artifact URI ${input.runArtifactUri}. Configure MLFLOW_ARTIFACTS_URI or config.artifactsUri.`,
+      `MLflow artifactsUri is required for non-HTTP artifact URI ${input.runArtifactUri}. Configure MLFLOW_ARTIFACTS_URI, MLFLOW_ARTIFACTS_PORT, or config.artifactsUri.`,
     );
   }
 
@@ -1064,6 +1461,152 @@ async function getOrCreateMlflowExperiment(input: {
   return String(created.experiment_id);
 }
 
+type MlflowRunReference = {
+  runId: string;
+  artifactUri: string;
+  recovered: boolean;
+};
+
+function mlflowRunReference(payload: unknown, recovered: boolean): MlflowRunReference | undefined {
+  if (!isRecord(payload) || !isRecord(payload.run) || !isRecord(payload.run.info)) return undefined;
+  const runId = payload.run.info.run_id ?? payload.run.info.run_uuid;
+  if (typeof runId !== "string" || runId.length === 0) return undefined;
+  return {
+    runId,
+    artifactUri: typeof payload.run.info.artifact_uri === "string"
+      ? payload.run.info.artifact_uri
+      : "",
+    recovered,
+  };
+}
+
+function mlflowFilterString(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+}
+
+async function findMlflowRunByExportIdentity(input: {
+  fetchImpl: EvalReportMlflowFetch;
+  trackingUri: string;
+  authHeaders: Record<string, string>;
+  experimentId: string;
+  exportIdentity: string;
+}): Promise<MlflowRunReference | undefined> {
+  const payload = await mlflowPost(
+    input.fetchImpl,
+    input.trackingUri,
+    input.authHeaders,
+    "runs/search",
+    {
+      experiment_ids: [input.experimentId],
+      filter: `tags.\`veryfront.export_id\` = '${mlflowFilterString(input.exportIdentity)}'`,
+      max_results: 1,
+      order_by: ["attributes.start_time DESC"],
+    },
+  );
+  if (!isRecord(payload) || !Array.isArray(payload.runs)) return undefined;
+  const run = payload.runs[0];
+  if (!isRecord(run)) return undefined;
+  return mlflowRunReference({ run }, true);
+}
+
+async function createOrRecoverMlflowRun(input: {
+  fetchImpl: EvalReportMlflowFetch;
+  trackingUri: string;
+  authHeaders: Record<string, string>;
+  experimentId: string;
+  runName: string;
+  startedAt: number;
+  tags: MlflowTag[];
+  exportIdentity: string;
+}): Promise<MlflowRunReference> {
+  try {
+    const created = await mlflowPost(
+      input.fetchImpl,
+      input.trackingUri,
+      input.authHeaders,
+      "runs/create",
+      {
+        experiment_id: input.experimentId,
+        run_name: input.runName,
+        start_time: input.startedAt,
+        tags: input.tags,
+      },
+    );
+    const reference = mlflowRunReference(created, false);
+    if (!reference) throw new Error("MLflow runs/create response did not include a run id.");
+    return reference;
+  } catch (createError) {
+    // Do not retry `runs/create`: the server may have created a run before a
+    // timeout or connection loss. Instead, recover the deterministic run via
+    // its export identity. This keeps metrics/log batches from being duplicated.
+    const recovered = await findMlflowRunByExportIdentity(input).catch(() => undefined);
+    if (recovered) return recovered;
+    throw createError;
+  }
+}
+
+function artifactPathsFromListResponse(payload: unknown): string[] {
+  if (!isRecord(payload) || !Array.isArray(payload.files)) return [];
+  return payload.files
+    .map((file) => isRecord(file) && typeof file.path === "string" ? file.path : undefined)
+    .filter((path): path is string => path !== undefined);
+}
+
+/**
+ * Best-effort confirmation that the uploaded artifacts show up under the run's
+ * `artifacts/list`. This is intentionally NON-FATAL: the upload PUT/POST calls
+ * are the source of truth for success, and `artifacts/list` responses vary
+ * across MLflow deployments (path prefixing, pagination, artifact-store
+ * backends), so a listing that does not echo every path must not fail an export
+ * that otherwise succeeded. A mismatch — or a listing endpoint that errors — is
+ * surfaced as a warning and reflected in the returned `verified`/`missing`
+ * fields (and the run's `artifacts.verified` tag) for observability.
+ */
+async function verifyUploadedArtifacts(input: {
+  fetchImpl: EvalReportMlflowFetch;
+  trackingUri: string;
+  authHeaders: Record<string, string>;
+  runId: string;
+  artifacts: string[];
+}): Promise<MlflowArtifactVerification> {
+  try {
+    const response = await mlflowGet(
+      input.fetchImpl,
+      input.trackingUri,
+      input.authHeaders,
+      "artifacts/list",
+      { run_id: input.runId, path: "veryfront-eval" },
+    );
+    const listedArtifacts = new Set(artifactPathsFromListResponse(response));
+    const missing = input.artifacts.filter((artifact) => !listedArtifacts.has(artifact));
+    if (missing.length > 0) {
+      console.warn(
+        `[ext-eval-report-mlflow] artifact verification: run ${input.runId} uploaded ` +
+          `${input.artifacts.length} artifact(s) but artifacts/list did not report ` +
+          `${missing.join(", ")}; treating as non-fatal (uploads returned success).`,
+      );
+    }
+    return {
+      method: "artifacts/list",
+      verified: missing.length === 0,
+      artifacts: input.artifacts,
+      missing,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[ext-eval-report-mlflow] artifact verification skipped for run ${input.runId}: ` +
+        `artifacts/list failed (${reason}); treating as non-fatal (uploads returned success).`,
+    );
+    return {
+      method: "artifacts/list",
+      verified: false,
+      artifacts: input.artifacts,
+      missing: [],
+    };
+  }
+}
+
 async function uploadReportArtifacts(input: {
   fetchImpl: EvalReportMlflowFetch;
   artifactsUri?: string;
@@ -1101,6 +1644,9 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
   readonly id: string;
   private readonly config: EvalReportMlflowExtensionConfig & {
     trackingUri: string;
+    exportArtifacts: boolean;
+    request: MlflowRequestOptions;
+    oauth?: MlflowOAuthClientCredentialsConfig;
   };
   private readonly fetchImpl: EvalReportMlflowFetch;
 
@@ -1112,14 +1658,23 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
     fetchImpl: EvalReportMlflowFetch = fetch,
   ) {
     this.id = config.id;
+    const trackingUri = normalizeHttpUri(config.trackingUri, "trackingUri");
+    const artifactsUri = resolveArtifactsUri(config, trackingUri);
+    const oauth = resolveOAuthClientCredentials(config);
+    const request = resolveMlflowRequestOptions(config);
+    const runUrlTemplate = config.runUrlTemplate
+      ? normalizeRunUrlTemplate(config.runUrlTemplate)
+      : undefined;
     this.config = {
       ...config,
-      trackingUri: normalizeHttpUri(config.trackingUri, "trackingUri"),
-      ...(config.artifactsUri
-        ? { artifactsUri: normalizeHttpUri(config.artifactsUri, "artifactsUri") }
-        : {}),
+      trackingUri,
+      exportArtifacts: config.exportArtifacts ?? true,
+      request,
+      ...(artifactsUri ? { artifactsUri: normalizeHttpUri(artifactsUri, "artifactsUri") } : {}),
+      ...(runUrlTemplate ? { runUrlTemplate } : {}),
+      ...(oauth ? { oauth } : {}),
     };
-    this.fetchImpl = fetchImpl;
+    this.fetchImpl = createMlflowFetchWithPolicy(fetchImpl, request);
   }
 
   async export(
@@ -1127,7 +1682,9 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
     context: EvalReportExportContext,
   ): Promise<EvalReportExportReceipt> {
     const trackingUri = this.config.trackingUri;
-    const authHeaders = createTrackingAuthHeaders(this.config);
+    const authHeaders = this.config.oauth
+      ? await createOAuthTrackingAuthHeaders(this.fetchImpl, this.config.oauth)
+      : createTrackingAuthHeaders(this.config);
     const selectedExperimentName = experimentName(this.config, report, context);
     const experimentId = await getOrCreateMlflowExperiment({
       fetchImpl: this.fetchImpl,
@@ -1138,23 +1695,19 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
       context,
     });
     const startedAt = Date.parse(report.startedAt);
-    const createdRun = await mlflowPost(
-      this.fetchImpl,
+    const createdRun = await createOrRecoverMlflowRun({
+      fetchImpl: this.fetchImpl,
       trackingUri,
       authHeaders,
-      "runs/create",
-      {
-        experiment_id: experimentId,
-        run_name: normalizeMlflowTagValue(runName(this.config, report)),
-        start_time: Number.isFinite(startedAt) ? startedAt : Date.now(),
-        tags: createRunTags(this.config, report, context),
-      },
-    );
+      experimentId,
+      runName: normalizeMlflowTagValue(runName(this.config, report)),
+      startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
+      tags: createRunTags(this.config, report, context),
+      exportIdentity: exportIdentity(report),
+    });
 
-    const runId = String(
-      createdRun.run.info.run_id ?? createdRun.run.info.run_uuid,
-    );
-    const runArtifactUri = String(createdRun.run.info.artifact_uri ?? "");
+    const runId = createdRun.runId;
+    const runArtifactUri = createdRun.artifactUri;
     try {
       const now = Date.now();
       await logMlflowBatch(this.fetchImpl, trackingUri, {
@@ -1168,19 +1721,42 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
         ]),
       });
 
-      const artifacts = await uploadReportArtifacts({
-        fetchImpl: this.fetchImpl,
-        artifactsUri: this.config.artifactsUri,
-        runArtifactUri,
-        report,
-      });
+      const artifacts = this.config.exportArtifacts
+        ? await uploadReportArtifacts({
+          fetchImpl: this.fetchImpl,
+          artifactsUri: this.config.artifactsUri ??
+            (runArtifactUri.startsWith("mlflow-artifacts:/") ? trackingUri : undefined),
+          runArtifactUri,
+          report,
+        })
+        : [];
+      const artifactVerification = this.config.exportArtifacts
+        ? await verifyUploadedArtifacts({
+          fetchImpl: this.fetchImpl,
+          trackingUri,
+          authHeaders,
+          runId,
+          artifacts,
+        })
+        : undefined;
 
       await logMlflowBatch(this.fetchImpl, trackingUri, {
         runId,
         authHeaders,
         tags: [
-          { key: "artifacts.logged", value: "true" },
+          { key: "artifacts.logged", value: String(this.config.exportArtifacts) },
           { key: "artifacts.count", value: String(artifacts.length) },
+          ...(artifactVerification
+            ? [
+              { key: "artifacts.verified", value: String(artifactVerification.verified) },
+              {
+                key: "artifacts.verified_count",
+                value: String(
+                  artifactVerification.artifacts.length - artifactVerification.missing.length,
+                ),
+              },
+            ]
+            : []),
         ],
       });
 
@@ -1192,11 +1768,18 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
 
       return {
         externalRunId: runId,
-        url: `${trackingUri}/#/experiments/${experimentId}/runs/${runId}`,
+        url: createMlflowRunUrl({
+          trackingUri,
+          experimentId,
+          runId,
+          runUrlTemplate: this.config.runUrlTemplate,
+        }),
         metadata: {
           experimentId,
           experimentName: selectedExperimentName,
+          ...(createdRun.recovered ? { recovered: true } : {}),
           artifacts,
+          ...(artifactVerification ? { artifactVerification } : {}),
         },
       };
     } catch (error) {
@@ -1212,7 +1795,6 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
 
 export function createEvalReportMlflowExporter(
   config: EvalReportMlflowExtensionConfig & {
-    id?: string;
     trackingUri: string;
   },
   fetchImpl?: EvalReportMlflowFetch,

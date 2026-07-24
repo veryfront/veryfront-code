@@ -3,12 +3,12 @@ import type { CommandHelp } from "../../help/types.ts";
 export const evalHelp: CommandHelp = {
   name: "eval",
   category: "ai",
-  description: "Discover and run eval definitions",
+  description: "List, run, and export discovered eval definitions",
   usage: "veryfront eval [eval-id] [options]",
   options: [
     {
       flag: "-l, --list",
-      description: "List discovered evals",
+      description: "List discovered evals without running them",
     },
     {
       flag: "--dataset-base <path>",
@@ -24,7 +24,7 @@ export const evalHelp: CommandHelp = {
     },
     {
       flag: "--junit <path>",
-      description: "Write a JUnit XML report to a file",
+      description: "Write an eval or suite JUnit XML report to a file",
     },
     {
       flag: "--baseline <path>",
@@ -59,6 +59,10 @@ export const evalHelp: CommandHelp = {
       description: "Export the report through registered eval exporters",
     },
     {
+      flag: "--require-export",
+      description: "Fail the command when a selected eval export is missing or fails (for CI)",
+    },
+    {
       flag: "--model <provider/model>",
       description: "Override the target agent model",
     },
@@ -86,6 +90,8 @@ export const evalHelp: CommandHelp = {
   ],
   examples: [
     "veryfront eval --list",
+    "veryfront eval",
+    "veryfront eval --report-dir .veryfront/evals/suite --junit .veryfront/evals/suite/junit.xml",
     "veryfront eval deep-research",
     "veryfront eval eval:deep-research --report-dir .veryfront/evals/deep-research",
     "veryfront eval eval:deep-research --report .veryfront/evals/deep-research/report.json --junit .veryfront/evals/deep-research/junit.xml",
@@ -93,6 +99,8 @@ export const evalHelp: CommandHelp = {
     "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6",
     "veryfront eval deep-research --baseline-model anthropic/claude-sonnet-4-6 --candidate-model moonshotai/kimi-k2.6 --comparison-policy evals/model-comparison.policy.json",
     "veryfront eval deep-research --export braintrust,langfuse --json",
+    "VERYFRONT_EVAL_EXPORTERS=mlflow VERYFRONT_EVAL_EXPORT_REQUIRED=true veryfront eval",
+    "MLFLOW_TRACKING_URI=https://mlflow.example.com veryfront eval",
     "veryfront eval deep-research --json",
   ],
 };

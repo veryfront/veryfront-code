@@ -146,6 +146,46 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
+  it("keeps runtime function tools explicitly non-strict in Responses requests", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.4-nano",
+      "veryfront-cloud",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Search knowledge." }] }],
+        tools: [{
+          type: "function",
+          name: "search_knowledge",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+              cursor: { type: "string" },
+            },
+            required: ["query"],
+          },
+        }],
+      },
+      true,
+      warnings,
+    );
+
+    assertEquals(body.tools, [{
+      type: "function",
+      name: "search_knowledge",
+      strict: false,
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          cursor: { type: "string" },
+        },
+        required: ["query"],
+      },
+    }]);
+  });
+
   it("preserves Responses request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },
@@ -301,6 +341,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
           type: "function",
           name: "lookup",
           description: "Look up a value",
+          strict: false,
           parameters: { type: "object", properties: { id: { type: "string" } } },
         },
         {

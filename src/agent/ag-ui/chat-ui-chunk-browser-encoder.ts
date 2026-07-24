@@ -1,4 +1,4 @@
-import { tryGetVeryfrontCloudProviderFromModelId } from "#veryfront/provider";
+import { tryGetVeryfrontCloudProviderFromModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { AgUiBrowserChunkEncoder } from "./browser-chunk-encoder.ts";
 import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";

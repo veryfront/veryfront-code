@@ -17,6 +17,7 @@ import { deployCommand } from "../deploy/index.ts";
 
 export const getUpArgsSchema = defineSchema((v) =>
   v.object({
+    projectDir: v.string().optional(),
     force: v.boolean().default(false),
     dryRun: v.boolean().default(false),
   })
@@ -27,6 +28,7 @@ export const UpArgsSchema = lazySchema(getUpArgsSchema);
 export type UpOptions = InferSchema<ReturnType<typeof getUpArgsSchema>>;
 
 export const parseUpArgs = createArgParser(UpArgsSchema, {
+  projectDir: CommonArgs.projectDir,
   force: CommonArgs.force,
   dryRun: CommonArgs.dryRun,
 });
@@ -106,12 +108,10 @@ export async function upCommand(
   options: Partial<UpOptions> = {},
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
-  const { force = false, dryRun = false } = options;
+  const { projectDir = cwd(), force = false, dryRun = false } = options;
 
   const useColor = shouldUseColor();
   const c = (fn: (s: string) => string, s: string): string => (useColor ? fn(s) : s);
-
-  const projectDir = cwd();
 
   const userInfo = await ensureAuthenticated(env);
   if (!userInfo) return;
@@ -200,6 +200,7 @@ export async function upCommand(
 
     try {
       await deployCommand({
+        projectDir,
         branch: "main",
         env: "preview",
         force: true,

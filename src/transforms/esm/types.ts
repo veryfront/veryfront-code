@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 
 export interface TransformOptions {
   dev?: boolean;
@@ -14,6 +15,8 @@ export interface TransformOptions {
   reactVersion?: string;
   /** Internal per-render dependency hash cache. */
   dependencyHashCache?: DependencyHashCache;
+  /** Internal observer for meaningful transform milestones. */
+  onProgress?: TransformProgressListener;
 }
 
 export interface TransformContext {

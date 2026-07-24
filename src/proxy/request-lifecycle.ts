@@ -1,4 +1,4 @@
-import type { Context, Span } from "#veryfront/observability/tracing/api-shim.ts";
+import type { Context, Span } from "#veryfront/observability";
 
 export interface ProxyRequestLifecycle {
   end(statusCode: number, error?: Error): void;

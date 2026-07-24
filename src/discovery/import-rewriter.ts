@@ -119,6 +119,12 @@ function isUnprefixedNpmSpecifier(specifier: string): boolean {
 // by TypeScript and must not trigger filesystem resolution.
 const TYPE_ONLY_STATIC_RE = /(?:^|[\s;{}])(?:import|export)\s+type\b/;
 
+function isNotFoundError(error: unknown): boolean {
+  const DenoNotFound = globalThis.Deno?.errors?.NotFound;
+  if (DenoNotFound && error instanceof DenoNotFound) return true;
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
 function rewriteBareNpmImportsForDeno(code: string): string {
   return code
     // `import x from "spec"`, `export { x } from "spec"`, `export * from "spec"`.
@@ -282,6 +288,7 @@ export async function rewriteDiscoveryImports(
 
   try {
     const { pathToFileURL } = await import("node:url");
+    const projectRoot = pathHelper.resolve(projectDir);
 
     // Handle relative imports
     transformed = transformed.replace(
@@ -297,15 +304,15 @@ export async function rewriteDiscoveryImports(
     // so a subsequent `npm install` of the missing dep is picked up
     // without a process restart.
     const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
-      const cacheKey = `${projectDir}::${specifier}`;
+      const cacheKey = `${projectRoot}::${specifier}`;
       const cached = resolvedSpecifierCache.get(cacheKey);
       if (cached !== undefined) return cached;
 
       const { name: packageName, subpath } = splitPackageSubpath(specifier);
-      let searchDir = projectDir;
+      let searchDir = projectRoot;
 
       for (let i = 0; i < 10; i++) {
-        const packagePath = pathHelper.join(searchDir, "node_modules", packageName);
+        const packagePath = pathHelper.resolve(searchDir, "node_modules", packageName);
         const packageJsonPath = pathHelper.join(packagePath, "package.json");
 
         try {
@@ -447,39 +454,57 @@ export async function rewriteDiscoveryImports(
         );
     };
 
-    // Handle veryfront package imports
-    let vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-    let exportsMap: Record<string, string | { import?: string }> = {};
+    type VeryfrontExportSource =
+      | { kind: "absent" }
+      | { kind: "present"; packagePath: string; exportsMap: unknown };
 
-    try {
-      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
-      const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-      exportsMap = pkgJson.exports || {};
-    } catch (_) {
-      /* expected: veryfront package.json not found, fallback to deno.json search */
-      // Search for deno.json in parent directories
-      let searchDir = projectDir;
+    const findVeryfrontExportSource = async (): Promise<VeryfrontExportSource> => {
+      const nodePackagePath = pathHelper.resolve(projectRoot, "node_modules", "veryfront");
+      const vfPackageJsonPath = pathHelper.join(nodePackagePath, "package.json");
+      let hasNodePackagePath = false;
+      try {
+        await fs.stat(nodePackagePath);
+        hasNodePackagePath = true;
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
+        }
 
+        /* expected: veryfront directory absent, fallback to deno.json search */
+      }
+
+      if (hasNodePackagePath) {
+        try {
+          const packageJsonText = await fs.readTextFile(vfPackageJsonPath);
+          const pkgJson = JSON.parse(packageJsonText);
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: pkgJson.exports };
+        } catch (_) {
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
+        }
+      }
+
+      // Search for deno.json in parent directories.
+      let searchDir = projectRoot;
       for (let i = 0; i < 5; i++) {
         try {
           const denoJsonPath = pathHelper.join(searchDir, "deno.json");
           const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
-          if (denoJson.name === "veryfront" && denoJson.exports) {
-            exportsMap = denoJson.exports;
-            vfPackagePath = searchDir;
-            break;
+          if (denoJson.name === "veryfront" && "exports" in denoJson) {
+            return {
+              kind: "present",
+              packagePath: pathHelper.resolve(searchDir),
+              exportsMap: denoJson.exports,
+            };
           }
         } catch (_) {
           /* expected: deno.json not found at this level */
         }
-        searchDir = pathHelper.dirname(searchDir);
+        const parent = pathHelper.dirname(searchDir);
+        if (parent === searchDir) break;
+        searchDir = parent;
       }
-    }
 
-    const getExportPath = (entry: string | { import?: string } | undefined): string | null => {
-      if (!entry) return null;
-      if (typeof entry === "string") return entry;
-      return entry.import ?? null;
+      return { kind: "absent" };
     };
 
     const veryfrontSpecifiers = new Set<string>();
@@ -494,34 +519,45 @@ export async function rewriteDiscoveryImports(
       if (specifier) veryfrontSpecifiers.add(specifier);
     }
 
+    const veryfrontExportSource = await findVeryfrontExportSource();
+
+    const resolveVeryfrontExportToFileUrl = (
+      specifier: string,
+    ): { kind: "resolved"; url: string } | { kind: "rejected" } => {
+      if (veryfrontExportSource.kind === "absent") return { kind: "rejected" };
+
+      const subpath = specifier === "veryfront" ? "." : "./" + specifier.replace("veryfront/", "");
+      const exportPath = resolveExportPath(veryfrontExportSource.exportsMap, subpath);
+      if (!exportPath) return { kind: "rejected" };
+
+      const packagePath = veryfrontExportSource.packagePath;
+      const resolvedPath = pathHelper.resolve(packagePath, exportPath);
+      const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
+        ? packagePath
+        : packagePath + pathHelper.SEPARATOR;
+      if (resolvedPath !== packagePath && !resolvedPath.startsWith(packagePathPrefix)) {
+        return { kind: "rejected" };
+      }
+
+      return { kind: "resolved", url: pathToFileURL(resolvedPath).href };
+    };
+
     for (const specifier of veryfrontSpecifiers) {
-      const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
-      if (resolvedUrl) {
-        transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+      if (veryfrontExportSource.kind === "absent") continue;
+      const result = resolveVeryfrontExportToFileUrl(specifier);
+      if (result.kind === "resolved") {
+        transformed = rewriteResolvedSpecifierImports(transformed, specifier, result.url);
       }
     }
 
-    // Rewrite veryfront subpath imports
-    transformed = transformed.replace(
-      /from\s+["'](veryfront\/[^"']+)["']/g,
-      (match, fullSpecifier: string) => {
-        const subpath = "./" + fullSpecifier.replace("veryfront/", "");
-        const exportPath = getExportPath(exportsMap[subpath]);
-        if (!exportPath) return match;
-
-        const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-        return `from "${pathToFileURL(resolvedPath).href}"`;
-      },
-    );
-
-    // Rewrite bare veryfront import
-    transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
-      const exportPath = getExportPath(exportsMap["."]);
-      if (!exportPath) return 'from "veryfront"';
-
-      const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-      return `from "${pathToFileURL(resolvedPath).href}"`;
-    });
+    if (veryfrontExportSource.kind === "absent") {
+      for (const specifier of veryfrontSpecifiers) {
+        const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
+        if (resolvedUrl) {
+          transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+        }
+      }
+    }
   } catch (_) {
     /* expected: Node.js URL module unavailable in non-Node runtime */
     return transformed;

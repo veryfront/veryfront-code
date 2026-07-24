@@ -1,7 +1,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { COMPILATION_ERROR } from "#veryfront/errors";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
 import { hashCSS } from "./candidate-extractor.ts";
 import { formatCSSErrorMessage } from "./tailwind-compiler-utils.ts";

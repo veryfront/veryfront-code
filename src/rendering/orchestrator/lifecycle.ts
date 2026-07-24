@@ -5,7 +5,7 @@ import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { CacheCoordinator } from "../cache/index.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import {
   FilesystemCacheStore,
   KVCacheStore,

@@ -57,7 +57,7 @@ function getProjectContextSwitchContent(result: unknown): Record<string, unknown
 /** Return confirmed project context switch ID. */
 export function getConfirmedProjectContextSwitchId(
   result: unknown,
-  requestedProjectId: string,
+  requestedProjectReference?: string,
 ): string | null {
   const content = getProjectContextSwitchContent(result);
   if (!content || Reflect.get(content, "success") !== true) {
@@ -69,5 +69,14 @@ export function getConfirmedProjectContextSwitchId(
     return null;
   }
 
-  return projectId === requestedProjectId ? projectId : null;
+  const slug = Reflect.get(content, "slug");
+  if (
+    requestedProjectReference &&
+    requestedProjectReference !== projectId &&
+    requestedProjectReference !== slug
+  ) {
+    return null;
+  }
+
+  return projectId;
 }

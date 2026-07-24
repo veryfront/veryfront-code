@@ -33,7 +33,7 @@ import { Switch } from "../ui/switch.tsx";
 import { Floating } from "../ui/floating.tsx";
 import { Button } from "../ui/button.tsx";
 import { PaperclipIcon, PlusIcon } from "../ui/icons/index.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../create-strict-context.ts";
 
 /* -------------------------------------------------------------------------------------------------
  * Inlined icons — Figma / Settings / ChevronRight are not in the shared icons
@@ -301,23 +301,11 @@ export interface ChatActionsContextValue {
   settings?: ChatActionsSettings;
 }
 
-const ChatActionsContext = React.createContext<ChatActionsContextValue | null>(
-  null,
+const [ChatActionsContext, useChatActions] = createStrictContext<ChatActionsContextValue>(
+  "useChatActions",
+  "a ChatActions",
 );
-
-/**
- * Read the enclosing `ChatActions` state. Throws when used outside a
- * `ChatActions` — a misplaced sub-part is a loud error, never a silent null.
- */
-export function useChatActions(): ChatActionsContextValue {
-  const ctx = React.useContext(ChatActionsContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useChatActions must be used within a ChatActions",
-    });
-  }
-  return ctx;
-}
+export { useChatActions };
 
 /**
  * `ChatActions.Root` — the `DropdownMenu` wrapper + context provider. No

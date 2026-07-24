@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { webhook } from "./factory.ts";
 import { isWebhookDefinition } from "./types.ts";
 
@@ -39,7 +40,7 @@ describe("webhook/factory", () => {
           id: "agent-ticket-created",
           target: { kind: "agent", id: "support-agent" },
         }),
-      Error,
+      VeryfrontError,
       "Agent webhooks must define agentMessage.promptTemplate.",
     );
   });
@@ -57,7 +58,7 @@ describe("webhook/factory", () => {
             ],
           },
         }),
-      Error,
+      VeryfrontError,
       "Webhook eventFilter condition 0 value must be JSON-serializable.",
     );
   });

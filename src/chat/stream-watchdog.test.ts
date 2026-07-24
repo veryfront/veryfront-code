@@ -12,6 +12,7 @@ const watchdogOptions = {
   idleTimeoutMs: 120,
   toolRunningTimeoutMs: 300,
   longRunningToolNames: ["invoke_agent"],
+  longRunningToolPrefixes: ["agent_"],
 };
 
 describe("chat/stream-watchdog", () => {
@@ -85,6 +86,28 @@ describe("chat/stream-watchdog", () => {
         toolCallId: "fork-1",
         toolName: "invoke_agent",
       },
+    );
+  });
+
+  it("keeps scoped delegate tools alive by configured prefix", () => {
+    const running = getNextChatStreamWatchdogState(
+      { phase: "response_pending", timeoutMs: 120 },
+      {
+        type: "tool-input-available",
+        toolCallId: "delegate-1",
+        toolName: "agent_extraction-agent",
+        input: {},
+      },
+      watchdogOptions,
+    );
+
+    assertEquals(
+      getNextChatStreamWatchdogState(
+        running,
+        { type: "message-metadata", messageMetadata: { modelId: "openai/gpt-5.4" } },
+        watchdogOptions,
+      ),
+      running,
     );
   });
 

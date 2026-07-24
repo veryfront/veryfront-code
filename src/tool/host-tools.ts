@@ -1,5 +1,5 @@
 import { dynamicTool, tool } from "./factory.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 
@@ -30,7 +30,6 @@ export type HostToolSet = Record<string, HostToolDefinition>;
 
 type RunnableHostToolDefinition = HostToolDefinition & {
   description: string;
-  inputSchema: Schema<unknown>;
   execute: HostToolExecute;
 };
 
@@ -53,11 +52,26 @@ function isSchemaLike(value: unknown): value is Schema<unknown> {
   return "_output" in value && typeof value.safeParse === "function";
 }
 
+function isParserBackedPrecomputedSchema(input: {
+  inputSchema?: unknown;
+  inputSchemaJson?: unknown;
+}): boolean {
+  return (
+    isRecord(input.inputSchema) &&
+    typeof input.inputSchema.parse === "function" &&
+    isRecord(input.inputSchemaJson)
+  );
+}
+
 function isHostToolDefinition(value: unknown): value is RunnableHostToolDefinition {
   return (
     isRecord(value) &&
     typeof value.description === "string" &&
-    isSchemaLike(value.inputSchema) &&
+    (
+      isSchemaLike(value.inputSchema) ||
+      isParserBackedPrecomputedSchema(value) ||
+      (value.inputSchema === undefined && isRecord(value.inputSchemaJson))
+    ) &&
     typeof value.execute === "function"
   );
 }
@@ -105,24 +119,29 @@ export function createToolsFromHostDefinitions(
       await definition.execute(input, normalizeExecutionContext(toolName, context, options));
 
     try {
-      tools[toolName] = definition.inputSchemaJson
-        ? dynamicTool({
+      if (definition.inputSchemaJson) {
+        tools[toolName] = dynamicTool({
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
           execute,
           mcp: definition.mcp,
-        })
-        : tool({
+        });
+      } else if (isSchemaLike(definition.inputSchema)) {
+        tools[toolName] = tool({
           id: toolName,
           description: definition.description,
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
         });
+      }
     } catch (error) {
-      agentLogger.warn("Skipping host tool: schema conversion failed", { toolName, error });
+      agentLogger.warn("Skipping host tool: schema conversion failed", {
+        toolName,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       continue;
     }
   }

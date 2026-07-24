@@ -29,6 +29,12 @@ export interface CacheBackend {
   get(key: string): Promise<string | null>;
 
   /**
+   * Get the remaining lifetime in seconds. Returns null when the entry is
+   * absent, expired, or the backend cannot determine its expiry.
+   */
+  getRemainingTtlSeconds?(key: string): Promise<number | null>;
+
+  /**
    * Get multiple values from the cache in a single batch.
    * @param keys - Array of cache keys
    * @returns Map of key to value (null for missing keys)

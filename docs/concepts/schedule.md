@@ -32,3 +32,23 @@ Do not put the work itself in the schedule definition. Use a one-time schedule
 for delayed one-off work and a cron-style schedule for recurring work.
 
 For implementation steps, see [Runs](../guides/runs.md).
+
+## Monitor a schedule
+
+Opt in to schedule health when a delayed or failed recurring job needs an
+operator alert. Set the longest acceptable time since a successful run:
+
+```ts
+import { schedule } from "veryfront/schedule";
+
+export default schedule({
+  id: "daily-support-triage",
+  schedule: "0 9 * * 1-5",
+  target: { kind: "workflow", id: "escalate-ticket" },
+  health: { maxStalenessSeconds: 1_800 },
+});
+```
+
+The platform reports the schedule as stale when it has not succeeded within
+that budget, and as failed after a newer terminal failure. Health settings are
+not sent to the target as run input.

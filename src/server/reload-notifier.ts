@@ -1,4 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
+import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
 
 const logger = serverLogger.component("reload-notifier");
 
@@ -20,8 +21,12 @@ type ReloadProjectInput = ReloadProjectInfo | string | undefined;
 const DEBOUNCE_MS = 300;
 
 class ReloadNotifierImpl {
-  private listeners = new Set<ReloadListener>();
-  private invalidateListeners = new Set<InvalidateListener>();
+  private listeners = createSubscriberSet<[string[] | undefined, ReloadProjectInfo | undefined]>(
+    (error) => logger.error("Listener error:", error),
+  );
+  private invalidateListeners = createSubscriberSet(
+    (error) => logger.error("Invalidate listener error:", error),
+  );
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths = new Set<string>();
   private pendingProject?: ReloadProjectInfo;
@@ -32,13 +37,11 @@ class ReloadNotifierImpl {
   };
 
   subscribe(listener: ReloadListener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return this.listeners.subscribe(listener);
   }
 
   subscribeInvalidate(listener: InvalidateListener): () => void {
-    this.invalidateListeners.add(listener);
-    return () => this.invalidateListeners.delete(listener);
+    return this.invalidateListeners.subscribe(listener);
   }
 
   triggerReload(changedPaths?: string[], project?: ReloadProjectInput): void {
@@ -87,13 +90,7 @@ class ReloadNotifierImpl {
       count: this.invalidateListeners.size,
     });
 
-    for (const listener of this.invalidateListeners) {
-      try {
-        listener();
-      } catch (error) {
-        logger.error("Invalidate listener error:", error);
-      }
-    }
+    this.invalidateListeners.notify();
   }
 
   private notifyListeners(changedPaths?: string[], project?: ReloadProjectInfo): void {
@@ -105,21 +102,11 @@ class ReloadNotifierImpl {
       project,
     });
 
-    for (const listener of this.listeners) {
-      try {
-        listener(changedPaths, project);
-      } catch (error) {
-        logger.error("Listener error:", error);
-      }
-    }
+    this.listeners.notify(changedPaths, project);
   }
 
   getListenerCount(): number {
     return this.listeners.size;
-  }
-
-  getInvalidateListenerCount(): number {
-    return this.invalidateListeners.size;
   }
 
   getMetrics(): {

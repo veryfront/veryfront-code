@@ -1,5 +1,5 @@
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { cn } from "../../theme.ts";
 
 /** Public API contract for feedback value. */
@@ -31,17 +31,12 @@ interface MessageFeedbackContextValue {
   onFeedback: (messageId: string, feedback: FeedbackValue) => void;
 }
 
-const MessageFeedbackContext = React.createContext<MessageFeedbackContextValue | null>(null);
-
-function useMessageFeedback(): MessageFeedbackContextValue {
-  const context = React.useContext(MessageFeedbackContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "MessageFeedback.* must be used within <MessageFeedback>",
-    });
-  }
-  return context;
-}
+const [MessageFeedbackContext, useMessageFeedback] = createStrictContext<
+  MessageFeedbackContextValue
+>(
+  "MessageFeedback.*",
+  "<MessageFeedback>",
+);
 
 const BUTTON_BASE =
   "inline-flex items-center justify-center size-7 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]";

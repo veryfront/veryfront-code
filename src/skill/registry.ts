@@ -97,6 +97,11 @@ class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
     }
     return ids;
   }
+
+  /** Whether at least one skill is visible without materializing a catalog. */
+  hasVisibleSkills(scope?: AgentCapabilityScope): boolean {
+    return this.manager.some((skill) => isSkillVisibleTo(skill, scope));
+  }
 }
 
 export const skillRegistry = new SkillRegistryClass(skillManager);

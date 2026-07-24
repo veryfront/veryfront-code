@@ -3,6 +3,12 @@ import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts"
 import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
+import {
+  INPUT_VALIDATION_FAILED,
+  INVALID_ARGUMENT,
+  NETWORK_ERROR,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 
 const CONVERSATION_API_TIMEOUT_MS = 15_000;
 
@@ -92,7 +98,9 @@ async function controlPlaneJson<T>(input: {
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`${input.operation} timed out after ${CONVERSATION_API_TIMEOUT_MS}ms`);
+      throw TIMEOUT_ERROR.create({
+        detail: `${input.operation} timed out after ${CONVERSATION_API_TIMEOUT_MS}ms`,
+      });
     }
     throw error;
   } finally {
@@ -106,9 +114,9 @@ async function controlPlaneJson<T>(input: {
       statusText: response.statusText,
       body,
     });
-    throw new Error(
-      `${input.operation} failed (${response.status}): ${body || response.statusText}`,
-    );
+    throw NETWORK_ERROR.create({
+      detail: `${input.operation} failed (${response.status}): ${body || response.statusText}`,
+    });
   }
 
   return input.responseSchema.parse(await response.json());
@@ -147,9 +155,10 @@ export async function ensureConversationProjectLink(input: {
 
   if (conversation.projectId === input.projectId) return;
   if (conversation.projectId !== null) {
-    throw new Error(
-      `Conversation ${input.conversationId} is already linked to a different project (${conversation.projectId})`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Conversation ${input.conversationId} is already linked to a different project (${conversation.projectId})`,
+    });
   }
 
   await controlPlaneJson({
@@ -210,7 +219,9 @@ export async function persistConversationUserMessage(input: {
 }): Promise<ConversationMessageRecord> {
   const parts = toConversationPartsFromUiMessage(input.message);
   if (parts.length === 0) {
-    throw new Error("CONVERSATION_USER_MESSAGE_REQUIRES_PERSISTABLE_PARTS");
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "CONVERSATION_USER_MESSAGE_REQUIRES_PERSISTABLE_PARTS",
+    });
   }
 
   return createConversationMessage({
@@ -281,7 +292,9 @@ export async function persistLatestConversationUserMessage(input: {
     input.messages,
   );
   if (!latestUserMessage) {
-    throw new Error(input.missingUserMessageErrorMessage ?? "CONVERSATION_REQUIRES_USER_MESSAGE");
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: input.missingUserMessageErrorMessage ?? "CONVERSATION_REQUIRES_USER_MESSAGE",
+    });
   }
 
   await persistConversationUserMessage({

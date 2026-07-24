@@ -1,18 +1,8 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { base64urlEncode, base64urlEncodeBytes, logger as baseLogger } from "#veryfront/utils";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = baseLogger.component("gcs-blob-storage");
-
-function base64url(str: string): string {
-  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64urlFromBytes(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
 
 async function importPKCS8Key(pem: string): Promise<CryptoKey> {
   const pemBody = pem
@@ -95,8 +85,8 @@ export class GCSBlobStorage implements BlobStorage {
     const iat = Math.floor(now / 1000);
     const exp = iat + 3600;
 
-    const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-    const claims = base64url(
+    const header = base64urlEncode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+    const claims = base64urlEncode(
       JSON.stringify({
         iss: sa.client_email,
         scope,
@@ -113,7 +103,7 @@ export class GCSBlobStorage implements BlobStorage {
       privateKey,
       new TextEncoder().encode(signingInput),
     );
-    const signature = base64urlFromBytes(new Uint8Array(signatureBytes));
+    const signature = base64urlEncodeBytes(new Uint8Array(signatureBytes));
     const jwt = `${signingInput}.${signature}`;
 
     const response = await fetch(tokenEndpoint, {

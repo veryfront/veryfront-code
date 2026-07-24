@@ -143,7 +143,7 @@ describe("MultiTierCache - backfill TTL preservation", () => {
     assertEquals(l1.store.has("key"), false);
   });
 
-  it("falls back to defaultTtlSeconds when getRemainingTtlSeconds throws", async () => {
+  it("skips backfill when getRemainingTtlSeconds throws", async () => {
     const l1 = createCapturingTier("l1");
     const l3 = createCapturingTier("l3", { throwOnRemainingTtl: true });
     l3.store.set("key", "value");
@@ -159,9 +159,8 @@ describe("MultiTierCache - backfill TTL preservation", () => {
 
     await cache.get("key");
 
-    // Error is suppressed; backfill proceeds with defaultTtlSeconds
-    assertEquals(l1.store.get("key"), "value");
-    assertEquals(l1.setTtls.get("key"), 120);
+    assertEquals(l1.store.has("key"), false);
+    assertEquals(l1.setTtls.has("key"), false);
   });
 
   it("falls back to defaultTtlSeconds when source tier has no getRemainingTtlSeconds", async () => {
@@ -184,7 +183,7 @@ describe("MultiTierCache - backfill TTL preservation", () => {
     assertEquals(l1.setTtls.get("key"), 90);
   });
 
-  it("getRemainingTtlSeconds returning null falls back to defaultTtlSeconds", async () => {
+  it("skips backfill when getRemainingTtlSeconds returns null", async () => {
     const l1 = createCapturingTier("l1");
     const l3 = createCapturingTier("l3", { remainingTtl: null });
     l3.store.set("key", "value");
@@ -200,8 +199,8 @@ describe("MultiTierCache - backfill TTL preservation", () => {
 
     await cache.get("key");
 
-    assertEquals(l1.store.get("key"), "value");
-    assertEquals(l1.setTtls.get("key"), 150);
+    assertEquals(l1.store.has("key"), false);
+    assertEquals(l1.setTtls.has("key"), false);
   });
 
   it("preserves source remaining TTL when backfilling from L2 to L1", async () => {

@@ -1,11 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
@@ -32,6 +36,41 @@ function emptyRemoteSource(config: RemoteMCPToolSourceConfig): RemoteToolSource 
     executeTool: (_toolName: string, _args: unknown, _context?: ToolExecutionContext) =>
       Promise.resolve({ ok: true }),
   };
+}
+
+function createTextStream() {
+  return new ReadableStream<unknown>({
+    start(controller) {
+      controller.enqueue({ type: "text-delta", text: "done" });
+      controller.enqueue({ type: "finish", finishReason: "stop" });
+      controller.close();
+    },
+  });
+}
+
+function createMockModel(): ModelRuntime {
+  return {
+    provider: "anthropic",
+    modelId: "anthropic/claude-sonnet-4-6",
+    async doGenerate() {
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    },
+    async doStream() {
+      return { stream: createTextStream() };
+    },
+  };
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    deleteEnv(key);
+    return;
+  }
+  setEnv(key, value);
 }
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
@@ -80,6 +119,85 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     inputRequestId: "input-request-1",
   });
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
+});
+
+Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
+  const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+  const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
+  const previousProjectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
+  const previousProxyMode = getEnv("PROXY_MODE");
+
+  try {
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_TOKEN", "environment-token");
+    deleteEnv("VERYFRONT_PROJECT_SLUG");
+    deleteEnv("PROXY_MODE");
+    refreshEnvironmentConfig();
+    clearModelProviders();
+    registerModelProvider("anthropic", () => createMockModel());
+
+    let authorizationHeader: string | null = null;
+    let projectSlugHeader: string | null = null;
+
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "11111111-1111-4111-8111-111111111111",
+        projectSlug: "authorized-project",
+        authToken: "user-scoped-token",
+        instructions: "Base instructions",
+        model: "sonnet",
+        allowedTools: ["github__list_repos"],
+        conversationId: "conversation-1",
+        userId: "user-1",
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({}),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (new URL(request.url).pathname === "/integrations/tools/list") {
+          authorizationHeader = request.headers.get("Authorization");
+          projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+          return Response.json({
+            tools: [{
+              name: "github__list_repos",
+              description: "List repos",
+              inputSchema: { type: "object", properties: {} },
+            }],
+          });
+        }
+        return Response.json({ ok: true });
+      },
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the stream so runtime tool discovery executes.
+        }
+      },
+    );
+
+    assertEquals(authorizationHeader, "Bearer user-scoped-token");
+    assertEquals(projectSlugHeader, "authorized-project");
+  } finally {
+    await toolRegistry.clearAll();
+    clearModelProviders();
+    restoreEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+    restoreEnv("VERYFRONT_API_TOKEN", previousApiToken);
+    restoreEnv("VERYFRONT_PROJECT_SLUG", previousProjectSlug);
+    restoreEnv("PROXY_MODE", previousProxyMode);
+    refreshEnvironmentConfig();
+  }
 });
 
 Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the global registry", async () => {

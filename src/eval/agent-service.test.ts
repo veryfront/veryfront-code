@@ -2,7 +2,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgUiRequestSchema } from "veryfront/agent";
-import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
+import { datasets, evalAgent, type EvalAgentAdapterResult, metrics, runEval } from "veryfront/eval";
+import { defineSchema } from "veryfront/schemas";
+import { type Tool, tool } from "veryfront/tool";
 import {
   buildAgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
@@ -304,6 +306,41 @@ describe("eval/agent-service", () => {
     });
     assertEquals(record.durationMs, 0);
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
+  });
+
+  it("rejects mockTools before fetching from the hosted agent service", async () => {
+    let fetchCalled = false;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () => {
+        fetchCalled = true;
+        return createSseResponse([]);
+      },
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-mocks",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+      mockTools: {
+        list_files: tool({
+          id: "list_files",
+          description: "List files",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => [],
+        }) as Tool,
+      },
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "smoke", input: "List files" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(fetchCalled, false);
+    assertEquals(result.completed, false);
+    assertStringIncludes(result.error ?? "", "mockTools");
   });
 
   it("marks AG-UI tool result failures in eval traces", async () => {

@@ -1,13 +1,12 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
-import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 
@@ -23,6 +22,10 @@ type CacheRequestContext = {
   token?: string;
   projectId?: string;
   projectSlug?: string;
+};
+
+type CacheRequestOptions = {
+  failOnError?: boolean;
 };
 
 let warnedMissingAdapterContract = false;
@@ -95,6 +98,7 @@ export class ApiCacheBackend implements CacheBackend {
     method: string,
     path: string,
     body?: Record<string, unknown>,
+    options: CacheRequestOptions = {},
   ): Promise<T | null> {
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
@@ -182,6 +186,7 @@ export class ApiCacheBackend implements CacheBackend {
           path: sanitizeUrlForSpan(path),
           nextAttemptMs: error.nextAttemptMs,
         });
+        if (options.failOnError) throw error;
         return null;
       }
 
@@ -194,6 +199,7 @@ export class ApiCacheBackend implements CacheBackend {
         tokenSource,
         projectRef,
       });
+      if (options.failOnError) throw error;
       return null;
     }
   }
@@ -255,13 +261,13 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async del(key: string): Promise<void> {
-    await this.request("POST", "/del", { key: this.prefixKey(key) });
+    await this.request("POST", "/del", { key: this.prefixKey(key) }, { failOnError: true });
   }
 
   async delByPattern(pattern: string): Promise<number> {
     const result = await this.request<{ deleted: number }>("POST", "/del-pattern", {
       pattern: this.prefixKey(pattern),
-    });
+    }, { failOnError: true });
     return result?.deleted ?? 0;
   }
 }

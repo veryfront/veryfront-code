@@ -10,6 +10,12 @@ import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts"
 import type { CheckpointManager } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
 
+/** Internal set/delete operations emitted by one node execution. */
+export interface ContextPatch {
+  set: Record<string, unknown>;
+  delete: string[];
+}
+
 export interface DAGExecutorConfig {
   stepExecutor: StepExecutor;
   checkpointManager?: CheckpointManager;
@@ -35,8 +41,13 @@ export interface DAGExecutionResult {
   error?: string;
 }
 
+/** Internal result used when a composite node executes a child graph. */
+export interface DAGInternalExecutionResult extends DAGExecutionResult {
+  contextPatch: ContextPatch;
+}
+
 export interface NodeExecutionResult {
   state: NodeState;
-  contextUpdates: Record<string, unknown>;
+  contextPatch: ContextPatch;
   waiting: boolean;
 }

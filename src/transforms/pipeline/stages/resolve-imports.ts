@@ -6,6 +6,7 @@
  */
 
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { stripJsonImportAttributes } from "../../esm/import-attributes.ts";
 import { type RewriteContext, rewriteImports } from "../../import-rewriter/index.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -43,6 +44,10 @@ export const resolveImportsPlugin: TransformPlugin = {
 
   async transform(ctx: TransformContext): Promise<string> {
     const rewriteCtx = await buildRewriteContext(ctx);
-    return rewriteImports(ctx.code, rewriteCtx);
+    const code = await rewriteImports(ctx.code, rewriteCtx);
+    return stripJsonImportAttributes(
+      code,
+      (specifier) => specifier === "/_vf_modules/_veryfront/_deno-config.js",
+    );
   },
 };

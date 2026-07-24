@@ -5,7 +5,7 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { buildMissingModuleError } from "../missing-module.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
 import { cacheModule } from "./module-cache.ts";

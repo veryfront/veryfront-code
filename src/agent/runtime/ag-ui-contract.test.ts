@@ -120,6 +120,40 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(body.details, [{ path: [], message: "Malformed JSON request body" }]);
   });
 
+  it("returns a 400 response when the runtime AG-UI request has no body", async () => {
+    const result = await parseAgUiRuntimeRequestOrError(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 400);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI runtime request");
+    assertEquals(body.details, [{ path: [], message: "Malformed JSON request body" }]);
+  });
+
+  it("returns a 400 response for an invalid runtime AG-UI Content-Length header", async () => {
+    const result = await parseAgUiRuntimeRequestOrError(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": "invalid",
+        },
+        body: "{}",
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 400);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI runtime request");
+    assertEquals(body.details, [{ path: [], message: "Malformed JSON request body" }]);
+  });
+
   it("returns a 400 response for invalid runtime AG-UI payloads", async () => {
     const result = await parseAgUiRuntimeRequestOrError(
       new Request("http://localhost/api/ag-ui", {

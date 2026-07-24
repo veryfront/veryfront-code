@@ -2,9 +2,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CachePayload, CacheStore } from "./types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "./stores/index.ts";
+import { markRequestProfilePhase, metrics } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
-import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 
 /** Default TTL for cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;

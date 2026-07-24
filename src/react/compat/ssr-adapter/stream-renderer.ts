@@ -4,7 +4,7 @@ import { getReactVersionInfo } from "../version-detector/index.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { isDebugEnvEnabled } from "#veryfront/config/env.ts";
 import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 

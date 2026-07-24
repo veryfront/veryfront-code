@@ -14,6 +14,7 @@ import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/sha
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
+import { isAutoConfirmEnabled } from "../../shared/interactive.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
@@ -29,6 +30,7 @@ import {
  */
 export const getDeployArgsSchema = defineSchema((v) =>
   v.object({
+    projectDir: v.string().optional(),
     branch: v.string().min(1).default("main"),
     env: v.string().min(1).default("production"),
     releaseName: v.string().min(1).optional(),
@@ -50,6 +52,7 @@ export type DeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
  * Parse CLI arguments into validated DeployOptions
  */
 export const parseDeployArgs = createArgParser(DeployArgsSchema, {
+  projectDir: CommonArgs.projectDir,
   branch: CommonArgs.branch,
   env: CommonArgs.env,
   releaseName: CommonArgs.releaseName,
@@ -57,6 +60,10 @@ export const parseDeployArgs = createArgParser(DeployArgsSchema, {
   force: CommonArgs.force,
   quiet: CommonArgs.quiet,
 });
+
+export function requiresExplicitDeployConfirmation(force: boolean): boolean {
+  return !force && !isAutoConfirmEnabled();
+}
 
 /**
  * Environment from the API
@@ -535,13 +542,12 @@ export async function resolvePushedSource(input: {
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<void> {
-  const { branch, env, releaseName, dryRun, force, quiet } = options;
+  const { projectDir = cwd(), branch, env, releaseName, dryRun, force, quiet } = options;
 
   if (isJsonMode()) {
     return deployCommandJson(options);
   }
 
-  const projectDir = cwd();
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
   const config = await resolveConfigWithAuth(projectDir);
@@ -661,12 +667,11 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<void> {
-  const { branch, env, releaseName, dryRun, force } = options;
+  const { projectDir = cwd(), branch, env, releaseName, dryRun, force } = options;
 
   try {
     // JSON mode requires --force or --yes to prevent accidental deploys
-    const { isInteractive } = await import("../../shared/interactive.ts");
-    if (!force && isInteractive()) {
+    if (requiresExplicitDeployConfirmation(force)) {
       streamJsonLine({
         type: "result",
         success: false,
@@ -679,7 +684,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }
 
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
-    const projectDir = cwd();
     const config = await resolveConfigWithAuth(projectDir);
     const client = createApiClient(config);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });

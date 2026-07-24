@@ -1,4 +1,5 @@
 import type { CacheManager } from "./data-fetching-cache.ts";
+import { isDataControlResult, toDataControlResult } from "./helpers.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
@@ -9,8 +10,8 @@ import {
   REVALIDATION_PER_PROJECT_LIMIT,
   REVALIDATION_TIMEOUT_MS,
 } from "#veryfront/utils/constants/cache.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
@@ -58,17 +59,25 @@ function resolveProjectId(context: DataContext, fallback: string): string {
 
 type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
 
+export interface StaticDataFetchOptions {
+  modulePath?: string;
+}
+
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
 
   constructor(private cacheManager: CacheManager) {}
 
-  async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
+  async fetch(
+    pageModule: PageWithData,
+    context: DataContext,
+    options: StaticDataFetchOptions = {},
+  ): Promise<DataResult> {
     const getStaticData = pageModule.getStaticData;
     if (typeof getStaticData !== "function") return { props: {} };
 
     const pathname = context.url?.pathname ?? "unknown";
-    const cacheKey = this.cacheManager.createCacheKey(context);
+    const cacheKey = this.cacheManager.createCacheKey(context, options.modulePath);
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
@@ -113,17 +122,27 @@ export class StaticDataFetcher {
     return { params: context.params, url: context.url };
   }
 
-  private executeStaticData(
+  private async executeStaticData(
     getStaticData: StaticDataHandler,
     context: DataContext,
     timeoutMs: number,
     label: string,
   ): Promise<DataResult> {
-    return withTimeoutThrow(
-      Promise.resolve(getStaticData(this.createStaticDataContext(context))),
-      timeoutMs,
-      label,
-    );
+    try {
+      return await withTimeoutThrow(
+        Promise.resolve(getStaticData(this.createStaticDataContext(context))),
+        timeoutMs,
+        label,
+      );
+    } catch (error) {
+      // `throw notFound()` / `throw redirect(...)`: treat a thrown control
+      // result exactly like a returned one. Normalising at the one place every
+      // path runs the handler covers the cached path as well as the preview
+      // one, and keeps a 404 from counting against the caller's circuit
+      // breaker.
+      if (isDataControlResult(error)) return toDataControlResult(error);
+      throw error;
+    }
   }
 
   private storeCacheEntry(cacheKey: string, result: DataResult): void {
@@ -266,6 +285,25 @@ export class StaticDataFetcher {
             REVALIDATION_TIMEOUT_MS,
             `getStaticData revalidation for ${pathname}`,
           );
+
+          // A background revalidation refreshes a page that is already being
+          // served. A notFound or redirect is not a refreshed page, so keep
+          // the entry that is live and let the next revalidation try again.
+          // Storing it would serve a 404 for the previously healthy page, and
+          // a control result carries no revalidate interval, so the entry
+          // would never revalidate again either.
+          if (result.notFound || result.redirect) {
+            serverLogger.warn(
+              "DATA_REVALIDATION_CONTROL_RESULT background revalidation returned a control result, keeping the cached entry",
+              {
+                pathname,
+                durationMs: Math.round(performance.now() - start),
+                cacheKey,
+                control: result.notFound ? "notFound" : "redirect",
+              },
+            );
+            return;
+          }
 
           this.storeCacheEntry(cacheKey, result);
         } catch (error) {

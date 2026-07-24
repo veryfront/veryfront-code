@@ -296,9 +296,14 @@ export async function handleHostedChildForkFailure(
   }
 
   const errorText = input.error instanceof Error ? input.error.message : "Unknown error";
+  // A step is one LLM turn, not one tool call, so tool-call count overcounts
+  // steps (a single turn can emit several parallel calls). The failed stream
+  // never resolves its step list, so the exact count is unavailable here; use
+  // completed tool-result rounds as the closest lower-bound proxy that never
+  // exceeds the real step count.
   const common = buildChildRunResultCommon({
     description: input.description,
-    steps: input.toolCalls.length,
+    steps: input.toolResults.length,
     toolCalls: input.toolCalls,
     toolResults: input.toolResults,
     usage: input.usage,

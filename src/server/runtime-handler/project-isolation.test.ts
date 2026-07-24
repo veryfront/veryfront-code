@@ -153,6 +153,18 @@ describe("server/runtime-handler/project-isolation", () => {
       manager.shutdown();
     });
 
+    it("should record a timeout without releasing in-flight work", () => {
+      const manager = createManager();
+      manager.startRequest("proj");
+      manager.recordTimeout("proj");
+
+      const stats = manager.getStats()["proj"];
+      assertEquals(stats?.inFlight, 1);
+      assertEquals(stats?.totalTimeouts, 1);
+      assertEquals(stats?.recentFailures, 1);
+      manager.shutdown();
+    });
+
     it("should open circuit after reaching failure threshold", () => {
       const manager = createManager({ circuitBreakerThreshold: 2 });
       manager.startRequest("proj");

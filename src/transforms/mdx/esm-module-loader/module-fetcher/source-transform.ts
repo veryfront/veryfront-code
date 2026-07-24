@@ -9,7 +9,7 @@ import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
 

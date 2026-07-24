@@ -14,7 +14,12 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasLockSupport,
+  hasWorkerSupport,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import {
   requireWorkflowSourceIntegrationPolicy,
@@ -390,10 +395,7 @@ export class WorkflowRunManager {
         if (tracked.missingPolls >= 2) {
           this.activeExecutions.delete(runId);
           this.stats.executionsFailed++;
-          logger.warn(
-            `[WorkflowRunManager] Run execution ${tracked.executionId} for run ${runId} ` +
-              `vanished from executor list; freeing concurrency slot`,
-          );
+          logger.warn("[WorkflowRunManager] Run execution vanished; freeing concurrency slot");
         }
       }
 
@@ -403,14 +405,19 @@ export class WorkflowRunManager {
           continue;
         }
 
-        if (executionInfo.status === tracked.status) {
-          continue;
-        }
-
-        tracked.status = executionInfo.status;
-
         // Handle terminal states
         if (executionInfo.status === "succeeded" || executionInfo.status === "failed") {
+          try {
+            await this.config.executor.deleteRunExecution(executionInfo.executionId);
+          } catch (error) {
+            tracked.status = executionInfo.status;
+            logger.warn(
+              `[WorkflowRunManager] Failed to clean up run execution ${executionInfo.executionId}:`,
+              error,
+            );
+            continue;
+          }
+
           this.activeExecutions.delete(executionInfo.runId);
 
           if (executionInfo.status === "succeeded") {
@@ -425,7 +432,14 @@ export class WorkflowRunManager {
               executionInfo.error,
             );
           }
+          continue;
         }
+
+        if (executionInfo.status === tracked.status) {
+          continue;
+        }
+
+        tracked.status = executionInfo.status;
       }
     } catch (error) {
       logger.error(`Failed to sync run execution statuses:`, error);
@@ -437,6 +451,7 @@ export class WorkflowRunManager {
    */
   private async createExecutionForWorkflow(run: WorkflowRun): Promise<void> {
     const executionId = generateId("run_exec");
+    const workerId = `run-execution:${executionId}`;
 
     const executionConfig: RunExecutionConfig = {
       executionId,
@@ -447,6 +462,7 @@ export class WorkflowRunManager {
       debug: this.config.debug,
     };
 
+    let claimed = false;
     try {
       requireWorkflowSourceIntegrationPolicy(run);
 
@@ -456,12 +472,16 @@ export class WorkflowRunManager {
       // the order reversed, a crash after this point leaves a "running" run with
       // no process, which stalled-run recovery reclaims cleanly. A spawn failure
       // is handled by the catch below, which marks the run failed.
-      await this.config.backend.updateRun(run.id, {
+      if (run.status !== "pending" && run.status !== "waiting" && run.status !== "running") {
+        return;
+      }
+      claimed = await updateRunIfStatus(this.config.backend, run.id, [run.status], {
         status: "running",
         startedAt: new Date(),
         heartbeatAt: new Date(),
-        workerId: `run-execution:${executionId}`,
+        workerId,
       });
+      if (!claimed) return;
 
       await runWithWorkflowSourceIntegrationPolicy(
         run,
@@ -486,16 +506,31 @@ export class WorkflowRunManager {
       logger.error(`Failed to create run execution for ${run.id}:`, error);
       this.stats.executionsFailed++;
 
-      // Mark workflow as failed
-      await this.config.backend.updateRun(run.id, {
-        status: "failed",
+      const failure = {
+        status: "failed" as const,
         error: {
           message: `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
         completedAt: new Date(),
-      });
+      };
+
+      if (claimed) {
+        // We own the run: only fail it while it is still running under our id, so
+        // a run reclaimed by a new owner after a lock loss is left untouched.
+        await updateRunIfStatus(this.config.backend, run.id, ["running"], failure, workerId);
+      } else {
+        // The failure happened before we claimed the run (e.g. a missing source
+        // policy snapshot). The run is still unowned, so fail it while it remains
+        // in a pre-execution state rather than clobbering a terminal run.
+        await updateRunIfStatus(
+          this.config.backend,
+          run.id,
+          ["pending", "waiting", "running"],
+          failure,
+        );
+      }
     }
   }
 

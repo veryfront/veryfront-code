@@ -9,6 +9,20 @@ const NODE_POLYFILL_MAP: Record<string, string> = {
   "node:async_hooks": "/_vf_modules/_veryfront/platform/polyfills/node-async-hooks.js",
 };
 
+/**
+ * Whether a builtin resolves to a polyfill that implements it for real, rather
+ * than to the noop.
+ *
+ * A real polyfill exports the names it is asked for, so a named import of it
+ * links successfully and must be left exactly as written. Rewriting it to a
+ * namespace import plus a destructure would move the binding out of link
+ * position and into the module body, where it is no longer hoisted — which
+ * breaks any cyclic module graph that reads it at evaluation time.
+ */
+export function hasRealBrowserPolyfill(specifier: string): boolean {
+  return specifier in NODE_POLYFILL_MAP;
+}
+
 const NODE_NOOP_URL = "/_vf_modules/_veryfront/platform/polyfills/node-noop.js";
 
 /**

@@ -1,4 +1,5 @@
 import { compareEvalReports } from "./baseline.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type {
   EvalMetricResult,
   EvalModelCandidateComparison,
@@ -616,9 +617,9 @@ export function compareEvalModelReports(
   const normalized = normalizeOptions(options);
   const baseline = reports.find((report) => reportModel(report) === normalized.baselineModel);
   if (!baseline) {
-    throw new Error(
-      `Baseline model "${normalized.baselineModel}" was not present in eval reports.`,
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: `Baseline model "${normalized.baselineModel}" was not present in eval reports.`,
+    });
   }
 
   const candidates = reports

@@ -1,7 +1,6 @@
 import { isAbsolute, join } from "#veryfront/compat/path";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
+import { createError, handleErrorWithFallback, toError } from "#veryfront/errors";
 import { computeHash } from "../utils/index.ts";
 import { getConfig } from "#veryfront/config";
 import { initializeBundleManifest } from "#veryfront/utils/bundle-manifest-init.ts";

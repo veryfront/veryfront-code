@@ -11,6 +11,8 @@ import {
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
+import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -27,13 +29,14 @@ import {
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
 import { resolveHostedRuntimeAllowedToolNames } from "#veryfront/agent/hosted/runtime-essential-tools.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import {
+  createToolsFromHostDefinitions,
   isToolVisibleTo,
   type Tool,
   type ToolExecutionContext,
   toolRegistry,
 } from "#veryfront/tool";
+import { skillRegistry } from "#veryfront/skill/registry.ts";
 import {
   addSpanEvent,
   setSpanAttributes,
@@ -49,6 +52,7 @@ import {
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
+import { createInternalAgentRunSystemPromptResolver } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -93,6 +97,7 @@ export interface RuntimeAgentStreamExecutionDeps {
   projectAgentSandbox?: {
     apiUrl?: string;
     authToken?: string;
+    branchId?: string | null;
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
@@ -193,9 +198,6 @@ export function buildMergedTools(
   if (agent.config.tools === true) {
     const merged: Record<string, Tool | boolean> = {};
     for (const [toolId, registryTool] of toolRegistry.getAll()) {
-      if (!agent.config.skills && SKILL_TOOL_IDS.has(toolId)) {
-        continue;
-      }
       // Owner-aware: another agent's owned tool never enters this agent's
       // model tool definitions.
       if (!isToolVisibleTo(registryTool, { agentId: agent.id })) {
@@ -363,16 +365,20 @@ async function buildProjectAgentSandboxTools(input: {
     getProjectId: () => sandboxConfig.projectId ?? input.deps.projectAgentSandbox?.projectId,
   });
 
-  const bash = sandboxResult.tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME];
-  if (!bash) {
+  const declaredTools = input.agent.config.tools;
+  const materializedTools = createToolsFromHostDefinitions(sandboxResult.tools);
+  const configuredTools = isRecord(declaredTools)
+    ? Object.fromEntries(
+      Object.entries(materializedTools).filter(([toolName]) => declaredTools[toolName] === true),
+    )
+    : {};
+  if (!configuredTools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]) {
     await sandboxResult.closeSandbox();
     return {};
   }
 
   return {
-    tools: {
-      [PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]: bash as Tool,
-    },
+    tools: configuredTools,
     closeSandbox: sandboxResult.closeSandbox,
   };
 }
@@ -395,6 +401,13 @@ function getAllowedRemoteToolNames(
     return [];
   }
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
+}
+
+function getForwardedMaxOutputTokens(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): number | undefined {
+  const value = forwardedProps?.maxOutputTokens;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 /**
@@ -430,8 +443,9 @@ function getRuntimeToolAllowlist(
 
 /**
  * Intersects the merged run tool set with the restrictive tool allowlist.
- * Skill runtime/delegation tools are preserved for skill-enabled agents,
- * mirroring the hosted chat runtime's allowlist semantics.
+ * Skill runtime tools are preserved for every agent. Delegation tools are
+ * preserved only when the agent has at least one visible skill, mirroring
+ * the hosted chat runtime's allowlist semantics.
  *
  * The allowlist bounds this run's direct tool surface only: preserved skill
  * delegation tools (`invoke_agent`) can spawn child runs whose tool assembly
@@ -452,15 +466,11 @@ function applyRuntimeToolAllowlist(
     // rather than silently skipping enforcement.
     return {};
   }
-  const availableSkillIds = agent.config.skills === true
-    ? ["*"]
-    : Array.isArray(agent.config.skills)
-    ? agent.config.skills
-    : undefined;
+  const hasVisibleSkills = skillRegistry.hasVisibleSkills({ agentId: agent.id });
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
     localToolNames: Object.keys(mergedTools),
-    ...(availableSkillIds ? { availableSkillIds } : {}),
+    ...(hasVisibleSkills ? { availableSkillIds: ["*"] } : {}),
   });
   if (!allowedToolNames) {
     return mergedTools;
@@ -468,6 +478,29 @@ function applyRuntimeToolAllowlist(
   return Object.fromEntries(
     Object.entries(mergedTools).filter(([toolName]) => allowedToolNames.has(toolName)),
   );
+}
+
+function getRequiredLocalToolNames(input: {
+  mergedTools: Agent["config"]["tools"];
+  availableLocalTools: Record<string, Tool | boolean>;
+  agent: Agent;
+}): string[] {
+  if (!input.mergedTools || input.mergedTools === true) {
+    return [];
+  }
+
+  return Object.entries(input.mergedTools)
+    .filter(([toolName, entry]) => {
+      if (entry && typeof entry === "object") {
+        return true;
+      }
+      if (Object.hasOwn(input.availableLocalTools, toolName)) {
+        return true;
+      }
+      const registryTool = toolRegistry.get(toolName);
+      return Boolean(registryTool && isToolVisibleTo(registryTool, { agentId: input.agent.id }));
+    })
+    .map(([toolName]) => toolName);
 }
 
 function getServerResolvedProjectToolNames(
@@ -658,10 +691,52 @@ export async function createRuntimeAgentStreamResponse(
         (toolName) => typeof toolName === "string" && runtimeToolAllowlist.has(toolName),
       )
       : undefined;
+  const effectiveProviderToolNames = cappedProviderTools ??
+    (Array.isArray(agent.config.providerTools)
+      ? agent.config.providerTools.filter((toolName): toolName is string =>
+        typeof toolName === "string"
+      )
+      : []);
+  const modelSupportedProviderToolNames = new Set(
+    getProviderNativeToolNames({ model: agent.config.model }),
+  );
+  const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
+    modelSupportedProviderToolNames.has(toolName)
+  );
+  const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
+  const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
+  const forwardedToolNames = (forwardedIntegrationToolDefs?.map((def) => def.name) ?? [])
+    .filter((toolName) => allowedRemoteToolNameSet.has(toolName));
+  const localToolNames = getRequiredLocalToolNames({
+    mergedTools,
+    availableLocalTools,
+    agent,
+  });
+  const runtimeToolNames = selectProviderCompatibleToolNames(
+    [
+      ...new Set([
+        ...mergedToolNames,
+        ...providerToolNames,
+        ...(allowedRemoteToolNames ?? []),
+        ...forwardedToolNames,
+      ]),
+    ].sort(),
+    {
+      model: agent.config.model,
+      requiredToolNames: localToolNames,
+    },
+  );
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
       ...agent.config,
+      system: createInternalAgentRunSystemPromptResolver({
+        agent,
+        runInput: input,
+        projectId: deps.projectAgentSandbox?.projectId ?? null,
+        branchId: deps.projectAgentSandbox?.branchId,
+        toolNames: runtimeToolNames,
+      }),
       tools: mergedTools,
       ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
       ...(allowedRemoteToolNames !== undefined
@@ -680,6 +755,7 @@ export async function createRuntimeAgentStreamResponse(
     normalizeAgUiRuntimeMessages(input.messages),
     mergedTools,
   );
+  const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
   let runtimeStream: ReadableStream<Uint8Array>;
   let clientAttached = true;
   try {
@@ -702,7 +778,7 @@ export async function createRuntimeAgentStreamResponse(
         },
       },
       undefined,
-      undefined,
+      maxOutputTokens,
       abortSignal,
     );
     logger.info("Internal agent runtime stream attached", {

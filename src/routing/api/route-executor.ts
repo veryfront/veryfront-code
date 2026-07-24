@@ -1,7 +1,7 @@
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, errorToRFC9457Response, NOT_SUPPORTED, toError } from "#veryfront/errors";
 import type {
   APIRoute,
   AppRouteContext,
@@ -15,7 +15,6 @@ import {
 } from "./method-validator.ts";
 import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { isDevelopment as isDevelopmentEnv } from "#veryfront/platform/environment.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -262,7 +261,7 @@ function workerResponseToResponse(
   }
 
   // data-result type is not expected in API route execution
-  throw new Error(`Unexpected worker response type: ${workerResponse.type}`);
+  throw NOT_SUPPORTED.create({ detail: `Unexpected worker response type: ${workerResponse.type}` });
 }
 
 // ---------------------------------------------------------------------------

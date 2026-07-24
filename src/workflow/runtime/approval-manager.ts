@@ -7,14 +7,20 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import { INVALID_ARGUMENT, PERMISSION_DENIED, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import {
+  INVALID_ARGUMENT,
+  ORCHESTRATION_ERROR,
+  PERMISSION_DENIED,
+  RESOURCE_NOT_FOUND,
+} from "#veryfront/errors";
 
 const logger = baseLogger.component("approval-manager");
 
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
+const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 
 export type ApprovalNotifier = (
   approval: PendingApproval,
@@ -49,7 +55,7 @@ export interface ApprovalRequest {
   expiresAt?: Date;
   /**
    * Set when notifying approvers failed. The approval was still created and the
-   * workflow is paused, but approvers were NOT informed — the caller should
+   * workflow is paused, but approvers were NOT informed. The caller should
    * re-notify or alert an operator rather than assume delivery.
    */
   notificationError?: string;
@@ -105,9 +111,28 @@ export class ApprovalManager {
       runId: run.id,
     });
 
-    // Attempt notification before persisting so a failure is recorded ON the
-    // stored approval (savePendingApproval appends, so we cannot amend it after
-    // the fact without duplicating). The failure is also returned to the caller.
+    // Worker-owned approvals are reserved atomically before notification. This
+    // prevents a delayed onWaiting callback from notifying or appending after a
+    // replacement worker has claimed the run.
+    const ownerBound = run.workerId !== undefined;
+    if (ownerBound) {
+      const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
+      const saved = saveOwned
+        ? await saveOwned.call(
+          this.config.backend,
+          run.id,
+          ["waiting"],
+          run.workerId!,
+          approval,
+        )
+        : false;
+      if (!saved) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Workflow execution ownership changed before approval persistence",
+        });
+      }
+    }
+
     try {
       await this.config.notifier?.(approval, run);
     } catch (error) {
@@ -119,7 +144,19 @@ export class ApprovalManager {
       );
     }
 
-    await this.config.backend.savePendingApproval(run.id, approval);
+    if (ownerBound) {
+      if (approval.notificationError) {
+        await this.config.backend.updatePendingApproval?.(
+          run.id,
+          approval.id,
+          { notificationError: approval.notificationError },
+        );
+      }
+    } else {
+      // Preserve direct/ownerless behavior: resolve notification first so its
+      // delivery error is included in the initial append.
+      await this.config.backend.savePendingApproval(run.id, approval);
+    }
 
     return {
       approvalId: approval.id,
@@ -161,6 +198,11 @@ export class ApprovalManager {
       approved: decision.approved,
     });
 
+    // Fast-path read: fetch the approval to validate expiry and approver
+    // authorization before mutating anything. The pending-status check here is
+    // only an early-out for the common already-decided case. It is NOT the
+    // authoritative gate, because a concurrent decision could slip in between
+    // this read and the write below.
     const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
@@ -179,11 +221,13 @@ export class ApprovalManager {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
-    await this.config.backend.updateApproval(runId, approvalId, decision);
-
-    const run = await this.config.backend.getRun(runId);
-    if (!run) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    // Authoritative gate: the backend applies the decision only while the
+    // approval is still pending and reports whether it won the race. If another
+    // decision resolved this approval first, `applied` is false and we must not
+    // proceed to touch the run.
+    const applied = await this.config.backend.updateApproval(runId, approvalId, decision);
+    if (applied === false) {
+      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
     }
 
     const decidedAt = new Date();
@@ -193,50 +237,79 @@ export class ApprovalManager {
       comment: decision.comment,
       decidedAt: decidedAt.toISOString(),
     };
+    const activeStatuses: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
-    await this.config.backend.updateRun(runId, {
-      context: {
-        ...run.context,
-        [approval.nodeId]: decisionContext,
-      },
-      nodeStates: {
-        ...run.nodeStates,
-        [approval.nodeId]: {
-          nodeId: approval.nodeId,
-          status: "completed",
-          output: {
-            approved: decision.approved,
-            approver: decision.approver,
-            comment: decision.comment,
-          },
-          attempt: 1,
-          completedAt: decidedAt,
-        },
-      },
-    });
-
-    if (decision.approved) {
-      if (!this.config.executor) {
-        return;
+    // The approval decision is already durable. Reconcile it onto whichever
+    // worker owns the run now, retrying if ownership changes between the read,
+    // conditional patch, and resume. Without this loop, a successful approval
+    // update could be consumed while leaving the workflow permanently waiting.
+    for (let attempt = 0; attempt < MAX_DECISION_RECONCILIATION_ATTEMPTS; attempt++) {
+      const run = await this.config.backend.getRun(runId);
+      if (!run) {
+        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
       }
+      if (!activeStatuses.includes(run.status)) return;
+
+      const expectedWorkerId = run.workerId;
+      const runPatch: Partial<WorkflowRun> = {
+        context: {
+          ...run.context,
+          [approval.nodeId]: decisionContext,
+        },
+        nodeStates: {
+          ...run.nodeStates,
+          [approval.nodeId]: {
+            nodeId: approval.nodeId,
+            status: "completed",
+            output: {
+              approved: decision.approved,
+              approver: decision.approver,
+              comment: decision.comment,
+            },
+            attempt: 1,
+            completedAt: decidedAt,
+          },
+        },
+      };
+
+      const updated = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        activeStatuses,
+        decision.approved ? runPatch : {
+          ...runPatch,
+          status: "failed",
+          error: {
+            message: `Approval "${approvalId}" was rejected${
+              decision.comment ? `: ${decision.comment}` : ""
+            }`,
+          },
+          completedAt: new Date(),
+        },
+        expectedWorkerId,
+      );
+      if (!updated) continue;
+
+      if (!decision.approved || !this.config.executor) return;
 
       try {
-        await this.config.executor.resume(runId);
+        await this.config.executor.resume(runId, undefined, expectedWorkerId);
+        return;
       } catch (error) {
+        const latestRun = await this.config.backend.getRun(runId);
+        if (
+          latestRun && activeStatuses.includes(latestRun.status) &&
+          latestRun.workerId !== expectedWorkerId
+        ) {
+          continue;
+        }
         logger.error("Failed to resume workflow", error);
         throw error;
       }
-      return;
     }
 
-    await this.config.backend.updateRun(runId, {
-      status: "failed",
-      error: {
-        message: `Approval "${approvalId}" was rejected${
-          decision.comment ? `: ${decision.comment}` : ""
-        }`,
-      },
-      completedAt: new Date(),
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow execution ownership kept changing while applying approval "${approvalId}"`,
     });
   }
 
@@ -307,13 +380,18 @@ export class ApprovalManager {
         approvalId: approval.id,
       });
 
-      await this.config.backend.updateApproval(runId, approval.id, {
+      const expired = await this.config.backend.updateApproval(runId, approval.id, {
         approved: false,
         approver: "system",
         comment: "Approval expired",
       });
+      // A concurrent decision may have resolved this approval between the list
+      // read and here; if so the atomic gate skipped it, so don't fail the run.
+      if (expired === false) {
+        continue;
+      }
 
-      await this.config.backend.updateRun(runId, {
+      await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",
         error: { message: `Approval "${approval.id}" expired` },
         completedAt: new Date(),

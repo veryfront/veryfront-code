@@ -1,21 +1,10 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { buildServerTimingValue, roundMs } from "#veryfront/observability/request-profiler.ts";
 
 export interface ProxyServerTiming {
   enabled: boolean;
   startedAt: number;
   phases: Map<string, number>;
-}
-
-function roundMs(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function formatDuration(value: number): string {
-  return Math.max(0, roundMs(value)).toFixed(2);
-}
-
-function sanitizeMetricName(name: string): string {
-  return name.replace(/[^A-Za-z0-9!#$%&'*+\-.^_`|~]/g, "_");
 }
 
 export function shouldEnableProxyServerTiming(): boolean {
@@ -64,12 +53,7 @@ export function withProxyServerTimingHeader(
 ): Response {
   if (!timing.enabled) return response;
 
-  const metrics = [`proxy.total;dur=${formatDuration(totalMs)}`];
-  for (const [name, duration] of timing.phases.entries()) {
-    metrics.push(`${sanitizeMetricName(name)};dur=${formatDuration(duration)}`);
-  }
-
-  const value = metrics.join(", ");
+  const value = buildServerTimingValue("proxy.total", totalMs, timing.phases.entries());
 
   try {
     const existing = response.headers.get("Server-Timing");

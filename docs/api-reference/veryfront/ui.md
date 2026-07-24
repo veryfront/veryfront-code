@@ -9,11 +9,11 @@ order: 35
 ```ts
 import {
   cva,
+  generateTokenCSS,
+  getDocumentNonce,
   getFileTypeLabel,
   useAppShell,
   useColorMode,
-  useColorModeOptional,
-  Alert,
 } from "veryfront/ui";
 ```
 
@@ -61,7 +61,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `AlertAction` | Trailing action slot for `<Alert>` (button or link). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L89) |
 | `AlertContent` | Message body for `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L70) |
 | `AlertIcon` | Leading icon slot for `<Alert>` (size-4 recommended). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L51) |
-| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L517) |
+| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L530) |
 | `Avatar` | Render a user / agent / entity avatar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L37) |
 | `Badge` | Render a badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L38) |
 | `Button` | Render an action button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L126) |
@@ -71,7 +71,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `Checkbox` | A checkbox with an overlaid check indicator. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L23) |
 | `CheckboxField` | A checkbox paired with a clickable label and optional description. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L62) |
 | `CheckboxGroup` | Vertical group of checkboxes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L91) |
-| `CodeBlock` | Render a syntax-highlighted code block (or a mermaid diagram). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L418) |
+| `CodeBlock` | Render a syntax-highlighted code block (or a mermaid diagram). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L438) |
 | `Collapsible` | Collapsible root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L28) |
 | `CollapsibleContent` | Collapsible content - rendered only while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L85) |
 | `CollapsibleTrigger` | Toggles the collapsible. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L59) |
@@ -90,6 +90,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `CommandList` | Scrollable results list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L157) |
 | `CommandSeparator` | Divider between groups. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L218) |
 | `CommandShortcut` | Trailing shortcut / metadata text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L307) |
+| `DesignTokenStyle` | Scoped design-token stylesheet. Idempotent - render it anywhere. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tokens.tsx#L23) |
 | `Dialog` | Dialog root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L38) |
 | `DialogAction` | Recommended action button (primary, default size). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L208) |
 | `DialogBody` | Scrollable body area with a bottom edge-fade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L172) |
@@ -162,16 +163,18 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `TagGroup` | Wrapping container for a row of tags. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L67) |
 | `TagLink` | Tag rendered as an external link. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L32) |
 | `Textarea` | Render a textarea. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L43) |
-| `Tooltip` | Tooltip root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L35) |
-| `TooltipContent` | Tooltip content - portalled + positioned while hovered/focused. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L134) |
-| `TooltipProvider` | Provider for shared tooltip config. Basic: a passthrough for API parity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L28) |
-| `TooltipTrigger` | Tooltip trigger. `asChild` merges onto the child element (e.g. a Button). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L57) |
+| `Tooltip` | Tooltip root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L36) |
+| `TooltipContent` | Tooltip content - portalled + positioned while hovered/focused. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L135) |
+| `TooltipProvider` | Provider for shared tooltip config. Basic: a passthrough for API parity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L29) |
+| `TooltipTrigger` | Tooltip trigger. `asChild` merges onto the child element (e.g. a Button). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L58) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `cva` | Build a class-name function from a base plus a variants config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/cva.ts#L45) |
+| `generateTokenCSS` | Generates the scoped CSS for the design tokens. Every rule matches BOTH the canonical `[data-vf-ui]` scope and the `[data-vf-chat]` compat alias, so tokens don't leak to the page and existing consumers keep working. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/design-tokens.ts#L184) |
+| `getDocumentNonce` | Reuse the server-issued CSP nonce for client-created style/script elements during hydration and SPA updates. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/csp-nonce.ts#L5) |
 | `getFileTypeLabel` | Human label for a file extension, falling back to the media type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L233) |
 | `useAppShell` | Access the enclosing {@link AppShell}'s state (external triggers, etc.). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L49) |
 | `useColorMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L108) |
@@ -182,19 +185,19 @@ export default function App({ children }: { children: React.ReactNode }) {
 | Name | Description | Source |
 |------|-------------|--------|
 | `AlertProps` | Props accepted by `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L23) |
-| `AppShellHeaderProps` | Props accepted by {@link AppShellHeader}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L422) |
+| `AppShellHeaderProps` | Props accepted by {@link AppShellHeader}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L435) |
 | `AppShellOpenState` | Per-side visibility map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L95) |
 | `AppShellProps` | Props accepted by {@link AppShell}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L101) |
 | `AppShellSide` | Which edge a sidebar docks to. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L28) |
-| `AppShellSidebarProps` | Props accepted by {@link AppShellSidebar}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L225) |
-| `AppShellTriggerProps` | Props accepted by {@link AppShellTrigger}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L454) |
+| `AppShellSidebarProps` | Props accepted by {@link AppShellSidebar}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L231) |
+| `AppShellTriggerProps` | Props accepted by {@link AppShellTrigger}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L467) |
 | `AvatarProps` | Props accepted by `<Avatar>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L25) |
 | `BadgeProps` | Props accepted by `<Badge>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L32) |
 | `ButtonProps` | Props accepted by `<Button>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L116) |
 | `CardProps` | Props accepted by `<Card>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/card.tsx#L44) |
 | `CheckboxFieldProps` | Props accepted by `<CheckboxField>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L56) |
 | `CheckboxProps` | Props accepted by `<Checkbox>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L16) |
-| `CodeBlockProps` | Props accepted by `<CodeBlock>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L226) |
+| `CodeBlockProps` | Props accepted by `<CodeBlock>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L237) |
 | `CollapsibleProps` | Props accepted by `<Collapsible>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L20) |
 | `ColorModeProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L36) |
 | `CommandDialogProps` | Props accepted by `<CommandDialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L88) |
@@ -234,7 +237,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `TabsProps` | Props accepted by `<Tabs>` (the tablist container). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tabs.tsx#L33) |
 | `TagLinkProps` | Props accepted by `<TagLink>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tag.tsx#L27) |
 | `TextareaProps` | Props accepted by `<Textarea>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L37) |
-| `TooltipContentProps` | Props accepted by `<TooltipContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L128) |
+| `TooltipContentProps` | Props accepted by `<TooltipContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/tooltip.tsx#L129) |
 | `VariantProps` | Extracts the variant props of a `cva` function, like upstream's helper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/cva.ts#L36) |
 
 ### Constants
@@ -250,3 +253,57 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `selectTriggerVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L20) |
 | `switchTrackVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L15) |
 | `textareaVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L11) |
+
+## Deep imports
+
+These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
+
+### `veryfront/ui/icons`
+
+Ai - Icons
+
+```ts
+import { AlertTriangleIcon, ArrowDownIcon, ArrowRightIcon } from "veryfront/ui/icons";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `AlertTriangleIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L214) |
+| `ArrowDownIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L240) |
+| `ArrowRightIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L329) |
+| `ArrowUpIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L338) |
+| `BrainIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L230) |
+| `CheckCircleIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L206) |
+| `CheckIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L264) |
+| `ChevronDownIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L226) |
+| `CircleIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L198) |
+| `ClockIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L202) |
+| `CodeBracketsIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L400) |
+| `CopyIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L256) |
+| `FileTextIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L408) |
+| `InfoIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L210) |
+| `MessageSquareIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L234) |
+| `MoreHorizontalIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L354) |
+| `PanelLeftIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L346) |
+| `PanelRightIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L350) |
+| `PaperclipIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L260) |
+| `PencilIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L360) |
+| `PlusIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L302) |
+| `RefreshCwIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L252) |
+| `SearchIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L311) |
+| `SendIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L244) |
+| `SparklesIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L377) |
+| `StopIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L248) |
+| `TargetIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L404) |
+| `TrashIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L342) |
+| `WrenchIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L222) |
+| `XCircleIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L218) |
+| `XIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L320) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `IconProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icons/index.ts#L10) |

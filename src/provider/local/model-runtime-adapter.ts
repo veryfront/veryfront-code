@@ -12,7 +12,7 @@ import { generate, generateStream } from "./local-engine.ts";
 import type { ChatMessage, GenerateOptions } from "./local-engine.ts";
 import { DEFAULT_LOCAL_MODEL } from "./model-catalog.ts";
 import { serverLogger } from "#veryfront/utils";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors";
 import { throwIfLocalAIDisabled } from "./env.ts";
 import type { ModelRuntime } from "../types.ts";
 

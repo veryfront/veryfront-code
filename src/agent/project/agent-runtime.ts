@@ -1,17 +1,19 @@
 import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
-import {
-  clearTrackedAgents,
-  clearTranspileCache,
-  createProjectDiscoveryConfig,
-  discoverAll,
-} from "#veryfront/discovery/index.ts";
+import { discoverAll } from "#veryfront/discovery/discovery-engine.ts";
+import { clearTrackedAgents } from "#veryfront/discovery/discovery-utils.ts";
+import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
+import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { clearMCPRegistry } from "#veryfront/mcp";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { agentRegistry } from "../composition/index.ts";
-import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type {
+  RuntimeAgentMarkdownDefinition,
+  RuntimeAgentMcpServerConfig,
+} from "../runtime/agent-definition.ts";
 import {
   getRuntimeAgentMarkdownDefinition,
   isRuntimeAgentMarkdownAgent,
@@ -25,6 +27,7 @@ import {
   getActiveSourceIntegrationPolicy,
   runWithEffectiveSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy-context.ts";
+import { CONFIG_INVALID } from "#veryfront/errors";
 
 /** Public API contract for project agent runtime agent source. */
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";
@@ -38,7 +41,7 @@ export type ProjectAgentRuntimeAgentIdCandidates = {
 /** Input payload for discover project agent runtime. */
 export type DiscoverProjectAgentRuntimeInput = {
   projectDir: string;
-  adapter: RuntimeAdapter;
+  adapter?: RuntimeAdapter;
   config?: VeryfrontConfig | null;
   fsAdapter?: FileSystemAdapter;
   cacheKey?: string;
@@ -74,11 +77,34 @@ function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | u
   }
 
   const names = Object.entries(tools)
-    .filter(([, value]) => value === true)
-    .map(([name]) => name)
+    .flatMap(([name, value]) => value === false ? [] : [name])
     .sort();
 
   return names.length > 0 ? names : undefined;
+}
+
+function resolveSerializableMcpServers(
+  mcpServers: AgentConfig["mcpServers"],
+): RuntimeAgentMcpServerConfig[] | undefined {
+  if (mcpServers === undefined) {
+    return undefined;
+  }
+
+  return mcpServers.map((server) => {
+    if ("transport" in server) {
+      throw CONFIG_INVALID.create({
+        detail:
+          `HTTP MCP server "${server.id}" cannot be serialized into a hosted agent definition. ` +
+          "Configure it on the hosted agent service, or use a first-party MCP preset.",
+      });
+    }
+
+    return {
+      kind: server.kind,
+      ...(server.id === undefined ? {} : { id: server.id }),
+      ...(server.toolPolicy === undefined ? {} : { toolPolicy: server.toolPolicy }),
+    };
+  });
 }
 
 /** Clear project agent runtime registries. */
@@ -102,7 +128,7 @@ export async function discoverProjectAgentRuntime(
       const config = input.config ??
         await getConfig(
           input.projectDir,
-          input.adapter,
+          input.adapter ?? await getLocalAdapter(),
           input.cacheKey ? { cacheKey: input.cacheKey } : undefined,
         );
       const discoveryOptions = createProjectDiscoveryConfig({
@@ -148,6 +174,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
     return markdownDefinition;
   }
   const toolNames = resolveAgentToolNames(runtimeAgent.config.tools);
+  const mcpServers = resolveSerializableMcpServers(runtimeAgent.config.mcpServers);
 
   return {
     id: runtimeAgent.id,
@@ -161,12 +188,19 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(runtimeAgent.config.temperature === undefined
       ? {}
       : { temperature: runtimeAgent.config.temperature }),
+    ...(runtimeAgent.config.thinking === undefined
+      ? {}
+      : { thinking: runtimeAgent.config.thinking }),
     maxSteps: runtimeAgent.config.maxSteps,
     ...(runtimeAgent.config.providerTools
       ? { providerTools: runtimeAgent.config.providerTools }
       : {}),
     ...(runtimeAgent.config.skills === undefined ? {} : { skills: runtimeAgent.config.skills }),
     ...(toolNames === undefined ? {} : { tools: toolNames }),
+    ...(runtimeAgent.config.delegates === undefined
+      ? {}
+      : { delegates: runtimeAgent.config.delegates }),
+    ...(mcpServers === undefined ? {} : { mcpServers }),
   };
 }
 

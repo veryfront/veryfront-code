@@ -6,9 +6,9 @@ import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
@@ -84,7 +84,24 @@ async function loadModule(args: {
   }
 
   const fileExistsLocally = await fs.exists(modulePath);
-  if (fileExistsLocally) return loadTSModuleDirect(modulePath);
+  if (fileExistsLocally) {
+    try {
+      return await loadTSModuleDirect(modulePath);
+    } catch (error) {
+      // A direct import shares the dev server's runtime context, which is what
+      // makes auto-discovery (agentRegistry and friends) work — but it leaves
+      // specifier resolution to Deno, which knows nothing about the project's
+      // `@/` alias. Bundling can resolve that import map path, so fall back to
+      // it rather than reporting a routing-shaped 500.
+      if (!isSpecifierResolutionError(error)) throw error;
+
+      logger.debug("Direct import could not resolve a specifier, bundling instead", {
+        modulePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    }
+  }
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
   return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
@@ -95,6 +112,27 @@ async function loadModule(args: {
  * This allows the module to share the same runtime context as the dev server,
  * enabling auto-discovery features like agentRegistry to work.
  */
+
+/**
+ * Deno's resolver reports an unresolvable import as a TypeError whose message
+ * opens by naming the specifier it could not resolve. Anchoring on that opening
+ * is what keeps a module's own error out: a route that throws
+ * `Error("Cannot find module x")` at evaluation time is broken, and re-running
+ * it under bundling would evaluate broken code a second time.
+ */
+const SPECIFIER_RESOLUTION_MESSAGE =
+  /^(?:Import "[^"]+" not a dependency|Module not found "[^"]+"|Relative import path "[^"]+" not prefixed)/;
+
+/**
+ * True when a module failed to load because Deno could not resolve one of its
+ * import specifiers, rather than because the module itself is broken.
+ */
+export function isSpecifierResolutionError(error: unknown): boolean {
+  // Every other error shape the direct import can produce belongs to the module.
+  if (!(error instanceof TypeError)) return false;
+  return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
+}
+
 function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
   const cacheBuster = `?v=${Date.now()}`;
   const url = modulePath.startsWith("file://")
@@ -221,6 +259,40 @@ function createNamespaceOnLoadHandler(options: {
   });
 }
 
+/** Resolves the framework's built-in @/ project alias through the runtime adapter. */
+function createProjectAliasPlugin(
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): Plugin {
+  const projectRoot = pathHelper.resolve(projectDir);
+
+  return {
+    name: "vf-project-alias",
+    setup(build) {
+      build.onResolve({ filter: /^@\// }, (args) => {
+        const absolutePath = pathHelper.resolve(projectRoot, args.path.slice(2));
+        if (!isWithinDirectory(projectRoot, absolutePath)) {
+          logger.error(
+            `[API] Project alias escapes project: ${args.path} -> ${absolutePath}`,
+          );
+          return { errors: [{ text: `Project alias escapes project: ${args.path}` }] };
+        }
+
+        return { path: absolutePath, namespace: "vf-project-alias" };
+      });
+
+      build.onLoad(
+        { filter: /.*/, namespace: "vf-project-alias" },
+        createNamespaceOnLoadHandler({
+          adapter,
+          projectDir,
+          errorLabel: "via project alias",
+        }),
+      );
+    },
+  };
+}
+
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
 function createAdapterResolvePlugin(
   adapter: RuntimeAdapter,
@@ -267,6 +339,62 @@ function createAdapterResolvePlugin(
           errorLabel: "via adapter",
         }),
       );
+    },
+  };
+}
+
+/**
+ * Refuse to load any file the bundle resolved outside the project.
+ *
+ * The resolver plugins above validate the specifiers they claim, but esbuild
+ * applies the project's own tsconfig `paths` itself, before any `onResolve`
+ * callback runs. A templated project maps `@/*` to `./*`, so `@/../secrets.ts`
+ * is resolved by esbuild straight to a path above the project root and loaded
+ * in the default namespace, where none of those guards ever see it.
+ *
+ * This runs at load time instead, which is the one point every resolution
+ * strategy converges on. Returning `undefined` defers to normal loading, so the
+ * plugin only ever subtracts. Package code is exempt: `node_modules` is
+ * resolved by esbuild's own node resolution rather than by a project alias, and
+ * is legitimately hoisted above the project root in a monorepo.
+ *
+ * `roots` carries both the project path as configured and its symlink-resolved
+ * form, because esbuild reports the real path of a file it loaded. A project
+ * reached through a symlink (`/var` -> `/private/var` on macOS, and any deploy
+ * layout that symlinks a release directory) would otherwise fail every import.
+ */
+/**
+ * The project path as configured, plus its symlink-resolved form when they
+ * differ. `realPath` throws if the directory is missing, in which case the
+ * configured path is all there is to compare against.
+ */
+async function resolveProjectRoots(projectDir: string): Promise<string[]> {
+  const configured = pathHelper.resolve(projectDir);
+
+  try {
+    const real = await realPath(configured);
+    return real === configured ? [configured] : [configured, real];
+  } catch {
+    return [configured];
+  }
+}
+
+function createProjectBoundaryPlugin(roots: string[]): Plugin {
+  return {
+    name: "vf-project-boundary",
+    setup(build) {
+      build.onLoad({ filter: /.*/ }, (args) => {
+        if (roots.some((root) => isWithinDirectory(root, args.path))) return undefined;
+        if (args.path.split(/[\\/]/).includes("node_modules")) return undefined;
+
+        logger.error(`[API] Resolved import escapes project: ${args.path}`);
+        return {
+          errors: [{
+            text: `Import escapes the project directory: ${args.path}. ` +
+              `API routes may only import files inside the project.`,
+          }],
+        };
+      });
     },
   };
 }
@@ -369,8 +497,10 @@ function loadAndTranspileModule(
         },
         plugins: [
           createImportMapPlugin(projectDir, adapter, config),
+          createProjectAliasPlugin(adapter, projectDir),
           createAdapterResolvePlugin(adapter, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
+          createProjectBoundaryPlugin(await resolveProjectRoots(projectDir)),
         ],
       });
 

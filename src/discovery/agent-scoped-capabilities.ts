@@ -25,7 +25,7 @@ import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/p
 import { getSkill, registerSkill } from "#veryfront/skill/registry.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import { registerTool } from "#veryfront/mcp";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { ensureError } from "#veryfront/errors";
 import { filenameToId } from "./discovery-utils.ts";
 import {
   discoveryFileExists,

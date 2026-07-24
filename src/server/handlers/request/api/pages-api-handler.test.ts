@@ -8,8 +8,10 @@ import {
   __injectCacheForTests,
   getApiHandler,
   type HandlerCache,
+  LRUHandlerCache,
   resetApiHandler,
   resetApiHandlerForProject,
+  withApiHandler,
 } from "./pages-api-handler.ts";
 
 type MockHandler = { destroyed: boolean; destroy(): void };
@@ -84,6 +86,30 @@ function createHandlerContext(
 }
 
 describe("server/handlers/request/api/pages-api-handler", () => {
+  describe("LRUHandlerCache", () => {
+    it("should clean up automatically evicted handlers without cleaning up manual removals", async () => {
+      const evicted: MockHandler[] = [];
+      const cache = new LRUHandlerCache<Promise<MockHandler>>({
+        maxEntries: 1,
+        onEvict: (promise) => {
+          void promise.then((handler) => evicted.push(handler));
+        },
+      });
+      const first = createMockHandler();
+      const second = createMockHandler();
+
+      cache.set("first", Promise.resolve(first));
+      cache.set("second", Promise.resolve(second));
+      await Promise.resolve();
+
+      assertEquals(evicted, [first]);
+
+      cache.delete("second");
+      await Promise.resolve();
+      assertEquals(evicted, [first]);
+    });
+  });
+
   describe("resetApiHandler", () => {
     it("should clear a specific project entry by key", async () => {
       const cache = createMockCache();
@@ -164,6 +190,52 @@ describe("server/handlers/request/api/pages-api-handler", () => {
   });
 
   describe("getApiHandler", () => {
+    it("keeps a cached handler alive between lookup and request handling", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project-dir/pages/api/status.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectCacheForTests(cache as any);
+      __injectApiRouteDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: () => new Response("ok"),
+          }),
+      });
+      const ctx = createHandlerContext({
+        adapter,
+        projectSlug: "my-project",
+        mode: "production",
+        releaseId: "release-1",
+      });
+      const acquired = Promise.withResolvers<void>();
+      const continueToHandle = Promise.withResolvers<void>();
+      let retainedHandler: Awaited<ReturnType<typeof getApiHandler>> | undefined;
+
+      const responsePromise = withApiHandler(ctx, async (handler) => {
+        retainedHandler = handler;
+        acquired.resolve();
+        await continueToHandle.promise;
+        return handler.handle(new Request("http://localhost/api/status"), ctx);
+      });
+
+      await acquired.promise;
+      await resetApiHandler();
+      continueToHandle.resolve();
+
+      const response = await responsePromise;
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
+
+      const responseAfterRelease = await retainedHandler!.handle(
+        new Request("http://localhost/api/status"),
+        ctx,
+      );
+      assertEquals(responseAfterRelease?.status, 404);
+    });
+
     it("should not reuse stale preview route maps after source changes", async () => {
       const adapter = createMockAdapter();
       let refreshCalls = 0;

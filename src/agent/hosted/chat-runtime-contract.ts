@@ -115,6 +115,7 @@ export type HostedChatRuntimeTargetKind = "main_branch" | "environment" | "previ
 /** Options accepted by hosted chat runtime creation. */
 export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingConfig> = {
   projectId: string | null;
+  projectSlug?: string;
   branchId?: string | null;
   runtimeTargetKind?: HostedChatRuntimeTargetKind | null;
   runtimeTargetEnvironmentId?: string | null;
@@ -125,6 +126,7 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   model?: string;
   temperature?: number;
   maxSteps?: number;
+  maxOutputTokens?: number;
   allowedTools?: string[];
   /** Provider-native selection kept separate from local and MCP tool bindings. */
   allowedProviderTools?: string[];

@@ -4,6 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
 import {
   CircularModuleDependencyError,
@@ -473,6 +474,58 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         const result = await fetchAndCacheModule("/_vf_modules/a.js", ctx);
         assertEquals(typeof result, "string");
         assertEquals(result?.endsWith(".mjs"), true);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("directory barrels", () => {
+    // A page importing "@/lib" resolves to lib/index.ts, which re-exports
+    // "./constants.js". That relative import must resolve to lib/constants.ts,
+    // not to constants.ts beside the lib directory.
+    function createBarrelAdapter(): RuntimeAdapter {
+      const sourceByPath = new Map<string, string>([
+        ["/virtual/lib/index.ts", `export * from "./constants.js";`],
+        ["/virtual/lib/constants.ts", `export const COLORS = ["red", "blue"];`],
+      ]);
+
+      return {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: (path: string) => {
+            if (path === "lib") return Promise.resolve("/virtual/lib/index.ts");
+            if (path === "lib/constants") return Promise.resolve("/virtual/lib/constants.ts");
+            return Promise.resolve(null);
+          },
+          readFile: (path: string) => {
+            const source = sourceByPath.get(path);
+            if (!source) throw new Error(`File not found: ${path}`);
+            return Promise.resolve(source);
+          },
+        },
+      } as unknown as RuntimeAdapter;
+    }
+
+    it("re-exports through a barrel's relative import", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-barrel-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-barrel-proj-" });
+
+      try {
+        const ctx = createModuleFetcherContext(
+          esmCacheDir,
+          createBarrelAdapter(),
+          projectDir,
+          "proj-barrel",
+          { strictMissingModules: true },
+        );
+
+        const modulePath = await fetchAndCacheModule("/_vf_modules/lib.js", ctx);
+        assertEquals(typeof modulePath, "string");
+
+        const barrel = await import(`file://${modulePath}`);
+        assertEquals(barrel.COLORS, ["red", "blue"]);
       } finally {
         await remove(esmCacheDir, { recursive: true });
         await remove(projectDir, { recursive: true });

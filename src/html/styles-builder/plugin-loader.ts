@@ -7,12 +7,13 @@
  * @module html/styles-builder/plugin-loader
  */
 
-import { serverLogger } from "#veryfront/utils";
+import { encodeBase64Bytes, serverLogger } from "#veryfront/utils";
 import {
   type ErrorSlug,
   getErrorBySlug,
   IMPORT_RESOLUTION_ERROR,
   NETWORK_ERROR,
+  SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
 import { getTailwindPluginBundleUrl } from "#veryfront/build/binary-plugin-includes.ts";
@@ -35,14 +36,14 @@ const logger = serverLogger.component("tailwind");
  */
 function assertPluginAllowed(spec: string): void {
   if (!PACKAGE_SPEC_RE.test(spec)) {
-    throw new Error(`Invalid Tailwind plugin specifier: ${spec}`);
+    throw SECURITY_VIOLATION.create({ detail: `Invalid Tailwind plugin specifier: ${spec}` });
   }
   const name = bareName(spec);
   if (!TAILWIND_PLUGIN_ALLOWLIST.has(name)) {
-    throw new Error(
-      `Package "${name}" is not on the Tailwind plugin allowlist. ` +
+    throw SECURITY_VIOLATION.create({
+      detail: `Package "${name}" is not on the Tailwind plugin allowlist. ` +
         `See src/html/styles-builder/tailwind-plugin-allowlist.ts.`,
-    );
+    });
   }
 }
 
@@ -72,23 +73,6 @@ try {
 // by the `@veryfront/ext-css-tailwind` extension's `setup()` hook — they depend on
 // tailwindcss imports that live in the extension package, not in core.
 
-function encodeToBase64(source: string): string {
-  const bufferCtor = (globalThis as {
-    Buffer?: {
-      from: (input: string, encoding: string) => { toString: (encoding: string) => string };
-    };
-  }).Buffer;
-
-  if (bufferCtor?.from) {
-    return bufferCtor.from(source, "utf8").toString("base64");
-  }
-
-  const bytes = new TextEncoder().encode(source);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 /**
  * esm.sh bundles can contain root-relative nested imports. Once the bundle is
  * written to a temp file, Deno resolves those as local file paths unless they
@@ -115,7 +99,11 @@ export function rewriteEsmShRootRelativeImports(code: string): string {
 
 async function importBundledModule(code: string): Promise<unknown> {
   if (!isDeno) {
-    const dataUrl = `data:text/javascript;base64,${encodeToBase64(code)}`;
+    // Encode as UTF-8 bytes: the data: URL importer decodes UTF-8, and btoa on
+    // the raw string would emit Latin-1 bytes for chars in [0x80, 0xFF].
+    const dataUrl = `data:text/javascript;base64,${
+      encodeBase64Bytes(new TextEncoder().encode(code))
+    }`;
     return await import(dataUrl);
   }
 

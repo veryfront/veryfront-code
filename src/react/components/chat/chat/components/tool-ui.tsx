@@ -14,7 +14,7 @@ import {
   XCircleIcon,
 } from "../../../ui/icons/index.ts";
 import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
@@ -214,18 +214,11 @@ export interface ToolCallContextValue {
   hasError: boolean;
 }
 
-const ToolCallContext = React.createContext<ToolCallContextValue | null>(null);
-
-/** Read the enclosing `ToolCall` state. Throws when used outside a `ToolCall`. */
-export function useToolCall(): ToolCallContextValue {
-  const ctx = React.useContext(ToolCallContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useToolCall must be used within a ToolCall",
-    });
-  }
-  return ctx;
-}
+const [ToolCallContext, useToolCall] = createStrictContext<ToolCallContextValue>(
+  "useToolCall",
+  "a ToolCall",
+);
+export { useToolCall };
 
 /** Props accepted by `ToolCall` / `ToolCall.Root`. */
 export interface ToolCallProps {

@@ -10,8 +10,8 @@
  */
 
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
-import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors/error-registry.ts";
-import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
+import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("cache");
 

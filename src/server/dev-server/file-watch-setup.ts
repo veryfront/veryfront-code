@@ -1,5 +1,5 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
+import { handleErrorWithFallback } from "#veryfront/errors";
 import { join, relative, sep } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
@@ -29,6 +29,8 @@ const IGNORED_PATH_PATTERNS = [
   ".git\\",
   ".veryfront/",
   ".veryfront\\",
+  ".omx/",
+  ".omx\\",
   // Tool output directories that live inside the project root. Tools such as
   // the Playwright MCP server write per-step artifacts here continuously,
   // which would otherwise drive an open-ended HMR refresh loop.

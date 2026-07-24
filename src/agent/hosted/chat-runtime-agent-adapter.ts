@@ -1,4 +1,5 @@
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -26,7 +27,9 @@ export type HostedChatRuntimeAgentAdapterInput = {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runId?: string;
   agentId?: string;
+  conversationId?: string;
   authToken?: string;
+  maxOutputTokens?: number;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
   warnOrphanedToolInput?: (
     message: string,
@@ -53,9 +56,13 @@ export function createHostedChatRuntimeAgentAdapter(
           async () => {
             const response = await input.runtimeAgent.stream({
               messages: streamInput.messages,
+              ...(input.maxOutputTokens !== undefined
+                ? { maxOutputTokens: input.maxOutputTokens }
+                : {}),
               context: {
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.agentId ? { agentId: input.agentId } : {}),
+                ...(input.conversationId ? { conversationId: input.conversationId } : {}),
                 ...(input.authToken ? { authToken: input.authToken } : {}),
                 abortSignal: streamInput.abortSignal,
                 publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
@@ -67,7 +74,7 @@ export function createHostedChatRuntimeAgentAdapter(
       );
 
       if (!streamResponse.body) {
-        throw new Error("Agent runtime returned an empty stream body");
+        throw AGENT_ERROR.create({ detail: "Agent runtime returned an empty stream body" });
       }
 
       const stream = createToolExecutionDataEventBridgeStream({

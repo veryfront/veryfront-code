@@ -167,6 +167,9 @@ when the tool input is complete enough to commit.
 `invoke_agent` creates an isolated child run. The child receives its own
 conversation context and tool inventory. The parent transcript receives a compact
 summary/result and durable child-run identifiers, not the full child transcript.
+For cross-project delegation, `project_reference` accepts a project UUID or slug.
+The hosted runtime resolves it to the canonical project UUID before selecting
+project-agent settings, changing project context, or creating the child run.
 The default `result_mode` is `summary`; use `structured` when critical contract
 ids such as model ids, tool ids, provider tool ids, and import paths must survive
 a bounded summary. Use `full` only when the parent needs exact delegated output.

@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
+import type { RenderOptions } from "./types.ts";
+import { markBuildFailure } from "./module-loader/build-failure.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -17,6 +20,11 @@ import {
   resetRequestProfiles,
   runWithRequestProfiling,
 } from "#veryfront/observability/request-profiler.ts";
+import {
+  clearSSRModuleCache,
+  globalInProgress,
+  globalModuleCache,
+} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -176,6 +184,160 @@ describe("RenderPipeline behavior", () => {
     }
   });
 
+  it("keeps a cold module graph alive while distinct transforms keep completing", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/large-cold-graph.tsx");
+    const owner = new AbortController();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: { onProgress?: (event: { phase: string; filePath: string }) => void },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>((resolve) => {
+        let completed = 0;
+        const interval = setInterval(() => {
+          completed += 1;
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: `/framework/module-${completed}.js`,
+          });
+          if (completed === 10) {
+            clearInterval(interval);
+            resolve({});
+          }
+        }, 5_000);
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/large-cold-graph", {
+      abortSignal: owner.signal,
+      request: new Request("http://localhost/large-cold-graph"),
+      url: new URL("http://localhost/large-cold-graph"),
+    });
+    await started;
+    await time.tickAsync(50_000);
+
+    assertEquals((await pageData).props, {});
+  });
+
+  it("preserves a hard cap for unowned cold module graphs", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/unowned-cold-graph.tsx");
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: {
+        onProgress?: (event: { phase: string; filePath: string }) => void;
+        signal?: AbortSignal;
+      },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>((_, reject) => {
+        let completed = 0;
+        const intervalId = setInterval(() => {
+          completed += 1;
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: `/framework/unowned-module-${completed}.js`,
+          });
+        }, 5_000);
+        config.signal?.addEventListener(
+          "abort",
+          () => {
+            clearInterval(intervalId);
+            reject(config.signal?.reason);
+          },
+          { once: true },
+        );
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/unowned-cold-graph", {
+      request: new Request("http://localhost/unowned-cold-graph"),
+      url: new URL("http://localhost/unowned-cold-graph"),
+    });
+    const rejected = assertRejects(
+      () => pageData,
+      Error,
+      "Module loading for /unowned-cold-graph timed out after 45000ms",
+    );
+
+    await started;
+    await time.tickAsync(45_000);
+
+    assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "hard");
+  });
+
+  it("does not treat a repeated transform milestone as continuing progress", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/repeating-graph.tsx");
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: { onProgress?: (event: { phase: string; filePath: string }) => void },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>(() => {
+        setInterval(() => {
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: "/framework/repeating.js",
+          });
+        }, 5_000);
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/repeating-graph", {
+      request: new Request("http://localhost/repeating-graph"),
+      url: new URL("http://localhost/repeating-graph"),
+    });
+    const rejected = assertRejects(
+      () => pageData,
+      Error,
+      "Module loading for /repeating-graph timed out",
+    );
+    await started;
+    await time.tickAsync(45_000);
+
+    assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "idle");
+  });
+
+  it("cancels module loading when the owning render is aborted", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/cancelled-graph.tsx");
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: { signal?: AbortSignal },
+    ) => {
+      observedSignal = config.signal;
+      markStarted();
+      return new Promise<Record<string, unknown>>(() => {});
+    };
+
+    const pageData = pipeline.resolvePageData("/cancelled-graph", {
+      abortSignal: controller.signal,
+      request: new Request("http://localhost/cancelled-graph"),
+      url: new URL("http://localhost/cancelled-graph"),
+    });
+    const rejected = assertRejects(() => pageData, Error, "render cancelled");
+    await started;
+
+    controller.abort(new Error("render cancelled"));
+    await time.tickAsync(10_000);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, controller.signal.reason);
+  });
+
   it("renderPage uses a non-empty cache key for the root slug", async () => {
     const checks: Array<{ slug: string; cacheKey?: string }> = [];
     const persists: Array<{ slug: string; cacheKey?: string }> = [];
@@ -200,6 +362,58 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+  });
+
+  it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {
+    clearSSRModuleCache();
+    const projectId = "project-dev-render-active-transform";
+    const moduleKey = `prefix:${projectId}:module`;
+    const inProgressKey = `prefix:${projectId}:in-progress`;
+    const leader = Promise.resolve();
+    globalModuleCache.set(moduleKey, { tempPath: "/tmp/dev-render.mjs", contentHash: "a" });
+    globalInProgress.set(inProgressKey, leader);
+
+    const pipeline = createPipeline("/project/pages/dev-render.tsx", {
+      mode: "development",
+      projectId,
+    });
+
+    try {
+      await pipeline.renderPage("/dev-render", { delivery: "string" });
+
+      assertEquals(globalModuleCache.has(moduleKey), false);
+      assertEquals(globalInProgress.get(inProgressKey), leader);
+    } finally {
+      clearSSRModuleCache();
+    }
+  });
+
+  it("resolvePageData preserves active SSR transforms during development cache freshness clears", async () => {
+    clearSSRModuleCache();
+    const projectId = "project-dev-page-data-active-transform";
+    const moduleKey = `prefix:${projectId}:module`;
+    const inProgressKey = `prefix:${projectId}:in-progress`;
+    const leader = Promise.resolve();
+    globalModuleCache.set(moduleKey, { tempPath: "/tmp/dev-page-data.mjs", contentHash: "a" });
+    globalInProgress.set(inProgressKey, leader);
+
+    const pipeline = createPipeline("/project/pages/dev-page-data.tsx", {
+      mode: "development",
+      projectId,
+    });
+    (pipeline as any).loadModule = async () => ({});
+
+    try {
+      await pipeline.resolvePageData("/dev-page-data", {
+        request: new Request("http://localhost/dev-page-data"),
+        url: new URL("http://localhost/dev-page-data"),
+      });
+
+      assertEquals(globalModuleCache.has(moduleKey), false);
+      assertEquals(globalInProgress.get(inProgressKey), leader);
+    } finally {
+      clearSSRModuleCache();
+    }
   });
 
   it("renderPage forwards project-relative layout props to HTML hydration", async () => {
@@ -252,6 +466,42 @@ describe("RenderPipeline behavior", () => {
     assertEquals(hydrationLayoutProps, {
       "layouts/root.tsx": { theme: "docs" },
     });
+  });
+
+  it("staticDataOnly skips request-only data hooks during static rendering", async () => {
+    const pagePath = "/project/pages/static-only.tsx";
+    let serverCalls = 0;
+    let staticCalls = 0;
+    let staticContext: Record<string, unknown> | undefined;
+    const pipeline = createPipeline(pagePath);
+
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => {
+        serverCalls++;
+        return { props: { source: "server" } };
+      },
+      getStaticData: (ctx: Record<string, unknown>) => {
+        staticCalls++;
+        staticContext = ctx;
+        return { props: { source: "static" } };
+      },
+    });
+
+    const result = await (pipeline as any).resolveDataFetching(
+      "/static-only",
+      pagePath,
+      [],
+      {
+        url: new URL("https://example.test/static-only"),
+        staticDataOnly: true,
+      },
+    );
+
+    assertEquals(serverCalls, 0);
+    assertEquals(staticCalls, 1);
+    assertEquals("request" in (staticContext ?? {}), false);
+    assertEquals("query" in (staticContext ?? {}), false);
+    assertEquals(result.pageProps, { source: "static" });
   });
 
   it("renderPage refreshes preview caches and retries stale MDX ESM export mismatches", async () => {
@@ -331,6 +581,54 @@ describe("RenderPipeline behavior", () => {
     ) {
       assert(phase in record.phases, `missing ${phase}`);
     }
+  });
+
+  describe("critical page module failures", () => {
+    // Downstream (the SSR handler) decides whether to show the project's own
+    // error page or the dev overlay, so the reason the module never loaded has
+    // to survive the trip.
+    type LoadModuleOverride = { loadModule: (path: string) => Promise<unknown> };
+
+    function pipelineWithFailingPageModule(fail: () => never): RenderPipeline {
+      const pipeline = createPipeline("/project/pages/behavior-load-failure.tsx");
+      (pipeline as unknown as LoadModuleOverride).loadModule = () => Promise.resolve(fail());
+      return pipeline;
+    }
+
+    function rejectLoad(pipeline: RenderPipeline): Promise<unknown> {
+      const slug = "/behavior-load-failure";
+      return assertRejects(
+        () =>
+          pipeline.resolvePageData(slug, {
+            projectId: "proj-load-failure",
+            request: new Request(`http://localhost${slug}`),
+            url: new URL(`http://localhost${slug}`),
+          }),
+        Error,
+        "Critical page module(s) failed to load",
+      );
+    }
+
+    function buildFailureFlag(error: unknown): unknown {
+      const context = (error as { context?: { buildFailure?: unknown } }).context;
+      return context?.buildFailure;
+    }
+
+    it("reports a build failure as one", async () => {
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw markBuildFailure(new Error("Cannot import the static asset"));
+      }));
+
+      assertEquals(buildFailureFlag(error), true);
+    });
+
+    it("does not report a module-scope runtime throw as a build failure", async () => {
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw new Error("Missing API key");
+      }));
+
+      assertEquals(buildFailureFlag(error), false);
+    });
   });
 
   it("resolvePageData surfaces notFound from data hooks", async () => {
@@ -693,6 +991,115 @@ describe("RenderPipeline behavior", () => {
       },
       pageData.layoutProps,
     );
+  });
+
+  it("resolvePageData reuses resolved page and layout data for CSS SSR", async () => {
+    const slug = "/behavior-css-data-reuse";
+    const projectId = "proj-css-data-reuse";
+    const pagePath = "/project/pages/behavior-css-data-reuse.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const cssHash = "cssdata1";
+    const expectedCss = ".from-data{color:blue}";
+    let pageDataCalls = 0;
+    let layoutDataCalls = 0;
+    let ssrOptions: Record<string, unknown> | undefined;
+    let appliedLayoutProps: Map<string, Record<string, unknown>> | undefined;
+    const pipeline = createPipeline(pagePath, {
+      pageRenderer: {
+        preparePageBundles: async () => ({
+          pageElement: {},
+          pageBundle: {},
+        }),
+      } as any,
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (
+          element: unknown,
+          _pageInfo: unknown,
+          _layoutBundle: unknown,
+          _nestedLayouts: unknown,
+          layoutProps: Map<string, Record<string, unknown>>,
+        ) => {
+          appliedLayoutProps = layoutProps;
+          return element;
+        },
+      } as any,
+      ssrOrchestrator: {
+        performSSRRendering: async (
+          _element: unknown,
+          _context: unknown,
+          options: RenderOptions,
+        ) => {
+          ssrOptions = options as Record<string, unknown>;
+          return {
+            fullHtml:
+              `<!DOCTYPE html><html><head><link rel="stylesheet" href="/_vf/css/${cssHash}.css"></head><body><div class="from-data">ok</div></body></html>`,
+            finalStream: null,
+            ssrHash: "test-hash",
+          };
+        },
+      } as any,
+    });
+
+    await cacheCSSAsync(expectedCss, cssHash, {
+      candidates: ["from-data"],
+      stylesheet: '@import "tailwindcss";',
+    });
+
+    (pipeline as any).loadModule = async (path: string) => {
+      if (path === pagePath) {
+        return {
+          getServerData: () => {
+            pageDataCalls++;
+            return { props: { title: "from-page" } };
+          },
+        };
+      }
+      if (path === layoutPath) {
+        return {
+          getServerData: () => {
+            layoutDataCalls++;
+            return { props: { theme: "from-layout" } };
+          },
+        };
+      }
+      return {};
+    };
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+      environment: "production",
+    });
+
+    assertEquals(pageDataCalls, 1);
+    assertEquals(layoutDataCalls, 1);
+    assertEquals(pageData.props, { title: "from-page" });
+    assertEquals(pageData.layoutProps, {
+      "layouts/root.tsx": { theme: "from-layout" },
+    });
+    assertEquals(pageData.css, expectedCss);
+    assertEquals(ssrOptions?.props, { title: "from-page" });
+    assertEquals(ssrOptions?.layoutProps, {
+      "layouts/root.tsx": { theme: "from-layout" },
+    });
+    assertEquals(Object.getOwnPropertySymbols(ssrOptions ?? {}).length, 0);
+    assertEquals(appliedLayoutProps?.get(layoutPath), { theme: "from-layout" });
   });
 
   it("resolvePageData reuses the SSR hashed stylesheet for SPA CSS", async () => {

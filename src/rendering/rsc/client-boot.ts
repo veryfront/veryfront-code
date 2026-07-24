@@ -16,6 +16,7 @@ import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { hydrateAllClientBoundaries } from "./hydrate-client.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
 import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
+import { rscLogger } from "../client/browser-logger.ts";
 
 /**
  * Import React using the page's import map when available.
@@ -139,7 +140,7 @@ async function tryStream(q: string): Promise<boolean> {
     await consumeNdjsonStream(res, document, ctrl.signal);
     return true;
   } catch (e) {
-    console.debug?.("[RSC] tryStream failed", e);
+    rscLogger.debug("tryStream failed", e);
     return false;
   }
 }
@@ -148,7 +149,7 @@ async function hydrateMarkers(): Promise<void> {
   try {
     await hydrateAllClientBoundaries(document);
   } catch (e) {
-    console.debug?.("[RSC] hydration failed", e);
+    rscLogger.debug("hydration failed", e);
   }
 }
 
@@ -163,13 +164,13 @@ async function hydratePageComponent(
       rel: pagePath,
     });
     if (!moduleUrl) return false;
-    console.debug?.("[RSC] Loading component from:", moduleUrl);
+    rscLogger.debug("Loading component from:", moduleUrl);
 
     const mod = await import(moduleUrl);
     const Component = mod.default;
 
     if (typeof Component !== "function") {
-      console.debug?.("[RSC] Page component is not a function");
+      rscLogger.debug("Page component is not a function");
       return false;
     }
 
@@ -192,10 +193,10 @@ async function hydratePageComponent(
       });
     }
 
-    console.debug?.("[RSC] Page component hydrated successfully");
+    rscLogger.debug("Page component hydrated successfully");
     return true;
   } catch (e) {
-    console.error("[RSC] Page hydration failed", e);
+    rscLogger.error("Page hydration failed", e);
     return false;
   }
 }
@@ -217,7 +218,7 @@ async function applyPayload(q: string): Promise<boolean> {
     getContainer(document, RSC_ROOT_ID).innerHTML = validateTrustedHtml(String(data?.html || ""));
     return true;
   } catch (e) {
-    console.debug?.("[RSC] payload fetch failed", e);
+    rscLogger.debug("payload fetch failed", e);
     return false;
   }
 }
@@ -241,12 +242,12 @@ export async function boot(): Promise<void> {
           document,
         )
       ) {
-        console.debug?.("[RSC] Page renderer owns hydration");
+        rscLogger.debug("Page renderer owns hydration");
         return;
       }
-      console.debug?.("[RSC] Found page component in hydration data:", pagePath);
+      rscLogger.debug("Found page component in hydration data:", pagePath);
       if (await hydratePageComponent(pagePath, clientModuleStrategy)) {
-        console.debug?.("[RSC] Client component hydrated successfully");
+        rscLogger.debug("Client component hydrated successfully");
       }
       return;
     }
@@ -267,7 +268,7 @@ export async function boot(): Promise<void> {
 
     await hydrateMarkers();
   } catch (e) {
-    console.error("[RSC] boot failed", e);
+    rscLogger.error("boot failed", e);
   }
 }
 

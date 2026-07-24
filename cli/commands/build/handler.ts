@@ -22,7 +22,7 @@ export const getBuildArgsSchema = defineSchema((v) =>
     compress: v.boolean().default(true),
     noCompress: v.boolean().default(false),
     prefetch: v.boolean().default(true),
-    ssg: v.boolean().default(false),
+    ssg: v.boolean().optional(),
     noSsg: v.boolean().default(false),
     include: v.array(v.string()).optional(),
     exclude: v.array(v.string()).optional(),
@@ -75,7 +75,10 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
     splitting: opts.split && !opts.noSplit,
     compress: opts.compress && !opts.noCompress,
     prefetch: opts.prefetch,
-    ssg: opts.ssg && !opts.noSsg,
+    // Tri-state: explicit --no-ssg wins, an explicit --ssg / --ssg=false is
+    // passed through, and an omitted flag stays undefined so the build can
+    // fall back to build.ssg from veryfront.config.ts (and its default).
+    ssg: opts.noSsg ? false : opts.ssg,
     include: opts.include,
     exclude: opts.exclude,
     dryRun: opts.dryRun,

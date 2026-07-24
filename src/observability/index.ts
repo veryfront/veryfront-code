@@ -21,6 +21,7 @@ export {
   getActiveContext,
   initTracing,
   injectContext,
+  isTracingDegraded,
   isTracingEnabled,
   setSpanAttributes,
   shutdownTracing,
@@ -46,6 +47,7 @@ export {
   recordCorsRejection,
   recordDataFetch,
   recordDataFetchError,
+  recordErrorCount,
   recordHttpRequest,
   recordHttpRequestComplete,
   recordRender,
@@ -73,11 +75,50 @@ export {
 } from "./auto-instrument/index.ts";
 
 export {
+  getTraceContext,
   initializeOTLP,
   isOTLPEnabled,
   type OTLPConfig,
+  setActiveSpanAttributes,
   shutdownOTLP,
 } from "./tracing/otlp-setup.ts";
+
+// OpenTelemetry API shim (spans, metrics, context primitives)
+export { getGlobalMetricsAPI, SpanKind, SpanStatusCode, trace } from "./tracing/api-shim.ts";
+export type {
+  AttributeValue,
+  Context,
+  Counter,
+  Histogram,
+  Meter,
+  ObservableGauge,
+  Span,
+} from "./tracing/api-shim.ts";
+
+// Shared-runtime telemetry environment helpers
+export {
+  getHostTelemetryEnv,
+  isReservedSharedRuntimeTelemetryEnvKey,
+} from "./tracing/telemetry-env.ts";
+
+// Per-request profiling
+export {
+  markRequestProfilePhase,
+  profilePhase,
+  profileSyncPhase,
+  snapshotRequestProfiles,
+} from "./request-profiler.ts";
+export type { RequestProfileRecord } from "./request-profiler.ts";
+
+// Simple in-process metrics
+export {
+  metrics,
+  recordApiRequest,
+  recordApiRetry,
+  recordContentCacheHit,
+  recordContentNetworkFetch,
+} from "./simple-metrics/index.ts";
+export type { ModuleServeStatus } from "./simple-metrics/index.ts";
 
 export {
   createOpenTelemetryServiceTracer,

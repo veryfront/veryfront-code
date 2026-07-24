@@ -25,7 +25,7 @@ export function GET() {
 }
 ```
 
-Use `pages/api/**` in the pages router. Export named HTTP method handlers or a `default` fallback handler. Each handler receives an `APIContext` as `ctx`; use `ctx.request` for the raw request, `ctx.params` for route params, `ctx.query` for query parameters, and `ctx.json()` or `Response.json()` to return JSON.
+Use `pages/api/**` in the pages router. Export named HTTP method handlers or a `default` fallback handler. Each handler receives an `APIContext` as `ctx`; use `ctx.request` for the raw request, `ctx.params` for route params, `ctx.query` for query parameters, and `ctx.json(data)` or `Response.json(data)` to return JSON. To read a posted JSON body, use `ctx.body()`, which parses it once and answers a 400 if it is malformed.
 
 ```ts
 // pages/api/hello.ts
@@ -33,6 +33,11 @@ import type { APIContext } from "veryfront";
 
 export function GET(ctx: APIContext) {
   return ctx.json({ message: "Hello, world!" });
+}
+
+export async function POST(ctx: APIContext) {
+  const { name } = await ctx.body<{ name: string }>();
+  return ctx.json({ message: `Hello, ${name}!` });
 }
 ```
 
@@ -65,7 +70,7 @@ Export any standard HTTP method:
 
 ```ts
 // app/api/users/route.ts
-const users = [{ id: "user_123", name: "Ada Lovelace" }];
+const users = [{ id: "user_123", name: "Test User" }];
 
 export async function GET() {
   return Response.json(users);
@@ -90,20 +95,20 @@ The same pages router route uses `ctx`:
 // pages/api/users.ts
 import type { APIContext } from "veryfront";
 
-const users = [{ id: "user_123", name: "Ada Lovelace" }];
+const users = [{ id: "user_123", name: "Test User" }];
 
 export async function GET(ctx: APIContext) {
   return ctx.json(users);
 }
 
 export async function POST(ctx: APIContext) {
-  const body = await ctx.request.json();
+  const body = await ctx.body<Record<string, unknown>>();
   const user = { id: "user_456", ...body };
   return ctx.json(user, { status: 201 });
 }
 
 export async function DELETE(ctx: APIContext) {
-  const { id } = await ctx.request.json();
+  const { id } = await ctx.body<{ id?: string }>();
   if (!id) return ctx.json({ error: "Missing id" }, { status: 400 });
   return new Response(null, { status: 204 });
 }

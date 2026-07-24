@@ -4,7 +4,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/persistence
  */
 
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import type { Logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { cacheModule } from "./module-cache.ts";

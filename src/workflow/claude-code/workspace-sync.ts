@@ -10,7 +10,7 @@
  * 3. After execution: Upload changed files back to Veryfront API
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
+import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
 import { dirname, join, relative, resolve } from "@std/path";
@@ -103,17 +103,6 @@ export interface UploadResult {
 
   /** Duration in ms */
   duration: number;
-}
-
-/**
- * Simple checksum for change detection
- */
-async function checksum(content: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(content);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -253,7 +242,7 @@ export class WorkspaceSync {
         }
 
         // Calculate checksum for change detection
-        const hash = await checksum(content);
+        const hash = await computeHash(content);
         this.fileChecksums.set(path, hash);
 
         // Write to local filesystem (use safe path resolution)
@@ -390,7 +379,7 @@ export class WorkspaceSync {
 
     // It's a regular file - check for changes
     const content = await Deno.readTextFile(localPath);
-    const newHash = await checksum(content);
+    const newHash = await computeHash(content);
     const originalHash = this.fileChecksums.get(relativePath);
 
     if (!originalHash) {

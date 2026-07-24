@@ -1,18 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { Agent, AgentResponse } from "veryfront/agent";
+import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
+import { defineSchema } from "veryfront/schemas";
 import {
   compareEvalReports,
+  datasets,
   type DiscoveredEval,
   EVAL_REPORT_SCHEMA_VERSION,
   evalAgent,
   type EvalReport,
   evalTool,
+  metrics,
+  runEval,
 } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
 import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
-import type { Tool } from "veryfront/tool";
+import type { ModelRuntime } from "veryfront/provider";
+import { type Tool, tool } from "veryfront/tool";
 import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
 import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
 import {
@@ -22,6 +27,7 @@ import {
 import { saveToken } from "../../auth/token-store.ts";
 import {
   applyGatewayBillingGroupFinalization,
+  createAgentAdapter,
   createDefaultEvalReportDir,
   createEvalArtifactPaths,
   createEvalCliExportConfig,
@@ -30,6 +36,7 @@ import {
   createEvalModelArtifactPaths,
   createEvalModelComparisonArtifact,
   createEvalModelComparisonExitCode,
+  createEvalSuiteJunitXml,
   createJunitXml,
   createResolvedEvalModelComparisonConfig,
   createResultsJsonl,
@@ -47,6 +54,7 @@ import {
   normalizeUsage,
   resolveEvalExporterIds,
   resolveEvalExportRedactionFromEnv,
+  resolveEvalExportRequired,
   resolveToolTargetId,
   runEvalCommand,
   runEvalWithGatewayBillingGroup,
@@ -61,6 +69,8 @@ const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
 const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
 const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
+const originalEvalExportRequired = Deno.env.get("VERYFRONT_EVAL_EXPORT_REQUIRED");
+const originalMlflowTrackingUri = Deno.env.get("MLFLOW_TRACKING_URI");
 const originalFetch = globalThis.fetch;
 const redactionEnvNames = [
   "VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS",
@@ -110,6 +120,18 @@ function restoreEnv(): void {
     Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
   } else {
     Deno.env.set("VERYFRONT_EVAL_EXPORTERS", originalEvalExporters);
+  }
+
+  if (originalEvalExportRequired === undefined) {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT_REQUIRED");
+  } else {
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_REQUIRED", originalEvalExportRequired);
+  }
+
+  if (originalMlflowTrackingUri === undefined) {
+    Deno.env.delete("MLFLOW_TRACKING_URI");
+  } else {
+    Deno.env.set("MLFLOW_TRACKING_URI", originalMlflowTrackingUri);
   }
 
   for (const name of redactionEnvNames) {
@@ -247,6 +269,57 @@ function createProjectRuntimeDiscovery(
   };
 }
 
+function createEvalOptions(overrides: Partial<EvalOptions> = {}): EvalOptions {
+  const parsed = parseEvalArgs({ _: ["eval"] });
+  if (!parsed.success) throw new Error("Failed to create eval options fixture");
+  return { ...parsed.data, ...overrides };
+}
+
+function makeEvalTool(id: string, source = id): Tool {
+  return tool({
+    id,
+    description: `${id} mock`,
+    inputSchema: defineSchema((v) => v.object({ query: v.string().optional() }))(),
+    execute: async (input) => ({ source, input }),
+  }) as Tool;
+}
+
+function makeAgentStub(
+  generate: Agent["generate"],
+  config: Partial<Agent["config"]> = {},
+): Agent {
+  return {
+    id: "agent:stub",
+    config: {
+      model: "hosted/stub",
+      system: "Stub.",
+      ...config,
+    } as Agent["config"],
+    generate,
+    stream: async () => ({ toDataStreamResponse: () => new Response() }),
+    respond: async () => new Response(),
+    getMemory: () => ({}) as ReturnType<Agent["getMemory"]>,
+    getMemoryStats: async () => ({ totalMessages: 0, estimatedTokens: 0, type: "stub" }),
+    clearMemory: async () => {},
+  };
+}
+
+function completedAgentResponse(toolName = "search_docs"): AgentResponse {
+  return {
+    text: "real answer",
+    status: "completed",
+    messages: [],
+    toolCalls: [{
+      id: "call-1",
+      name: toolName,
+      args: { query: "docs" },
+      status: "completed",
+      result: { source: "real-agent" },
+    }],
+    usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+  };
+}
+
 describe("eval CLI command helpers", () => {
   afterEach(() => {
     restoreEnv();
@@ -268,6 +341,7 @@ describe("eval CLI command helpers", () => {
       "baseline-usage-increase-threshold": 0.15,
       "baseline-latency-increase-threshold": 0.2,
       export: "braintrust,langfuse",
+      "require-export": true,
       debug: true,
       "baseline-model": "anthropic/claude-opus-4-6",
       "candidate-model": ["moonshotai/kimi-k2.6"],
@@ -289,6 +363,7 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.baselineUsageIncreaseThreshold, 0.15);
       assertEquals(parsed.data.baselineLatencyIncreaseThreshold, 0.2);
       assertEquals(parsed.data.exporters, ["braintrust", "langfuse"]);
+      assertEquals(parsed.data.requireExport, true);
       assertEquals(parsed.data.debug, true);
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
       assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2.6"]);
@@ -320,6 +395,23 @@ describe("eval CLI command helpers", () => {
     Deno.env.set("VERYFRONT_EVAL_EXPORT", "langfuse");
 
     assertEquals(resolveEvalExporterIds({ exporters: [] }), ["langfuse"]);
+  });
+
+  it("exports to MLflow when its tracking URI is configured", () => {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.example.com");
+
+    assertEquals(resolveEvalExporterIds({ exporters: [] }), ["mlflow"]);
+  });
+
+  it("requires eval export only when the CLI flag or CI environment requests it", () => {
+    Deno.env.delete("VERYFRONT_EVAL_EXPORT_REQUIRED");
+    assertEquals(resolveEvalExportRequired({ requireExport: false }), false);
+    assertEquals(resolveEvalExportRequired({ requireExport: true }), true);
+
+    Deno.env.set("VERYFRONT_EVAL_EXPORT_REQUIRED", "true");
+    assertEquals(resolveEvalExportRequired({ requireExport: false }), true);
   });
 
   it("keeps eval export redaction safe by default", () => {
@@ -545,6 +637,211 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("passes static mock tools into real agent.generate and keeps real traces", async () => {
+    const mockTools = { search_docs: makeEvalTool("search_docs", "mock") };
+    let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
+    const agent = makeAgentStub(async (input) => {
+      capturedGenerateInput = input;
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:mocked-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Find docs" }]),
+      mockTools,
+    });
+
+    const result = await createAgentAdapter(agent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Find docs" },
+      repetition: 1,
+    });
+
+    assertEquals(capturedGenerateInput?.tools, mockTools);
+    assertEquals(result.text, "real answer");
+    assertEquals(result.trace?.toolCalls, [{
+      id: "call-1",
+      name: "search_docs",
+      status: "ok",
+      input: { query: "docs" },
+      output: { source: "real-agent" },
+    }]);
+  });
+
+  it("resolves mock tools once for each example repetition", async () => {
+    const calls: string[] = [];
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "q1", input: "one" },
+        { id: "q2", input: "two" },
+      ]),
+      repetitions: 2,
+      mockTools: ({ example, repetition }) => {
+        calls.push(`${example.id}:${repetition}`);
+        return { search_docs: makeEvalTool("search_docs", `${example.id}:${repetition}`) };
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(report.records.map((record) => record.completed), [true, true, true, true]);
+    assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
+  });
+
+  it("isolates mock tool resolver errors to the current eval record", async () => {
+    const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
+    const definition = evalAgent({
+      id: "eval:resolver-error",
+      target: "agent:assistant",
+      dataset: datasets.inline([
+        { id: "ok", input: "ok" },
+        { id: "bad", input: "bad" },
+      ]),
+      mockTools: ({ example }) => {
+        if (example.id === "bad") throw new Error("mock resolver failed");
+        return { search_docs: makeEvalTool("search_docs") };
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+    });
+
+    assertEquals(report.records.map((record) => record.completed), [true, false]);
+    assertEquals(report.records[1]?.error, "mock resolver failed");
+  });
+
+  it("retains only skill loader tools for skills agents when mock tools are active", async () => {
+    const observedToolNames: string[][] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-skill-mocks",
+      async doGenerate(options: unknown) {
+        const tools = (options as { tools?: Array<{ name?: string }> | Record<string, unknown> })
+          .tools;
+        observedToolNames.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name ?? "").filter(Boolean).sort()
+            : Object.keys(tools ?? {}).sort(),
+        );
+        return {
+          content: [{ type: "text", text: "real answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const agent = createAgent({
+      id: "eval-skills-agent",
+      model: "hosted/eval-skill-mocks",
+      system: "Use skills.",
+      skills: true,
+      tools: {
+        load_skill: makeEvalTool("load_skill"),
+        load_skill_reference: makeEvalTool("load_skill_reference"),
+        execute_skill_script: makeEvalTool("execute_skill_script"),
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:skills-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Use skill" }]),
+      mockTools: { search_docs: makeEvalTool("search_docs") },
+    });
+
+    await createAgentAdapter(agent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Use skill" },
+      repetition: 1,
+    });
+
+    assertEquals(observedToolNames, [[
+      "load_skill",
+      "load_skill_reference",
+      "search_docs",
+    ]]);
+  });
+
+  it("uses default-enabled skills when retaining skill loader tools for mocked evals", async () => {
+    const observedToolNames: string[][] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-default-skills-mocks",
+      async doGenerate(options: unknown) {
+        const tools = (options as { tools?: Array<{ name?: string }> | Record<string, unknown> })
+          .tools;
+        observedToolNames.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name ?? "").filter(Boolean).sort()
+            : Object.keys(tools ?? {}).sort(),
+        );
+        return {
+          content: [{ type: "text", text: "real answer" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const definition = evalAgent({
+      id: "eval:default-skills-agent",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Use skill" }]),
+      mockTools: { search_docs: makeEvalTool("search_docs") },
+    });
+
+    const defaultSkillsAgent = createAgent({
+      id: "eval-default-skills-agent",
+      model: "hosted/eval-default-skills-mocks",
+      system: "Use skills.",
+      tools: {
+        load_skill: makeEvalTool("load_skill"),
+        load_skill_reference: makeEvalTool("load_skill_reference"),
+        execute_skill_script: makeEvalTool("execute_skill_script"),
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+    const disabledSkillsAgent = createAgent({
+      id: "eval-disabled-skills-agent",
+      model: "hosted/eval-default-skills-mocks",
+      system: "Do not use skills.",
+      skills: false,
+      tools: {
+        load_skill: makeEvalTool("load_skill"),
+        load_skill_reference: makeEvalTool("load_skill_reference"),
+        execute_skill_script: makeEvalTool("execute_skill_script"),
+      },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await createAgentAdapter(defaultSkillsAgent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Use skill" },
+      repetition: 1,
+    });
+    await createAgentAdapter(disabledSkillsAgent, createEvalOptions())({
+      definition,
+      example: { id: "q1", input: "Use skill" },
+      repetition: 1,
+    });
+
+    assertEquals(observedToolNames, [
+      ["load_skill", "load_skill_reference", "search_docs"],
+      ["search_docs"],
+    ]);
+  });
+
   it("creates a CLI tool adapter for direct tool evals", async () => {
     const contexts: Array<Parameters<Tool["execute"]>[1]> = [];
     const tool = {
@@ -614,6 +911,26 @@ describe("eval CLI command helpers", () => {
     });
   });
 
+  it("keeps evalTool execution independent from agent mockTools support", async () => {
+    const directTool = makeEvalTool("lookup_order");
+    const definition = evalTool({
+      id: "eval:lookup-tool-regression",
+      target: "tool:lookup_order",
+      dataset: datasets.inline([{ id: "order-1", input: { query: "A1049" } }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: { tool: createToolAdapter(directTool) },
+    });
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(report.records[0]?.trace.toolCalls[0]?.name, "lookup_order");
+    assertEquals(report.records[0]?.output, {
+      source: "lookup_order",
+      input: { query: "A1049" },
+    });
+  });
+
   it("keeps the exact source policy active while a tool eval executes", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-policy-" });
     const configHome = await Deno.makeTempDir({ prefix: "vf-eval-policy-auth-" });
@@ -670,6 +987,129 @@ describe("eval CLI command helpers", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(observedPolicies, [sourceIntegrationPolicy]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("runs every discovered eval sequentially and passes example metadata through agent context", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-suite-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-suite-auth-" });
+    const contexts: unknown[] = [];
+    const fixtureAgent = {
+      id: "fixture",
+      config: {},
+      generate: async (input: { context?: unknown }) => {
+        contexts.push(input.context);
+        return {
+          text: "expected",
+          messages: [],
+          status: "completed",
+          toolCalls: [],
+        } satisfies AgentResponse;
+      },
+    } as unknown as Agent;
+    const alpha = evalAgent({
+      id: "eval:alpha",
+      target: "agent:fixture",
+      dataset: [{
+        id: "alpha-example",
+        input: "alpha",
+        metadata: { fixtureScenario: "alpha" },
+      }],
+      metrics: [metrics.answer.contains({ text: "expected" }).gate()],
+    });
+    const beta = evalAgent({
+      id: "eval:beta",
+      target: "agent:fixture",
+      dataset: [{
+        id: "beta-example",
+        input: "beta",
+        metadata: { fixtureScenario: "beta" },
+      }],
+      metrics: [metrics.answer.contains({ text: "missing" }).gate()],
+    });
+    alpha.source = { filePath: `${projectDir}/evals/alpha.eval.ts`, exportName: "default" };
+    beta.source = { filePath: `${projectDir}/evals/beta.eval.ts`, exportName: "default" };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.agents.set(fixtureAgent.id, fixtureAgent);
+    runtime.evals.set(beta.id, beta);
+    runtime.evals.set(alpha.id, alpha);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const exitCode = await runEvalCommand(
+        {
+          list: false,
+          exporters: [],
+          debug: false,
+          candidateModels: [],
+          projectDir,
+          reportDir: `${projectDir}/suite`,
+          junit: `${projectDir}/suite/junit.xml`,
+        },
+        { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+      );
+
+      assertEquals(exitCode, 1);
+      assertEquals(contexts, [
+        {
+          eval: {
+            definitionId: "eval:alpha",
+            exampleId: "alpha-example",
+            repetition: 1,
+            metadata: { fixtureScenario: "alpha" },
+          },
+        },
+        {
+          eval: {
+            definitionId: "eval:beta",
+            exampleId: "beta-example",
+            repetition: 1,
+            metadata: { fixtureScenario: "beta" },
+          },
+        },
+      ]);
+      const summary = JSON.parse(await Deno.readTextFile(`${projectDir}/suite/summary.json`));
+      assertEquals(summary.total, 2);
+      assertEquals(summary.passed, 1);
+      assertEquals(summary.failed, 1);
+      assertEquals(summary.results.map((result: { id: string }) => result.id), [
+        "eval:alpha",
+        "eval:beta",
+      ]);
+      const results = (await Deno.readTextFile(`${projectDir}/suite/results.jsonl`))
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const result = JSON.parse(line) as { id: string; status: string };
+          return { id: result.id, status: result.status };
+        });
+      assertEquals(results, [
+        { id: "eval:alpha", status: "passed" },
+        { id: "eval:beta", status: "failed" },
+      ]);
+      const junit = await Deno.readTextFile(`${projectDir}/suite/junit.xml`);
+      assertStringIncludes(
+        junit,
+        '<testsuites tests="2" failures="1" skipped="0">\n  <testsuite name="veryfront eval suite" tests="2" failures="1" skipped="0">',
+      );
+      assertStringIncludes(junit, '    <testcase classname="eval" name="eval:alpha" />');
+      assertStringIncludes(junit, '    <testcase classname="eval" name="eval:beta">');
+      assertEquals(
+        await Deno.stat(`${projectDir}/suite/001-alpha/summary.json`).then(() => true),
+        true,
+      );
+      assertEquals(
+        await Deno.stat(`${projectDir}/suite/002-beta/summary.json`).then(() => true),
+        true,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
@@ -1507,6 +1947,43 @@ describe("eval CLI command helpers", () => {
     );
   });
 
+  it("serializes required export failures as suite JUnit failures", () => {
+    const junit = createEvalSuiteJunitXml({
+      kind: "eval-suite-summary",
+      runId: "suite-1",
+      startedAt: "2026-07-19T00:00:00.000Z",
+      endedAt: "2026-07-19T00:00:01.000Z",
+      total: 1,
+      passed: 0,
+      failed: 1,
+      results: [{
+        id: "eval:metadata-export",
+        name: "metadata export",
+        target: "agent:fixture",
+        status: "failed",
+        summary: {
+          runId: "eval-1",
+          evalId: "eval:metadata-export",
+          target: "agent:fixture",
+          records: 1,
+          passed: 1,
+          failed: 0,
+          passRate: 1,
+          metrics: [],
+        },
+      }],
+    });
+
+    assertStringIncludes(
+      junit,
+      '<testsuites tests="1" failures="1" skipped="0">\n  <testsuite name="veryfront eval suite" tests="1" failures="1" skipped="0">',
+    );
+    assertStringIncludes(
+      junit,
+      '<failure message="A required eval export failed.">A required eval export failed.</failure>',
+    );
+  });
+
   it("fails the command exit code when baseline comparison regresses", () => {
     const report = createReport();
     const baseline = compareEvalReports(report, {
@@ -1529,6 +2006,26 @@ describe("eval CLI command helpers", () => {
     );
   });
 
+  it("keeps exports best-effort locally but fails the CI gate when required", () => {
+    const passing = {
+      ...createReport(),
+      summary: { ...createReport().summary, failed: 0, passed: 2, passRate: 1 },
+    };
+    const exportedFailure = {
+      ...passing,
+      exports: [{ exporterId: "mlflow", ok: false as const, error: "unavailable" }],
+    };
+    const exportedSuccess = {
+      ...passing,
+      exports: [{ exporterId: "mlflow", ok: true as const }],
+    };
+
+    assertEquals(createEvalExitCode(exportedFailure), 0);
+    assertEquals(createEvalExitCode(exportedFailure, undefined, true), 1);
+    assertEquals(createEvalExitCode(exportedSuccess, undefined, true), 0);
+    assertEquals(createEvalExitCode(passing, undefined, true), 1);
+  });
+
   it("fails model comparison exit code only when an evaluated report fails", () => {
     const passing = {
       ...createReport(),
@@ -1538,5 +2035,14 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(createEvalModelComparisonExitCode([passing]), 0);
     assertEquals(createEvalModelComparisonExitCode([passing, failing]), 1);
+    assertEquals(
+      createEvalModelComparisonExitCode([
+        {
+          ...passing,
+          exports: [{ exporterId: "mlflow", ok: false as const, error: "unavailable" }],
+        },
+      ], true),
+      1,
+    );
   });
 });

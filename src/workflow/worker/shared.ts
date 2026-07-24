@@ -2,7 +2,10 @@ import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { WorkflowClient } from "../api/workflow-client.ts";
+import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import type { StepExecutorConfig } from "../executor/step-executor.ts";
+import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { CapturedTenantContext, WorkflowRun } from "../types.ts";
 
 interface EntrypointLogger {
@@ -14,6 +17,27 @@ interface EntrypointLogger {
 interface EntrypointExitCodes {
   SUCCESS: number;
   WORKFLOW_FAILED: number;
+}
+
+/** Return the immutable worker owner assigned to this isolated run execution. */
+export function getRunExecutionWorkerId(): string | undefined {
+  const executionId = getEnv("RUN_EXECUTION_ID");
+  return executionId ? `run-execution:${executionId}` : undefined;
+}
+
+/** Create an isolated executor with durable approval handling and no background timer. */
+export function createIsolatedWorkflowExecutor(
+  backend: WorkflowBackend,
+  debug = false,
+  stepExecutor?: StepExecutorConfig,
+): WorkflowExecutor {
+  const client = new WorkflowClient({
+    backend,
+    debug,
+    executor: stepExecutor ? { stepExecutor } : undefined,
+    approval: { expirationCheckInterval: 0 },
+  });
+  return client.getExecutor();
 }
 
 export function getTenantFromEnv(): CapturedTenantContext | undefined {
@@ -42,6 +66,7 @@ export async function hydrateRunContextEnv(
   backend: WorkflowBackend,
   runId: string,
   run: WorkflowRun,
+  expectedWorkerId?: string,
 ): Promise<WorkflowRun> {
   const injectedEnv = mergeInjectedWorkflowEnv(run.context.env, getProcessEnv());
   if (!injectedEnv) {
@@ -54,12 +79,19 @@ export async function hydrateRunContextEnv(
     return run;
   }
 
-  await backend.updateRun(runId, {
-    context: {
-      ...run.context,
-      env: injectedEnv,
+  const updated = await updateRunIfStatus(
+    backend,
+    runId,
+    [run.status],
+    {
+      context: {
+        ...run.context,
+        env: injectedEnv,
+      },
     },
-  });
+    expectedWorkerId,
+  );
+  if (!updated) return (await backend.getRun(runId)) ?? run;
 
   return (await backend.getRun(runId)) ?? run;
 }
@@ -100,17 +132,18 @@ export async function failRunExecution(
   exitCodes: EntrypointExitCodes,
   runId: string,
   error: unknown,
+  expectedWorkerId?: string,
 ): Promise<number> {
   logger.error("Execution error:", error);
 
-  await backend.updateRun(runId, {
+  await updateRunIfStatus(backend, runId, ["pending", "running"], {
     status: "failed",
     error: {
       message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
       stack: error instanceof Error ? error.stack : undefined,
     },
     completedAt: new Date(),
-  });
+  }, expectedWorkerId);
 
   return exitCodes.WORKFLOW_FAILED;
 }

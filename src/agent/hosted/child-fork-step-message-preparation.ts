@@ -1,4 +1,5 @@
 import { compactForStep, estimateOverhead } from "../../chat/message-prep.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
 import type { ProviderModelMessage } from "../../chat/types.ts";
 import {
   type AgentRuntimeMessagePart,
@@ -91,7 +92,9 @@ function convertAgentRuntimePartToChildForkMessagePart(
     return { type: "text", text: `[file: ${part.mediaType}]` };
   }
 
-  throw new Error(`Unhandled AgentRuntimeMessagePart type: ${String(part.type)}`);
+  throw AGENT_ERROR.create({
+    detail: `Unhandled AgentRuntimeMessagePart type: ${String(part.type)}`,
+  });
 }
 
 /** Convert compacted provider messages to child fork runtime messages. */

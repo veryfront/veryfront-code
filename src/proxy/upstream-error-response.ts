@@ -10,9 +10,12 @@ export function createUpstreamTimeoutResponse(timeoutMs: number): Response {
   });
 }
 
-export function createUpstreamFailureResponse(error: unknown): Response {
+export function createUpstreamFailureResponse(_error: unknown): Response {
+  // The real error is logged server-side by the caller (proxyLogger). Keep the
+  // client-facing body generic so internal hostnames/paths carried in
+  // error.message are not leaked to the client.
   return jsonErrorResponse(UPSTREAM_FAILURE_STATUS, {
-    error: "Proxy Error",
-    message: error instanceof Error ? error.message : "Unknown error",
+    error: "Bad Gateway",
+    message: "Bad Gateway",
   });
 }

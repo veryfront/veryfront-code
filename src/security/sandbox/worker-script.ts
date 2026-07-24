@@ -29,20 +29,48 @@ import type {
   WorkerStreamChunk,
   WorkerStreamEnd,
 } from "./worker-types.ts";
-import { installWorkerEgressGuard } from "./worker-egress-guard.ts";
+import { installWorkerEgressGuard, type WorkerEgressGuardOptions } from "./worker-egress-guard.ts";
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { isDataControlResult, toDataControlResult } from "#veryfront/data/helpers.ts";
 import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import { createBodyReader, createJsonHelper } from "#veryfront/routing/api/context-builder.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
-const allowInternalEgress = (() => {
-  try {
-    return new URL(import.meta.url).searchParams.get("allowInternalEgress") === "1";
-  } catch {
-    return false;
+type InitializeEgressMessage = {
+  type: "initialize-egress";
+  options: WorkerEgressGuardOptions;
+};
+let egressInitialized = false;
+let exitNotifierInstalled = false;
+
+function installWorkerExitNotifier(): void {
+  if (exitNotifierInstalled || typeof globalThis.close !== "function") return;
+
+  const postMessage = self.postMessage.bind(self);
+  const notifyExit = () => postMessage({ type: "worker-exit" });
+  const closeWorker = globalThis.close.bind(globalThis);
+  globalThis.close = () => {
+    try {
+      notifyExit();
+    } finally {
+      closeWorker();
+    }
+  };
+  if (typeof Deno.exit === "function") {
+    const exitWorker = Deno.exit.bind(Deno);
+    Deno.exit = ((code?: number): never => {
+      try {
+        notifyExit();
+      } catch {
+        // Exit even if the notification channel is already closed.
+      }
+      return exitWorker(code);
+    }) as typeof Deno.exit;
   }
-})();
+  exitNotifierInstalled = true;
+}
 
 /** True when `child` is the same as, or nested under, `root`. Cross-platform. */
 function isContained(root: string, child: string): boolean {
@@ -338,6 +366,28 @@ function deserializeDataContext(
   };
 }
 
+/**
+ * Run the project's `getServerData` and fold a thrown control result back into
+ * a normal result.
+ *
+ * `throw notFound()` and `throw redirect(...)` must behave like the returned
+ * form here as well as in-process. The normalisation has to happen inside the
+ * worker: the brand is a symbol, `structuredClone` drops symbols, and the
+ * worker error path would otherwise serialize the plain object with `String()`
+ * and hand the host "[object Object]" as a 500.
+ */
+async function runServerData(
+  getServerData: (ctx: unknown) => unknown | Promise<unknown>,
+  context: unknown,
+): Promise<SerializedDataResult> {
+  try {
+    return (await getServerData(context)) as SerializedDataResult;
+  } catch (error) {
+    if (isDataControlResult(error)) return toDataControlResult(error);
+    throw error;
+  }
+}
+
 async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataResult> {
   return await runWithWorkerSourceIntegrationPolicy(
     req.sourceIntegrationPolicy,
@@ -352,7 +402,7 @@ async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataRes
       }
 
       const context = deserializeDataContext(req.context);
-      const result = (await getServerData(context)) as SerializedDataResult;
+      const result = await runServerData(getServerData, context);
 
       // Normalize the result shape
       if (result.redirect) return { redirect: result.redirect };
@@ -428,11 +478,10 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
           cookies,
           headers: request.headers,
           url,
-          json: (data: unknown, init?: ResponseInit): Response =>
-            new Response(JSON.stringify(data), {
-              ...init,
-              headers: { "Content-Type": "application/json", ...init?.headers },
-            }),
+          // The same helpers the in-process context uses, so a handler behaves
+          // the same whether or not isolation is enabled.
+          json: createJsonHelper(request),
+          body: createBodyReader(request),
           text: (data: string, init?: ResponseInit): Response =>
             new Response(data, {
               ...init,
@@ -561,7 +610,9 @@ async function renderSSR(
 
 async function processWorkerRequest(request: WorkerRequest): Promise<void> {
   try {
-    installWorkerEgressGuard({ allowInternalEgress });
+    if (!egressInitialized) {
+      throw new Error("Worker egress guard is not initialized");
+    }
 
     // Data fetcher returns a different response shape than HTTP handlers
     if (request.type === "fetch-data") {
@@ -622,10 +673,33 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
 
 let requestQueue: Promise<void> = Promise.resolve();
 
-self.onmessage = (
-  event: MessageEvent<WorkerRequest | { type: "ping"; id: string } | { type: "clear-cache" }>,
-) => {
+function handleWorkerMessage(
+  event: MessageEvent<
+    | WorkerRequest
+    | InitializeEgressMessage
+    | { type: "ping"; id: string }
+    | { type: "clear-cache" }
+  >,
+): void {
+  // Dedicated workers receive host messages on a private channel. Deno marks
+  // those events as trusted, with an empty origin and no source object. Keep
+  // the listener private and reject synthetic events from project code before
+  // reading privileged messages such as the egress broker configuration.
+  if (
+    !event.isTrusted || event.origin !== "" || event.source !== null ||
+    event.currentTarget !== self
+  ) return;
+
   const msg = event.data;
+
+  if (msg.type === "initialize-egress") {
+    if (!egressInitialized) {
+      installWorkerExitNotifier();
+      installWorkerEgressGuard(msg.options);
+      egressInitialized = true;
+    }
+    return;
+  }
 
   // Health check
   if (msg.type === "ping") {
@@ -647,4 +721,6 @@ self.onmessage = (
     () => processWorkerRequest(request),
     () => processWorkerRequest(request),
   );
-};
+}
+
+self.addEventListener("message", handleWorkerMessage);

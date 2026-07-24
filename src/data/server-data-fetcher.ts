@@ -1,4 +1,5 @@
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
+import { isDataControlResult, toDataControlResult } from "./helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
@@ -33,8 +34,10 @@ export class ServerDataFetcher {
 
     const pathname = context.url?.pathname ?? "unknown";
     const projectId = context.request?.headers?.get("x-project-id") ?? "default";
+    const isPrefetch = context.request?.headers?.get("x-veryfront-prefetch") === "1";
+    const breakerNamespace = isPrefetch ? "data-prefetch" : "data-fetch";
 
-    const circuitBreaker = getCircuitBreaker(`data-fetch:${projectId}`, {
+    const circuitBreaker = getCircuitBreaker(`${breakerNamespace}:${projectId}`, {
       failureThreshold: 5,
       resetTimeoutMs: 30_000,
       successThreshold: 2,
@@ -51,15 +54,24 @@ export class ServerDataFetcher {
         const start = performance.now();
 
         try {
-          const result = await circuitBreaker.execute(() =>
-            withTimeoutThrow(
-              useIsolation
-                ? this.fetchIsolated(options!.modulePath!, options!.projectDir!, context)
-                : Promise.resolve(pageModule.getServerData!(context)),
-              DATA_FETCH_TIMEOUT_MS,
-              `getServerData for ${pathname}`,
-            )
-          );
+          const result = await circuitBreaker.execute(async () => {
+            try {
+              return await withTimeoutThrow(
+                useIsolation
+                  ? this.fetchIsolated(options!.modulePath!, options!.projectDir!, context)
+                  : Promise.resolve(pageModule.getServerData!(context)),
+                DATA_FETCH_TIMEOUT_MS,
+                `getServerData for ${pathname}`,
+              );
+            } catch (error) {
+              // `throw notFound()` / `throw redirect(...)`: treat a thrown
+              // control result exactly like a returned one. This has to happen
+              // inside the breaker, or five legitimate 404s on the same project
+              // open it and every data route after that fails fast for 30s.
+              if (isDataControlResult(error)) return toDataControlResult(error);
+              throw error;
+            }
+          });
 
           if (result.redirect) return { redirect: result.redirect };
           if (result.notFound) return { notFound: true };
@@ -72,6 +84,7 @@ export class ServerDataFetcher {
             serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
               pathname,
               projectId,
+              breakerNamespace,
               retryAfterMs: error.nextAttemptMs,
             });
             throw error;
@@ -99,6 +112,7 @@ export class ServerDataFetcher {
         "data.pathname": pathname,
         "data.timeout_ms": DATA_FETCH_TIMEOUT_MS,
         "data.project_id": projectId,
+        "data.prefetch": isPrefetch,
         "data.isolated": useIsolation,
       },
     );

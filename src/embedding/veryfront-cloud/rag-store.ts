@@ -165,13 +165,17 @@ function normalizeEmbeddingModelDescriptor(model: string, dimension: SupportedDi
   };
 }
 
+function normalizeExtension(type: string | undefined): string | undefined {
+  return type?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function buildDocumentFilePath(documentId: string, type?: string): string {
-  const extension = type?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const extension = normalizeExtension(type);
   return `${DOCUMENTS_DIR}/${documentId}.${extension || "txt"}`;
 }
 
 function buildRefreshDocumentFilePath(documentId: string, type?: string): string {
-  const extension = type?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const extension = normalizeExtension(type);
   return `${DOCUMENTS_DIR}/${documentId}.refresh-${crypto.randomUUID()}.${extension || "txt"}`;
 }
 

@@ -3,7 +3,13 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { HTTP_OK } from "#veryfront/utils";
-import { APIRouteHandler } from "./handler.ts";
+import type { HandlerContext } from "#veryfront/types";
+import {
+  __injectDepsForTests,
+  type APIRoute,
+  APIRouteHandler,
+  sanitizeLoadErrorForResponse,
+} from "./handler.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -27,6 +33,7 @@ async function createInitializedHandler(
 
 afterEach((): void => {
   while (handlers.length) handlers.pop()?.destroy();
+  __injectDepsForTests(null);
 });
 
 describe("APIRouteHandler", () => {
@@ -253,6 +260,33 @@ describe("APIRouteHandler", () => {
 
       assertExists(handler);
     });
+
+    it("should defer destruction until active requests settle", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/status.ts",
+        "export function GET() { return new Response('ok'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: () => new Response("ok"),
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const responsePromise = handler.handle(new Request("http://localhost/api/status"));
+      handler.destroy();
+
+      const response = await responsePromise;
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
+
+      const responseAfterDestroy = await handler.handle(
+        new Request("http://localhost/api/status"),
+      );
+      assertEquals(responseAfterDestroy?.status, 404);
+    });
   });
 
   describe("error scenarios", () => {
@@ -444,6 +478,176 @@ describe("APIRouteHandler", () => {
         const finalStatus = status ?? HTTP_OK;
         assertEquals(finalStatus, expected, `Status ${status} should result in ${expected}`);
       });
+    });
+  });
+
+  // A load failure belongs to the attempt that produced it. Held on the
+  // instance, it outlived the request and the next route to fail for its own
+  // reason reported someone else's error.
+  describe("load failure scoping", () => {
+    async function handlerWithTwoRoutes(
+      onLoad: (modulePath: string) => Promise<APIRoute | null>,
+    ): Promise<{ handler: APIRouteHandler; localCtx: HandlerContext }> {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/broken.ts",
+        "export function GET() { return new Response('broken'); }",
+      );
+      adapter.fs.files.set(
+        "/test/project/pages/api/empty.ts",
+        "export const notAMethod = 1;",
+      );
+
+      __injectDepsForTests({ loadHandlerModule: ({ modulePath }) => onLoad(modulePath) });
+
+      return {
+        handler: await createInitializedHandler("/test/project", adapter),
+        localCtx: {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          cspUserHeader: null,
+          isLocalProject: true,
+        },
+      };
+    }
+
+    it("does not report one route's load error on another route", async () => {
+      const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) throw new Error("Unexpected token in broken.ts");
+        // A module with no HTTP exports: no error, just nothing to call.
+        return Promise.resolve({});
+      });
+
+      const broken = await handler.handle(new Request("http://localhost/api/broken"), localCtx);
+      assertEquals(broken?.status, 500);
+      assertEquals(await broken?.text(), "Unexpected token in broken.ts");
+
+      const empty = await handler.handle(new Request("http://localhost/api/empty"), localCtx);
+      assertEquals(empty?.status, 500);
+      assertEquals(await empty?.text(), "Handler not found");
+    });
+
+    // The load error names files, specifiers and build internals. It is a
+    // development aid, and the only thing keeping it out of a deployed response
+    // body is this flag.
+    it("withholds the load error from a response when the project is not local", async () => {
+      const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) {
+          throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
+        }
+        return Promise.resolve({});
+      });
+
+      const hosted = await handler.handle(
+        new Request("http://localhost/api/broken"),
+        { ...localCtx, isLocalProject: false },
+      );
+
+      assertEquals(hosted?.status, 500);
+      assertEquals(await hosted?.text(), "Handler not found");
+    });
+
+    it("withholds the load error from a response when there is no context", async () => {
+      const { handler } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) {
+          throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
+        }
+        return Promise.resolve({});
+      });
+
+      const anonymous = await handler.handle(new Request("http://localhost/api/broken"));
+
+      assertEquals(anonymous?.status, 500);
+      assertEquals(await anonymous?.text(), "Handler not found");
+    });
+
+    it("classifies the allow-list block against the current attempt only", async () => {
+      const { handler } = await handlerWithTwoRoutes((modulePath) => {
+        if (modulePath.includes("broken")) {
+          throw new Error("Remote import blocked by allow-list: evil.example.com");
+        }
+        return Promise.resolve({});
+      });
+
+      const blocked = await handler.handle(new Request("http://localhost/api/broken"));
+      assertEquals(blocked?.status, 502);
+
+      const empty = await handler.handle(new Request("http://localhost/api/empty"));
+      assertEquals(empty?.status, 500, "a later route inherited the allow-list classification");
+    });
+  });
+
+  // AGENTS.md forbids local absolute paths, home directories, temp directories
+  // and full stack traces in user-facing output. A dev-mode 500 body is
+  // user-facing, and a raw module load error carries all four.
+  describe("sanitizeLoadErrorForResponse", () => {
+    const projectDir = "/PROJECT_ROOT/app";
+
+    it("keeps the actionable first line", () => {
+      const result = sanitizeLoadErrorForResponse(
+        'Expected ";" but found "}"\n    at file:///PROJECT_ROOT/app/api/users.ts:12:3',
+        projectDir,
+      );
+
+      assertEquals(result, 'Expected ";" but found "}"');
+    });
+
+    it("drops the stack trace", () => {
+      const result = sanitizeLoadErrorForResponse(
+        "Boom\n    at load (file:///PROJECT_ROOT/app/x.ts:1:1)\n    at run (x.ts:2:2)",
+        projectDir,
+      );
+
+      assertEquals(result.includes("    at "), false);
+    });
+
+    it("makes a path inside the project relative", () => {
+      const result = sanitizeLoadErrorForResponse(
+        "Module not found: file:///PROJECT_ROOT/app/api/users.ts",
+        projectDir,
+      );
+
+      assertEquals(result, "Module not found: api/users.ts");
+    });
+
+    it("redacts a temp directory the bundle was written to", () => {
+      const result = sanitizeLoadErrorForResponse(
+        "Could not resolve /var/folders/kx/T/vf-bundle-1234/route.js",
+        projectDir,
+      );
+
+      assertEquals(result.includes("/var/folders/"), false);
+      assertEquals(result.includes("<PATH>"), true);
+    });
+
+    it("redacts a home directory", () => {
+      for (const path of ["/Users/someone/code/x.ts", "/home/someone/code/x.ts"]) {
+        const result = sanitizeLoadErrorForResponse(`Cannot find module ${path}`, projectDir);
+
+        assertEquals(result.includes("someone"), false, `leaked a home directory: ${result}`);
+        assertEquals(result.includes("<PATH>"), true);
+      }
+    });
+
+    it("redacts a file:// URL outside the project", () => {
+      const result = sanitizeLoadErrorForResponse(
+        "Failed to load file:///tmp/vf-9f/route.js",
+        projectDir,
+      );
+
+      assertEquals(result.includes("file://"), false);
+    });
+
+    it("truncates a very long message", () => {
+      const result = sanitizeLoadErrorForResponse("x".repeat(1000), projectDir);
+      assertEquals(result.length <= 303, true);
+      assertEquals(result.endsWith("..."), true);
+    });
+
+    it("handles an empty message and a missing project directory", () => {
+      assertEquals(sanitizeLoadErrorForResponse(""), "");
+      assertEquals(sanitizeLoadErrorForResponse("Handler not found"), "Handler not found");
     });
   });
 });

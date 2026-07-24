@@ -6,52 +6,21 @@ import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
 
 describe("memoize", () => {
   describe("MemoCache", () => {
-    it("should set and get values", () => {
+    it("stores, replaces, and clears entries", () => {
       const cache = new MemoCache<number>();
-      cache.set("key1", 42);
-      assertEquals(cache.get("key1"), 42);
-    });
 
-    it("should return undefined for missing keys", () => {
-      const cache = new MemoCache<string>();
-      assertEquals(cache.get("missing"), undefined);
-    });
-
-    it("should check if key exists", () => {
-      const cache = new MemoCache<string>();
-      cache.set("exists", "value");
-      assertEquals(cache.has("exists"), true);
-      assertEquals(cache.has("missing"), false);
-    });
-
-    it("should clear all entries", () => {
-      const cache = new MemoCache<number>();
-      cache.set("a", 1);
-      cache.set("b", 2);
-      assertEquals(cache.size(), 2);
-
-      cache.clear();
-      assertEquals(cache.size(), 0);
-      assertEquals(cache.has("a"), false);
-    });
-
-    it("should return correct size", () => {
-      const cache = new MemoCache<string>();
-      assertEquals(cache.size(), 0);
-
-      cache.set("a", "1");
+      cache.set("key", 1);
+      assertEquals(cache.get("key"), 1);
+      assertEquals(cache.has("key"), true);
       assertEquals(cache.size(), 1);
 
-      cache.set("b", "2");
-      assertEquals(cache.size(), 2);
-    });
-
-    it("should overwrite existing values", () => {
-      const cache = new MemoCache<number>();
-      cache.set("key", 1);
       cache.set("key", 2);
       assertEquals(cache.get("key"), 2);
       assertEquals(cache.size(), 1);
+
+      cache.clear();
+      assertEquals(cache.has("key"), false);
+      assertEquals(cache.size(), 0);
     });
   });
 

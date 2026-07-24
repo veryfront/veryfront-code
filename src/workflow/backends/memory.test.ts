@@ -86,6 +86,35 @@ describe("MemoryBackend", () => {
       assertExists(updated?.startedAt);
     });
 
+    it("should conditionally update only the expected worker owner", async () => {
+      await backend.createRun(createTestRun("run-owned", {
+        status: "running",
+        workerId: "worker-new",
+      }));
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owned",
+          ["running"],
+          "worker-old",
+          { status: "failed" },
+        ),
+        false,
+      );
+      assertEquals((await backend.getRun("run-owned"))?.status, "running");
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-owned",
+          ["running"],
+          "worker-new",
+          { status: "failed" },
+        ),
+        true,
+      );
+      assertEquals((await backend.getRun("run-owned"))?.status, "failed");
+    });
+
     it("rejects attempts to mutate the source policy after run creation", async () => {
       const run = createTestRun("run-immutable-policy");
       await backend.createRun(run);
@@ -148,6 +177,38 @@ describe("MemoryBackend", () => {
     it("should return null for no checkpoints", async () => {
       assertEquals(await backend.getLatestCheckpoint("no-checkpoints"), null);
     });
+
+    it("should condition checkpoint appends on the canonical run owner", async () => {
+      await backend.createRun(createTestRun("run-owned-checkpoint", {
+        status: "running",
+        workerId: "worker-new",
+      }));
+      const checkpoint = createCheckpoint("cp-owned", "step-owned", new Date());
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-owned-checkpoint",
+          ["running"],
+          "worker-old",
+          checkpoint,
+        ),
+        false,
+      );
+      assertEquals(await backend.getCheckpoints("synthetic-child-run"), []);
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "synthetic-child-run",
+          "run-owned-checkpoint",
+          ["running"],
+          "worker-new",
+          checkpoint,
+        ),
+        true,
+      );
+      assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
   });
 
   describe("Approvals", () => {
@@ -191,6 +252,47 @@ describe("MemoryBackend", () => {
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+    });
+
+    it("should condition approval appends on owner and patch notification metadata", async () => {
+      await backend.createRun(createTestRun("run-owned-approval", {
+        status: "waiting",
+        workerId: "worker-new",
+      }));
+      const approval: PendingApproval = {
+        id: "approval-owned",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-owned-approval",
+          ["waiting"],
+          "worker-old",
+          approval,
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          "run-owned-approval",
+          ["waiting"],
+          "worker-new",
+          approval,
+        ),
+        true,
+      );
+      await backend.updatePendingApproval("run-owned-approval", approval.id, {
+        notificationError: "delivery failed",
+      });
+      assertEquals(
+        (await backend.getPendingApproval("run-owned-approval", approval.id))?.notificationError,
+        "delivery failed",
+      );
     });
   });
 
@@ -265,6 +367,21 @@ describe("MemoryBackend", () => {
       assertExists(await backend.acquireLock("resource-3", 5000));
       await backend.releaseLock("resource-3");
       assertExists(await backend.acquireLock("resource-3", 5000));
+    });
+
+    it("should reject stale lock tokens after a lease is reacquired", async () => {
+      const staleToken = await backend.acquireLock("resource-4", 0);
+      const currentToken = await backend.acquireLock("resource-4", 5000);
+      assertExists(staleToken);
+      assertExists(currentToken);
+
+      assertEquals(await backend.extendLock("resource-4", 5000, staleToken), false);
+      assertEquals(await backend.extendLock("resource-4", 5000, currentToken), true);
+
+      await backend.releaseLock("resource-4", staleToken);
+      assertEquals(await backend.isLocked("resource-4"), true);
+      await backend.releaseLock("resource-4", currentToken);
+      assertEquals(await backend.isLocked("resource-4"), false);
     });
   });
 

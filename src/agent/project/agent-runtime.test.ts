@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { getMCPRegistry, registerPrompt, registerResource } from "#veryfront/mcp";
 import { nodeAdapter } from "#veryfront/platform/adapters/node.ts";
@@ -23,6 +23,10 @@ import {
   normalizeSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
+import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
+import { tool } from "#veryfront/tool";
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
@@ -96,7 +100,13 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "openai/gpt-5.4",
     maxSteps: 7,
     providerTools: ["web_search"],
-    tools: ["get_active_agent_run", "get_agent_run_events"],
+    tools: [
+      "execute_skill_script",
+      "get_active_agent_run",
+      "get_agent_run_events",
+      "load_skill",
+      "load_skill_reference",
+    ],
   });
   assertEquals(await createRuntimeAgentDefinitionFromAgent(markdownAgent), {
     id: "writer",
@@ -107,6 +117,124 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "anthropic/claude-sonnet-4-5",
     maxSteps: 4,
   });
+});
+
+Deno.test("project agent runtime keeps factory skill catalogs out of hosted instructions", async () => {
+  registerSkill("incident-response", {
+    id: "incident-response",
+    metadata: { name: "incident-response", description: "Respond to incidents" },
+    rootPath: "/test/skills/incident-response",
+  });
+
+  try {
+    const codeAgent = agent({
+      id: "incident-agent",
+      system: "Handle incidents carefully.",
+    });
+    const effectiveSystem = getEffectiveAgentSystem(codeAgent);
+    const localPrompt = typeof effectiveSystem === "function"
+      ? await effectiveSystem()
+      : effectiveSystem;
+
+    assertStringIncludes(localPrompt, "## Available Skills");
+    assertEquals(codeAgent.config.system, "Handle incidents carefully.");
+    assertEquals(
+      (await createRuntimeAgentDefinitionFromAgent(codeAgent)).instructions,
+      "Handle incidents carefully.",
+    );
+  } finally {
+    skillRegistry.clearAll();
+  }
+});
+
+Deno.test("project agent runtime serializes scoped delegates and first-party MCP presets", async () => {
+  const coordinator = agent({
+    id: "coordinator",
+    system: "Delegate bounded specialist work.",
+    delegates: ["specialist"],
+    tools: {
+      get_file: true,
+      lookup_job: tool({
+        id: "lookup_job",
+        description: "Lookup a job posting",
+        inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        execute: ({ id }) => ({ id }),
+      }),
+      skip_file: false,
+    },
+    mcpServers: [
+      {
+        kind: "veryfront-api",
+        toolPolicy: { allow: ["get_file"] },
+      },
+    ],
+  });
+
+  const definition = await createRuntimeAgentDefinitionFromAgent(coordinator);
+
+  assertEquals(definition.tools, [
+    "agent_specialist",
+    "execute_skill_script",
+    "get_file",
+    "load_skill",
+    "load_skill_reference",
+    "lookup_job",
+  ]);
+  assertEquals(definition.delegates, ["specialist"]);
+  assertEquals(definition.mcpServers, [{
+    kind: "veryfront-api",
+    toolPolicy: { allow: ["get_file"] },
+  }]);
+});
+
+Deno.test("project agent runtime serializes code agent thinking config", async () => {
+  const thinkingAgent = agent({
+    id: "thinking-agent",
+    system: "Reason before answering.",
+    thinking: { enabled: true, budgetTokens: 4096 },
+  });
+  const noThinkingAgent = agent({
+    id: "no-thinking-agent",
+    system: "Answer directly.",
+    thinking: { enabled: false },
+  });
+
+  assertEquals(
+    (await createRuntimeAgentDefinitionFromAgent(thinkingAgent)).thinking,
+    { enabled: true, budgetTokens: 4096 },
+  );
+  assertEquals(
+    (await createRuntimeAgentDefinitionFromAgent(noThinkingAgent)).thinking,
+    { enabled: false },
+  );
+});
+
+Deno.test("project agent runtime rejects non-serializable HTTP MCP credentials", async () => {
+  const privateAgent = agent({
+    id: "private-agent",
+    system: "Use the private MCP server.",
+    mcpServers: [{
+      id: "private-mcp",
+      transport: { type: "http", url: "https://mcp.example.test" },
+      auth: { type: "bearer", token: "must-not-cross-hosted-boundary" },
+    }],
+  });
+
+  await assertRejects(
+    () => createRuntimeAgentDefinitionFromAgent(privateAgent),
+    Error,
+    'HTTP MCP server "private-mcp" cannot be serialized into a hosted agent definition',
+  );
+});
+
+Deno.test("project agent runtime preserves an explicitly empty MCP catalog", async () => {
+  const isolated = agent({
+    id: "isolated",
+    system: "Use no remote MCP servers.",
+    mcpServers: [],
+  });
+
+  assertEquals((await createRuntimeAgentDefinitionFromAgent(isolated)).mcpServers, []);
 });
 
 Deno.test("discoverProjectAgentRuntime clears stale runtime registries before rediscovery", async () => {
@@ -133,6 +261,37 @@ Deno.test("discoverProjectAgentRuntime clears stale runtime registries before re
     assertEquals(getMCPRegistry().resources.has("stale-resource"), false);
     assertEquals(getMCPRegistry().prompts.has("stale-prompt"), false);
     assertEquals(workflowRegistry.has("stale-workflow"), false);
+  });
+});
+
+Deno.test("project runtime discovers local skills without an explicit adapter", async () => {
+  await withTempDir(async (rootDir) => {
+    const skillDir = resolve(rootDir, "skills", "extract-submission");
+    Deno.mkdirSync(skillDir, { recursive: true });
+    Deno.writeTextFileSync(
+      resolve(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: extract-submission",
+        "description: Extract one submission",
+        "---",
+        "",
+        "Parse the staged attachment and preserve field provenance.",
+        "",
+      ].join("\n"),
+    );
+
+    const discovery = await discoverProjectAgentRuntime({ projectDir: rootDir });
+
+    assertEquals([...discovery.skills.keys()], ["extract-submission"]);
+    const loaded = await createLoadSkillTool().execute({
+      skillId: "extract-submission",
+    }) as { skillId: string; instructions: string };
+    assertEquals(loaded.skillId, "extract-submission");
+    assertStringIncludes(
+      loaded.instructions,
+      "Parse the staged attachment and preserve field provenance.",
+    );
   });
 });
 

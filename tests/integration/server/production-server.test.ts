@@ -60,6 +60,13 @@ describe(
               join(context.projectDir, "public", "styles.css"),
               "body { margin: 0; }",
             );
+            // The build now fails when it produces zero pages, so the static
+            // asset fixture needs at least one route.
+            await mkdir(join(context.projectDir, "pages"), { recursive: true });
+            await writeTextFile(
+              join(context.projectDir, "pages", "index.mdx"),
+              "# Static Assets Fixture",
+            );
 
             await buildProduction({
               projectDir: context.projectDir,

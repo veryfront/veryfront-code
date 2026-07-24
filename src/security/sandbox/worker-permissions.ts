@@ -109,7 +109,7 @@ function getDefaultCompiledReadPaths(): string[] {
  *
  * - read: restricted to the project temp dir (transformed modules) and cache dirs
  * - write: denied (workers produce output via postMessage, not filesystem)
- * - net: allowed (data fetchers and API routes may call external APIs)
+ * - net: broker-scoped by ProjectWorker before user code starts
  * - env: restricted to framework keys and the project's configured env keys
  * - run: denied (no subprocess spawning from user code)
  * - ffi: denied (no native code from user code)

@@ -39,8 +39,13 @@ import { rateLimit } from "veryfront/middleware";
 const limiter = rateLimit({
   maxRequests: 100, // Max requests per window
   windowMs: 60_000, // 1 minute window
+  trustProxy: true, // Only behind a trusted reverse proxy
 });
 ```
+
+Forwarded client-address headers are ignored by default. If the app is not
+behind a trusted reverse proxy, use `keyGenerator` with a trusted client or
+account identifier.
 
 ### Logging
 

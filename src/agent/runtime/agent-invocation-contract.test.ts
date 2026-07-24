@@ -250,6 +250,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
         project: {
           projectId,
           projectSlug: "demo-project",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: branchId,
         },
         parentRunId: "run_root_1",
       },
@@ -265,6 +267,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
+      runtimeTargetBranchId: branchId,
       credentials: parsed.credentials,
       agentSource: parsed.agentSource,
       forwardedProps: parsed.forwardedProps,

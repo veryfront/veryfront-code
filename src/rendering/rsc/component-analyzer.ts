@@ -6,7 +6,7 @@ import { toBase64Url } from "#veryfront/utils/path-utils.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { ClientComponentMeta, ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { extractExportNames } from "./export-extractor.ts";
 import { shortHash } from "#veryfront/utils/hash-utils.ts";
 import { hasClientFileName, hasUseClientDirective, hasUseServerDirective } from "./page-island.ts";

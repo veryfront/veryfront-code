@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createRemoteMCPToolSource } from "./remote-mcp.ts";
@@ -329,6 +329,25 @@ describe("tool/remote-mcp", () => {
       connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
+  });
+
+  it("does not surface remote HTTP error bodies", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const error = await assertRejects(
+      () =>
+        withMockFetch(
+          async () => new Response("private payload <TOKEN> at <LOCAL_PATH>", { status: 500 }),
+          async () => await source.listTools(),
+        ),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertEquals(error.message, "Remote MCP request failed (500)");
   });
 
   it("preserves caller accept types while adding the MCP-required media types", async () => {

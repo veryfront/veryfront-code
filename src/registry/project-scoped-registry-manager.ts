@@ -24,7 +24,7 @@
  */
 
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const DEFAULT_SCOPE_ID = "__default__";
@@ -365,6 +365,29 @@ export class ProjectScopedRegistryManager<T> {
     const scopeId = this.getCurrentScopeId();
     return (this.getActiveScopeRegistry(scopeId)?.has(id) ?? false) ||
       this.sharedRegistry.has(id);
+  }
+
+  /**
+   * Test effective items without materializing the merged registry.
+   *
+   * Project items shadow shared items with the same id, matching `getAll()`.
+   * Iteration stops after the first match.
+   */
+  some(predicate: (item: T, id: string) => boolean): boolean {
+    const scopeId = this.getCurrentScopeId();
+    const projectRegistry = this.getActiveScopeRegistry(scopeId);
+
+    for (const [id, sharedItem] of this.sharedRegistry) {
+      const item = projectRegistry?.has(id) ? projectRegistry.get(id) as T : sharedItem;
+      if (predicate(item, id)) return true;
+    }
+
+    if (!projectRegistry) return false;
+    for (const [id, item] of projectRegistry) {
+      if (this.sharedRegistry.has(id)) continue;
+      if (predicate(item, id)) return true;
+    }
+    return false;
   }
 
   /**

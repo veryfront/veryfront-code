@@ -18,6 +18,7 @@ import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { getTmpDirCacheKey } from "../tmp-paths.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
   function resetState(): void {
@@ -267,6 +268,21 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       globalInProgress.clear();
     });
 
+    it("should preserve in-progress entries for a specific project when requested", () => {
+      resetState();
+
+      const projectTransform = Promise.resolve();
+      globalInProgress.set("prefix:project-1:mod", projectTransform);
+      globalInProgress.set("prefix:project-2:mod", Promise.resolve());
+
+      clearSSRModuleCacheForProject("project-1", { preserveActiveTransforms: true });
+
+      assertEquals(globalInProgress.get("prefix:project-1:mod"), projectTransform);
+      assertEquals(globalInProgress.has("prefix:project-2:mod"), true);
+
+      globalInProgress.clear();
+    });
+
     it("should clear failed components for a specific project", () => {
       resetState();
 
@@ -285,13 +301,36 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       resetState();
 
       const baseCacheDir = getMdxEsmCacheDir();
-      const key1 = `${baseCacheDir}|${hashCodeHex("project-1")}|${hashCodeHex("preview-main")}`;
-      const key2 = `${baseCacheDir}|${hashCodeHex("project-2")}|${hashCodeHex("preview-main")}`;
+      const key1 = getTmpDirCacheKey(baseCacheDir, "project-1", "preview-main");
+      const key2 = getTmpDirCacheKey(baseCacheDir, "project-2", "preview-main");
+      const legacyKey = `${baseCacheDir}|${hashCodeHex("project-1")}|${
+        hashCodeHex("preview-main")
+      }`;
+
+      globalTmpDirs.set(key1, "/tmp/proj1");
+      globalTmpDirs.set(key2, "/tmp/proj2");
+      globalTmpDirs.set(legacyKey, "/tmp/proj1-legacy");
+
+      clearSSRModuleCacheForProject("project-1");
+
+      assertEquals(globalTmpDirs.has(key1), false);
+      assertEquals(globalTmpDirs.has(key2), true);
+      assertEquals(globalTmpDirs.has(legacyKey), false);
+
+      globalTmpDirs.clear();
+    });
+
+    it("should clear project tmp dirs even when active transforms are preserved", () => {
+      resetState();
+
+      const baseCacheDir = getMdxEsmCacheDir();
+      const key1 = getTmpDirCacheKey(baseCacheDir, "project-1", "preview-main");
+      const key2 = getTmpDirCacheKey(baseCacheDir, "project-2", "preview-main");
 
       globalTmpDirs.set(key1, "/tmp/proj1");
       globalTmpDirs.set(key2, "/tmp/proj2");
 
-      clearSSRModuleCacheForProject("project-1");
+      clearSSRModuleCacheForProject("project-1", { preserveActiveTransforms: true });
 
       assertEquals(globalTmpDirs.has(key1), false);
       assertEquals(globalTmpDirs.has(key2), true);
@@ -314,6 +353,43 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       }
 
       releaseTransformSlot("proj-other");
+    });
+
+    it("should reject project transform waiters by default", async () => {
+      resetState();
+      if (getTransformPerProjectLimit() <= 0) return;
+
+      const projectId = "proj-waiter-default-clear";
+      for (let i = 0; i < getTransformPerProjectLimit(); i++) {
+        assertEquals(acquireTransformSlot(projectId), true);
+      }
+
+      const waiter = tryAcquireTransformSlot(projectId, 10_000);
+      clearSSRModuleCacheForProject(projectId);
+
+      assertEquals(await waiter, false);
+      assertEquals(getTransformStats().activeProjects.has(projectId), false);
+    });
+
+    it("should preserve project transform slots and waiters when requested", async () => {
+      resetState();
+      if (getTransformPerProjectLimit() <= 0) return;
+
+      const projectId = "proj-waiter-preserved-clear";
+      for (let i = 0; i < getTransformPerProjectLimit(); i++) {
+        assertEquals(acquireTransformSlot(projectId), true);
+      }
+
+      const waiter = tryAcquireTransformSlot(projectId, 10_000);
+      clearSSRModuleCacheForProject(projectId, { preserveActiveTransforms: true });
+
+      assertEquals(getTransformStats().activeProjects.has(projectId), true);
+      releaseTransformSlot(projectId);
+      assertEquals(await waiter, true);
+
+      for (let i = 0; i < getTransformPerProjectLimit(); i++) {
+        releaseTransformSlot(projectId);
+      }
     });
 
     it("should clear verifiedHttpBundlePaths", () => {

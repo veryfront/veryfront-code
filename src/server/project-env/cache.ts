@@ -92,8 +92,7 @@ export class EnvironmentVariableCache {
       // agent-stream handler), so we log rather than throw to avoid turning a
       // transient fetch error into a hard request failure.
       logger.error("Failed to fetch project env vars and no stale entry exists", {
-        environmentId,
-        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
       return {};
     }

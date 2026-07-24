@@ -150,10 +150,16 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
 }
 
 class BackendTierAdapter implements CacheTier<string> {
+  readonly getRemainingTtlSeconds?: (key: string) => Promise<number | null>;
+
   constructor(
     readonly name: string,
     private readonly backend: CacheBackend,
-  ) {}
+  ) {
+    if (backend.getRemainingTtlSeconds) {
+      this.getRemainingTtlSeconds = backend.getRemainingTtlSeconds.bind(backend);
+    }
+  }
 
   async get(key: string): Promise<string | null> {
     return this.backend.get(key);
@@ -298,7 +304,7 @@ class MemoryTier implements CacheTier<string> {
       return null;
     }
 
-    return Math.ceil(remainingMs / 1000);
+    return remainingMs / 1000;
   }
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {

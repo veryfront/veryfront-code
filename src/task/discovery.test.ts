@@ -450,4 +450,89 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(result.id, "probe-runtime");
     assertEquals(result.output, { hasRuntimeTool: true });
   });
+
+  it("runs agent targets after project runtime discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/scheduled-agent.ts": [
+        "export default {",
+        '  id: "scheduled-agent",',
+        '  config: { id: "scheduled-agent" },',
+        "  async generate({ input, context }) {",
+        '    return { text: `ran:${input}:${context.schedule_name}`, status: "completed", toolCalls: [] };',
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "agent", id: "scheduled-agent" },
+      agentInput: "Run the fixture.",
+      agentContext: { schedule_name: "Fixture schedule" },
+    });
+
+    assertEquals(result.kind, "agent");
+    assertEquals(result.id, "scheduled-agent");
+    assertEquals(result.output, {
+      text: "ran:Run the fixture.:Fixture schedule",
+      status: "completed",
+      toolCalls: 0,
+    });
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "scheduled-agent" },
+        }),
+      Error,
+      "Local agent trigger runs require an explicit agent input.",
+    );
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "missing-agent" },
+          agentInput: "Run the fixture.",
+        }),
+      Error,
+      'Agent target "missing-agent" not found.',
+    );
+  });
+
+  it("fails when an agent target returns an error status", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/failing-agent.ts": [
+        "export default {",
+        '  id: "failing-agent",',
+        '  config: { id: "failing-agent" },',
+        "  async generate() {",
+        '    return { text: "failure", status: "error", toolCalls: [] };',
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "agent", id: "failing-agent" },
+          agentInput: "Run the fixture.",
+        }),
+      Error,
+      'Agent target "failing-agent" failed.',
+    );
+  });
 });

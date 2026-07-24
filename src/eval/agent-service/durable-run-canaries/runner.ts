@@ -1,4 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { API_CLIENT_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { sleep } from "#veryfront/utils";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
@@ -278,9 +280,10 @@ export function createDurableRunCanaryApiClient(
     });
 
     if (!response.ok) {
-      throw new Error(
-        `API ${init?.method ?? "GET"} ${path} failed: ${response.status} ${await response.text()}`,
-      );
+      throw API_CLIENT_ERROR.create({
+        detail: `API ${init?.method ?? "GET"} ${path} failed: ${response.status} ${await response
+          .text()}`,
+      });
     }
 
     const payload: unknown = await response.json();
@@ -460,12 +463,6 @@ function collectReferencedChildConversationIds(messages: DurableRunCanaryMessage
   return [...childConversationIds];
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 function isTerminalRunStatus(status: string): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -476,7 +473,9 @@ function assertCompletedSetupRunBeforeFollowUp(run: DurableRunCanaryRunSummary):
   }
 
   const reason = run.terminalErrorMessage ?? run.terminalErrorCode ?? `status ${run.status}`;
-  throw new Error(`Setup durable run did not complete before follow-up: ${reason}`);
+  throw TIMEOUT_ERROR.create({
+    detail: `Setup durable run did not complete before follow-up: ${reason}`,
+  });
 }
 
 function createDurableRunCanaryRunId(): string {
@@ -514,7 +513,7 @@ async function waitForRunSummaryVisibility(
     await sleep(500);
   }
 
-  throw new Error(`Run ${input.runId} did not become visible in time`);
+  throw TIMEOUT_ERROR.create({ detail: `Run ${input.runId} did not become visible in time` });
 }
 
 async function waitForTerminalRun(
@@ -531,7 +530,9 @@ async function waitForTerminalRun(
     await sleep(1_500);
   }
 
-  throw new Error(`Timed out waiting for run ${input.runId} to reach a terminal state`);
+  throw TIMEOUT_ERROR.create({
+    detail: `Timed out waiting for run ${input.runId} to reach a terminal state`,
+  });
 }
 
 /** Create durable run canary runner. */

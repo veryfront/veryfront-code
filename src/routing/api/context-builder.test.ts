@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
+import {
+  type APIContext,
+  createBodyReader,
+  createContext,
+  normalizeParams,
+  parseCookies,
+} from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -380,5 +386,103 @@ describe("API Context Builder", () => {
       assertEquals(body.name, "Test User");
       assertEquals(body.email, "test@example.com");
     });
+  });
+});
+
+describe("createContext: ctx.json writes, ctx.body reads", () => {
+  function ctxFor(request: Request): APIContext {
+    return createContext(request, { params: {} } as RouteMatch, mockFs);
+  }
+
+  it("builds a JSON response from ctx.json(data)", async () => {
+    const ctx = ctxFor(new Request("http://localhost/api/echo"));
+    const response = ctx.json({ received: true });
+
+    assertEquals(response instanceof Response, true);
+    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(await response.json(), { received: true });
+  });
+
+  it("honours a ResponseInit when building a response", async () => {
+    const ctx = ctxFor(new Request("http://localhost/api/echo"));
+    const response = ctx.json({ error: "nope" }, { status: 422 });
+
+    assertEquals(response.status, 422);
+    assertEquals(await response.json(), { error: "nope" });
+  });
+
+  it("reads the request body with ctx.body()", async () => {
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x: 1, nested: { y: "z" } }),
+      }),
+    );
+
+    assertEquals(await ctx.body(), { x: 1, nested: { y: "z" } });
+  });
+
+  it("caches the parse so ctx.body() can be read more than once", async () => {
+    // A validation helper and the handler both receive only `ctx`, so both
+    // reach for the body. A single-use stream would make the second call throw.
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ count: 7 }),
+      }),
+    );
+
+    assertEquals(await ctx.body(), { count: 7 });
+    assertEquals(await ctx.body(), { count: 7 });
+  });
+
+  it("does not consume the body away from a manual ctx.request.json()", async () => {
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ shared: true }),
+      }),
+    );
+
+    await ctx.body();
+    // The raw request stream is untouched by ctx.body(), so this still works.
+    assertEquals(await ctx.request.json(), { shared: true });
+  });
+
+  it("reads via ctx.body() even after ctx.request was consumed raw first", async () => {
+    // The reverse order: a handler reads the raw stream, *then* reaches for
+    // ctx.body(). The clone is taken at construction time, so it does not throw
+    // `Body already consumed` no matter which one runs first.
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ shared: true }),
+      }),
+    );
+
+    assertEquals(await ctx.request.json(), { shared: true });
+    assertEquals(await ctx.body(), { shared: true });
+  });
+
+  it("throws a 400 when the body is not valid JSON", async () => {
+    const ctx = ctxFor(
+      new Request("http://localhost/api/echo", { method: "POST", body: "not json" }),
+    );
+
+    const error = await assertRejects(() => ctx.body());
+    assertEquals((error as { status?: number }).status, 400);
+  });
+
+  it("createBodyReader reads the body under worker isolation too", async () => {
+    // Worker isolation builds its own context, so it uses this same reader.
+    const read = createBodyReader(
+      new Request("http://localhost/api/echo", {
+        method: "POST",
+        body: JSON.stringify({ isolated: true }),
+      }),
+    );
+
+    assertEquals(await read(), { isolated: true });
   });
 });

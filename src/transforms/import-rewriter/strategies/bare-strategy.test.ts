@@ -108,5 +108,61 @@ describe("BareStrategy", () => {
       );
       assertEquals(result.specifier?.includes("esm.sh/lodash@4.17.21"), true);
     });
+
+    // R1 regression: a known server-only driver (`redis`) and its explicit Deno
+    // `npm:` form only run server-side. They must be left external (specifier:
+    // null) for the runtime to resolve natively — never routed through esm.sh,
+    // which 500s building `redis` under `external=react` and otherwise ships a
+    // client that can never connect. This is the v0.1.1101 cold-cache regression.
+    it("leaves a server-only package (redis) external for the browser", () => {
+      const result = bareStrategy.rewrite(makeInfo("redis"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier, null);
+    });
+
+    it("leaves an explicit npm: server-only specifier external for the browser", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("npm:redis@5.11.0"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier, null);
+    });
+
+    // The `npm:` scheme alone does not mean server-only. A browser-safe package
+    // imported Deno-style (`npm:zod@4.0.0`) must still flow through esm.sh — the
+    // `npm:` prefix is stripped and the package rewritten like a bare import, so
+    // the browser can load it. Only server-only `npm:` packages stay external.
+    it("rewrites a browser-safe npm: specifier through esm.sh", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("npm:zod@4.0.0"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/zod@4.0.0?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("rewrites a version-less npm: specifier through esm.sh", () => {
+      const result = bareStrategy.rewrite(makeInfo("npm:zod"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier, "https://esm.sh/zod?external=react,react-dom&target=es2022");
+    });
+
+    it("preserves a subpath on a browser-safe npm: specifier", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("npm:zod@4.0.0/mini"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/zod@4.0.0/mini?external=react,react-dom&target=es2022",
+      );
+    });
+
+    // On the SSR target every bare/`npm:` package is left external regardless of
+    // whether it is server-only — the rewrite only ever targets the browser.
+    it("leaves a browser-safe npm: specifier external on the SSR target", () => {
+      const result = bareStrategy.rewrite(makeInfo("npm:zod@4.0.0"), makeCtx({ target: "ssr" }));
+      assertEquals(result.specifier, null);
+    });
   });
 });

@@ -12,7 +12,7 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
 import {

@@ -73,6 +73,34 @@ Deno.test("delegate tool runs the resolved specialist agent and returns its resu
   assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
 });
 
+Deno.test("delegate tool keeps host execution fixed to its declared target", async () => {
+  const writer = {
+    id: "writer",
+    config: {},
+  } as unknown as Agent;
+  const calls: unknown[] = [];
+  const tools = buildAgentDelegateTools({
+    delegates: ["writer"],
+    resolveAgent: () => writer,
+    executeDelegate: (input) => {
+      calls.push(input);
+      return Promise.resolve({ status: "completed" });
+    },
+  });
+
+  const result = await tools[`${AGENT_DELEGATE_TOOL_PREFIX}writer`]!.execute({
+    input: "Draft it.",
+  });
+
+  assertEquals(result, { status: "completed" });
+  assertEquals(calls, [{
+    delegateId: "writer",
+    agent: writer,
+    toolInput: { input: "Draft it." },
+    context: undefined,
+  }]);
+});
+
 Deno.test("delegate tool reports an error when the target agent is unavailable", async () => {
   const tools = buildAgentDelegateTools({
     delegates: ["writer"],

@@ -30,6 +30,7 @@ import {
   type SSRServiceLike,
 } from "../../../services/rendering/ssr.service.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 
 const logger = serverLogger.component("ssr");
@@ -57,6 +58,26 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
  *
  * Business logic is delegated to SSRService.
  */
+
+/**
+ * True for errors raised while compiling or resolving project source, as
+ * opposed to errors thrown by the running application.
+ *
+ * Module-load failures arrive wrapped in a RUNTIME-category `render-error`,
+ * which loses the original category, so they carry a `buildFailure` flag that
+ * the module loader sets at the point of failure. Failing to load is not
+ * evidence on its own: a module that compiled fine and threw at module scope
+ * also fails to load, and that is an application error the project's own error
+ * page should present.
+ */
+function isBuildError(error: unknown): boolean {
+  if (!(error instanceof VeryfrontError)) return false;
+  if (error.category === "BUILD" || error.category === "MODULE") return true;
+
+  const context = error.context as { buildFailure?: unknown } | undefined;
+  return context?.buildFailure === true;
+}
+
 export class SSRHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "SSRHandler",
@@ -235,7 +256,11 @@ export class SSRHandler extends BaseHandler {
           return this.handleNotFound(req, ctx, slug, nonce);
         }
 
-        if (result.errorType === "server-error" && !result.showDevOverlay) {
+        const isServerError = result.errorType === "server-error" ||
+          result.errorType === "runtime";
+        // Project error pages should beat the dev overlay for runtime errors.
+        // Build/import errors stay visible because their overlay is actionable.
+        if (isServerError && !(result.showDevOverlay && isBuildError(result.error))) {
           const customResponse = await this.tryCustomErrorFallback(req, ctx, result, nonce);
           if (customResponse) return customResponse;
         }

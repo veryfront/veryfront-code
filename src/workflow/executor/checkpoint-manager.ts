@@ -17,6 +17,12 @@ export interface ResumeInfo {
   nodeStates: Record<string, NodeState>;
 }
 
+/** Canonical run identity used to fence auxiliary writes from stale workers. */
+export interface CheckpointOwnership {
+  runId: string;
+  workerId: string;
+}
+
 export class CheckpointManager {
   private config: CheckpointManagerConfig;
 
@@ -24,9 +30,28 @@ export class CheckpointManager {
     this.config = { debug: false, ...config };
   }
 
-  async save(runId: string, checkpoint: Checkpoint): Promise<void> {
+  async save(
+    runId: string,
+    checkpoint: Checkpoint,
+    ownership?: CheckpointOwnership,
+  ): Promise<boolean> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
+
+    if (ownership) {
+      const saveOwned = this.config.backend.saveCheckpointIfStatusAndWorker;
+      if (!saveOwned) return false;
+      return await saveOwned.call(
+        this.config.backend,
+        runId,
+        ownership.runId,
+        ["running"],
+        ownership.workerId,
+        checkpoint,
+      );
+    }
+
     await this.config.backend.saveCheckpoint(runId, checkpoint);
+    return true;
   }
 
   async createCheckpoint(

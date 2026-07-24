@@ -1,8 +1,8 @@
 import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 
 interface ContractSchemaShape {
   __zod?: unknown;
@@ -198,7 +198,7 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
       } else if (input === undefined) {
         input = {};
       } else if (input === null || typeof input !== "object") {
-        throw new Error("dynamicTool: input must be a non-null object");
+        throw INVALID_ARGUMENT.create({ detail: "dynamicTool: input must be a non-null object" });
       }
       const result = await config.execute(input, context);
       return config.toModelOutput ? config.toModelOutput(result) : result;

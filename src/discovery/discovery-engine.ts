@@ -6,8 +6,8 @@
  */
 
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
-import { agentLogger } from "#veryfront/utils/logger/logger.ts";
-import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type {
   DiscoveryConfig,

@@ -191,39 +191,57 @@ describe("chat/conversation helpers", () => {
     ]);
   });
 
-  it("treats provider-native web tools as complete when the AI SDK omits providerExecuted", () => {
+  it("treats local web_fetch input-available tools as incomplete without providerExecuted", () => {
     const message: ChatUiMessage = {
-      id: "assistant-provider-native-tool",
+      id: "assistant-local-web-fetch",
       role: "assistant",
       parts: [
-        { type: "text", text: "I can answer with the fetched context." },
+        { type: "text", text: "Fetching the docs." },
         {
           type: "tool-web_fetch",
-          toolCallId: "srvtoolu-fetch",
+          toolCallId: "local-fetch",
           input: { url: "https://veryfront.com/docs/agent/create-agent" },
           state: "input-available",
         },
       ],
     };
 
-    assertEquals(hasIncompleteToolParts(message), false);
-    assertEquals(markIncompleteToolPartsAsErrored(message, "Tool call did not complete"), message);
-    assertEquals(toConversationPartsFromUiMessage(message), [
-      { type: "text", text: "I can answer with the fetched context." },
-      {
-        type: "tool_call",
-        id: "srvtoolu-fetch",
-        name: "web_fetch",
-        input: { url: "https://veryfront.com/docs/agent/create-agent" },
-        state: "completed",
-      },
-      {
-        type: "tool_result",
-        tool_call_id: "srvtoolu-fetch",
-        output: null,
-        is_error: false,
-      },
-    ]);
+    assertEquals(hasIncompleteToolParts(message), true);
+    assertEquals(markIncompleteToolPartsAsErrored(message, "Tool call did not complete"), {
+      ...message,
+      parts: [
+        { type: "text", text: "Fetching the docs." },
+        {
+          type: "tool-web_fetch",
+          toolCallId: "local-fetch",
+          input: { url: "https://veryfront.com/docs/agent/create-agent" },
+          state: "output-error",
+          errorText: "Tool call did not complete",
+        },
+      ],
+    });
+    assertEquals(
+      toConversationPartsFromUiMessage(markIncompleteToolPartsAsErrored(
+        message,
+        "Tool call did not complete",
+      )),
+      [
+        { type: "text", text: "Fetching the docs." },
+        {
+          type: "tool_call",
+          id: "local-fetch",
+          name: "web_fetch",
+          input: { url: "https://veryfront.com/docs/agent/create-agent" },
+          state: "completed",
+        },
+        {
+          type: "tool_result",
+          tool_call_id: "local-fetch",
+          output: "Tool call did not complete",
+          is_error: true,
+        },
+      ],
+    );
   });
 
   it("maps UI messages into persistable conversation parts", () => {

@@ -126,9 +126,10 @@ interface ListBranchesResponse {
 
 interface RemoteFile {
   path: string;
+  content?: string;
 }
 
-async function scanLocalFiles(
+export async function scanLocalFiles(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
 ): Promise<UploadOp[]> {
@@ -268,7 +269,9 @@ export function createBranch(
   projectSlug: string,
   branchName: string,
 ): Promise<BranchResponse> {
-  return client.post<BranchResponse>(`/projects/${projectSlug}/branches`, { name: branchName });
+  return client.post<BranchResponse>(`/projects/${encodeURIComponent(projectSlug)}/branches`, {
+    name: branchName,
+  });
 }
 
 function getErrorStatus(error: unknown): number | undefined {
@@ -292,7 +295,7 @@ async function getBranchByName(
     };
 
     const response = await client.get<ListBranchesResponse>(
-      `/projects/${projectSlug}/branches`,
+      `/projects/${encodeURIComponent(projectSlug)}/branches`,
       params,
     );
 
@@ -341,7 +344,7 @@ export async function resolvePushRemoteFiles(
 
 function buildFileUrl(projectSlug: string, path: string, branchId: string | null): string {
   const encodedPath = encodeURIComponent(path);
-  const base = `/projects/${projectSlug}/files/${encodedPath}`;
+  const base = `/projects/${encodeURIComponent(projectSlug)}/files/${encodedPath}`;
   return branchId ? `${base}?branch_id=${branchId}` : base;
 }
 
@@ -439,6 +442,7 @@ export async function recordPushReceipt(
   branch: string,
   snapshot: PushSourceSnapshot,
   ignoreChecker: IgnoreChecker,
+  pushedSourceDigest = snapshot.sourceDigest,
 ): Promise<void> {
   const project = await getProjectTarget(client, config.projectSlug);
   let currentSnapshot: PushSourceSnapshot;
@@ -456,7 +460,7 @@ export async function recordPushReceipt(
     projectSlug: project.slug,
     branch,
     commitSha: snapshot.gitSource.commitSha,
-    sourceDigest: snapshot.sourceDigest,
+    sourceDigest: pushedSourceDigest,
     clean: snapshot.gitSource.clean,
   });
 }
@@ -576,7 +580,20 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           remoteFiles: mainFiles,
           source: { type: "main" } satisfies PullSource,
         };
-      const toDelete = target.remoteFiles.map((f) => f.path).filter((p) => !localPaths.has(p));
+      const toDelete = target.remoteFiles
+        .map((file) => file.path)
+        .filter((path) => !ignoreChecker.isIgnored(path) && !localPaths.has(path));
+      const preservedRemoteFiles = target.remoteFiles
+        .filter((file) => ignoreChecker.isIgnored(file.path))
+        .map((file) => {
+          if (typeof file.content !== "string") {
+            throw new Error(`Veryfront returned invalid content for ignored file "${file.path}".`);
+          }
+          return { path: file.path, content: file.content };
+        });
+      const pushedSourceDigest = preservedRemoteFiles.length === 0
+        ? sourceSnapshot.sourceDigest
+        : await computeSourceDigest([...ops, ...preservedRemoteFiles]);
 
       if (ops.length === 0 && toDelete.length === 0) {
         try {
@@ -590,6 +607,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               branchName,
               sourceSnapshot,
               ignoreChecker,
+              pushedSourceDigest,
             );
           }
         } finally {
@@ -699,6 +717,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           branchName,
           sourceSnapshot,
           ignoreChecker,
+          pushedSourceDigest,
         );
       } finally {
         spinner.stop();

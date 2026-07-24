@@ -269,9 +269,7 @@ describe("security/http/response/security-handler", () => {
         [
           "'self'",
           "https://veryfront.com",
-          "https://studio.veryfront.com",
           "https://veryfront.org",
-          "https://studio.veryfront.org",
         ],
         "frame-ancestors must be the explicit Studio allowlist",
       );
@@ -546,9 +544,7 @@ describe("security/http/response/security-handler", () => {
         [
           "'self'",
           "https://veryfront.com",
-          "https://studio.veryfront.com",
           "https://veryfront.org",
-          "https://studio.veryfront.org",
         ],
         "frame-ancestors must be the explicit Studio allowlist (no wildcards, no tenant subdomains)",
       );

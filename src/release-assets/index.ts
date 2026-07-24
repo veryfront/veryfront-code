@@ -20,7 +20,6 @@ export {
   type ReleaseAssetExtension,
   releaseAssetUrl,
 } from "./constants.ts";
-export { sha256Hex, sha256HexBytes } from "./hash.ts";
 export {
   getReleaseAssetManifestSchema,
   parseReleaseAssetManifest,

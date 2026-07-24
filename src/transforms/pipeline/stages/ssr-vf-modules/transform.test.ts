@@ -4,7 +4,12 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
-import { isCyclePlaceholder, reactReExportToEsmUrl, transformFrameworkCode } from "./transform.ts";
+import {
+  isCyclePlaceholder,
+  reactReExportToEsmUrl,
+  stripJsonAttributesFromModuleImports,
+  transformFrameworkCode,
+} from "./transform.ts";
 import {
   buildFrameworkTransformCacheKey,
   FRAMEWORK_ROOT,
@@ -605,5 +610,59 @@ describe("transformFrameworkCode depth-limit fallback", {
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
+  });
+});
+
+describe("stripJsonAttributesFromModuleImports", () => {
+  // A framework `.json` import is resolved by compiling the JSON into a cached
+  // `.mjs` that default-exports the data. The attribute describes the original
+  // target, so leaving it makes the runtime reject the rewritten import with
+  // "Expected a Json module, but identified a Mjs module".
+  it("drops the attribute when the target is now an .mjs", async () => {
+    const code = `import m from "file:///cache/framework/vfmod-abc.mjs" with { type: "json" };`;
+    assertEquals(
+      await stripJsonAttributesFromModuleImports(code),
+      `import m from "file:///cache/framework/vfmod-abc.mjs";`,
+    );
+  });
+
+  it("drops the attribute from a dynamic import of a rewritten module", async () => {
+    const code =
+      `export async function load() { return import("file:///cache/a.mjs", { with: { type: "json" } }); }`;
+    assertEquals(
+      await stripJsonAttributesFromModuleImports(code),
+      `export async function load() { return import("file:///cache/a.mjs"); }`,
+    );
+  });
+
+  it("keeps the attribute on a genuine .json target", async () => {
+    const code = `import m from "./manifest.json" with { type: "json" };`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  it("handles single quotes and extra whitespace", async () => {
+    const code = `import m from 'file:///cache/a.mjs'  with  { type: 'json' };`;
+    assertStringIncludes(
+      await stripJsonAttributesFromModuleImports(code),
+      `from 'file:///cache/a.mjs';`,
+    );
+  });
+
+  it("leaves plain module imports untouched", async () => {
+    const code = `import { a } from "file:///cache/a.mjs";`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  // The framework embeds module source in string literals (the `#deno-config`
+  // stub, the generated RSC bundles). Rewriting those corrupts the payload and
+  // the corruption is content-hashed straight into the cache.
+  it("leaves import-like text inside a string literal alone", async () => {
+    const code = 'export const TPL = `import d from "file:///cache/a.mjs" with { type: "json" };`;';
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
+  });
+
+  it("keeps an attribute clause that is not a json type", async () => {
+    const code = `import m from "file:///cache/a.mjs" with { type: "css" };`;
+    assertEquals(await stripJsonAttributesFromModuleImports(code), code);
   });
 });

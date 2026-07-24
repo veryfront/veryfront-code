@@ -17,6 +17,7 @@
  */
 
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   isOptionalSchema as schemaIsOptional,
   schemaToJsonSchema,
@@ -44,7 +45,7 @@ export function zodToJsonSchema(schema: unknown): JsonSchema {
   if (isContractSchema(schema)) {
     return schemaToJsonSchema(schema);
   }
-  throw new Error("Invalid Veryfront schema: use defineSchema()");
+  throw INVALID_ARGUMENT.create({ detail: "Invalid Veryfront schema: use defineSchema()" });
 }
 
 /**

@@ -130,6 +130,32 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes source documents as durable custom events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const path = "knowledge/knowledge-ingest-20260723131451088-source.md";
+
+    assertEquals(
+      encoder.encode({
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/markdown",
+        title: path,
+        filename: path,
+      }),
+      [{
+        type: conversationRunEventTypes.custom,
+        name: "source-document",
+        value: {
+          type: "source-document",
+          sourceId: path,
+          mediaType: "text/markdown",
+          title: path,
+          filename: path,
+        },
+      }],
+    );
+  });
+
   it("encodes and normalizes whole event lists", () => {
     const events = [
       { type: "text-start", id: "msg-1" },

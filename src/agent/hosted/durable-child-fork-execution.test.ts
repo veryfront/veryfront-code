@@ -18,6 +18,7 @@ import {
   type HostedDurableChildSuccess,
 } from "./durable-child-fork-execution.ts";
 import type { InvokeAgentChildRunProgressEvent } from "../child-run/invoke-agent-child-runs.ts";
+import { bootstrapHostedChildRun, type BootstrapHostedChildRunInput } from "./child-bootstrap.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -241,13 +242,13 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       runtimeTargetKind: "preview_branch",
       targetBranchId: BRANCH_ID,
     } satisfies ConversationRunTargets;
-    const result: ChildRunExecutionResult = {
+    const result = {
       ...baseSuccessResult(),
       summary: {
         text:
           '<function_calls><invoke name="run_bash"><parameter name="command">curl -s https://example.com</parameter></invoke></function_calls><function_result>Title: Example Content</parameter></invoke></function_calls>',
       },
-    };
+    } as ChildRunExecutionResult;
 
     assertEquals(
       buildHostedDurableChildInvokeSuccessResult({
@@ -726,6 +727,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     let projectId = PROJECT_ID;
     const lifecycleStatuses: string[] = [];
     const bootstrapCalls: string[] = [];
+    const capturedBootstrapInputs: BootstrapHostedChildRunInput[] = [];
     const { requests } = stubFetchWithRecorder((_input, _init) => {
       const requestCount = requests.length;
       if (requestCount === 1) {
@@ -773,7 +775,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         forkInput: {
           description: "Inspect logs",
           prompt: "Find logs",
-          project_id: "77777777-7777-4777-8777-777777777777",
+          project_reference: "target-project",
           context: {
             veryfront_invocation_context: {
               root_conversation_id: "root-conversation-1",
@@ -787,6 +789,11 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         parentConversationId: PARENT_CONVERSATION_ID,
         parentRunId: "run_parent_1",
         parentMessageId: PARENT_MESSAGE_ID,
+        trustedInvocationContext: {
+          root_conversation_id: "root-conversation-1",
+          root_run_id: "run_root_1",
+          delegation_depth: 0,
+        },
         getProjectId: () => projectId,
         getRuntimeTargetKind: () => "environment",
         getRuntimeTargetEnvironmentId: () => ENVIRONMENT_ID,
@@ -795,6 +802,13 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         defaultModel: "opus",
         resolveModelId: (model) => `resolved-${model}`,
         resolveProvider: (model) => `provider-${model}`,
+        resolveProjectReference: ({ projectReference }) => {
+          assertEquals(projectReference, "target-project");
+          return Promise.resolve({
+            projectId: "77777777-7777-4777-8777-777777777777",
+            slug: "target-project",
+          });
+        },
         onRequestedProjectId: (requestedProjectId) => {
           projectId = requestedProjectId;
         },
@@ -814,6 +828,12 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
         buildTerminalFailureResult: () => ({ status: "missing_context", message: "unexpected" }),
         buildSuccessResult: (success) => ({ status: "completed", success }),
+        runtime: {
+          bootstrapChildRun: (input) => {
+            capturedBootstrapInputs.push(input);
+            return bootstrapHostedChildRun(input);
+          },
+        },
         bootstrap: {
           runBootstrap: async (operation) => {
             bootstrapCalls.push("wrapped");
@@ -834,6 +854,11 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     }
 
     assertEquals(projectId, "77777777-7777-4777-8777-777777777777");
+    assertEquals(
+      capturedBootstrapInputs[0]?.ensureProjectId,
+      "77777777-7777-4777-8777-777777777777",
+    );
+    assertEquals(capturedBootstrapInputs[0]?.runProjectId, "77777777-7777-4777-8777-777777777777");
     assertEquals(bootstrapCalls, ["wrapped", "start:resolved-sonnet", "complete:run_child_1"]);
     assertEquals(lifecycleStatuses, ["pending", "running", "completed"]);
     assertEquals(result.success.identifiers, {
@@ -850,6 +875,11 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       targetBranchId: null,
     });
     assertEquals(result.success.snapshot.success, true);
+    const childConversationBody = getRecordedRequest(requests, 1).body;
+    assertEquals(
+      (childConversationBody as { project_id?: string }).project_id,
+      "77777777-7777-4777-8777-777777777777",
+    );
     const handoffMessageBody = getRecordedRequest(requests, 2).body;
     assertEquals(handoffMessageBody, {
       role: "user",
@@ -857,7 +887,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         {
           type: "text",
           text:
-            'Find logs\n\n<structured_context>\n{"veryfront_invocation_context":{"root_conversation_id":"root-conversation-1","root_run_id":"run_root_1","parent_conversation_id":"11111111-1111-4111-a111-111111111111","parent_run_id":"run_parent_1","tool_call_id":"tool-call-1"}}\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.',
+            'Find logs\n\n<structured_context>\n{"veryfront_invocation_context":{"root_conversation_id":"root-conversation-1","parent_conversation_id":"11111111-1111-4111-a111-111111111111","root_run_id":"run_root_1","root_message_id":"33333333-3333-4333-a333-333333333333","parent_run_id":"run_parent_1","parent_message_id":"33333333-3333-4333-a333-333333333333","tool_call_id":"tool-call-1","delegation_depth":1}}\n</structured_context>\nTreat structured_context as the authoritative data payload for the child task. If prose conflicts with structured_context, use structured_context and say what conflicted.',
         },
       ],
     });

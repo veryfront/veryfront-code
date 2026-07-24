@@ -1,3 +1,11 @@
+import {
+  API_CLIENT_ERROR,
+  INPUT_VALIDATION_FAILED,
+  INVALID_ARGUMENT,
+  NOT_SUPPORTED,
+  RESOURCE_NOT_FOUND,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import { getEnvironmentConfig } from "#veryfront/config";
 import {
@@ -158,22 +166,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
-  if (!isRecord(value)) throw new Error("Expected object");
+  if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
   return value;
 }
 
 function parseOptionalUrl(value: unknown, fieldName: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.length === 0) throw new Error(`Invalid ${fieldName}`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
+  }
 
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new Error(`Invalid ${fieldName}`);
+      throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
     }
     return url.toString();
   } catch {
-    throw new Error(`Invalid ${fieldName}`);
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
   }
 }
 
@@ -182,36 +192,50 @@ function parseRuntimeTargetKind(value: unknown): ProjectRunExecuteRequest["runti
   if (value === "main_branch" || value === "environment" || value === "preview_branch") {
     return value;
   }
-  throw new Error("Invalid runtimeTargetKind");
+  throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid runtimeTargetKind" });
 }
 
 function parseOptionalNullableString(value: unknown, fieldName: string): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
-  if (typeof value !== "string" || value.length === 0) throw new Error(`Invalid ${fieldName}`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: `Invalid ${fieldName}` });
+  }
   return value;
 }
 
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
-  if (!isRecord(value)) throw new Error("Expected object");
+  if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
   const runId = value.runId;
   const kind = value.kind;
   const target = value.target;
   const projectId = value.projectId;
 
-  if (typeof runId !== "string" || !runId) throw new Error("Invalid runId");
-  if (runId !== pathRunId) throw new Error("Run id does not match request path");
+  if (typeof runId !== "string" || !runId) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid runId" });
+  }
+  if (runId !== pathRunId) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Run id does not match request path" });
+  }
   if (kind !== "task" && kind !== "workflow" && kind !== "eval") {
-    throw new Error("Invalid run kind");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid run kind" });
   }
-  if (typeof target !== "string" || !target) throw new Error("Invalid target");
-  if (typeof projectId !== "string" || !projectId) throw new Error("Invalid projectId");
-  if (kind === "task" && !target.startsWith("task:")) throw new Error("Invalid task target");
+  if (typeof target !== "string" || !target) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid target" });
+  }
+  if (typeof projectId !== "string" || !projectId) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid projectId" });
+  }
+  if (kind === "task" && !target.startsWith("task:")) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid task target" });
+  }
   if (kind === "workflow" && !target.startsWith("workflow:")) {
-    throw new Error("Invalid workflow target");
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid workflow target" });
   }
-  if (kind === "eval" && !target.startsWith("eval:")) throw new Error("Invalid eval target");
+  if (kind === "eval" && !target.startsWith("eval:")) {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
+  }
 
   return {
     runId,
@@ -315,7 +339,9 @@ async function executeTaskRun(
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
-    throw new Error("Knowledge ingest must be executed through the knowledge ingest executor");
+    throw NOT_SUPPORTED.create({
+      detail: "Knowledge ingest must be executed through the knowledge ingest executor",
+    });
   }
 
   const discovery = await deps.ensureProjectDiscovery(ctx);
@@ -358,7 +384,7 @@ async function waitForWorkflowResult(
 
   while (true) {
     const run = await client.getRun(runId);
-    if (!run) throw new Error(`Workflow run not found: ${runId}`);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     if (
       run.status === "completed" ||
@@ -370,7 +396,7 @@ async function waitForWorkflowResult(
     }
 
     if (deps.now() >= deadline) {
-      throw new Error(`Workflow run timed out: ${runId}`);
+      throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
     await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
@@ -609,7 +635,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
   const token = getRuntimeApiToken(req, ctx);
   if (!token) {
-    throw new Error("Missing project runtime API token");
+    throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
 
   async function requestJson<T>(
@@ -634,7 +660,9 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
     });
 
     if (!response.ok) {
-      throw new Error(`Veryfront API request failed: ${response.status} ${response.statusText}`);
+      throw API_CLIENT_ERROR.create({
+        detail: `Veryfront API request failed: ${response.status} ${response.statusText}`,
+      });
     }
 
     if (response.status === 204) return undefined as T;
@@ -712,7 +740,7 @@ async function resolveUploadIdsToPaths(
       `/projects/${encodeURIComponent(projectReference)}/uploads/${encodeURIComponent(uploadId)}`,
     );
     if (!upload.path) {
-      throw new Error(`Upload not found: ${uploadId}`);
+      throw RESOURCE_NOT_FOUND.create({ detail: `Upload not found: ${uploadId}` });
     }
     paths.push(upload.path);
   }
@@ -784,7 +812,7 @@ async function executeKnowledgeIngestRun(input: {
     const recursive = config.recursive === undefined ? true : Boolean(config.recursive);
 
     if (uploadPaths.length > 0 && pathPrefix) {
-      throw new Error("Use upload paths or upload prefix, not both.");
+      throw INVALID_ARGUMENT.create({ detail: "Use upload paths or upload prefix, not both." });
     }
 
     const options = {
@@ -815,7 +843,7 @@ async function executeKnowledgeIngestRun(input: {
     });
     const requestedCount = collection.sources.length + collection.skipped.length;
     if (requestedCount === 0) {
-      throw new Error("No supported knowledge sources were found.");
+      throw INVALID_ARGUMENT.create({ detail: "No supported knowledge sources were found." });
     }
 
     const results = await ingestResolvedSources(collection.sources, options, {
@@ -933,7 +961,7 @@ function createEvalAdapterConfig(input: {
   const runInput = input.request.input ?? {};
   const authToken = getRuntimeApiToken(input.req, input.ctx);
   if (!authToken) {
-    throw new Error("Missing project runtime API token");
+    throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
   const managedEndpointContext = getManagedProjectAgUiEndpointContext(
     input.request.runtimeAgUiEndpoint,
@@ -1049,7 +1077,9 @@ async function executeReleaseAssetBuildRun(input: {
 
   try {
     if (!releaseId || releaseVersion === undefined) {
-      throw new Error("Missing release_id or release_version for release asset build");
+      throw INVALID_ARGUMENT.create({
+        detail: "Missing release_id or release_version for release asset build",
+      });
     }
 
     const { VeryfrontApiClient } = await import(
@@ -1063,7 +1093,7 @@ async function executeReleaseAssetBuildRun(input: {
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
     const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
-    if (!token) throw new Error("Missing project runtime API token");
+    if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     const apiClient = new VeryfrontApiClient({
       apiBaseUrl,
@@ -1169,7 +1199,7 @@ function resolveStyleArtifactBuildSelector(
     .filter((value) => typeof value === "string" && value.length > 0).length;
 
   if (count !== 1) {
-    throw new Error("Exactly one style artifact selector is required");
+    throw INVALID_ARGUMENT.create({ detail: "Exactly one style artifact selector is required" });
   }
 
   return selector;
@@ -1293,7 +1323,7 @@ async function executeStyleArtifactBuildRun(input: {
 
     const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
       input.ctx.requestContext?.token ?? "";
-    if (!token) throw new Error("Missing project runtime API token");
+    if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     apiClient = new VeryfrontApiClient({
       apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
@@ -1312,9 +1342,10 @@ async function executeStyleArtifactBuildRun(input: {
     styleProfileHash = requestedStyleProfileHash ?? styleProfile.hash;
 
     if (requestedStyleProfileHash && requestedStyleProfileHash !== styleProfile.hash) {
-      throw new Error(
-        `Style profile hash mismatch: expected ${requestedStyleProfileHash}, got ${styleProfile.hash}`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Style profile hash mismatch: expected ${requestedStyleProfileHash}, got ${styleProfile.hash}`,
+      });
     }
 
     const { files, contentContext } = await resolveStyleArtifactSourceFiles(
@@ -1323,7 +1354,9 @@ async function executeStyleArtifactBuildRun(input: {
       collectLocalProjectSourceFiles,
     );
     if (files.length === 0) {
-      throw new Error("No project source files were available to build the style artifact");
+      throw INVALID_ARGUMENT.create({
+        detail: "No project source files were available to build the style artifact",
+      });
     }
 
     const stylesheetPath = input.ctx.config?.tailwind?.stylesheet;

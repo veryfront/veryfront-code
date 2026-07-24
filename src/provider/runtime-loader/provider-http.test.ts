@@ -1,5 +1,6 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   buildProviderError,
   parseRetryAfterMs,
@@ -69,6 +70,18 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
+    it("fails closed when an oversized OpenAI 429 body is truncated", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(429, {
+          error: { code: "insufficient_quota", message: "x".repeat(9_000) },
+        }),
+      );
+
+      assertEquals(err instanceof ProviderRequestError, true);
+      assertEquals(err.retryable, false);
+    });
+
     it("openai 429 rate_limit_exceeded -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "openai",
@@ -96,6 +109,18 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
+    it("fails closed when an oversized Google 429 body is truncated", async () => {
+      const err = await buildProviderError(
+        "google",
+        jsonResponse(429, {
+          error: { status: "RESOURCE_EXHAUSTED", message: "x".repeat(9_000) },
+        }),
+      );
+
+      assertEquals(err instanceof ProviderRequestError, true);
+      assertEquals(err.retryable, false);
+    });
+
     it("google 429 without RESOURCE_EXHAUSTED -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "google",
@@ -105,11 +130,27 @@ describe("provider-http", () => {
       assertEquals(err.retryable, true);
     });
 
-    it("generic transient 5xx (500/502/504) -> retryable overloaded", async () => {
-      for (const status of [500, 502, 504]) {
+    it("fails closed for unparseable ambiguous 429 bodies", async () => {
+      for (const provider of ["openai", "google"] as const) {
+        const err = await buildProviderError(provider, jsonResponse(429, "{"));
+        assertEquals(err instanceof ProviderRequestError, true, provider);
+        assertEquals(err.retryable, false, provider);
+      }
+    });
+
+    it("generic and reverse-proxy transient 5xx -> retryable overloaded", async () => {
+      for (const status of [500, 502, 504, 507, 520, 521, 522, 523, 524, 529]) {
         const err = await buildProviderError("openai", jsonResponse(status, "gateway error"));
         assertEquals(err instanceof ProviderOverloadedError, true, `status ${status}`);
         assertEquals(err.retryable, true, `status ${status}`);
+      }
+    });
+
+    it("permanent 5xx responses are non-retryable request errors", async () => {
+      for (const status of [501, 505]) {
+        const err = await buildProviderError("openai", jsonResponse(status, "not supported"));
+        assertEquals(err instanceof ProviderRequestError, true, `status ${status}`);
+        assertEquals(err.retryable, false, `status ${status}`);
       }
     });
 
@@ -121,15 +162,144 @@ describe("provider-http", () => {
       }
     });
 
-    it("bounds the error message to the max body length", async () => {
-      const huge = "x".repeat(10_000);
-      const err = await buildProviderError("openai", jsonResponse(500, huge));
-      assertEquals(err.message.length <= 2_000, true);
+    it("does not surface provider error body contents", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(500, "private provider payload <TOKEN>"),
+      );
+      assertEquals(err.message, "Provider request failed with status 500");
+      assertEquals(err.message.includes("<TOKEN>"), false);
     });
 
-    it("falls back to status text when the body is empty", async () => {
+    it("preserves structured 400 details for internal classification without enumerating them", async () => {
+      const responseBody = JSON.stringify({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "This model does not support assistant message prefill.",
+        },
+      });
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(JSON.stringify(err).includes("assistant message prefill"), false);
+      assertEquals(err.message, "Provider request failed with status 400");
+      assertEquals(parseProviderError(err), {
+        code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+        message:
+          "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+      });
+    });
+
+    it("preserves invalid-request details when a provider also supplies a specific code", async () => {
+      const responseBody = JSON.stringify({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+          message: "The prompt is too long for this model.",
+        },
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(400, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(parseProviderError(err), {
+        code: "CONTEXT_LENGTH_EXCEEDED",
+        message: "Conversation is too long",
+      });
+    });
+
+    it("preserves structured Veryfront 402 problems for internal classification", async () => {
+      const responseBody = JSON.stringify({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        balance: 0,
+        required: 4,
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(JSON.stringify(err).includes("AI credit limit exceeded"), false);
+      assertEquals(err.message, "Provider request failed with status 402");
+      assertEquals(parseProviderError(err), {
+        code: "INSUFFICIENT_CREDITS",
+        message: "AI credit limit exceeded",
+        status: 402,
+      });
+    });
+
+    it("preserves structured Veryfront resource limit problems for classification", async () => {
+      const responseBody = JSON.stringify({
+        slug: "resource-limit-exceeded",
+        error: "Resource limit exceeded",
+        suggestion: "Reduce the request size and try again.",
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(parseProviderError(err), {
+        code: "RESOURCE_LIMIT_EXCEEDED",
+        message: "Reduce the request size and try again.",
+        status: 402,
+      });
+    });
+
+    it("does not preserve arbitrary provider 402 response details", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, {
+          error: {
+            message: "private provider payload <TOKEN>",
+          },
+        }),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(JSON.stringify(err).includes("<TOKEN>"), false);
+      assertEquals(parseProviderError(err), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    });
+
+    it("does not preserve arbitrary provider api error messages", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(400, {
+          type: "error",
+          error: {
+            type: "api_error",
+            message: "private provider payload <TOKEN>",
+          },
+        }),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(parseProviderError(err), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+      assertEquals(JSON.stringify(err).includes("<TOKEN>"), false);
+    });
+
+    it("uses the response status when the body is empty", async () => {
       const err = await buildProviderError("openai", new Response("", { status: 500 }));
-      assertEquals(err.message.length > 0, true);
+      assertEquals(err.message, "Provider request failed with status 500");
     });
   });
 });

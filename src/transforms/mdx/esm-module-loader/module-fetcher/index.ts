@@ -12,8 +12,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { rendererLogger as globalLogger } from "#veryfront/utils";
-import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import { type Logger, rendererLogger as globalLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
@@ -22,7 +21,7 @@ import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
-import { resolveNestedModuleImports } from "./nested-imports.ts";
+import { resolveNestedImportBase, resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache } from "./distributed-cache.ts";
 import { resolveUnresolvedModuleViaHttpFallback } from "./http-fallback.ts";
 import { normalizePath } from "./module-cache.ts";
@@ -286,6 +285,7 @@ async function doFetchAndCacheModule(
       moduleCode,
       esmCacheDir,
       normalizedPath,
+      parentBasePath: resolveNestedImportBase(normalizedPath, actualFilePath),
       strictMissingModules: context.strictMissingModules ?? true,
       projectSlug,
       fetchAndCacheModule: fetchAndCacheModuleFn,

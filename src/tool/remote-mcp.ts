@@ -1,15 +1,32 @@
 import { logger } from "#veryfront/utils";
+import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 
 /** Default timeout for a single outbound remote MCP request. */
 const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
-/** Upper bound on characters of a remote error body surfaced in thrown errors. */
+/** Upper bound on characters inspected when classifying a remote HTTP failure. */
 const MAX_ERROR_BODY_LENGTH = 2_000;
+const MAX_ERROR_BODY_BYTES = MAX_ERROR_BODY_LENGTH * 4;
 /** Defensive cap on tools/list pagination to avoid unbounded cursor loops. */
 const MAX_TOOL_LIST_PAGES = 50;
+
+class RemoteMCPHttpError extends Error {
+  constructor(status: number) {
+    super(`Remote MCP request failed (${status})`);
+    this.name = "RemoteMCPHttpError";
+  }
+}
+
+class RemoteMCPOAuthExpiredHttpError extends RemoteMCPHttpError {
+  constructor(status: number) {
+    super(status);
+    this.name = "RemoteMCPOAuthExpiredHttpError";
+  }
+}
 
 type ResolvableValue<T> = T | ((context?: ToolExecutionContext) => T | Promise<T>);
 
@@ -225,7 +242,11 @@ function normalizeKnownToolException(
   endpoint: string,
   context?: ToolExecutionContext,
 ): Record<string, unknown> | null {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof RemoteMCPOAuthExpiredHttpError
+    ? "invalid_grant"
+    : error instanceof Error
+    ? error.message
+    : String(error);
   const normalized = normalizeKnownToolError(message, toolName, endpoint, context);
   return isReconnectRequiredToolOutput(normalized) ? normalized : null;
 }
@@ -296,7 +317,9 @@ function parseJsonRpcSsePayload(text: string): unknown {
     return parsedPayloads[0];
   }
 
-  throw new Error("Remote MCP SSE response did not include a JSON-RPC payload");
+  throw NETWORK_ERROR.create({
+    detail: "Remote MCP SSE response did not include a JSON-RPC payload",
+  });
 }
 
 async function parseJsonRpcResponse(response: Response): Promise<unknown> {
@@ -379,18 +402,20 @@ async function postJsonRpc(
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new Error(
-        `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
-      );
+      throw TIMEOUT_ERROR.create({
+        detail: `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
+      });
     }
     throw error;
   }
 
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, MAX_ERROR_BODY_LENGTH);
-    throw new Error(
-      `Remote MCP request failed (${response.status})${detail ? `: ${detail}` : ""}`,
-    );
+    const { text } = await readResponseTextPrefix(response, MAX_ERROR_BODY_BYTES);
+    const detail = text.slice(0, MAX_ERROR_BODY_LENGTH);
+    if (isOauthExpiredMessage(detail)) {
+      throw new RemoteMCPOAuthExpiredHttpError(response.status);
+    }
+    throw new RemoteMCPHttpError(response.status);
   }
 
   return await parseJsonRpcResponse(response);
@@ -398,15 +423,15 @@ async function postJsonRpc(
 
 function getJsonRpcResult(payload: unknown): unknown {
   if (!isRecord(payload)) {
-    throw new Error("Remote MCP response was not a JSON object");
+    throw NETWORK_ERROR.create({ detail: "Remote MCP response was not a JSON object" });
   }
 
   if ("error" in payload) {
-    throw new Error(extractJsonRpcErrorMessage(payload));
+    throw NETWORK_ERROR.create({ detail: extractJsonRpcErrorMessage(payload) });
   }
 
   if (!("result" in payload)) {
-    throw new Error("Remote MCP response did not include a result");
+    throw NETWORK_ERROR.create({ detail: "Remote MCP response did not include a result" });
   }
 
   return payload.result;
@@ -521,7 +546,6 @@ export function createRemoteMCPToolSource(
 
         if (page === MAX_TOOL_LIST_PAGES - 1) {
           logger.warn("Remote MCP tools/list pagination capped", {
-            id,
             pages: MAX_TOOL_LIST_PAGES,
           });
         }

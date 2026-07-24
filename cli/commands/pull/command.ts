@@ -239,15 +239,18 @@ async function validateFilePath(
  * Build the files list URL based on pull source
  */
 export function buildFilesListUrl(projectSlug: string, source: PullSource): string {
+  const encodedProjectSlug = encodeURIComponent(projectSlug);
   switch (source.type) {
     case "environment":
-      return `/projects/${projectSlug}/environments/${encodeURIComponent(source.name)}/files`;
+      return `/projects/${encodedProjectSlug}/environments/${
+        encodeURIComponent(source.name)
+      }/files`;
     case "release":
-      return `/projects/${projectSlug}/releases/${encodeURIComponent(source.version)}/files`;
+      return `/projects/${encodedProjectSlug}/releases/${encodeURIComponent(source.version)}/files`;
     case "branch":
-      return `/projects/${projectSlug}/files?branch=${encodeURIComponent(source.name)}`;
+      return `/projects/${encodedProjectSlug}/files?branch=${encodeURIComponent(source.name)}`;
     case "main":
-      return `/projects/${projectSlug}/files`;
+      return `/projects/${encodedProjectSlug}/files`;
   }
 }
 
@@ -285,23 +288,24 @@ export async function listAllFiles(
  * Build the file content URL based on pull source
  */
 export function buildFileContentUrl(projectSlug: string, path: string, source: PullSource): string {
+  const encodedProjectSlug = encodeURIComponent(projectSlug);
   const encodedPath = encodeURIComponent(path);
 
   switch (source.type) {
     case "environment":
-      return `/projects/${projectSlug}/environments/${
+      return `/projects/${encodedProjectSlug}/environments/${
         encodeURIComponent(source.name)
       }/files/${encodedPath}`;
     case "release":
-      return `/projects/${projectSlug}/releases/${
+      return `/projects/${encodedProjectSlug}/releases/${
         encodeURIComponent(source.version)
       }/files/${encodedPath}`;
     case "branch":
-      return `/projects/${projectSlug}/files/${encodedPath}?branch=${
+      return `/projects/${encodedProjectSlug}/files/${encodedPath}?branch=${
         encodeURIComponent(source.name)
       }`;
     case "main":
-      return `/projects/${projectSlug}/files/${encodedPath}`;
+      return `/projects/${encodedProjectSlug}/files/${encodedPath}`;
   }
 }
 
@@ -833,7 +837,16 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
       const cancelledProjects: string[] = [];
 
       for (const project of projects) {
-        const targetDir = join(projectDir, project);
+        let targetDir: string;
+        try {
+          validateRemoteFilePath(project);
+          targetDir = join(projectDir, project);
+        } catch (error) {
+          const message = `Invalid project slug "${project}": ${describeError(error)}`;
+          cliLogger.error(message);
+          failedProjects.push({ project, message, error });
+          continue;
+        }
 
         if (!quiet) cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
 

@@ -137,6 +137,8 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       ],
     });
     const input = createRefreshInput();
+    input.liveProjectSteering.agent.skills = ["build"];
+    input.taskContext.availableSkillIds = ["build", "hidden"];
 
     const system = await refresh(input);
 
@@ -204,7 +206,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     ]);
   });
 
-  it("keeps an empty visible skill set restrictive during refresh", async () => {
+  it("keeps an explicitly empty advertised skill catalog during refresh", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
       fetchSkills: () => Promise.resolve([createSkill("other-agent--private")]),
@@ -212,17 +214,10 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
     });
 
-    const system = await refresh(
-      createRefreshInput({
-        taskContext: {
-          authToken: "auth-token",
-          projectId: "project-1",
-          branchId: "branch-1",
-          model: "openai/gpt-test",
-          availableSkillIds: [],
-        },
-      }),
-    );
+    const input = createRefreshInput();
+    input.liveProjectSteering.agent.skills = [];
+    input.taskContext.availableSkillIds = ["other-agent--private"];
+    const system = await refresh(input);
 
     assertEquals(system.includes("Fresh instructions:other-agent--private"), false);
     assertEquals(system.includes("Fresh instructions:"), true);

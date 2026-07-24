@@ -1,5 +1,5 @@
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import { cn } from "../../theme.ts";
 
 /** Props accepted by branch picker. */
@@ -35,17 +35,10 @@ interface BranchPickerContextValue {
   onNext: () => void;
 }
 
-const BranchPickerContext = React.createContext<BranchPickerContextValue | null>(null);
-
-function useBranchPicker(): BranchPickerContextValue {
-  const context = React.useContext(BranchPickerContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "BranchPicker.* must be used within <BranchPicker>",
-    });
-  }
-  return context;
-}
+const [BranchPickerContext, useBranchPicker] = createStrictContext<BranchPickerContextValue>(
+  "BranchPicker.*",
+  "<BranchPicker>",
+);
 
 const ACTION_BUTTON =
   "size-5 flex items-center justify-center rounded-full transition-all hover:bg-[var(--foreground)]/5 disabled:opacity-50 disabled:pointer-events-none";

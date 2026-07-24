@@ -8,7 +8,7 @@
  * @module transforms/esm/bundle-manifest
  **************************/
 
-import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { buildBundleManifestCacheKey } from "#veryfront/cache/keys.ts";
 import { BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";

@@ -10,6 +10,7 @@
 
 import { proxyLogger } from "./logger.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
+import { encodeBase64 } from "#veryfront/utils";
 
 const logger = proxyLogger.child({ module: "server-resolver" });
 
@@ -112,7 +113,7 @@ export class ServerResolver {
     const headers: Record<string, string> = { Accept: "application/json" };
 
     if (this.apiUser && this.apiPass) {
-      headers.Authorization = `Basic ${btoa(`${this.apiUser}:${this.apiPass}`)}`;
+      headers.Authorization = `Basic ${encodeBase64(`${this.apiUser}:${this.apiPass}`)}`;
     }
 
     let response: Response;

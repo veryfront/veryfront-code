@@ -57,8 +57,19 @@ export function resetCachedTransformLimits(): void {
   _transformPerProjectLimit = undefined;
 }
 
-export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
-export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;
+// Cold framework transforms can occupy every permit for longer than 500ms.
+// Queue briefly instead of misclassifying normal backpressure as a missing
+// dependency; this remains well below the module-load and render hard caps.
+export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 5_000;
+
+// Bound waits on a shared cold transform leader. If the leader promise never
+// settles, callers should detach and allow later requests to retry cleanly.
+export const TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS = 45_000;
+
+// A caller timeout must not evict a live leader and trigger a retry stampede.
+// Retain the shared flight for a generous final safety window, then remove
+// only that exact promise so a genuinely wedged transform can recover.
+export const TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS = 5 * MS_PER_MINUTE;
 
 export const MAX_TRANSFORM_DEPTH = 15;
 export const TRANSFORM_BATCH_SIZE = 10;

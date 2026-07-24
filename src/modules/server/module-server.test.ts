@@ -20,7 +20,7 @@ import {
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { isModuleRequest } from "./module-server.ts";
+import { getDevModuleContentType, isModuleRequest } from "./module-server.ts";
 import { clearReleaseModuleResponseCache } from "./module-response-cache.ts";
 import { clearSourceMissCache } from "./module-source-resolution-cache.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -265,6 +265,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     const text = await response.text();
     assertEquals(text.includes("#deno-config"), false);
     assertEquals(text.includes("./version-constant.js"), true);
+    assertEquals(/with\s*\{\s*type\s*:\s*["']json["']\s*\}/.test(text), false);
   });
 
   it("should serve browser React shims imported by npm framework modules", async () => {
@@ -1066,5 +1067,87 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(cacheDir, { recursive: true });
     }
+  });
+
+  it("serves a TypeScript source request as JavaScript", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-ts-content-type-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/lib`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/lib/constants.ts`,
+        `export const SITE_NAME: string = "veryfront";\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/lib/constants.ts"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type"), "application/javascript; charset=utf-8");
+      assertStringIncludes(await response.text(), "SITE_NAME");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("serves a JSON module requested with a .js suffix as JSON", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-json-content-type-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/lib`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/lib/data.json`, `{"a":1}\n`);
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/lib/data.json.js"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-type"), "application/json; charset=utf-8");
+      assertEquals(JSON.parse(await response.text()), { a: 1 });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
+
+describe("getDevModuleContentType", () => {
+  // The module server compiles TS/JSX/MDX sources to JavaScript before serving
+  // them. Typing the response from the requested source extension yields
+  // `application/typescript`, which browsers refuse to execute as a module.
+  for (const path of ["lib/constants.ts", "components/Badge.tsx", "a.jsx", "post.mdx", "a.md"]) {
+    it(`serves ${path} as JavaScript`, () => {
+      assertEquals(getDevModuleContentType(path), "application/javascript; charset=utf-8");
+    });
+  }
+
+  it("still serves .css as CSS", () => {
+    assertEquals(getDevModuleContentType("styles/globals.css"), "text/css; charset=utf-8");
+  });
+
+  it("still serves source maps as JSON", () => {
+    assertEquals(getDevModuleContentType("pages/index.js.map"), "application/json; charset=utf-8");
+  });
+
+  it("serves extensionless paths as JavaScript", () => {
+    assertEquals(getDevModuleContentType("pages/index"), "application/javascript; charset=utf-8");
+  });
+
+  // The import rewriter appends `.js` to any specifier whose extension it does
+  // not recognise, so `@/lib/data.json` reaches the server as `lib/data.json.js`
+  // while the body stays raw JSON. Typing that as JavaScript makes the browser
+  // throw a syntax error on the first `:` in the object.
+  it("serves a JSON module requested with a .js suffix as JSON", () => {
+    assertEquals(getDevModuleContentType("lib/data.json.js"), "application/json; charset=utf-8");
+  });
+
+  it("serves a CSS module requested with a .js suffix as CSS", () => {
+    assertEquals(getDevModuleContentType("styles/globals.css.js"), "text/css; charset=utf-8");
+  });
+
+  it("still serves plain .js as JavaScript", () => {
+    assertEquals(getDevModuleContentType("lib/legacy.js"), "application/javascript; charset=utf-8");
   });
 });

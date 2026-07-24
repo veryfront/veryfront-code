@@ -172,6 +172,22 @@ describe("html-generation/utils", () => {
       assertStringIncludes(imports["veryfront/markdown"]!, "/esm/src/markdown/index.js");
       assertStringIncludes(imports["veryfront/mdx"]!, "/esm/src/mdx/index.js");
       assertStringIncludes(imports["veryfront/workflow"]!, "/esm/src/workflow/react/index.js");
+
+      // Core runtime utilities must ALWAYS resolve locally, even under a
+      // non-default CDN provider — they must share the same React context module
+      // instance as SSR, otherwise the browser cannot resolve `veryfront/router`
+      // and hydration fails. CDN is only for third-party deps + the AI modules.
+      assertEquals(imports["veryfront/router"], "/_vf_modules/_veryfront/react/runtime/core.js");
+      assertEquals(imports["veryfront/head"], "/_vf_modules/_veryfront/react/runtime/core.js");
+      assertEquals(imports["veryfront/context"], "/_vf_modules/_veryfront/react/runtime/core.js");
+      assertEquals(imports["veryfront/fonts"], "/_vf_modules/_veryfront/react/fonts/index.js");
+
+      // React must come from esm.sh even under unpkg — unpkg only ships UMD
+      // globals, which cannot be loaded through an import map, so hydration would
+      // never start. (The `provider` only governs the veryfront framework modules.)
+      assertStringIncludes(imports["react"]!, "esm.sh");
+      assertStringIncludes(imports["react-dom"]!, "esm.sh");
+      assertStringIncludes(imports["react-dom/client"]!, "esm.sh");
     });
 
     it("should format JSON with proper indentation", async () => {

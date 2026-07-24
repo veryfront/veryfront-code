@@ -1,4 +1,5 @@
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
+import { AGENT_ERROR } from "#veryfront/errors";
 
 /** Public API contract for tool execution data event publisher. */
 export type ToolExecutionDataEventPublisher = (event: ToolExecutionDataEvent) => void;
@@ -33,7 +34,7 @@ function toUint8ArrayChunk(value: unknown): Uint8Array {
     return new Uint8Array(value);
   }
 
-  throw new Error("Agent runtime returned a non-binary stream chunk");
+  throw AGENT_ERROR.create({ detail: "Agent runtime returned a non-binary stream chunk" });
 }
 
 /** Create tool execution data event bridge stream. */

@@ -39,6 +39,8 @@ export type { CorsOptions } from "./builtin/types.ts";
 export { cors } from "#veryfront/security";
 
 export {
+  authRateLimit,
+  type AuthRateLimitOptions,
   MemoryRateLimitStore,
   rateLimit,
   type RateLimitOptions,

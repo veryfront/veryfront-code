@@ -10,7 +10,7 @@ import type {
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { INVALID_ARGUMENT, TOKEN_STORAGE_ERROR } from "#veryfront/errors";
-import { logger as baseLogger } from "#veryfront/utils";
+import { base64urlEncodeBytes, logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("o-auth");
 
@@ -36,11 +36,7 @@ function generateCodeVerifier(): string {
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
   const data = new TextEncoder().encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  return base64urlEncodeBytes(new Uint8Array(await crypto.subtle.digest("SHA-256", data)));
 }
 
 /** Implement oauth provider. */
@@ -75,6 +71,14 @@ export class OAuthProvider {
 
     const state = options.state ?? generateRandomString(32);
     const scopes = options.scopes ?? options.defaultScopes ?? [];
+    if (scopes.length === 0) {
+      logger.warn(
+        "createAuthorizationUrl: no scopes configured; OAuth request will have empty scope set",
+        {
+          clientIdEnvVar: this.config.clientIdEnvVar,
+        },
+      );
+    }
     const redirectUri = options.redirectUri ?? "";
     const usePkce = options.usePkce !== false;
 
@@ -418,7 +422,7 @@ export class OAuthService extends OAuthProvider {
     if (!tokens.refreshToken) return null;
 
     if (!this.tokenStore) {
-      throw new Error("TokenStore not configured");
+      throw TOKEN_STORAGE_ERROR.create({ detail: "TokenStore not configured" });
     }
 
     const key = JSON.stringify([this.serviceId, userId]);
@@ -444,7 +448,7 @@ export class OAuthService extends OAuthProvider {
     if (!result.success || !result.tokens) return null;
 
     if (!this.tokenStore) {
-      throw new Error("TokenStore not configured");
+      throw TOKEN_STORAGE_ERROR.create({ detail: "TokenStore not configured" });
     }
     await this.tokenStore.setTokens(this.serviceId, userId, result.tokens);
     return result.tokens.accessToken;

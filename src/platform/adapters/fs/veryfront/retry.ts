@@ -8,6 +8,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { retryWithBackoff } from "#veryfront/errors/error-handlers.ts";
 
 const logger = baseLogger.component("fs-retry");
 
@@ -57,22 +58,18 @@ function isTransientError(error: unknown): boolean {
  * Execute an async function with a single retry for transient errors.
  * Non-transient errors (4xx, validation) are thrown immediately.
  */
-export async function withRetryOnTransient<T>(
+export function withRetryOnTransient<T>(
   fn: () => Promise<T>,
   context: string,
 ): Promise<T> {
-  try {
-    return await fn();
-  } catch (error) {
-    if (!isTransientError(error)) throw error;
-
-    logger.warn(`${context} — transient error, retrying once`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-
-    // no cleanup needed: one-shot
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-
-    return fn();
-  }
+  return retryWithBackoff(() => fn(), {
+    maxAttempts: 2,
+    computeDelay: () => RETRY_DELAY_MS,
+    shouldRetry: (error) => isTransientError(error),
+    onRetry: ({ error }) => {
+      logger.warn(`${context} — transient error, retrying once`, {
+        error: error.message,
+      });
+    },
+  });
 }

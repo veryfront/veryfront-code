@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/types.ts";
 import {
   type ChatUiMessageStreamFinish,
+  type ChatUiMessageStreamFinishPart,
   createChatUiMessageStreamFromDataStream,
 } from "./chat-ui-message-stream.ts";
 
@@ -130,6 +131,68 @@ describe("createChatUiMessageStreamFromDataStream", () => {
     });
   });
 
+  it("preserves providerExecuted from data stream tool events into final dynamic tool parts", async () => {
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        {
+          stream: createSseStream([
+            { type: "message-start", messageId: "framework-message" },
+            {
+              type: "tool-input-start",
+              toolCallId: "tool-provider-fetch",
+              toolName: "web_fetch",
+              providerExecuted: true,
+            },
+            {
+              type: "tool-input-available",
+              toolCallId: "tool-provider-fetch",
+              toolName: "web_fetch",
+              input: { url: "https://example.com/docs" },
+              providerExecuted: true,
+            },
+            { type: "message-finish" },
+          ]),
+        },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+
+    assertEquals(chunks, [
+      { type: "start", messageId: "assistant-message" },
+      { type: "start-step" },
+      {
+        type: "tool-input-start",
+        toolCallId: "tool-provider-fetch",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-provider-fetch",
+        toolName: "web_fetch",
+        input: { url: "https://example.com/docs" },
+        providerExecuted: true,
+      },
+      { type: "finish", finishReason: "stop" },
+    ]);
+    assertEquals(finish?.responseMessage.parts, [
+      {
+        type: "dynamic-tool",
+        toolName: "web_fetch",
+        toolCallId: "tool-provider-fetch",
+        input: { url: "https://example.com/docs" },
+        providerExecuted: true,
+        state: "input-available",
+      },
+    ]);
+  });
+
   it("carries runtime finish usage into final message metadata", async () => {
     let finish:
       | ChatUiMessageStreamFinish<{
@@ -145,13 +208,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
         costCredits?: number;
       }>
       | undefined;
-    let observedFinishPart:
-      | Parameters<
-        NonNullable<
-          Parameters<typeof createChatUiMessageStreamFromDataStream>[1]
-        >["messageMetadata"]
-      >[0]["part"]
-      | undefined;
+    let observedFinishPart: ChatUiMessageStreamFinishPart | undefined;
 
     const chunks = await collectChunks(
       createChatUiMessageStreamFromDataStream(

@@ -54,6 +54,8 @@ Deno.test("createVeryfrontCloudRuntimeSystemMessages includes skills and environ
       id: "deploy",
       name: "Deploy",
       description: "Deployment guidance",
+      instructions: "Deploy carefully.",
+      allowedTools: [],
       references: [],
     },
   ];
@@ -70,6 +72,31 @@ Deno.test("createVeryfrontCloudRuntimeSystemMessages includes skills and environ
   assertEquals(messages[1]?.role, "system");
   assertStringIncludes(messages[1]?.content ?? "", "<environment_context>");
   assertStringIncludes(messages[1]?.content ?? "", "Runtime facts");
+});
+
+Deno.test("createVeryfrontCloudRuntimeSystemMessages scopes skill delegation to available tools", () => {
+  const skills: RuntimeSkillDefinition[] = [
+    {
+      id: "review",
+      name: "Review",
+      description: "Review guidance",
+      instructions: "Review carefully.",
+      allowedTools: [],
+    },
+  ];
+
+  const [message] = createVeryfrontCloudRuntimeSystemMessages({
+    agent: createAgent({ instructions: "Base instructions" }),
+    skills,
+    availableToolNames: ["agent_reviewer", "load_skill"],
+  });
+
+  assertStringIncludes(
+    message?.content ?? "",
+    "When delegating, use only these available scoped delegation tools: `agent_reviewer`.",
+  );
+  assertEquals((message?.content ?? "").includes("invoke_agent"), false);
+  assertEquals((message?.content ?? "").includes("Pass through any returned model"), false);
 });
 
 Deno.test("buildVeryfrontCloudRuntimeInstructions adapts hosted preparation input", () => {

@@ -75,8 +75,8 @@ function createMockAdapter(
 describe("embedding module static import", () => {
   // The embedding module must be statically imported so deno compile includes
   // it in the binary. Unlike agent/tool/platform which are statically imported
-  // throughout the codebase, embedding is only referenced in transpiler.ts.
-  // If this import breaks, the compiled binary will fail to load upload handlers.
+  // throughout the codebase, embedding is registered by the discovery runtime
+  // bootstrap. If this import breaks, the compiled binary cannot load upload handlers.
 
   it("exports createUploadHandler", () => {
     assertEquals(typeof embeddingMod.createUploadHandler, "function");

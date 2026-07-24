@@ -8,7 +8,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { unrefTimer } from "#veryfront/compat/process.ts";
 import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
-import type { RequestProfileRecord } from "#veryfront/observability/request-profiler.ts";
+import type { RequestProfileRecord } from "#veryfront/observability";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("request-tracker");

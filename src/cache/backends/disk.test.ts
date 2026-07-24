@@ -143,6 +143,9 @@ Deno.test("DiskCacheBackend", async (t) => {
     const backend = makeBackend();
     await backend.set("ttl-long", "val", 3600);
     assertEquals(await backend.get("ttl-long"), "val");
+    const remaining = await backend.getRemainingTtlSeconds("ttl-long");
+    assertEquals(typeof remaining, "number");
+    assertEquals(remaining! > 0 && remaining! <= 3600, true);
   });
 
   await t.step("short TTL expires after delay", async () => {

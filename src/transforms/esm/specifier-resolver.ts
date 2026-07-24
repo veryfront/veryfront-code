@@ -9,7 +9,12 @@
 
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
-import { parseImports, replaceSpecifiers } from "./lexer.ts";
+import { rendererLogger } from "#veryfront/utils";
+import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
+import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
+import { type ImportSpecifier, parseImports, replaceSpecifiers } from "./lexer.ts";
+
+const logger = rendererLogger.component("specifier-resolver");
 import {
   type CacheOptions,
   isCanonicalReactEsmUrl,
@@ -43,6 +48,17 @@ async function resolveSpecifier(
   cacheHttpModule: CacheHttpModuleFn,
 ): Promise<string | null> {
   if (isExternalScheme(specifier)) return null;
+
+  // Server-only packages (`redis`, `pg`, …), including their explicit `npm:`
+  // form, must never be routed through esm.sh. esm.sh either 500s building them
+  // or emits a browser bundle with Node built-ins stubbed that can never
+  // connect. The framework's adapters only `import()` them behind a lazy,
+  // configured code path, so leaving the specifier external lets the runtime
+  // resolve the real package (node_modules on Node, npm: on Deno) if and when
+  // the backend is actually used — and costs nothing when it is not.
+  const serverOnlyCandidate = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
+  const serverOnlyParsed = parseBarePackageSpecifier(serverOnlyCandidate);
+  if (serverOnlyParsed && isServerOnlyPackage(serverOnlyParsed.packageName)) return null;
 
   if (isInternalBare(specifier)) {
     const mapped = resolveImport(specifier, options.importMap);
@@ -103,18 +119,74 @@ async function resolveSpecifier(
 }
 
 /**
+ * Specifiers the runtime can still resolve on its own if prefetching fails.
+ *
+ * Two conditions must hold together. The specifier must be reached only
+ * through `import(...)`, because a static import is part of the emitted
+ * module's own import graph: every static dependency resolves to a local path
+ * before the module is handed to the runtime loader, and a failure to do that
+ * is fatal, exactly as it was before graceful degradation existed. A dynamic
+ * specifier is resolved by the runtime at call time and is routinely guarded by
+ * the caller (`platform/adapters/redis/modules.js` only calls
+ * `await import("redis")` when the redis adapter is actually used), so failing
+ * to prefetch it leaves the specifier in place rather than taking down a render
+ * that would never have imported it.
+ *
+ * The specifier must also be an absolute http(s) URL, because that is the only
+ * form the runtime can resolve without the transform. A relative specifier left
+ * in place resolves against the local bundle cache directory, where the chunk
+ * was never written; `npm:` and bare specifiers need the import map the cached
+ * module no longer carries. Those failures stay fatal.
+ */
+function runtimeResolvableSpecifiers(imports: readonly ImportSpecifier[]): Set<string> {
+  const dynamic = new Set<string>();
+  const staticSpecifiers = new Set<string>();
+
+  for (const imp of imports) {
+    if (!imp.n) continue;
+    (imp.d > -1 ? dynamic : staticSpecifiers).add(imp.n);
+  }
+
+  for (const specifier of staticSpecifiers) dynamic.delete(specifier);
+  for (const specifier of [...dynamic]) {
+    if (!isHttpUrl(specifier)) dynamic.delete(specifier);
+  }
+  return dynamic;
+}
+
+/** Specifier replacements plus the specifiers that were left unresolved. */
+export interface SpecifierReplacements {
+  readonly replacements: ReadonlyMap<string, string>;
+  /** Specifiers left in place because prefetching them failed. */
+  readonly degraded: readonly string[];
+}
+
+/** Rewritten module code plus the specifiers that were left unresolved. */
+export interface RewrittenModule {
+  readonly code: string;
+  /** Specifiers left in place because prefetching them failed. */
+  readonly degraded: readonly string[];
+}
+
+/**
  * Build a map of specifier replacements by resolving all imports in the code.
+ *
+ * Resolution failure is fatal unless the runtime can resolve the specifier on
+ * its own. See {@link runtimeResolvableSpecifiers}. Every specifier left in
+ * place is reported as degraded so callers can decide whether the resulting
+ * code is fit to cache.
  */
 export async function buildReplacements(
   code: string,
   baseUrl: string | undefined,
   options: CacheOptions,
   cacheHttpModule: CacheHttpModuleFn,
-): Promise<Map<string, string>> {
+): Promise<SpecifierReplacements> {
   const imports = await parseImports(code);
   const uniqueSpecifiers = [...new Set(imports.map((imp) => imp.n).filter(Boolean))] as string[];
+  const runtimeResolvable = runtimeResolvableSpecifiers(imports);
 
-  const results = await Promise.all(
+  const settled = await Promise.allSettled(
     uniqueSpecifiers.map(async (specifier) => ({
       specifier,
       resolved: await resolveSpecifier(specifier, baseUrl, options, cacheHttpModule),
@@ -122,24 +194,56 @@ export async function buildReplacements(
   );
 
   const replacements = new Map<string, string>();
-  for (const { specifier, resolved } of results) {
-    if (resolved && resolved !== specifier) replacements.set(specifier, resolved);
+  const degraded: string[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    const specifier = uniqueSpecifiers[i];
+    if (!outcome || specifier === undefined) continue;
+
+    if (outcome.status === "fulfilled") {
+      const { specifier: resolvedFor, resolved } = outcome.value;
+      if (resolved && resolved !== resolvedFor) replacements.set(resolvedFor, resolved);
+      continue;
+    }
+
+    // Anything the runtime cannot resolve on its own must resolve here.
+    // Leaving one unresolved would emit a module whose own import graph reaches
+    // outside the local cache, which is not what the runtime loader is handed
+    // anywhere else.
+    if (!runtimeResolvable.has(specifier)) throw outcome.reason;
+
+    degraded.push(specifier);
+    logger.warn("Leaving an unresolvable dynamic specifier for runtime resolution", {
+      specifier,
+      error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+    });
   }
 
-  return replacements;
+  return { replacements, degraded };
 }
 
 /**
  * Rewrite all HTTP/npm/bare import specifiers in module code to local cached paths.
+ *
+ * Reports any specifier left in place, so the caller can keep the resulting
+ * code out of the caches that outlive this render.
  */
 export async function rewriteModuleImports(
   code: string,
   moduleUrl: string,
   options: CacheOptions,
   cacheHttpModule: CacheHttpModuleFn,
-): Promise<string> {
-  const replacements = await buildReplacements(code, moduleUrl, options, cacheHttpModule);
-  if (replacements.size === 0) return code;
+): Promise<RewrittenModule> {
+  const { replacements, degraded } = await buildReplacements(
+    code,
+    moduleUrl,
+    options,
+    cacheHttpModule,
+  );
+  if (replacements.size === 0) return { code, degraded };
 
-  return replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+  return {
+    code: await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null),
+    degraded,
+  };
 }

@@ -6,6 +6,7 @@ import type {
   EvalReportComparison,
   EvalReportComparisonPolicy,
 } from "./types.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 function metricKey(metric: EvalMetricSummary): string {
   return `${metric.name}:${metric.family}:${metric.severity}`;
@@ -33,7 +34,9 @@ function firstMetricForKey(
 ): EvalMetricSummary {
   const metric = current.get(key) ?? baseline.get(key);
   if (!metric) {
-    throw new Error(`Metric key "${key}" was not present in either report.`);
+    throw INVALID_ARGUMENT.create({
+      detail: `Metric key "${key}" was not present in either report.`,
+    });
   }
   return metric;
 }

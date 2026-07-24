@@ -4,7 +4,7 @@
 
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
-import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Memory } from "./memory/memory-interface.ts";
 
 // Re-export schema-based types
@@ -34,6 +34,7 @@ import type {
   ToolCallPartWithArgs,
   ToolCallPartWithInput,
 } from "./schemas/index.ts";
+import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
 
 /**
  * Model configuration string format: "provider/model-name"
@@ -146,6 +147,11 @@ export interface AgentConfig {
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
   /**
+   * Exact registered agent ids this agent may call through scoped
+   * `agent_<id>` tools. Each delegate keeps its own model, skills, and tools.
+   */
+  delegates?: string[];
+  /**
    * Optional sandbox selection for runtime-owned sandbox tools such as `bash`.
    * `id` attaches to an existing sandbox session and detaches on run cleanup.
    * When omitted, sandbox tools lazily create a request/project-scoped session.
@@ -166,6 +172,8 @@ export interface AgentConfig {
   maxSteps?: number;
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
+  /** Provider-neutral reasoning / thinking configuration for hosted runtimes. */
+  thinking?: RuntimeAgentThinkingConfig;
   streaming?: boolean;
   /**
    * Conversation memory persisted across `stream()` / `generate()` calls on this
@@ -201,15 +209,17 @@ export interface AgentConfig {
    */
   onToolResult?: ToolExecutionResultHandler;
   /**
-   * Enable skills for this agent.
-   * - true: include all discovered skills from skills/ directory
-   * - string[]: include only specific skill IDs
+   * Select the skills advertised in this agent's system prompt.
+   * - omitted or true: include every discovered skill visible to this agent
+   * - string[] or false: include only the listed skill IDs; use [] or false to advertise none
    *
-   * Discovery happens at startup via discoverAll().
-   * This controls which skills appear in the agent's prompt
-   * and registers the skill tools.
+   * This selects the prompt catalog only. It does not restrict which
+   * owner-visible skills `load_skill` can resolve by id.
+   *
+   * Discovery happens at startup via discoverAll(). `load_skill` remains
+   * available to every agent regardless of this catalog selection.
    */
-  skills?: true | string[];
+  skills?: true | false | string[];
   suggestions?: Suggestions;
   /** Set to false to disable the default security middleware */
   security?: false;
@@ -282,6 +292,9 @@ export type ToolExecutionResultHandler = (
   request: ToolExecutionResultRequest,
 ) => void | Promise<void>;
 
+/** Tool map that replaces an agent's configured tools for one generate request. */
+export type AgentGenerateToolReplacements = Record<string, Tool>;
+
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
 
@@ -343,6 +356,17 @@ export interface Agent {
     model?: ModelString;
     /** Override the maximum model output tokens for this request. */
     maxOutputTokens?: number;
+    /**
+     * Replace this agent's configured tools for this generate request only.
+     * When present, only these tools are advertised and executable.
+     */
+    tools?: AgentGenerateToolReplacements;
+    /**
+     * @internal Retain framework skill loader tools while replacement tools are active.
+     */
+    retainSkillLoaderTools?: boolean;
+    /** Abort signal for cooperative cancellation. */
+    abortSignal?: AbortSignal;
   }): Promise<AgentResponse>;
 
   stream(input: {

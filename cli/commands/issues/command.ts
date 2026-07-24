@@ -10,7 +10,7 @@ import { createIssuesManager, type Issue, type IssuePrefix, parseState } from "v
 import { bold, muted, success } from "#cli/ui";
 
 import type { ParsedArgs } from "#cli/shared/types";
-import { getStringArg } from "../../shared/parsed-args.ts";
+import { getNumberArg, getStringArg } from "../../shared/parsed-args.ts";
 
 /** Extract a boolean value from parsed args by checking multiple keys */
 function bool(args: ParsedArgs, ...keys: string[]): boolean {
@@ -18,12 +18,6 @@ function bool(args: ParsedArgs, ...keys: string[]): boolean {
     if (args[k]) return true;
   }
   return false;
-}
-
-/** Extract a number value from parsed args */
-function num(args: ParsedArgs, key: string): number | undefined {
-  const v = args[key];
-  return typeof v === "number" ? v : undefined;
 }
 
 /**
@@ -151,7 +145,7 @@ export async function issuesCommand(args: ParsedArgs): Promise<void> {
         sortBy: (getStringArg(args, "sort") as "created_at" | "updated_at" | "id") ||
           "created_at",
         sortDirection: (getStringArg(args, "dir") as "asc" | "desc") || "desc",
-        limit: num(args, "limit"),
+        limit: getNumberArg(args, "limit"),
       });
 
       if (json) {

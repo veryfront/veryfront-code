@@ -121,6 +121,7 @@ describe("sandbox/agent-service-tools", () => {
       createOkResponse(),
       ndjsonResponse([{ type: "stdout", data: "ok" }, { type: "exit", exitCode: 0 }]),
       jsonResponse(createCommandPayload()),
+      createOkResponse(),
     ]);
 
     let projectId = "project-1";
@@ -132,23 +133,27 @@ describe("sandbox/agent-service-tools", () => {
 
     projectId = "project-2";
 
-    assertEquals(await sandbox.executeCommand("echo ok"), {
-      stdout: "ok",
-      stderr: "",
-      exitCode: 0,
-    });
-    assertEquals(await sandbox.startBackgroundCommand("npm test"), {
-      id: "command-1",
-      status: "running",
-      exitCode: null,
-      signal: null,
-      startedAt: "2026-03-19T10:00:00.000Z",
-      finishedAt: null,
-      heartbeatStatus: "healthy",
-      lastHeartbeatAt: "2026-03-19T10:00:05.000Z",
-      lastHeartbeatError: null,
-      heartbeatFailureCount: 0,
-    });
+    try {
+      assertEquals(await sandbox.executeCommand("echo ok"), {
+        stdout: "ok",
+        stderr: "",
+        exitCode: 0,
+      });
+      assertEquals(await sandbox.startBackgroundCommand("npm test"), {
+        id: "command-1",
+        status: "running",
+        exitCode: null,
+        signal: null,
+        startedAt: "2026-03-19T10:00:00.000Z",
+        finishedAt: null,
+        heartbeatStatus: "healthy",
+        lastHeartbeatAt: "2026-03-19T10:00:05.000Z",
+        lastHeartbeatError: null,
+        heartbeatFailureCount: 0,
+      });
+    } finally {
+      await sandbox.close();
+    }
 
     assertEquals(jsonBody(fetchCalls, 0), { project_id: "project-2" });
     assertEquals(jsonBody(fetchCalls, 2), {
@@ -167,19 +172,24 @@ describe("sandbox/agent-service-tools", () => {
       createSandboxSessionResponse(),
       createOkResponse(),
       jsonResponse(createCommandPayload()),
+      createOkResponse(),
     ]);
 
-    const { tools } = await createAgentServiceSandboxTools({
+    const { closeSandbox, tools } = await createAgentServiceSandboxTools({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
       projectId: "project-123",
       createBashTool,
     });
 
-    await executeStartBackgroundCommand(
-      tools,
-      'mkdir -p /tmp/bash-tool && cd "/workspace" && python3 process_pdf.py',
-    );
+    try {
+      await executeStartBackgroundCommand(
+        tools,
+        'mkdir -p /tmp/bash-tool && cd "/workspace" && python3 process_pdf.py',
+      );
+    } finally {
+      await closeSandbox();
+    }
 
     assertEquals(jsonBody(fetchCalls, 2), {
       command: "python3 process_pdf.py",

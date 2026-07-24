@@ -34,7 +34,7 @@ import type {
 import { extractProjectCandidates } from "./styles-candidate-scanner.ts";
 import { extractProjectCssImports } from "./styles-css-import-scanner.ts";
 import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
+import { profilePhase } from "#veryfront/observability";
 
 const logger = serverLogger.component("styles-css-handler");
 

@@ -18,44 +18,6 @@ import {
 
 ## Examples
 
-### Search OKF knowledge locally
-
-Use this for the same compact lookup shape as Veryfront Cloud's `search_knowledge` tool.
-Search responses return paths, matched fields, and frontmatter.
-
-```ts
-import { projectKnowledge } from "veryfront/knowledge";
-
-const knowledge = projectKnowledge();
-
-const result = await knowledge.lookup({
-  query: "billing escalation",
-  limit: 5,
-});
-```
-
-Use `lookup_target` when the agent needs a specific document body after search:
-
-```ts
-const article = await knowledge.lookup({
-  lookup_target: { path: "knowledge/billing-escalation.md" },
-});
-```
-
-### Expose local knowledge as the standard tool
-
-Use this when local development needs the same `search_knowledge` tool contract that Veryfront Studio and Cloud provide through the platform.
-
-```ts
-import { createSearchKnowledgeTool } from "veryfront/knowledge";
-
-export default createSearchKnowledgeTool();
-```
-
-### Retrieve embedded knowledge context
-
-Use this when you want body-content retrieval for prompt context. Indexing remains explicit.
-
 ```ts
 import { projectKnowledge } from "veryfront/knowledge";
 
@@ -68,27 +30,27 @@ const result = await knowledge.retrieve("SSO login failure");
 
 ### Functions
 
-| Name                        | Description                                                           | Source                                                                                      |
-| --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `createSearchKnowledgeTool` | Create a local `search_knowledge` tool backed by OKF files.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)      |
-| `formatKnowledgeContext`    | Format search results into a deterministic prompt context block.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L102) |
-| `normalizeKnowledgeQuery`   | Normalize a knowledge query before retrieval.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L94)  |
-| `projectKnowledge`          | Create a project knowledge helper backed by the configured RAG store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L109) |
-| `searchProjectKnowledge`    | Search local OKF files with the `search_knowledge` response shape.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)      |
+| Name | Description | Source |
+|------|-------------|--------|
+| `createSearchKnowledgeTool` | Create a local tool with the same id and response shape as hosted `search_knowledge`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L881) |
+| `formatKnowledgeContext` | Format search results into a deterministic prompt context block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L861) |
+| `normalizeKnowledgeQuery` | Normalize a knowledge query before retrieval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L853) |
+| `projectKnowledge` | Create a project knowledge helper backed by the configured RAG store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L897) |
+| `searchProjectKnowledge` | Search the local OKF knowledge manifest with the same input/output shape as Veryfront Cloud's `search_knowledge` MCP tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L871) |
 
 ### Types
 
-| Name                                     | Description                                                        | Source                                                                                     |
-| ---------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `CreateSearchKnowledgeToolOptions`       | Options for the local `search_knowledge` tool factory.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledge`                       | Helper for indexing, looking up, and retrieving project knowledge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeConfig`                 | Configuration for project knowledge indexing and retrieval.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L30) |
-| `ProjectKnowledgeLookupFrontmatterField` | Frontmatter key/value returned by local knowledge lookup.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeLookupInput`            | Input compatible with the hosted `search_knowledge` tool.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeLookupItem`             | One local knowledge lookup result.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeLookupOutput`           | Output compatible with the hosted `search_knowledge` tool.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeLookupPageInfo`         | Cursor page info returned by local knowledge lookup.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeLookupShard`            | Shard metadata returned by local knowledge lookup.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
-| `ProjectKnowledgeResult`                 | Result returned from project knowledge retrieval.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L66) |
-| `ProjectKnowledgeRetrieveOptions`        | Per-call options for project knowledge retrieval.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L61) |
-| `SearchKnowledgeTool`                    | Tool type returned by `createSearchKnowledgeTool`.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts)     |
+| Name | Description | Source |
+|------|-------------|--------|
+| `CreateSearchKnowledgeToolOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L141) |
+| `ProjectKnowledge` | Helper for indexing and retrieving project knowledge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L222) |
+| `ProjectKnowledgeConfig` | Configuration for project knowledge indexing and retrieval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L54) |
+| `ProjectKnowledgeLookupFrontmatterField` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L106) |
+| `ProjectKnowledgeLookupInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L96) |
+| `ProjectKnowledgeLookupItem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L111) |
+| `ProjectKnowledgeLookupOutput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L131) |
+| `ProjectKnowledgeLookupPageInfo` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L118) |
+| `ProjectKnowledgeLookupShard` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L125) |
+| `ProjectKnowledgeResult` | Result returned from project knowledge retrieval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L90) |
+| `ProjectKnowledgeRetrieveOptions` | Per-call options for project knowledge retrieval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L85) |
+| `SearchKnowledgeTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L146) |

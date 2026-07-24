@@ -18,6 +18,7 @@ export type RuntimeStepToolLoader = (
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
     sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
+    strictConfiguredToolsOnly?: boolean;
     callerAgentId?: string;
   },
 ) => Promise<ToolDefinition[]>;
@@ -54,6 +55,7 @@ export interface PrepareAgentRuntimeStepInput {
   step: number;
   systemPrompt: string;
   toolContextBase: ToolExecutionContext | undefined;
+  strictConfiguredToolsOnly?: boolean;
 }
 
 export interface PreparedAgentRuntimeStep {
@@ -75,6 +77,9 @@ export async function prepareAgentRuntimeStep(
     input.systemPrompt,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
+  if (input.toolContextBase?.abortSignal !== undefined) {
+    toolContext.abortSignal = input.toolContextBase.abortSignal;
+  }
   delete toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY];
   if (input.sourceIntegrationPolicy !== undefined) {
     toolContext[SOURCE_INTEGRATION_POLICY_CONTEXT_KEY] = input.sourceIntegrationPolicy;
@@ -88,12 +93,13 @@ export async function prepareAgentRuntimeStep(
 
   let tools = input.isLocalModel ? [] : await input.getAvailableTools(input.config.tools, {
     callerAgentId: input.agentId,
-    includeSkillTools: Boolean(input.config.skills),
+    includeSkillTools: true,
     allowedRemoteToolNames: input.allowedRemoteToolNames,
     forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
     remoteToolSources: input.remoteToolSources,
     remoteToolContext: toolContext,
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+    strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
   });
 
   if (input.activeSkillPolicy || input.activeSkillToolAvailability) {

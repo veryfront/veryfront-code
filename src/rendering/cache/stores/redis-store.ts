@@ -1,6 +1,6 @@
 import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { MemoryCacheStore } from "./memory-store.ts";
 
 const logger = rendererLogger.component("redis");

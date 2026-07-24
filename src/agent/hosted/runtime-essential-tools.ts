@@ -6,10 +6,13 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
   allowedToolNames?: HostedRuntimeAllowedToolNames;
   localToolNames: Iterable<string>;
   availableSkillIds?: readonly string[];
-  /** Let the existing skill-enabled essential-tool policy handle an empty configured selector. */
+  /** Preserve universal skill infrastructure for an empty configured selector. */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
 };
 
+// Script execution is intentionally not runtime-essential under allowlists:
+// loading skill instructions is framework infrastructure, while running a
+// project-provided script remains a direct execution capability.
 const SKILL_RUNTIME_TOOL_NAMES = ["load_skill", "load_skill_reference"] as const;
 const SKILL_DELEGATION_TOOL_NAMES = ["invoke_agent"] as const;
 
@@ -58,14 +61,20 @@ export function resolveHostedRuntimeAllowedToolNames(
     }
   }
 
-  if (!input.availableSkillIds?.length) {
-    return resolvedToolNames;
+  // Preserve request-scoped skill loading tools when the host supplies them.
+  // Hosted cloud supplies load_skill; other adapters may also supply the
+  // reference tool. Explicit request-level empty allowlists return above and
+  // remain deny-all.
+  if (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) {
+    for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
+      if (localToolNames.has(toolName)) {
+        resolvedToolNames.add(toolName);
+      }
+    }
   }
 
-  for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
-    if (localToolNames.has(toolName)) {
-      resolvedToolNames.add(toolName);
-    }
+  if (!input.availableSkillIds?.length) {
+    return resolvedToolNames;
   }
 
   for (const toolName of SKILL_DELEGATION_TOOL_NAMES) {

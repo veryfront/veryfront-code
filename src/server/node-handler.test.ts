@@ -12,6 +12,7 @@ type FakeRes = {
   setHeader(name: string, value: unknown): void;
   write(chunk: Uint8Array): void;
   end(body?: string): void;
+  on(event: string, listener: () => void): void;
 };
 
 function createFakeRes(): FakeRes {
@@ -38,6 +39,9 @@ function createFakeRes(): FakeRes {
     },
     end(_body) {
       this.ended = true;
+    },
+    on(_event, _listener) {
+      // no-op: close-handler registration is not exercised in unit tests
     },
   };
 }

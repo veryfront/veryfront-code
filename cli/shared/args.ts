@@ -38,9 +38,9 @@ function coerceValue(
   value: unknown,
   type: ArgSpec["type"],
 ): string | boolean | number | string[] {
-  if (type === "boolean") return Boolean(value);
+  if (type === "boolean") return parseBooleanValue(value) ?? String(value);
   if (type === "number") {
-    return typeof value === "number" ? value : parseInt(String(value), 10);
+    return typeof value === "number" ? value : Number(String(value));
   }
   if (type === "array") {
     if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -184,29 +184,109 @@ const GLOBAL_BOOLEAN_FLAGS = new Set([
   "no-animation",
 ]);
 
-function isDocumentedBooleanFlag(
+function getDocumentedFlagKind(
   key: string,
   positionalArgs: string[],
-): boolean {
-  if (GLOBAL_BOOLEAN_FLAGS.has(key)) return true;
+): "boolean" | "value" | undefined {
+  if (GLOBAL_BOOLEAN_FLAGS.has(key)) return "boolean";
 
   const command = positionalArgs[0];
-  if (!command) return false;
+  if (!command) return undefined;
 
-  return (COMMANDS[command]?.options ?? []).some((option) => {
-    if (option.flag.includes("<")) return false;
+  for (const option of COMMANDS[command]?.options ?? []) {
     const names = option.flag.match(/--?[a-z0-9-]+/gi) ?? [];
-    return names.some((name) => name.replace(/^-+/, "") === key);
-  });
+    if (names.some((name) => name.replace(/^-+/, "") === key)) {
+      return option.flag.includes("<") ? "value" : "boolean";
+    }
+  }
+
+  return undefined;
 }
 
-function maybeNumber(val: unknown): unknown {
-  if (typeof val === "string" && /^\d+$/.test(val)) return parseInt(val, 10);
-  return val;
+const BOOLEAN_FLAGS = new Set([
+  "all",
+  "auto",
+  "binary",
+  "build",
+  "cache",
+  "check",
+  "clear",
+  "color",
+  "compress",
+  "debug",
+  "delete",
+  "deploy",
+  "dry-run",
+  "force",
+  "github",
+  "global",
+  "google",
+  "headless",
+  "help",
+  "hmr",
+  "json",
+  "list",
+  "microsoft",
+  "no-animation",
+  "no-color",
+  "no-compress",
+  "no-gpg-sign",
+  "no-hmr",
+  "no-split",
+  "no-ssg",
+  "no-tui",
+  "open",
+  "parallel",
+  "prefetch",
+  "quiet",
+  "recursive",
+  "skip-env-prompt",
+  "skip-install",
+  "split",
+  "ssg",
+  "strict",
+  "studio",
+  "update",
+  "verbose",
+  "verify",
+  "version",
+  "yes",
+]);
+
+function isBooleanFlag(key: string, positionalArgs: string[]): boolean {
+  const documentedKind = getDocumentedFlagKind(key, positionalArgs);
+  if (documentedKind !== undefined) return documentedKind === "boolean";
+  return BOOLEAN_FLAGS.has(key);
+}
+
+function parseBooleanValue(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value !== "string") return undefined;
+
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "1":
+    case "yes":
+    case "on":
+      return true;
+    case "false":
+    case "0":
+    case "no":
+    case "off":
+    case "":
+      return false;
+    default:
+      return undefined;
+  }
 }
 
 function isValue(arg: string | undefined): boolean {
-  return arg !== undefined && !arg.startsWith("-");
+  return arg !== undefined && (!arg.startsWith("-") || /^-\d/.test(arg));
 }
 
 function parse(
@@ -219,7 +299,9 @@ function parse(
 
   function setValue(key: string, value: unknown): void {
     explicit[key] = true;
-    const converted = maybeNumber(value);
+    const converted = isBooleanFlag(key, result._ as string[])
+      ? parseBooleanValue(value) ?? value
+      : value;
 
     if (!ARRAY_FLAGS.has(key)) {
       result[key] = converted;
@@ -234,6 +316,11 @@ function parse(
     const arg = args[i];
     if (!arg) continue;
 
+    if (arg === "--") {
+      (result._ as string[]).push(...args.slice(i + 1));
+      break;
+    }
+
     if (arg.startsWith("--")) {
       const eqIdx = arg.indexOf("=");
 
@@ -245,7 +332,7 @@ function parse(
       const key = arg.slice(2);
       const next = args[i + 1];
 
-      if (!isDocumentedBooleanFlag(key, result._ as string[]) && isValue(next)) {
+      if (!isBooleanFlag(key, result._ as string[]) && isValue(next)) {
         setValue(key, next);
         i++;
         continue;
@@ -260,8 +347,8 @@ function parse(
       const key = aliasMap.get(short) ?? short;
       const next = args[i + 1];
 
-      const isBoolean = isDocumentedBooleanFlag(key, result._ as string[]) ||
-        isDocumentedBooleanFlag(short, result._ as string[]);
+      const isBoolean = isBooleanFlag(key, result._ as string[]) ||
+        isBooleanFlag(short, result._ as string[]);
       if (!isBoolean && isValue(next)) {
         setValue(key, next);
         if (key !== short) setValue(short, next);

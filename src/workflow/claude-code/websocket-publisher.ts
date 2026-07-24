@@ -5,6 +5,7 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { createSubscriberSet } from "#veryfront/utils/subscriber-set.ts";
 import type {
   BidirectionalPublisher,
   CancelledEvent,
@@ -55,7 +56,11 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   private config: Required<Omit<WebSocketPublisherConfig, "socket">> & {
     socket: WebSocket;
   };
-  private commandHandlers = new Set<ClientCommandHandler>();
+  private commandHandlers = createSubscriberSet<[ClientCommand]>((error) => {
+    if (this.config.debug) {
+      logger.error("Handler error", error);
+    }
+  });
   private closed = false;
   private pingTimer: number | null = null;
 
@@ -114,15 +119,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     }
 
     // Dispatch to handlers
-    for (const handler of this.commandHandlers) {
-      try {
-        handler(command);
-      } catch (error) {
-        if (this.config.debug) {
-          logger.error("Handler error", error);
-        }
-      }
-    }
+    this.commandHandlers.notify(command);
   }
 
   private sendPong(): void {
@@ -165,10 +162,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
    * Subscribe to client commands
    */
   onCommand(handler: ClientCommandHandler): () => void {
-    this.commandHandlers.add(handler);
-    return () => {
-      this.commandHandlers.delete(handler);
-    };
+    return this.commandHandlers.subscribe(handler);
   }
 
   /**

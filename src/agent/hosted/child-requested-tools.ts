@@ -211,10 +211,18 @@ export function selectHostedChildForkRuntimeTools(input: {
   forkTools: HostToolSet;
   requestedTools?: readonly string[];
 }): HostedChildForkRuntimeToolSelectionResult {
-  if (!input.requestedTools?.length) {
+  if (input.requestedTools === undefined) {
     return {
       ok: true,
       forkTools: input.forkTools,
+    };
+  }
+
+  if (input.requestedTools.length === 0) {
+    return {
+      ok: true,
+      forkTools: {},
+      availableToolNames: [],
     };
   }
 

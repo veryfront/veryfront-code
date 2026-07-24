@@ -3,17 +3,23 @@ import {
   createRemoteMCPToolSource,
   type RemoteToolSource,
   type ToolDefinition,
-  toolRegistry,
 } from "#veryfront/tool";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
+import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
-import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import {
+  bindRemoteToolSourceToProject,
+  getRequestedUnresolvedBooleanToolNames,
+  type RuntimeRemoteToolConfig,
+  VERYFRONT_API_MCP_SOURCE_ID,
+  VERYFRONT_STUDIO_MCP_SOURCE_ID,
+} from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { buildStudioMcpHeaders } from "#veryfront/agent/project/live-studio-mcp-tools.ts";
 import {
   clientAllowsStudioMcp,
@@ -47,6 +53,7 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -55,6 +62,7 @@ import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
+import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
@@ -80,8 +88,6 @@ const defaultDeps: AgentStreamHandlerDeps = {
 };
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
-const VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID = "veryfront-platform-mcp";
-const VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID = "veryfront-studio-mcp";
 const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   [
     "studio_suggestions",
@@ -92,7 +98,6 @@ const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
     "studio_capture_screenshot",
   ] as const,
 );
-const LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES = new Set(["bash"]);
 
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
@@ -107,13 +112,13 @@ const _agentEnvVarCache = new EnvironmentVariableCache(
 );
 
 // Cache: projectSlug → production environmentId (stable across restarts)
-const _productionEnvIdCache = new Map<string, string>();
+const _productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
 
 async function _resolveProductionEnvironmentId(
   projectSlug: string,
   token: string,
 ): Promise<string | null> {
-  const cached = _productionEnvIdCache.get(projectSlug);
+  const cached = _productionEnvIdCache.get<string>(projectSlug);
   if (cached) return cached;
   const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   try {
@@ -149,27 +154,6 @@ async function _resolveProductionEnvironmentId(
     });
     return null;
   }
-}
-
-function getRequestedUnresolvedBooleanToolNames(input: {
-  agent: Agent;
-  availableToolNames?: string[];
-}): string[] {
-  const availableToolNames = new Set(input.availableToolNames ?? []);
-  const tools = input.agent.config.tools;
-  if (!tools || tools === true) {
-    return [];
-  }
-
-  return Object.entries(tools)
-    .filter(([toolName, entry]) =>
-      entry === true &&
-      !toolRegistry.get(toolName) &&
-      !availableToolNames.has(toolName) &&
-      !LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES.has(toolName)
-    )
-    .map(([toolName]) => toolName)
-    .sort();
 }
 
 function mergeAllowedRemoteTools(
@@ -346,14 +330,14 @@ function getVeryfrontApiMcpPolicy(agent: Agent): {
 function hasVeryfrontPlatformRemoteToolSource(
   remoteTools: RemoteToolSource[] | undefined,
 ): boolean {
-  return remoteTools?.some((source) => source.id === VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID) ??
+  return remoteTools?.some((source) => source.id === VERYFRONT_API_MCP_SOURCE_ID) ??
     false;
 }
 
 function hasVeryfrontStudioRemoteToolSource(
   remoteTools: RemoteToolSource[] | undefined,
 ): boolean {
-  return remoteTools?.some((source) => source.id === VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID) ??
+  return remoteTools?.some((source) => source.id === VERYFRONT_STUDIO_MCP_SOURCE_ID) ??
     false;
 }
 
@@ -389,17 +373,27 @@ async function withVeryfrontPlatformRemoteTools(input: {
   availableToolNames?: string[];
 }): Promise<Agent> {
   const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
-  const requestedToolNames = getRequestedUnresolvedBooleanToolNames({
-    agent: input.agent,
-    availableToolNames: input.availableToolNames,
-  }).concat(veryfrontApiMcpPolicy.requestedToolNames);
-  if ((!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0) || !input.token) {
+  const implicitlyRequestedToolNames = input.agent.config.mcpServers === undefined
+    ? getRequestedUnresolvedBooleanToolNames({
+      tools: input.agent.config.tools,
+      agentId: input.agent.id,
+      availableToolNames: input.availableToolNames,
+    })
+    : [];
+  const requestedToolNames = implicitlyRequestedToolNames.concat(
+    veryfrontApiMcpPolicy.requestedToolNames,
+  );
+  if (
+    (!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0) ||
+    !input.token ||
+    !input.projectId
+  ) {
     return input.agent;
   }
 
   const apiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   const platformRemoteToolSource = createRemoteMCPToolSource({
-    id: VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID,
+    id: VERYFRONT_API_MCP_SOURCE_ID,
     endpoint: `${apiUrl}/mcp`,
     headers: { Authorization: `Bearer ${input.token}` },
   });
@@ -415,14 +409,15 @@ async function withVeryfrontPlatformRemoteTools(input: {
     });
   }
 
-  const platformToolNames = platformToolDefinitions
-    ? new Set(platformToolDefinitions.map((tool) => tool.name))
-    : null;
-  const requestedPlatformToolNames = platformToolNames
-    ? (veryfrontApiMcpPolicy.allowAll ? [...platformToolNames] : requestedToolNames).filter((
+  if (!platformToolDefinitions) {
+    return input.agent;
+  }
+
+  const platformToolNames = new Set(platformToolDefinitions.map((tool) => tool.name));
+  const requestedPlatformToolNames =
+    (veryfrontApiMcpPolicy.allowAll ? [...platformToolNames] : requestedToolNames).filter((
       toolName,
-    ) => platformToolNames.has(toolName) && !veryfrontApiMcpPolicy.deniedToolNames.has(toolName))
-    : requestedToolNames.filter((toolName) => !veryfrontApiMcpPolicy.deniedToolNames.has(toolName));
+    ) => platformToolNames.has(toolName) && !veryfrontApiMcpPolicy.deniedToolNames.has(toolName));
   if (requestedPlatformToolNames.length === 0) {
     return input.agent;
   }
@@ -430,9 +425,10 @@ async function withVeryfrontPlatformRemoteTools(input: {
   const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
-    platformToolDefinitions
-      ? createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions)
-      : platformRemoteToolSource,
+    bindRemoteToolSourceToProject(
+      createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions),
+      input.projectId,
+    ),
   ];
 
   const runtimeConfig: Agent["config"] & RuntimeRemoteToolConfig = {
@@ -465,6 +461,7 @@ function withVeryfrontStudioRemoteTools(input: {
     availableToolNames: input.availableToolNames,
   });
   if (
+    input.agent.config.mcpServers !== undefined ||
     !input.token ||
     !studioMcpUrl ||
     !clientAllowsStudioMcp(clientProfile) ||
@@ -477,7 +474,7 @@ function withVeryfrontStudioRemoteTools(input: {
   const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const studioRemoteToolSources = hasVeryfrontStudioRemoteToolSource(remoteTools) ? [] : [
     createRemoteMCPToolSource({
-      id: VERYFRONT_STUDIO_REMOTE_TOOL_SOURCE_ID,
+      id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
       endpoint: studioMcpUrl,
       headers: () =>
         buildStudioMcpHeaders(
@@ -619,7 +616,9 @@ export class AgentStreamHandler extends BaseHandler {
   ): Promise<T> {
     const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
     if (!ctx.projectSlug || !fsWrapper.isMultiProjectMode?.() || !fsWrapper.runWithContext) {
-      throw new Error("Alternate agent source requires a multi-project runtime context");
+      throw INVALID_ARGUMENT.create({
+        detail: "Alternate agent source requires a multi-project runtime context",
+      });
     }
 
     const token = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
@@ -685,7 +684,7 @@ export class AgentStreamHandler extends BaseHandler {
         hasAgentConfig: Boolean(payload.agentConfig),
       });
 
-      return await this.withProxyContext(requestScopedContext, () =>
+      const runWithAgentSourceContext = () =>
         this.withAgentSourceContext(
           requestScopedContext,
           payload.agentSource,
@@ -775,6 +774,7 @@ export class AgentStreamHandler extends BaseHandler {
                     projectAgentSandbox: {
                       apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
                       authToken: apiAuthToken || undefined,
+                      branchId: payload.runtimeTargetBranchId,
                       projectId: sourceScopedContext.projectId ?? null,
                     },
                   });
@@ -809,7 +809,11 @@ export class AgentStreamHandler extends BaseHandler {
               },
             );
           },
-        ), { verifiedControlPlaneClaims: verifiedClaims });
+        );
+      return await runWithVerifiedCacheApiCredential(
+        verifiedClaims,
+        runWithAgentSourceContext,
+      );
     } catch (error) {
       if (error instanceof InternalAgentRequestBodyTooLargeError) {
         return this.respond(builder.json({ error: error.message }, error.status));

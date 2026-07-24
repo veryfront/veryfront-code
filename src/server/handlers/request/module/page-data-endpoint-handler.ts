@@ -1,13 +1,13 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
-import { getRendererForProject } from "../../../shared/renderer-factory.ts";
+import { getRendererForProject, type RendererAdapter } from "../../../shared/renderer-factory.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { markRequestProfilePhase } from "#veryfront/observability/request-profiler.ts";
+import { markRequestProfilePhase } from "#veryfront/observability";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 import { serverLogger } from "#veryfront/utils";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   type QueryParamCacheOptions,
@@ -78,6 +78,32 @@ function isPageDataCacheEnabled(): boolean {
   return PAGE_DATA_CACHE_MAX_ENTRIES > 0;
 }
 
+async function resolvePageDataWithinDeadline(
+  renderer: RendererAdapter,
+  slug: string,
+  request: Request,
+  url: URL,
+  callerSignal: AbortSignal | undefined,
+): Promise<PageDataResponse> {
+  const controller = new AbortController();
+  const workRequest = callerSignal ? request : new Request(request, { signal: controller.signal });
+
+  return await withTimeoutThrow(
+    renderer.resolvePageData(slug, {
+      request: workRequest,
+      url,
+      abortSignal: controller.signal,
+    }),
+    PAGE_DATA_TIMEOUT_MS,
+    `resolvePageData for ${slug}`,
+    {
+      signal: callerSignal,
+      onAbort: (reason) => controller.abort(reason),
+      onTimeout: (error) => controller.abort(error),
+    },
+  );
+}
+
 export function __clearPageDataEndpointCacheForTests(): void {
   pageDataCache.clear();
 }
@@ -100,24 +126,25 @@ export function handlePageDataEndpoint(
 
         const url = new URL(req.url);
         const renderer = await getRendererForProject(ctx);
-        const cacheKey = !isPageDataCacheEnabled() || requestHasCacheSensitiveState(req)
-          ? null
-          : buildPageDataCacheKey(ctx, slug, url);
+        const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";
+        // The request reaches server-data hooks, so prefetch work cannot safely
+        // populate or join the foreground response cache/singleflight.
+        const canUsePageDataCache = isPageDataCacheEnabled() &&
+          !requestHasCacheSensitiveState(req) && !isSpeculativePrefetch;
+        const cacheKey = canUsePageDataCache ? buildPageDataCacheKey(ctx, slug, url) : null;
         const cachePolicy = cacheKey ? getPageDataCachePolicy(ctx) : null;
 
         const payload = cacheKey
-          ? await resolveCachedPageData(cacheKey, () =>
-            withTimeoutThrow(
-              renderer.resolvePageData(slug, { request: req, url }),
-              PAGE_DATA_TIMEOUT_MS,
-              `resolvePageData for ${slug}`,
-            ), cachePolicy!)
+          ? await waitForSharedPromise(
+            resolveCachedPageData(
+              cacheKey,
+              () => resolvePageDataWithinDeadline(renderer, slug, req, url, undefined),
+              cachePolicy!,
+            ),
+            req.signal,
+          )
           : await resolveUncachedPageData(() =>
-            withTimeoutThrow(
-              renderer.resolvePageData(slug, { request: req, url }),
-              PAGE_DATA_TIMEOUT_MS,
-              `resolvePageData for ${slug}`,
-            )
+            resolvePageDataWithinDeadline(renderer, slug, req, url, req.signal)
           );
         const cacheStrategy = cacheKey
           ? {
@@ -160,6 +187,26 @@ export function handlePageDataEndpoint(
                 securityConfig: ctx.securityConfig,
                 corsConfig: ctx.securityConfig?.cors,
                 status: HTTP_GATEWAY_TIMEOUT,
+              },
+            ),
+          );
+        }
+
+        // A redirect() from getServerData surfaces here as a thrown
+        // VeryfrontError carrying context.redirect. The full-page render path
+        // converts this into a 302; the SPA page-data endpoint must encode it as
+        // a 200 payload so the client router can follow the redirect instead of
+        // treating it as an internal error (which 500s and aborts navigation).
+        const redirect = extractRedirectFromError(e);
+        if (redirect) {
+          return respond(
+            ResponseBuilder.json(
+              { redirect },
+              req,
+              {
+                securityConfig: ctx.securityConfig,
+                corsConfig: ctx.securityConfig?.cors,
+                status: 200,
               },
             ),
           );
@@ -316,6 +363,22 @@ function refreshStalePageData(
       }
     },
   );
+}
+
+/**
+ * A redirect() from getServerData is thrown up the pipeline as a VeryfrontError
+ * whose `context.redirect` holds the destination (mirrors extractRedirectLocation
+ * in the SSR service). Returns null for any other error.
+ */
+function extractRedirectFromError(
+  error: unknown,
+): { destination: string; permanent: boolean } | null {
+  const context = (error as {
+    context?: { redirect?: { destination?: unknown; permanent?: unknown } };
+  })?.context;
+  const redirect = context?.redirect;
+  if (!redirect || typeof redirect.destination !== "string") return null;
+  return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 
 function buildPageDataCacheKey(ctx: HandlerContext, slug: string, url: URL): string {

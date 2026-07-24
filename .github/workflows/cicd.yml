@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
+  # Required for merge-queue entries: queued runs report checks via merge_group.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
@@ -39,7 +42,7 @@ jobs:
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:test-typecheck && deno task storybook:check ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:module-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task lint:ban-test-only && deno task lint:sanitizer-baseline && deno task lint:skipped-tests && deno task lint:chat-ratchets && deno task lint:test-typecheck && deno task storybook:check ;;
             typecheck) deno task typecheck ;;
           esac
 
@@ -267,7 +270,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "24"
           package-manager-cache: false
@@ -439,7 +442,7 @@ jobs:
 
       - uses: ./.github/actions/setup-deno
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -599,7 +602,7 @@ jobs:
 
       - uses: ./.github/actions/setup-deno
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"

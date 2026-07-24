@@ -1,4 +1,6 @@
 import { isResponseLike } from "../service/response-like.ts";
+import { INITIALIZATION_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
+import { agentLogger } from "#veryfront/utils";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
@@ -52,10 +54,10 @@ function invokeLifecycleCallback(
   try {
     const result = callback(context);
     void Promise.resolve(result).catch((error) => {
-      console.error("[AgUiRuntime] Lifecycle callback rejected:", error);
+      agentLogger.error("[AgUiRuntime] Lifecycle callback rejected:", { error });
     });
   } catch (error) {
-    console.error("[AgUiRuntime] Lifecycle callback threw:", error);
+    agentLogger.error("[AgUiRuntime] Lifecycle callback threw:", { error });
   }
 }
 
@@ -68,7 +70,7 @@ async function invokeLifecycleCallbackAndWait(
   try {
     await callback(context);
   } catch (error) {
-    console.error("[AgUiRuntime] Lifecycle callback (await) threw:", error);
+    agentLogger.error("[AgUiRuntime] Lifecycle callback (await) threw:", { error });
   }
 }
 
@@ -401,9 +403,9 @@ export function createAgUiRuntimeHandler(
   config: AgUiRuntimeHandlerConfig,
 ): (requestOrCtx: unknown) => Promise<Response> {
   if (!config.agent && !config.execute) {
-    throw new Error(
-      "createAgUiRuntimeHandler requires either an agent or an execute handler.",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: "createAgUiRuntimeHandler requires either an agent or an execute handler.",
+    });
   }
 
   return async function POST(requestOrCtx: unknown): Promise<Response> {
@@ -524,7 +526,9 @@ export function createAgUiRuntimeHandler(
         return await createDefaultResponseWithLifecycle();
       }
 
-      throw new Error("createAgUiRuntimeHandler configuration became invalid during execution.");
+      throw INITIALIZATION_ERROR.create({
+        detail: "createAgUiRuntimeHandler configuration became invalid during execution.",
+      });
     } catch (error) {
       if (
         error instanceof Error &&

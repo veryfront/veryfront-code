@@ -10,8 +10,7 @@
 import { validatePath, type ValidationResult } from "#veryfront/security";
 import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { exists, readDir, stat } from "#veryfront/platform/compat/fs.ts";
-import { VeryfrontError } from "#veryfront/errors";
-import { createError, fromError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, fromError, toError, VeryfrontError } from "#veryfront/errors";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function isInsideDir(baseDir: string, targetPath: string): boolean {

@@ -45,6 +45,7 @@ import { Head } from "../../src/react/components/Head.tsx";
 import { PageContextProvider, usePageContext } from "../../src/react/context/index.tsx";
 import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
 import { Sandbox } from "../../src/sandbox/index.ts";
+import { schedule } from "../../src/schedule/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
   getConnector,
@@ -102,6 +103,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "project-metrics.md",
   "quickstart.md",
   "sandbox.md",
+  "schedule.md",
   "skills.md",
   "storybook-ui-workbench.md",
   "tasks.md",
@@ -172,6 +174,19 @@ describe("Guide code example coverage", () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
     const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
     assertEquals(stale, []);
+  });
+});
+
+describe("Guide: concepts/schedule.md", () => {
+  it("defines the documented stale-run health budget", () => {
+    const definition = schedule({
+      id: "daily-support-triage",
+      schedule: "0 9 * * 1-5",
+      target: { kind: "workflow", id: "escalate-ticket" },
+      health: { maxStalenessSeconds: 1_800 },
+    });
+
+    assertEquals(definition.health, { maxStalenessSeconds: 1_800 });
   });
 });
 

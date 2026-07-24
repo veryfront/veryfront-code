@@ -12,6 +12,7 @@ export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
   instructions?: string;
   skills?: readonly RuntimeSkillDefinition[];
+  availableToolNames?: readonly string[];
   projectId?: string | null;
   branchId?: string | null;
   environmentContext?: string;
@@ -24,7 +25,10 @@ function createProjectInstructionsBlock(instructions: string): string {
   });
 }
 
-function createProjectContextBlock(input: { projectId: string; branchId?: string | null }): string {
+/** Builds the shared project-context prompt block (project reference + branch). */
+export function buildProjectContextPromptBlock(
+  input: { projectId: string; branchId?: string | null },
+): string {
   const branchLine = input.branchId
     ? `branch_id: "${input.branchId}"`
     : "branch_id: main (no branch_id needed for file operations)";
@@ -52,7 +56,7 @@ export function createVeryfrontCloudRuntimeSystemMessages(
 
   if (input.projectId) {
     runtimeBlocks.push(
-      createProjectContextBlock({
+      buildProjectContextPromptBlock({
         projectId: input.projectId,
         branchId: input.branchId,
       }),
@@ -63,6 +67,7 @@ export function createVeryfrontCloudRuntimeSystemMessages(
     agent: input.agent,
     runtimeBlocks,
     skills: input.skills,
+    availableToolNames: input.availableToolNames,
     environmentContext: input.environmentContext,
   });
 }
@@ -75,6 +80,7 @@ export function buildVeryfrontCloudRuntimeInstructions(
     agent: input.agentConfig,
     instructions: input.instructions || undefined,
     skills: input.skills.length > 0 ? input.skills : undefined,
+    availableToolNames: input.availableToolNames,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,

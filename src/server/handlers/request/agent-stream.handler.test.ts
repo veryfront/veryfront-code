@@ -193,6 +193,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for the signed runtime agent invocation envelope", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
+    let runtimeSystem: unknown;
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -200,8 +201,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
-      createRuntime: () => ({
+      createRuntime: (runtimeAgent) => ({
         stream: async (_messages, context, callbacks) => {
+          runtimeSystem = runtimeAgent.config.system;
           streamContext = context;
           callbacks?.onFinish?.({
             text: "hello from runtime",
@@ -239,7 +241,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }),
     });
 
-    const body = createRuntimeAgentRunInvocationBody();
+    const invocation = JSON.parse(createRuntimeAgentRunInvocationBody());
+    invocation.context = [{
+      type: "json",
+      title: "studio_context",
+      data: { branchId: null },
+    }];
+    const body = JSON.stringify(invocation);
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
@@ -259,6 +267,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
+    assertEquals(typeof runtimeSystem, "function");
+    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertStringIncludes(
+      prompt,
+      'branch_id: "10000000-1000-4000-8000-100000000006"',
+    );
+    assertEquals(prompt.includes("branch_id: main"), false);
 
     const text = await result.response.text();
     assertStringIncludes(text, "event: RunStarted");
@@ -706,7 +721,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
-      assertEquals(capturedSystem, "Use project-scoped instructions.");
+      const resolvedSystem = typeof capturedSystem === "function"
+        ? await (capturedSystem as () => Promise<string>)()
+        : capturedSystem;
+      assertStringIncludes(String(resolvedSystem), "Use project-scoped instructions.");
       assertEquals(capturedSkills, ["support-triage"]);
       assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
       assertEquals((capturedTools as Record<string, unknown>).get_file, true);
@@ -879,7 +897,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(contextCalls, ["main", "restrict-gmail"]);
+    assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
@@ -1067,7 +1085,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         new Response(
           JSON.stringify({
             jsonrpc: "2.0",
-            id: "veryfront-studio-mcp:tools:list",
+            id: "studio-mcp:tools:list",
             result: {
               tools: [
                 {
@@ -1158,6 +1176,107 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 200);
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteToolNames, ["studio_todo_write", "studio_panel_control"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+    }
+  });
+
+  it("preserves an explicit Studio MCP opt-out", async () => {
+    let studioMcpFetchCalls = 0;
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedRemoteSourceCount = -1;
+    const originalFetch = globalThis.fetch;
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", "https://studio.veryfront.org/mcp");
+    globalThis.fetch = ((url) => {
+      if (String(url) === "https://studio.veryfront.org/mcp") {
+        studioMcpFetchCalls += 1;
+      }
+      return Promise.resolve(new Response(null, { status: 503 }));
+    }) as typeof fetch;
+
+    try {
+      const handler = new AgentStreamHandler({
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              tools: { studio_todo_write: true },
+              mcpServers: [],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => {
+          const runtimeConfig = runtimeAgent.config as
+            & typeof runtimeAgent.config
+            & RuntimeRemoteToolConfig;
+          capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+          capturedRemoteSourceCount = runtimeConfig.__vfRemoteToolSources?.length ?? 0;
+
+          return {
+            stream: async (_messages, _context, callbacks) => {
+              callbacks?.onFinish?.({
+                text: "ok",
+                messages: [],
+                toolCalls: [],
+                status: "completed",
+                usage: {
+                  promptTokens: 1,
+                  completionTokens: 1,
+                  totalTokens: 2,
+                },
+              });
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          };
+        },
+      });
+
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: {
+            client: {
+              id: "veryfront-studio",
+              type: "web",
+              platform: "browser",
+            },
+          },
+          runtimeOverrides: {
+            allowedTools: ["studio_todo_write"],
+          },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(studioMcpFetchCalls, 0);
+      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedRemoteSourceCount, 0);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -1297,9 +1416,117 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("fails closed when platform MCP is opted out or discovery fails", async () => {
+    const originalFetch = globalThis.fetch;
+
+    try {
+      for (
+        const testCase of [
+          {
+            id: "explicit-opt-out",
+            name: "explicit opt-out",
+            mcpServers: [] as const,
+            expectedFetchCalls: 0,
+          },
+          {
+            id: "failed-discovery",
+            name: "failed discovery",
+            mcpServers: undefined,
+            expectedFetchCalls: 1,
+          },
+        ]
+      ) {
+        let mcpFetchCalls = 0;
+        let capturedAllowedRemoteTools: string[] | undefined;
+        let capturedRemoteSourceCount = -1;
+        globalThis.fetch = ((url) => {
+          if (String(url).endsWith("/mcp")) {
+            mcpFetchCalls += 1;
+            return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
+          }
+          return Promise.resolve(new Response(null, { status: 503 }));
+        }) as typeof fetch;
+
+        const handler = new AgentStreamHandler({
+          ensureProjectDiscovery: async () => {},
+          getAgent: (id) =>
+            id === "assistant-1"
+              ? createAgentWithConfig("assistant-1", {
+                tools: { get_file: true },
+                ...(testCase.mcpServers === undefined
+                  ? {}
+                  : { mcpServers: [...testCase.mcpServers] }),
+              })
+              : undefined,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+            capturedRemoteSourceCount = runtimeConfig.__vfRemoteToolSources?.length ?? 0;
+            return {
+              stream: async (_messages, _context, callbacks) => {
+                callbacks?.onFinish?.({
+                  text: "ok",
+                  messages: [],
+                  toolCalls: [],
+                  status: "completed",
+                  usage: {
+                    promptTokens: 1,
+                    completionTokens: 1,
+                    totalTokens: 2,
+                  },
+                });
+                return new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                });
+              },
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({
+          runId: `run-${testCase.id}`,
+          credentials: { authToken: "request-scoped-user-token" },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          audience: "support-agent-fork",
+          requestId: `run-${testCase.id}`,
+        });
+        const result = await handler.handle(
+          new Request(`https://example.com/api/control-plane/runs/run-${testCase.id}/stream`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          {
+            ...createCtx(publicKeyPem),
+            proxyToken: "run-scoped-token",
+            projectSlug: "support-agent-fork",
+          },
+        );
+
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        assertEquals(mcpFetchCalls, testCase.expectedFetchCalls);
+        assertEquals(capturedAllowedRemoteTools, undefined);
+        assertEquals(capturedRemoteSourceCount, 0);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("exposes Veryfront API MCP tools requested through mcpServers policy", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
+    let capturedToolArguments: Record<string, unknown> | undefined;
     const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
@@ -1312,17 +1539,38 @@ describe("server/handlers/request/agent-stream.handler", () => {
         new Headers(init?.headers).get("authorization"),
         "Bearer request-scoped-user-token",
       );
+      const request = JSON.parse(String(init?.body)) as {
+        id: string;
+        method: string;
+        params?: { arguments?: Record<string, unknown> };
+      };
+      if (request.method === "tools/call") {
+        capturedToolArguments = request.params?.arguments;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
       return Promise.resolve(
         new Response(
           JSON.stringify({
             jsonrpc: "2.0",
-            id: "veryfront-platform-mcp:tools:list",
+            id: request.id,
             result: {
               tools: [
                 {
                   name: "list_uploads",
                   description: "List uploads",
-                  inputSchema: { type: "object", properties: {} },
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      project_reference: { type: "string" },
+                      limit: { type: "number" },
+                    },
+                    required: ["project_reference"],
+                  },
                 },
                 {
                   name: "delete_upload",
@@ -1360,9 +1608,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
               & typeof runtimeAgent.config
               & RuntimeRemoteToolConfig;
             capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
-            capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
-              projectId: "proj-1",
+            const platformSource = runtimeConfig.__vfRemoteToolSources?.[0];
+            capturedRemoteToolNames = (await platformSource?.listTools({
+              projectId: "untrusted-project",
             }))?.map((tool) => tool.name) ?? [];
+            await platformSource?.executeTool(
+              "list_uploads",
+              { project_reference: "untrusted-project", limit: 10 },
+              { projectId: "untrusted-project" },
+            );
             callbacks?.onFinish?.({
               text: "ok",
               messages: [],
@@ -1412,6 +1666,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 200);
       assertEquals(capturedAllowedRemoteTools, ["list_uploads"]);
       assertEquals(capturedRemoteToolNames, ["list_uploads", "delete_upload"]);
+      assertEquals(capturedToolArguments, {
+        project_reference: "proj-1",
+        limit: 10,
+      });
     } finally {
       globalThis.fetch = originalFetch;
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
@@ -1604,7 +1862,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
       OTEL_RESOURCE_ATTRIBUTES: undefined,
     });
-    assertEquals(capturedSystem, "project_reference=support-agent-fork");
+    assertStringIncludes(capturedSystem ?? "", "project_reference=support-agent-fork");
+    assertStringIncludes(capturedSystem ?? "", '<project_context>\nproject_reference: "proj-1"');
     assertEquals(capturedMcpRequest, {
       url: "https://api.veryfront.org/mcp",
       authorization: "Bearer request-scoped-user-token",
@@ -1770,7 +2029,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       VERYFRONT_PROJECT_SLUG: "base-url-agent-fork",
       CUSTOM_PROJECT_ENV: "project-value-from-base-url",
     });
-    assertEquals(capturedSystem, `api=${apiBaseUrl}`);
+    assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
       `${apiBaseUrl}/mcp`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
@@ -1968,7 +2227,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunFinished");
   });
 
-  it("uses the verified request credential for proxy and explicit agent source contexts", async () => {
+  it("uses the verified request credential for the exact agent source context", async () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
@@ -2026,26 +2285,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
-      agentSource: { type: "branch", branch: "main" },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "10000000-1000-4000-8000-100000000099",
+      },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
-    ctx.parsedDomain = {
-      slug: "demo-project",
-      branch: "feature-a",
-      environment: "preview",
-      isVeryfrontDomain: true,
-      isDraft: true,
-      allowIframeEmbed: true,
-    };
-    ctx.resolvedEnvironment = "preview";
-    ctx.requestContext = {
-      slug: "demo-project",
-      branch: "feature-a",
-      mode: "preview",
-      token: "",
-    };
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
@@ -2079,12 +2327,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(runWithContextCalls.length, 2);
+    assertEquals(runWithContextCalls.length, 1);
     assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
-    assertEquals(runWithContextCalls[0]?.branch, "feature-a");
-    assertEquals(runWithContextCalls[1]?.token, "request-scoped-user-token");
-    assertEquals(runWithContextCalls[1]?.branch, "main");
-    assertEquals(runWithContextCalls[1]?.productionMode, false);
+    assertEquals(runWithContextCalls[0]?.environmentName, "staging");
+    assertEquals(runWithContextCalls[0]?.releaseId, "10000000-1000-4000-8000-100000000099");
+    assertEquals(runWithContextCalls[0]?.productionMode, true);
     assertEquals(observedCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",

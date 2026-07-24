@@ -188,7 +188,7 @@ function fetchDomainLookup(
         }
 
         if (!response.ok) {
-          logger.error("API error — throwing DomainLookupApiError so callers can return 502", {
+          logger.error("API error, throwing DomainLookupApiError so callers can return 502", {
             domain,
             status: response.status,
             statusText: response.statusText,

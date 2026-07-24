@@ -7,8 +7,14 @@
  * @module rendering/orchestrator/module-collection
  */
 
-/** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
+/** Idle timeout for the module-loading stage. Any concrete module/transform progress resets it. */
 export const MODULE_LOAD_TIMEOUT_MS = 10_000;
+
+/**
+ * Fallback cap when module loading is called without an owner signal.
+ * Request and renderer entrypoints supply their own total deadline signal.
+ */
+export const MODULE_LOAD_HARD_TIMEOUT_MS = 45_000;
 
 /** Timeout for data fetching (getStaticData, getServerData) */
 export const DATA_FETCH_TIMEOUT_MS = 15_000;
@@ -27,6 +33,7 @@ export interface ModuleToLoad {
 export interface LoadedModule {
   type: "page" | "layout";
   id: string;
+  path: string;
   mod: unknown;
 }
 

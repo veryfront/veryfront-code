@@ -27,9 +27,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 82 registered errors", () => {
+    it("should have 88 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 82);
+      assertEquals(slugs.length, 88);
     });
   });
 
@@ -143,7 +143,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 8);
+      assertEquals(errors.length, 11);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -289,9 +289,9 @@ describe("error-registry", () => {
 
   describe("error categories coverage", () => {
     const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 8,
+      CONFIG: 11,
       BUILD: 8,
-      RUNTIME: 7,
+      RUNTIME: 10,
       ROUTE: 6,
       MODULE: 6,
       SERVER: 15,

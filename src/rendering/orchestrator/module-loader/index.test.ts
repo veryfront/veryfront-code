@@ -1,9 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
-import { isMissingModuleError, type ModuleLoaderConfig, transformModuleWithDeps } from "./index.ts";
+import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  isMissingModuleError,
+  loadModule,
+  type ModuleLoaderConfig,
+  transformModuleWithDeps,
+} from "./index.ts";
+import { getModuleCacheKey } from "./module-cache-lookup.ts";
+import { isBuildFailure } from "./build-failure.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -46,6 +61,13 @@ function assertTransformedImportPath(code: string, expectedPathPart: string): st
 }
 
 describe("module-loader/transformModuleWithDeps", () => {
+  // The `.ts` cycle case compiles real TypeScript, which starts esbuild's child
+  // process; stop it so the test does not leak the handle into a later suite.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   it("transforms @/ alias dependencies before rewriting the import to a file URL", async () => {
     await withModuleLoaderFixture(
       {
@@ -82,6 +104,158 @@ describe("module-loader/transformModuleWithDeps", () => {
     );
   });
 
+  it("isolates progress listener failures without weakening aborts", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": `export const value = "ready";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let listenerCalls = 0;
+        const transformedPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.json"),
+          tmpDir,
+          config.adapter,
+          {
+            ...config,
+            onProgress: () => {
+              listenerCalls++;
+              throw new Error("observer failure");
+            },
+          },
+        );
+
+        assert(listenerCalls > 0);
+        assertEquals((await Deno.stat(transformedPath)).isFile, true);
+
+        const controller = new AbortController();
+        controller.abort(new Error("render cancelled"));
+        let abortedListenerCalls = 0;
+        await assertRejects(
+          () =>
+            transformModuleWithDeps(
+              join(projectDir, "app/page.json"),
+              tmpDir,
+              config.adapter,
+              {
+                ...config,
+                signal: controller.signal,
+                onProgress: () => {
+                  abortedListenerCalls++;
+                },
+              },
+            ),
+          Error,
+          "render cancelled",
+        );
+        assertEquals(abortedListenerCalls, 0);
+      },
+    );
+  });
+
+  // A dynamic import is how a module graph legitimately breaks a cycle. Before
+  // dynamic specifiers were followed, this shape terminated because the cycle
+  // edge was invisible; following it eagerly recurses until the worker dies.
+  // The race turns a regression into a failure rather than a hung suite.
+  it("does not recurse forever when a dynamic import closes a cycle", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": [
+          `import { a } from "../lib/a.json";`,
+          `export const pageValue = a;`,
+        ].join("\n"),
+        "lib/a.json": [
+          `export const a = "cycle";`,
+          `export async function later() { return await import("../app/page.json"); }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let timer = 0;
+        const transformed = await Promise.race([
+          transformModuleWithDeps(
+            join(projectDir, "app/page.json"),
+            tmpDir,
+            config.adapter,
+            config,
+          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("transform did not terminate")), 10_000);
+          }),
+        ]).finally(() => clearTimeout(timer));
+
+        assertStringIncludes(transformed, "/app/page.json");
+
+        // The cycle edge is left as the author wrote it, so the runtime
+        // resolves it if that branch is ever taken.
+        const depCode = await Deno.readTextFile(
+          assertTransformedImportPath(
+            await Deno.readTextFile(transformed),
+            "/lib/a.json",
+          ),
+        );
+        assertStringIncludes(depCode, `import("../app/page.json")`);
+      },
+    );
+  });
+
+  // The `.ts` counterpart of the cycle case, which the `.json` shape above does
+  // not exercise: a `.ts` module is persisted as a *content-hashed* `.js`
+  // artifact (`app/page.<hash>.js`), and the cycle edge — left un-transformed to
+  // break the recursion — is normalised by esbuild to a relative `../app/page.js`
+  // that does not match the hashed name. To make that edge resolvable, the cycle
+  // target persists a stable non-hashed alias (`app/page.js`) that re-exports
+  // its hashed artifact. This test pins both halves: the edge shape and the
+  // alias that backs it. (The alias is not yet runtime-verified end to end; if
+  // it does not resolve in a real runtime the branch stays broken, no worse than
+  // before.)
+  it("writes a resolvable alias when a dynamic import closes a .ts cycle", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { a } from "../lib/a.ts";`,
+          `export const pageValue = a;`,
+        ].join("\n"),
+        "lib/a.ts": [
+          `export const a = "cycle";`,
+          `export async function later() { return await import("../app/page.ts"); }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let timer = 0;
+        const transformed = await Promise.race([
+          transformModuleWithDeps(
+            join(projectDir, "app/page.ts"),
+            tmpDir,
+            config.adapter,
+            config,
+          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("transform did not terminate")), 10_000);
+          }),
+        ]).finally(() => clearTimeout(timer));
+
+        // The static import to lib/a resolves to its content-hashed artifact.
+        const depArtifactPath = assertTransformedImportPath(
+          await Deno.readTextFile(transformed),
+          "/lib/a.",
+        );
+        assert(/\/lib\/a\.[0-9a-f]{1,8}\.js$/.test(depArtifactPath), depArtifactPath);
+
+        // The cycle edge survives as the relative `.js` specifier esbuild leaves.
+        const depCode = await Deno.readTextFile(depArtifactPath);
+        assertStringIncludes(depCode, `import("../app/page.js")`);
+
+        // The alias the edge points at exists next to the hashed artifact and
+        // re-exports it, so `../app/page.js` resolves to the real module.
+        const aliasPath = join(tmpDir, "app/page.js");
+        const aliasCode = await Deno.readTextFile(aliasPath);
+        assertStringIncludes(
+          aliasCode,
+          `export * from "./${basename(transformed)}";`,
+        );
+      },
+    );
+  });
+
   it("resolves relative imports before rewriting them to file URLs", async () => {
     await withModuleLoaderFixture(
       {
@@ -103,6 +277,122 @@ describe("module-loader/transformModuleWithDeps", () => {
 
         assertStringIncludes(transformedPath, "/app/page.json");
         assertEquals((await Deno.stat(depPath)).isFile, true);
+      },
+    );
+  });
+});
+
+describe("module-loader/loadModule build-failure tagging", () => {
+  // Compiling a real page module starts esbuild's child process; stop it so the
+  // test does not leak the handle rather than opting out of the sanitizer.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
+  // A page whose module ran and threw is an application bug the project's own
+  // error page should present. A page that never compiled is a developer-facing
+  // build failure. Only the loader can tell them apart, so it tags the error.
+  it("tags a failure from the transform step", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import logo from "@/assets/logo.svg";`,
+          `export default function Page() { return logo; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("does not tag a module that compiled and threw at module scope", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `throw new Error("Missing API key");`,
+          `export const value = "unreachable";`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.ts"), config),
+            Error,
+            "Missing API key",
+          );
+
+          assertEquals(isBuildFailure(error), false);
+        });
+      },
+    );
+  });
+});
+
+describe("module-loader/loadModule", () => {
+  it("reuses the content-addressed module identity across repeated loads", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const value = "stable";` },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.ts");
+        const productionConfig = { ...config, mode: "production" as const };
+        const artifactPath = join(tmpDir, "page.stable.mjs");
+        await Deno.writeTextFile(artifactPath, `export const value = "stable";`);
+        productionConfig.moduleCache.set(
+          getModuleCacheKey(filePath, undefined, projectDir, undefined, undefined, "production"),
+          artifactPath,
+        );
+
+        await runWithCacheDir(tmpDir, async () => {
+          const first = await loadModule(filePath, productionConfig);
+          const loadedAt = Date.now();
+          while (Date.now() === loadedAt) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+          const second = await loadModule(filePath, productionConfig);
+
+          assertStrictEquals(second, first);
+        });
+      },
+    );
+  });
+
+  it("loads a new module identity when the cached content artifact changes", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const value = "stable";` },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.ts");
+        const productionConfig = { ...config, mode: "production" as const };
+        const cacheKey = getModuleCacheKey(
+          filePath,
+          undefined,
+          projectDir,
+          undefined,
+          undefined,
+          "production",
+        );
+        const stablePath = join(tmpDir, "page.stable.mjs");
+        await Deno.writeTextFile(stablePath, `export const value = "stable";`);
+        productionConfig.moduleCache.set(cacheKey, stablePath);
+
+        await runWithCacheDir(tmpDir, async () => {
+          const first = await loadModule(filePath, productionConfig);
+          const changedPath = join(tmpDir, "page.changed.mjs");
+          await Deno.writeTextFile(changedPath, `export const value = "changed";`);
+          productionConfig.moduleCache.set(cacheKey, changedPath);
+          const changed = await loadModule(filePath, productionConfig);
+
+          assertNotStrictEquals(changed, first);
+          assertEquals(changed.value, "changed");
+        });
       },
     );
   });

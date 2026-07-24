@@ -256,6 +256,69 @@ describe(
       });
     });
 
+    // `throw notFound()` used to reach the SSR error handler as a plain object,
+    // get stringified to "[object Object]", and answer 500. The status code is
+    // the whole point of the helper, so assert it over the wire.
+    it("returns 404 and 302 when getServerData throws notFound() or redirect()", async () => {
+      await withTestContext(
+        "production-server-ssr-thrown-control",
+        async (context: TestContext) => {
+          const pagesDir = join(context.projectDir, "pages");
+          await mkdir(pagesDir, { recursive: true });
+          // `notFound()` and `redirect()` brand their result with a registered
+          // symbol, so a result built by project code is recognised by the
+          // framework. The fixtures rebuild that public brand rather than import
+          // the helpers, which keeps the page modules dependency-free.
+          const brand =
+            `Object.defineProperty(result, Symbol.for("veryfront.dataControlResult"), { value: true });`;
+
+          await writeTextFile(
+            join(pagesDir, "missing.tsx"),
+            `export function getServerData(){
+             const result = { notFound: true };
+             ${brand}
+             throw result;
+           }
+           export default function Page(){ return <div>Should not render</div>; }`,
+          );
+          await writeTextFile(
+            join(pagesDir, "moved.tsx"),
+            `export function getServerData(){
+             const result = { redirect: { destination: '/login', permanent: false } };
+             ${brand}
+             throw result;
+           }
+           export default function Page(){ return <div>Should not render</div>; }`,
+          );
+
+          const port = await context.allocatePort();
+          const server = await startProductionServer({
+            projectDir: context.projectDir,
+            port,
+            bindAddress: "127.0.0.1",
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
+          });
+          context.trackResource(server);
+          await server.ready;
+
+          try {
+            const missing = await fetch(`http://127.0.0.1:${port}/missing`);
+            assertEquals(missing.status, 404);
+            const html = await missing.text();
+            assertEquals(html.includes("Should not render"), false);
+
+            const moved = await fetch(`http://127.0.0.1:${port}/moved`, { redirect: "manual" });
+            assertEquals(moved.status, 302);
+            assertEquals(moved.headers.get("location"), "/login");
+            await moved.text();
+          } finally {
+            await server.stop();
+          }
+        },
+      );
+    });
+
     it("includes metadata (title, description) in SSR HTML", async () => {
       await withTestContext("production-server-metadata", async (context: TestContext) => {
         const appDir = join(context.projectDir, "app");

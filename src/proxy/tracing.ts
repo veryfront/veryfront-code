@@ -28,7 +28,7 @@ import {
   trace as shimTrace,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
+import { getHostTelemetryEnv } from "#veryfront/observability";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   importFirstPartyExtensionModule,

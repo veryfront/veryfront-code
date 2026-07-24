@@ -1,5 +1,5 @@
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import type { Source } from "./sources.tsx";
 import { cn } from "../../theme.ts";
 
@@ -26,17 +26,10 @@ interface InlineCitationContextValue {
   setCardRef: (node: HTMLDivElement | null) => void;
 }
 
-const InlineCitationContext = React.createContext<InlineCitationContextValue | null>(null);
-
-function useInlineCitation(): InlineCitationContextValue {
-  const context = React.useContext(InlineCitationContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "InlineCitation parts must be used within an InlineCitation",
-    });
-  }
-  return context;
-}
+const [InlineCitationContext, useInlineCitation] = createStrictContext<InlineCitationContextValue>(
+  "InlineCitation parts",
+  "an InlineCitation",
+);
 
 /** Props accepted by `InlineCitation.Trigger`. */
 export interface InlineCitationTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {

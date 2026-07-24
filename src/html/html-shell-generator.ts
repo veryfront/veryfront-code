@@ -1,14 +1,9 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { profilePhase } from "#veryfront/observability/request-profiler.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils";
 import { isMarkdownPreview as checkMarkdownPreview } from "#veryfront/transforms/md/utils.ts";
-import {
-  generateModulePreloadHintsFromManifest,
-  getRouteManifest,
-} from "#veryfront/modules/manifest/route-module-manifest.ts";
 import {
   getReadyManifestForRenderAsync,
   isReleaseAssetManifestEnabled,
@@ -144,11 +139,6 @@ function generateModulePreloadHints(
     ? getRelativePagePath(options.pagePath, projectDir)
     : "";
   const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
-  const legacyModuleManifestRoute = relativePagePath
-    ? relativePagePath
-      .replace(/\.(tsx|ts|jsx|mdx)$/, "")
-      .replace(/^pages\//, "")
-    : "";
 
   // Manifest-covered routes: preload the full closure from the manifest.
   if (releaseManifest) {
@@ -156,28 +146,6 @@ function generateModulePreloadHints(
       addHint(url);
     }
     return hints.join("\n  ");
-  }
-
-  const projectSlug = options.projectSlug ?? options.projectId;
-  const manifest = getRouteManifest(projectSlug, legacyModuleManifestRoute);
-  if (!manifest || manifest.renderCount <= 0) return hints.join("\n  ");
-
-  for (
-    const hint of generateModulePreloadHintsFromManifest(
-      projectSlug,
-      legacyModuleManifestRoute,
-      50,
-    )
-  ) {
-    const hintPrefix = '<link rel="modulepreload" href="';
-    const hintSuffix = '">';
-    if (!hint.startsWith(hintPrefix) || !hint.endsWith(hintSuffix)) continue;
-
-    const rawHref = hint.slice(hintPrefix.length, -hintSuffix.length);
-    const href = rawHref && fallbackReleaseId && rawHref.startsWith("/_vf_modules/")
-      ? appendReleaseModuleVersion(rawHref, fallbackReleaseId)
-      : rawHref;
-    addHint(href);
   }
 
   return hints.join("\n  ");

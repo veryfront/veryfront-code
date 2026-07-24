@@ -11,6 +11,7 @@
  */
 import * as React from "react";
 import { Slot } from "./slot.tsx";
+import { useDisclosure } from "./disclosure.ts";
 
 const CollapsibleContext = React.createContext<
   { open: boolean; toggle: () => void; disabled?: boolean } | null
@@ -33,14 +34,8 @@ export function Collapsible({
   children,
   ...props
 }: CollapsibleProps): React.ReactElement {
-  const [internal, setInternal] = React.useState(defaultOpen ?? false);
-  const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internal;
-  const toggle = React.useCallback(() => {
-    const next = !isOpen;
-    if (!isControlled) setInternal(next);
-    onOpenChange?.(next);
-  }, [isOpen, isControlled, onOpenChange]);
+  const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
+  const toggle = React.useCallback(() => setOpen(!isOpen), [isOpen, setOpen]);
   return (
     <div data-state={isOpen ? "open" : "closed"} {...props}>
       <CollapsibleContext.Provider value={{ open: isOpen, toggle, disabled }}>

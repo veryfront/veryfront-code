@@ -9,13 +9,24 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import { workflow } from "../dsl/workflow.ts";
+import { dependsOn, workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
 import { waitForApproval } from "../dsl/wait.ts";
-import type { WorkflowRun } from "../types.ts";
+import type { PendingApproval, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+
+class RejectingApprovalPersistenceBackend extends MemoryBackend {
+  override savePendingApprovalIfStatusAndWorker(
+    _runId: string,
+    _expectedStatuses: WorkflowRun["status"][],
+    _expectedWorkerId: string,
+    _approval: PendingApproval,
+  ): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+}
 
 function createMockTool(name: string, output: unknown): Tool {
   return {
@@ -285,6 +296,7 @@ describe("WorkflowClient", () => {
           checkpoints: [],
           pendingApprovals: [],
           createdAt: new Date(),
+          workerId: "worker-current-owner",
           sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
           _tenant: {
             projectSlug: "acme",
@@ -297,7 +309,12 @@ describe("WorkflowClient", () => {
         };
         await scopedBackend.createRun(run);
 
-        await scopedClient.resume(run.id);
+        await assertRejects(
+          () => scopedClient.resume(run.id, "worker-stale-owner"),
+          Error,
+          "ownership",
+        );
+        await scopedClient.resume(run.id, "worker-current-owner");
 
         const completedRun = await scopedBackend.getRun(run.id);
         assertEquals(completedRun?.status, "completed");
@@ -394,6 +411,104 @@ describe("WorkflowClient", () => {
       assertEquals(approval?.status, "approved");
       assertEquals(approval?.decidedBy, "admin@test.com");
       assertEquals(approval?.comment, "Looks good!");
+    });
+
+    it("allows an approval to resume while its notifier is still pending", async () => {
+      const approvalPersisted = Promise.withResolvers<string>();
+      const releaseNotifier = Promise.withResolvers<void>();
+      const lockedBackend = new MemoryBackend();
+      const lockedClient = createWorkflowClient({
+        backend: lockedBackend,
+        approval: {
+          notifier: async (approval) => {
+            approvalPersisted.resolve(approval.id);
+            await releaseNotifier.promise;
+          },
+        },
+      });
+      const workflowId = "immediate-approval-workflow";
+      lockedClient.register(
+        workflow({
+          id: workflowId,
+          steps: [
+            waitForApproval("review"),
+            dependsOn(
+              step("finish", { tool: createMockTool("finish", { ok: true }) }),
+              "review",
+            ),
+          ],
+        }),
+      );
+      const run: WorkflowRun = {
+        id: "run-immediate-approval",
+        workflowId,
+        status: "pending",
+        input: {},
+        nodeStates: {},
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        workerId: "worker-current-owner",
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      };
+      await lockedBackend.createRun(run);
+      const waitingExecution = lockedClient.resume(run.id, run.workerId);
+
+      try {
+        const approvalId = await approvalPersisted.promise;
+        await lockedClient.approve(run.id, approvalId, "reviewer");
+
+        const completedRun = await lockedBackend.getRun(run.id);
+        assertEquals(completedRun?.status, "completed");
+        assertEquals(
+          (completedRun?.output as { finish?: unknown } | undefined)?.finish,
+          { ok: true },
+        );
+      } finally {
+        releaseNotifier.resolve();
+        await waitingExecution;
+        await lockedClient.destroy();
+      }
+    });
+
+    it("fails an owner-bound run when approval persistence fails", async () => {
+      const rejectingBackend = new RejectingApprovalPersistenceBackend();
+      const rejectingClient = createWorkflowClient({ backend: rejectingBackend });
+      const workflowId = "approval-persistence-failure-workflow";
+      rejectingClient.register(
+        workflow({ id: workflowId, steps: [waitForApproval("review")] }),
+      );
+      const run: WorkflowRun = {
+        id: "run-approval-persistence-failure",
+        workflowId,
+        status: "pending",
+        input: {},
+        nodeStates: {},
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        workerId: "worker-current-owner",
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      };
+      await rejectingBackend.createRun(run);
+
+      try {
+        await assertRejects(
+          () => rejectingClient.resume(run.id, run.workerId),
+          Error,
+          "ownership changed before approval persistence",
+        );
+
+        const failedRun = await rejectingBackend.getRun(run.id);
+        assertEquals(failedRun?.status, "failed");
+        assertEquals(await rejectingBackend.getPendingApprovals(run.id), []);
+      } finally {
+        await rejectingClient.destroy();
+      }
     });
 
     it("should reject a pending approval", async () => {

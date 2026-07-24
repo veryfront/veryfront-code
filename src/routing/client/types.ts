@@ -36,4 +36,10 @@ export interface SpaPageData {
   props: Record<string, unknown>;
   params: Record<string, string | string[]>;
   layoutProps: Record<string, Record<string, unknown>>;
+  /**
+   * Set when the route's getServerData called redirect(): the page-data endpoint
+   * returns a 200 with this instead of page props, and the client router follows
+   * it with a document navigation to `destination`.
+   */
+  redirect?: { destination: string; permanent?: boolean };
 }

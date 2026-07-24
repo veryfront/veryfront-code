@@ -144,7 +144,16 @@ describe("SSRModuleLoader Stress Tests", {
       const results = await Promise.all(promises);
       const errors = results.filter(hasErrorResult);
 
-      assertEquals(errors.length, 0, `Expected no errors, got: ${JSON.stringify(errors)}`);
+      assertEquals(
+        errors.length,
+        0,
+        `Expected no errors, got: ${
+          JSON.stringify(errors.map(({ error }) => ({
+            name: error.name,
+            message: error.message,
+          })))
+        }`,
+      );
       console.log(`✓ ${concurrentRequests} concurrent requests completed without race condition`);
     } finally {
       await removeDir(projectDir);

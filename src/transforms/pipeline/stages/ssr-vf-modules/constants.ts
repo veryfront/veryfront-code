@@ -4,6 +4,7 @@
 
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -113,6 +114,7 @@ export interface TransformContext {
   reactVersion: string;
   projectDir: string;
   fs: ReturnType<typeof createFileSystem>;
+  onProgress?: TransformProgressListener;
   /** Transform keys already visited by the current recursive traversal. */
   transformAncestry?: ReadonlySet<string>;
 }

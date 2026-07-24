@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "../../../ui/dropdown-menu.tsx";
 import { AttachmentPill, useAttachmentPill } from "./attachment-pill.tsx";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Public API contract for uploaded file. */
 export interface UploadedFile {
@@ -52,29 +52,13 @@ export interface AttachmentsPanelContextValue {
   triggerAttach: () => void;
 }
 
-const AttachmentsPanelContext = React.createContext<
-  AttachmentsPanelContextValue | null
->(null);
-
-/**
- * Read the enclosing `AttachmentsPanel`'s state to compose custom leaves inside
- * a `Root` you're already rendering. Throws when used outside an
- * `AttachmentsPanel`.
- *
- * This is the *panel composition context*, not the headless state hook: it only
- * re-surfaces what `<AttachmentsPanel.Root>` was given (plus `triggerAttach`).
- * To OWN attachment state with no panel rendered, use the domain hook
- * `useAttachments()` (upload / remove / list) and render whatever UI you like.
- */
-export function useAttachmentsPanel(): AttachmentsPanelContextValue {
-  const ctx = React.useContext(AttachmentsPanelContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useAttachmentsPanel must be used within an AttachmentsPanel",
-    });
-  }
-  return ctx;
-}
+const [AttachmentsPanelContext, useAttachmentsPanel] = createStrictContext<
+  AttachmentsPanelContextValue
+>(
+  "useAttachmentsPanel",
+  "an AttachmentsPanel",
+);
+export { useAttachmentsPanel };
 
 /** Props accepted by `AttachmentsPanel` / `AttachmentsPanel.Root`. */
 export interface AttachmentsPanelProps {

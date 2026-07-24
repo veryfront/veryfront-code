@@ -59,10 +59,15 @@ export function toNodeHandler(
       res.writeHead(response.status, outHeaders);
       if (response.body) {
         const reader = response.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(value);
+        res.on("close", () => reader.cancel().catch(() => undefined));
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+        } finally {
+          reader.releaseLock();
         }
       }
       res.end();

@@ -107,7 +107,7 @@ export class HMRHandler extends BaseHandler {
     const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
       getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
     const host = (await isProxyTrusted(req, { publicKeyPem }))
-      ? getEffectiveRequestHost(req, url)
+      ? getEffectiveRequestHost(req, url, true)
       : (req.headers.get("host") ?? url.host);
     const isLocalhost = isLocalDevHost(host);
 

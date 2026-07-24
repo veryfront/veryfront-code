@@ -1,4 +1,5 @@
 import { type ConversationRunProjection, getConversationRun } from "../conversation/durable.ts";
+import { agentLogger } from "#veryfront/utils";
 
 /** Public API contract for hosted child run identifiers. */
 export interface HostedChildRunIdentifiers {
@@ -140,6 +141,8 @@ export interface MonitorHostedChildRunStatusInput {
   onTerminal: (error: HostedChildTerminalStateError) => void;
   /** Called when a poll attempt fails; receives the error and consecutive failure count. */
   onMonitoringError?: (error: unknown, consecutiveFailures: number) => void;
+  /** Called when repeated poll failures stop the monitor without observing a terminal run. */
+  onMonitoringExhausted?: (error: Error) => void;
 }
 
 /** Monitor hosted child run status helper. */
@@ -185,9 +188,17 @@ export async function monitorHostedChildRunStatus(
       input.onMonitoringError?.(error, consecutiveFailures);
 
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        console.error(
+        agentLogger.error(
           `[monitorHostedChildRunStatus] Aborting status monitor after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures for run ${input.identifiers.childRunId}`,
-          error,
+          { errorName: error instanceof Error ? error.name : typeof error },
+        );
+        // A transport failure is not an observed remote terminal state. Abort
+        // local execution through a separate channel so lifecycle code still
+        // persists or reconciles the durable child failure.
+        input.onMonitoringExhausted?.(
+          new Error(
+            `Stopped monitoring hosted child run ${input.identifiers.childRunId} after ${MAX_CONSECUTIVE_POLL_FAILURES} consecutive failures`,
+          ),
         );
         return;
       }

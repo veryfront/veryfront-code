@@ -1,5 +1,5 @@
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";

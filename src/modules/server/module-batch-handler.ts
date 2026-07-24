@@ -25,15 +25,14 @@ import {
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
-import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import {
-  applySSRImportRewritesAsync,
   resolveSSRImportTargetModulePath,
   type SSRImportRewriteTarget,
   stripSSRModuleJsExtension,
 } from "./ssr-import-rewriter.ts";
+import { transformModuleToServable } from "./module-transform.ts";
 import { buildModuleTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framework-source-resolver.ts";
@@ -46,6 +45,7 @@ import {
   hasSourceMiss,
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
+import { findFirstExistingFile } from "./fs-probe.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -82,38 +82,6 @@ const FRAMEWORK_EXTENSIONS = [
   ".jsx",
   ".js", // Regular sources for dev mode
 ] as const;
-
-async function findFirstSecureFile(
-  secureFs: ReturnType<typeof createSecureFs>,
-  paths: string[],
-): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
-    try {
-      const stat = await secureFs.stat(path);
-      return stat.isFile ? path : null;
-    } catch {
-      return null;
-    }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
-}
-
-async function findFirstPlatformFile(
-  platformFs: ReturnType<typeof createFileSystem>,
-  paths: string[],
-): Promise<string | null> {
-  const results = await Promise.all(paths.map(async (path) => {
-    try {
-      const stat = await platformFs.stat(path);
-      return stat.isFile ? path : null;
-    } catch {
-      return null;
-    }
-  }));
-
-  return results.find((path): path is string => path !== null) ?? null;
-}
 
 export interface BatchHandlerOptions {
   projectDir: string;
@@ -341,7 +309,7 @@ async function loadAndTransformModule(
   });
   if (hasSourceMiss(missCacheKey)) return null;
 
-  const sourcePath = await findFirstSecureFile(
+  const sourcePath = await findFirstExistingFile(
     secureFs,
     EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
   );
@@ -359,7 +327,7 @@ async function loadAndTransformModule(
 
   const platformFs = createFileSystem();
   for (const lookupDir of frameworkLookupDirs) {
-    const frameworkPath = await findFirstPlatformFile(
+    const frameworkPath = await findFirstExistingFile(
       platformFs,
       FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
     );
@@ -397,26 +365,33 @@ async function transformModule(
     reactVersion?: string;
   },
 ): Promise<string> {
-  let code = await transformToESM(source, sourceFile, projectDir, adapter, {
-    projectId: options.projectId ?? projectDir,
-    dev: options.dev,
-    ssr: options.ssr,
-    reactVersion: options.reactVersion,
+  return transformModuleToServable({
+    source,
+    sourceFile,
+    projectDir,
+    adapter,
+    transformOpts: {
+      projectId: options.projectId ?? projectDir,
+      dev: options.dev,
+      ssr: options.ssr,
+      reactVersion: options.reactVersion,
+    },
+    isSSR: options.ssr,
+    ssrRewriteOptions: options.ssr
+      ? {
+        projectSlug: options.projectSlug,
+        branch: options.branch,
+        resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
+          projectDir,
+          secureFs,
+          currentModulePath: modulePath,
+        }),
+      }
+      : undefined,
+    // No releaseRewriteOptions: the batch handler does not rewrite release
+    // dependency imports on the non-SSR path (intentional difference vs
+    // the module-server paths; noted in module-transform.ts JSDoc).
   });
-
-  if (options.ssr) {
-    code = await applySSRImportRewritesAsync(code, {
-      projectSlug: options.projectSlug,
-      branch: options.branch,
-      resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
-        projectDir,
-        secureFs,
-        currentModulePath: modulePath,
-      }),
-    });
-  }
-
-  return code;
 }
 
 async function readBatchTargetSource(

@@ -1,8 +1,8 @@
-import { wrapWithContext } from "#veryfront/errors/index.ts";
+import { wrapWithContext } from "#veryfront/errors";
 import type { MdxBundle } from "#veryfront/types";
 import type { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
+import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 export interface MDXCompilerConfig {

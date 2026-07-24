@@ -19,6 +19,7 @@ import {
   vendorStrategy,
   veryfrontStrategy,
 } from "./strategies/index.ts";
+import { assetStrategy } from "./strategies/asset-strategy.ts";
 import type { ImportRewriteStrategy, RewriteContext, RewriteResult } from "./types.ts";
 
 /**
@@ -26,6 +27,7 @@ import type { ImportRewriteStrategy, RewriteContext, RewriteResult } from "./typ
  */
 const DEFAULT_STRATEGIES: ImportRewriteStrategy[] = [
   nodeBuiltinStrategy, // 0.5 - Node.js built-ins (noop for browser)
+  assetStrategy, // 0.6 - static assets are not modules; reject with a pointer
   reactStrategy, // 0 - React packages first
   aliasStrategy, // 1 - @/ aliases
   veryfrontStrategy, // 1.5 - #veryfront/*, veryfront/*

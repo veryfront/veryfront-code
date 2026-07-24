@@ -6,7 +6,7 @@ import type {
   ContentProcessingResult,
   ContentProcessor,
 } from "#veryfront/extensions/content/index.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const logger = rendererLogger.component("mdx-compiler");

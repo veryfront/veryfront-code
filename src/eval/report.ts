@@ -15,6 +15,7 @@ import type {
   EvalReportSummary,
   EvalUsageSummary,
 } from "./types.ts";
+import { computeHash } from "#veryfront/utils";
 
 /** Additive eval report contract version written by new reports and summary artifacts. */
 export const EVAL_REPORT_SCHEMA_VERSION = 2;
@@ -54,13 +55,6 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(sortJsonValue(value));
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
   return {
     kind: dataset.kind,
@@ -83,7 +77,7 @@ export async function createEvalDatasetMetadata(
     kind: dataset.kind,
     ...(dataset.path ? { path: dataset.path } : {}),
     examples: examples.length,
-    hash: `sha256:${await sha256Hex(stableStringify(hashInput))}`,
+    hash: `sha256:${await computeHash(stableStringify(hashInput))}`,
   };
 }
 

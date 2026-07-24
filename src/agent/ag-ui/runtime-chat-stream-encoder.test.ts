@@ -38,6 +38,64 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
   });
 
+  it("preserves providerExecuted on runtime tool lifecycle events", () => {
+    const encoder = createAgUiRuntimeChatStreamEncoder({
+      responseMessageId: "msg-1",
+    });
+
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-start",
+        toolCallId: "tool-provider-fetch",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      }),
+      [
+        { type: "start-step" },
+        {
+          type: "tool-input-start",
+          toolCallId: "tool-provider-fetch",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      ],
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "tool-provider-fetch",
+        toolName: "web_fetch",
+        input: { url: "https://example.com/docs" },
+        providerExecuted: true,
+      }),
+      [
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-provider-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://example.com/docs" },
+          providerExecuted: true,
+        },
+      ],
+    );
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-error",
+        toolCallId: "tool-provider-fetch",
+        errorText: "provider failed",
+        providerExecuted: true,
+      }),
+      [
+        {
+          type: "tool-output-error",
+          toolCallId: "tool-provider-fetch",
+          errorText: "provider failed",
+          providerExecuted: true,
+        },
+      ],
+    );
+  });
+
   it("emits text events with the response message id and block content id", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",
