@@ -39,9 +39,101 @@ type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
 };
 
-type OpenTelemetryExtensionModule = {
-  OpenTelemetryNodeTelemetryProvider: new () => NodeTelemetryProvider;
-};
+type ZeroArgumentConstructor<T> = new () => T;
+
+const OPEN_TELEMETRY_EXTENSION_PACKAGE = "@veryfront/ext-observability-opentelemetry";
+
+function isMissingOpenTelemetryExtension(error: unknown): boolean {
+  return isMissingFirstPartyExtensionModule(error, [
+    OPEN_TELEMETRY_EXTENSION_PACKAGE,
+  ]);
+}
+
+function isConstructor<T>(
+  value: unknown,
+): value is ZeroArgumentConstructor<T> {
+  if (typeof value !== "function") return false;
+  try {
+    Reflect.construct(Object, [], value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveOptionalOpenTelemetryProviderConstructor(
+  extensionModule: unknown,
+): ZeroArgumentConstructor<NodeTelemetryProvider> | null {
+  if (extensionModule === null) return null;
+  if (
+    typeof extensionModule !== "object" &&
+    typeof extensionModule !== "function"
+  ) {
+    throw new TypeError(
+      `Invalid ${OPEN_TELEMETRY_EXTENSION_PACKAGE} module: expected a module namespace`,
+    );
+  }
+
+  let candidate: unknown;
+  try {
+    candidate = (extensionModule as Record<string, unknown>)
+      .OpenTelemetryNodeTelemetryProvider;
+  } catch (cause) {
+    throw new TypeError(
+      `Invalid ${OPEN_TELEMETRY_EXTENSION_PACKAGE} module: could not read export "OpenTelemetryNodeTelemetryProvider"`,
+      { cause },
+    );
+  }
+
+  if (!isConstructor<NodeTelemetryProvider>(candidate)) {
+    throw new TypeError(
+      `Invalid ${OPEN_TELEMETRY_EXTENSION_PACKAGE} module: export "OpenTelemetryNodeTelemetryProvider" must be constructible`,
+    );
+  }
+  return candidate;
+}
+
+function createOptionalOpenTelemetryProvider(
+  extensionModule: unknown,
+): NodeTelemetryProvider | null {
+  const Provider = resolveOptionalOpenTelemetryProviderConstructor(extensionModule);
+  if (Provider === null) return null;
+
+  const provider = new Provider();
+  let initialize: unknown;
+  try {
+    initialize = (provider as unknown as Record<string, unknown>).initialize;
+  } catch (cause) {
+    throw new TypeError(
+      `Invalid ${OPEN_TELEMETRY_EXTENSION_PACKAGE} module: "OpenTelemetryNodeTelemetryProvider" instance could not expose method "initialize"`,
+      { cause },
+    );
+  }
+  if (typeof initialize !== "function") {
+    throw new TypeError(
+      `Invalid ${OPEN_TELEMETRY_EXTENSION_PACKAGE} module: "OpenTelemetryNodeTelemetryProvider" instance must implement method "initialize"`,
+    );
+  }
+  return provider;
+}
+
+function registerOpenTelemetryProviderIfMissing(extensionModule: unknown): void {
+  if (tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName)) return;
+  const provider = createOptionalOpenTelemetryProvider(extensionModule);
+  if (provider === null) return;
+  // A constructor can synchronously register an explicit implementation.
+  // Preserve it instead of overwriting it with the default.
+  if (tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName)) return;
+  register<NodeTelemetryProvider>(NodeTelemetryProviderName, provider);
+}
+
+/** @internal Test-only seams; this module is not a public package entry point. */
+export const cloudAgentProviderBootstrapInternals = Object.freeze({
+  createOptionalOpenTelemetryProvider,
+  isMissingOpenTelemetryExtension,
+  registerOpenTelemetryProviderIfMissing,
+  resolveOptionalOpenTelemetryProviderConstructor,
+});
 
 /**
  * Resolved options produced by `resolveNodeVeryfrontCloudAgentServiceOptions`.
@@ -109,7 +201,11 @@ async function loadDefaultCreateBashTool(): Promise<
 export async function ensureDefaultSchemaValidator(): Promise<void> {
   if (tryResolve<SchemaValidator>("SchemaValidator")) return;
   const { createZodAdapter } = await import("../../../extensions/ext-schema-zod/src/adapter.ts");
-  register<SchemaValidator>("SchemaValidator", createZodAdapter());
+  if (tryResolve<SchemaValidator>("SchemaValidator")) return;
+  const validator = createZodAdapter();
+  if (!tryResolve<SchemaValidator>("SchemaValidator")) {
+    register<SchemaValidator>("SchemaValidator", validator);
+  }
 }
 
 async function ensureDefaultAuthProvider(): Promise<void> {
@@ -118,46 +214,31 @@ async function ensureDefaultAuthProvider(): Promise<void> {
     "ext-auth-jwt",
     "@veryfront/ext-auth-jwt",
   );
-  register<AuthProvider>("AuthProvider", createAuthProvider({}));
+  if (tryResolve<AuthProvider>("AuthProvider")) return;
+  const provider = createAuthProvider({});
+  if (!tryResolve<AuthProvider>("AuthProvider")) {
+    register<AuthProvider>("AuthProvider", provider);
+  }
 }
 
 async function ensureDefaultNodeTelemetryProvider(): Promise<void> {
   if (tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName)) return;
-  const OpenTelemetryNodeTelemetryProvider = await importOpenTelemetryNodeTelemetryProvider();
-  if (!OpenTelemetryNodeTelemetryProvider) return;
-  register<NodeTelemetryProvider>(
-    NodeTelemetryProviderName,
-    new OpenTelemetryNodeTelemetryProvider(),
-  );
+  const extensionModule = await importOpenTelemetryExtensionModule();
+  registerOpenTelemetryProviderIfMissing(extensionModule);
 }
 
-async function importOpenTelemetryNodeTelemetryProvider() {
+async function importOpenTelemetryExtensionModule(): Promise<unknown | null> {
   try {
-    const { OpenTelemetryNodeTelemetryProvider } = await importFirstPartyExtensionModule<
-      OpenTelemetryExtensionModule
-    >(
+    return await importFirstPartyExtensionModule<unknown>(
       "ext-observability-opentelemetry",
-      "@veryfront/ext-observability-opentelemetry",
+      OPEN_TELEMETRY_EXTENSION_PACKAGE,
     );
-    return OpenTelemetryNodeTelemetryProvider;
   } catch (error) {
-    if (!isMissingOptionalPackageError(error) && !isMissingFirstPartyExtensionModule(error)) {
+    if (!isMissingOpenTelemetryExtension(error)) {
       throw error;
     }
     return null;
   }
-}
-
-// Runtime heuristic: detects a missing optional npm/Deno package by error message text.
-// These strings come from Node, Deno, and bundler runtimes and can vary by version.
-// If the wording changes, a missing optional package will throw instead of returning null,
-// turning an optional dependency into a hard startup failure — the safe fallback.
-function isMissingOptionalPackageError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Cannot find package") ||
-    message.includes("Cannot find module") ||
-    message.includes("ERR_MODULE_NOT_FOUND") ||
-    message.includes("Module not found");
 }
 
 /** Validates and snapshots an explicit runtime source identity, rejecting branch sources. */
