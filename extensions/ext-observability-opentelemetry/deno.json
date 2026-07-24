@@ -66,6 +66,8 @@
     "@opentelemetry/exporter-trace-otlp-http": "npm:@opentelemetry/exporter-trace-otlp-http@0.220.0",
     "@opentelemetry/resources": "npm:@opentelemetry/resources@2.9.0",
     "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.43.0",
+    "gaxios": "npm:gaxios@7.2.0",
+    "gcp-metadata": "npm:gcp-metadata@8.1.2",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "protobufjs": "npm:protobufjs@7.6.5",
