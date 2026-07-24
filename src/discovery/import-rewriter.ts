@@ -9,6 +9,11 @@ import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import {
+  resolveContainedPackagePath,
+  resolvePackageExportPath,
+  splitPackageSubpath,
+} from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 
 export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/agent",
@@ -202,76 +207,6 @@ const resolvedSpecifierCache = new LRUCache<string, string>({
   maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
 });
 
-// Split `react/jsx-runtime` → { name: "react", subpath: "./jsx-runtime" } and
-// `@scope/pkg/sub/path` → { name: "@scope/pkg", subpath: "./sub/path" }.
-function splitPackageSubpath(specifier: string): { name: string; subpath: string } {
-  const parts = specifier.split("/");
-  const segments = specifier.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1);
-  const name = segments.join("/");
-  const rest = parts.slice(segments.length).join("/");
-  return { name, subpath: rest ? `./${rest}` : "." };
-}
-
-// Pick the relative file path from a `package.json#exports` entry, which can
-// be a string, a conditional object (`{ import, default, ... }`), or an
-// array of those.
-function pickExportEntry(entry: unknown): string | null {
-  if (typeof entry === "string") return entry;
-  if (Array.isArray(entry)) {
-    for (const e of entry) {
-      const v = pickExportEntry(e);
-      if (v) return v;
-    }
-    return null;
-  }
-  if (entry && typeof entry === "object") {
-    const obj = entry as Record<string, unknown>;
-    const candidate = obj.import ?? obj.node ?? obj.default;
-    return candidate ? pickExportEntry(candidate) : null;
-  }
-  return null;
-}
-
-// Resolve a subpath (`.` or `./foo/bar`) against a `package.json#exports`
-// map. Honors literal keys first, then matches `./*`-style glob patterns
-// where the trailing `*` is substituted with the captured remainder.
-// Returns the resolved relative path (e.g. `./debounce.js`) or null when
-// no entry matches.
-function resolveExportPath(exports: unknown, subpath: string): string | null {
-  if (!exports || typeof exports !== "object") return null;
-  const map = exports as Record<string, unknown>;
-
-  // Literal key (covers "." and exact subpaths like "./jsx-runtime").
-  if (subpath in map) return pickExportEntry(map[subpath]);
-
-  // Glob keys like "./*", "./feature/*", "./lib/*.js". Pick the longest
-  // matching prefix so more specific patterns win over `./*`.
-  let bestKey: string | null = null;
-  let bestPrefixLen = -1;
-  for (const key of Object.keys(map)) {
-    const star = key.indexOf("*");
-    if (star === -1) continue;
-    const prefix = key.slice(0, star);
-    const suffix = key.slice(star + 1);
-    if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
-    if (subpath.length < prefix.length + suffix.length) continue;
-    if (prefix.length > bestPrefixLen) {
-      bestKey = key;
-      bestPrefixLen = prefix.length;
-    }
-  }
-  if (!bestKey) return null;
-
-  const star = bestKey.indexOf("*");
-  const captured = subpath.slice(
-    bestKey.slice(0, star).length,
-    subpath.length - bestKey.slice(star + 1).length,
-  );
-  const template = pickExportEntry(map[bestKey]);
-  if (!template) return null;
-  return template.replaceAll("*", captured);
-}
-
 /**
  * Rewrite imports for Node.js runtime
  * - Resolves relative imports to file:// URLs
@@ -317,7 +252,7 @@ export async function rewriteDiscoveryImports(
 
         try {
           const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          const exportPath = resolveExportPath(pkgJson.exports, subpath);
+          const exportPath = resolvePackageExportPath(pkgJson.exports, subpath);
 
           const entryPoint = exportPath ??
             (subpath === "."
@@ -326,19 +261,8 @@ export async function rewriteDiscoveryImports(
               // onto the package dir (e.g. `dotenv/config.js`).
               : subpath.replace(/^\.\//, ""));
 
-          // Defense in depth: refuse resolved paths that escape the package
-          // directory. A malicious package shipping `exports: { ".": "../foo" }`
-          // would otherwise yield a `file://` URL outside `node_modules/<pkg>`
-          // that the discovery loader would still `import()`. `path.resolve`
-          // (unlike `path.join`) normalizes `..` segments, so the prefix
-          // check correctly catches escape attempts.
-          const normalized = pathHelper.resolve(packagePath, entryPoint);
-          const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
-            ? packagePath
-            : packagePath + pathHelper.SEPARATOR;
-          if (normalized !== packagePath && !normalized.startsWith(packagePathPrefix)) {
-            return null;
-          }
+          const normalized = resolveContainedPackagePath(packagePath, entryPoint);
+          if (!normalized) return null;
 
           const resolved = pathToFileURL(normalized).href;
           resolvedSpecifierCache.set(cacheKey, resolved);
@@ -527,17 +451,12 @@ export async function rewriteDiscoveryImports(
       if (veryfrontExportSource.kind === "absent") return { kind: "rejected" };
 
       const subpath = specifier === "veryfront" ? "." : "./" + specifier.replace("veryfront/", "");
-      const exportPath = resolveExportPath(veryfrontExportSource.exportsMap, subpath);
+      const exportPath = resolvePackageExportPath(veryfrontExportSource.exportsMap, subpath);
       if (!exportPath) return { kind: "rejected" };
 
       const packagePath = veryfrontExportSource.packagePath;
-      const resolvedPath = pathHelper.resolve(packagePath, exportPath);
-      const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
-        ? packagePath
-        : packagePath + pathHelper.SEPARATOR;
-      if (resolvedPath !== packagePath && !resolvedPath.startsWith(packagePathPrefix)) {
-        return { kind: "rejected" };
-      }
+      const resolvedPath = resolveContainedPackagePath(packagePath, exportPath);
+      if (!resolvedPath) return { kind: "rejected" };
 
       return { kind: "resolved", url: pathToFileURL(resolvedPath).href };
     };
