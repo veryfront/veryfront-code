@@ -2,6 +2,28 @@ const REACT_ROOT_PREFIX = "react@";
 const REACT_DOM_ROOT_PREFIX = "react-dom@";
 const SCHEDULER_ROOT_PREFIX = "scheduler@";
 
+/**
+ * Fail closed if dnt bundles the Deno-only react-dom/client adapter.
+ *
+ * Browser hydration is prebundled separately, so this shim should not be
+ * reachable from npm entry points. If a new entry point starts using it, the
+ * build must map that edge directly to the consumer's `react-dom/client`
+ * package export instead of publishing the local esm.sh adapter.
+ */
+export function assertNoBundledReactDomClientShim(root: string): void {
+  const unexpected = [
+    `${root}/src/react/react-dom-client.js`,
+    `${root}/src/react/react-dom-client.d.ts`,
+  ].filter(pathExists);
+  if (unexpected.length === 0) return;
+
+  throw new Error(
+    `Generated npm package contains a local react-dom/client shim; map the new npm entry-point edge directly to the consumer package: ${
+      unexpected.join(", ")
+    }`,
+  );
+}
+
 export function normalizeEsmShReactNpmShims(root: string): number {
   let patchedCount = 0;
 
@@ -109,6 +131,16 @@ export function normalizeEsmShReactNpmShims(root: string): number {
 
   assertNoReactInternalPackageImports(root);
   return patchedCount;
+}
+
+function pathExists(path: string): boolean {
+  try {
+    Deno.statSync(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
 }
 
 function isShimFile(name: string): boolean {
