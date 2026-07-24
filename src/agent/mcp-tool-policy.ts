@@ -61,7 +61,7 @@ export function wrapRemoteToolSourceWithMcpPolicy(
   return {
     ...source,
     listTools: async (context) => gate.filterDefinitions(await source.listTools(context)),
-    executeTool: async (toolName, args, context) => {
+    executeTool: (toolName, args, context) => {
       gate.assertAllowed(toolName);
       return source.executeTool(toolName, args, context);
     },

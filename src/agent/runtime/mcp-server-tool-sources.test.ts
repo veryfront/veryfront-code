@@ -98,7 +98,7 @@ Deno.test("getRuntimeRemoteToolSources blocks denied MCP tool execution", async 
     }],
   });
 
-  await assertRejects(
+  assertThrows(
     () => sources![0]!.executeTool("delete_docs", {}),
     Error,
     'Tool "delete_docs" is not allowed for MCP server "docs"',
@@ -461,7 +461,7 @@ Deno.test("getRuntimeRemoteToolSources constrains inherited sources to implicit 
 
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
   await sources?.[0]?.executeTool("get_file", {});
-  await assertRejects(
+  assertThrows(
     () => sources![0]!.executeTool("delete_file", {}),
     Error,
     'Tool "delete_file" is not allowed for MCP server "studio-mcp"',
@@ -489,7 +489,7 @@ Deno.test("constrainRuntimeRemoteToolSources applies an explicit empty cap to ac
   );
 
   assertEquals(await sources?.[0]?.listTools(), []);
-  await assertRejects(
+  assertThrows(
     () => sources![0]!.executeTool("get_file", {}),
     Error,
     'Tool "get_file" is not allowed for MCP server "studio-mcp"',
@@ -521,7 +521,7 @@ Deno.test("constrainRuntimeRemoteToolSources applies a narrower cap to active so
   );
 
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
-  await assertRejects(
+  assertThrows(
     () => sources![0]!.executeTool("delete_file", {}),
     Error,
     'Tool "delete_file" is not allowed for MCP server "studio-mcp"',
@@ -750,7 +750,7 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Veryfront API
 
   assertEquals((await sources?.[0]?.listTools())?.map((tool) => tool.name), ["get_file"]);
   await sources?.[0]?.executeTool("get_file", {});
-  await assertRejects(
+  assertThrows(
     () => sources![0]!.executeTool("delete_file", {}),
     Error,
     'Tool "delete_file" is not allowed for MCP server "veryfront-platform-mcp"',
@@ -827,7 +827,7 @@ Deno.test("getRuntimeRemoteToolSources enforces policy on injected Studio MCP so
     "studio_open_project",
   ]);
   await sources?.[0]?.executeTool("studio_open_project", {});
-  await assertRejects(
+  assertThrows(
     () => sources![0]!.executeTool("studio_delete_project", {}),
     Error,
     'Tool "studio_delete_project" is not allowed for MCP server "studio-mcp"',

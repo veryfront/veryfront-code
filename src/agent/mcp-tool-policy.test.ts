@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { AgentMcpToolPolicy } from "./types.ts";
@@ -179,8 +179,8 @@ describe("agent/mcp-tool-policy", () => {
     const detail = "Tool delete_docs denied for docs";
 
     assertStrictEquals(wrapped.id, source.id);
-    const error = await assertRejects(
-      () => wrapped.executeTool("delete_docs", { value: "blocked" }, { projectId: "project-1" }),
+    const error = captureThrown(() =>
+      wrapped.executeTool("delete_docs", { value: "blocked" }, { projectId: "project-1" })
     );
     assertPermissionDenied(error, detail);
     assertEquals(calls, []);
