@@ -1,3 +1,5 @@
+import { mergeToolInputDelta } from "#veryfront/agent/streaming/data-stream.ts";
+import { parseCanonicalToolInput } from "./tool-input.ts";
 import type {
   StreamLifecycleError,
   StreamLifecycleFrame,
@@ -246,11 +248,310 @@ function cloneReducerState(current: StreamReducerState): StreamReducerState {
 
 function reduceNonTextProtocolEvent(
   state: StreamReducerState,
-  _event: StreamProtocolEvent,
-  _elapsedMs: number,
+  event: StreamProtocolEvent,
+  elapsedMs: number,
   emit: FrameEmitter,
   semanticProgress: boolean,
 ): Pick<StreamReduction, "state" | "semanticProgress"> {
-  emit({ class: "diagnostic", event: { type: "provider_part_rejected" } });
-  return { state, semanticProgress };
+  switch (event.type) {
+    case "message_start":
+    case "step_start":
+      emit({ class: "semantic", event });
+      return { state, semanticProgress };
+
+    case "tool_input_start": {
+      closeOpenContent(state, emit);
+      state.tools.set(event.toolCallId, {
+        id: event.toolCallId,
+        name: event.toolName,
+        phase: "input_open",
+        inputText: "",
+        inputDeltas: [],
+        ...(event.providerExecuted !== undefined
+          ? { providerExecuted: event.providerExecuted }
+          : {}),
+        ...(event.dynamic ? { dynamic: true } : {}),
+      });
+      syncToolSnapshot(state, "awaiting_tool_input");
+      emit({ class: "semantic", event });
+      return { state, semanticProgress };
+    }
+
+    case "tool_input_content": {
+      const tool = state.tools.get(event.toolCallId);
+      if (!tool || tool.phase === "input_rejected") {
+        return failProtocol(state, emit, elapsedMs);
+      }
+      const inputText = mergeToolInputDelta(tool.inputText, event.delta);
+      state.tools.set(event.toolCallId, {
+        ...tool,
+        phase: "input_streaming",
+        inputText,
+        inputDeltas: [...tool.inputDeltas, event.delta],
+      });
+      syncToolSnapshot(state, "awaiting_tool_input");
+      emit({ class: "semantic", event });
+      emit({
+        class: "telemetry",
+        event: {
+          type: "tool_input_status",
+          toolCallId: event.toolCallId,
+          status: "streaming_input",
+        },
+      });
+      return { state, semanticProgress: inputText !== tool.inputText };
+    }
+
+    case "tool_input_ready": {
+      const prior = state.tools.get(event.toolCallId);
+      if (!prior) {
+        emit({
+          class: "semantic",
+          event: {
+            type: "tool_input_start",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            ...(event.providerExecuted !== undefined
+              ? { providerExecuted: event.providerExecuted }
+              : {}),
+            ...(event.dynamic ? { dynamic: true } : {}),
+          },
+        });
+        emit({
+          class: "diagnostic",
+          event: { type: "protocol_repair", code: "implicit_tool_input_start" },
+        });
+      }
+      state.tools.set(event.toolCallId, {
+        id: event.toolCallId,
+        name: event.toolName,
+        phase: "input_ready",
+        inputText: prior?.inputText ?? JSON.stringify(event.input ?? null),
+        inputDeltas: prior?.inputDeltas ?? [],
+        input: event.input,
+        ...(event.providerExecuted !== undefined
+          ? { providerExecuted: event.providerExecuted }
+          : {}),
+        ...(event.dynamic ? { dynamic: true } : {}),
+      });
+      syncToolSnapshot(state, "awaiting_tool_input");
+      emit({ class: "semantic", event });
+      return { state, semanticProgress: true };
+    }
+
+    case "tool_input_rejected": {
+      const prior = state.tools.get(event.toolCallId);
+      state.tools.set(event.toolCallId, {
+        id: event.toolCallId,
+        name: event.toolName,
+        phase: "input_rejected",
+        inputText: prior?.inputText ?? "",
+        inputDeltas: prior?.inputDeltas ?? [],
+        rejectionReason: event.reason,
+      });
+      syncToolSnapshot(state, "awaiting_tool_input");
+      emit({ class: "semantic", event });
+      return { state, semanticProgress };
+    }
+
+    case "provider_tool_start": {
+      const tool = state.tools.get(event.toolCallId);
+      if (
+        !tool || tool.providerExecuted !== true || tool.phase !== "input_ready"
+      ) {
+        return failProtocol(state, emit, elapsedMs);
+      }
+      state.tools.set(event.toolCallId, { ...tool, phase: "running" });
+      syncToolSnapshot(state, "streaming");
+      emit({ class: "semantic", event });
+      return { state, semanticProgress };
+    }
+
+    case "provider_tool_result":
+    case "provider_tool_denied":
+    case "provider_tool_cancelled": {
+      const tool = state.tools.get(event.toolCallId);
+      if (!tool || tool.providerExecuted !== true || tool.phase !== "running") {
+        return failProtocol(state, emit, elapsedMs);
+      }
+      const phase = event.type === "provider_tool_result"
+        ? event.isError ? "failed" : "succeeded"
+        : event.type === "provider_tool_denied"
+        ? "denied"
+        : "cancelled";
+      state.tools.set(event.toolCallId, {
+        ...tool,
+        phase,
+        ...(event.type === "provider_tool_result" && !event.isError
+          ? { output: event.output }
+          : {}),
+        ...(event.type === "provider_tool_result" && event.isError ? { error: event.output } : {}),
+        ...(event.type === "provider_tool_denied" ? { error: "Tool output denied" } : {}),
+        ...(event.type === "provider_tool_cancelled"
+          ? { error: "Provider tool execution was cancelled" }
+          : {}),
+        ...(event.type === "provider_tool_result" &&
+            event.preliminary !== undefined
+          ? { preliminary: event.preliminary }
+          : {}),
+      });
+      syncToolSnapshot(state, "streaming");
+      emit({ class: "semantic", event });
+      return { state, semanticProgress: true };
+    }
+
+    case "step_finish": {
+      closeOpenContent(state, emit);
+      if (event.finishReason === "tool-calls") {
+        commitPendingLocalInputs(state, emit, elapsedMs);
+      }
+      emit({ class: "semantic", event });
+      const readyLocal = [...state.tools.values()].filter((tool) =>
+        tool.phase === "input_ready" && tool.providerExecuted !== true
+      );
+      const rejectedLocal = [...state.tools.values()].filter((tool) =>
+        tool.phase === "input_rejected" && tool.providerExecuted !== true
+      );
+      const phaseBeforeFinish = state.snapshot.phase;
+      const terminalPhase = event.finishReason === "tool-calls" && readyLocal.length > 0
+        ? "tool_handoff" as const
+        : event.finishReason === "tool-calls"
+        ? "failed" as const
+        : "completed" as const;
+      state.snapshot = {
+        ...state.snapshot,
+        finishReason: event.finishReason,
+        phase: terminalPhase,
+        hasSemanticProgress: true,
+      };
+      if (terminalPhase === "failed") {
+        const incomplete = rejectedLocal.some((tool) =>
+          tool.rejectionReason === "invalid" ||
+          tool.rejectionReason === "malformed"
+        );
+        state.terminalError = {
+          code: incomplete ? "TOOL_INPUT_INCOMPLETE" : "PROTOCOL_VIOLATION",
+          phase: phaseBeforeFinish,
+          source: incomplete ? "tool" : "runtime",
+          retryable: false,
+          publicMessage: incomplete
+            ? "Tool input ended before a valid object was complete"
+            : "Provider requested tool handoff without an executable tool call",
+        };
+      }
+      state.terminal = true;
+      return { state, semanticProgress: true };
+    }
+
+    case "text_start":
+    case "text_content":
+    case "text_end":
+    case "reasoning_start":
+    case "reasoning_content":
+    case "reasoning_end":
+    case "custom":
+      throw new Error(`Reducer routing error for ${event.type}`);
+  }
+}
+
+function closeOpenContent(state: StreamReducerState, emit: FrameEmitter): void {
+  if (state.activeReasoningId !== null) {
+    emit({
+      class: "semantic",
+      event: { type: "reasoning_end", id: state.activeReasoningId },
+    });
+    state.activeReasoningId = null;
+  }
+  if (state.activeTextId !== null) {
+    emit({
+      class: "semantic",
+      event: { type: "text_end", id: state.activeTextId },
+    });
+    state.activeTextId = null;
+  }
+}
+
+function syncToolSnapshot(
+  state: StreamReducerState,
+  phase: StreamLifecyclePhase,
+): void {
+  state.snapshot = {
+    ...state.snapshot,
+    phase,
+    tools: [...state.tools.values()].map((tool) => ({ ...tool })),
+    hasStreamOutput: state.snapshot.hasStreamOutput ||
+      [...state.tools.values()].some((tool) => tool.rejectionReason !== "unavailable"),
+  };
+}
+
+function failProtocol(
+  state: StreamReducerState,
+  emit: FrameEmitter,
+  _elapsedMs: number,
+): Pick<StreamReduction, "state" | "semanticProgress"> {
+  const failedFrom = state.snapshot.phase;
+  state.terminal = true;
+  state.terminalError = {
+    code: "PROTOCOL_VIOLATION",
+    phase: failedFrom,
+    source: "runtime",
+    retryable: false,
+    publicMessage: "Provider stream violated the lifecycle protocol",
+  };
+  state.snapshot = { ...state.snapshot, phase: "failed" };
+  emit({
+    class: "diagnostic",
+    event: { type: "protocol_violation", code: "invalid_tool_transition" },
+  });
+  return { state, semanticProgress: false };
+}
+
+function commitPendingLocalInputs(
+  state: StreamReducerState,
+  emit: FrameEmitter,
+  _elapsedMs: number,
+): void {
+  for (const [toolCallId, tool] of state.tools) {
+    if (
+      tool.providerExecuted === true ||
+      (tool.phase !== "input_open" && tool.phase !== "input_streaming")
+    ) continue;
+
+    const parsed = parseCanonicalToolInput(tool.inputText);
+    if (parsed.ok) {
+      const ready = {
+        ...tool,
+        phase: "input_ready" as const,
+        input: parsed.value,
+      };
+      state.tools.set(toolCallId, ready);
+      emit({
+        class: "semantic",
+        event: {
+          type: "tool_input_ready",
+          toolCallId,
+          toolName: tool.name,
+          input: parsed.value,
+          ...(tool.dynamic ? { dynamic: true } : {}),
+        },
+      });
+      continue;
+    }
+
+    state.tools.set(toolCallId, {
+      ...tool,
+      phase: "input_rejected",
+      rejectionReason: parsed.reason,
+    });
+    emit({
+      class: "semantic",
+      event: {
+        type: "tool_input_rejected",
+        toolCallId,
+        toolName: tool.name,
+        reason: parsed.reason,
+      },
+    });
+  }
+  syncToolSnapshot(state, state.snapshot.phase);
 }
