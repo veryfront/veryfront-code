@@ -70,15 +70,17 @@ function installWorkerExitNotifier(): void {
     }
   };
   Object.defineProperty(globalThis, "close", {
-    configurable: true,
-    writable: true,
+    configurable: false,
+    writable: false,
     value: controlledClose,
   });
-  Object.defineProperty(self, "close", {
-    configurable: true,
-    writable: true,
-    value: controlledClose,
-  });
+  if (self !== globalThis) {
+    Object.defineProperty(self, "close", {
+      configurable: false,
+      writable: false,
+      value: controlledClose,
+    });
+  }
   if (typeof Deno.exit === "function") {
     const exitWorker = Deno.exit.bind(Deno);
     Deno.exit = ((code?: number): never => {

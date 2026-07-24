@@ -213,9 +213,22 @@ testSuite("ProjectWorker - clearModuleCache", () => {
 testSuite("ProjectWorker - real worker request isolation", () => {
   it("closes broker resources when project code exits the worker", async () => {
     for (
-      const [label, exitStatement] of [
-        ["close", "globalThis.close()"],
-        ["deno-exit", "Deno.exit(0)"],
+      const [label, exitStatement, overrideAttempt] of [
+        [
+          "close",
+          "globalThis.close()",
+          `
+            try { globalThis.close = () => {}; } catch {}
+            try {
+              Object.defineProperty(self, "close", {
+                configurable: true,
+                writable: true,
+                value: () => {},
+              });
+            } catch {}
+          `,
+        ],
+        ["deno-exit", "Deno.exit(0)", ""],
       ]
     ) {
       const projectDir = await Deno.makeTempDir();
@@ -226,6 +239,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         `
           export function GET() {
             self.postMessage = () => {};
+            ${overrideAttempt}
             try {
               ${exitStatement};
             } catch {
