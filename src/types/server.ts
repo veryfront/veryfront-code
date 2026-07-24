@@ -143,9 +143,12 @@ export enum HandlerPriority {
 export interface RoutePattern {
   /** String or regular expression matched against the request path. */
   pattern: string | RegExp;
-  /** Whether the pattern must match the complete request path. */
+  /**
+   * Whether a string pattern must match the complete request path.
+   * `false` is retained as a legacy alias for prefix matching.
+   */
   exact?: boolean;
-  /** Whether the pattern matches a request path prefix. */
+  /** Whether a string pattern matches a request path prefix. Takes precedence over `exact`. */
   prefix?: boolean;
   /** Allowed HTTP method or methods. */
   method?: string | string[];
@@ -155,7 +158,7 @@ export interface RoutePattern {
 export interface HandlerMetadata {
   /** Stable, human-readable handler name. */
   name: string;
-  /** Handler-chain sort order. Lower values run first. */
+  /** Finite handler-chain sort order. Lower values run first. */
   priority: number;
   /** Request patterns handled by this handler. */
   patterns?: RoutePattern[];

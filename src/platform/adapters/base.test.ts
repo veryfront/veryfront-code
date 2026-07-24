@@ -16,6 +16,7 @@ import type {
   ServerAdapter,
   ShellAdapter,
   WatchOptions,
+  WebSocketUpgradeResponse,
 } from "./base.ts";
 
 describe("base.ts type exports", () => {
@@ -32,6 +33,90 @@ describe("base.ts type exports", () => {
       assertEquals(response instanceof Response, false);
       assertEquals(isWebSocketUpgradeResponse(response), true);
       assertEquals(isWebSocketUpgradeResponse(new Response()), false);
+    });
+
+    it("accepts the public structural upgrade-response contract", () => {
+      const response: WebSocketUpgradeResponse = {
+        kind: "websocket-upgrade",
+        status: 101,
+        statusText: "Switching Protocols",
+        headers: new Headers({ upgrade: "websocket" }),
+        body: null,
+      };
+
+      assertEquals(isWebSocketUpgradeResponse(response), true);
+    });
+
+    it("recognizes upgrade signals created by another module instance", async () => {
+      const duplicate = await import("./base.ts?websocket-upgrade-duplicate");
+      const response = createWebSocketUpgradeResponse();
+
+      assertEquals(duplicate.isWebSocketUpgradeResponse(response), true);
+    });
+
+    it("does not invoke accessors while identifying an upgrade response", () => {
+      let accessorReads = 0;
+      const value = Object.defineProperties({}, {
+        kind: {
+          enumerable: true,
+          get() {
+            accessorReads++;
+            return "websocket-upgrade";
+          },
+        },
+        status: { enumerable: true, value: 101 },
+      });
+
+      assertEquals(isWebSocketUpgradeResponse(value), false);
+      assertEquals(accessorReads, 0);
+    });
+
+    it("short-circuits a mismatched kind before inspecting other fields", () => {
+      let otherFieldReads = 0;
+      const value = new Proxy({}, {
+        getOwnPropertyDescriptor(_target, key) {
+          if (key === "kind") {
+            return {
+              configurable: true,
+              value: "http-response",
+            };
+          }
+          otherFieldReads++;
+          throw new Error("non-upgrade fields must not be inspected");
+        },
+      });
+
+      assertEquals(isWebSocketUpgradeResponse(value), false);
+      assertEquals(otherFieldReads, 0);
+    });
+
+    it("bounds prototype traversal when a Proxy returns fresh prototypes", () => {
+      let descriptorReads = 0;
+      let prototypeReads = 0;
+      const createFreshPrototype = (): object =>
+        new Proxy({}, {
+          getOwnPropertyDescriptor() {
+            descriptorReads++;
+            return undefined;
+          },
+          getPrototypeOf() {
+            prototypeReads++;
+            return createFreshPrototype();
+          },
+        });
+
+      assertEquals(isWebSocketUpgradeResponse(createFreshPrototype()), false);
+      assertEquals(descriptorReads, 16);
+      assertEquals(prototypeReads, 16);
+    });
+
+    it("rejects incomplete structural upgrade signals", () => {
+      const incomplete = {
+        kind: "websocket-upgrade",
+        status: 101,
+      };
+
+      assertEquals(isWebSocketUpgradeResponse(incomplete), false);
     });
   });
 
