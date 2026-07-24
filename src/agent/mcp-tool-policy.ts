@@ -22,27 +22,26 @@ export function createMcpToolPolicyGate(
 ): McpToolPolicyGate {
   const deniedDetail = options?.deniedDetail ?? defaultDeniedDetail;
 
-  return {
-    allows(toolName: string): boolean {
-      const deny = policy?.deny;
-      if (deny?.includes(toolName)) return false;
+  const allows = (toolName: string): boolean => {
+    const deny = policy?.deny;
+    if (deny?.includes(toolName)) return false;
 
-      const allow = policy?.allow;
-      if (allow !== undefined) return allow.includes(toolName);
+    const allow = policy?.allow;
+    if (allow !== undefined) return allow.includes(toolName);
 
-      return true;
-    },
-
-    filterDefinitions<T extends { name: string }>(definitions: readonly T[]): T[] {
-      return definitions.filter((definition) => this.allows(definition.name));
-    },
-
-    assertAllowed(toolName: string): void {
-      if (this.allows(toolName)) return;
-
-      throw PERMISSION_DENIED.create({ detail: deniedDetail(toolName) });
-    },
+    return true;
   };
+
+  const filterDefinitions = <T extends { name: string }>(definitions: readonly T[]): T[] =>
+    definitions.filter((definition) => allows(definition.name));
+
+  const assertAllowed = (toolName: string): void => {
+    if (allows(toolName)) return;
+
+    throw PERMISSION_DENIED.create({ detail: deniedDetail(toolName) });
+  };
+
+  return { allows, filterDefinitions, assertAllowed };
 }
 
 export function wrapRemoteToolSourceWithMcpPolicy(
@@ -60,6 +59,7 @@ export function wrapRemoteToolSourceWithMcpPolicy(
 
   return {
     ...source,
+    id: source.id,
     listTools: async (context) => gate.filterDefinitions(await source.listTools(context)),
     executeTool: (toolName, args, context) => {
       gate.assertAllowed(toolName);

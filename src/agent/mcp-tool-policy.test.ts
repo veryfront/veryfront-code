@@ -31,6 +31,26 @@ function remoteSource(tools: ToolDefinition[], calls: string[] = []): RemoteTool
   };
 }
 
+function remoteSourceWithNonEnumerableId(
+  tools: ToolDefinition[],
+  calls: string[] = [],
+): RemoteToolSource {
+  const source = {
+    listTools: () => Promise.resolve(tools),
+    executeTool: (toolName: string, args: Record<string, unknown>, context) => {
+      calls.push(`${toolName}:${String(args.value)}:${String(context?.projectId)}`);
+      return Promise.resolve({ ok: true, toolName });
+    },
+  } as RemoteToolSource;
+
+  Object.defineProperty(source, "id", {
+    enumerable: false,
+    get: () => "docs",
+  });
+
+  return source;
+}
+
 function hostToolSet(calls: string[] = []): HostToolSet {
   return {
     search_docs: {
@@ -149,6 +169,24 @@ describe("agent/mcp-tool-policy", () => {
     assertPermissionDenied(error, "Denied search_docs");
   });
 
+  it("keeps gate callbacks usable when detached from the gate object", () => {
+    const gate = createMcpToolPolicyGate({ allow: ["search_docs"] }, {
+      deniedDetail: (toolName) => `Detached ${toolName}`,
+    });
+    const { filterDefinitions, assertAllowed } = gate;
+
+    assertEquals(
+      filterDefinitions([remoteTool("search_docs"), remoteTool("delete_docs")]).map((tool) =>
+        tool.name
+      ),
+      ["search_docs"],
+    );
+    assertAllowed("search_docs");
+
+    const error = captureThrown(() => assertAllowed("delete_docs"));
+    assertPermissionDenied(error, "Detached delete_docs");
+  });
+
   it("wrapRemoteToolSourceWithMcpPolicy returns the same source for empty policy", () => {
     const source = remoteSource([remoteTool("search_docs")]);
 
@@ -168,6 +206,24 @@ describe("agent/mcp-tool-policy", () => {
     policy.allow = ["delete_docs"];
 
     assertEquals((await wrapped.listTools()).map((tool) => tool.name), ["delete_docs"]);
+  });
+
+  it("wrapped remote source preserves a non-enumerable id", () => {
+    const source = remoteSourceWithNonEnumerableId([
+      remoteTool("search_docs"),
+      remoteTool("delete_docs"),
+    ]);
+    const wrapped = wrapRemoteToolSourceWithMcpPolicy(source, { deny: ["delete_docs"] }, {
+      deniedDetail: (toolName, sourceId) => `Tool ${toolName} denied for ${sourceId}`,
+    });
+
+    assertEquals(Object.keys(source).includes("id"), false);
+    assertStrictEquals(wrapped.id, "docs");
+
+    const error = captureThrown(() =>
+      wrapped.executeTool("delete_docs", { value: "blocked" }, { projectId: "project-1" })
+    );
+    assertPermissionDenied(error, "Tool delete_docs denied for docs");
   });
 
   it("wrapped remote executeTool blocks denied names before calling the source", async () => {
