@@ -25,15 +25,14 @@ import {
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
-import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import {
-  applySSRImportRewritesAsync,
   resolveSSRImportTargetModulePath,
   type SSRImportRewriteTarget,
   stripSSRModuleJsExtension,
 } from "./ssr-import-rewriter.ts";
+import { transformModuleToServable } from "./module-transform.ts";
 import { buildModuleTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framework-source-resolver.ts";
@@ -366,26 +365,33 @@ async function transformModule(
     reactVersion?: string;
   },
 ): Promise<string> {
-  let code = await transformToESM(source, sourceFile, projectDir, adapter, {
-    projectId: options.projectId ?? projectDir,
-    dev: options.dev,
-    ssr: options.ssr,
-    reactVersion: options.reactVersion,
+  return transformModuleToServable({
+    source,
+    sourceFile,
+    projectDir,
+    adapter,
+    transformOpts: {
+      projectId: options.projectId ?? projectDir,
+      dev: options.dev,
+      ssr: options.ssr,
+      reactVersion: options.reactVersion,
+    },
+    isSSR: options.ssr,
+    ssrRewriteOptions: options.ssr
+      ? {
+        projectSlug: options.projectSlug,
+        branch: options.branch,
+        resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
+          projectDir,
+          secureFs,
+          currentModulePath: modulePath,
+        }),
+      }
+      : undefined,
+    // No releaseRewriteOptions: the batch handler does not rewrite release
+    // dependency imports on the non-SSR path (intentional difference vs
+    // the module-server paths; noted in module-transform.ts JSDoc).
   });
-
-  if (options.ssr) {
-    code = await applySSRImportRewritesAsync(code, {
-      projectSlug: options.projectSlug,
-      branch: options.branch,
-      resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
-        projectDir,
-        secureFs,
-        currentModulePath: modulePath,
-      }),
-    });
-  }
-
-  return code;
 }
 
 async function readBatchTargetSource(

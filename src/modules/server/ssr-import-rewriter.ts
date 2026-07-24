@@ -44,7 +44,7 @@ export function resolveSSRImportTargetModulePath(
   return normalizeSSRModulePath(resolved);
 }
 
-interface SSRRewriteOptions {
+export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
   projectSlug?: string | null;
   /** Branch name for branch-aware routing */
