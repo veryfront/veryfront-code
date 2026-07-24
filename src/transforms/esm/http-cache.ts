@@ -9,10 +9,11 @@
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { rendererLogger as logger, sleep } from "#veryfront/utils";
-import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND, retryWithBackoff } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { replaceSpecifiers } from "./lexer.ts";
 import { createBundleManifest, storeBundleManifest } from "./bundle-manifest.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
@@ -85,6 +86,25 @@ const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_FETCH_TIMEOUT_MS * HTTP_MODULE_FETCH_
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
 
+interface HttpModuleFetchResult {
+  code: string;
+  contentType: string;
+}
+
+class HttpModuleResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP module response returned status ${status}`);
+    this.name = "HttpModuleResponseError";
+  }
+}
+
+class HttpModuleRequestError extends Error {
+  constructor(readonly requestErrorType: string) {
+    super(`HTTP module request failed (${requestErrorType})`);
+    this.name = "HttpModuleRequestError";
+  }
+}
+
 function shouldRetryHttpModuleFetch(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
@@ -97,66 +117,100 @@ async function discardResponseBody(response: Response): Promise<void> {
   }
 }
 
-async function fetchHttpModule(url: string): Promise<Response> {
-  const urlObj = new URL(url);
+async function fetchHttpModuleAttempt(
+  url: string,
+  safeUrl: string,
+  urlObj: URL,
+  signal: AbortSignal | undefined,
+  attempt: number,
+): Promise<HttpModuleFetchResult> {
+  let response: Response | undefined;
 
-  for (let attempt = 1; attempt <= HTTP_MODULE_FETCH_MAX_ATTEMPTS; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
+  try {
     const startedAt = performance.now();
+    response = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+      signal,
+      redirect: "follow",
+    });
 
-    try {
-      const response = await withSpan(
-        SpanNames.HTTP_CLIENT_FETCH,
-        () =>
-          fetch(url, {
-            headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-            signal: controller.signal,
-            redirect: "follow",
-          }),
-        {
-          "http.method": "GET",
-          "http.url": url,
-          "http.host": urlObj.host,
-          "http.scheme": urlObj.protocol.replace(":", ""),
-          "esm.package_fetch": true,
-        },
-      );
+    const duration = Math.round(performance.now() - startedAt);
+    contentMetricsLog.debug("HTTP_MODULE_FETCH", {
+      url: safeUrl,
+      host: urlObj.host,
+      duration_ms: duration,
+      status: response.status,
+      slow: duration > SLOW_HTTP_FETCH_THRESHOLD_MS,
+      attempt: attempt + 1,
+    });
 
-      const duration = Math.round(performance.now() - startedAt);
-      contentMetricsLog.debug("HTTP_MODULE_FETCH", {
-        url: url.substring(0, 120),
-        host: urlObj.host,
-        duration_ms: duration,
-        status: response.status,
-        slow: duration > SLOW_HTTP_FETCH_THRESHOLD_MS,
-        attempt,
-      });
-
-      if (
-        response.ok || !shouldRetryHttpModuleFetch(response.status) ||
-        attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS
-      ) {
-        return response;
-      }
-
-      httpCacheLog.warn("Transient HTTP module fetch failed, retrying", {
-        url,
-        status: response.status,
-        attempt,
-      });
+    if (!response.ok) {
+      const status = response.status;
       await discardResponseBody(response);
-    } catch (error) {
-      if (attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS) throw error;
-      httpCacheLog.warn("HTTP module fetch failed, retrying", { url, attempt, error });
-    } finally {
-      clearTimeout(timeout);
+      throw new HttpModuleResponseError(status);
     }
 
-    await sleep(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
-  }
+    return {
+      code: await response.text(),
+      contentType: response.headers.get("content-type") ?? "",
+    };
+  } catch (error) {
+    if (error instanceof HttpModuleResponseError) throw error;
+    if (response) await discardResponseBody(response);
 
-  throw BUILD_FAILED.create({ detail: `Failed to fetch ${url}` });
+    const requestErrorType = error instanceof Error ? error.name : typeof error;
+    throw new HttpModuleRequestError(requestErrorType);
+  }
+}
+
+async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
+  const urlObj = new URL(url);
+  const safeUrl = sanitizeUrlForSpan(url);
+
+  try {
+    return await retryWithBackoff(
+      (signal, attempt) =>
+        withSpan(
+          SpanNames.HTTP_CLIENT_FETCH,
+          () => fetchHttpModuleAttempt(url, safeUrl, urlObj, signal, attempt),
+          {
+            "http.method": "GET",
+            "http.url": safeUrl,
+            "http.host": urlObj.host,
+            "http.scheme": urlObj.protocol.replace(":", ""),
+            "esm.package_fetch": true,
+          },
+        ),
+      {
+        maxAttempts: HTTP_MODULE_FETCH_MAX_ATTEMPTS,
+        timeoutMs: HTTP_FETCH_TIMEOUT_MS,
+        shouldRetry: (error) =>
+          !(error instanceof HttpModuleResponseError) ||
+          shouldRetryHttpModuleFetch(error.status),
+        computeDelay: (attempt) => HTTP_MODULE_FETCH_RETRY_DELAY_MS * (attempt + 1),
+        onRetry: ({ error, attempt }) => {
+          httpCacheLog.warn("HTTP module fetch failed, retrying", {
+            url: safeUrl,
+            status: error instanceof HttpModuleResponseError ? error.status : undefined,
+            errorType: error instanceof HttpModuleRequestError
+              ? error.requestErrorType
+              : error.name,
+            attempt: attempt + 1,
+          });
+        },
+      },
+    );
+  } catch (error) {
+    if (error instanceof HttpModuleResponseError) {
+      throw BUILD_FAILED.create({ detail: `Failed to fetch ${safeUrl}: ${error.status}` });
+    }
+    if (error instanceof HttpModuleRequestError) {
+      throw BUILD_FAILED.create({
+        detail: `Failed to fetch ${safeUrl}: ${error.requestErrorType}`,
+      });
+    }
+    throw error;
+  }
 }
 
 // Re-export for backwards compatibility
@@ -333,17 +387,10 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     httpCacheLog.debug("Fetching from network", { url: normalizedUrl });
-    const response = await fetchHttpModule(normalizedUrl);
+    const fetchedModule = await fetchHttpModule(normalizedUrl);
+    let code = fetchedModule.code;
 
-    if (!response.ok) {
-      const status = response.status;
-      await discardResponseBody(response);
-      throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${status}` });
-    }
-
-    let code = await response.text();
-
-    const contentType = response.headers.get("content-type") ?? "";
+    const contentType = fetchedModule.contentType;
     const isHtmlContent = contentType.includes("text/html") || looksLikeHtmlNotJs(code);
 
     if (isHtmlContent) {
