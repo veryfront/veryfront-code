@@ -1,4 +1,4 @@
-# Schemas Module
+# Schemas module
 
 This directory contains shared validation schemas used across multiple modules in the veryfront codebase.
 
@@ -11,7 +11,7 @@ The veryfront codebase follows a **schema-first approach** where:
 3. **Module-local schemas** live in `{module}/schemas/` directories
 4. **Shared schemas** (cross-module) live in `src/schemas/` (this directory)
 
-## Naming Conventions
+## Naming conventions
 
 - **Schema files**: `{name}.schema.ts` (e.g., `config.schema.ts`)
 - **Shared schema files**: `common.ts`, `primitives.ts` (no `.schema` suffix since they're collections)
@@ -19,14 +19,19 @@ The veryfront codebase follows a **schema-first approach** where:
 - **Schema exports**: Backward-compat constant (e.g., `export const UserSchema = getUserSchema()`)
 - **Type exports**: Infer types from schema getters (e.g., `type User = InferSchema<ReturnType<typeof getUserSchema>>`)
 
-## Directory Structure
+## Directory structure
 
 ```
 src/
 ├── schemas/                    # Shared schemas (cross-module)
 │   ├── index.ts                # Barrel export
 │   ├── common.ts               # Common validators (email, url, pagination, etc.)
-│   └── primitives.ts           # Primitive validators (non-empty string, positive int, etc.)
+│   ├── define.ts               # Lazy, memoized schema factories
+│   ├── json-schema.ts          # Adapter-neutral JSON Schema helpers
+│   ├── json-value.ts           # Defensive JSON value validation
+│   ├── lazy.ts                 # Import-safe schema facade
+│   ├── primitives.ts           # Primitive validators
+│   └── *.test.ts               # Colocated behavior and regression tests
 │
 ├── config/
 │   ├── schemas/                # Module-local schemas
@@ -37,9 +42,50 @@ src/
 └── [other modules follow same pattern]
 ```
 
-## When to Use Shared vs Module-Local Schemas
+## Shared schema constraints
 
-### Use `src/schemas/` (shared) for:
+| Schema        | Accepted input and limits                                                                                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Email         | Valid email string, at most 255 characters                                                                                                                                                                                                                                                             |
+| Slug          | 1 to 100 lowercase ASCII letters, digits, or hyphens                                                                                                                                                                                                                                                   |
+| URL           | Valid URL string, at most 2,048 characters                                                                                                                                                                                                                                                             |
+| Phone number  | E.164 digits with an optional leading `+`                                                                                                                                                                                                                                                              |
+| Pagination    | `page` and `limit` accept numbers or decimal digit strings of at most 16 characters. `page` is a positive safe integer. `limit` is 1 to 100. Defaults are 1 and 10.                                                                                                                                    |
+| File path     | Non-empty, no null bytes, at most 4,096 characters                                                                                                                                                                                                                                                     |
+| Absolute path | Filesystem-rooted, no null bytes, at most 4,096 characters                                                                                                                                                                                                                                             |
+| JSON value    | Data-only JSON with at most 128 levels, 100,000 nodes, and 4 MiB serialized size. A string is at most 1 MiB and an object key is at most 16 KiB in UTF-8. Cycles, accessors, symbol keys, non-enumerable properties, and plain-object prototypes other than `Object.prototype` or `null` are rejected. |
+
+Raw JSON Schema compilation and adapter-generated JSON Schema documents use
+the same bounded, data-only snapshot. Only that canonical snapshot crosses the
+helper boundary, so later reads cannot observe different Proxy values. Invalid
+adapter results fail with a `TypeError`.
+
+## JSON Schema conversion
+
+The built-in adapter preserves these representable constraints:
+
+- Integer, inclusive range, and exclusive range checks
+- String and array length checks
+- Regular expressions without flags
+- Email, URI, UUID, and date-time formats
+- Literal defaults, including defaults on union schemas
+- Optional, nullable, object, array, tuple, record, enum, and union structure
+
+Dynamic default callbacks are not executed during conversion and do not appear
+in the generated document. Runtime transforms, arbitrary refinements, and
+regular-expression flags have no exact JSON Schema equivalent and are omitted.
+Recursive lazy cycles are cut off with an unconstrained schema instead of
+emitting `$ref`. JavaScript-only values such as `bigint`, `Date`, functions,
+and class instances also have no faithful JSON representation and should not
+be exposed as JSON tool inputs. Runtime validation remains authoritative for
+those constraints.
+Conversion stops with a clear error above 128 active schema levels or 100,000
+visited schema nodes instead of exhausting the call stack or allocating an
+unbounded document.
+
+## When to use shared vs module-local schemas
+
+### Use `src/schemas/` (shared) for
 
 - **Cross-cutting validators** used by 3+ modules
   - Examples: email, URL, UUID, slug validation
@@ -47,16 +93,16 @@ src/
   - Date/time schemas
   - Common primitive types
 
-### Use `{module}/schemas/` (module-local) for:
+### Use `{module}/schemas/` (module-local) for
 
 - **Domain-specific schemas** used primarily within one module
   - Examples: `AgentConfig`, `WorkflowStep`, `CacheKeyContext`
 - **Module business logic** types
 - **Module-specific enums** and discriminated unions
 
-## Schema Patterns
+## Schema patterns
 
-### 1. Basic Schema with Inferred Type
+### 1. Basic schema with inferred type
 
 ```typescript
 // schemas/user.schema.ts
@@ -77,7 +123,7 @@ export const UserSchema = getUserSchema();
 export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
 
-### 2. Discriminated Union (Event Types)
+### 2. Discriminated union (event types)
 
 ```typescript
 // schemas/events.schema.ts
@@ -102,7 +148,7 @@ export const EventSchema = getEventSchema();
 export type Event = InferSchema<ReturnType<typeof getEventSchema>>;
 ```
 
-### 3. Composing Schemas
+### 3. Composing schemas
 
 ```typescript
 // schemas/api.schema.ts
@@ -144,7 +190,7 @@ export const ApiResponseSchema = getApiResponseSchema();
 export type ApiResponse = InferSchema<ReturnType<typeof getApiResponseSchema>>;
 ```
 
-### 4. Recursive/Lazy Schemas
+### 4. Recursive and lazy schemas
 
 ```typescript
 // schemas/tree.schema.ts
@@ -165,7 +211,7 @@ export const TreeNodeSchema = getTreeNodeSchema();
 export type TreeNode = InferSchema<ReturnType<typeof getTreeNodeSchema>>;
 ```
 
-### 5. Using with Runtime Validation
+### 5. Runtime validation
 
 ```typescript
 import { getUserSchema } from "./schemas/user.schema.ts";
@@ -193,7 +239,7 @@ function createUserSafe(data: unknown) {
 }
 ```
 
-## Migration Guidelines
+## Migration guidelines
 
 When converting existing `types.ts` files to schemas:
 
@@ -204,7 +250,7 @@ When converting existing `types.ts` files to schemas:
 5. **Delete old `types.ts`** file (no legacy cruft)
 6. **Run `deno task verify`** to ensure everything works
 
-### Before (Old Pattern)
+### Before (old pattern)
 
 ```typescript
 // types.ts
@@ -215,7 +261,7 @@ export interface User {
 }
 ```
 
-### After (New Pattern)
+### After (new pattern)
 
 ```typescript
 // schemas/user.schema.ts
@@ -244,7 +290,7 @@ export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 6. **Maintainability**: Change schema once, type updates automatically
 7. **Documentation**: Schemas serve as living documentation
 
-## Testing Schemas
+## Testing schemas
 
 ```typescript
 import "#veryfront/schemas/_test-setup.ts";

@@ -10,6 +10,8 @@ export type {
   InferSchema,
   InferShape,
   JsonSchema,
+  JsonSchemaValidationFunction,
+  JsonSchemaValidationResult,
   RefinementCtx,
   SchemaFactory,
   ValidationResult,
@@ -17,6 +19,9 @@ export type {
 
 // Interfaces
 export type {
+  JsonSchemaValidationFailure,
+  JsonSchemaValidationIssue,
+  JsonSchemaValidationSuccess,
   Schema,
   SchemaValidator,
   SchemaValidatorCoerce,

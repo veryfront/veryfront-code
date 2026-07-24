@@ -4,7 +4,7 @@
  * `defineSchema(factory)` returns a memoized getter that resolves the
  * `SchemaValidator` extension contract on first call and materializes the
  * schema via the provided factory. This indirection lets core modules declare
- * schemas without importing zod directly — a real validator (typically
+ * schemas without importing zod directly. A real validator (typically
  * `@veryfront/ext-schema-zod`) must be registered in the contract registry before
  * the schema is first accessed.
  *
@@ -14,8 +14,53 @@
 import { resolve } from "#veryfront/extensions/contracts.ts";
 import type { Schema, SchemaFactory, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
+const SCHEMA_METHOD_NAMES = [
+  "optional",
+  "nullable",
+  "nullish",
+  "default",
+  "describe",
+  "refine",
+  "superRefine",
+  "transform",
+  "strict",
+  "strip",
+  "passthrough",
+  "partial",
+  "extend",
+  "merge",
+  "omit",
+  "pick",
+  "min",
+  "max",
+  "int",
+  "positive",
+  "nonnegative",
+  "regex",
+  "email",
+  "url",
+  "uuid",
+  "datetime",
+  "pipe",
+  "parse",
+  "safeParse",
+] as const;
+
 export function resolveSchemaValidator(): SchemaValidator {
   return resolve<SchemaValidator>("SchemaValidator");
+}
+
+/** Assert the runtime surface promised by the opaque Schema contract. */
+export function assertSchemaContract<T>(
+  value: unknown,
+  message: string,
+): asserts value is Schema<T> {
+  const valid = !!value &&
+    (typeof value === "object" || typeof value === "function") &&
+    SCHEMA_METHOD_NAMES.every((method) =>
+      typeof (value as Record<string, unknown>)[method] === "function"
+    );
+  if (!valid) throw new TypeError(message);
 }
 
 /**
@@ -36,10 +81,27 @@ export function resolveSchemaValidator(): SchemaValidator {
  */
 export function defineSchema<T>(factory: SchemaFactory<T>): () => Schema<T> {
   let cached: Schema<T> | undefined;
+  let materializing = false;
+
   return () => {
-    if (cached) return cached;
-    const v = resolveSchemaValidator();
-    cached = factory(v);
-    return cached;
+    if (cached !== undefined) return cached;
+    if (materializing) {
+      throw new Error(
+        "Schema factory recursively invoked its own getter; use v.lazy() for recursion",
+      );
+    }
+
+    materializing = true;
+    try {
+      const schema = factory(resolveSchemaValidator());
+      assertSchemaContract<T>(
+        schema,
+        "Schema factory must return a Schema contract implementation",
+      );
+      cached = schema;
+      return schema;
+    } finally {
+      materializing = false;
+    }
   };
 }
