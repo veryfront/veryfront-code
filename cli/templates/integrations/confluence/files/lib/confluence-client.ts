@@ -1,5 +1,9 @@
-import { fetchOAuthJson, OAuthApiRequestError } from "./oauth.ts";
+import { atlassianOAuthScopePolicy } from "./atlassian-oauth.generated.ts";
 import { resolveAtlassianCloudId } from "./atlassian-cloud.ts";
+import {
+  fetchOAuthJsonWithScopePolicy,
+  OAuthApiRequestError,
+} from "./oauth.ts";
 
 const CONFLUENCE_API_BASE = "https://api.atlassian.com/ex/confluence";
 
@@ -89,7 +93,11 @@ export class ConfluenceApiError extends Error {
 }
 
 export function createConfluenceClient(userId: string) {
-  const cloudId = resolveAtlassianCloudId(userId, "confluence");
+  const cloudId = resolveAtlassianCloudId(
+    userId,
+    "confluence",
+    atlassianOAuthScopePolicy,
+  );
 
   async function confluenceFetch<T>(
     endpoint: string,
@@ -98,14 +106,20 @@ export function createConfluenceClient(userId: string) {
     const resolvedCloudId = await cloudId;
     const url = `${CONFLUENCE_API_BASE}/${resolvedCloudId}${endpoint}`;
     try {
-      return await fetchOAuthJson<T>(userId, "confluence", url, {
-        ...options,
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          ...options.headers,
+      return await fetchOAuthJsonWithScopePolicy<T>(
+        userId,
+        "confluence",
+        url,
+        atlassianOAuthScopePolicy,
+        {
+          ...options,
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            ...options.headers,
+          },
         },
-      });
+      );
     } catch (error) {
       if (error instanceof OAuthApiRequestError) {
         throw new ConfluenceApiError(
@@ -183,8 +197,9 @@ export function createConfluenceClient(userId: string) {
   }
 
   // v2 splits pages and blogposts into separate resources. Try /pages first;
-  // fall back to /blogposts on 404 so search-content → get-page works for both
-  // (searchContent returns mixed results and tools/get-page.ts has no type discriminator).
+  // fall back to /blogposts on 404 so confluence-search-content →
+  // confluence-get-page works for both (searchContent returns mixed results and
+  // tools/confluence-get-page.ts has no type discriminator).
   async function getPage(pageId: string): Promise<ConfluencePage> {
     try {
       return await confluenceFetch<ConfluencePage>(
@@ -245,7 +260,8 @@ export function createConfluenceClient(userId: string) {
 
   // v2 PUT /pages/{id} is a full replace, not PATCH — title and body are both required.
   // Callers must resolve fallbacks (e.g. from a prior getPage) before invoking this.
-  // Mirrors getPage's pages-then-blogposts fallback so update-page works on either resource
+  // Mirrors getPage's pages-then-blogposts fallback so
+  // confluence-update-page works on either resource.
   // (createPage with type='blogpost' returns a blogpost id that this must accept).
   async function updatePage(
     pageId: string,

@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-users",
+  id: "linear-list-users",
   description:
     "List users in the Linear workspace. Use this to find assignee user IDs before assigning issues.",
   inputSchema: defineSchema((v) =>

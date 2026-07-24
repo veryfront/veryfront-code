@@ -4,7 +4,7 @@ import { createAsanaClient } from "../lib/asana-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-task-comments",
+  id: "asana-list-task-comments",
   description: "List comment stories for an Asana task.",
   inputSchema: defineSchema((v) =>
     v.object({

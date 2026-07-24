@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAWSClient } from '../../lib/aws-client';
+import { getAWSClient } from '../lib/aws-client';
 
 export const getS3ObjectTool = tool({
-  id: 'get-s3-object',
+  id: 'aws-get-s3-object',
   description: 'Get the contents of an object from an S3 bucket. Returns the object content as a string.',
   inputSchema: defineSchema((v) =>
     v.object({

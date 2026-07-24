@@ -4,7 +4,7 @@ import { createDocsClient } from "../lib/docs-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-document",
+  id: "docs-google-get-document",
   description:
     "Get a Google Docs document's content and metadata. Returns the full document structure including text, formatting, and styles.",
   inputSchema: defineSchema((v) =>

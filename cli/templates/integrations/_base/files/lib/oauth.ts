@@ -21,6 +21,7 @@ import {
   slackConfig,
   teamsConfig,
 } from "veryfront/oauth";
+import { satisfiesOAuthScopePolicy } from "./oauth-scope-utils.ts";
 import { oauthTokenStore } from "./oauth-store.ts";
 
 const OAUTH_SERVICE_CONFIGS = {
@@ -46,6 +47,11 @@ const OAUTH_SERVICE_CONFIGS = {
 } as const satisfies Record<string, OAuthServiceConfig>;
 
 export type OAuthClientService = keyof typeof OAUTH_SERVICE_CONFIGS;
+
+export interface OAuthScopePolicy {
+  requiredScopes: readonly string[];
+  forbiddenScopes: readonly string[];
+}
 
 const services = new Map<OAuthClientService, OAuthService>();
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -86,11 +92,44 @@ export async function fetchOAuthJson<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
+  return await fetchOAuthJsonInternal(
+    userId,
+    serviceId,
+    endpoint,
+    options,
+  );
+}
+
+/** Execute an OAuth JSON request only when its stored grant satisfies policy. */
+export async function fetchOAuthJsonWithScopePolicy<T>(
+  userId: string,
+  serviceId: OAuthClientService,
+  endpoint: string,
+  scopePolicy: OAuthScopePolicy,
+  options: RequestInit = {},
+): Promise<T> {
+  return await fetchOAuthJsonInternal(
+    userId,
+    serviceId,
+    endpoint,
+    options,
+    scopePolicy,
+  );
+}
+
+async function fetchOAuthJsonInternal<T>(
+  userId: string,
+  serviceId: OAuthClientService,
+  endpoint: string,
+  options: RequestInit,
+  scopePolicy?: OAuthScopePolicy,
+): Promise<T> {
   const response = await fetchOAuthResponse(
     userId,
     serviceId,
     endpoint,
     options,
+    scopePolicy,
   );
   if (response.status === 204 || response.status === 205) {
     await response.body?.cancel().catch(() => {});
@@ -157,9 +196,25 @@ async function fetchOAuthResponse(
   serviceId: OAuthClientService,
   endpoint: string,
   options: RequestInit,
+  scopePolicy?: OAuthScopePolicy,
 ): Promise<Response> {
   const token = await getOAuthService(serviceId).getAccessToken(userId);
   if (!token) throw new Error(`Not authenticated with ${serviceId}`);
+  if (scopePolicy) {
+    const storedTokens = await oauthTokenStore.getTokens(serviceId, userId);
+    if (
+      storedTokens?.accessToken !== token ||
+      !satisfiesOAuthScopePolicy(
+        storedTokens.scope,
+        scopePolicy.requiredScopes,
+        scopePolicy.forbiddenScopes,
+      )
+    ) {
+      throw new Error(
+        `${serviceId} OAuth grant does not satisfy the generated scope policy`,
+      );
+    }
+  }
 
   const headers = new Headers(OAUTH_SERVICE_CONFIGS[serviceId].apiHeaders);
   for (const [name, value] of new Headers(options.headers)) {

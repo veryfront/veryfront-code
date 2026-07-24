@@ -101,6 +101,68 @@ describe("cli/templates/integration-loader feature gates", () => {
       );
     }
   });
+
+  it("composes Jira and Confluence through one deterministic Atlassian callback", async () => {
+    const canonical = await loadIntegrations(["jira", "confluence"]);
+    const reversed = await loadIntegrations(["confluence", "jira"]);
+    const getOAuthComposition = (
+      files: typeof canonical.files,
+    ) =>
+      files.filter((file) =>
+        file.path === "lib/atlassian-oauth.generated.ts" ||
+        file.path.includes("/api/auth/")
+      );
+
+    assertEquals(canonical.errors, []);
+    assertEquals(reversed.errors, []);
+    assertEquals(
+      getOAuthComposition(reversed.files),
+      getOAuthComposition(canonical.files),
+    );
+    assertEquals(
+      canonical.files.filter((file) => file.path.endsWith("/callback/route.ts"))
+        .map((file) => file.path),
+      ["app/api/auth/atlassian/callback/route.ts"],
+    );
+    assertEquals(
+      canonical.files.some((file) =>
+        file.path === "app/api/auth/jira/callback/route.ts" ||
+        file.path === "app/api/auth/confluence/callback/route.ts"
+      ),
+      false,
+    );
+  });
+
+  it("retains same-named tools and env examples from multiple providers", async () => {
+    const result = await loadIntegrations(["gmail", "outlook"]);
+    const files = new Map(result.files.map((file) => [file.path, file.content]));
+
+    assertEquals(result.errors, []);
+    for (
+      const [path, toolId] of [
+        ["tools/gmail-get-email.ts", "gmail-get-email"],
+        ["tools/outlook-get-email.ts", "outlook-get-email"],
+      ] as const
+    ) {
+      assertEquals(files.get(path)?.includes(`id: "${toolId}"`), true);
+    }
+    assertEquals(files.has("examples/env/gmail.env.example"), true);
+    assertEquals(files.has("examples/env/outlook.env.example"), true);
+    assertEquals(files.has(".env.example"), false);
+  });
+
+  it("composes every default-visible integration without output collisions", async () => {
+    const names = getAvailableIntegrations();
+    const result = await loadIntegrations(names);
+    const outputPaths = result.files.map((file) => file.path);
+
+    assertEquals(result.errors, []);
+    assertEquals(
+      result.integrations.map((integration) => integration.config.name),
+      names,
+    );
+    assertEquals(new Set(outputPaths).size, outputPaths.length);
+  });
 });
 
 describe("cli/templates/integration-loader config failures", () => {
@@ -112,8 +174,7 @@ describe("cli/templates/integration-loader config failures", () => {
     assertEquals(malformed.failure, "parse");
 
     const invalid = assertThrows(
-      () =>
-        parseIntegrationConfig(JSON.stringify({ name: "github" }), "github"),
+      () => parseIntegrationConfig(JSON.stringify({ name: "github" }), "github"),
       IntegrationConfigLoadError,
     );
     assertEquals(invalid.failure, "validate");

@@ -16,6 +16,17 @@ veryfront dev
 
 Visit `http://localhost:3000/api/auth/{service}` to connect each service.
 
+## Generated Tool IDs
+
+Integration tools use the stable ID format `<integration>-<tool>`, such as
+`github-get-issue` or `jira-get-issue`. The provider prefix keeps tools and
+their generated files distinct when a project includes multiple integrations.
+
+When regenerating an existing project, update any prompts, agent allowlists, or
+saved tool references that used the previous unprefixed IDs. This naming
+contract applies to tools generated into the project; connector-managed remote
+tool IDs keep their connector-defined names.
+
 ---
 
 ## Table of Contents
@@ -84,7 +95,7 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 | Gmail    | `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.compose`, `https://mail.google.com/` for permanent delete               |
 | Calendar | `calendar.readonly`, `calendar.events`                                                                                                         |
 | Drive    | `https://www.googleapis.com/auth/drive`                                                                                                        |
-| Docs     | `documents.readonly`, `documents`                                                                                                              |
+| Docs     | `https://www.googleapis.com/auth/documents.readonly`, `https://www.googleapis.com/auth/documents`, `https://www.googleapis.com/auth/drive.readonly` |
 | Sheets   | `https://www.googleapis.com/auth/spreadsheets`, `https://www.googleapis.com/auth/drive.readonly`, `https://www.googleapis.com/auth/drive.file` |
 
 ---
@@ -100,7 +111,11 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 2. Click **New registration**:
    - Name: Your app name
    - Supported account types: Accounts in any organizational directory
-   - Redirect URI: Web, `http://localhost:3000/api/auth/outlook/callback`
+   - Add each Web redirect URI required by the selected integrations:
+     - `http://localhost:3000/api/auth/outlook/callback`
+     - `http://localhost:3000/api/auth/teams/callback`
+     - `http://localhost:3000/api/auth/sharepoint/callback`
+     - `http://localhost:3000/api/auth/onedrive/callback`
 3. After creation, go to **Certificates & secrets**:
    - Create a new client secret
 4. Go to **API permissions**:
@@ -111,15 +126,14 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 ```env
 MICROSOFT_CLIENT_ID=your-application-client-id
 MICROSOFT_CLIENT_SECRET=your-client-secret
-MICROSOFT_TENANT_ID=common
 ```
 
 ### Required Scopes by Service
 
 | Service    | Scopes                                                                                                                                                              |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Outlook    | `Mail.Read`, `Mail.Send`, `Mail.ReadWrite`, `Calendars.Read`, `Calendars.ReadWrite`, `Group.Read.All`, `Group-Conversation.Read.All`, `User.Read`, `offline_access` |
-| Teams      | `Chat.Read`, `Chat.ReadWrite`, `ChannelMessage.Send`, `ChannelMessage.Read.All`, `Channel.ReadBasic.All`, `Team.ReadBasic.All`, `User.Read`, `offline_access`       |
+| Outlook    | `Mail.Read`, `Mail.Send`, `Mail.ReadWrite`, `Mail.Read.Shared`, `Calendars.Read`, `Calendars.ReadWrite`, `Group.Read.All`, `Group-Conversation.Read.All`, `offline_access` |
+| Teams      | `Chat.Read`, `Chat.ReadWrite`, `ChannelMessage.Send`, `Channel.ReadBasic.All`, `Team.ReadBasic.All`, `offline_access`                                              |
 | SharePoint | `Sites.Read.All`, `Sites.ReadWrite.All`, `Files.Read.All`, `Files.ReadWrite.All`, `offline_access`                                                                  |
 | OneDrive   | `Files.Read`, `Files.ReadWrite`, `Files.Read.All`, `Files.ReadWrite.All`, `offline_access`                                                                          |
 
@@ -136,17 +150,31 @@ MICROSOFT_TENANT_ID=common
 2. Click **Create** > **OAuth 2.0 integration**
 3. Configure:
    - Name: Your app name
-   - Callback URL: `http://localhost:3000/api/auth/jira/callback`
-4. Add required scopes in **Permissions**
-5. Get your Cloud ID: Visit
-   `https://your-domain.atlassian.net/_edge/tenant_info`
+   - Grant type: choose **account-level** when consent should cover all
+     permitted sites for the account, or **resource-level** when consent must
+     be limited to sites selected by the user
+   - Callback URL: `http://localhost:3000/api/auth/atlassian/callback`
+4. Add the required scopes for every Jira or Confluence integration selected
+   for this project
+5. The generated clients discover the sites available to each authenticated
+   user through Atlassian's `accessible-resources` endpoint.
+6. If a user can access multiple Jira sites, set `JIRA_CLOUD_ID` to the site
+   selected for this deployment.
+7. If a user can access multiple Confluence sites, set `CONFLUENCE_CLOUD_ID` to
+   the selected site.
+
+The generated clients support both grant types and always validate Atlassian's
+`accessible-resources` response. Account-level grants can return multiple
+sites; resource-level grants return only the sites selected during consent.
 
 ### Environment Variables
 
 ```env
 ATLASSIAN_CLIENT_ID=your-client-id
 ATLASSIAN_CLIENT_SECRET=your-client-secret
-ATLASSIAN_CLOUD_ID=your-cloud-id
+# Optional when the authenticated user can access multiple sites:
+JIRA_CLOUD_ID=your-jira-site-id
+CONFLUENCE_CLOUD_ID=your-confluence-site-id
 ```
 
 ### Required Scopes
@@ -155,6 +183,34 @@ ATLASSIAN_CLOUD_ID=your-cloud-id
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Jira       | `read:jira-work`, `write:jira-work`, `read:jira-user`, `offline_access`                                                                                                                                    |
 | Confluence | `read:confluence-content.all`, `write:confluence-content`, `read:confluence-space.summary`, `read:confluence-user`, `search:confluence`, `read:page:confluence`, `write:page:confluence`, `offline_access` |
+
+### Shared Grant and Migration
+
+Atlassian accepts one exact callback URL and maintains one grant per app and
+account. A later consent replaces the previous scope set. Generated projects
+therefore use one shared Atlassian grant, one callback, and one physical token
+slot for Jira and Confluence. Either product's connect route requests the
+deduplicated union of scopes for every selected Atlassian product.
+
+Changing the selected Atlassian product set in either direction requires a
+fresh least-privilege consent. Update the app scopes in the Atlassian Developer
+Console, revoke the old grant, delete the shared `atlassian` token row, deploy
+the generated routes, and connect once. Removing a product without this step
+can leave its scopes on the previous grant.
+
+For a project generated with the old separate callbacks:
+
+1. Revoke the old app grant in the user's Atlassian account.
+2. Delete the legacy `jira` and `confluence` token rows from the application
+   OAuth store. They are deliberately not copied into the shared slot.
+3. Register `/api/auth/atlassian/callback`, deploy the updated routes, and
+   connect Jira or Confluence once.
+
+The generated template does not expose a disconnect endpoint. If the
+application adds one using either logical Jira or Confluence service ID, the
+generated token-store alias clears the shared `atlassian` row. Without a custom
+endpoint, revoke the Atlassian grant and delete that row through the
+application's storage administration path.
 
 ---
 
@@ -617,7 +673,7 @@ veryfront dev
 # http://localhost:3000/api/auth/{service}
 
 # Check connection status
-curl http://localhost:3000/api/connections
+curl http://localhost:3000/api/integrations/status
 ```
 
 ## Troubleshooting

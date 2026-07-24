@@ -21,7 +21,7 @@ const getModifyLabelsInput = defineSchema((v) =>
 );
 
 export default tool({
-  id: "modify-email-labels",
+  id: "gmail-modify-email-labels",
   description: "Modify labels on a Gmail message.",
   inputSchema: getModifyLabelsInput(),
   execute: async ({ messageId, addLabelIds, removeLabelIds }, context) => {

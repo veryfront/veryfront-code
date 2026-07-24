@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createLead, formatLeadName } from "../../lib/salesforce-client.ts";
+import { createLead, formatLeadName } from "../lib/salesforce-client.ts";
 
 type Output = {
   id: string;
@@ -16,7 +16,7 @@ type Output = {
 };
 
 export default tool({
-  id: "create-lead",
+  id: "salesforce-create-lead",
   description:
     "Create a new lead in Salesforce CRM. LastName and Company are required, other fields are optional.",
   inputSchema: defineSchema((v) => v.object({

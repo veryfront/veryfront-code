@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
+import { getAnthropicAdminClient } from '../lib/anthropic-admin-client';
 
 export const getUsage = tool({
-  id: 'get_usage',
+  id: 'anthropic-get-usage',
   description:
     'Get API usage statistics for a specific date range. Returns token usage and costs broken down by date, workspace, and model. Dates must be in YYYY-MM-DD format.',
   inputSchema: defineSchema((v) =>

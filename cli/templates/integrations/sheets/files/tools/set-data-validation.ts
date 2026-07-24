@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "set-data-validation",
+  id: "sheets-set-data-validation",
   description: "Set a Google Sheets data validation rule on a grid range.",
   inputSchema: defineSchema((v) =>
     v.object({

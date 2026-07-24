@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-records",
+  id: "airtable-create-records",
   description:
     "Create multiple records in an Airtable table. Provide an array of record objects with field values. Returns created records with IDs.",
   inputSchema: defineSchema((v) =>

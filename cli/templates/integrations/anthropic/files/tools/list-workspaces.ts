@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
+import { getAnthropicAdminClient } from '../lib/anthropic-admin-client';
 
 export const listWorkspaces = tool({
-  id: 'list_workspaces',
+  id: 'anthropic-list-workspaces',
   description:
     'List all workspaces in the Anthropic organization. Workspaces allow you to organize API keys, usage, and permissions for different teams or projects.',
   inputSchema: defineSchema((v) => v.object({}))(),

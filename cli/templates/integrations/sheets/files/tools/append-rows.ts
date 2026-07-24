@@ -8,7 +8,7 @@ const VALUE_INPUT_OPTIONS = ["RAW", "USER_ENTERED"] as const;
 const INSERT_DATA_OPTIONS = ["OVERWRITE", "INSERT_ROWS"] as const;
 
 export default tool({
-  id: "append-rows",
+  id: "sheets-append-rows",
   description:
     "Append rows to a Google Sheets range. Use for trackers, logs, and adding records without overwriting existing rows.",
   inputSchema: defineSchema((v) =>

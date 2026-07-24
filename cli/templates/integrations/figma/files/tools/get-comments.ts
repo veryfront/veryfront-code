@@ -27,7 +27,7 @@ type Output = {
 };
 
 export default tool({
-  id: "get-comments",
+  id: "figma-get-comments",
   description:
     "Get all comments on a Figma file. Returns comment threads with messages, authors, timestamps, and resolution status.",
   inputSchema: defineSchema((v) =>

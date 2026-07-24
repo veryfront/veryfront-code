@@ -7,7 +7,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 const ORDER_BY_VALUES = ["createdTime", "modifiedTime", "name"] as const;
 
 export default tool({
-  id: "list-spreadsheets",
+  id: "sheets-list-spreadsheets",
   description:
     "List recent Google Sheets spreadsheets from Google Drive. Returns spreadsheet names, IDs, and metadata.",
   inputSchema: defineSchema((v) =>

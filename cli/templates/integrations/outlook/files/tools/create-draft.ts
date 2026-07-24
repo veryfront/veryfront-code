@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-draft",
+  id: "outlook-create-draft",
   description:
     "Create an Outlook email draft for human approval. This does not send the message.",
   inputSchema: defineSchema((v) =>

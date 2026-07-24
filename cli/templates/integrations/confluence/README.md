@@ -24,16 +24,17 @@ confluence/
 │   │   ├── confluence-client.ts            # Confluence API client
 │   │   ├── oauth-store.ts                  # Fail-closed store binding
 │   │   ├── oauth-store-registry.ts         # Durable store injection contract
+│   │   ├── atlassian-oauth.generated.ts    # Selected configs and scope union
 │   │   └── user-id.ts                      # Verified identity binding
-│   ├── app/api/auth/confluence/
-│   │   ├── route.ts                        # OAuth initialization endpoint
-│   │   └── callback/route.ts               # OAuth callback handler
+│   ├── app/api/auth/confluence/route.ts     # OAuth initialization endpoint
+│   ├── app/api/auth/atlassian/callback/
+│   │   └── route.ts                        # Shared Atlassian callback handler
 │   └── tools/
-│       ├── search-content.ts               # Search tool
-│       ├── get-page.ts                     # Get page content tool
-│       ├── create-page.ts                  # Create page tool
-│       ├── update-page.ts                  # Update page tool
-│       └── list-spaces.ts                  # List spaces tool
+│       ├── confluence-search-content.ts               # Search tool
+│       ├── confluence-get-page.ts                     # Get page content tool
+│       ├── confluence-create-page.ts                  # Create page tool
+│       ├── confluence-update-page.ts                  # Update page tool
+│       └── confluence-list-spaces.ts                  # List spaces tool
 ```
 
 ## Setup
@@ -45,7 +46,10 @@ confluence/
 2. Click "Create" → "OAuth 2.0 integration"
 3. Name your app (e.g., "Veryfront Confluence Integration")
 4. Add the following settings:
-   - **Callback URL**: `https://your-domain.com/api/auth/confluence/callback`
+   - **Grant type**: choose account-level for permitted sites across the
+     account, or resource-level to limit the grant to sites selected during
+     consent
+   - **Callback URL**: `https://your-domain.com/api/auth/atlassian/callback`
    - **Scopes**:
      - `read:confluence-content.all`
      - `write:confluence-content`
@@ -142,7 +146,7 @@ const spaces = await confluenceFor(context).listSpaces({
 
 ## AI Tools
 
-### search-content
+### confluence-search-content
 
 Search for pages and blog posts in Confluence.
 
@@ -152,7 +156,7 @@ Search for pages and blog posts in Confluence.
 - `spaceKey` (string, optional): Limit to specific space
 - `limit` (number, default: 10): Max results
 
-### get-page
+### confluence-get-page
 
 Get the full content of a Confluence page.
 
@@ -160,7 +164,7 @@ Get the full content of a Confluence page.
 
 - `pageId` (string): The page ID to retrieve
 
-### create-page
+### confluence-create-page
 
 Create a new page in a Confluence space.
 
@@ -172,7 +176,7 @@ Create a new page in a Confluence space.
 - `parentId` (string, optional): Parent page ID
 - `type` (enum, default: "page"): "page" or "blogpost"
 
-### update-page
+### confluence-update-page
 
 Update an existing Confluence page.
 
@@ -183,7 +187,7 @@ Update an existing Confluence page.
 - `content` (string, optional): New content
 - `versionMessage` (string, optional): Version change message
 
-### list-spaces
+### confluence-list-spaces
 
 List all accessible Confluence spaces.
 
@@ -197,7 +201,7 @@ List all accessible Confluence spaces.
 1. User navigates to `/api/auth/confluence`
 2. OAuth flow redirects to Atlassian authorization page
 3. User approves access to their Confluence site
-4. Atlassian redirects to `/api/auth/confluence/callback`
+4. Atlassian redirects to `/api/auth/atlassian/callback`
 5. Callback exchanges code for access token
 6. System retrieves accessible Confluence sites (cloud IDs)
 7. Tokens stored in the installed application OAuth store
@@ -210,6 +214,22 @@ installed a durable `ApplicationOAuthTokenStore` and a verified session/JWT
 identity resolver. The store owns per-user encrypted tokens, one-shot state,
 revisioned compare-and-set, and a bounded distributed refresh lease. The shared
 `OAuthService` owns expiration checks and refresh.
+
+Jira and Confluence share one Atlassian grant and one physical token row.
+Selecting both products makes either initialization route request the
+deduplicated union of their scopes. Changing the selected product set,
+including removing a product, requires updating the app scopes, revoking the
+old grant, deleting the shared `atlassian` row, and consenting again.
+
+Projects generated with separate Jira and Confluence callbacks must revoke the
+old Atlassian grant, delete the legacy `jira` and `confluence` token rows,
+register `/api/auth/atlassian/callback`, and consent once again. Legacy refresh
+tokens are not migrated automatically.
+
+The generated template has no disconnect endpoint. A custom disconnect handler
+using either logical service ID clears the shared row through the generated
+alias; otherwise revoke the grant and remove the row through the application's
+storage administration path.
 
 ## API Details
 
@@ -241,6 +261,8 @@ This integration works well with:
   `ATLASSIAN_CLIENT_SECRET`)
 - Requires OAuth app to have Confluence API access enabled
 - Supports both Confluence Cloud and multi-site access
+- Supports account-level and resource-level grants; the latter can access only
+  sites selected during consent
 - Automatically uses the only accessible site; multi-site users must configure
   and authorize `CONFLUENCE_CLOUD_ID`
 

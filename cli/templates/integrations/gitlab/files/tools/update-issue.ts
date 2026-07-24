@@ -5,7 +5,7 @@ import { optionalAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-issue",
+  id: "gitlab-update-issue",
   description: "Update, close, or reopen a GitLab issue.",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -20,19 +20,19 @@ This integration enables AI assistants to:
 
 ### AI Tools
 
-1. **get-file** - Deep file inspection
+1. **figma-get-file** - Deep file inspection
    - Complete file structure and metadata
    - Component extraction and documentation
    - Style system information
    - Page organization
 
-2. **get-comments** - Read design feedback
+2. **figma-get-comments** - Read design feedback
    - Threaded comment retrieval
    - Filter by resolution status
    - Author and timestamp information
    - Comment location data
 
-3. **post-comment** - Provide feedback
+3. **figma-post-comment** - Provide feedback
    - Post new comments or replies
    - Attach to specific nodes
    - Positioned annotations
@@ -82,9 +82,9 @@ figma/
 │   │   ├── route.ts           # OAuth initiation (14 lines)
 │   │   └── callback/route.ts  # OAuth callback (44 lines)
 │   └── tools/
-│       ├── get-file.ts        # File inspection (46 lines)
-│       ├── get-comments.ts    # Comment reading (71 lines)
-│       └── post-comment.ts    # Comment posting (47 lines)
+│       ├── figma-get-file.ts        # File inspection (46 lines)
+│       ├── figma-get-comments.ts    # Comment reading (71 lines)
+│       └── figma-post-comment.ts    # Comment posting (47 lines)
 └── README.md                  # This file
 ```
 

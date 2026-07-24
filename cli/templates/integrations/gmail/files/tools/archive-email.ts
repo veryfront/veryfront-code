@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "archive-email",
+  id: "gmail-archive-email",
   description: "Archive a Gmail message by removing the INBOX label.",
   inputSchema: defineSchema((v) =>
     v.object({

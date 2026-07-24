@@ -7,7 +7,7 @@ import { resolveUserId } from "../lib/context.ts";
 const THREAD_FORMATS = ["full", "metadata", "minimal"] as const;
 
 export default tool({
-  id: "get-thread",
+  id: "gmail-get-thread",
   description: "Get a Gmail thread by ID.",
   inputSchema: defineSchema((v) =>
     v.object({

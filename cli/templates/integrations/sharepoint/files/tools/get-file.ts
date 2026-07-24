@@ -4,7 +4,7 @@ import { createSharePointClient } from "../lib/sharepoint-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-file",
+  id: "sharepoint-get-file",
   description:
     "Get detailed metadata and optionally download content of a file from SharePoint. Can retrieve text content for text-based files.",
   inputSchema: defineSchema((v) =>

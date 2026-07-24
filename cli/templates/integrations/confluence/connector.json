@@ -18,12 +18,8 @@
       "write:page:confluence",
       "offline_access"
     ],
-    "callbackPath": "/api/auth/confluence/callback",
-    "tokenAuthMethod": "client_secret_post",
-    "additionalParams": {
-      "audience": "api.atlassian.com",
-      "prompt": "consent"
-    },
+    "callbackPath": "/api/auth/atlassian/callback",
+    "tokenAuthMethod": "body",
     "requiredApis": [
       {
         "name": "Atlassian OAuth 2.0 App",

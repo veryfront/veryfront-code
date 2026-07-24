@@ -5,6 +5,10 @@ import {
   type OAuthStorageStatus,
   readOAuthStorageStatus,
 } from "./oauth-store-registry.ts";
+import {
+  ATLASSIAN_OAUTH_TOKEN_SERVICE_ALIASES,
+  createOAuthTokenStoreWithServiceAliases,
+} from "./oauth-token-service-aliases.ts";
 import { readEnvironmentVariable } from "./environment.ts";
 
 function isExplicitDevelopmentMemoryMode(): boolean {
@@ -39,7 +43,10 @@ function resolveApplicationOAuthTokenStore(): ApplicationOAuthTokenStore {
  * instrumentation did not install a durable store before route modules load.
  */
 export const oauthTokenStore: ApplicationOAuthTokenStore =
-  resolveApplicationOAuthTokenStore();
+  createOAuthTokenStoreWithServiceAliases(
+    resolveApplicationOAuthTokenStore(),
+    ATLASSIAN_OAUTH_TOKEN_SERVICE_ALIASES,
+  );
 
 /** Return capabilities reported by the selected adapter after validation. */
 export function getOAuthStorageStatus(): OAuthStorageStatus {

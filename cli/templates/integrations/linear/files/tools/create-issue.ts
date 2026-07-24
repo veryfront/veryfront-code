@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-issue",
+  id: "linear-create-issue",
   description:
     "Create a new Linear issue in a specified team. You can optionally set priority, assign to someone, add to a project, and attach labels.",
   inputSchema: defineSchema((v) =>
@@ -12,7 +12,7 @@ export default tool({
       teamId: v
         .string()
         .describe(
-          "The ID of the team to create the issue in. Use list-projects tool first if you need to find team IDs.",
+          "The ID of the team to create the issue in. Use the linear-list-projects tool first if you need to find team IDs.",
         ),
       title: v.string().describe("Title of the issue"),
       description: v

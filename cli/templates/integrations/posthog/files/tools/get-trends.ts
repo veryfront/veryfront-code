@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getTrends } from "../../lib/posthog-client.ts";
+import { getTrends } from "../lib/posthog-client.ts";
 
 export default tool({
-  id: "get-trends",
+  id: "posthog-get-trends",
   description:
     "Retrieve event trends and analytics data from PostHog. Analyze how events are trending over time.",
   inputSchema: defineSchema((v) => v.object({

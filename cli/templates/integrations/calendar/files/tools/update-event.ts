@@ -4,7 +4,7 @@ import { createCalendarClient } from "../lib/calendar-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-event",
+  id: "calendar-update-event",
   description: "Update an existing Google Calendar event by ID",
   inputSchema: defineSchema((v) =>
     v.object({

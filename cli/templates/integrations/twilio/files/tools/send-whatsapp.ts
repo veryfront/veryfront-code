@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatPhoneNumber, sendWhatsApp } from "../../lib/twilio-client.ts";
+import { formatPhoneNumber, sendWhatsApp } from "../lib/twilio-client.ts";
 
 export default tool({
-  id: "send-whatsapp",
+  id: "twilio-send-whatsapp",
   description:
     "Send a WhatsApp message to a phone number using Twilio. Note: Recipients must have opted in to receive messages.",
   inputSchema: defineSchema((v) => v.object({

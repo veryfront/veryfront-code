@@ -20,7 +20,7 @@ function nonEmpty(value: string | undefined): string | undefined {
 }
 
 export default tool({
-  id: "update-page",
+  id: "confluence-update-page",
   description:
     "Update the content or title of an existing Confluence page. Requires the current version number.",
   inputSchema: defineSchema((v) =>

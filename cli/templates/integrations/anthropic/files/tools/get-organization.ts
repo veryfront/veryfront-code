@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
+import { getAnthropicAdminClient } from '../lib/anthropic-admin-client';
 
 export const getOrganization = tool({
-  id: 'get_organization',
+  id: 'anthropic-get-organization',
   description:
     'Get detailed information about the Anthropic organization including name, settings, default configurations, and billing information.',
   inputSchema: defineSchema((v) => v.object({}))(),

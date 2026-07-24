@@ -44,7 +44,7 @@
     {
       "id": "gmail__list_emails",
       "name": "List Emails",
-      "description": "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use get-email only when full message content is needed.",
+      "description": "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use gmail-get-email only when full message content is needed.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

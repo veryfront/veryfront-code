@@ -4,7 +4,7 @@ import { createDriveClient } from "../lib/drive-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "upload-file",
+  id: "drive-upload-file",
   description:
     "Upload or create a text file in Google Drive. Supports plain text, JSON, CSV, Markdown, and other text formats. Returns the new file ID and details.",
   inputSchema: defineSchema((v) =>

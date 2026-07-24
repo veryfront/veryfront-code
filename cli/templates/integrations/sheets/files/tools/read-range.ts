@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "read-range",
+  id: "sheets-read-range",
   description:
     "Read cell data from a Google Sheets range. Returns a 2D array of values. Use A1 notation (e.g., 'Sheet1!A1:D10', 'A1:B', or just 'Sheet1' for entire sheet).",
   inputSchema: defineSchema((v) =>

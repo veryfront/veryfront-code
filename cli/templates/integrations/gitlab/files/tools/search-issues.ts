@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-issues",
+  id: "gitlab-search-issues",
   description:
     "Search for issues in GitLab projects. Can search across all accessible projects or within a specific project. Returns issue titles, states, assignees, and labels.",
   inputSchema: defineSchema((v) =>

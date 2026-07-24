@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "batch-update",
+  id: "sheets-batch-update",
   description:
     "Run Google Sheets batchUpdate requests for formatting, filters, dimensions, protected ranges, charts, and other advanced spreadsheet changes.",
   inputSchema: defineSchema((v) =>

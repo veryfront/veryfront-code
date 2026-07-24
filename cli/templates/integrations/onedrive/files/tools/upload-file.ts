@@ -4,7 +4,7 @@ import { createOneDriveClient } from "../lib/onedrive-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "upload-file",
+  id: "onedrive-upload-file",
   description:
     "Upload or update a file in OneDrive. Can create new files or overwrite existing ones.",
   inputSchema: defineSchema((v) =>

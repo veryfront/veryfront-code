@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getTableColumns, listTables } from "../../lib/supabase-client.ts";
+import { getTableColumns, listTables } from "../lib/supabase-client.ts";
 
 export default tool({
-  id: "list-tables",
+  id: "supabase-list-tables",
   description: "List all tables in your Supabase database with their schema information.",
   inputSchema: defineSchema((v) => v.object({
     includeColumns: v

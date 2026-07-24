@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "update-draft",
+  id: "gmail-update-draft",
   description: "Replace the content of a Gmail draft.",
   inputSchema: defineSchema((v) =>
     v.object({

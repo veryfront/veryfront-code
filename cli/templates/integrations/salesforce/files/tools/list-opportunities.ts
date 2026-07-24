@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listOpportunities } from "../../lib/salesforce-client.ts";
+import { listOpportunities } from "../lib/salesforce-client.ts";
 
 export default tool({
-  id: "list-opportunities",
+  id: "salesforce-list-opportunities",
   description:
     "List sales opportunities from your Salesforce CRM. Returns opportunity information including name, amount, stage, close date, and account association.",
   inputSchema: defineSchema((v) => v.object({

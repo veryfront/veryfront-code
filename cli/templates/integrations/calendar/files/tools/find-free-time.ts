@@ -6,7 +6,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 type FreeSlot = { start: Date; end: Date };
 
 export default tool({
-  id: "find-free-time",
+  id: "calendar-find-free-time",
   description: "Find available time slots in the calendar for scheduling",
   inputSchema: defineSchema((v) =>
     v.object({

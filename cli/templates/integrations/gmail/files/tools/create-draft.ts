@@ -27,7 +27,7 @@ const getDraftInput = defineSchema((v) =>
 );
 
 export default tool({
-  id: "create-draft",
+  id: "gmail-create-draft",
   description: "Create a Gmail draft message.",
   inputSchema: getDraftInput(),
   execute: async (input, context) => {

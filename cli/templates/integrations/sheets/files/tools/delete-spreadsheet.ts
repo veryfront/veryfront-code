@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "delete-spreadsheet",
+  id: "sheets-delete-spreadsheet",
   description:
     "Delete an app-accessible spreadsheet file. Defaults to moving it to trash for safer cleanup.",
   inputSchema: defineSchema((v) =>

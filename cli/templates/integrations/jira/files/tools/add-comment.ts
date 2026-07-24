@@ -4,7 +4,7 @@ import { createJiraClient } from "../lib/jira-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "add-comment",
+  id: "jira-add-comment",
   description: "Add a comment to a Jira issue.",
   inputSchema: defineSchema((v) =>
     v.object({

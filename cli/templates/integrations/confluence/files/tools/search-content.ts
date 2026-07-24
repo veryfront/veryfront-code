@@ -4,7 +4,7 @@ import { createConfluenceClient } from "../lib/confluence-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-content",
+  id: "confluence-search-content",
   description:
     "Search for pages and blog posts in Confluence. Returns matching content with titles, excerpts, and links.",
   inputSchema: defineSchema((v) =>

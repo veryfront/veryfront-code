@@ -4,7 +4,7 @@ import { createDocsClient } from "../lib/docs-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-documents",
+  id: "docs-google-search-documents",
   description:
     "Search for Google Docs documents by query string. Searches document names and content. Returns matching document IDs, names, and metadata.",
   inputSchema: defineSchema((v) =>

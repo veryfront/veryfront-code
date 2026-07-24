@@ -7,7 +7,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 const ISSUE_STATES = ["open", "closed"] as const;
 
 export default tool({
-  id: "update-issue",
+  id: "github-update-issue",
   description: "Update, close, or reopen a GitHub issue",
   inputSchema: defineSchema((v) =>
     v.object({

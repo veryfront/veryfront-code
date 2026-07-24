@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getMessage } from "../../lib/twilio-client.ts";
+import { getMessage } from "../lib/twilio-client.ts";
 
 export default tool({
-  id: "get-message",
+  id: "twilio-get-message",
   description:
     "Get detailed information about a specific SMS or WhatsApp message by its SID (Message ID)",
   inputSchema: defineSchema((v) => v.object({

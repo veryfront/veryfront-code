@@ -4,7 +4,7 @@ import { createNotionClient } from "../lib/notion-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-database",
+  id: "notion-get-database",
   description: "Get Notion database metadata, title, and property schema.",
   inputSchema: defineSchema((v) =>
     v.object({

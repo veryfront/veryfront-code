@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateRow, updateRows } from "../../lib/supabase-client.ts";
+import { updateRow, updateRows } from "../lib/supabase-client.ts";
 
 export default tool({
-  id: "update-row",
+  id: "supabase-update-row",
   description: "Update rows in a Supabase table. Can update by ID or by custom filter conditions.",
   inputSchema: defineSchema((v) => v.object({
     tableName: v.string().describe("The name of the table to update"),

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getCard } from "../../lib/trello-client.ts";
+import { getCard } from "../lib/trello-client.ts";
 
 export default tool({
-  id: "get-card",
+  id: "trello-get-card",
   description: "Get details of a specific Trello card by its ID.",
   inputSchema: defineSchema((v) => v.object({
     cardId: v.string().describe("The ID of the card to retrieve"),

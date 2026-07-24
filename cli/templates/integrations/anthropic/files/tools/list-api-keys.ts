@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
+import { getAnthropicAdminClient } from '../lib/anthropic-admin-client';
 
 export const listAPIKeys = tool({
-  id: 'list_api_keys',
+  id: 'anthropic-list-api-keys',
   description:
     'List all API keys for the organization or a specific workspace. Returns key metadata including name, status, type, and usage information. The actual key values are not returned for security reasons.',
   inputSchema: defineSchema((v) =>

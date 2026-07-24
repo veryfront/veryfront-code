@@ -199,30 +199,6 @@ export function createTeamsClient(userId: string) {
     );
   }
 
-  async function getChannelMessages(
-    teamId: string,
-    channelId: string,
-    options?: { limit?: number; orderBy?: string },
-  ): Promise<ChatMessage[]> {
-    const params = new URLSearchParams();
-    if (options?.limit) params.set("$top", options.limit.toString());
-    params.set("$orderby", options?.orderBy ?? "createdDateTime desc");
-
-    const response = await graphFetch<GraphResponse<ChatMessage>>(
-      buildEndpoint(`/teams/${teamId}/channels/${channelId}/messages`, params),
-    );
-    return response.value ?? [];
-  }
-
-  function getCurrentUser(): Promise<{
-    id: string;
-    displayName: string;
-    mail?: string;
-    userPrincipalName?: string;
-  }> {
-    return graphFetch("/me");
-  }
-
   function getChatDisplayName(chat: TeamsChat): string {
     if (chat.topic) return chat.topic;
 
@@ -254,8 +230,6 @@ export function createTeamsClient(userId: string) {
     listTeams,
     listChannels,
     sendChannelMessage,
-    getChannelMessages,
-    getCurrentUser,
     getChatDisplayName,
     getPlainTextContent,
   };

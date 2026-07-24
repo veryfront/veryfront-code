@@ -4,7 +4,7 @@ import { createGitLabClient } from "../lib/gitlab-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-merge-request",
+  id: "gitlab-get-merge-request",
   description:
     "Get detailed information about a specific GitLab merge request.",
   inputSchema: defineSchema((v) =>

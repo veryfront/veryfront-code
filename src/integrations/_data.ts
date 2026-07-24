@@ -2040,7 +2040,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 8,
         "title": "Verify Access",
         "description":
-          "Test the integration by calling the get-organization tool to confirm your admin key has the correct permissions",
+          "Test the integration by calling the anthropic-get-organization tool to confirm your admin key has the correct permissions",
       }],
       "notes": [
         "Admin API keys have full access to organization management features. Keep them secure and never commit them to version control",
@@ -3829,7 +3829,7 @@ export const connectors: IntegrationConfig[] = [
       "steps": [{
         "title": "Setup guide",
         "description":
-          '# AWS Integration Setup Guide\n\n## Step 1: Create an IAM User\n\n1. Log in to the [AWS Console](https://console.aws.amazon.com/)\n2. Navigate to **IAM** (Identity and Access Management)\n3. Click on **Users** in the left sidebar\n4. Click **Add users**\n5. Enter a username (e.g., `veryfront-integration`)\n6. Select **Access key - Programmatic access**\n7. Click **Next: Permissions**\n\n## Step 2: Attach Permissions\n\nYou can either:\n\n### Option A: Create a Custom Policy (Recommended)\n\n1. Click **Attach existing policies directly**\n2. Click **Create policy**\n3. Choose the **JSON** tab\n4. Paste the following policy:\n\n```json\n{\n  "Version": "2012-10-17",\n  "Statement": [\n    {\n      "Effect": "Allow",\n      "Action": [\n        "s3:ListAllMyBuckets",\n        "s3:ListBucket",\n        "s3:GetObject",\n        "ec2:DescribeInstances",\n        "lambda:ListFunctions"\n      ],\n      "Resource": "*"\n    }\n  ]\n}\n```\n\n5. Click **Review policy**\n6. Name it `VeryfrontAWSIntegration`\n7. Click **Create policy**\n8. Go back to the user creation tab and refresh the policy list\n9. Search for and select `VeryfrontAWSIntegration`\n\n### Option B: Use AWS Managed Policies\n\nAttach these managed policies:\n- `AmazonS3ReadOnlyAccess`\n- `AmazonEC2ReadOnlyAccess`\n- `AWSLambdaReadOnlyAccess`\n\n**Note:** Option B provides broader read access than Option A.\n\n## Step 3: Complete User Creation\n\n1. Click **Next: Tags** (optional)\n2. Click **Next: Review**\n3. Click **Create user**\n4. **Important:** Save your credentials:\n   - **Access Key ID**\n   - **Secret Access Key**\n   \n   ⚠️ This is the only time you\'ll be able to see the Secret Access Key!\n\n## Step 4: Configure Environment Variables\n\n1. Copy the `.env.example` file to `.env.local`\n2. Add your AWS credentials:\n\n```env\nAWS_ACCESS_KEY_ID=your_access_key_id_here\nAWS_SECRET_ACCESS_KEY=your_secret_access_key_here\nAWS_REGION=us-east-1\n```\n\n3. Replace `your_access_key_id_here` and `your_secret_access_key_here` with your actual credentials\n4. Update `AWS_REGION` to your preferred region (e.g., `us-west-2`, `eu-west-1`)\n\n## Step 5: Install Dependencies\n\nRun the following command to install required AWS SDK packages:\n\n```bash\nnpm install @aws-sdk/client-s3 @aws-sdk/client-ec2 @aws-sdk/client-lambda @aws-sdk/credential-providers\n```\n\n## Step 6: Test Your Integration\n\nYou can test your integration by using any of the available tools:\n\n- `list-s3-buckets` - List all your S3 buckets\n- `list-s3-objects` - List objects in a specific bucket\n- `get-s3-object` - Retrieve an object from S3\n- `list-ec2-instances` - List your EC2 instances\n- `list-lambda-functions` - List your Lambda functions\n\n## Security Best Practices\n\n1. **Never commit your `.env.local` file** - It\'s already in `.gitignore`\n2. **Use the principle of least privilege** - Only grant permissions needed\n3. **Rotate credentials regularly** - Update your access keys periodically\n4. **Use different credentials for different environments** - Dev, staging, and production\n5. **Consider using AWS IAM Roles** - For production environments, use IAM roles with EC2/ECS/Lambda\n\n## Troubleshooting\n\n### "Access Denied" Errors\n\n- Verify your IAM user has the correct permissions\n- Check that the region in your `.env.local` matches where your resources are located\n\n### "Invalid Access Key" Errors\n\n- Double-check your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`\n- Ensure there are no extra spaces or newlines in your credentials\n- Verify the IAM user is active and the access key hasn\'t been deleted\n\n### Region Issues\n\n- Some resources are region-specific (EC2, Lambda)\n- S3 bucket listing is global, but object access respects bucket regions\n- Update `AWS_REGION` to match where your resources are located\n\n## Additional Resources\n\n- [AWS IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/)\n- [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/)\n- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)',
+          '# AWS Integration Setup Guide\n\n## Step 1: Create an IAM User\n\n1. Log in to the [AWS Console](https://console.aws.amazon.com/)\n2. Navigate to **IAM** (Identity and Access Management)\n3. Click on **Users** in the left sidebar\n4. Click **Add users**\n5. Enter a username (e.g., `veryfront-integration`)\n6. Select **Access key - Programmatic access**\n7. Click **Next: Permissions**\n\n## Step 2: Attach Permissions\n\nYou can either:\n\n### Option A: Create a Custom Policy (Recommended)\n\n1. Click **Attach existing policies directly**\n2. Click **Create policy**\n3. Choose the **JSON** tab\n4. Paste the following policy:\n\n```json\n{\n  "Version": "2012-10-17",\n  "Statement": [\n    {\n      "Effect": "Allow",\n      "Action": [\n        "s3:ListAllMyBuckets",\n        "s3:ListBucket",\n        "s3:GetObject",\n        "ec2:DescribeInstances",\n        "lambda:ListFunctions"\n      ],\n      "Resource": "*"\n    }\n  ]\n}\n```\n\n5. Click **Review policy**\n6. Name it `VeryfrontAWSIntegration`\n7. Click **Create policy**\n8. Go back to the user creation tab and refresh the policy list\n9. Search for and select `VeryfrontAWSIntegration`\n\n### Option B: Use AWS Managed Policies\n\nAttach these managed policies:\n- `AmazonS3ReadOnlyAccess`\n- `AmazonEC2ReadOnlyAccess`\n- `AWSLambdaReadOnlyAccess`\n\n**Note:** Option B provides broader read access than Option A.\n\n## Step 3: Complete User Creation\n\n1. Click **Next: Tags** (optional)\n2. Click **Next: Review**\n3. Click **Create user**\n4. **Important:** Save your credentials:\n   - **Access Key ID**\n   - **Secret Access Key**\n   \n   ⚠️ This is the only time you\'ll be able to see the Secret Access Key!\n\n## Step 4: Configure Environment Variables\n\n1. Copy the `.env.example` file to `.env.local`\n2. Add your AWS credentials:\n\n```env\nAWS_ACCESS_KEY_ID=your_access_key_id_here\nAWS_SECRET_ACCESS_KEY=your_secret_access_key_here\nAWS_REGION=us-east-1\n```\n\n3. Replace `your_access_key_id_here` and `your_secret_access_key_here` with your actual credentials\n4. Update `AWS_REGION` to your preferred region (e.g., `us-west-2`, `eu-west-1`)\n\n## Step 5: Install Dependencies\n\nRun the following command to install required AWS SDK packages:\n\n```bash\nnpm install @aws-sdk/client-s3 @aws-sdk/client-ec2 @aws-sdk/client-lambda @aws-sdk/credential-providers\n```\n\n## Step 6: Test Your Integration\n\nYou can test your integration by using any of the available tools:\n\n- `aws-list-s3-buckets` - List all your S3 buckets\n- `aws-list-s3-objects` - List objects in a specific bucket\n- `aws-get-s3-object` - Retrieve an object from S3\n- `aws-list-ec2-instances` - List your EC2 instances\n- `aws-list-lambda-functions` - List your Lambda functions\n\n## Security Best Practices\n\n1. **Never commit your `.env.local` file** - It\'s already in `.gitignore`\n2. **Use the principle of least privilege** - Only grant permissions needed\n3. **Rotate credentials regularly** - Update your access keys periodically\n4. **Use different credentials for different environments** - Dev, staging, and production\n5. **Consider using AWS IAM Roles** - For production environments, use IAM roles with EC2/ECS/Lambda\n\n## Troubleshooting\n\n### "Access Denied" Errors\n\n- Verify your IAM user has the correct permissions\n- Check that the region in your `.env.local` matches where your resources are located\n\n### "Invalid Access Key" Errors\n\n- Double-check your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`\n- Ensure there are no extra spaces or newlines in your credentials\n- Verify the IAM user is active and the access key hasn\'t been deleted\n\n### Region Issues\n\n- Some resources are region-specific (EC2, Lambda)\n- S3 bucket listing is global, but object access respects bucket regions\n- Update `AWS_REGION` to match where your resources are located\n\n## Additional Resources\n\n- [AWS IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/)\n- [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/)\n- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)',
       }],
     },
   },
@@ -12221,12 +12221,11 @@ export const connectors: IntegrationConfig[] = [
         "write:page:confluence",
         "offline_access",
       ],
-      "tokenAuthMethod": "client_secret_post",
+      "tokenAuthMethod": "body",
       "requiredApis": [{
         "name": "Atlassian OAuth 2.0 App",
         "enableUrl": "https://developer.atlassian.com/console/myapps/",
       }],
-      "additionalParams": { "audience": "api.atlassian.com", "prompt": "consent" },
       "additionalAuthParams": { "audience": "api.atlassian.com", "prompt": "consent" },
     },
     "envVars": [{
@@ -12241,6 +12240,14 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/",
+    }, {
+      "name": "CONFLUENCE_CLOUD_ID",
+      "description":
+        "Optional Atlassian site ID; required when the user can access multiple Confluence sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl":
+        "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/#get-list-of-resources",
     }],
     "tools": [{
       "id": "confluence__list_sites",
@@ -15270,7 +15277,6 @@ export const connectors: IntegrationConfig[] = [
       "scopes": [
         "https://www.googleapis.com/auth/documents.readonly",
         "https://www.googleapis.com/auth/documents",
-        "https://www.googleapis.com/auth/docs",
         "https://www.googleapis.com/auth/drive.readonly",
       ],
       "requiredApis": [{
@@ -15441,11 +15447,44 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
     "setupGuide": {
+      "title": "Google Docs Integration Setup",
       "steps": [{
-        "title": "Setup guide",
+        "title": "Create or select a Google Cloud project",
         "description":
-          "# Google Docs Integration Setup\n\n## Prerequisites\n- A Google Cloud Platform account\n- A Google Cloud project\n\n## Step 1: Create OAuth 2.0 Credentials\n\n1. Go to the [Google Cloud Console](https://console.cloud.google.com/)\n2. Select or create a project\n3. Navigate to **APIs & Services** > **Credentials**\n4. Click **Create Credentials** > **OAuth client ID**\n5. Select **Web application** as the application type\n6. Add your authorized redirect URIs:\n   - For development: `http://localhost:3000/api/auth/docs-google/callback`\n   - For production: `https://yourdomain.com/api/auth/docs-google/callback`\n7. Click **Create** and copy your Client ID and Client Secret\n\n## Step 2: Enable Required APIs\n\nEnable the following APIs in your Google Cloud project:\n\n1. [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)\n2. [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)\n\n## Step 3: Configure Environment Variables\n\nAdd the following to your `.env` file:\n\n```bash\nGOOGLE_CLIENT_ID=your_client_id_here\nGOOGLE_CLIENT_SECRET=your_client_secret_here\n```\n\n## Step 4: Test the Integration\n\n1. Start your development server\n2. Navigate to `/api/auth/docs-google` to initiate OAuth flow\n3. Grant permissions when prompted\n4. You should be redirected back to your application\n\n## OAuth Scopes\n\nThis integration requests the following scopes:\n\n- `https://www.googleapis.com/auth/documents.readonly` - Read access to Google Docs\n- `https://www.googleapis.com/auth/documents` - Full access to create and edit Google Docs\n- `https://www.googleapis.com/auth/docs` - Manage Google Docs files in Drive (create, edit, delete)\n- `https://www.googleapis.com/auth/drive.readonly` - Read access to list documents from Drive\n\n## Security Notes\n\n- Keep your Client Secret secure and never commit it to version control\n- Use environment variables for all sensitive credentials\n- Consider implementing proper user session management in production\n- The default implementation uses an in-memory token store - replace with a persistent store for production use\n\n## Available AI Tools\n\nOnce configured, you can use these AI tools:\n\n- **list-documents** - List recent Google Docs from your Drive\n- **get-document** - Retrieve document content and structure\n- **create-document** - Create new documents with formatted content\n- **update-document** - Modify existing documents with batch updates\n- **search-documents** - Search for documents by name or content\n\n## Need Help?\n\nRefer to the [Google Docs API documentation](https://developers.google.com/docs/api) for detailed information about API capabilities and limits.",
+          "Open the Google Cloud Console and select the project that will own the OAuth client.",
+        "url": "https://console.cloud.google.com/projectcreate",
+      }, {
+        "title": "Enable the Google Docs API",
+        "description": "Enable the Docs API used to read, create, and edit documents.",
+        "url": "https://console.cloud.google.com/apis/library/docs.googleapis.com",
+      }, {
+        "title": "Enable the Google Drive API",
+        "description": "Enable the Drive API used to list and search Google Docs files.",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+      }, {
+        "title": "Configure the OAuth consent screen",
+        "description":
+          "Authorize exactly https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, and https://www.googleapis.com/auth/drive.readonly.",
+        "url": "https://console.cloud.google.com/apis/credentials/consent",
+      }, {
+        "title": "Create a web OAuth client",
+        "description":
+          "Create an OAuth 2.0 Client ID for a web application and register http://localhost:3000/api/auth/docs-google/callback for local development plus the matching HTTPS callback for each deployed environment.",
+        "url": "https://console.cloud.google.com/apis/credentials",
+      }, {
+        "title": "Configure credentials",
+        "description":
+          "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the application environment. Keep the client secret out of source control.",
+      }, {
+        "title": "Connect Google Docs",
+        "description":
+          "Start the application and open /api/auth/docs-google to complete the OAuth flow.",
       }],
+      "notes": [
+        "The same Google OAuth client can serve Gmail, Calendar, Drive, Docs, and Sheets when all required APIs, scopes, and callback URLs are configured.",
+        "Production deployments must use the application's durable OAuth token store and verified user identity resolver.",
+      ],
+      "documentation": "https://developers.google.com/workspace/docs/api/auth",
     },
   },
   {
@@ -21455,7 +21494,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "gmail__list_emails",
       "name": "List Emails",
       "description":
-        "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use get-email only when full message content is needed.",
+        "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use gmail-get-email only when full message content is needed.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -28786,7 +28825,7 @@ export const connectors: IntegrationConfig[] = [
       "type": "oauth2",
       "provider": "hubspot",
       "authorizationUrl": "https://app.hubspot.com/oauth/authorize",
-      "tokenUrl": "https://api.hubapi.com/oauth/v1/token",
+      "tokenUrl": "https://api.hubapi.com/oauth/v3/token",
       "scopes": ["oauth", "crm.objects.contacts.read"],
       "optionalScopes": ["forms", "crm.objects.leads.read", "crm.objects.leads.write"],
       "tokenAuthMethod": "request_body",
@@ -30204,6 +30243,14 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/",
+    }, {
+      "name": "JIRA_CLOUD_ID",
+      "description":
+        "Optional Atlassian site ID; required when the user can access multiple Jira sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl":
+        "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/#get-list-of-resources",
     }],
     "tools": [{
       "id": "jira__list_sites",
@@ -37854,6 +37901,7 @@ export const connectors: IntegrationConfig[] = [
         "Mail.Read",
         "Mail.Send",
         "Mail.ReadWrite",
+        "Mail.Read.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
         "Group.Read.All",
@@ -38867,7 +38915,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "outlook__list_threads",
       "name": "List Threads",
       "description":
-        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template get-thread tool or use it in get_thread's filter.",
+        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template outlook-get-thread tool or use it in get_thread's filter.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56147,7 +56195,7 @@ export const connectors: IntegrationConfig[] = [
       }, {
         "title": "Test the Integration",
         "description":
-          "Try sending a test SMS using the send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
+          "Try sending a test SMS using the twilio-send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
         "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified",
       }],
       "notes": [

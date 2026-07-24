@@ -4,7 +4,7 @@ import { createOutlookClient } from "../lib/outlook-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-email",
+  id: "outlook-get-email",
   description:
     "Get detailed information about a specific email, including full body content, recipients, and metadata.",
   inputSchema: defineSchema((v) =>

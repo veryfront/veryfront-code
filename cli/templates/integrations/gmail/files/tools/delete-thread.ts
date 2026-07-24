@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "delete-thread",
+  id: "gmail-delete-thread",
   description: "Permanently delete a Gmail thread.",
   inputSchema: defineSchema((v) =>
     v.object({

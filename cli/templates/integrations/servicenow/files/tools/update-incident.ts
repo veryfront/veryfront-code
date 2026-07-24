@@ -1,6 +1,6 @@
 import { defineSchema } from "veryfront/schemas";
-import { getServiceNowClient } from "../../lib/servicenow-client.ts";
-import { isServiceNowConnected } from "../../lib/token-store.ts";
+import { getServiceNowClient } from "../lib/servicenow-client.ts";
+import { isServiceNowConnected } from "../lib/token-store.ts";
 
 export default defineTool({
   id: "servicenow-update-incident",

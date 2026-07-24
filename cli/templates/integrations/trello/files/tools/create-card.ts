@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCard } from "../../lib/trello-client.ts";
+import { createCard } from "../lib/trello-client.ts";
 
 export default tool({
-  id: "create-card",
+  id: "trello-create-card",
   description: "Create a new card in a Trello list.",
   inputSchema: defineSchema((v) => v.object({
     listId: v.string().describe("The ID of the list to create the card in"),

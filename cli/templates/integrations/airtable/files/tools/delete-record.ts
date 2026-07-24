@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "delete-record",
+  id: "airtable-delete-record",
   description:
     "Delete an Airtable record from a table. Returns Airtable's deletion confirmation.",
   inputSchema: defineSchema((v) =>

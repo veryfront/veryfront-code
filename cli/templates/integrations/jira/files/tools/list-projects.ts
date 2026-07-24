@@ -4,7 +4,7 @@ import { createJiraClient } from "../lib/jira-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "jira-list-projects",
   description:
     "List all accessible Jira projects in the connected site. Returns project keys, names, and basic information.",
   inputSchema: defineSchema((v) => v.object({}))(),

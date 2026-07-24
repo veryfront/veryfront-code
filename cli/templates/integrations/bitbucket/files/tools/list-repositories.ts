@@ -20,7 +20,7 @@ type BitbucketRepo = {
 };
 
 export default tool({
-  id: "list-repositories",
+  id: "bitbucket-list-repositories",
   description: "List Bitbucket repositories for the authenticated user",
   inputSchema: defineSchema((v) =>
     v.object({

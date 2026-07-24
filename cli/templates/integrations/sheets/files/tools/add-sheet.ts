@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "add-sheet",
+  id: "sheets-add-sheet",
   description: "Add a new sheet/tab to an existing spreadsheet.",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -4,7 +4,7 @@ import { createGitHubClient } from "../lib/github-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-pr",
+  id: "github-get-pr",
   description: "Get details of a specific GitHub pull request",
   inputSchema: defineSchema((v) =>
     v.object({

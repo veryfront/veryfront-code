@@ -4,7 +4,7 @@ import { createGitLabClient } from "../lib/gitlab-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-project",
+  id: "gitlab-get-project",
   description: "Get detailed information about a GitLab project.",
   inputSchema: defineSchema((v) =>
     v.object({

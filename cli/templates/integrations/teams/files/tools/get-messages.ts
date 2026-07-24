@@ -4,7 +4,7 @@ import { createTeamsClient } from "../lib/teams-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-messages",
+  id: "teams-get-messages",
   description:
     "Get messages from a specific Microsoft Teams chat. Returns message content, sender information, and timestamps. Use list-chats first to get chat IDs.",
   inputSchema: defineSchema((v) =>

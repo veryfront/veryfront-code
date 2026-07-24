@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getIssue, listEvents } from "../../lib/sentry-client.ts";
+import { getIssue, listEvents } from "../lib/sentry-client.ts";
 
 export default tool({
-  id: "get-issue",
+  id: "sentry-get-issue",
   description:
     "Get detailed information about a specific Sentry issue including error details, stack traces, and recent events. Use this to investigate and debug specific errors.",
   inputSchema: defineSchema((v) => v.object({

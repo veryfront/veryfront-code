@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatAmount, formatDate, listSubscriptions } from "../../lib/stripe-client.ts";
+import { formatAmount, formatDate, listSubscriptions } from "../lib/stripe-client.ts";
 
 export default tool({
-  id: "list-subscriptions",
+  id: "stripe-list-subscriptions",
   description:
     "List Stripe subscriptions. Supports filtering by customer, status, and creation date range.",
   inputSchema: defineSchema((v) => v.object({

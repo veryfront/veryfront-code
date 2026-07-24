@@ -4,7 +4,7 @@ import { createFigmaClient } from "../lib/figma-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "post-comment",
+  id: "figma-post-comment",
   description:
     "Post a comment on a Figma file. Can be a new comment or a reply to an existing comment thread.",
   inputSchema: defineSchema((v) =>

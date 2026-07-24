@@ -4,7 +4,7 @@ import { createAsanaClient } from "../lib/asana-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-task",
+  id: "asana-update-task",
   description: "Update an existing Asana task.",
   inputSchema: defineSchema((v) =>
     v.object({

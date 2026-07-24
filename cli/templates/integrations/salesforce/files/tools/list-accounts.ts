@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listAccounts } from "../../lib/salesforce-client.ts";
+import { listAccounts } from "../lib/salesforce-client.ts";
 
 export default tool({
-  id: "list-accounts",
+  id: "salesforce-list-accounts",
   description:
     "List accounts from your Salesforce CRM. Returns account information including name, type, industry, website, and billing details.",
   inputSchema: defineSchema((v) => v.object({

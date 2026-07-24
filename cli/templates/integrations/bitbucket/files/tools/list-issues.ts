@@ -48,7 +48,7 @@ type BitbucketIssue = {
 };
 
 export default tool({
-  id: "list-issues",
+  id: "bitbucket-list-issues",
   description: "List issues for a Bitbucket repository",
   inputSchema: defineSchema((v) =>
     v.object({

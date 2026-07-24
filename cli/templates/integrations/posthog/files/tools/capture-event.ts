@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { captureEvent } from "../../lib/posthog-client.ts";
+import { captureEvent } from "../lib/posthog-client.ts";
 
 export default tool({
-  id: "capture-event",
+  id: "posthog-capture-event",
   description:
     "Track a custom event in PostHog. Capture user actions, page views, or any custom analytics event.",
   inputSchema: defineSchema((v) => v.object({

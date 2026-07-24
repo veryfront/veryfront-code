@@ -4,7 +4,7 @@ import { createTeamsClient } from "../lib/teams-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-chats",
+  id: "teams-list-chats",
   description:
     "List recent Microsoft Teams chats for the authenticated user. Returns chat IDs, names, types, and last updated timestamps.",
   inputSchema: defineSchema((v) =>

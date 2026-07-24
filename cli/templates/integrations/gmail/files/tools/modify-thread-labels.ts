@@ -21,7 +21,7 @@ const getModifyThreadLabelsInput = defineSchema((v) =>
 );
 
 export default tool({
-  id: "modify-thread-labels",
+  id: "gmail-modify-thread-labels",
   description: "Modify labels on a Gmail thread.",
   inputSchema: getModifyThreadLabelsInput(),
   execute: async ({ threadId, addLabelIds, removeLabelIds }, context) => {

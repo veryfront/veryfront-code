@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-issue",
+  id: "linear-get-issue",
   description:
     "Get detailed information about a specific Linear issue by its ID or identifier (e.g., ENG-123). Returns complete issue details including description, status, assignee, labels, and project.",
   inputSchema: defineSchema((v) =>

@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-notion",
+  id: "notion-search-notion",
   description:
     "Search for pages and databases in the connected Notion workspace. Returns matching pages with their titles and IDs.",
   inputSchema: defineSchema((v) =>

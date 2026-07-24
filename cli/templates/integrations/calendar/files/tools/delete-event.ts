@@ -4,7 +4,7 @@ import { createCalendarClient } from "../lib/calendar-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "delete-event",
+  id: "calendar-delete-event",
   description: "Delete a Google Calendar event by ID",
   inputSchema: defineSchema((v) =>
     v.object({

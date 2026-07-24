@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "get-label",
+  id: "gmail-get-label",
   description: "Get a Gmail label by ID.",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -4,7 +4,7 @@ import { createNotionClient } from "../lib/notion-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-page",
+  id: "notion-update-page",
   description: "Update Notion page properties or archive/unarchive a page.",
   inputSchema: defineSchema((v) =>
     v.object({

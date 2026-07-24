@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-base",
+  id: "airtable-get-base",
   description:
     "Get the schema and structure of an Airtable base, including all tables, fields, and views. Useful for understanding the data model before querying or creating records.",
   inputSchema: defineSchema((v) =>

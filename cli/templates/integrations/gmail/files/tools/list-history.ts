@@ -12,7 +12,7 @@ const HISTORY_TYPES = [
 ] as const;
 
 export default tool({
-  id: "list-history",
+  id: "gmail-list-history",
   description: "List Gmail mailbox history changes after a start history ID.",
   inputSchema: defineSchema((v) =>
     v.object({

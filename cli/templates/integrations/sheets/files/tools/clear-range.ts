@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "clear-range",
+  id: "sheets-clear-range",
   description:
     "Clear cell values from a Google Sheets range while preserving formatting.",
   inputSchema: defineSchema((v) =>

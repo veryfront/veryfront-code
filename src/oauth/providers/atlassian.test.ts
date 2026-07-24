@@ -20,6 +20,28 @@ describe("Atlassian OAuth provider configs", () => {
     assertEquals(confluenceConfig.tokenRequestFormat, "json");
   });
 
+  it("declares the one shared callback accepted by the Atlassian OAuth app", async () => {
+    for (const serviceId of ["jira", "confluence"]) {
+      const connector = JSON.parse(
+        await Deno.readTextFile(
+          `cli/templates/integrations/${serviceId}/connector.json`,
+        ),
+      ) as {
+        auth: {
+          callbackPath?: string;
+          tokenAuthMethod?: string;
+          additionalParams?: Record<string, string>;
+        };
+      };
+      assertEquals(
+        connector.auth.callbackPath,
+        "/api/auth/atlassian/callback",
+      );
+      assertEquals(connector.auth.tokenAuthMethod, "body");
+      assertEquals(connector.auth.additionalParams, undefined);
+    }
+  });
+
   it("keeps every Atlassian runtime scope set aligned with its connector", async () => {
     for (const config of [jiraConfig, confluenceConfig, bitbucketConfig]) {
       const connector = JSON.parse(

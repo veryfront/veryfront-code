@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getProduct } from "../../lib/shopify-client.ts";
+import { getProduct } from "../lib/shopify-client.ts";
 
 export default tool({
-  id: "get-product",
+  id: "shopify-get-product",
   description: "Get details of a specific Shopify product by its ID.",
   inputSchema: defineSchema((v) => v.object({
     productId: v.union([v.number(), v.string()]).describe("The ID of the product to retrieve"),

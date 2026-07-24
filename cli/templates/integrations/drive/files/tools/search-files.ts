@@ -5,7 +5,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export default tool({
-  id: "search-files",
+  id: "drive-search-files",
   description:
     "Search for files and folders in Google Drive using queries. Supports searching by name, content, type, and more. Use Drive query syntax (e.g., \"name contains 'report'\", \"mimeType='application/pdf'\").",
   inputSchema: defineSchema((v) =>

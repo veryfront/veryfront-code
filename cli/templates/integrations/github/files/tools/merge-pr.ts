@@ -7,7 +7,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 const MERGE_METHODS = ["merge", "squash", "rebase"] as const;
 
 export default tool({
-  id: "merge-pr",
+  id: "github-merge-pr",
   description: "Merge an open GitHub pull request",
   inputSchema: defineSchema((v) =>
     v.object({

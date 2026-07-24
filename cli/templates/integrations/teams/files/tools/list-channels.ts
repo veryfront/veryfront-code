@@ -4,7 +4,7 @@ import { createTeamsClient } from "../lib/teams-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-channels",
+  id: "teams-list-channels",
   description:
     "List all channels in a specific Microsoft Team. Use list-teams first to get team IDs. Returns channel IDs, names, descriptions, and types.",
   inputSchema: defineSchema((v) =>

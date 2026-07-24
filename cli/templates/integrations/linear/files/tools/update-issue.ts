@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-issue",
+  id: "linear-update-issue",
   description:
     "Update an existing Linear issue. You can change the title, description, status, priority, assignee, project, or labels.",
   inputSchema: defineSchema((v) =>

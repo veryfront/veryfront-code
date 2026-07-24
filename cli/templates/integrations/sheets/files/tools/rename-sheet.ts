@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "rename-sheet",
+  id: "sheets-rename-sheet",
   description: "Rename an existing sheet/tab by numeric sheet ID.",
   inputSchema: defineSchema((v) =>
     v.object({

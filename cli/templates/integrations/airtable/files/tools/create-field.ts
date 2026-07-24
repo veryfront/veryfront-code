@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-field",
+  id: "airtable-create-field",
   description:
     "Create a new field in an Airtable table. Requires schema write permissions.",
   inputSchema: defineSchema((v) =>

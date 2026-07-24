@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatDate, getFeatureFlags } from "../../lib/posthog-client.ts";
+import { formatDate, getFeatureFlags } from "../lib/posthog-client.ts";
 
 export default tool({
-  id: "list-feature-flags",
+  id: "posthog-list-feature-flags",
   description:
     "List all feature flags in your PostHog project. View flag status, rollout percentages, and configuration.",
   inputSchema: defineSchema((v) => v.object({

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { queryEvents } from "../../lib/mixpanel-client.ts";
+import { queryEvents } from "../lib/mixpanel-client.ts";
 
 export default tool({
-  id: "query-events",
+  id: "mixpanel-query-events",
   description:
     "Query and export event data from Mixpanel. Retrieve events within a date range, optionally filtered by event name.",
   inputSchema: defineSchema((v) => v.object({

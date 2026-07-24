@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { describeTable, getTableRowCount } from "../../lib/neon-client.ts";
+import { describeTable, getTableRowCount } from "../lib/neon-client.ts";
 
 export default tool({
-  id: "describe-table",
+  id: "neon-describe-table",
   description:
     "Get detailed schema information for a specific table including column names, data types, nullability, defaults, and constraints.",
   inputSchema: defineSchema((v) => v.object({

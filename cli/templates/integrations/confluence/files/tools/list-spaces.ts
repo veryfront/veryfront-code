@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-spaces",
+  id: "confluence-list-spaces",
   description:
     "List all accessible Confluence spaces. Returns space keys, names, and links.",
   inputSchema: defineSchema((v) =>

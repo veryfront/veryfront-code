@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "gitlab-list-projects",
   description:
     "List GitLab projects accessible to the authenticated user. Can search, filter by membership, and sort results.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createAsanaClient } from "../lib/asana-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "asana-list-projects",
   description: "List all projects in the Asana workspace.",
   inputSchema: defineSchema((v) =>
     v.object({

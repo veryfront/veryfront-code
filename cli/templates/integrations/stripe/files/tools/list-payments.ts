@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatAmount, formatDate, listPaymentIntents } from "../../lib/stripe-client.ts";
+import { formatAmount, formatDate, listPaymentIntents } from "../lib/stripe-client.ts";
 
 export default tool({
-  id: "list-payments",
+  id: "stripe-list-payments",
   description: "List Stripe payment intents. Supports filtering by customer and creation date range.",
   inputSchema: defineSchema((v) => v.object({
     limit: v

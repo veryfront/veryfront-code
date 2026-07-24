@@ -4,7 +4,7 @@ import { createOneDriveClient } from "../lib/onedrive-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-files",
+  id: "onedrive-list-files",
   description:
     "List files and folders in a OneDrive folder. Returns file/folder names, types, sizes, and modification dates.",
   inputSchema: defineSchema((v) =>

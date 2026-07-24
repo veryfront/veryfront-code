@@ -216,5 +216,48 @@
     "calendar",
     "drive",
     "sheets"
-  ]
+  ],
+  "setupGuide": {
+    "title": "Google Docs Integration Setup",
+    "steps": [
+      {
+        "title": "Create or select a Google Cloud project",
+        "description": "Open the Google Cloud Console and select the project that will own the OAuth client.",
+        "url": "https://console.cloud.google.com/projectcreate"
+      },
+      {
+        "title": "Enable the Google Docs API",
+        "description": "Enable the Docs API used to read, create, and edit documents.",
+        "url": "https://console.cloud.google.com/apis/library/docs.googleapis.com"
+      },
+      {
+        "title": "Enable the Google Drive API",
+        "description": "Enable the Drive API used to list and search Google Docs files.",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+      },
+      {
+        "title": "Configure the OAuth consent screen",
+        "description": "Authorize exactly https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, and https://www.googleapis.com/auth/drive.readonly.",
+        "url": "https://console.cloud.google.com/apis/credentials/consent"
+      },
+      {
+        "title": "Create a web OAuth client",
+        "description": "Create an OAuth 2.0 Client ID for a web application and register http://localhost:3000/api/auth/docs-google/callback for local development plus the matching HTTPS callback for each deployed environment.",
+        "url": "https://console.cloud.google.com/apis/credentials"
+      },
+      {
+        "title": "Configure credentials",
+        "description": "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the application environment. Keep the client secret out of source control."
+      },
+      {
+        "title": "Connect Google Docs",
+        "description": "Start the application and open /api/auth/docs-google to complete the OAuth flow."
+      }
+    ],
+    "notes": [
+      "The same Google OAuth client can serve Gmail, Calendar, Drive, Docs, and Sheets when all required APIs, scopes, and callback URLs are configured.",
+      "Production deployments must use the application's durable OAuth token store and verified user identity resolver."
+    ],
+    "documentation": "https://developers.google.com/workspace/docs/api/auth"
+  }
 }

@@ -13,7 +13,7 @@ type SlackChannel = {
 };
 
 export default tool({
-  id: "list-channels",
+  id: "slack-list-channels",
   description: "List Slack channels the user is a member of",
   inputSchema: defineSchema((v) =>
     v.object({

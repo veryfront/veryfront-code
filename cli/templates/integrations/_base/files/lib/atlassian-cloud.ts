@@ -1,5 +1,8 @@
 import { readEnvironmentVariable } from "./environment.ts";
-import { fetchOAuthJson } from "./oauth.ts";
+import {
+  fetchOAuthJsonWithScopePolicy,
+  type OAuthScopePolicy,
+} from "./oauth.ts";
 
 type AtlassianService = "confluence" | "jira";
 
@@ -63,11 +66,13 @@ function supportsService(
 export async function resolveAtlassianCloudId(
   userId: string,
   service: AtlassianService,
+  scopePolicy: OAuthScopePolicy,
 ): Promise<string> {
-  const rawResources = await fetchOAuthJson<unknown>(
+  const rawResources = await fetchOAuthJsonWithScopePolicy<unknown>(
     userId,
     service,
     ACCESSIBLE_RESOURCES_URL,
+    scopePolicy,
   );
   const resources = normalizeAccessibleResources(rawResources).filter((
     resource,

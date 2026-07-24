@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-table",
+  id: "airtable-update-table",
   description:
     "Update Airtable table metadata, such as name or description. Uses the table ID for stable updates.",
   inputSchema: defineSchema((v) =>

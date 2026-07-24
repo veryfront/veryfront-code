@@ -4,7 +4,7 @@ import { createAsanaClient } from "../lib/asana-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-task",
+  id: "asana-create-task",
   description: "Create a new task in an Asana project.",
   inputSchema: defineSchema((v) =>
     v.object({

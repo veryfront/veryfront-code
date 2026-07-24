@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listOrders } from "../../lib/shopify-client.ts";
+import { listOrders } from "../lib/shopify-client.ts";
 
 export default tool({
-  id: "list-orders",
+  id: "shopify-list-orders",
   description:
     "List orders from your Shopify store. Can filter by status, financial status, and fulfillment status.",
   inputSchema: defineSchema((v) => v.object({

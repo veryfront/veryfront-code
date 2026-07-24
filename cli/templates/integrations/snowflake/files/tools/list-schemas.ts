@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listSchemas } from "../../lib/snowflake-client.ts";
+import { listSchemas } from "../lib/snowflake-client.ts";
 
 export default tool({
-  id: "list-schemas",
+  id: "snowflake-list-schemas",
   description:
     "List all schemas in a Snowflake database. Returns schema names, database names, creation dates, and owners.",
   inputSchema: defineSchema((v) => v.object({

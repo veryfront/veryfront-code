@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatDate, getCustomer } from "../../lib/stripe-client.ts";
+import { formatDate, getCustomer } from "../lib/stripe-client.ts";
 
 export default tool({
-  id: "get-customer",
+  id: "stripe-get-customer",
   description: "Retrieve detailed information about a specific Stripe customer by their ID.",
   inputSchema: defineSchema((v) => v.object({
     customerId: v.string().describe("The Stripe customer ID (starts with cus_)"),

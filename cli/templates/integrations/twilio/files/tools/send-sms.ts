@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatPhoneNumber, sendSMS } from "../../lib/twilio-client.ts";
+import { formatPhoneNumber, sendSMS } from "../lib/twilio-client.ts";
 
 export default tool({
-  id: "send-sms",
+  id: "twilio-send-sms",
   description: "Send an SMS text message to a phone number using Twilio",
   inputSchema: defineSchema((v) => v.object({
     to: v

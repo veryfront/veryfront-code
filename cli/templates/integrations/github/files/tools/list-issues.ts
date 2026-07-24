@@ -20,7 +20,7 @@ type GitHubIssueListItem = {
 };
 
 export default tool({
-  id: "list-issues",
+  id: "github-list-issues",
   description: "List issues for a GitHub repository",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "copy-sheet",
+  id: "sheets-copy-sheet",
   description: "Copy a sheet/tab to another spreadsheet.",
   inputSchema: defineSchema((v) =>
     v.object({

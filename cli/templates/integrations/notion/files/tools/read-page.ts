@@ -4,7 +4,7 @@ import { createNotionClient } from "../lib/notion-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "read-page",
+  id: "notion-read-page",
   description:
     "Read the content of a Notion page. Returns the page title and text content.",
   inputSchema: defineSchema((v) =>

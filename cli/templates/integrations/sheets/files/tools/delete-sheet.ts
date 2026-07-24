@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "delete-sheet",
+  id: "sheets-delete-sheet",
   description: "Delete a sheet/tab from a spreadsheet by numeric sheet ID.",
   inputSchema: defineSchema((v) =>
     v.object({

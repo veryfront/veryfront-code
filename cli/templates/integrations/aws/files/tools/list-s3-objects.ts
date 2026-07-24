@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAWSClient } from '../../lib/aws-client';
+import { getAWSClient } from '../lib/aws-client';
 
 export const listS3ObjectsTool = tool({
-  id: 'list-s3-objects',
+  id: 'aws-list-s3-objects',
   description: 'List objects in a specific S3 bucket. Optionally filter by prefix and limit the number of results.',
   inputSchema: defineSchema((v) =>
     v.object({

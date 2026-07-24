@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAWSClient } from '../../lib/aws-client';
+import { getAWSClient } from '../lib/aws-client';
 
 export const listLambdaFunctionsTool = tool({
-  id: 'list-lambda-functions',
+  id: 'aws-list-lambda-functions',
   description:
     'List all Lambda functions in your AWS account. Returns function details including name, ARN, runtime, and configuration.',
   inputSchema: defineSchema((v) =>

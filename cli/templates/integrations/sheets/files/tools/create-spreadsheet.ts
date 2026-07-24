@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-spreadsheet",
+  id: "sheets-create-spreadsheet",
   description:
     "Create a new Google Sheets spreadsheet with optional sheet configurations. Returns the new spreadsheet ID and URL.",
   inputSchema: defineSchema((v) =>

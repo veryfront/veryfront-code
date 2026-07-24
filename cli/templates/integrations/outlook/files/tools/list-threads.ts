@@ -4,7 +4,7 @@ import { createOutlookClient } from "../lib/outlook-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-threads",
+  id: "outlook-list-threads",
   description:
     "List recent Outlook conversation threads for request-desk triage. Returns representative messages with thread_id values that can be passed to get-thread.",
   inputSchema: defineSchema((v) =>

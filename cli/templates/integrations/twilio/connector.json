@@ -240,7 +240,7 @@
       },
       {
         "title": "Test the Integration",
-        "description": "Try sending a test SMS using the send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
+        "description": "Try sending a test SMS using the twilio-send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
         "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified"
       }
     ],

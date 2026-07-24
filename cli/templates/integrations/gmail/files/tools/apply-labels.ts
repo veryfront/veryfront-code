@@ -21,7 +21,7 @@ const getLabelChangeInput = defineSchema((v) =>
 );
 
 export default tool({
-  id: "apply-labels",
+  id: "gmail-apply-labels",
   description: "Apply or remove Gmail labels on a message.",
   inputSchema: getLabelChangeInput(),
   execute: async ({ messageId, addLabelIds, removeLabelIds }, context) => {

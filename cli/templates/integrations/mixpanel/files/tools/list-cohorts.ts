@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listCohorts } from "../../lib/mixpanel-client.ts";
+import { listCohorts } from "../lib/mixpanel-client.ts";
 
 export default tool({
-  id: "list-cohorts",
+  id: "mixpanel-list-cohorts",
   description:
     "List all user cohorts defined in your Mixpanel project. Cohorts are saved user segments based on properties or behaviors.",
   inputSchema: defineSchema((v) => v.object({

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatContactName, listContacts } from "../../lib/salesforce-client.ts";
+import { formatContactName, listContacts } from "../lib/salesforce-client.ts";
 
 export default tool({
-  id: "list-contacts",
+  id: "salesforce-list-contacts",
   description:
     "List contacts from your Salesforce CRM. Returns contact information including name, email, phone, title, and account association.",
   inputSchema: defineSchema((v) => v.object({

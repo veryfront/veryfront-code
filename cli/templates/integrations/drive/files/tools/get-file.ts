@@ -5,7 +5,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export default tool({
-  id: "get-file",
+  id: "drive-get-file",
   description:
     "Get detailed metadata about a specific file or folder in Google Drive. Returns detailed information including sharing settings, owners, and capabilities.",
   inputSchema: defineSchema((v) =>

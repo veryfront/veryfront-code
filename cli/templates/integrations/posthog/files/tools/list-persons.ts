@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatDate, listPersons } from "../../lib/posthog-client.ts";
+import { formatDate, listPersons } from "../lib/posthog-client.ts";
 
 export default tool({
-  id: "list-persons",
+  id: "posthog-list-persons",
   description:
     "List persons/users tracked in PostHog. View user properties, distinct IDs, and activity.",
   inputSchema: defineSchema((v) => v.object({

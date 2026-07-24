@@ -22,15 +22,8 @@ import {
   installDependencies,
   type PackageManager,
 } from "../../utils/package-manager.ts";
-import {
-  generateGitignoreContent,
-  promptForEnvVars,
-} from "../../utils/env-prompt.ts";
-import type {
-  EnvVarConfig,
-  ResolvedIntegration,
-  TemplateFile,
-} from "../../templates/types.ts";
+import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
+import type { EnvVarConfig, ResolvedIntegration, TemplateFile } from "../../templates/types.ts";
 import {
   loadFeature,
   mergeFiles,
@@ -43,6 +36,10 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
+import {
+  getAtlassianOAuthScopes,
+  getUnselectedAtlassianOAuthScopes,
+} from "../../templates/atlassian-oauth-composition.ts";
 import {
   runInteractiveWizard,
   shouldRunWizard,
@@ -107,6 +104,12 @@ const INTEGRATION_ICONS: Record<string, string> = {
 function generateIntegrationsStatusRoute(
   integrations: ResolvedIntegration[],
 ): string {
+  const atlassianOAuthScopes = getAtlassianOAuthScopes(
+    integrations.map(({ config }) => config.name),
+  );
+  const unselectedAtlassianOAuthScopes = getUnselectedAtlassianOAuthScopes(
+    integrations.map(({ config }) => config.name),
+  );
   const definitions = integrations.map(({ config }) => ({
     id: config.name,
     name: config.displayName,
@@ -119,10 +122,16 @@ function generateIntegrationsStatusRoute(
     requiredEnvironmentVariables: (config.envVars ?? [])
       .filter(({ required }) => required)
       .map(({ name }) => name),
+    requiredOAuthScopes: config.name === "jira" || config.name === "confluence"
+      ? atlassianOAuthScopes
+      : [],
+    forbiddenOAuthScopes: config.name === "jira" || config.name === "confluence"
+      ? unselectedAtlassianOAuthScopes
+      : [],
+    atlassianService: config.name === "jira" || config.name === "confluence" ? config.name : null,
   }));
-  const hasUserOAuth = definitions.some(({ connectionMode }) =>
-    connectionMode === "user-oauth"
-  );
+  const hasUserOAuth = definitions.some(({ connectionMode }) => connectionMode === "user-oauth");
+  const hasAtlassianOAuth = definitions.some(({ atlassianService }) => atlassianService !== null);
   const hasEnvironmentAuth = definitions.some(
     ({ connectionMode }) => connectionMode === "environment",
   );
@@ -130,10 +139,19 @@ function generateIntegrationsStatusRoute(
     const environmentVariables = definition.requiredEnvironmentVariables.length
       ? `[
 ${
-        definition.requiredEnvironmentVariables.map((name) =>
-          `      ${JSON.stringify(name)},`
-        ).join("\n")
+        definition.requiredEnvironmentVariables.map((name) => `      ${JSON.stringify(name)},`)
+          .join("\n")
       }
+    ]`
+      : "[]";
+    const requiredOAuthScopes = definition.requiredOAuthScopes.length
+      ? `[
+${definition.requiredOAuthScopes.map((scope) => `      ${JSON.stringify(scope)},`).join("\n")}
+    ]`
+      : "[]";
+    const forbiddenOAuthScopes = definition.forbiddenOAuthScopes.length
+      ? `[
+${definition.forbiddenOAuthScopes.map((scope) => `      ${JSON.stringify(scope)},`).join("\n")}
     ]`
       : "[]";
     return `  {
@@ -143,11 +161,18 @@ ${
     authType: ${JSON.stringify(definition.authType)},
     connectionMode: ${JSON.stringify(definition.connectionMode)},
     requiredEnvironmentVariables: ${environmentVariables},
+    requiredOAuthScopes: ${requiredOAuthScopes},
+    forbiddenOAuthScopes: ${forbiddenOAuthScopes},
+    atlassianService: ${JSON.stringify(definition.atlassianService)},
   },`;
   }).join("\n");
   const imports = [
+    hasUserOAuth ? 'import { oauthTokenStore } from "../../../../lib/oauth-store.ts";' : "",
     hasUserOAuth
-      ? 'import { oauthTokenStore } from "../../../../lib/oauth-store.ts";'
+      ? 'import { satisfiesOAuthScopePolicy } from "../../../../lib/oauth-scope-utils.ts";'
+      : "",
+    hasAtlassianOAuth
+      ? 'import { resolveAtlassianCloudId } from "../../../../lib/atlassian-cloud.ts";'
       : "",
     'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
     hasEnvironmentAuth
@@ -155,7 +180,12 @@ ${
       : "",
   ].filter(Boolean).join("\n");
   const oauthTokenValidator = hasUserOAuth
-    ? `function hasUsableOAuthTokens(value: unknown, now = Date.now()): boolean {
+    ? `function hasUsableOAuthTokens(
+  value: unknown,
+  requiredScopes: readonly string[],
+  forbiddenScopes: readonly string[],
+  now = Date.now(),
+): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const token = value as Record<string, unknown>;
   if (
@@ -163,6 +193,7 @@ ${
     token.accessToken.length > 131072 ||
     token.accessToken.trim() !== token.accessToken
   ) return false;
+  if (!satisfiesOAuthScopePolicy(token.scope, requiredScopes, forbiddenScopes)) return false;
   const hasRefreshToken = typeof token.refreshToken === "string" &&
     token.refreshToken.length > 0 && token.refreshToken.length <= 131072 &&
     token.refreshToken.trim() === token.refreshToken;
@@ -174,6 +205,34 @@ ${
     token.expiresAt < 0
   ) return false;
   return token.expiresAt > now || hasRefreshToken;
+}`
+    : "";
+  const integrationOAuthValidator = hasUserOAuth
+    ? `async function hasUsableIntegrationOAuth(
+  integration: (typeof INTEGRATIONS)[number],
+  userId: string,
+): Promise<boolean> {
+  const usableTokens = hasUsableOAuthTokens(
+    await oauthTokenStore.getTokens(integration.id, userId),
+    integration.requiredOAuthScopes,
+    integration.forbiddenOAuthScopes,
+  );
+  if (!usableTokens) return false;
+${
+      hasAtlassianOAuth
+        ? `  if (integration.atlassianService !== null) {
+    try {
+      await resolveAtlassianCloudId(userId, integration.atlassianService, {
+        requiredScopes: integration.requiredOAuthScopes,
+        forbiddenScopes: integration.forbiddenOAuthScopes,
+      });
+    } catch {
+      return false;
+    }
+  }
+`
+        : ""
+    }  return true;
 }`
     : "";
   const environmentValidator = hasEnvironmentAuth
@@ -190,9 +249,7 @@ ${
   userId: string,
 ): Promise<boolean> {
   return integration.connectionMode === "user-oauth"
-    ? hasUsableOAuthTokens(
-      await oauthTokenStore.getTokens(integration.id, userId),
-    )
+    ? hasUsableIntegrationOAuth(integration, userId)
     : hasRequiredConfiguration(integration.requiredEnvironmentVariables);
 }`
     : hasUserOAuth
@@ -200,9 +257,7 @@ ${
   integration: (typeof INTEGRATIONS)[number],
   userId: string,
 ): Promise<boolean> {
-  return hasUsableOAuthTokens(
-    await oauthTokenStore.getTokens(integration.id, userId),
-  );
+  return hasUsableIntegrationOAuth(integration, userId);
 }`
     : `function resolveConnected(
   integration: (typeof INTEGRATIONS)[number],
@@ -214,6 +269,7 @@ ${
 }`;
   const helperDefinitions = [
     oauthTokenValidator,
+    integrationOAuthValidator,
     environmentValidator,
     connectionResolver,
   ].filter(Boolean).join("\n\n");
@@ -399,9 +455,7 @@ function renderProjectStructure(
 
   if (omitted > 0) {
     lines.push(
-      `${"  ".repeat(1)}... ${omitted} more ${
-        omitted === 1 ? "entry" : "entries"
-      }`,
+      `${"  ".repeat(1)}... ${omitted} more ${omitted === 1 ? "entry" : "entries"}`,
     );
   }
 
@@ -474,9 +528,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   validateOrThrow("features", features, validateFeatures);
   validateOrThrow("integrations", integrations, validateIntegrations);
 
-  const featuresStr = features.length
-    ? ` with features: ${features.join(", ")}`
-    : "";
+  const featuresStr = features.length ? ` with features: ${features.join(", ")}` : "";
   const integrationsStr = integrations.length
     ? ` with integrations: ${integrations.join(", ")}`
     : "";
@@ -529,9 +581,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     ]);
   }
 
-  const allEnvVars: EnvVarConfig[] = templateConfig?.envVars
-    ? [...templateConfig.envVars]
-    : [];
+  const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
   const featureTips: string[] = [];
   let loadedIntegrations: ResolvedIntegration[] = [];
 
@@ -589,9 +639,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
       throw toError(
         createError({
           type: "config",
-          message: `Failed to load selected integrations: ${
-            integrationErrors.join("; ")
-          }`,
+          message: `Failed to load selected integrations: ${integrationErrors.join("; ")}`,
         }),
       );
     }
@@ -623,9 +671,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (projectName) await ensureDir(projectDir);
 
   // Create project files with progress spinner
-  const filesSpinner = quiet
-    ? null
-    : createSpinner("Creating project files...");
+  const filesSpinner = quiet ? null : createSpinner("Creating project files...");
   const createdPaths: string[] = [];
   try {
     for (const file of templateFiles as TemplateFile[]) {
@@ -699,9 +745,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Initialize git if requested
   if (initGit) {
-    const gitSpinner = quiet
-      ? null
-      : createSpinner("Initializing git repository...");
+    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
     try {
       const { initializeGitRepo } = await import("../../utils/git.ts");
       const success = await initializeGitRepo(
@@ -718,14 +762,11 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
-  (options as InitOptions & { _featureTips?: string[] })._featureTips =
-    featureTips;
+  (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   if (!options.skipInstall) {
     const pm = await detectPackageManager(projectDir, pmPreference);
-    const installSpinner = quiet
-      ? null
-      : createSpinner(`Installing dependencies with ${pm}...`);
+    const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
     const installSuccess = await installDependencies(projectDir, {
       silent: true,
       packageManager: pm,
@@ -755,9 +796,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const { writeProjectSlug } = await import("#cli/shared/config");
     const { pushCommand } = await import("../push/index.ts");
     const { deployCommand } = await import("../deploy/index.ts");
-    const manualDeployHint = `Run ${
-      brand("veryfront push --branch main")
-    }, then ${
+    const manualDeployHint = `Run ${brand("veryfront push --branch main")}, then ${
       brand("veryfront deploy --branch main --env production")
     } to deploy later.`;
 
@@ -803,9 +842,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
             }`,
           );
         } catch (error) {
-          const message = error instanceof Error
-            ? error.message
-            : String(error);
+          const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
           log(`  Your project was created locally. ${manualDeployHint}`);
         }
@@ -870,8 +907,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
       );
     }
 
-    const displayFeatureTips =
-      (options as InitOptions & { _featureTips?: string[] })._featureTips;
+    const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
     if (displayFeatureTips?.length) {
       for (const tip of displayFeatureTips) {
         tips.push(dim(tip));

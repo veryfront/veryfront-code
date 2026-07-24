@@ -1,12 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertExists,
-  assertRejects,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { getTemplate, templateConfigs } from "./index.ts";
+import {
+  ATLASSIAN_OAUTH_CALLBACK_PATH,
+  generateAtlassianOAuthFiles,
+} from "./atlassian-oauth-composition.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
 import {
   airtableConfig,
@@ -339,8 +339,33 @@ describe("cli/templates", () => {
 
   it("OAuth integration routes share one hardened application token store", async () => {
     const integrationTemplates = new URL("./integrations/", import.meta.url);
-    const oauthRoutes: URL[] = [];
+    const oauthRoutes: string[] = [];
     const offenders: string[] = [];
+    const inspectRoute = (path: string, source: string): void => {
+      oauthRoutes.push(path);
+      for (
+        const forbidden of [
+          "oauthMemoryTokenStore",
+          "hybridTokenStore",
+          "tokenStore.getToken",
+          "codeVerifier?: string",
+          "redirectUri?: string",
+        ]
+      ) {
+        if (source.includes(forbidden)) {
+          offenders.push(`${path}: ${forbidden}`);
+        }
+      }
+      if (!source.includes("oauthTokenStore")) {
+        offenders.push(`${path}: missing oauthTokenStore`);
+      }
+      const sharedLibPrefix = source.includes("createOAuthInitHandler")
+        ? "../../../../lib/"
+        : "../../../../../lib/";
+      if (!source.includes(sharedLibPrefix)) {
+        offenders.push(`${path}: invalid generated lib import depth`);
+      }
+    };
 
     for (const file of await collectTemplateTsFiles(integrationTemplates)) {
       if (!file.pathname.includes("/app/api/auth/")) continue;
@@ -352,35 +377,20 @@ describe("cli/templates", () => {
         continue;
       }
 
-      oauthRoutes.push(file);
-      for (
-        const forbidden of [
-          "oauthMemoryTokenStore",
-          "hybridTokenStore",
-          "tokenStore.getToken",
-          "codeVerifier?: string",
-          "redirectUri?: string",
-        ]
-      ) {
-        if (source.includes(forbidden)) {
-          offenders.push(`${file.pathname}: ${forbidden}`);
-        }
-      }
-      if (!source.includes("oauthTokenStore")) {
-        offenders.push(`${file.pathname}: missing oauthTokenStore`);
-      }
-      const sharedLibPrefix = source.includes("createOAuthCallbackHandler")
-        ? "../../../../../lib/"
-        : "../../../../lib/";
-      if (!source.includes(sharedLibPrefix)) {
-        offenders.push(`${file.pathname}: invalid generated lib import depth`);
-      }
+      inspectRoute(file.pathname, source);
     }
+
+    const atlassianCallback = generateAtlassianOAuthFiles([
+      "jira",
+      "confluence",
+    ]).find((file) => file.path === ATLASSIAN_OAUTH_CALLBACK_PATH);
+    assertExists(atlassianCallback);
+    inspectRoute(atlassianCallback.path, atlassianCallback.content);
 
     assertEquals(
       oauthRoutes.length,
-      46,
-      "23 OAuth integrations should ship init + callback routes",
+      45,
+      "23 OAuth integrations should ship init routes and one callback per provider grant",
     );
     assertEquals(
       offenders,
@@ -495,9 +505,7 @@ describe("cli/templates", () => {
     }
 
     assertEquals(
-      oauthFiles.map((file) =>
-        file.pathname.replace(integrationTemplates.pathname, "")
-      ),
+      oauthFiles.map((file) => file.pathname.replace(integrationTemplates.pathname, "")),
       ["_base/files/lib/oauth.ts"],
       "integrations must not override the shared hardened OAuth helper",
     );
@@ -596,9 +604,7 @@ describe("cli/templates", () => {
     assertEquals(
       offenders,
       [],
-      `OAuth API clients and tools must be user-bound. Offenders: ${
-        offenders.join(", ")
-      }`,
+      `OAuth API clients and tools must be user-bound. Offenders: ${offenders.join(", ")}`,
     );
   });
 
@@ -650,6 +656,157 @@ describe("cli/templates", () => {
     );
   });
 
+  it("gives every integration template tool a globally unique provider namespace", async () => {
+    const integrationsRoot = new URL("./integrations/", import.meta.url);
+    const seenToolIds = new Map<string, string>();
+
+    for await (const integration of Deno.readDir(integrationsRoot)) {
+      if (!integration.isDirectory || integration.name === "_base") continue;
+      const toolsRoot = new URL(
+        `./integrations/${integration.name}/files/tools/`,
+        import.meta.url,
+      );
+
+      try {
+        for await (const file of Deno.readDir(toolsRoot)) {
+          if (!file.isFile || !file.name.endsWith(".ts")) continue;
+          const source = await Deno.readTextFile(new URL(file.name, toolsRoot));
+          const ids = [
+            ...source.matchAll(/\bid:\s*(["'])([^"']+)\1/g),
+          ].map((match) => match[2]!);
+          assertEquals(
+            ids.length > 0,
+            true,
+            `${integration.name}/${file.name} must declare a literal tool id`,
+          );
+
+          for (const id of ids) {
+            assertEquals(
+              id.startsWith(`${integration.name}-`),
+              true,
+              `${integration.name}/${file.name} must namespace tool id ${id}`,
+            );
+            assertEquals(
+              /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id),
+              true,
+              `${integration.name}/${file.name} must use hyphenated lowercase tool id ${id}`,
+            );
+            assertEquals(
+              seenToolIds.has(id),
+              false,
+              `${id} is also declared by ${seenToolIds.get(id)}`,
+            );
+            seenToolIds.set(id, `${integration.name}/${file.name}`);
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+    }
+
+    assertEquals(seenToolIds.size > 0, true);
+  });
+
+  it("keeps integration guidance aligned with generated local tool IDs", async () => {
+    const integrationsRoot = new URL("./integrations/", import.meta.url);
+    const offenders: string[] = [];
+    const ignoredConnectorStringKeys = new Set([
+      "docsUrl",
+      "file",
+      "icon",
+      "id",
+      "name",
+      "url",
+    ]);
+
+    const collectConnectorGuidance = (
+      value: unknown,
+      key: string | null,
+      output: string[],
+    ): void => {
+      if (typeof value === "string") {
+        if (!key || !ignoredConnectorStringKeys.has(key)) output.push(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) collectConnectorGuidance(item, key, output);
+        return;
+      }
+      if (!value || typeof value !== "object") return;
+      for (const [childKey, child] of Object.entries(value)) {
+        collectConnectorGuidance(child, childKey, output);
+      }
+    };
+
+    for await (const integration of Deno.readDir(integrationsRoot)) {
+      if (!integration.isDirectory || integration.name === "_base") continue;
+      const integrationRoot = new URL(
+        `./integrations/${integration.name}/`,
+        import.meta.url,
+      );
+      const toolsRoot = new URL("./files/tools/", integrationRoot);
+      const legacyIds = new Set<string>();
+      try {
+        for await (const file of Deno.readDir(toolsRoot)) {
+          if (!file.isFile || !file.name.endsWith(".ts")) continue;
+          const source = await Deno.readTextFile(new URL(file.name, toolsRoot));
+          for (const match of source.matchAll(/\bid:\s*(["'])([^"']+)\1/g)) {
+            const id = match[2]!;
+            const prefix = `${integration.name}-`;
+            if (id.startsWith(prefix)) legacyIds.add(id.slice(prefix.length));
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+
+      const guidance: Array<{ source: string; content: string }> = [];
+      for (const fileName of ["README.md", "INTEGRATION_SUMMARY.md"]) {
+        try {
+          guidance.push({
+            source: `${integration.name}/${fileName}`,
+            content: await Deno.readTextFile(new URL(fileName, integrationRoot)),
+          });
+        } catch (error) {
+          if (!(error instanceof Deno.errors.NotFound)) throw error;
+        }
+      }
+      try {
+        const connectorGuidance: string[] = [];
+        collectConnectorGuidance(
+          JSON.parse(
+            await Deno.readTextFile(
+              new URL("./connector.json", integrationRoot),
+            ),
+          ),
+          null,
+          connectorGuidance,
+        );
+        guidance.push({
+          source: `${integration.name}/connector.json`,
+          content: connectorGuidance.join("\n"),
+        });
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+
+      for (const legacyId of legacyIds) {
+        const escapedId = legacyId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(
+          `(^|[^A-Za-z0-9-])${escapedId}($|[^A-Za-z0-9-])`,
+        );
+        for (const document of guidance) {
+          const prose = document.content.replaceAll(`${legacyId}.ts`, "");
+          if (pattern.test(prose)) {
+            offenders.push(`${document.source}: ${legacyId}`);
+          }
+        }
+      }
+    }
+
+    assertEquals(offenders, []);
+  });
+
   it("Google Docs templates only request documented Google OAuth scopes", async () => {
     const invalidScope = "https://www.googleapis.com/auth/docs";
     const checkedFiles = [
@@ -670,6 +827,11 @@ describe("cli/templates", () => {
   it("keeps supported OAuth connector scopes aligned with generated setup guidance", async () => {
     const expectedScopes = {
       drive: ["https://www.googleapis.com/auth/drive"],
+      "docs-google": [
+        "https://www.googleapis.com/auth/documents.readonly",
+        "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/drive.readonly",
+      ],
       github: ["repo", "read:user", "read:org"],
       gitlab: ["api", "read_user", "read_repository"],
       bitbucket: ["repository", "pullrequest:write", "issue", "account"],
@@ -712,21 +874,19 @@ describe("cli/templates", () => {
         "Mail.Read",
         "Mail.Send",
         "Mail.ReadWrite",
+        "Mail.Read.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
         "Group.Read.All",
         "Group-Conversation.Read.All",
-        "User.Read",
         "offline_access",
       ],
       teams: [
         "Chat.Read",
         "Chat.ReadWrite",
         "ChannelMessage.Send",
-        "ChannelMessage.Read.All",
         "Channel.ReadBasic.All",
         "Team.ReadBasic.All",
-        "User.Read",
         "offline_access",
       ],
     } as const;
@@ -774,6 +934,69 @@ describe("cli/templates", () => {
       setupPage.includes("Enable PKCE for the authorization flow (S256)"),
       true,
     );
+    assertEquals(setup.includes("ChannelMessage.Read.All"), false);
+    assertEquals(setupPage.includes("ChannelMessage.Read.All"), false);
+    assertEquals(setup.includes("User.Read"), false);
+    assertEquals(setupPage.includes("User.Read"), false);
+    assertEquals(setup.includes("ATLASSIAN_CLOUD_ID"), false);
+    for (const variableName of ["JIRA_CLOUD_ID", "CONFLUENCE_CLOUD_ID"]) {
+      assertEquals(setup.includes(variableName), true);
+      assertEquals(setupPage.includes(variableName), true);
+    }
+    for (
+      const callbackPath of [
+        "/api/auth/outlook/callback",
+        "/api/auth/teams/callback",
+        "/api/auth/sharepoint/callback",
+        "/api/auth/onedrive/callback",
+      ]
+    ) {
+      assertEquals(setup.includes(callbackPath), true);
+    }
+    assertEquals(setup.includes("/api/auth/atlassian/callback"), true);
+    assertEquals(setupPage.includes("/api/auth/atlassian/callback"), true);
+    for (
+      const obsoleteCallbackPath of [
+        "/api/auth/jira/callback",
+        "/api/auth/confluence/callback",
+      ]
+    ) {
+      assertEquals(setup.includes(obsoleteCallbackPath), false);
+      assertEquals(setupPage.includes(obsoleteCallbackPath), false);
+    }
+    assertEquals(setup.includes("one shared Atlassian grant"), true);
+    assertEquals(setup.includes("legacy `jira` and `confluence` token rows"), true);
+    assertEquals(setup.includes("account-level"), true);
+    assertEquals(setup.includes("resource-level"), true);
+    assertEquals(setup.includes("does not expose a disconnect endpoint"), true);
+    assertEquals(setup.includes("delete the shared `atlassian` token row"), true);
+    assertEquals(setup.includes("`<integration>-<tool>`"), true);
+    assertEquals(setup.includes("agent allowlists"), true);
+    assertEquals(setup.includes("MICROSOFT_TENANT_ID"), false);
+    assertEquals(setup.includes("/api/connections"), false);
+    assertEquals(setup.includes("/api/integrations/status"), true);
+  });
+
+  it("omits Teams client methods that require scopes outside the generated contract", async () => {
+    const client = await Deno.readTextFile(
+      new URL("./integrations/teams/files/lib/teams-client.ts", import.meta.url),
+    );
+    const readme = await Deno.readTextFile(
+      new URL("./integrations/teams/README.md", import.meta.url),
+    );
+
+    for (const unsupportedMethod of ["getChannelMessages", "getCurrentUser"]) {
+      assertEquals(
+        client.includes(unsupportedMethod),
+        false,
+        `Teams client must not expose ${unsupportedMethod} without its required OAuth scope`,
+      );
+      assertEquals(
+        readme.includes(unsupportedMethod),
+        false,
+        `Teams README must not document ${unsupportedMethod} without its required OAuth scope`,
+      );
+    }
   });
 
   it("keeps every generated OAuth connector scope-exact with its runtime provider", async () => {
@@ -814,9 +1037,7 @@ describe("cli/templates", () => {
     assertEquals(
       offenders,
       [],
-      `Integration templates must require a real user id. Offenders: ${
-        offenders.join(", ")
-      }`,
+      `Integration templates must require a real user id. Offenders: ${offenders.join(", ")}`,
     );
   });
 

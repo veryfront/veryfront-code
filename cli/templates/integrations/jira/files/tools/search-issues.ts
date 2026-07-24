@@ -4,7 +4,7 @@ import { createJiraClient } from "../lib/jira-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-issues",
+  id: "jira-search-issues",
   description:
     'Search for Jira issues using JQL (Jira Query Language). Returns matching issues with key details. Common JQL examples: "assignee = currentUser() AND status != Done", "project = PROJ AND type = Bug", "created >= -7d".',
   inputSchema: defineSchema((v) =>

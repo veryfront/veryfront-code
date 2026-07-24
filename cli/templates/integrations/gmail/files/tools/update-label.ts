@@ -12,7 +12,7 @@ const LABEL_LIST_VISIBILITIES = [
 ] as const;
 
 export default tool({
-  id: "update-label",
+  id: "gmail-update-label",
   description: "Update a Gmail user label.",
   inputSchema: defineSchema((v) =>
     v.object({

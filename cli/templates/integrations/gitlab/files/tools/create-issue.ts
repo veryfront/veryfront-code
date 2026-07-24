@@ -4,7 +4,7 @@ import { createGitLabClient } from "../lib/gitlab-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-issue",
+  id: "gitlab-create-issue",
   description:
     "Create a new issue in a GitLab project. Can set title, description, labels, assignees, milestone, and due date.",
   inputSchema: defineSchema((v) =>

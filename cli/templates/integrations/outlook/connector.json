@@ -12,11 +12,11 @@
       "Mail.Read",
       "Mail.Send",
       "Mail.ReadWrite",
+      "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "Group.Read.All",
       "Group-Conversation.Read.All",
-      "User.Read",
       "offline_access"
     ],
     "callbackPath": "/api/auth/outlook/callback",
@@ -1408,7 +1408,7 @@
     {
       "id": "outlook__list_threads",
       "name": "List Threads",
-      "description": "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template get-thread tool or use it in get_thread's filter.",
+      "description": "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template outlook-get-thread tool or use it in get_thread's filter.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

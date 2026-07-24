@@ -4,7 +4,7 @@ import { createGitHubClient } from "../lib/github-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-pr",
+  id: "github-create-pr",
   description: "Create a new pull request in a GitHub repository",
   inputSchema: defineSchema((v) =>
     v.object({

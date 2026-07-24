@@ -4,7 +4,7 @@ import { createAsanaClient } from "../lib/asana-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-tasks",
+  id: "asana-list-tasks",
   description:
     "List tasks from Asana. Can filter by project or get tasks assigned to the current user.",
   inputSchema: defineSchema((v) =>
