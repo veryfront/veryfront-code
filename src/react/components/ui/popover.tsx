@@ -3,26 +3,14 @@
  * (Root / Trigger / Content + Title / Body / Footer / Actions section parts).
  * Classes are ported 1:1 from Studio's `Popover` (tokens remapped to
  * veryfront's `[var(--token)]` vocabulary). Anchored below the trigger;
- * dismisses on outside-click and `Escape`.
- *
- * TODO(a11y): focus trap + restore, portal + collision-aware positioning
- * (flip/shift), `aria-controls`/`aria-expanded` wiring on the trigger,
- * `side`/`align` offset variants. Private to the chat module.
+ * dismisses on outside-click and `Escape`. A11y work tracked in
+ * anchored-surface.tsx.
  *
  * @module react/components/ui/popover
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
-import { Floating } from "./floating.tsx";
-
-const PopoverContext = React.createContext<
-  {
-    open: boolean;
-    setOpen: (open: boolean) => void;
-    anchorRef: React.RefObject<HTMLElement | null>;
-  } | null
->(null);
+import { AnchoredContent, AnchoredRoot, AnchoredTrigger } from "./anchored-surface.tsx";
 
 /** Props accepted by `<Popover>`. */
 export interface PopoverProps {
@@ -33,52 +21,15 @@ export interface PopoverProps {
 }
 
 /** Popover root — owns open state and the positioning anchor. */
-export function Popover({
-  children,
-  open,
-  defaultOpen,
-  onOpenChange,
-}: PopoverProps): React.ReactElement {
-  const [internal, setInternal] = React.useState(defaultOpen ?? false);
-  const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internal;
-  const setOpen = React.useCallback((next: boolean) => {
-    if (!isControlled) setInternal(next);
-    onOpenChange?.(next);
-  }, [isControlled, onOpenChange]);
-  const anchorRef = React.useRef<HTMLElement | null>(null);
-  return (
-    <span ref={anchorRef} className="relative inline-block">
-      <PopoverContext.Provider value={{ open: isOpen, setOpen, anchorRef }}>
-        {children}
-      </PopoverContext.Provider>
-    </span>
-  );
+export function Popover(props: PopoverProps): React.ReactElement {
+  return <AnchoredRoot {...props} />;
 }
 
 /** Trigger — toggles the popover. `asChild` merges onto the child element. */
-export function PopoverTrigger({
-  children,
-  asChild,
-  onClick,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
-  const ctx = React.useContext(PopoverContext);
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      aria-haspopup="dialog"
-      aria-expanded={ctx?.open}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx?.setOpen(!ctx.open);
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function PopoverTrigger(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+): React.ReactElement {
+  return <AnchoredTrigger {...props} haspopup="dialog" />;
 }
 
 /** Props accepted by `<PopoverContent>`. */
@@ -94,23 +45,15 @@ export function PopoverContent({
   align = "end",
   ...props
 }: PopoverContentProps): React.ReactElement | null {
-  const ctx = React.useContext(PopoverContext);
-  if (!ctx) return null;
   return (
-    <Floating
-      anchorRef={ctx.anchorRef}
-      open={ctx.open}
-      align={align}
-      onDismiss={() => ctx.setOpen(false)}
+    <AnchoredContent
       role="dialog"
-      className={cn(
-        "z-50 min-w-[220px] overflow-hidden rounded-lg bg-[var(--popover)] text-[var(--foreground)] shadow-sm outline-none",
-        className,
-      )}
+      align={align}
+      className={cn("min-w-[220px]", className)}
       {...props}
     >
       {children}
-    </Floating>
+    </AnchoredContent>
   );
 }
 

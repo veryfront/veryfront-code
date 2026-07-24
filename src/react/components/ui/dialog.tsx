@@ -3,28 +3,22 @@
  * Trigger / Content + Header / Title / Description / Body / Footer / Action /
  * Cancel / Close / Form). Classes ported 1:1 from Studio's `Dialog` (tokens
  * remapped; `Heading` level 2 + `Text` inlined). Modal overlay + centered panel;
- * dismisses on `Escape` and overlay click.
- *
- * TODO(a11y): focus trap + restore, `aria-labelledby`/`aria-describedby` wiring,
- * scroll-lock, portal, enter/exit animation. Private to the chat module.
+ * dismisses on `Escape` and overlay click. A11y work tracked in modal-surface.tsx.
  *
  * @module react/components/ui/dialog
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
 import { ScrollFade } from "./scroll-fade.tsx";
 import { Button, type ButtonProps, LoadingButton } from "./button.tsx";
-
-const DialogContext = React.createContext<
-  { open: boolean; setOpen: (open: boolean) => void } | null
->(null);
-
-function useDialog() {
-  const ctx = React.useContext(DialogContext);
-  if (!ctx) throw new Error("Dialog parts must be used within <Dialog>");
-  return ctx;
-}
+import { useDisclosure } from "./disclosure.ts";
+import {
+  ModalClose,
+  ModalContent,
+  ModalContext,
+  ModalTrigger,
+  useModal,
+} from "./modal-surface.tsx";
 
 /** Props accepted by `<Dialog>`. */
 export interface DialogProps {
@@ -41,41 +35,20 @@ export function Dialog({
   defaultOpen,
   onOpenChange,
 }: DialogProps): React.ReactElement {
-  const [internal, setInternal] = React.useState(defaultOpen ?? false);
-  const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internal;
-  const setOpen = React.useCallback((next: boolean) => {
-    if (!isControlled) setInternal(next);
-    onOpenChange?.(next);
-  }, [isControlled, onOpenChange]);
+  const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
+  const ctx = React.useMemo(() => ({ open: isOpen, setOpen }), [isOpen, setOpen]);
   return (
-    <DialogContext.Provider value={{ open: isOpen, setOpen }}>
+    <ModalContext.Provider value={ctx}>
       {children}
-    </DialogContext.Provider>
+    </ModalContext.Provider>
   );
 }
 
 /** Trigger — opens the dialog. `asChild` merges onto the child element. */
-export function DialogTrigger({
-  children,
-  asChild,
-  onClick,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
-  const ctx = useDialog();
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx.setOpen(true);
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function DialogTrigger(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+): React.ReactElement {
+  return <ModalTrigger {...props} />;
 }
 
 /** Modal surface — overlay + centered panel, rendered while open. */
@@ -84,47 +57,17 @@ export function DialogContent({
   children,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
-  const ctx = useDialog();
-  const panelRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!ctx.open) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ctx.setOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    // Focus the first focusable descendant on open (radix-like) — e.g. a
-    // CommandInput — falling back to the panel itself. Full focus-trap is TODO.
-    const panel = panelRef.current;
-    const focusable = panel?.querySelector<HTMLElement>(
-      'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-    );
-    (focusable ?? panel)?.focus();
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [ctx.open]);
-
-  if (!ctx.open) return null;
   return (
-    <div className="fixed inset-0 z-50">
-      <div
-        className="fixed inset-0 bg-[var(--overlay)]"
-        onClick={() => ctx.setOpen(false)}
-      />
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        tabIndex={-1}
-        className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
-          "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none overflow-hidden flex flex-col",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-      </div>
-    </div>
+    <ModalContent
+      className={cn(
+        "fixed left-1/2 top-1/2 z-50 w-[calc(100%-3rem)] max-w-xl max-h-[85vh] -translate-x-1/2 -translate-y-1/2",
+        "rounded-xl bg-[var(--dialog)] text-[var(--foreground)] shadow-lg outline-none overflow-hidden flex flex-col",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </ModalContent>
   );
 }
 
@@ -231,7 +174,7 @@ export function DialogCancel({
   onClick,
   ...props
 }: ButtonProps): React.ReactElement {
-  const ctx = useDialog();
+  const ctx = useModal("Dialog");
   return (
     <Button
       variant={variant}
@@ -247,24 +190,8 @@ export function DialogCancel({
 }
 
 /** Closes the dialog. `asChild` merges onto the child element. */
-export function DialogClose({
-  children,
-  asChild,
-  onClick,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }): React.ReactElement {
-  const ctx = useDialog();
-  const Comp = asChild ? Slot : "button";
-  return (
-    <Comp
-      {...(asChild ? {} : { type: "button" as const })}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(e);
-        ctx.setOpen(false);
-      }}
-      {...props}
-    >
-      {children}
-    </Comp>
-  );
+export function DialogClose(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+): React.ReactElement {
+  return <ModalClose {...props} />;
 }
