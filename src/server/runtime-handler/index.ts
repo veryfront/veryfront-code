@@ -15,7 +15,6 @@ import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfro
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
-import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 // Re-export is at the bottom of the file
@@ -94,17 +93,10 @@ import {
   createIsolationErrorResponse,
   startIsolatedRequest,
 } from "./isolation.ts";
-import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
-import { resolveEnvironment } from "./environment-resolution.ts";
-import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
+import { buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import {
-  HTTP_GATEWAY_TIMEOUT,
-  isLightweightPath,
-  isMonitoringPath,
-  shouldSkipEnrichedContext,
-} from "./request-utils.ts";
+import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
   EnvironmentVariableCache,
@@ -114,7 +106,11 @@ import {
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { projectMiddlewareRuntime } from "./project-middleware.ts";
-import { prepareProjectRequest, resolveProjectIdentity } from "./project-runtime-context.ts";
+import {
+  prepareProjectRequest,
+  resolveProjectIdentity,
+  resolveProjectRuntimeContext,
+} from "./project-runtime-context.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -526,108 +522,42 @@ export function createVeryfrontHandler(
             if (response) return response;
           }
 
-          // Resolve adapter and config for project.
-          // Note: `x-project-path` is NOT forwarded via `headers.projectPath` anymore;
-          // `resolveAdapter` reads it directly from `req` and only honours it when the
-          // request is proxy-trusted (see isProxyTrusted).
-          const adapterRes = await profilePhase("runtime.resolve_adapter", () =>
-            resolveAdapter({
-              req: request,
-              projectDir,
-              adapter,
-              config,
-              projectSlug: projectRes.projectSlug,
-              projectId: projectRes.projectId,
-              proxyToken: reqCtx.token,
-              releaseId: projectRes.releaseId,
-              proxyEnv: projectRes.proxyEnv,
-              branch: reqCtx.branch,
-              environmentName: projectRes.environmentName,
-              parsedDomain: projectRes.parsedDomain,
-              pathname: url.pathname,
-              isProxyMode,
-              proxyTrusted,
-            }));
-
-          // Resolve environment and validate
-          const host = request.headers.get("x-forwarded-host") ||
-            request.headers.get("host") || url.host;
-          const envRes = resolveEnvironment({
-            proxyEnv: projectRes.proxyEnv,
-            reqCtxMode: reqCtx.mode,
-            releaseId: projectRes.releaseId,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            environmentName: projectRes.environmentName,
-            host,
-            isLocalProject: adapterRes.isLocalProject,
+          const runtimeContext = await resolveProjectRuntimeContext({
+            req: request,
+            url,
+            projectDir,
+            adapter,
+            config,
+            projectIdentity: projectRes,
+            headers,
+            requestContext: reqCtx,
             isProxyMode,
-            pathname: url.pathname,
+            proxyTrust: { proxyTrusted },
+            securityConfig: securityLoader.getSecurityConfig(),
+            cspUserHeader: securityLoader.getCspUserHeader(),
+            debug: opts.debug,
+            routeRegistry: registry,
+            moduleServerUrl: opts.moduleServerUrl,
             defaultEnvironment: opts.defaultEnvironment,
+            envVarCache,
+            profileAdapter: (operation) => profilePhase("runtime.resolve_adapter", operation),
+            profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
+            logDebug,
           });
+          const adapterRes = runtimeContext.adapter;
+          const envRes = runtimeContext.environment;
 
           if (envRes.errorResponse) {
             return envRes.errorResponse;
           }
           updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
 
-          const skipRenderEnrichedContext = shouldSkipEnrichedContext(url.pathname);
-
-          // Build handler context
-          const ctx = buildHandlerContext({
-            projectDir: adapterRes.projectDir,
-            adapter: adapterRes.adapter,
-            securityConfig: securityLoader.getSecurityConfig(),
-            cspUserHeader: securityLoader.getCspUserHeader(),
-            debug: opts.debug,
-            config: adapterRes.config,
-            parsedDomain: projectRes.parsedDomain,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            releaseId: envRes.releaseId,
-            proxyToken: reqCtx.token,
-            environmentName: projectRes.environmentName,
-            resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
-            requestContext: reqCtx,
-            routeRegistry: registry,
-            isLocalProject: adapterRes.isLocalProject,
-            moduleServerUrl: opts.moduleServerUrl,
-            environmentId: headers.environmentId,
-            skipEnrichedContext: skipRenderEnrichedContext,
-          });
-
-          // Fetch per-project env vars for remote projects
-          let envVarsForRequest: Record<string, string> = {};
-          if (
-            !adapterRes.isLocalProject &&
-            headers.environmentId &&
-            reqCtx.token &&
-            projectRes.projectSlug
-          ) {
-            const environmentId = headers.environmentId;
-            const projectSlug = projectRes.projectSlug;
-            envVarsForRequest = await profilePhase(
-              "runtime.load_env_vars",
-              () =>
-                envVarCache.get(
-                  environmentId,
-                  reqCtx.token,
-                  projectSlug,
-                ),
-            );
-
-            logDebug("[runtime-handler] Project env vars fetched", {
-              projectSlug,
-              environmentId,
-              count: Object.keys(envVarsForRequest).length,
-            });
-          }
+          const ctx = runtimeContext.handlerContext!;
+          const envVarsForRequest = runtimeContext.rawEnvVars;
 
           await incrementRequestMetrics();
 
-          const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
-            adapterRes.config?.integrations,
-          );
+          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
           const executeProjectRoute = () =>
             projectMiddlewareRuntime.execute({
               request,

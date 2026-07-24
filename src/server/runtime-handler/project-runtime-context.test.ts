@@ -1,12 +1,23 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createRequestContext } from "../context/request-context.ts";
 import type { DomainLookupResult } from "../utils/domain-lookup.ts";
 import type { ParsedDomain } from "#veryfront/types";
+import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { __injectDepsForTests, extractRequestHeaders } from "./project-resolution.ts";
-import { prepareProjectRequest, resolveProjectIdentity } from "./project-runtime-context.ts";
+import {
+  prepareProjectRequest,
+  resolveProjectIdentity,
+  resolveProjectRuntimeContext,
+} from "./project-runtime-context.ts";
 
 const defaultParsedDomain: ParsedDomain = {
   slug: null,
@@ -16,6 +27,123 @@ const defaultParsedDomain: ParsedDomain = {
   isDraft: false,
   allowIframeEmbed: false,
 };
+
+function createMockAdapter(
+  files: Record<string, { isDirectory: boolean; isFile?: boolean }> = {},
+  env: Record<string, string> = {},
+): RuntimeAdapter {
+  return {
+    id: "memory",
+    name: "Memory",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: true,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: true,
+    },
+    fs: {
+      readFile: async () => "",
+      writeFile: async () => {},
+      exists: async (path: string) => path in files,
+      readDir: async function* () {},
+      stat: async (path: string) => {
+        const entry = files[path];
+        if (!entry) throw new Error(`Not found: ${path}`);
+        return {
+          size: 0,
+          isFile: entry.isFile ?? !entry.isDirectory,
+          isDirectory: entry.isDirectory,
+          isSymlink: false,
+          mtime: null,
+        };
+      },
+      mkdir: async () => {},
+      remove: async () => {},
+      makeTempDir: async () => "/tmp/vf-test",
+      watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
+    },
+    env: {
+      get: (key: string) => env[key],
+      set: (key: string, value: string) => {
+        env[key] = value;
+      },
+      toObject: () => ({ ...env }),
+    },
+    server: {
+      upgradeWebSocket: () => {
+        throw new Error("Not implemented");
+      },
+    },
+    serve: async () => ({
+      stop: async () => {},
+      addr: { hostname: "127.0.0.1", port: 0 },
+    }),
+  };
+}
+
+function makeRuntimeContextInput(
+  overrides: Record<string, unknown> = {},
+): Parameters<typeof resolveProjectRuntimeContext>[0] {
+  const req = new Request("http://remote-project.preview.lvh.me/page", {
+    headers: {
+      "x-project-slug": "remote-project",
+      "x-project-id": "proj-remote",
+      "x-token": "proxy-token",
+      "x-environment-id": "env-remote",
+    },
+  });
+  const url = new URL(req.url);
+  const headers = extractRequestHeaders(req, url);
+  const requestContext = createRequestContext(req);
+  const adapter = createMockAdapter();
+  const config = {
+    integrations: {
+      allow: {
+        github: { allowedTools: ["list_repos", "get_issue"] },
+      },
+    },
+  } as unknown as VeryfrontConfig;
+
+  return {
+    req,
+    url,
+    projectDir: "/base/project",
+    adapter,
+    config,
+    projectIdentity: {
+      projectSlug: "remote-project",
+      projectId: "proj-remote",
+      releaseId: "rel-remote",
+      environmentName: "Preview",
+      proxyEnv: "preview",
+      parsedDomain: defaultParsedDomain,
+    },
+    headers,
+    requestContext,
+    isProxyMode: false,
+    proxyTrust: { proxyTrusted: undefined },
+    securityConfig: { allowedOrigins: ["*"] } as any,
+    cspUserHeader: "default-src 'self'",
+    debug: true,
+    routeRegistry: {} as any,
+    moduleServerUrl: "https://modules.example.test",
+    envVarCache: {
+      get: () => Promise.resolve({ REMOTE_ONLY: "1" }),
+    },
+    logDebug: () => {},
+    ...overrides,
+  } as Parameters<typeof resolveProjectRuntimeContext>[0];
+}
+
+afterEach(() => {
+  defaultDiscoveryCache.projects.clear();
+  defaultDiscoveryCache.adapters.clear();
+});
 
 async function assertJsonResponse(
   response: Response,
@@ -176,7 +304,7 @@ describe("prepareProjectRequest", () => {
 });
 
 describe("resolveProjectIdentity", () => {
-  it("rejects unsupported runtime context operations before Task 3", async () => {
+  it("rejects unsupported identity operation names", async () => {
     const req = new Request("http://localhost/");
     const url = new URL(req.url);
 
@@ -371,5 +499,199 @@ describe("resolveProjectIdentity", () => {
     } finally {
       __injectDepsForTests(null);
     }
+  });
+});
+
+describe("resolveProjectRuntimeContext", () => {
+  it("returns handler context, raw env vars, and normalized source policy for remote requests", async () => {
+    let envLoadCount = 0;
+    const adapter = createMockAdapter();
+    const routeRegistry = { execute: () => Promise.resolve(undefined) } as any;
+    const securityConfig = { allowedOrigins: ["https://example.test"] } as any;
+    const cspUserHeader = "default-src 'self'";
+    const input = makeRuntimeContextInput({
+      adapter,
+      routeRegistry,
+      securityConfig,
+      cspUserHeader,
+      envVarCache: {
+        get: (
+          environmentId: string,
+          token: string,
+          projectSlug: string,
+        ) => {
+          envLoadCount += 1;
+          assertEquals(environmentId, "env-remote");
+          assertEquals(token, "proxy-token");
+          assertEquals(projectSlug, "remote-project");
+          return Promise.resolve({ REMOTE_ONLY: "1", SECRET_VALUE: "present" });
+        },
+      },
+    });
+
+    const result = await resolveProjectRuntimeContext(input);
+
+    assertEquals(envLoadCount, 1);
+    assertEquals(result.rawEnvVars, { REMOTE_ONLY: "1", SECRET_VALUE: "present" });
+    assertEquals(result.sourceIntegrationPolicy, {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: {
+        github: { allowedToolIds: ["get_issue", "list_repos"] },
+      },
+    });
+    assertExists(result.handlerContext);
+    const ctx = result.handlerContext;
+    assertStrictEquals(ctx.adapter, adapter);
+    assertStrictEquals(ctx.securityConfig, securityConfig);
+    assertStrictEquals(ctx.cspUserHeader, cspUserHeader);
+    assertStrictEquals(ctx.routeRegistry, routeRegistry);
+    assertEquals(ctx.projectDir, "/base/project");
+    assertEquals(ctx.projectSlug, "remote-project");
+    assertEquals(ctx.projectId, "proj-remote");
+    assertEquals(ctx.releaseId, "rel-remote");
+    assertEquals(ctx.proxyToken, "proxy-token");
+    assertEquals(ctx.environmentId, "env-remote");
+    assertEquals(ctx.moduleServerUrl, "https://modules.example.test");
+    assertEquals(ctx.requestContext?.mode, "preview");
+    assertEquals(result.environment.resolvedEnvironment, "preview");
+  });
+
+  it("honors trusted local project paths, suppresses local proxy tokens, and skips enriched context", async () => {
+    const adapter = createMockAdapter({
+      "/trusted/project": { isDirectory: true },
+      "/trusted/project/app": { isDirectory: true },
+    });
+    defaultDiscoveryCache.adapters.set("/trusted/project", adapter);
+    const req = new Request("http://localhost/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+      headers: {
+        "x-project-slug": "local-project",
+        "x-project-id": "proj-local",
+        "x-token": "proxy-token",
+        "x-project-path": "/trusted/project",
+      },
+    });
+    const url = new URL(req.url);
+    const headers = extractRequestHeaders(req, url, true);
+    const requestContext = createRequestContext(req, { proxyTrusted: true });
+
+    let envLoadCount = 0;
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      adapter,
+      headers,
+      requestContext,
+      projectIdentity: {
+        projectSlug: "local-project",
+        projectId: "proj-local",
+        releaseId: undefined,
+        environmentName: undefined,
+        proxyEnv: "preview",
+        parsedDomain: defaultParsedDomain,
+      },
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: true },
+      skipEnrichedContext: true,
+      envVarCache: {
+        get: () => {
+          envLoadCount += 1;
+          return Promise.resolve({ SHOULD_NOT_LOAD: "1" });
+        },
+      },
+    }));
+
+    assertEquals(envLoadCount, 0);
+    assertEquals(result.adapter.isLocalProject, true);
+    assertEquals(result.adapter.projectDir, "/trusted/project");
+    assertEquals(defaultDiscoveryCache.projects.get("local-project"), "/trusted/project");
+    assertExists(result.handlerContext);
+    const ctx = result.handlerContext;
+    assertEquals(ctx.projectDir, "/trusted/project");
+    assertStrictEquals(ctx.adapter, adapter);
+    assertEquals(ctx.config, undefined);
+    assertEquals(ctx.proxyToken, undefined);
+    assertEquals(ctx.enriched, undefined);
+    assertEquals(result.rawEnvVars, {});
+  });
+
+  it("passes explicit false proxy trust so untrusted x-project-path is suppressed", async () => {
+    const adapter = createMockAdapter({
+      "/attacker/chosen/path": { isDirectory: true },
+      "/attacker/chosen/path/app": { isDirectory: true },
+    });
+    defaultDiscoveryCache.adapters.set("/attacker/chosen/path", adapter);
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "remote-project",
+        "x-project-id": "proj-remote",
+        "x-token": "proxy-token",
+        "x-project-path": "/attacker/chosen/path",
+      },
+    });
+    const url = new URL(req.url);
+    const headers = extractRequestHeaders(req, url, false);
+
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      adapter,
+      headers,
+      requestContext: createRequestContext(req, { proxyTrusted: false }),
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: false },
+      projectIdentity: {
+        projectSlug: "remote-project",
+        projectId: "proj-remote",
+        releaseId: undefined,
+        environmentName: undefined,
+        proxyEnv: "preview",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(result.adapter.isLocalProject, false);
+    assertEquals(result.adapter.projectDir, "/base/project");
+    assertEquals(defaultDiscoveryCache.projects.has("remote-project"), false);
+  });
+
+  it("returns production 404 responses and standalone synthetic fallback from environment resolution", async () => {
+    const remoteProduction = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      isProxyMode: true,
+      projectIdentity: {
+        projectSlug: "remote-project",
+        projectId: "proj-remote",
+        releaseId: undefined,
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(remoteProduction.environment.errorResponse?.status, 404);
+    assertEquals(
+      remoteProduction.environment.errorResponse?.headers.get("Content-Type"),
+      "text/html; charset=utf-8",
+    );
+
+    const standaloneProduction = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      isProxyMode: false,
+      defaultEnvironment: "production",
+      projectIdentity: {
+        projectSlug: "remote-project",
+        projectId: "proj-remote",
+        releaseId: undefined,
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(standaloneProduction.environment.errorResponse, undefined);
+    assertEquals(standaloneProduction.environment.resolvedEnvironment, "production");
+    assertEquals(standaloneProduction.environment.releaseId, "standalone-dev");
+    assertExists(standaloneProduction.handlerContext);
+    assertEquals(standaloneProduction.handlerContext.releaseId, "standalone-dev");
   });
 });
