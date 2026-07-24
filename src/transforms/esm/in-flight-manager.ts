@@ -43,21 +43,22 @@ export function __clearInFlightHttpFetches(): void {
 const IN_FLIGHT_JITTER_MS = 5_000;
 
 /**
- * Wait for an in-flight fetch with timeout + jitter.
+ * Wait for an in-flight fetch. The default timeout includes jitter; callers
+ * with a bounded owner operation can supply its complete wait window.
  * Returns undefined on timeout so caller can retry.
  */
 export async function waitForInFlightFetch(
   promise: Promise<string | null>,
-  cacheKey: string,
+  waitTimeoutMs?: number,
 ): Promise<string | null | undefined> {
-  const jitter = Math.floor(Math.random() * IN_FLIGHT_JITTER_MS);
-  const timeoutMs = IN_FLIGHT_WAIT_TIMEOUT_MS + jitter;
+  const timeoutMs = waitTimeoutMs === undefined
+    ? IN_FLIGHT_WAIT_TIMEOUT_MS + Math.floor(Math.random() * IN_FLIGHT_JITTER_MS)
+    : waitTimeoutMs;
 
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
       logger.warn("In-flight fetch wait timed out, will retry", {
-        cacheKey,
         timeoutMs,
       });
       resolve(undefined);

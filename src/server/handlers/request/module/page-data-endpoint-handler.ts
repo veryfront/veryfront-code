@@ -1,13 +1,13 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
-import { getRendererForProject } from "../../../shared/renderer-factory.ts";
+import { getRendererForProject, type RendererAdapter } from "../../../shared/renderer-factory.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { markRequestProfilePhase } from "#veryfront/observability";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 import { serverLogger } from "#veryfront/utils";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   type QueryParamCacheOptions,
@@ -78,6 +78,32 @@ function isPageDataCacheEnabled(): boolean {
   return PAGE_DATA_CACHE_MAX_ENTRIES > 0;
 }
 
+async function resolvePageDataWithinDeadline(
+  renderer: RendererAdapter,
+  slug: string,
+  request: Request,
+  url: URL,
+  callerSignal: AbortSignal | undefined,
+): Promise<PageDataResponse> {
+  const controller = new AbortController();
+  const workRequest = callerSignal ? request : new Request(request, { signal: controller.signal });
+
+  return await withTimeoutThrow(
+    renderer.resolvePageData(slug, {
+      request: workRequest,
+      url,
+      abortSignal: controller.signal,
+    }),
+    PAGE_DATA_TIMEOUT_MS,
+    `resolvePageData for ${slug}`,
+    {
+      signal: callerSignal,
+      onAbort: (reason) => controller.abort(reason),
+      onTimeout: (error) => controller.abort(error),
+    },
+  );
+}
+
 export function __clearPageDataEndpointCacheForTests(): void {
   pageDataCache.clear();
 }
@@ -109,18 +135,16 @@ export function handlePageDataEndpoint(
         const cachePolicy = cacheKey ? getPageDataCachePolicy(ctx) : null;
 
         const payload = cacheKey
-          ? await resolveCachedPageData(cacheKey, () =>
-            withTimeoutThrow(
-              renderer.resolvePageData(slug, { request: req, url }),
-              PAGE_DATA_TIMEOUT_MS,
-              `resolvePageData for ${slug}`,
-            ), cachePolicy!)
+          ? await waitForSharedPromise(
+            resolveCachedPageData(
+              cacheKey,
+              () => resolvePageDataWithinDeadline(renderer, slug, req, url, undefined),
+              cachePolicy!,
+            ),
+            req.signal,
+          )
           : await resolveUncachedPageData(() =>
-            withTimeoutThrow(
-              renderer.resolvePageData(slug, { request: req, url }),
-              PAGE_DATA_TIMEOUT_MS,
-              `resolvePageData for ${slug}`,
-            )
+            resolvePageDataWithinDeadline(renderer, slug, req, url, req.signal)
           );
         const cacheStrategy = cacheKey
           ? {
@@ -342,9 +366,30 @@ function refreshStalePageData(
 }
 
 /**
+ * Only http(s) and root-relative destinations may be encoded for the client to
+ * follow. The client follows the destination with `window.location.href`, which
+ * would EXECUTE a `javascript:`/`data:` URL — unlike the full-page 302 path where
+ * the browser ignores such a Location. Protocol-relative `//host` is rejected too
+ * (it is easy to smuggle past a naive "starts with /" check). Blocked
+ * destinations fall through to normal error handling instead of being followed.
+ */
+function isFollowableRedirect(destination: string): boolean {
+  if (destination.startsWith("/")) {
+    const baseOrigin = "https://veryfront.local";
+    try {
+      return new URL(destination, baseOrigin).origin === baseOrigin;
+    } catch {
+      return false;
+    }
+  }
+  return /^https?:\/\//i.test(destination);
+}
+
+/**
  * A redirect() from getServerData is thrown up the pipeline as a VeryfrontError
  * whose `context.redirect` holds the destination (mirrors extractRedirectLocation
- * in the SSR service). Returns null for any other error.
+ * in the SSR service). Returns null for any other error, or for a redirect whose
+ * destination is not safe to hand to the client to follow.
  */
 function extractRedirectFromError(
   error: unknown,
@@ -354,6 +399,7 @@ function extractRedirectFromError(
   })?.context;
   const redirect = context?.redirect;
   if (!redirect || typeof redirect.destination !== "string") return null;
+  if (!isFollowableRedirect(redirect.destination)) return null;
   return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 

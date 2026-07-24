@@ -34,7 +34,11 @@ import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "n
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { isDataControlResult, toDataControlResult } from "#veryfront/data/helpers.ts";
 import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import { createBodyReader, createJsonHelper } from "#veryfront/routing/api/context-builder.ts";
+import {
+  createBodyReader,
+  createJsonHelper,
+  createTextHelper,
+} from "#veryfront/routing/api/context-builder.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
@@ -482,11 +486,7 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
           // the same whether or not isolation is enabled.
           json: createJsonHelper(request),
           body: createBodyReader(request),
-          text: (data: string, init?: ResponseInit): Response =>
-            new Response(data, {
-              ...init,
-              headers: { "Content-Type": "text/plain", ...init?.headers },
-            }),
+          text: createTextHelper(),
           fs: workerFs,
         };
 

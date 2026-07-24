@@ -592,7 +592,7 @@ export const getRouterScript = () => `
     // ============================================
     // SPA navigation handler
     // ============================================
-    async function navigateSPA(href, pushState = true, restoreScroll = false) {
+    async function navigateSPA(href, historyMode = 'push', restoreScroll = false) {
       currentAbortController?.abort();
 
       if (isNavigating) return;
@@ -626,14 +626,24 @@ export const getRouterScript = () => `
         // { redirect: { destination } } payload. Follow it with a document
         // navigation to the target (the same net effect as the full-page 302),
         // instead of trying to render a page that does not exist here.
+        // Only follow http(s)/relative destinations: assigning a javascript:/data:
+        // URL to location.href would EXECUTE it (the server also filters these, so
+        // this is defense in depth). Fall through to the normal error path otherwise.
         if (pageData && pageData.redirect && typeof pageData.redirect.destination === 'string') {
-          log('SPA navigation redirect -> ' + pageData.redirect.destination);
-          window.location.href = pageData.redirect.destination;
-          return;
+          try {
+            var redirectTarget = new URL(pageData.redirect.destination, window.location.origin);
+            if (redirectTarget.protocol === 'http:' || redirectTarget.protocol === 'https:') {
+              log('SPA navigation redirect -> ' + redirectTarget.href);
+              window.location.href = redirectTarget.href;
+              return;
+            }
+          } catch (e) { /* invalid destination — do not follow */ }
         }
 
-        if (pushState) {
+        if (historyMode === 'push') {
           window.history.pushState({ pageData, scrollY: 0 }, '', href);
+        } else if (historyMode === 'replace') {
+          window.history.replaceState({ pageData, scrollY: 0 }, '', href);
         }
 
         // Update the shared router snapshot BEFORE rendering. RouterProvider
@@ -666,7 +676,11 @@ export const getRouterScript = () => `
 
         hideNavigationProgress();
         perfEnd('nav:total:' + href);
-        emitRouteTiming('total', targetPath, navigationStartedAt, { href, pushState, restoreScroll });
+        emitRouteTiming('total', targetPath, navigationStartedAt, {
+          href,
+          historyMode,
+          restoreScroll
+        });
         log('SPA navigation complete');
       } catch (error) {
         hideNavigationProgress();
@@ -1076,10 +1090,10 @@ export const getRouterScript = () => `
       domain: window.location.origin,
       path: window.location.pathname,
       push: (path) => {
-        void navigateSPA(path, true);
+        void navigateSPA(path, 'push');
       },
       replace: (path) => {
-        void navigateSPA(path, false);
+        void navigateSPA(path, 'replace');
       },
       back: () => {
         window.history.back();
@@ -1105,11 +1119,21 @@ export const getRouterScript = () => `
       })(),
       isPreview: false,
       isMounted: true,
-      navigate: (path) => navigateSPA(path, true),
+      navigate: (path) => navigateSPA(path, 'push'),
       reload: () => window.location.reload()
     };
 
     window.__veryfrontRouter = router;
+
+    // Route useRouter().push/replace/navigate (from veryfront/router) through the
+    // same SPA navigator that intercepts <Link> clicks. Without this the shared
+    // navigation store has no navigator registered and its navigate() falls back
+    // to a full-page location.assign (finding #7: push() full-reloads).
+    getNavigationStore().setNavigator((href, options) => {
+      const mode = options && options.history;
+      const historyMode = mode === 'replace' ? 'replace' : mode === 'none' ? 'none' : 'push';
+      return navigateSPA(href, historyMode);
+    });
 
     // ============================================
     // Event handlers
@@ -1121,7 +1145,7 @@ export const getRouterScript = () => `
       saveScrollPosition(currentPath);
 
       if (!e.state?.pageData) {
-        await navigateSPA(path, false, true);
+        await navigateSPA(path, 'none', true);
         return;
       }
 
@@ -1177,7 +1201,7 @@ export const getRouterScript = () => `
 
       e.preventDefault();
       cancelScheduledPrefetch();
-      void navigateSPA(href, true);
+      void navigateSPA(href, 'push');
     });
 
     document.addEventListener(

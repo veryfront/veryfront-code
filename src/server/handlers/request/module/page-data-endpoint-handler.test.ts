@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { FakeTime } from "#std/testing/time";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
@@ -240,6 +241,62 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 
+  it("does not encode a non-http(s) redirect destination for the client to follow", async () => {
+    // The client follows the destination with window.location.href, which would
+    // EXECUTE a javascript:/data: URL. Such destinations must NOT be emitted as a
+    // 200 redirect payload — they fall through to normal error handling instead.
+    for (const destination of ["javascript:alert(1)", "data:text/html,x", "//evil.example"]) {
+      setRendererInitializer(
+        createInitializer(() =>
+          Promise.reject(
+            Object.assign(new Error(`Redirect to ${destination}`), {
+              slug: "render-error",
+              context: { redirect: { destination, permanent: false } },
+            }),
+          )
+        ),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+        makeCtx(),
+      );
+
+      assertEquals(res.status, 500);
+      const body = await res.json();
+      assertEquals(body.redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
+  it("does not encode root-relative redirects that URL parsing normalizes across origins", async () => {
+    for (const destination of ["/\\evil.example", "/\t//evil.example"]) {
+      const parsedOrigin = parseOrigin(destination, "https://app.example");
+      assertEquals(parsedOrigin === null || parsedOrigin !== "https://app.example", true);
+
+      setRendererInitializer(
+        createInitializer(() =>
+          Promise.reject(
+            Object.assign(new Error(`Redirect to ${destination}`), {
+              slug: "render-error",
+              context: { redirect: { destination, permanent: false } },
+            }),
+          )
+        ),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+        makeCtx(),
+      );
+
+      assertEquals(res.status, 500);
+      const body = await res.json();
+      assertEquals(body.redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
   it("keeps speculative prefetch work and cache state out of foreground page data", async () => {
     const producers: string[] = [];
     const prefetchGate = Promise.withResolvers<void>();
@@ -415,6 +472,128 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(first.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
   });
 
+  it("aborts underlying page-data work when the request deadline expires", async () => {
+    using time = new FakeTime();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer((_slug, _ctx, options) => {
+        observedSignal = options?.abortSignal;
+        started.resolve();
+        return new Promise<PageDataResponse>((_, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+
+    const responsePromise = callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json"),
+      makeCtx(),
+    );
+    await started.promise;
+
+    await time.tickAsync(25_000);
+
+    const response = await responsePromise;
+    assertEquals(response.status, 504);
+    assertEquals(observedSignal?.aborted, true);
+  });
+
+  it("propagates caller cancellation into page-data work", async () => {
+    using time = new FakeTime();
+    const caller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer((_slug, _ctx, options) => {
+        observedSignal = options?.abortSignal;
+        started.resolve();
+        return new Promise<PageDataResponse>((_, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+
+    const responsePromise = callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json", {
+        headers: { cookie: "session=caller" },
+        signal: caller.signal,
+      }),
+      makeCtx(),
+    );
+    await started.promise;
+
+    const reason = new Error("client disconnected");
+    caller.abort(reason);
+    await time.tickAsync(0);
+
+    const response = await responsePromise;
+    assertEquals(response.status, 500);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, reason);
+  });
+
+  it("detaches a cancelled request without aborting a shared page-data fill", async () => {
+    const caller = new AbortController();
+    const resolveStarted = Promise.withResolvers<void>();
+    const resolveGate = Promise.withResolvers<void>();
+    let calls = 0;
+    let observedSignal: AbortSignal | undefined;
+    let observedRequestSignal: AbortSignal | undefined;
+
+    setRendererInitializer(
+      createInitializer((slug, _ctx, options) => {
+        calls++;
+        observedSignal = options?.abortSignal;
+        observedRequestSignal = options?.request?.signal;
+        resolveStarted.resolve();
+        return new Promise<PageDataResponse>((resolve, reject) => {
+          const onAbort = () => reject(options?.abortSignal?.reason);
+          options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+          resolveGate.promise.then(() => {
+            options?.abortSignal?.removeEventListener("abort", onAbort);
+            resolve(createPageData(slug, calls));
+          });
+        });
+      }),
+    );
+
+    const ctx = makeCtx();
+    const url = "http://localhost/_veryfront/page-data/index.json";
+    const cancelledResponse = callPageDataEndpoint(
+      new Request(url, { signal: caller.signal }),
+      ctx,
+    );
+    await resolveStarted.promise;
+
+    const followerResponse = callPageDataEndpoint(new Request(url), ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    caller.abort(new Error("client disconnected"));
+    assertEquals((await cancelledResponse).status, 500);
+    assertEquals(observedSignal?.aborted, false);
+    assertEquals(observedRequestSignal?.aborted, false);
+
+    resolveGate.resolve();
+    const response = await followerResponse;
+    assertEquals(response.status, 200);
+    assertEquals(calls, 1);
+
+    const cached = await callPageDataEndpoint(new Request(url), ctx);
+    assertEquals(cached.status, 200);
+    assertEquals(calls, 1);
+  });
+
   it("can disable the page-data cache with max entries set to zero", async () => {
     const envName = "VERYFRONT_PAGE_DATA_CACHE_MAX_ENTRIES";
     const originalMaxEntries = Deno.env.get(envName);
@@ -557,3 +736,11 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 });
+
+function parseOrigin(destination: string, base: string): string | null {
+  try {
+    return new URL(destination, base).origin;
+  } catch {
+    return null;
+  }
+}

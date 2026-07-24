@@ -185,7 +185,7 @@ interface NavigationStore {
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
 
-function getNavigationStore(): NavigationStore {
+export function getNavigationStore(): NavigationStore {
   const holder = globalThis as Record<symbol, unknown>;
   const existing = holder[NAVIGATION_STORE_KEY] as NavigationStore | undefined;
   if (existing) return existing;

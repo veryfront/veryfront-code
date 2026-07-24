@@ -117,27 +117,32 @@ export const PLATFORM_UTILITIES: Record<string, string> = {
   ...AI_MODULE_UTILITIES,
 };
 
+// Per-provider URL templates for the veryfront framework modules only. React is
+// NOT here: it always comes from esm.sh (see esmShReactImports) because unpkg and
+// jsdelivr only serve UMD globals, which cannot be loaded through an import map.
 interface CdnUrlTemplates {
-  react: (version: string) => string;
-  reactDom: (version: string) => string;
-  reactDomClient: (version: string) => string;
-  jsxRuntime: (version: string) => string;
-  jsxDevRuntime: (version: string) => string;
   veryfrontChat: (version: string) => string;
   veryfrontMarkdown: (version: string) => string;
   veryfrontMdx: (version: string) => string;
   veryfrontWorkflow: (version: string) => string;
 }
 
+// React import-map entries, always from esm.sh — the only CDN that serves React
+// as real ESM. Uses the centralized esmShReact() helper so the URLs stay
+// byte-identical across SSR/client (any mismatch loads a second React instance
+// and hooks fail).
+function esmShReactImports(react: string): Record<string, string> {
+  return {
+    react: esmShReact("react", react),
+    "react-dom": esmShReact("react-dom", react, "", true),
+    "react-dom/client": esmShReact("react-dom", react, "/client", true),
+    "react/jsx-runtime": esmShReact("react", react, "/jsx-runtime", true),
+    "react/jsx-dev-runtime": esmShReact("react", react, "/jsx-dev-runtime", true),
+  };
+}
+
 const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
   "esm.sh": {
-    // Use centralized esmShReact() helper from package-registry.ts to ensure URL consistency
-    // Any URL mismatch causes esm.sh to serve different modules -> multiple React instances -> hooks fail
-    react: (v) => esmShReact("react", v),
-    reactDom: (v) => esmShReact("react-dom", v, "", true),
-    reactDomClient: (v) => esmShReact("react-dom", v, "/client", true),
-    jsxRuntime: (v) => esmShReact("react", v, "/jsx-runtime", true),
-    jsxDevRuntime: (v) => esmShReact("react", v, "/jsx-dev-runtime", true),
     veryfrontChat: (v) =>
       `https://esm.sh/veryfront@${v}/chat?external=react,react-dom&target=es2022`,
     veryfrontMarkdown: (v) =>
@@ -147,23 +152,12 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
       `https://esm.sh/veryfront@${v}/workflow/react?external=react,react-dom&target=es2022`,
   },
   unpkg: {
-    react: (v) => `https://unpkg.com/react@${v}/umd/react.production.min.js`,
-    reactDom: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
-    reactDomClient: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
-    jsxRuntime: (v) => `https://unpkg.com/react@${v}/jsx-runtime`,
-    jsxDevRuntime: (v) => `https://unpkg.com/react@${v}/jsx-dev-runtime`,
     veryfrontChat: (v) => `https://unpkg.com/veryfront@${v}/esm/src/chat/index.js`,
     veryfrontMarkdown: (v) => `https://unpkg.com/veryfront@${v}/esm/src/markdown/index.js`,
     veryfrontMdx: (v) => `https://unpkg.com/veryfront@${v}/esm/src/mdx/index.js`,
     veryfrontWorkflow: (v) => `https://unpkg.com/veryfront@${v}/esm/src/workflow/react/index.js`,
   },
   jsdelivr: {
-    react: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/umd/react.production.min.js`,
-    reactDom: (v) => `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
-    reactDomClient: (v) =>
-      `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
-    jsxRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-runtime`,
-    jsxDevRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-dev-runtime`,
     veryfrontChat: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/chat/index.js`,
     veryfrontMarkdown: (v) =>
       `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/markdown/index.js`,
@@ -187,26 +181,15 @@ function buildCdnImportMapFromTemplates(
 ): Record<string, string> {
   const { react, veryfront } = versions;
 
-  // React is ALWAYS served from esm.sh, regardless of the configured CDN
-  // provider. esm.sh is the only CDN that serves React as real ESM; unpkg and
-  // jsdelivr only ship UMD globals (react/umd/react.production.min.js), which
-  // cannot be consumed through an import map at all — the browser rejects them
-  // with a module-resolution/CORS error and hydration never starts. Self-hosted
-  // mode already does exactly this. The `provider` only governs where the
-  // veryfront framework modules load from.
-  const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];
-
   return {
-    react: reactTemplates.react(react),
-    "react-dom": reactTemplates.reactDom(react),
-    "react-dom/client": reactTemplates.reactDomClient(react),
-    "react/jsx-runtime": reactTemplates.jsxRuntime(react),
-    "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(react),
+    // React is ALWAYS from esm.sh, regardless of the configured provider (see
+    // esmShReactImports). The `provider` only governs the veryfront modules.
+    ...esmShReactImports(react),
     "veryfront/chat": templates.veryfrontChat(veryfront),
     "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
     "veryfront/mdx": templates.veryfrontMdx(veryfront),
     "veryfront/workflow": templates.veryfrontWorkflow(veryfront),
-    // Core runtime utilities always resolve locally (see comment above).
+    // Core runtime utilities always resolve locally.
     ...CORE_PLATFORM_UTILITIES,
     // AI modules only override the CDN entries when requested.
     ...(includeAiModulesLocally ? AI_MODULE_UTILITIES : {}),
@@ -227,14 +210,9 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
 
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
-  const esmShTemplates = CDN_URL_TEMPLATES["esm.sh"];
 
   return {
-    react: esmShTemplates.react(react),
-    "react-dom": esmShTemplates.reactDom(react),
-    "react-dom/client": esmShTemplates.reactDomClient(react),
-    "react/jsx-runtime": esmShTemplates.jsxRuntime(react),
-    "react/jsx-dev-runtime": esmShTemplates.jsxDevRuntime(react),
+    ...esmShReactImports(react),
     "veryfront/chat": "/_veryfront/lib/chat.js",
     "veryfront/markdown": "/_veryfront/lib/markdown.js",
     "veryfront/mdx": "/_veryfront/lib/mdx.js",
@@ -423,14 +401,7 @@ export async function buildImportMap(
     : DEFAULT_VERSIONS;
 
   if (mode === "bundled") {
-    const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];
-    let imports: Record<string, string> = {
-      react: reactTemplates.react(versions.react),
-      "react-dom": reactTemplates.reactDom(versions.react),
-      "react-dom/client": reactTemplates.reactDomClient(versions.react),
-      "react/jsx-runtime": reactTemplates.jsxRuntime(versions.react),
-      "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(versions.react),
-    };
+    let imports: Record<string, string> = { ...esmShReactImports(versions.react) };
     imports = applyManifestDependencies(imports, releaseAssetManifest);
     imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
     imports = { ...imports, ...customImports };

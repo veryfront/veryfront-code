@@ -40,6 +40,29 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
     __destroyRSCHandlerForTests();
   });
 
+  it("does not inspect project dependencies until a handler is used", async () => {
+    const cache = createStubCache();
+    __injectCacheForTests(cache);
+    const originalStat = Deno.stat;
+    const projectDir = "/project/lazy-react-version";
+    let statCalls = 0;
+
+    Deno.stat = (path: string | URL) => {
+      if (String(path).includes(projectDir)) statCalls++;
+      return originalStat(path);
+    };
+
+    try {
+      getRSCHandler(projectDir);
+      await Deno.stat(".");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(statCalls, 0);
+    } finally {
+      Deno.stat = originalStat;
+    }
+  });
+
   describe("invalidateRSCHandlersForProject", () => {
     it("evicts every handler variant for only the changed project", () => {
       const cache = createStubCache();

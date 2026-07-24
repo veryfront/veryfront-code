@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache.test */
 
-import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
@@ -25,6 +31,7 @@ import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -57,7 +64,219 @@ function createMemoryBackend(store: Map<string, string>): CacheBackend {
   };
 }
 
+async function withIsolatedHttpCache<T>(
+  tempPrefix: string,
+  mockFetch: typeof fetch,
+  run: (tempDir: string) => Promise<T>,
+): Promise<T> {
+  const tempDir = await makeTempDir({ prefix: tempPrefix });
+
+  try {
+    return await withMockFetch(mockFetch, async () => {
+      __injectCachesForTests({
+        cachedPaths: new Map(),
+        processingStack: new Set(),
+        lastDistributedRefresh: new Map(),
+      });
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+
+      try {
+        return await run(tempDir);
+      } finally {
+        __injectCachesForTests(null);
+        __setDistributedCacheAccessorForTests(null);
+        __clearInFlightHttpFetches();
+      }
+    });
+  } finally {
+    await remove(tempDir, { recursive: true });
+  }
+}
+
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("retries transient esm.sh failures before failing a render", async () => {
+    const moduleUrl = "https://esm.sh/react@19.0.0/jsx-runtime?target=es2022";
+    let fetchCount = 0;
+
+    const mockFetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      return Promise.resolve(
+        new Response("export const jsx = () => null;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-retry-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal(moduleUrl, tempDir, "19.0.0");
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("does not retry permanent HTTP module failures", async () => {
+    let fetchCount = 0;
+    let bodyCancelled = false;
+
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          { status: 404 },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-permanent-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () =>
+          cacheModuleToLocal(
+            "https://esm.sh/missing-package?access_token=super-secret",
+            tempDir,
+          ),
+        Error,
+      );
+      assertEquals(fetchCount, 1);
+      assertEquals(bodyCancelled, true);
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+    });
+  });
+
+  it("retries failures while reading an HTTP module body", async () => {
+    let fetchCount = 0;
+
+    const mockFetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new TypeError("body disconnected"));
+              },
+            }),
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response("export const recovered = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-body-retry-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal(
+        "https://esm.sh/body-disconnect",
+        tempDir,
+      );
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("retries a network rejection before succeeding", async () => {
+    let fetchCount = 0;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) return Promise.reject(new TypeError("network unavailable"));
+      return Promise.resolve(new Response("export const recovered = true;"));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-network-retry-", mockFetch, async (tempDir) => {
+      const cachedUrl = await cacheModuleToLocal("https://esm.sh/network-retry", tempDir);
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("does not expose URL credentials after network retries are exhausted", async () => {
+    let fetchCount = 0;
+    const secretUrl = "https://esm.sh/network-failure?access_token=super-secret";
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.reject(new TypeError(`network unavailable for ${secretUrl}`));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-network-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(secretUrl, tempDir),
+        Error,
+      );
+
+      assertEquals(fetchCount, 3);
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+    });
+  });
+
+  it("does not expose URL credentials when an upstream returns HTML", async () => {
+    const secretUrl = "https://esm.sh/html-failure?access_token=super-secret";
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("<!doctype html><title>upstream failure</title>", {
+          headers: { "content-type": "text/html" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-html-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(secretUrl, tempDir),
+        Error,
+      );
+
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+      assertEquals(
+        error.message,
+        "Received HTML instead of JavaScript from https://esm.sh/html-failure. " +
+          "The package may not exist or failed to build on esm.sh.",
+      );
+    });
+  });
+
+  it("bounds transient failure attempts and cancels every response body", async () => {
+    let fetchCount = 0;
+    let cancelledBodies = 0;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelledBodies += 1;
+            },
+          }),
+          { status: 503 },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-exhausted-retry-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/exhausted", tempDir),
+        Error,
+      );
+
+      assertEquals(fetchCount, 3);
+      assertEquals(cancelledBodies, 3);
+      assertInstanceOf(error, Error);
+      assert(error.message.includes("503"));
+    });
+  });
+
   it("preserves and shares canonical React versions across project import maps", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-react-singleton-cache-" });
     const originalFetch = globalThis.fetch;
