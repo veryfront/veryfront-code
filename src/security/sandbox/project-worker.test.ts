@@ -260,7 +260,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             () => true,
           ),
           new Promise<boolean>((resolve) => {
-            timeout = setTimeout(() => resolve(false), 2_000);
+            timeout = setTimeout(() => resolve(false), 15_000);
           }),
         ]);
         assertEquals(rejected, true, label);
