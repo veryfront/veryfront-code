@@ -2,7 +2,11 @@ import type { CachePayload, CacheStore, CacheStoreStats } from "../types.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
-import { cloneCachePayload, parseCachePayload, serializeCachePayload } from "../cache-payload.ts";
+import {
+  cloneCachePayload,
+  parseSerializedCachePayload,
+  serializeCachePayload,
+} from "../cache-payload.ts";
 import { requirePositiveIntegerCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
 import { escapeRedisCacheGlobLiteral } from "#veryfront/cache/backends/redis-keyspace.ts";
 
@@ -43,7 +47,7 @@ export class APICacheStore implements CacheStore {
       this.keyPrefix.trim() !== this.keyPrefix ||
       this.keyPrefix.length === 0 ||
       this.keyPrefix.length > 128 ||
-      /[\x00-\x1f\x7f*?\[\]\\]/.test(this.keyPrefix)
+      /[\p{Cc}*?\[\]\\]/u.test(this.keyPrefix)
     ) {
       throw new TypeError(
         "API render cache keyPrefix must be a non-blank, glob-free value of at most 128 characters",
@@ -120,13 +124,7 @@ export class APICacheStore implements CacheStore {
   }
 
   private deserialize(json: string): CachePayload | undefined {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(json);
-    } catch (_) {
-      return undefined;
-    }
-    return parseCachePayload(parsed);
+    return parseSerializedCachePayload(json);
   }
 
   private resolveRetentionDeadline(value: CachePayload, now = Date.now()): number | null {

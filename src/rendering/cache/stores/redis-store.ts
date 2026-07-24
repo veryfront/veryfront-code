@@ -6,7 +6,7 @@ import {
   registerLegacyRenderRedisCacheNamespace,
 } from "#veryfront/cache/backends/redis-keyspace.ts";
 import { requirePositiveIntegerCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
-import { parseCachePayload, serializeCachePayload } from "../cache-payload.ts";
+import { parseSerializedCachePayload, serializeCachePayload } from "../cache-payload.ts";
 import {
   createRedisClientManager,
   type RedisClient,
@@ -221,17 +221,7 @@ export class RedisCacheStore implements CacheStore {
         return undefined;
       }
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch (_) {
-        /* expected: cached data may be corrupted or malformed JSON */
-        await this.deleteRedisKey(client, this.storageKey(key));
-        await this.deleteFallback(key);
-        return undefined;
-      }
-
-      const payload = parseCachePayload(parsed);
+      const payload = parseSerializedCachePayload(raw);
       if (payload) {
         await this.deleteFallback(key);
         return payload;

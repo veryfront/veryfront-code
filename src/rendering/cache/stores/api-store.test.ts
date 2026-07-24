@@ -141,6 +141,17 @@ describe("rendering/cache/stores/api-store", () => {
       const backend = new FakeApiBackend();
       const store = storeWith(backend);
       const original = payload("<h1>Original</h1>");
+      original.result.frontmatter = {
+        tags: ["Original"],
+        publishedAt: new Date("2026-07-24T08:30:00.000Z"),
+      };
+      original.result.nodeMap = new Map([[
+        1,
+        {
+          type: "heading",
+          createdAt: new Date("2026-07-23T07:20:00.000Z"),
+        },
+      ]]);
 
       await store.set("page", original);
       (original.result.frontmatter as { tags: string[] }).tags[0] = "input mutation";
@@ -151,6 +162,10 @@ describe("rendering/cache/stores/api-store", () => {
       assertEquals(
         (first?.result.frontmatter as { tags: string[] }).tags[0],
         "Original",
+      );
+      assertEquals(
+        first?.result.frontmatter.publishedAt,
+        new Date("2026-07-24T08:30:00.000Z"),
       );
       assertEquals((first?.result.nodeMap?.get(1) as { type: string }).type, "heading");
       if (first) {
@@ -164,10 +179,20 @@ describe("rendering/cache/stores/api-store", () => {
         "Original",
       );
       assertEquals((second?.result.nodeMap?.get(1) as { type: string }).type, "heading");
+      assertEquals(
+        (second?.result.nodeMap?.get(1) as { createdAt: Date }).createdAt,
+        new Date("2026-07-23T07:20:00.000Z"),
+      );
       assertEquals(backend.getCount, 0);
 
       const serialized = parseCachePayload(JSON.parse(backend.values.get("page")!));
-      assertEquals(serialized?.nodeMapEntries, [[1, { type: "heading" }]]);
+      assertEquals(serialized?.nodeMapEntries, [[
+        1,
+        {
+          type: "heading",
+          createdAt: new Date("2026-07-23T07:20:00.000Z"),
+        },
+      ]]);
       assertEquals(
         (serialized?.result.nodeMap?.get(1) as { type: string }).type,
         "heading",

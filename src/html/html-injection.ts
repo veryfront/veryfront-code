@@ -208,7 +208,9 @@ export function injectHTMLContent(
   }
 
   if (options.projectStylesheetHref && /<\/head>/i.test(html) && !hasProjectStylesheet(html)) {
-    const projectStylesheetTag = `<link rel="stylesheet" href="${options.projectStylesheetHref}">`;
+    const projectStylesheetTag = `<link rel="stylesheet" href="${
+      escapeHTML(options.projectStylesheetHref)
+    }">`;
     html = replaceLiteral(
       html,
       /<\/head>/i,

@@ -331,7 +331,7 @@ function snapshotPublicValue(
       return snapshot;
     }
 
-    if (!hasPlainObjectPrototype(value)) return undefined;
+    if (!hasPlainObjectPrototype(value, state.work)) return undefined;
     const properties = getOwnEnumerableDataProperties(
       value,
       MAX_FRONTMATTER_CONTAINER_ENTRIES,
@@ -357,7 +357,12 @@ function snapshotPublicValue(
   }
 }
 
-function hasPlainObjectPrototype(value: object): boolean {
+function hasPlainObjectPrototype(
+  value: object,
+  work?: FrontmatterWorkBudget,
+): boolean {
+  if (work && !consumeInspectionBudget(work, 1)) return false;
+
   try {
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
@@ -426,6 +431,7 @@ function getDenseArrayDataValues(
   try {
     if (!Array.isArray(value)) return undefined;
 
+    if (work && !consumeInspectionBudget(work, 1)) return undefined;
     const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
     if (!lengthDescriptor || !("value" in lengthDescriptor)) return undefined;
 
@@ -470,6 +476,7 @@ function getOwnEnumerableDataProperties(
   if (!isObjectRecord(value)) return undefined;
 
   try {
+    if (work && !consumeInspectionBudget(work, 1)) return undefined;
     const keys = Reflect.ownKeys(value);
     if (keys.length > maxEntries) return undefined;
     if (work && !consumeInspectionBudget(work, keys.length)) return undefined;
