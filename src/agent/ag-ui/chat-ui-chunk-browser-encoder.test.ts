@@ -210,6 +210,25 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
     );
   });
 
+  it("encodes source documents as renderable custom events", () => {
+    const encoder = createAgUiChatUiChunkBrowserEncoder();
+    const sourceDocument: ChatUiMessageChunk = {
+      type: "source-document",
+      sourceId: "knowledge/knowledge-ingest-20260723131451088-source.md",
+      mediaType: "text/markdown",
+      title: "knowledge/knowledge-ingest-20260723131451088-source.md",
+      filename: "knowledge/knowledge-ingest-20260723131451088-source.md",
+    };
+
+    assertEquals(encoder.encode(sourceDocument), [{
+      event: "Custom",
+      payload: {
+        name: "source-document",
+        value: sourceDocument,
+      },
+    }]);
+  });
+
   it("creates a tracked browser response for chat UI chunks", async () => {
     const response = createAgUiChatUiTrackedBrowserResponse({
       agUiInput: {
