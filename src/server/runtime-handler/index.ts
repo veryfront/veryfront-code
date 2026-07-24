@@ -318,9 +318,13 @@ export function createVeryfrontHandler(
 
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
   const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
+  const projectEnvFetch = globalThis.fetch;
   const envVarCache = new EnvironmentVariableCache(
-    (environmentId, token, projectSlug) =>
-      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token),
+    (environmentId, token, projectSlug, signal) =>
+      fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token, {
+        signal,
+        fetch: projectEnvFetch,
+      }),
   );
 
   let config: VeryfrontConfig | undefined = opts.config;

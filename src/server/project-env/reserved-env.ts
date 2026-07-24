@@ -1,12 +1,22 @@
 import { isReservedSharedRuntimeTelemetryEnvKey } from "#veryfront/observability";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { createProjectEnvSnapshot, type ProjectEnvSnapshot } from "./snapshot.ts";
 
 export function filterSharedRuntimeProjectEnv(
-  vars: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(vars).filter(([key]) => !isReservedSharedRuntimeTelemetryEnvKey(key)),
-  );
+  vars: Readonly<Record<string, string>>,
+): ProjectEnvSnapshot {
+  const source = createProjectEnvSnapshot(vars);
+  const filtered = Object.create(null) as Record<string, string>;
+  for (const key of Reflect.ownKeys(source)) {
+    if (typeof key !== "string" || isReservedSharedRuntimeTelemetryEnvKey(key)) continue;
+    Object.defineProperty(filtered, key, {
+      value: source[key],
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return createProjectEnvSnapshot(filtered);
 }
 
 function isDedicatedRuntime(): boolean {
@@ -14,8 +24,8 @@ function isDedicatedRuntime(): boolean {
 }
 
 export function filterRuntimeProjectEnv(
-  vars: Record<string, string>,
-): Record<string, string> {
-  if (isDedicatedRuntime()) return { ...vars };
+  vars: Readonly<Record<string, string>>,
+): ProjectEnvSnapshot {
+  if (isDedicatedRuntime()) return createProjectEnvSnapshot(vars);
   return filterSharedRuntimeProjectEnv(vars);
 }

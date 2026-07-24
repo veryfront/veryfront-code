@@ -62,10 +62,30 @@ describe("project-env/storage", () => {
   });
 
   it("getProjectEnvSnapshot returns full env overlay inside context", () => {
-    runWithProjectEnv({ FOO: "bar", BAZ: "qux" }, () => {
+    const input = { FOO: "bar", BAZ: "qux" };
+    runWithProjectEnv(input, () => {
       const snapshot = getProjectEnvSnapshot();
       assertEquals(snapshot, { FOO: "bar", BAZ: "qux" });
+      assertEquals(Object.getPrototypeOf(snapshot!), null);
+      assertEquals(Object.isFrozen(snapshot!), true);
+      input.FOO = "mutated";
+      assertEquals(getProjectEnv("FOO"), "bar");
     });
+  });
+
+  it("rejects accessor-backed overlays without invoking getters", () => {
+    let calls = 0;
+    const input = Object.create(null);
+    Object.defineProperty(input, "SECRET", {
+      enumerable: true,
+      get() {
+        calls += 1;
+        return "leaked";
+      },
+    });
+
+    assertThrows(() => runWithProjectEnv(input, () => undefined), TypeError);
+    assertEquals(calls, 0);
   });
 
   it("getProjectEnvSnapshot returns empty object for empty overlay", () => {

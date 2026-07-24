@@ -20,6 +20,8 @@ describe("server/project-env/reserved-env", () => {
       OPENAI_API_KEY: "project-openai-key",
       FEATURE_FLAG: "enabled",
     });
+    assertEquals(Object.getPrototypeOf(filtered), null);
+    assertEquals(Object.isFrozen(filtered), true);
   });
 
   it("returns the original project env values for non-reserved keys", () => {
@@ -46,6 +48,8 @@ describe("server/project-env/reserved-env", () => {
         OTEL_SERVICE_NAME: "veryfront-ops-agent",
         OPENAI_API_KEY: "project-openai-key",
       });
+      assertEquals(Object.getPrototypeOf(filtered), null);
+      assertEquals(Object.isFrozen(filtered), true);
     });
   });
 });

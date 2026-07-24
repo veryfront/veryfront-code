@@ -9,15 +9,19 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { registerTrustedProjectEnvSnapshot } from "#veryfront/platform/compat/process/env.ts";
+import { createProjectEnvSnapshot, type ProjectEnvSnapshot } from "./snapshot.ts";
 
-const projectEnvStorage = new AsyncLocalStorage<Record<string, string>>();
+const projectEnvStorage = new AsyncLocalStorage<ProjectEnvSnapshot>();
 
 /**
  * Run a function with project-specific environment variables.
  * Within the callback, `getProjectEnv()` will return values from `vars`.
  */
-export function runWithProjectEnv<T>(vars: Record<string, string>, fn: () => T): T {
-  return projectEnvStorage.run(vars, fn);
+export function runWithProjectEnv<T>(
+  vars: Readonly<Record<string, string>>,
+  fn: () => T,
+): T {
+  return projectEnvStorage.run(createProjectEnvSnapshot(vars), fn);
 }
 
 /**
@@ -42,7 +46,7 @@ export function isProjectEnvActive(): boolean {
  * Returns undefined if no overlay is active.
  * Used to forward env vars to isolated workers in proxy mode.
  */
-export function getProjectEnvSnapshot(): Record<string, string> | undefined {
+export function getProjectEnvSnapshot(): ProjectEnvSnapshot | undefined {
   return projectEnvStorage.getStore();
 }
 

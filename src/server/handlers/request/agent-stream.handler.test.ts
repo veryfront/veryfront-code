@@ -1696,6 +1696,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: (...args) => globalThis.fetch(...args),
       createRuntime: (runtimeAgent) => ({
         stream: async (_messages, _context, callbacks) => {
           capturedEnv = {
@@ -1892,6 +1893,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? agent : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: (...args) => globalThis.fetch(...args),
       createRuntime: (runtimeAgent) => ({
         stream: async (_messages, _context, callbacks) => {
           capturedEnv = {
