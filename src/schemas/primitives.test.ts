@@ -13,6 +13,7 @@ import {
   getSemverSchema,
   getTimestampSchema,
 } from "./index.ts";
+import { MAX_PATH_LENGTH_CHARS } from "../utils/constants/index.ts";
 
 function assertParseSuccess(result: { success: boolean }): void {
   assertEquals(result.success, true);
@@ -92,6 +93,102 @@ describe("primitive schemas", () => {
     it("rejects undefined values", () => {
       assertParseFailure(getJsonValueSchema().safeParse({ invalid: undefined }));
     });
+
+    it("rejects cyclic values without throwing", () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+
+      assertParseFailure(getJsonValueSchema().safeParse(cyclic));
+    });
+
+    it("rejects values deeper than the validation limit without throwing", () => {
+      let value: unknown = null;
+      for (let depth = 0; depth < 256; depth++) value = [value];
+
+      assertParseFailure(getJsonValueSchema().safeParse(value));
+    });
+
+    it("rejects oversized strings", () => {
+      assertParseFailure(getJsonValueSchema().safeParse("x".repeat(1_048_577)));
+    });
+
+    it("rejects accessors without invoking them", () => {
+      let reads = 0;
+      const value: Record<string, unknown> = {};
+      Object.defineProperty(value, "field", {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return "value";
+        },
+      });
+
+      assertParseFailure(getJsonValueSchema().safeParse(value));
+      assertEquals(reads, 0);
+    });
+
+    it("consumes one data-only snapshot of a stateful Proxy", () => {
+      let descriptorReads = 0;
+      let valueReads = 0;
+      const target = { field: "target" };
+      const value = new Proxy(target, {
+        getOwnPropertyDescriptor(_target, property) {
+          if (property !== "field") return undefined;
+          descriptorReads += 1;
+          return {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: "snapshot",
+          };
+        },
+        get(_target, property, receiver) {
+          if (property === "field") {
+            valueReads += 1;
+            return () => "not-json";
+          }
+          return Reflect.get(_target, property, receiver);
+        },
+      });
+
+      const result = getJsonValueSchema().safeParse(value);
+
+      assertEquals(result.success, true);
+      if (!result.success) return;
+      assertEquals(result.data, { field: "snapshot" });
+      assertEquals(result.data === value, false);
+      assertEquals(descriptorReads, 1);
+      assertEquals(valueReads, 0);
+    });
+
+    it("rejects objects with custom prototypes or symbol keys", () => {
+      const inherited = Object.assign(Object.create({ inherited: true }), { own: true });
+      const symbolKeyed = { value: true, [Symbol("hidden")]: true };
+
+      assertParseFailure(getJsonValueSchema().safeParse(inherited));
+      assertParseFailure(getJsonValueSchema().safeParse(symbolKeyed));
+    });
+
+    it("preserves __proto__ as data without changing the output prototype", () => {
+      const value: Record<string, unknown> = {};
+      Object.defineProperty(value, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: { polluted: true },
+      });
+
+      const result = getJsonValueSchema().safeParse(value);
+
+      assertEquals(result.success, true);
+      if (!result.success) return;
+      assertEquals(Object.hasOwn(result.data as object, "__proto__"), true);
+      assertEquals((result.data as Record<string, unknown>)["__proto__"], {
+        polluted: true,
+      });
+      assertEquals(Object.getPrototypeOf(result.data as object), Object.prototype);
+      assertEquals((result.data as { polluted?: unknown }).polluted, undefined);
+    });
   });
 
   describe("hexColor", () => {
@@ -131,6 +228,11 @@ describe("primitive schemas", () => {
     it("rejects file paths containing null bytes", () => {
       assertParseFailure(getFilePathSchema().safeParse("src/main\0.ts"));
     });
+
+    it("rejects file paths exceeding the shared path limit", () => {
+      assertParseSuccess(getFilePathSchema().safeParse("a".repeat(MAX_PATH_LENGTH_CHARS)));
+      assertParseFailure(getFilePathSchema().safeParse("a".repeat(MAX_PATH_LENGTH_CHARS + 1)));
+    });
   });
 
   describe("absolutePath", () => {
@@ -152,6 +254,15 @@ describe("primitive schemas", () => {
 
     it("rejects absolute paths containing null bytes", () => {
       assertParseFailure(getAbsolutePathSchema().safeParse("/tmp/main\0.ts"));
+    });
+
+    it("rejects absolute paths exceeding the shared path limit", () => {
+      assertParseSuccess(
+        getAbsolutePathSchema().safeParse(`/${"a".repeat(MAX_PATH_LENGTH_CHARS - 1)}`),
+      );
+      assertParseFailure(
+        getAbsolutePathSchema().safeParse(`/${"a".repeat(MAX_PATH_LENGTH_CHARS)}`),
+      );
     });
   });
 });

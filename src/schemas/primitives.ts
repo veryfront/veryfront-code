@@ -1,13 +1,15 @@
 /**
  * Reusable validation primitives, expressed against the `SchemaValidator`
- * contract via `defineSchema`. Each export is a lazy getter — calling it
+ * contract via `defineSchema`. Each export is a lazy getter. Calling it
  * materializes (and caches) the schema on first use.
  *
  * @module schemas/primitives
  */
 
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/index.ts";
 import { defineSchema } from "./define.ts";
+import { type BoundedJsonValue, snapshotBoundedJsonValue } from "./json-value.ts";
 
 const ABSOLUTE_PATH_PATTERN = /^(?:\/|\\(?!\\)|[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/;
 const MIN_PORT_NUMBER = 1;
@@ -42,29 +44,31 @@ export const getTimestampSchema = defineSchema((v) => v.string().datetime());
 export type Timestamp = InferSchema<ReturnType<typeof getTimestampSchema>>;
 
 /**
- * Recursive JSON value type — a string, number, boolean, null, array of
+ * Recursive JSON value type: a string, number, boolean, null, array of
  * JsonValue, or object with string keys and JsonValue values.
  */
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+export type JsonValue = BoundedJsonValue;
 
-export const getJsonValueSchema = defineSchema<JsonValue>((v): Schema<JsonValue> =>
-  v.lazy<JsonValue>(() =>
-    v.union([
-      v.string(),
-      v.number(),
-      v.boolean(),
-      v.null(),
-      v.array(getJsonValueSchema()),
-      v.record(v.string(), getJsonValueSchema()),
-    ]) as Schema<JsonValue>
-  )
-);
+export const getJsonValueSchema = defineSchema<JsonValue>((v): Schema<JsonValue> => {
+  const jsonValueShape = v.union([
+    v.string(),
+    v.number(),
+    v.boolean(),
+    v.null(),
+    v.array(v.unknown()),
+    v.object({}).passthrough(),
+  ]) as Schema<JsonValue>;
+
+  return v
+    .custom<unknown>(() => true)
+    .transform((value) => snapshotBoundedJsonValue(value))
+    .refine(
+      (snapshot) => snapshot.success,
+      "Expected an acyclic, bounded, data-only JSON value",
+    )
+    .transform((snapshot): JsonValue => snapshot.success ? snapshot.value : null)
+    .pipe(jsonValueShape);
+});
 
 export const getHexColorSchema = defineSchema((v) =>
   v.string().regex(/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/, "Invalid hex color")
@@ -83,6 +87,7 @@ export const getFilePathSchema = defineSchema((v) =>
   v
     .string()
     .min(1, "File path cannot be empty")
+    .max(MAX_PATH_LENGTH_CHARS, `File path cannot exceed ${MAX_PATH_LENGTH_CHARS} characters`)
     .refine(isPathWithoutNullBytes, "File path cannot contain null bytes")
 );
 export type FilePath = InferSchema<ReturnType<typeof getFilePathSchema>>;
@@ -90,6 +95,7 @@ export type FilePath = InferSchema<ReturnType<typeof getFilePathSchema>>;
 export const getAbsolutePathSchema = defineSchema((v) =>
   v
     .string()
+    .max(MAX_PATH_LENGTH_CHARS, `Path cannot exceed ${MAX_PATH_LENGTH_CHARS} characters`)
     .regex(
       ABSOLUTE_PATH_PATTERN,
       "Path must start at a filesystem root, drive letter, or UNC share",

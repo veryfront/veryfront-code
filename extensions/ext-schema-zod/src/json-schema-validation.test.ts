@@ -97,6 +97,27 @@ describe("SchemaValidator.compileJsonSchema", () => {
     assertEquals((await validate(validator, 42)).success, false);
   });
 
+  it("snapshots proxied array lengths from their data descriptor", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    let lengthReads = 0;
+    const value = new Proxy([] as unknown[], {
+      get(target, property, receiver) {
+        if (property === "length") {
+          lengthReads++;
+          return lengthReads === 5 ? 5 : 0;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const validator = compile({ enum: [value] });
+
+    assertEquals(lengthReads, 0);
+    assertEquals((await validate(validator, [])).success, true);
+    assertEquals((await validate(validator, [null, null, null, null, null])).success, false);
+  });
+
   it("rejects non-JSON schema values before they can collide in the cache", () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
