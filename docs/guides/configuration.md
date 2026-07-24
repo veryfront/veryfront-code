@@ -133,6 +133,26 @@ defineConfig({
 });
 ```
 
+### Remote module hosts
+
+Use `security.remoteHosts` to allow API route source to import modules from
+specific remote origins:
+
+```ts
+defineConfig({
+  security: {
+    remoteHosts: ["https://esm.sh", "https://cdn.jsdelivr.net"],
+  },
+});
+```
+
+Veryfront compares URL origins, so paths in these entries do not grant a
+narrower path-level permission. An omitted setting uses the framework's default
+CDN origins; an explicit empty array blocks every remote module import. A policy
+can contain at most 128 URLs, and each URL can contain at most 2,048 characters.
+Invalid configuration is rejected rather than replaced with a more permissive
+default.
+
 ### Render cache
 
 `cache.render` selects the render-result cache and defines its logical freshness window.
