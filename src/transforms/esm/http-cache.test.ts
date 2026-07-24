@@ -100,6 +100,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     const tempDir = await makeTempDir({ prefix: "vf-esm-permanent-failure-" });
     const originalFetch = globalThis.fetch;
     let fetchCount = 0;
+    let bodyCancelled = false;
 
     __injectCachesForTests({
       cachedPaths: new Map(),
@@ -109,12 +110,22 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
     globalThis.fetch = (() => {
       fetchCount += 1;
-      return Promise.resolve(new Response("not found", { status: 404 }));
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          { status: 404 },
+        ),
+      );
     }) as typeof fetch;
 
     try {
       await assertRejects(() => cacheModuleToLocal("https://esm.sh/missing-package", tempDir));
       assertEquals(fetchCount, 1);
+      assertEquals(bodyCancelled, true);
     } finally {
       globalThis.fetch = originalFetch;
       __injectCachesForTests(null);

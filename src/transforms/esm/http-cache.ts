@@ -76,12 +76,25 @@ import {
 const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
+const HTTP_MODULE_FETCH_WAIT_GRACE_MS = 5_000;
+const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_FETCH_TIMEOUT_MS * HTTP_MODULE_FETCH_MAX_ATTEMPTS +
+  HTTP_MODULE_FETCH_RETRY_DELAY_MS *
+    ((HTTP_MODULE_FETCH_MAX_ATTEMPTS - 1) * HTTP_MODULE_FETCH_MAX_ATTEMPTS / 2) +
+  HTTP_MODULE_FETCH_WAIT_GRACE_MS;
 
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
 
 function shouldRetryHttpModuleFetch(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function discardResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch (_) {
+    // The response is already being discarded.
+  }
 }
 
 async function fetchHttpModule(url: string): Promise<Response> {
@@ -132,11 +145,7 @@ async function fetchHttpModule(url: string): Promise<Response> {
         status: response.status,
         attempt,
       });
-      try {
-        await response.body?.cancel();
-      } catch (_) {
-        // A failed response is being discarded before retrying.
-      }
+      await discardResponseBody(response);
     } catch (error) {
       if (attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS) throw error;
       httpCacheLog.warn("HTTP module fetch failed, retrying", { url, attempt, error });
@@ -251,7 +260,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
-    const result = await waitForInFlightFetch(inFlight, cacheKey);
+    const result = await waitForInFlightFetch(inFlight, cacheKey, HTTP_MODULE_FETCH_MAX_WAIT_MS);
     if (result !== undefined) return result;
 
     if (inFlightHttpFetches.get(cacheKey) === inFlight) {
@@ -327,7 +336,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     const response = await fetchHttpModule(normalizedUrl);
 
     if (!response.ok) {
-      throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${response.status}` });
+      const status = response.status;
+      await discardResponseBody(response);
+      throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${status}` });
     }
 
     let code = await response.text();

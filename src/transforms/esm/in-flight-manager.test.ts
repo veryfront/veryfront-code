@@ -58,5 +58,20 @@ describe("transforms/esm/in-flight-manager", () => {
       const elapsed = Date.now() - start;
       assertEquals(elapsed < 1000, true);
     });
+
+    it("honors a caller-provided wait window", async () => {
+      let timer: ReturnType<typeof setTimeout>;
+      const slowResult = new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve("late"), 25);
+      });
+
+      try {
+        const result = await waitForInFlightFetch(slowResult, "key", 5);
+
+        assertEquals(result, undefined);
+      } finally {
+        clearTimeout(timer!);
+      }
+    });
   });
 });
