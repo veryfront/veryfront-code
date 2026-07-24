@@ -350,7 +350,14 @@ function refreshStalePageData(
  * destinations fall through to normal error handling instead of being followed.
  */
 function isFollowableRedirect(destination: string): boolean {
-  if (destination.startsWith("/") && !destination.startsWith("//")) return true;
+  if (destination.startsWith("/")) {
+    const baseOrigin = "https://veryfront.local";
+    try {
+      return new URL(destination, baseOrigin).origin === baseOrigin;
+    } catch {
+      return false;
+    }
+  }
   return /^https?:\/\//i.test(destination);
 }
 

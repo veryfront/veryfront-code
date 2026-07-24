@@ -268,6 +268,34 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     }
   });
 
+  it("does not encode root-relative redirects that URL parsing normalizes across origins", async () => {
+    for (const destination of ["/\\evil.example", "/\t//evil.example"]) {
+      const parsedOrigin = parseOrigin(destination, "https://app.example");
+      assertEquals(parsedOrigin === null || parsedOrigin !== "https://app.example", true);
+
+      setRendererInitializer(
+        createInitializer(() =>
+          Promise.reject(
+            Object.assign(new Error(`Redirect to ${destination}`), {
+              slug: "render-error",
+              context: { redirect: { destination, permanent: false } },
+            }),
+          )
+        ),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+        makeCtx(),
+      );
+
+      assertEquals(res.status, 500);
+      const body = await res.json();
+      assertEquals(body.redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
   it("keeps speculative prefetch work and cache state out of foreground page data", async () => {
     const producers: string[] = [];
     const prefetchGate = Promise.withResolvers<void>();
@@ -585,3 +613,11 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 });
+
+function parseOrigin(destination: string, base: string): string | null {
+  try {
+    return new URL(destination, base).origin;
+  } catch {
+    return null;
+  }
+}
