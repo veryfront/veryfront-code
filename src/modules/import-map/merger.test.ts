@@ -52,5 +52,73 @@ describe("modules/import-map/merger", () => {
       const result = mergeImportMaps({ imports: { a: "b" } });
       assertEquals(result.imports?.a, "b");
     });
+
+    it("treats prototype-shaped keys as inert own import-map data", () => {
+      const objectConstructor = Object as unknown as Record<string, unknown>;
+      const objectPrototype = Object.prototype as Record<string, unknown>;
+      const constructorDescriptor = Object.getOwnPropertyDescriptor(
+        objectConstructor,
+        "vfConstructorPolluted",
+      );
+      const prototypeDescriptor = Object.getOwnPropertyDescriptor(
+        objectPrototype,
+        "vfPolluted",
+      );
+      const input = JSON.parse(`{
+        "imports": {
+          "__proto__": "proto-import",
+          "constructor": "constructor-import",
+          "prototype": "prototype-import"
+        },
+        "scopes": {
+          "__proto__": { "vfPolluted": "yes" },
+          "constructor": { "vfConstructorPolluted": "yes" },
+          "prototype": {
+            "__proto__": "inner-proto-import",
+            "constructor": "inner-constructor-import"
+          }
+        }
+      }`) as never;
+
+      try {
+        const result = mergeImportMaps(input);
+        const imports = result.imports as Record<string, string>;
+        const scopes = result.scopes as Record<string, Record<string, string>>;
+
+        assertEquals(Object.getPrototypeOf(imports), null);
+        assertEquals(Object.getPrototypeOf(scopes), null);
+        assertEquals(Object.hasOwn(imports, "__proto__"), true);
+        assertEquals(Object.hasOwn(imports, "constructor"), true);
+        assertEquals(Object.hasOwn(scopes, "__proto__"), true);
+        assertEquals(Object.hasOwn(scopes, "constructor"), true);
+        assertEquals(Object.hasOwn(scopes, "prototype"), true);
+        assertEquals(Object.getPrototypeOf(scopes["__proto__"]), null);
+        assertEquals(Object.getPrototypeOf(scopes.constructor), null);
+        assertEquals(Object.getPrototypeOf(scopes.prototype), null);
+        assertEquals(scopes["__proto__"]?.vfPolluted, "yes");
+        assertEquals(scopes["constructor"]?.vfConstructorPolluted, "yes");
+        assertEquals(scopes.prototype?.["__proto__"], "inner-proto-import");
+        assertEquals(objectPrototype.vfPolluted, prototypeDescriptor?.value);
+        assertEquals(
+          objectConstructor.vfConstructorPolluted,
+          constructorDescriptor?.value,
+        );
+      } finally {
+        if (prototypeDescriptor) {
+          Object.defineProperty(objectPrototype, "vfPolluted", prototypeDescriptor);
+        } else {
+          delete objectPrototype.vfPolluted;
+        }
+        if (constructorDescriptor) {
+          Object.defineProperty(
+            objectConstructor,
+            "vfConstructorPolluted",
+            constructorDescriptor,
+          );
+        } else {
+          delete objectConstructor.vfConstructorPolluted;
+        }
+      }
+    });
   });
 });
