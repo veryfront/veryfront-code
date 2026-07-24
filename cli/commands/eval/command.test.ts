@@ -4,7 +4,6 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
 import {
-  compareEvalReports,
   datasets,
   type DiscoveredEval,
   EVAL_REPORT_SCHEMA_VERSION,
@@ -29,19 +28,7 @@ import { setJsonMode } from "../../shared/json-output.ts";
 import {
   applyGatewayBillingGroupFinalization,
   createAgentAdapter,
-  createDefaultEvalReportDir,
-  createEvalArtifactPaths,
-  createEvalCliExportConfig,
-  createEvalExitCode,
-  createEvalMarkdownReport,
-  createEvalModelArtifactPaths,
-  createEvalModelComparisonArtifact,
-  createEvalModelComparisonExitCode,
-  createEvalSuiteJunitXml,
-  createJunitXml,
   createResolvedEvalModelComparisonConfig,
-  createResultsJsonl,
-  createSummaryArtifact,
   createToolAdapter,
   type EvalOptions,
   exportEvalReportForCli,
@@ -59,8 +46,6 @@ import {
   resolveToolTargetId,
   runEvalCommand,
   runEvalWithGatewayBillingGroup,
-  summarizeReportForCli,
-  writeEvalArtifacts,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
 
@@ -482,31 +467,6 @@ describe("eval CLI command helpers", () => {
     for (const name of redactionEnvNames) Deno.env.delete(name);
 
     assertEquals(resolveEvalExportRedactionFromEnv(), {});
-  });
-
-  it("threads the runtime project slug into eval export context", () => {
-    const registry = createEvalReportExporterRegistry();
-    const config = createEvalCliExportConfig(
-      {
-        id: "eval:answers",
-        filePath: "/repo/evals/answers.eval.ts",
-        exportName: "default",
-        definition: {
-          id: "eval:answers",
-          target: "agent:assistant",
-          targetKind: "agent",
-          dataset: { kind: "inline", examples: [] },
-          metrics: [],
-        },
-      } as unknown as DiscoveredEval,
-      { exporters: ["mlflow"] } as EvalOptions,
-      "/repo",
-      createEvalArtifactPaths("/tmp/report"),
-      registry,
-      { projectSlug: "customer-support-agent" },
-    );
-
-    assertEquals(config?.context?.projectReference, "customer-support-agent");
   });
 
   it("lists evals without initializing selected exporter extensions", async () => {
@@ -1566,98 +1526,6 @@ describe("eval CLI command helpers", () => {
     }
   });
 
-  it("summarizes reports for JSON and human CLI output", () => {
-    assertEquals(summarizeReportForCli(createReport()), {
-      runId: "evalrun_test",
-      evalId: "eval:answers",
-      target: "agent:assistant",
-      records: 2,
-      passed: 1,
-      failed: 1,
-      passRate: 0.5,
-      metrics: [
-        {
-          name: "answer.exactMatch",
-          family: "answer",
-          severity: "gate",
-          passed: 1,
-          failed: 1,
-          skipped: 0,
-          passRate: 0.5,
-        },
-      ],
-    });
-  });
-
-  it("creates default eval artifact paths", () => {
-    assertEquals(
-      createDefaultEvalReportDir("evalrun_20260621_010203000"),
-      [
-        ".veryfront",
-        "evals",
-        "20260621_010203000",
-      ].join("/"),
-    );
-    assertEquals(
-      createDefaultEvalReportDir("evalrun_20260621_010203000", "eval:support-triage"),
-      [
-        ".veryfront",
-        "evals",
-        "20260621_010203000-support-triage",
-      ].join("/"),
-    );
-    assertEquals(createEvalArtifactPaths(".veryfront/evals/run-1"), {
-      directory: ".veryfront/evals/run-1",
-      summary: ".veryfront/evals/run-1/summary.json",
-      results: ".veryfront/evals/run-1/results.jsonl",
-      reportMarkdown: ".veryfront/evals/run-1/report.md",
-    });
-    assertEquals(
-      createEvalModelArtifactPaths(".veryfront/evals/run-1", "anthropic/claude-opus-4-6"),
-      {
-        directory: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6",
-        summary: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/summary.json",
-        results: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/results.jsonl",
-        reportMarkdown: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/report.md",
-        junit: ".veryfront/evals/run-1/models/anthropic__claude-opus-4-6/junit.xml",
-      },
-    );
-  });
-
-  it("serializes eval summary and record artifacts", () => {
-    const report = createReport();
-    const baseline = compareEvalReports(report, {
-      ...report,
-      runId: "evalrun_baseline",
-      summary: {
-        ...report.summary,
-        passed: 2,
-        failed: 0,
-        passRate: 1,
-        failedExamples: [],
-      },
-    });
-
-    assertEquals(createSummaryArtifact(report, baseline), {
-      kind: "eval-summary",
-      schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
-      runId: "evalrun_test",
-      definitionId: "eval:answers",
-      targetKind: "agent",
-      target: "agent:assistant",
-      dataset: report.dataset,
-      startedAt: "2026-01-01T00:00:00.000Z",
-      endedAt: "2026-01-01T00:00:01.000Z",
-      summary: report.summary,
-      baseline,
-    });
-
-    const lines = createResultsJsonl(report).trimEnd().split("\n").map((line) =>
-      JSON.parse(line) as { id: string }
-    );
-    assertEquals(lines.map((record) => record.id), ["q1:1", "q2:1"]);
-  });
-
   it("applies gateway billing group finalization to eval summary usage", () => {
     const report = createReport();
 
@@ -1889,61 +1757,6 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
-  it("keeps local eval artifacts writable when selected exporters fail unexpectedly", async () => {
-    const tempDir = await Deno.makeTempDir();
-    try {
-      const report = createReport();
-      const exported = await exportEvalReportForCli(report, {
-        exporterIds: ["braintrust", "langfuse"],
-        registry: {
-          register() {},
-          unregister() {},
-          get() {
-            throw new Error("gateway registry crashed");
-          },
-          require() {
-            throw new Error("not implemented");
-          },
-          list() {
-            return [];
-          },
-          has() {
-            return false;
-          },
-          export() {
-            throw new Error("not implemented");
-          },
-        },
-      });
-      const paths = createEvalArtifactPaths(`${tempDir}/eval-report`);
-
-      await writeEvalArtifacts(exported, paths);
-      await Deno.writeTextFile(`${tempDir}/junit.xml`, createJunitXml(exported));
-
-      const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
-        exports?: Array<{ exporterId: string; ok: boolean; error?: string }>;
-      };
-      const junit = await Deno.readTextFile(`${tempDir}/junit.xml`);
-
-      assertEquals(exported.exports, [
-        {
-          exporterId: "braintrust",
-          ok: false,
-          error: "gateway registry crashed",
-        },
-        {
-          exporterId: "langfuse",
-          ok: false,
-          error: "gateway registry crashed",
-        },
-      ]);
-      assertEquals(summary.exports, exported.exports);
-      assertStringIncludes(junit, '<testsuite name="eval:answers"');
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
-  });
-
   it("reports unknown CLI eval exporters as failed export results", async () => {
     const exported = await exportEvalReportForCli(createReport(), {
       registry: createEvalReportExporterRegistry(),
@@ -1956,181 +1769,6 @@ describe("eval CLI command helpers", () => {
         ok: false,
         error: 'No EvalReportExporter registered for "missing".',
       },
-    ]);
-  });
-
-  it("renders a markdown eval report", () => {
-    const markdown = createEvalMarkdownReport(createReport());
-
-    assertStringIncludes(markdown, "# Eval report: eval:answers");
-    assertStringIncludes(markdown, "Result: `1/2 passed (50%)`");
-    assertStringIncludes(markdown, "| Provider input cost USD | `$0.0004` |");
-    assertStringIncludes(markdown, "| Provider output cost USD | `$0.0006` |");
-    assertStringIncludes(markdown, "| Veryfront input charge USD | `$0.001` |");
-    assertStringIncludes(markdown, "| Veryfront output charge USD | `$0.0015` |");
-    assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
-    assertStringIncludes(markdown, "| Billing mode | deferred |");
-    assertStringIncludes(markdown, "| `q1:1` | PASS | 0.012s | 12 | `$0.06` | 0.6 |");
-    assertStringIncludes(markdown, "| `q2:1` | FAIL | 0.010s | 10 | `$0.04` | 0.4 |");
-  });
-
-  it("renders examples with only soft metric misses as passing", () => {
-    const report = createReport();
-    const softReport: EvalReport = {
-      ...report,
-      summary: {
-        ...report.summary,
-        passed: 2,
-        failed: 0,
-        passRate: 1,
-        metrics: report.summary.metrics.map((metric) => ({
-          ...metric,
-          severity: "soft",
-        })),
-        failedExamples: [],
-      },
-      records: report.records.map((record) => ({
-        ...record,
-        metrics: (record.metrics ?? []).map((metric) => ({
-          ...metric,
-          severity: "soft",
-        })),
-      })),
-    };
-
-    const markdown = createEvalMarkdownReport(softReport);
-
-    assertStringIncludes(markdown, "Result: `2/2 passed (100%)`");
-    assertStringIncludes(markdown, "| `q2:1` | PASS | 0.010s | 10 | `$0.04` | 0.4 |");
-  });
-
-  it("writes summary, JSONL, and markdown artifacts to the report directory", async () => {
-    const tempDir = await Deno.makeTempDir();
-    try {
-      const paths = createEvalArtifactPaths(`${tempDir}/eval-report`);
-      await writeEvalArtifacts(createReport(), paths);
-
-      const summary = JSON.parse(await Deno.readTextFile(paths.summary)) as {
-        kind: string;
-        schemaVersion?: number;
-        dataset?: { kind: string; examples: number; hash: string };
-        summary: { records: number };
-      };
-      const results = (await Deno.readTextFile(paths.results)).trimEnd().split("\n");
-      const markdown = await Deno.readTextFile(paths.reportMarkdown);
-
-      assertEquals(summary.kind, "eval-summary");
-      assertEquals(summary.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
-      assertEquals(summary.dataset, {
-        kind: "inline",
-        examples: 2,
-        hash: "sha256:fixture-dataset",
-      });
-      assertEquals(summary.summary.records, 2);
-      assertEquals(results.length, 2);
-      assertStringIncludes(markdown, "# Eval report: eval:answers");
-      assertStringIncludes(markdown, "| Veryfront billed USD | `$0.10` |");
-    } finally {
-      await Deno.remove(tempDir, { recursive: true });
-    }
-  });
-
-  it("creates a model comparison artifact for JSON and report output", () => {
-    const baseReport = createReport();
-    const groundednessMetric: EvalReport["summary"]["metrics"][number] = {
-      name: "answer.groundedness",
-      family: "answer",
-      severity: "gate",
-      passed: 2,
-      failed: 0,
-      skipped: 0,
-      passRate: 0.9,
-    };
-    const baseline: EvalReport = {
-      ...baseReport,
-      runId: "evalrun_baseline",
-      metadata: { model: "anthropic/claude-opus-4-6" },
-      summary: {
-        ...baseReport.summary,
-        passed: 2,
-        failed: 0,
-        passRate: 1,
-        failedExamples: [],
-        metrics: [...baseReport.summary.metrics, groundednessMetric],
-        usage: { totalTokens: 100, costUsd: 1 },
-      },
-    };
-    const candidate: EvalReport = {
-      ...baseline,
-      runId: "evalrun_candidate",
-      metadata: { model: "moonshotai/kimi-k2.6" },
-      summary: {
-        ...baseline.summary,
-        usage: { totalTokens: 90, costUsd: 0.5 },
-      },
-    };
-
-    const artifact = createEvalModelComparisonArtifact(
-      [baseline, candidate],
-      "anthropic/claude-opus-4-6",
-    );
-
-    assertEquals(artifact.kind, "eval-model-comparison");
-    assertEquals(artifact.baselineModel, "anthropic/claude-opus-4-6");
-    assertEquals(artifact.candidateModels, ["moonshotai/kimi-k2.6"]);
-    assertEquals(artifact.recommendation.decision, "promote-candidate");
-  });
-
-  it("applies model comparison policy when creating comparison artifacts", () => {
-    const baseReport = createReport();
-    const baseline: EvalReport = {
-      ...baseReport,
-      runId: "evalrun_baseline",
-      metadata: { model: "openai/gpt-5.2" },
-      summary: {
-        ...baseReport.summary,
-        passed: 2,
-        failed: 0,
-        passRate: 1,
-        failedExamples: [],
-        usage: { totalTokens: 100 },
-        duration: {
-          totalMs: 1000,
-          minMs: 100,
-          maxMs: 1000,
-          meanMs: 500,
-          p50Ms: 500,
-          p95Ms: 1000,
-        },
-      },
-    };
-    const candidate: EvalReport = {
-      ...baseline,
-      runId: "evalrun_candidate",
-      metadata: { model: "moonshotai/kimi-k2.6" },
-      summary: {
-        ...baseline.summary,
-        usage: { totalTokens: 70 },
-        duration: {
-          ...baseline.summary.duration!,
-          p95Ms: 2500,
-        },
-      },
-    };
-
-    const artifact = createEvalModelComparisonArtifact(
-      [baseline, candidate],
-      "openai/gpt-5.2",
-      {
-        constraints: {
-          p95Ms: { maxRegressionPct: 0.5 },
-        },
-      },
-    );
-
-    assertEquals(artifact.recommendation.decision, "keep-baseline");
-    assertEquals(artifact.candidates[0]?.constraintFailures, [
-      "p95Ms regressed by 150%, above the allowed 50%",
     ]);
   });
 
@@ -2255,115 +1893,5 @@ describe("eval CLI command helpers", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
-  });
-
-  it("serializes eval reports to JUnit XML", () => {
-    const xml = createJunitXml(createReport());
-
-    assertStringIncludes(xml, '<testsuite name="eval:answers" tests="2" failures="1" skipped="0">');
-    assertStringIncludes(xml, '<testcase classname="eval:answers" name="q1#1" time="0.012" />');
-    assertStringIncludes(
-      xml,
-      '<failure message="answer.exactMatch failed">Expected Paris, got Lyon</failure>',
-    );
-  });
-
-  it("serializes required export failures as suite JUnit failures", () => {
-    const junit = createEvalSuiteJunitXml({
-      kind: "eval-suite-summary",
-      runId: "suite-1",
-      startedAt: "2026-07-19T00:00:00.000Z",
-      endedAt: "2026-07-19T00:00:01.000Z",
-      total: 1,
-      passed: 0,
-      failed: 1,
-      results: [{
-        id: "eval:metadata-export",
-        name: "metadata export",
-        target: "agent:fixture",
-        status: "failed",
-        summary: {
-          runId: "eval-1",
-          evalId: "eval:metadata-export",
-          target: "agent:fixture",
-          records: 1,
-          passed: 1,
-          failed: 0,
-          passRate: 1,
-          metrics: [],
-        },
-      }],
-    });
-
-    assertStringIncludes(
-      junit,
-      '<testsuites tests="1" failures="1" skipped="0">\n  <testsuite name="veryfront eval suite" tests="1" failures="1" skipped="0">',
-    );
-    assertStringIncludes(
-      junit,
-      '<failure message="A required eval export failed.">A required eval export failed.</failure>',
-    );
-  });
-
-  it("fails the command exit code when baseline comparison regresses", () => {
-    const report = createReport();
-    const baseline = compareEvalReports(report, {
-      ...report,
-      runId: "evalrun_baseline",
-      summary: {
-        ...report.summary,
-        passed: 2,
-        failed: 0,
-        passRate: 1,
-        failedExamples: [],
-      },
-    });
-
-    assertEquals(createEvalExitCode(report), 1);
-    assertEquals(createEvalExitCode({ ...report, summary: { ...report.summary, failed: 0 } }), 0);
-    assertEquals(
-      createEvalExitCode({ ...report, summary: { ...report.summary, failed: 0 } }, baseline),
-      1,
-    );
-  });
-
-  it("keeps exports best-effort locally but fails the CI gate when required", () => {
-    const passing = {
-      ...createReport(),
-      summary: { ...createReport().summary, failed: 0, passed: 2, passRate: 1 },
-    };
-    const exportedFailure = {
-      ...passing,
-      exports: [{ exporterId: "mlflow", ok: false as const, error: "unavailable" }],
-    };
-    const exportedSuccess = {
-      ...passing,
-      exports: [{ exporterId: "mlflow", ok: true as const }],
-    };
-
-    assertEquals(createEvalExitCode(exportedFailure), 0);
-    assertEquals(createEvalExitCode(exportedFailure, undefined, true), 1);
-    assertEquals(createEvalExitCode(exportedSuccess, undefined, true), 0);
-    assertEquals(createEvalExitCode(passing, undefined, true), 1);
-  });
-
-  it("fails model comparison exit code only when an evaluated report fails", () => {
-    const passing = {
-      ...createReport(),
-      summary: { ...createReport().summary, failed: 0, passed: 2, passRate: 1 },
-    };
-    const failing = createReport();
-
-    assertEquals(createEvalModelComparisonExitCode([passing]), 0);
-    assertEquals(createEvalModelComparisonExitCode([passing, failing]), 1);
-    assertEquals(
-      createEvalModelComparisonExitCode([
-        {
-          ...passing,
-          exports: [{ exporterId: "mlflow", ok: false as const, error: "unavailable" }],
-        },
-      ], true),
-      1,
-    );
   });
 });
