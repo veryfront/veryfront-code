@@ -1856,3 +1856,153 @@ describe("stream lifecycle shadow mode", () => {
     assertEquals(legacy.report, undefined);
   });
 });
+
+describe("processStream active mode", () => {
+  async function runMode(mode: "legacy" | "active", parts: unknown[]) {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const chunks: string[] = [];
+    let usage: unknown;
+    await processStream(
+      createMockResult(parts),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: mode,
+        onChunk: (chunk) => chunks.push(chunk),
+        onUsage: (next) => usage = next,
+        providerExecutedToolNames: ["web_search"],
+        availableToolNames: ["create_file", "web_search"],
+      },
+      undefined,
+    );
+    return { events, state, chunks, usage };
+  }
+
+  async function assertModeParity(parts: unknown[]) {
+    const legacy = await runMode("legacy", parts);
+    const active = await runMode("active", parts);
+
+    assertEquals(active.events, legacy.events);
+    assertEquals(active.chunks, legacy.chunks);
+    assertEquals(active.usage, legacy.usage);
+    assertEquals(active.state.accumulatedText, legacy.state.accumulatedText);
+    assertEquals(active.state.finishReason, legacy.state.finishReason);
+    assertEquals(active.state.reasoningParts, legacy.state.reasoningParts);
+    assertEquals(
+      active.state.suppressedToolCalls,
+      legacy.state.suppressedToolCalls,
+    );
+    assertEquals(active.state.usage, legacy.state.usage);
+    assertEquals(
+      [...active.state.toolCalls.values()].map((tool) => ({
+        id: tool.id,
+        name: tool.name,
+        arguments: tool.arguments,
+        inputAvailable: tool.inputAvailable,
+      })),
+      [...legacy.state.toolCalls.values()].map((tool) => ({
+        id: tool.id,
+        name: tool.name,
+        arguments: tool.arguments,
+        inputAvailable: tool.inputAvailable,
+      })),
+    );
+    assertEquals(
+      active.state.toolResults.map((result) => ({
+        toolCallId: result.toolCallId,
+        toolName: result.toolName,
+        output: result.output,
+        providerExecuted: result.providerExecuted,
+      })),
+      legacy.state.toolResults.map((result) => ({
+        toolCallId: result.toolCallId,
+        toolName: result.toolName,
+        output: result.output,
+        providerExecuted: result.providerExecuted,
+      })),
+    );
+    return { legacy, active };
+  }
+
+  it("matches legacy SSE and state for accumulated text", async () => {
+    const { active } = await assertModeParity([
+      { type: "text-delta", text: "Hello " },
+      { type: "text-delta", text: "world" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+    assertEquals(active.state.streamOutcome?.status, "completed");
+  });
+
+  it("matches legacy SSE and state for reasoning segments", async () => {
+    await assertModeParity([
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "thinking" },
+      { type: "reasoning-end", id: "r1", signature: "sig" },
+      { type: "text-delta", text: "answer" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+  });
+
+  it("matches legacy SSE and state for a committed local tool call", async () => {
+    const { active } = await assertModeParity([
+      { type: "tool-input-start", id: "local-1", toolName: "create_file" },
+      { type: "tool-input-delta", id: "local-1", delta: '{"path":"a.md"}' },
+      { type: "tool-input-end", id: "local-1" },
+      { type: "finish", finishReason: "tool-calls", totalUsage: null },
+    ]);
+    assertEquals(active.state.streamOutcome?.status, "tool_handoff");
+  });
+
+  it("matches legacy SSE and state for a provider-executed tool", async () => {
+    await assertModeParity([
+      { type: "tool-input-start", id: "native-1", toolName: "web_search" },
+      { type: "tool-input-delta", id: "native-1", delta: '{"query":"x"}' },
+      {
+        type: "tool-input-available",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        input: { query: "x" },
+      },
+      {
+        type: "tool-result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        result: { answer: 42 },
+      },
+      { type: "text-delta", text: "done" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+  });
+
+  it("matches legacy usage propagation", async () => {
+    const { active, legacy } = await assertModeParity([
+      { type: "text-delta", text: "hi" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: {
+          inputTokens: 2,
+          outputTokens: 3,
+          totalTokens: 5,
+          cacheReadInputTokens: 1,
+          costUsd: 0.25,
+          costSource: "gateway",
+        },
+      },
+    ]);
+    assertEquals(legacy.state.usage.promptTokens, 2);
+    assertEquals(active.state.usage.promptTokens, 2);
+  });
+
+  it("matches legacy suppression of unavailable tools", async () => {
+    await assertModeParity([
+      { type: "tool-input-start", id: "missing-1", toolName: "missing_tool" },
+      { type: "tool-input-delta", id: "missing-1", delta: '{"a":1}' },
+      { type: "text-delta", text: "recovered" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+  });
+});

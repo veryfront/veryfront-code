@@ -73,6 +73,12 @@ export type StreamProtocolEvent =
     input: unknown;
     providerExecuted?: boolean;
     dynamic?: boolean;
+    /**
+     * True when the provider delivered the complete input in one part, so a
+     * live projection must not synthesize a start/delta announcement. This is
+     * a compatibility presentation hint, never a semantic distinction.
+     */
+    announced?: boolean;
   }
   | {
     type: "tool_input_rejected";

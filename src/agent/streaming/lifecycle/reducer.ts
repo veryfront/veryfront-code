@@ -143,12 +143,27 @@ export function reduceStreamSignal(
       if (delta.length > 0) markProgress();
       break;
     }
-    case "reasoning_end":
-      if (state.activeReasoningId === signal.event.id) {
-        emit({ class: "semantic", event: signal.event });
-        state.activeReasoningId = null;
+    case "reasoning_end": {
+      if (state.activeReasoningId !== signal.event.id) break;
+      const { id, signature, redactedData } = signal.event;
+      if (signature !== undefined || redactedData !== undefined) {
+        state.snapshot = {
+          ...state.snapshot,
+          reasoning: state.snapshot.reasoning.map((part) =>
+            part.id === id
+              ? {
+                ...part,
+                ...(signature !== undefined ? { signature } : {}),
+                ...(redactedData !== undefined ? { redactedData } : {}),
+              }
+              : part
+          ),
+        };
       }
+      emit({ class: "semantic", event: signal.event });
+      state.activeReasoningId = null;
       break;
+    }
     case "text_start":
       closeReasoning();
       closeText();
@@ -296,14 +311,6 @@ function reduceNonTextProtocolEvent(
       });
       syncToolSnapshot(state, "awaiting_tool_input");
       emit({ class: "semantic", event });
-      emit({
-        class: "telemetry",
-        event: {
-          type: "tool_input_status",
-          toolCallId: event.toolCallId,
-          status: "streaming_input",
-        },
-      });
       return { state, semanticProgress: inputText !== tool.inputText };
     }
 

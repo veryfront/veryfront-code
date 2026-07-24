@@ -94,9 +94,10 @@ export function decodeRuntimeStreamPart(
         typed,
         snapshot,
         options,
+        { announced: true },
       );
     case "tool-call":
-      return toolReadySignals(typed.toolCallId, typed, snapshot, options);
+      return toolReadySignals(typed.toolCallId, typed, snapshot, options, {});
     case "tool-result":
       return providerToolTerminalSignals(typed, snapshot, options);
     case "tool-error":
@@ -276,6 +277,7 @@ function toolReadySignals(
   >,
   snapshot: Readonly<StreamSnapshot>,
   options: RuntimeStreamProviderOptions,
+  presentation: { announced?: boolean },
 ): readonly StreamSignal[] {
   if (toolCallId.length === 0) {
     return [{
@@ -338,6 +340,7 @@ function toolReadySignals(
       input: parsed.value,
       ...(providerExecuted !== undefined ? { providerExecuted } : {}),
       ...(dynamic ? { dynamic: true } : {}),
+      ...(presentation.announced ? { announced: true } : {}),
     },
   }];
 }

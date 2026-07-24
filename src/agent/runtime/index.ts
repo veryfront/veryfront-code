@@ -131,6 +131,7 @@ export {
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
 import { resolveStreamLifecycleModeFromEnv } from "./stream-lifecycle-mode.ts";
+import { createRuntimeStreamSource } from "./chat-stream-handler.ts";
 export type {
   ChatStreamCallbacks,
   ChatStreamState,
@@ -1513,22 +1514,26 @@ export class AgentRuntime {
       );
       const maxOutputTokens = this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride);
       const genAiProviderName = resolveRuntimeGenAiProviderName(effectiveModel);
-      const result = streamText({
-        model: languageModel,
-        system: currentSystemPrompt,
-        messages: convertToTextGenerationRuntimeRequestMessages(currentMessages),
-        tools: runtimeTools,
-        experimental_repairToolCall: repairToolCall,
-        maxOutputTokens,
-        ...(temperature === undefined ? {} : { temperature }),
-        ...(headers ? { headers } : {}),
-        ...(providerOptions ? { providerOptions } : {}),
-        ...(reasoning ? { reasoning } : {}),
-        abortSignal,
-      });
+      const streamSource = createRuntimeStreamSource((streamSignal) =>
+        streamText({
+          model: languageModel,
+          system: currentSystemPrompt,
+          messages: convertToTextGenerationRuntimeRequestMessages(
+            currentMessages,
+          ),
+          tools: runtimeTools,
+          experimental_repairToolCall: repairToolCall,
+          maxOutputTokens,
+          ...(temperature === undefined ? {} : { temperature }),
+          ...(headers ? { headers } : {}),
+          ...(providerOptions ? { providerOptions } : {}),
+          ...(reasoning ? { reasoning } : {}),
+          abortSignal: streamSignal,
+        })
+      );
 
       const state = createStreamState();
-      await processStream(result, state, controller, encoder, textPartId, {
+      await processStream(streamSource, state, controller, encoder, textPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
         providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),

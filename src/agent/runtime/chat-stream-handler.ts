@@ -27,6 +27,17 @@ import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  applyLifecycleSnapshotToChatStreamState,
+  createRuntimeStreamProviderAdapter,
+  createStreamLifecycleLiveAdapter,
+  resolveStreamLifecyclePolicy,
+  runStreamLifecycle,
+  StreamLifecycleFailure,
+  type StreamLifecyclePolicy,
+  type StreamOutcome,
+  toLegacyRuntimeUsage,
+} from "#veryfront/agent/streaming/lifecycle/index.ts";
 import type { StreamLifecycleMode } from "./stream-lifecycle-mode.ts";
 import {
   createStreamLifecycleShadow,
@@ -112,6 +123,7 @@ export interface ChatStreamState {
     billingMode?: "direct" | "deferred";
     usageCaptureStatus?: "complete" | "partial" | "missing";
   };
+  streamOutcome?: StreamOutcome;
 }
 
 export interface ChatStreamCallbacks {
@@ -144,6 +156,7 @@ export interface ChatStreamCallbacks {
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
   streamLifecycleMode?: StreamLifecycleMode;
+  streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
   onLifecycleShadowReport?: (report: StreamLifecycleShadowReport) => void;
   traceSpanName?: string;
   traceAttributes?: Record<string, TraceAttributeValue>;
@@ -334,6 +347,89 @@ export function createStreamState(): ChatStreamState {
  * - tool-call → tool-input-available SSE (accumulated input)
  * - finish → captures finishReason and usage
  */
+export interface RuntimeStreamSource {
+  open(signal: AbortSignal): RuntimeStreamResult;
+}
+
+export function createRuntimeStreamSource(
+  open: (signal: AbortSignal) => RuntimeStreamResult,
+): RuntimeStreamSource {
+  return { open };
+}
+
+export function isRuntimeStreamSource(
+  value: RuntimeStreamResult | RuntimeStreamSource,
+): value is RuntimeStreamSource {
+  return typeof value === "object" && value !== null &&
+    "open" in value && typeof value.open === "function";
+}
+
+export function resolveRuntimeLifecyclePolicy(
+  callbacks?: ChatStreamCallbacks,
+): StreamLifecyclePolicy {
+  const compatibility: Partial<StreamLifecyclePolicy> = {
+    ...(callbacks?.streamIdleTimeoutMs === undefined ? {} : {
+      firstProgressTimeoutMs: callbacks.streamIdleTimeoutMs,
+      semanticIdleTimeoutMs: callbacks.streamIdleTimeoutMs,
+    }),
+    ...(callbacks?.localToolInputIdleTimeoutMs === undefined
+      ? {}
+      : { toolInputIdleTimeoutMs: callbacks.localToolInputIdleTimeoutMs }),
+  };
+  return resolveStreamLifecyclePolicy({
+    ...compatibility,
+    ...callbacks?.streamLifecyclePolicy,
+  });
+}
+
+async function processActiveStream(
+  source: RuntimeStreamSource,
+  state: ChatStreamState,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  textPartId: string | undefined,
+  callbacks: ChatStreamCallbacks | undefined,
+  abortSignal: AbortSignal | undefined,
+): Promise<void> {
+  const adapter = createRuntimeStreamProviderAdapter({
+    open: (signal) => source.open(signal).fullStream,
+    options: {
+      availableToolNames: callbacks?.availableToolNames
+        ? new Set(callbacks.availableToolNames)
+        : null,
+      providerExecutedToolNames: new Set(
+        callbacks?.providerExecutedToolNames ?? [],
+      ),
+    },
+  });
+  const run = runStreamLifecycle({
+    provider: adapter,
+    policy: resolveRuntimeLifecyclePolicy(callbacks),
+    cancellations: abortSignal
+      ? [{ source: "runtime", signal: abortSignal }]
+      : [],
+  });
+  const live = createStreamLifecycleLiveAdapter({ textPartId });
+  for await (const frame of run.frames) {
+    if (frame.class === "semantic" && frame.event.type === "text_content") {
+      callbacks?.onChunk?.(frame.event.delta);
+    }
+    if (frame.class === "semantic" && frame.event.type === "usage") {
+      callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
+    }
+    for (const event of live.encode(frame)) sendSSE(controller, encoder, event);
+  }
+  const streamOutcome = await run.outcome;
+  applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
+  state.streamOutcome = streamOutcome;
+  if (streamOutcome.status === "failed") {
+    throw new StreamLifecycleFailure(streamOutcome.error);
+  }
+  if (streamOutcome.status === "cancelled" && abortSignal?.aborted) {
+    throw abortSignal.reason;
+  }
+}
+
 interface ProcessStreamInternals {
   createShadow: typeof createStreamLifecycleShadow;
 }
@@ -343,7 +439,7 @@ const defaultProcessStreamInternals: ProcessStreamInternals = {
 };
 
 export function processStream(
-  result: RuntimeStreamResult,
+  result: RuntimeStreamResult | RuntimeStreamSource,
   state: ChatStreamState,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
@@ -364,7 +460,7 @@ export function processStream(
 }
 
 export function processStreamInternal(
-  result: RuntimeStreamResult,
+  resultOrSource: RuntimeStreamResult | RuntimeStreamSource,
   state: ChatStreamState,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
@@ -379,6 +475,31 @@ export function processStreamInternal(
     ...(callbacks?.traceAttributes ?? {}),
   };
   const traceSpanName = callbacks?.traceSpanName ?? "agent.runtime.processStream";
+
+  if (callbacks?.streamLifecycleMode === "active") {
+    const source: RuntimeStreamSource = isRuntimeStreamSource(resultOrSource)
+      ? resultOrSource
+      : { open: () => resultOrSource };
+    return withSpan(
+      traceSpanName,
+      () =>
+        processActiveStream(
+          source,
+          state,
+          controller,
+          encoder,
+          textPartId,
+          callbacks,
+          abortSignal,
+        ),
+      traceAttributes,
+      { kind: SpanKind.CLIENT },
+    );
+  }
+
+  const result = isRuntimeStreamSource(resultOrSource)
+    ? resultOrSource.open(abortSignal ?? new AbortController().signal)
+    : resultOrSource;
 
   const process = async () => {
     let eventCount = 0;
