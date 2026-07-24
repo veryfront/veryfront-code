@@ -133,6 +133,56 @@ describe("stream lifecycle live adapter", () => {
     );
   });
 
+  it("does not retain committed tool-input state for later frames", () => {
+    const adapter = createStreamLifecycleLiveAdapter({
+      textPartId: "text-part",
+    });
+
+    frames([
+      {
+        type: "tool_input_start",
+        toolCallId: "local-1",
+        toolName: "create_file",
+        dynamic: true,
+      },
+      {
+        type: "tool_input_content",
+        toolCallId: "local-1",
+        delta: '{"path":"a.md"}',
+      },
+      {
+        type: "tool_input_ready",
+        toolCallId: "local-1",
+        toolName: "create_file",
+        input: { path: "a.md" },
+        dynamic: true,
+      },
+    ]).flatMap((frame) => adapter.encode(frame));
+
+    const events = frames([
+      {
+        type: "tool_input_ready",
+        toolCallId: "local-1",
+        toolName: "create_file",
+        input: { path: "b.md" },
+      },
+    ]).flatMap((frame) => adapter.encode(frame));
+
+    assertEquals(events, [
+      {
+        type: "tool-input-start",
+        toolCallId: "local-1",
+        toolName: "create_file",
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: "local-1",
+        toolName: "create_file",
+        input: { path: "b.md" },
+      },
+    ]);
+  });
+
   it("projects the final snapshot into the legacy chat stream state", () => {
     const state = createStreamState();
     const snapshot: StreamSnapshot = {

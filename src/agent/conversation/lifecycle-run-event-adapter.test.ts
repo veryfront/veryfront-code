@@ -172,6 +172,24 @@ describe("lifecycle run event adapter", () => {
     );
   });
 
+  it("flushes buffered content by UTF-8 bytes instead of UTF-16 code units", () => {
+    const { emitted, adapter } = createCollector({
+      maxBufferedContentBytes: 5,
+    });
+
+    adapter.handleFrame(
+      frames([{ event: { type: "text_start", id: "text:0" } }])[0]!,
+    );
+    adapter.handleFrame(
+      frames([{ event: { type: "text_content", id: "text:0", delta: "ééé" } }])[0]!,
+    );
+
+    assertEquals(emitted.map((event) => event.type), [
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+    ]);
+  });
+
   it("rejects content without a lifecycle boundary instead of repairing", () => {
     const { adapter } = createCollector();
     assertThrows(

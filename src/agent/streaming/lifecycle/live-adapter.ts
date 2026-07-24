@@ -118,6 +118,7 @@ export function createStreamLifecycleLiveAdapter(
               : {}),
             ...(dynamic ? { dynamic: true } : {}),
           });
+          tools.delete(event.toolCallId);
           return events;
         }
         case "tool_input_rejected":

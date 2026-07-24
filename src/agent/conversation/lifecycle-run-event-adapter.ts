@@ -26,10 +26,12 @@ type PendingDurableContent = {
   identity: string;
   event: ConversationRunEvent;
   delta: string;
+  byteLength: number;
 };
 
 const DEFAULT_MAX_BUFFERED_CONTENT_BYTES = 32 * 1024;
 const DEFAULT_FLUSH_DELAY_MS = 250;
+const utf8Encoder = new TextEncoder();
 
 export function createLifecycleRunEventAdapter(input: {
   runId: string;
@@ -98,7 +100,8 @@ export function createLifecycleRunEventAdapter(input: {
     publish([{ ...buffered.event, delta: buffered.delta }]);
   };
 
-  const bufferContent = (content: PendingDurableContent): void => {
+  const bufferContent = (content: Omit<PendingDurableContent, "byteLength">): void => {
+    const byteLength = utf8Encoder.encode(content.delta).byteLength;
     if (
       pending !== null &&
       (pending.type !== content.type || pending.identity !== content.identity)
@@ -106,7 +109,7 @@ export function createLifecycleRunEventAdapter(input: {
       flushPending();
     }
     if (pending === null) {
-      pending = content;
+      pending = { ...content, byteLength };
       if (flushTimerId === null) {
         flushTimerId = setTimer(() => {
           flushTimerId = null;
@@ -115,8 +118,9 @@ export function createLifecycleRunEventAdapter(input: {
       }
     } else {
       pending.delta += content.delta;
+      pending.byteLength += byteLength;
     }
-    if (pending.delta.length >= maxBufferedContentBytes) {
+    if (pending.byteLength >= maxBufferedContentBytes) {
       flushPending();
     }
   };

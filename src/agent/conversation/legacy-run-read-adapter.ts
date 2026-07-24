@@ -195,6 +195,7 @@ type Version2Validator = {
   openText: Set<string>;
   openReasoning: Set<string>;
   openTools: Set<string>;
+  toolNames: Map<string, string>;
   toolInputText: Map<string, string>;
 };
 
@@ -208,6 +209,7 @@ function readVersion2(
     openText: new Set(),
     openReasoning: new Set(),
     openTools: new Set(),
+    toolNames: new Map(),
     toolInputText: new Map(),
   };
   let sequence = 0;
@@ -224,6 +226,9 @@ function readVersion2(
       elapsedMs: 0,
     });
   };
+
+  const readRequiredString = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
 
   for (const event of events) {
     if (event.stream_protocol_version !== 2) {
@@ -248,18 +253,24 @@ function readVersion2(
     validator.keys.add(idempotencyKey);
 
     const type = typeof event.type === "string" ? event.type : null;
-    const contentId = typeof event.contentId === "string" ? event.contentId : "content";
-    const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-    const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
     switch (type) {
-      case "TEXT_MESSAGE_START":
+      case "TEXT_MESSAGE_START": {
+        const contentId = readRequiredString(event.contentId);
+        if (contentId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (validator.openText.has(contentId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openText.add(contentId);
         push({ type: "text_start", id: contentId });
         break;
-      case "TEXT_MESSAGE_CONTENT":
+      }
+      case "TEXT_MESSAGE_CONTENT": {
+        const contentId = readRequiredString(event.contentId);
+        if (contentId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (!validator.openText.has(contentId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
@@ -269,21 +280,36 @@ function readVersion2(
           delta: typeof event.delta === "string" ? event.delta : "",
         });
         break;
-      case "TEXT_MESSAGE_END":
+      }
+      case "TEXT_MESSAGE_END": {
+        const contentId = readRequiredString(event.contentId);
+        if (contentId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (!validator.openText.has(contentId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openText.delete(contentId);
         push({ type: "text_end", id: contentId });
         break;
-      case "REASONING_MESSAGE_START":
+      }
+      case "REASONING_MESSAGE_START": {
+        const contentId = readRequiredString(event.contentId);
+        if (contentId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (validator.openReasoning.has(contentId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openReasoning.add(contentId);
         push({ type: "reasoning_start", id: contentId });
         break;
-      case "REASONING_MESSAGE_CONTENT":
+      }
+      case "REASONING_MESSAGE_CONTENT": {
+        const contentId = readRequiredString(event.contentId);
+        if (contentId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (!validator.openReasoning.has(contentId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
@@ -293,22 +319,39 @@ function readVersion2(
           delta: typeof event.delta === "string" ? event.delta : "",
         });
         break;
-      case "REASONING_MESSAGE_END":
+      }
+      case "REASONING_MESSAGE_END": {
+        const contentId = readRequiredString(event.contentId);
+        if (contentId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (!validator.openReasoning.has(contentId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openReasoning.delete(contentId);
         push({ type: "reasoning_end", id: contentId });
         break;
-      case "TOOL_CALL_START":
+      }
+      case "TOOL_CALL_START": {
+        const toolCallId = readRequiredString(event.toolCallId);
+        const toolName = readRequiredString(event.toolName);
+        if (toolCallId === null || toolName === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (validator.openTools.has(toolCallId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openTools.add(toolCallId);
+        validator.toolNames.set(toolCallId, toolName);
         validator.toolInputText.set(toolCallId, "");
         push({ type: "tool_input_start", toolCallId, toolName });
         break;
-      case "TOOL_CALL_ARGS":
+      }
+      case "TOOL_CALL_ARGS": {
+        const toolCallId = readRequiredString(event.toolCallId);
+        if (toolCallId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (!validator.openTools.has(toolCallId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
@@ -324,12 +367,22 @@ function readVersion2(
           delta: typeof event.delta === "string" ? event.delta : "",
         });
         break;
+      }
       case "TOOL_CALL_END": {
+        const toolCallId = readRequiredString(event.toolCallId);
+        if (toolCallId === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         if (!validator.openTools.has(toolCallId)) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
+        const toolName = validator.toolNames.get(toolCallId);
+        if (toolName === undefined) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openTools.delete(toolCallId);
         const parsed = parseCanonicalToolInput(validator.toolInputText.get(toolCallId) ?? "");
+        validator.toolNames.delete(toolCallId);
         validator.toolInputText.delete(toolCallId);
         if (parsed.ok) {
           push({
@@ -348,7 +401,12 @@ function readVersion2(
         }
         break;
       }
-      case "TOOL_CALL_RESULT":
+      case "TOOL_CALL_RESULT": {
+        const toolCallId = readRequiredString(event.toolCallId);
+        const toolName = readRequiredString(event.toolName);
+        if (toolCallId === null || toolName === null) {
+          return invalid("VERSION_2_LIFECYCLE_VIOLATION");
+        }
         push({
           type: "custom",
           name: "tool-call-result",
@@ -360,6 +418,7 @@ function readVersion2(
           },
         });
         break;
+      }
       case "CUSTOM":
         push({
           type: "custom",

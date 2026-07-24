@@ -97,6 +97,68 @@ describe("conversation run lifecycle read adapter", () => {
     }
   });
 
+  it("rejects version 2 durable events with missing lifecycle identities", () => {
+    const cases = [
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "text:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "text:2",
+        },
+      ],
+      [
+        {
+          type: "TOOL_CALL_START",
+          toolName: "get_file",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "tool:1",
+        },
+        {
+          type: "TOOL_CALL_END",
+          toolName: "get_file",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "tool:2",
+        },
+      ],
+      [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "tool-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "tool-name:1",
+        },
+        {
+          type: "TOOL_CALL_END",
+          toolCallId: "tool-1",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "tool-name:2",
+        },
+      ],
+    ];
+
+    for (const events of cases) {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 2,
+        events,
+      });
+      assertEquals(result.status, "invalid");
+      if (result.status === "invalid") {
+        assertEquals(result.code, "VERSION_2_LIFECYCLE_VIOLATION");
+      }
+    }
+  });
+
   it("preserves stored version 2 tool arguments when replaying a committed call", () => {
     const result = readConversationRunLifecycleFrames({
       streamProtocolVersion: 2,
