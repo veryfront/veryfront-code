@@ -20,12 +20,26 @@ import {
   rewriteDenoNpmDependencyImports,
 } from "#veryfront/routing/api/module-loader/external-import-rewriter.ts";
 import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
+import { rewriteWithImportRewriteCore } from "./core.ts";
+import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
 import {
   pickPackageExportEntry,
   resolveContainedPackagePath,
   resolvePackageExportPath,
   splitPackageSubpath,
 } from "./package-resolution.ts";
+
+function createRewriteContext(overrides?: Partial<RewriteContext>): RewriteContext {
+  return {
+    filePath: "/project/app/page.tsx",
+    projectDir: "/project",
+    projectId: "p1",
+    target: "browser",
+    dev: false,
+    reactVersion: "19.2.4",
+    ...overrides,
+  };
+}
 
 describe("import rewrite compatibility golden tests", () => {
   it("preserves transform query and attribute output", async () => {
@@ -237,5 +251,82 @@ describe("package resolution core", () => {
       resolveContainedPackagePath("/app/node_modules/pkg", "./sub/../../../secret.js"),
       null,
     );
+  });
+});
+
+describe("import rewrite core runner", () => {
+  it("runs strategies in caller-provided order even when priority would sort differently", async () => {
+    const strategies: ImportRewriteStrategy[] = [
+      {
+        name: "first-supplied-low-priority",
+        priority: 10,
+        matches: (specifier) => specifier === "target",
+        rewrite: () => ({ specifier: "first" }),
+      },
+      {
+        name: "second-supplied-high-priority",
+        priority: 0,
+        matches: (specifier) => specifier === "target",
+        rewrite: () => ({ specifier: "second" }),
+      },
+    ];
+
+    const out = await rewriteWithImportRewriteCore({
+      code: `import x from "target";`,
+      strategies,
+      context: createRewriteContext(),
+    });
+
+    assertEquals(out, `import x from "first";`);
+  });
+
+  it("falls through when a matching strategy returns a null specifier", async () => {
+    const strategies: ImportRewriteStrategy[] = [
+      {
+        name: "matching-noop",
+        priority: 0,
+        matches: (specifier) => specifier === "target",
+        rewrite: () => ({ specifier: null }),
+      },
+      {
+        name: "matching-rewrite",
+        priority: 1,
+        matches: (specifier) => specifier === "target",
+        rewrite: () => ({ specifier: "rewritten" }),
+      },
+    ];
+
+    const out = await rewriteWithImportRewriteCore({
+      code: `import x from "target";`,
+      strategies,
+      context: createRewriteContext(),
+    });
+
+    assertEquals(out, `import x from "rewritten";`);
+  });
+
+  it("treats a statement rewrite as a handled result", async () => {
+    const strategies: ImportRewriteStrategy[] = [
+      {
+        name: "statement",
+        priority: 0,
+        matches: (specifier) => specifier === "target",
+        rewrite: () => ({ specifier: null, statement: `const x = "handled";` }),
+      },
+      {
+        name: "later",
+        priority: 1,
+        matches: (specifier) => specifier === "target",
+        rewrite: () => ({ specifier: "later" }),
+      },
+    ];
+
+    const out = await rewriteWithImportRewriteCore({
+      code: `import x from "target"`,
+      strategies,
+      context: createRewriteContext(),
+    });
+
+    assertEquals(out, `const x = "handled";`);
   });
 });
