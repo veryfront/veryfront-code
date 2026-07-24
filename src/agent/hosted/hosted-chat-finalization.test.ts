@@ -96,6 +96,15 @@ function createLogger() {
   };
 }
 
+function getToolOutputErrorChunks(
+  chunks: readonly ChatUiMessageChunk<MessageMetadata>[],
+  toolCallId: string,
+): ChatUiMessageChunk<MessageMetadata>[] {
+  return chunks.filter((chunk) =>
+    chunk.type === "tool-output-error" && chunk.toolCallId === toolCallId
+  );
+}
+
 describe("agent/hosted-chat-finalization", () => {
   it("appends response fallback chunks, flushes, dispatches completed, then cleanup", async () => {
     const calls: string[] = [];
@@ -155,8 +164,8 @@ describe("agent/hosted-chat-finalization", () => {
     });
 
     assertEquals(calls, ["flush", "terminal:failed:EMPTY_RESPONSE", "cleanup"]);
-    assertEquals(terminalStates[0].status, "failed");
-    assertEquals(terminalStates[0].terminalErrorCode, "EMPTY_RESPONSE");
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
   });
 
   it("preserves response metadata on terminal states", async () => {
@@ -278,8 +287,155 @@ describe("agent/hosted-chat-finalization", () => {
       ),
       true,
     );
-    assertEquals(terminalStates[0].status, "failed");
-    assertEquals(terminalStates[0].terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals(terminalStates.at(0)!.terminalErrorCode, "INCOMPLETE_TOOL_CALLS");
+  });
+
+  it("emits one output-error chunk for unfinished legacy tool parts", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "response",
+      responseMessage: createResponseMessage({
+        parts: [
+          { type: "text", text: "done" },
+          {
+            type: "tool-web_fetch",
+            toolCallId: "legacy-tool-1",
+            input: { url: "https://example.com/docs" },
+            state: "input-available",
+          },
+        ],
+      }),
+      isAborted: false,
+      streamResult: createStreamResult({}),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(getToolOutputErrorChunks(chunks, "legacy-tool-1"), [
+      {
+        type: "tool-output-error",
+        toolCallId: "legacy-tool-1",
+        errorText: "Tool call did not complete",
+      },
+    ]);
+  });
+
+  for (
+    const part of [
+      {
+        label: "dynamic-tool",
+        value: {
+          type: "dynamic-tool",
+          toolName: "web_fetch",
+          toolCallId: "dynamic-tool-1",
+          input: { url: "https://example.com/docs" },
+          state: "input-available",
+        },
+      },
+      {
+        label: "tool_call",
+        value: {
+          type: "tool_call",
+          toolName: "web_fetch",
+          toolCallId: "tool-call-1",
+          input: { url: "https://example.com/docs" },
+          state: "input-available",
+        },
+      },
+    ] as const
+  ) {
+    it(`emits one output-error chunk for unfinished ${part.label} response parts`, async () => {
+      const calls: string[] = [];
+      const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({
+          parts: [
+            { type: "text", text: "done" },
+            part.value,
+          ],
+        }),
+        isAborted: false,
+        streamResult: createStreamResult({}),
+        lifecycleAdapter: createLifecycleAdapter({
+          calls,
+          terminalStates,
+          mirror: createDurableRunMirror({ calls, chunks }),
+        }),
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {
+          calls.push("cleanup");
+        },
+        streamError: null,
+      });
+
+      assertEquals(getToolOutputErrorChunks(chunks, part.value.toolCallId), [
+        {
+          type: "tool-output-error",
+          toolCallId: part.value.toolCallId,
+          errorText: "Tool call did not complete",
+        },
+      ]);
+    });
+  }
+
+  it("emits one output-error chunk for detached unfinished fallback tools", async () => {
+    const calls: string[] = [];
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+
+    await finalizeHostedChatRun({
+      kind: "detached",
+      isAborted: false,
+      mirroredDurableOutput: false,
+      streamResult: createStreamResult({
+        toolCalls: [
+          {
+            toolCallId: "detached-tool-1",
+            toolName: "web_fetch",
+            input: { url: "https://example.com/docs" },
+          },
+        ],
+      }),
+      lifecycleAdapter: createLifecycleAdapter({
+        calls,
+        terminalStates,
+        mirror: createDurableRunMirror({ calls, chunks }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+      streamError: null,
+    });
+
+    assertEquals(getToolOutputErrorChunks(chunks, "detached-tool-1"), [
+      {
+        type: "tool-output-error",
+        toolCallId: "detached-tool-1",
+        errorText: "Tool call did not complete",
+      },
+    ]);
   });
 
   it("appends detached fallback chunks when no durable output was mirrored", async () => {
@@ -340,8 +496,8 @@ describe("agent/hosted-chat-finalization", () => {
     });
 
     assertEquals(calls, ["flush", "terminal:failed:EMPTY_RESPONSE", "cleanup"]);
-    assertEquals(terminalStates[0].status, "failed");
-    assertEquals(terminalStates[0].terminalErrorCode, "EMPTY_RESPONSE");
+    assertEquals(terminalStates.at(0)!.status, "failed");
+    assertEquals(terminalStates.at(0)!.terminalErrorCode, "EMPTY_RESPONSE");
   });
 
   it("completes detached empty output when durable output was mirrored", async () => {
@@ -414,7 +570,7 @@ describe("agent/hosted-chat-finalization", () => {
         "terminal:failed:STREAM_ERROR",
         "cleanup",
       ]);
-      assertEquals(terminalStates[0].terminalErrorMessage, "provider stream failed");
+      assertEquals(terminalStates.at(0)!.terminalErrorMessage, "provider stream failed");
     });
   }
 

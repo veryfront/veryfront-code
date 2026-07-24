@@ -78,20 +78,25 @@ function createHostedChatFinalizeResponseBuildState(
 
     const fallbackChunks =
       sanitizedFinalizedMessage.parts.length > 0 && input.lifecycleAdapter.durableRunMirror
-        ? [
-          ...buildFinalizedMessageFallbackChunks({
+        ? (() => {
+          const primaryChunks = buildFinalizedMessageFallbackChunks({
             persistedMessage,
             sanitizedFinalizedMessage,
             finalStep,
             mirroredToolChunkState: input.mirroredToolChunkState,
             capturedMessageId: input.capturedMessageId,
             hasIncompleteFinalizedToolParts,
-          }),
-          ...buildMissingToolOutputErrorChunksFromParts({
-            parts: sanitizedFinalizedMessage.parts,
-            mirroredToolChunkState: input.mirroredToolChunkState,
-          }),
-        ]
+          });
+
+          return [
+            ...primaryChunks,
+            ...buildMissingToolOutputErrorChunksFromParts({
+              parts: sanitizedFinalizedMessage.parts,
+              mirroredToolChunkState: input.mirroredToolChunkState,
+              primaryChunks,
+            }),
+          ];
+        })()
         : [];
 
     return {
@@ -119,20 +124,25 @@ function createHostedChatFinalizeDetachedBuildState(
 
     const fallbackChunks = fallbackParts.length > 0 && input.lifecycleAdapter.durableRunMirror &&
         input.capturedMessageId
-      ? [
-        ...buildDetachedFallbackChunks({
+      ? (() => {
+        const primaryChunks = buildDetachedFallbackChunks({
           fallbackParts,
           finalStep,
           mirroredToolChunkState: input.mirroredToolChunkState,
           mirroredDurableOutput: input.mirroredDurableOutput,
           capturedMessageId: input.capturedMessageId,
           hasIncompleteFallbackToolParts,
-        }),
-        ...buildMissingToolOutputErrorChunksFromParts({
-          parts: fallbackParts,
-          mirroredToolChunkState: input.mirroredToolChunkState,
-        }),
-      ]
+        });
+
+        return [
+          ...primaryChunks,
+          ...buildMissingToolOutputErrorChunksFromParts({
+            parts: fallbackParts,
+            mirroredToolChunkState: input.mirroredToolChunkState,
+            primaryChunks,
+          }),
+        ];
+      })()
       : [];
 
     return {
@@ -146,16 +156,37 @@ function createHostedChatFinalizeDetachedBuildState(
 function buildMissingToolOutputErrorChunksFromParts(input: {
   parts: ChatUiMessage["parts"];
   mirroredToolChunkState: MirroredToolChunkState;
+  primaryChunks: readonly ChatUiMessageChunk<MessageMetadata>[];
 }): ChatUiMessageChunk<MessageMetadata>[] {
   const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
   const outputErrorToolCallIds = new Set(input.mirroredToolChunkState.outputErrorToolCallIds);
+  const outputAvailableToolCallIds = new Set(
+    input.mirroredToolChunkState.outputAvailableToolCallIds,
+  );
+  const outputDeniedToolCallIds = new Set(input.mirroredToolChunkState.outputDeniedToolCallIds);
+
+  for (const chunk of input.primaryChunks) {
+    if (chunk.type === "tool-output-error") {
+      outputErrorToolCallIds.add(chunk.toolCallId);
+      continue;
+    }
+
+    if (chunk.type === "tool-output-available") {
+      outputAvailableToolCallIds.add(chunk.toolCallId);
+      continue;
+    }
+
+    if (chunk.type === "tool-output-denied") {
+      outputDeniedToolCallIds.add(chunk.toolCallId);
+    }
+  }
 
   for (const part of input.parts) {
     if (
       !isToolUiPart(part) || part.state !== "output-error" ||
       outputErrorToolCallIds.has(part.toolCallId) ||
-      input.mirroredToolChunkState.outputAvailableToolCallIds.has(part.toolCallId) ||
-      input.mirroredToolChunkState.outputDeniedToolCallIds.has(part.toolCallId)
+      outputAvailableToolCallIds.has(part.toolCallId) ||
+      outputDeniedToolCallIds.has(part.toolCallId)
     ) {
       continue;
     }
