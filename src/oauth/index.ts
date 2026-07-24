@@ -100,11 +100,13 @@ export { MemoryTokenStore } from "./token-store/index.ts";
 export type { MemoryTokenStoreOptions } from "./token-store/index.ts";
 
 export {
+  createOAuthCallbackDispatcher,
   createOAuthCallbackHandler,
   createOAuthDisconnectHandler,
   createOAuthInitHandler,
   createOAuthStatusHandler,
   type GetUserIdFn,
+  type OAuthCallbackDispatcherOptions,
   type OAuthCallbackHandlerOptions,
   type OAuthDisconnectHandlerOptions,
   type OAuthInitHandlerOptions,

@@ -5,10 +5,17 @@ import {
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
-import type { OAuthServiceConfig, OAuthTokens, StoredOAuthState, TokenStore } from "../types.ts";
-import { normalizeStoredOAuthState } from "../state-utils.ts";
-import { MAX_OAUTH_STATE_KEY_LENGTH } from "../state-utils.ts";
-import { MAX_OAUTH_AUTHORIZATION_CODE_LENGTH } from "../limits.ts";
+import type { OAuthServiceConfig, OAuthTokens, TokenStore } from "../types.ts";
+import {
+  MAX_OAUTH_STATE_KEY_LENGTH,
+  type NormalizedStoredOAuthState,
+  normalizeStoredOAuthStateForStorage,
+} from "../state-utils.ts";
+import {
+  MAX_OAUTH_AUTHORIZATION_CODE_LENGTH,
+  MAX_OAUTH_ERROR_DESCRIPTION_LENGTH,
+  MAX_OAUTH_ERROR_LENGTH,
+} from "../limits.ts";
 import {
   buildOAuthCallbackUrl,
   createOAuthJsonResponse,
@@ -59,7 +66,242 @@ export interface OAuthCallbackHandlerOptions {
   envReader?: EnvReader;
 }
 
-/** Handler for create oauth callback. */
+/** Options accepted by a shared OAuth callback dispatcher. */
+export interface OAuthCallbackDispatcherOptions extends OAuthCallbackHandlerOptions {
+  /**
+   * Physical callback route shared by every allowlisted service.
+   *
+   * Init handlers for these services must receive the same `callbackRouteId`.
+   */
+  callbackRouteId: string;
+}
+
+interface OAuthCallbackParameters {
+  code: string | null;
+  state: string | null;
+  providerError: string | null;
+}
+
+interface OAuthCallbackParameterResult {
+  parameters: OAuthCallbackParameters | null;
+  reason?: "ambiguous" | "oversized";
+}
+
+interface OAuthCallbackRuntimeOptions {
+  tokenStore: TokenStore;
+  expectedRedirectUri: string;
+  successUrl: URL;
+  errorUrl: URL;
+  onSuccess?: OAuthCallbackHandlerOptions["onSuccess"];
+  onError?: OAuthCallbackHandlerOptions["onError"];
+  defaultErrorServiceId?: string;
+  selectService: (state: NormalizedStoredOAuthState) => OAuthService | null;
+}
+
+const CALLBACK_PARAMETER_LIMITS = {
+  code: MAX_OAUTH_AUTHORIZATION_CODE_LENGTH,
+  state: MAX_OAUTH_STATE_KEY_LENGTH,
+  error: MAX_OAUTH_ERROR_LENGTH,
+  error_description: MAX_OAUTH_ERROR_DESCRIPTION_LENGTH,
+} as const;
+
+function normalizeErrorCode(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.length <= MAX_OAUTH_ERROR_LENGTH &&
+      /^[A-Za-z0-9._~-]+$/.test(value)
+    ? value
+    : fallback;
+}
+
+function readOAuthCallbackParameters(url: URL): OAuthCallbackParameterResult {
+  const values = new Map<keyof typeof CALLBACK_PARAMETER_LIMITS, string | null>();
+  for (
+    const [name, maximum] of Object.entries(CALLBACK_PARAMETER_LIMITS) as [
+      keyof typeof CALLBACK_PARAMETER_LIMITS,
+      number,
+    ][]
+  ) {
+    const matches = url.searchParams.getAll(name);
+    if (matches.length > 1) return { parameters: null, reason: "ambiguous" };
+    const value = matches[0] ?? null;
+    if (value !== null && value.length > maximum) {
+      return { parameters: null, reason: "oversized" };
+    }
+    values.set(name, value);
+  }
+
+  const code = values.get("code") ?? null;
+  const providerError = values.get("error") ?? null;
+  if (code && providerError) return { parameters: null, reason: "ambiguous" };
+  return {
+    parameters: {
+      code,
+      state: values.get("state") ?? null,
+      providerError,
+    },
+  };
+}
+
+function assertStateValidationEnabled(skipStateValidation: boolean): void {
+  if (skipStateValidation) {
+    throw new Error(
+      "OAuth callback state validation cannot be disabled because it binds PKCE and user identity",
+    );
+  }
+}
+
+function createOAuthCallbackRuntime(
+  options: OAuthCallbackRuntimeOptions,
+): (request: Request) => Promise<Response> {
+  const {
+    tokenStore,
+    expectedRedirectUri,
+    successUrl,
+    errorUrl,
+    onSuccess,
+    onError,
+    defaultErrorServiceId,
+    selectService,
+  } = options;
+
+  function redirectWithError(errorCode: string): Response {
+    const target = new URL(errorUrl);
+    target.searchParams.set("error", normalizeErrorCode(errorCode, "callback_error"));
+    return createOAuthRedirect(target);
+  }
+
+  async function handleError(
+    errorCode: string,
+    serviceId: string | undefined,
+    logMessage?: string,
+    logData?: unknown,
+  ): Promise<Response> {
+    const normalizedCode = normalizeErrorCode(errorCode, "callback_error");
+    if (logMessage) {
+      logger.error(logMessage, {
+        ...(serviceId === undefined ? {} : { serviceId }),
+        data: logData,
+      });
+    }
+    if (onError && serviceId !== undefined) {
+      try {
+        await onError(serviceId, normalizedCode);
+      } catch (error) {
+        logger.error("OAuth error callback failed", { serviceId }, error);
+      }
+    }
+    return redirectWithError(normalizedCode);
+  }
+
+  return async function handler(request: Request): Promise<Response> {
+    if (request.method !== "GET") {
+      return createOAuthJsonResponse(
+        { error: "Method not allowed" },
+        { status: 405, headers: { Allow: "GET" } },
+      );
+    }
+
+    const parsed = readOAuthCallbackParameters(new URL(request.url));
+    if (!parsed.parameters) {
+      return handleError(
+        "invalid_request",
+        defaultErrorServiceId,
+        parsed.reason === "oversized"
+          ? "Oversized OAuth callback parameter"
+          : "Ambiguous OAuth callback parameters",
+      );
+    }
+    const { code, state, providerError } = parsed.parameters;
+    if (!state) {
+      return handleError("invalid_state", defaultErrorServiceId, "Missing state parameter");
+    }
+
+    let consumedState: unknown;
+    try {
+      consumedState = await tokenStore.consumeState(state);
+    } catch (error) {
+      return handleError(
+        "callback_error",
+        defaultErrorServiceId,
+        "OAuth state lookup failed",
+        { error: error instanceof Error ? error.name : "Error" },
+      );
+    }
+
+    const storedState = normalizeStoredOAuthStateForStorage(consumedState);
+    const service = storedState ? selectService(storedState) : null;
+    const stateHasRequiredPkce = service?.pkceMode === "unsupported"
+      ? storedState?.codeVerifier === undefined
+      : storedState?.codeVerifier !== undefined;
+    if (
+      !storedState || !service || storedState.redirectUri !== expectedRedirectUri ||
+      !stateHasRequiredPkce
+    ) {
+      return handleError(
+        "invalid_state",
+        defaultErrorServiceId,
+        "Invalid, expired, or mismatched state",
+      );
+    }
+    const serviceId = service.serviceId;
+
+    if (providerError) {
+      const normalizedProviderError = normalizeErrorCode(providerError, "provider_error");
+      logger.error("OAuth provider denied callback", {
+        serviceId,
+        error: normalizedProviderError,
+      });
+      return handleError(normalizedProviderError, serviceId);
+    }
+
+    if (!code) return handleError("no_code", serviceId);
+
+    try {
+      const result = await service.exchangeCode({
+        code,
+        redirectUri: storedState.redirectUri,
+        codeVerifier: storedState.codeVerifier,
+      });
+
+      if (!result.success || !result.tokens) {
+        return handleError(
+          result.error ?? "token_exchange_failed",
+          serviceId,
+          "OAuth token exchange failed",
+          { error: result.error },
+        );
+      }
+
+      const tokens = {
+        ...result.tokens,
+        ...(result.tokens.scope === undefined && storedState.scopes.length > 0
+          ? { scope: storedState.scopes.join(" ") }
+          : {}),
+      };
+      await tokenStore.setTokens(serviceId, storedState.userId, { ...tokens });
+
+      if (onSuccess) {
+        try {
+          await onSuccess(serviceId, { ...tokens }, storedState.userId);
+        } catch (error) {
+          logger.error("OAuth success callback failed", { serviceId }, error);
+        }
+      }
+
+      const target = new URL(successUrl);
+      target.searchParams.set("connected", serviceId);
+      return createOAuthRedirect(target);
+    } catch (error) {
+      return handleError(
+        "callback_error",
+        serviceId,
+        "OAuth callback failed",
+        { error: error instanceof Error ? error.name : "Error" },
+      );
+    }
+  };
+}
+
+/** Create a callback handler for one logical OAuth service. */
 export function createOAuthCallbackHandler(
   config: OAuthServiceConfig,
   options: OAuthCallbackHandlerOptions = {},
@@ -76,168 +318,73 @@ export function createOAuthCallbackHandler(
     envReader = getEnv,
   } = options;
 
-  if (skipStateValidation) {
-    throw new Error(
-      "OAuth callback state validation cannot be disabled because it binds PKCE and user identity",
-    );
-  }
+  assertStateValidationEnabled(skipStateValidation);
   const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
   const service = new OAuthService(config, tokenStore, envReader);
+  const appUrl = resolveOAuthApplicationUrl(baseUrl, env);
+
+  return createOAuthCallbackRuntime({
+    tokenStore,
+    expectedRedirectUri: buildOAuthCallbackUrl(appUrl, service.serviceId),
+    successUrl: resolveOAuthCompletionRedirect(appUrl, successRedirect),
+    errorUrl: resolveOAuthCompletionRedirect(appUrl, errorRedirect),
+    onSuccess,
+    onError,
+    defaultErrorServiceId: service.serviceId,
+    selectService: (state) => state.serviceId === service.serviceId ? service : null,
+  });
+}
+
+/**
+ * Create one callback handler shared by a fixed allowlist of logical services.
+ *
+ * The consumed state selects a service only after generic state validation.
+ * Configuration is snapshotted at construction and duplicate service IDs are
+ * rejected so dispatch cannot depend on mutable array order.
+ */
+export function createOAuthCallbackDispatcher(
+  configs: readonly OAuthServiceConfig[],
+  options: OAuthCallbackDispatcherOptions,
+): (request: Request) => Promise<Response> {
+  if (!Array.isArray(configs) || configs.length === 0) {
+    throw new Error("OAuth callback dispatcher requires at least one service config");
+  }
+  if (!options || typeof options.callbackRouteId !== "string" || !options.callbackRouteId) {
+    throw new Error("OAuth callback dispatcher requires a nonempty callbackRouteId");
+  }
+
+  const {
+    tokenStore: configuredTokenStore,
+    callbackRouteId,
+    baseUrl,
+    successRedirect = "/",
+    errorRedirect = "/",
+    onSuccess,
+    onError,
+    skipStateValidation = false,
+    env = getEnvironmentConfig(),
+    envReader = getEnv,
+  } = options;
+
+  assertStateValidationEnabled(skipStateValidation);
+  const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
+  const services = new Map<string, OAuthService>();
+  for (const config of configs) {
+    const service = new OAuthService(config, tokenStore, envReader);
+    if (services.has(service.serviceId)) {
+      throw new Error("OAuth callback dispatcher service IDs must be unique");
+    }
+    services.set(service.serviceId, service);
+  }
 
   const appUrl = resolveOAuthApplicationUrl(baseUrl, env);
-  const expectedRedirectUri = buildOAuthCallbackUrl(appUrl, service.serviceId);
-  const successUrl = resolveOAuthCompletionRedirect(appUrl, successRedirect);
-  const errorUrl = resolveOAuthCompletionRedirect(appUrl, errorRedirect);
-
-  function normalizeErrorCode(value: unknown, fallback: string): string {
-    return typeof value === "string" && /^[A-Za-z0-9._~-]{1,128}$/.test(value) ? value : fallback;
-  }
-
-  function redirectWithError(
-    errorCode: string,
-  ): Response {
-    const target = new URL(errorUrl);
-    target.searchParams.set("error", normalizeErrorCode(errorCode, "callback_error"));
-    return createOAuthRedirect(target);
-  }
-
-  async function handleError(
-    errorCode: string,
-    logMessage?: string,
-    logData?: unknown,
-  ): Promise<Response> {
-    const normalizedCode = normalizeErrorCode(errorCode, "callback_error");
-    if (logMessage) logger.error(logMessage, { data: logData });
-    if (onError) {
-      try {
-        await onError(service.serviceId, normalizedCode);
-      } catch (error) {
-        logger.error("OAuth error callback failed", { serviceId: service.serviceId }, error);
-      }
-    }
-    return redirectWithError(normalizedCode);
-  }
-
-  function readSingleParameter(url: URL, name: string): string | null | undefined {
-    const values = url.searchParams.getAll(name);
-    return values.length > 1 ? undefined : values[0] ?? null;
-  }
-
-  return async function handler(request: Request): Promise<Response> {
-    if (request.method !== "GET") {
-      return createOAuthJsonResponse(
-        { error: "Method not allowed" },
-        { status: 405, headers: { Allow: "GET" } },
-      );
-    }
-    const url = new URL(request.url);
-    const code = readSingleParameter(url, "code");
-    const state = readSingleParameter(url, "state");
-    const providerError = readSingleParameter(url, "error");
-    const errorDescription = readSingleParameter(url, "error_description");
-    if (
-      code === undefined || state === undefined || providerError === undefined ||
-      errorDescription === undefined || (code && providerError)
-    ) {
-      return handleError("invalid_request", "Ambiguous OAuth callback parameters", {
-        serviceId: service.serviceId,
-      });
-    }
-
-    if (
-      (state !== null && state.length > MAX_OAUTH_STATE_KEY_LENGTH) ||
-      (code !== null && code.length > MAX_OAUTH_AUTHORIZATION_CODE_LENGTH)
-    ) {
-      return handleError("invalid_request", "Oversized OAuth callback parameter", {
-        serviceId: service.serviceId,
-      });
-    }
-
-    let storedState: StoredOAuthState | null = null;
-
-    if (!state) {
-      return handleError("invalid_state", "Missing state parameter", {
-        serviceId: service.serviceId,
-      });
-    }
-
-    if (state) {
-      let consumedState: unknown;
-      try {
-        consumedState = await tokenStore.consumeState(state);
-      } catch (error) {
-        return handleError("callback_error", "OAuth state lookup failed", {
-          serviceId: service.serviceId,
-          error: error instanceof Error ? error.name : "Error",
-        });
-      }
-      storedState = normalizeStoredOAuthState(
-        consumedState,
-        service.serviceId,
-        expectedRedirectUri,
-        Date.now(),
-        service.pkceMode !== "unsupported",
-      );
-      if (!storedState) {
-        return handleError("invalid_state", "Invalid, expired, or mismatched state", {
-          serviceId: service.serviceId,
-        });
-      }
-    }
-
-    if (providerError) {
-      logger.error("OAuth provider denied callback", {
-        serviceId: service.serviceId,
-        error: normalizeErrorCode(providerError, "provider_error"),
-      });
-      return handleError(normalizeErrorCode(providerError, "provider_error"));
-    }
-
-    if (!code) return handleError("no_code");
-
-    const userId = storedState?.userId;
-    if (!userId) {
-      return handleError(
-        "user_binding_required",
-        `Cannot store tokens for ${service.serviceId}: no authenticated user binding is available`,
-      );
-    }
-
-    try {
-      const result = await service.exchangeCode({
-        code,
-        redirectUri: storedState?.redirectUri ?? expectedRedirectUri,
-        codeVerifier: storedState?.codeVerifier,
-      });
-
-      if (!result.success || !result.tokens) {
-        return handleError(
-          result.error ?? "token_exchange_failed",
-          `Token exchange failed for ${service.serviceId}:`,
-          result.error,
-        );
-      }
-
-      const tokens = { ...result.tokens };
-      await tokenStore.setTokens(service.serviceId, userId, { ...tokens });
-
-      if (onSuccess) {
-        try {
-          await onSuccess(service.serviceId, { ...tokens }, userId);
-        } catch (error) {
-          logger.error("OAuth success callback failed", { serviceId: service.serviceId }, error);
-        }
-      }
-
-      const target = new URL(successUrl);
-      target.searchParams.set("connected", service.serviceId);
-      return createOAuthRedirect(target);
-    } catch (error) {
-      return handleError(
-        "callback_error",
-        `OAuth callback error for ${service.serviceId}:`,
-        error,
-      );
-    }
-  };
+  return createOAuthCallbackRuntime({
+    tokenStore,
+    expectedRedirectUri: buildOAuthCallbackUrl(appUrl, callbackRouteId),
+    successUrl: resolveOAuthCompletionRedirect(appUrl, successRedirect),
+    errorUrl: resolveOAuthCompletionRedirect(appUrl, errorRedirect),
+    onSuccess,
+    onError,
+    selectService: (state) => services.get(state.serviceId) ?? null,
+  });
 }

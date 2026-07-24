@@ -980,7 +980,6 @@ Deno.test(
             access_token: "fresh-access-token",
             refresh_token: "rotated-refresh-token",
             token_type: "Bearer",
-            scope: "read",
             expires_in: 3600,
           }),
           {
@@ -1002,6 +1001,7 @@ Deno.test(
       assertEquals(refreshCalls, 1);
       assertEquals(setTokenCalls, 1);
       assertEquals(storedTokens.refreshToken, "rotated-refresh-token");
+      assertEquals(storedTokens.scope, "read");
     } finally {
       globalThis.fetch = original;
     }

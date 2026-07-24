@@ -98,6 +98,14 @@ export interface OAuthInitHandlerOptions {
   /** Base URL for callbacks (defaults to APP_URL or localhost) */
   baseUrl?: string;
 
+  /**
+   * Physical callback route. Defaults to the logical service ID.
+   *
+   * Set this to the dispatcher's shared route when multiple logical services
+   * complete through one provider callback URI.
+   */
+  callbackRouteId?: string;
+
   /** Additional authorization options */
   authOptions?: AuthorizationUrlOptions;
 
@@ -131,6 +139,7 @@ export function createOAuthInitHandler(
   const {
     tokenStore: configuredTokenStore,
     baseUrl,
+    callbackRouteId,
     authOptions = {},
     env = getEnvironmentConfig(),
     envReader = getEnv,
@@ -183,7 +192,10 @@ export function createOAuthInitHandler(
     usePkce: handlerUsesPkce,
   };
   const appUrl = resolveOAuthApplicationUrl(baseUrl, env);
-  const redirectUri = buildOAuthCallbackUrl(appUrl, service.serviceId);
+  const redirectUri = buildOAuthCallbackUrl(
+    appUrl,
+    callbackRouteId === undefined ? service.serviceId : callbackRouteId,
+  );
 
   return async function handler(req: Request): Promise<Response> {
     if (req.method !== "GET") return createMethodNotAllowedResponse("GET");

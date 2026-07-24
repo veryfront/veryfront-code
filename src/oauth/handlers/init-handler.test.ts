@@ -242,6 +242,40 @@ Deno.test("init handler: stores state with userId and redirects to the provider"
   assertEquals(storedState?.scopes, ["read"]);
 });
 
+Deno.test("init handler binds provider state to an explicit shared callback route", async () => {
+  const store = new MemoryTokenStore();
+  const appUrl = "https://example.test";
+  const handler = createOAuthInitHandler(TEST_CONFIG, {
+    tokenStore: store,
+    callbackRouteId: "shared-oauth",
+    env: makeEnv(appUrl),
+    envReader: (key: string) => ENV[key],
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
+  const location = new URL(response.headers.get("location")!);
+  const expectedRedirectUri = `${appUrl}/api/auth/shared-oauth/callback`;
+  const state = location.searchParams.get("state")!;
+
+  assertEquals(location.searchParams.get("redirect_uri"), expectedRedirectUri);
+  assertEquals((await store.consumeState(state))?.redirectUri, expectedRedirectUri);
+});
+
+Deno.test("init handler validates an explicit callback route eagerly", () => {
+  assertThrows(
+    () =>
+      createOAuthInitHandler(TEST_CONFIG, {
+        callbackRouteId: "invalid/route",
+        env: makeEnv(),
+        envReader: (key) => ENV[key],
+        getUserId: () => "alice",
+      }),
+    Error,
+    "unsupported characters",
+  );
+});
+
 Deno.test("init handler: supports async isAuthenticated and getUserId", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthInitHandler(TEST_CONFIG, {
