@@ -249,6 +249,6 @@ function FilesButton() {
 
 ## Related
 
-- [`useAppShell`](../hooks/use-app-shell.md) — shell state hook.
+- [`useAppShell`](../hooks/consumed-from-ui.md) — shell state hook.
 - [`ChatSidebar`](./chat-sidebar.md) — the usual left-sidebar occupant.
-- [`useColorMode` / `ColorModeProvider` / `ColorModeToggle`](../hooks/use-color-mode.md) — color mode, also from `veryfront/ui`, documented as-is.
+- [`useColorMode` / `ColorModeProvider` / `ColorModeToggle`](../hooks/consumed-from-ui.md) — color mode, also from `veryfront/ui`, documented as-is.

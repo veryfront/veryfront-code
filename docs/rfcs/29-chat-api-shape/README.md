@@ -112,8 +112,7 @@ One graduation path, not three products: every L1 default is public L2; every L2
 
 ### Shell
 
-- [useAppShell](./hooks/use-app-shell.md) — `AppShell` state (from `veryfront/ui`; reference)
-- [useColorMode](./hooks/use-color-mode.md) — color mode (from `veryfront/ui`; reference)
+- [Consumed from `veryfront/ui`](./hooks/consumed-from-ui.md) — `useAppShell`, `useColorMode` (reference only; owned by `veryfront/ui`, not chat)
 
 ## Everything else
 
