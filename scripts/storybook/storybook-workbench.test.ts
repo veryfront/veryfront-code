@@ -448,6 +448,8 @@ describe("Storybook UI workbench", () => {
     assertStringIncludes(main, "createVeryfrontAliases");
     assertStringIncludes(aliases, "veryfront\\/chat");
     assertStringIncludes(aliases, "#veryfront");
+    assertStringIncludes(aliases, "#deno-config");
+    assertStringIncludes(aliases, "deno.json");
     assertStringIncludes(
       aliases,
       "storybook/.storybook/shims/veryfront-utils.ts",

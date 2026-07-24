@@ -239,7 +239,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
 
       assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
-      assert(error.message.includes("https://esm.sh/html-failure"));
+      assertEquals(
+        error.message,
+        "Received HTML instead of JavaScript from https://esm.sh/html-failure. " +
+          "The package may not exist or failed to build on esm.sh.",
+      );
     });
   });
 

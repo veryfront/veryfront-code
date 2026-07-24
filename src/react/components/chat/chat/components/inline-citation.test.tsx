@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { InlineCitation } from "./inline-citation.tsx";
 
 function installDomGlobals(dom: JSDOM): () => void {
@@ -74,10 +75,10 @@ describe("InlineCitation", () => {
       assert(trigger.className.includes("vf-citation-trigger"));
 
       trigger.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 170));
-      flushSync(() => {
-        // Flush the hover timer's state update before inspecting the DOM.
-      });
+      await waitFor(
+        () => document.querySelector(".vf-citation-card") !== null,
+        { interval: 10, message: "Citation card did not render after hover" },
+      );
 
       const card = document.querySelector(".vf-citation-card");
       assert(card, "Expected citation card to render after hover");

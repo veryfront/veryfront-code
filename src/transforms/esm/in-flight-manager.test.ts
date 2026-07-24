@@ -60,16 +60,24 @@ describe("transforms/esm/in-flight-manager", () => {
     });
 
     it("honors a caller-provided wait window", async () => {
+      const originalRandom = Math.random;
+      let randomCalls = 0;
       let timer: ReturnType<typeof setTimeout>;
       const slowResult = new Promise<string>((resolve) => {
         timer = setTimeout(() => resolve("late"), 25);
       });
 
       try {
+        Math.random = () => {
+          randomCalls += 1;
+          return 0.5;
+        };
         const result = await waitForInFlightFetch(slowResult, "key", 5);
 
         assertEquals(result, undefined);
+        assertEquals(randomCalls, 0);
       } finally {
+        Math.random = originalRandom;
         clearTimeout(timer!);
       }
     });

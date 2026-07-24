@@ -52,8 +52,9 @@ export async function waitForInFlightFetch(
   cacheKey: string,
   waitTimeoutMs?: number,
 ): Promise<string | null | undefined> {
-  const jitter = Math.floor(Math.random() * IN_FLIGHT_JITTER_MS);
-  const timeoutMs = waitTimeoutMs ?? IN_FLIGHT_WAIT_TIMEOUT_MS + jitter;
+  const timeoutMs = waitTimeoutMs === undefined
+    ? IN_FLIGHT_WAIT_TIMEOUT_MS + Math.floor(Math.random() * IN_FLIGHT_JITTER_MS)
+    : waitTimeoutMs;
 
   let timeoutId: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<undefined>((resolve) => {
