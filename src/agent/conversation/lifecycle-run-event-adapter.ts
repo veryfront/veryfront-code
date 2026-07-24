@@ -62,6 +62,7 @@ export function createLifecycleRunEventAdapter(input: {
   let disposed = false;
   const openToolCalls = new Map<string, string>();
   const toolInputs = new Map<string, unknown>();
+  const streamedToolInputs = new Set<string>();
   const lastToolStatus = new Map<string, string>();
   const openTextIds = new Set<string>();
   const openReasoningIds = new Set<string>();
@@ -231,6 +232,7 @@ export function createLifecycleRunEventAdapter(input: {
           },
           delta: event.delta,
         });
+        streamedToolInputs.add(event.toolCallId);
         return;
       case "tool_input_ready":
         if (!openToolCalls.has(event.toolCallId)) {
@@ -239,6 +241,13 @@ export function createLifecycleRunEventAdapter(input: {
           );
         }
         toolInputs.set(event.toolCallId, event.input);
+        if (!streamedToolInputs.has(event.toolCallId)) {
+          emit({
+            type: conversationRunEventTypes.toolCallArgs,
+            toolCallId: event.toolCallId,
+            delta: serialize(event.input),
+          });
+        }
         emit({
           type: conversationRunEventTypes.toolCallEnd,
           toolCallId: event.toolCallId,
@@ -268,6 +277,7 @@ export function createLifecycleRunEventAdapter(input: {
         });
         openToolCalls.delete(event.toolCallId);
         toolInputs.delete(event.toolCallId);
+        streamedToolInputs.delete(event.toolCallId);
         return;
       }
       case "provider_tool_start":
@@ -284,6 +294,7 @@ export function createLifecycleRunEventAdapter(input: {
         });
         openToolCalls.delete(event.toolCallId);
         toolInputs.delete(event.toolCallId);
+        streamedToolInputs.delete(event.toolCallId);
         return;
       }
       case "provider_tool_denied":
@@ -301,6 +312,7 @@ export function createLifecycleRunEventAdapter(input: {
         });
         openToolCalls.delete(event.toolCallId);
         toolInputs.delete(event.toolCallId);
+        streamedToolInputs.delete(event.toolCallId);
         return;
       }
       case "custom":

@@ -195,6 +195,7 @@ type Version2Validator = {
   openText: Set<string>;
   openReasoning: Set<string>;
   openTools: Set<string>;
+  toolInputText: Map<string, string>;
 };
 
 function readVersion2(
@@ -207,6 +208,7 @@ function readVersion2(
     openText: new Set(),
     openReasoning: new Set(),
     openTools: new Set(),
+    toolInputText: new Map(),
   };
   let sequence = 0;
 
@@ -303,30 +305,49 @@ function readVersion2(
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openTools.add(toolCallId);
+        validator.toolInputText.set(toolCallId, "");
         push({ type: "tool_input_start", toolCallId, toolName });
         break;
       case "TOOL_CALL_ARGS":
         if (!validator.openTools.has(toolCallId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
+        validator.toolInputText.set(
+          toolCallId,
+          `${validator.toolInputText.get(toolCallId) ?? ""}${
+            typeof event.delta === "string" ? event.delta : ""
+          }`,
+        );
         push({
           type: "tool_input_content",
           toolCallId,
           delta: typeof event.delta === "string" ? event.delta : "",
         });
         break;
-      case "TOOL_CALL_END":
+      case "TOOL_CALL_END": {
         if (!validator.openTools.has(toolCallId)) {
           return invalid("VERSION_2_LIFECYCLE_VIOLATION");
         }
         validator.openTools.delete(toolCallId);
-        push({
-          type: "tool_input_ready",
-          toolCallId,
-          toolName,
-          input: {},
-        });
+        const parsed = parseCanonicalToolInput(validator.toolInputText.get(toolCallId) ?? "");
+        validator.toolInputText.delete(toolCallId);
+        if (parsed.ok) {
+          push({
+            type: "tool_input_ready",
+            toolCallId,
+            toolName,
+            input: parsed.value,
+          });
+        } else {
+          push({
+            type: "tool_input_rejected",
+            toolCallId,
+            toolName,
+            reason: parsed.reason,
+          });
+        }
         break;
+      }
       case "TOOL_CALL_RESULT":
         push({
           type: "custom",

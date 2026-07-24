@@ -140,7 +140,7 @@ describe("lifecycle run event adapter", () => {
           toolName: "missing_tool",
           reason: "unavailable",
         },
-      }])[0],
+      }])[0]!,
     );
     adapter.dispose();
     assertEquals(emitted, []);
@@ -179,7 +179,7 @@ describe("lifecycle run event adapter", () => {
         adapter.handleFrame(
           frames([{
             event: { type: "text_content", id: "text:0", delta: "orphan" },
-          }])[0],
+          }])[0]!,
         ),
       StreamProjectionInvariantError,
     );
@@ -245,5 +245,38 @@ describe("lifecycle run event adapter", () => {
     ]);
     assertEquals(emitted[3]?.input, { query: "x" });
     assertEquals(emitted[3]?.isError, false);
+  });
+
+  it("records ready-only tool input before committing the durable tool call", () => {
+    const { emitted, adapter } = createCollector();
+    for (
+      const frame of frames([
+        {
+          event: {
+            type: "tool_input_start",
+            toolCallId: "native-1",
+            toolName: "create_file",
+          },
+        },
+        {
+          event: {
+            type: "tool_input_ready",
+            toolCallId: "native-1",
+            toolName: "create_file",
+            input: { path: "a.md" },
+          },
+        },
+      ])
+    ) {
+      adapter.handleFrame(frame);
+    }
+    adapter.dispose();
+
+    assertEquals(emitted.map((event) => event.type), [
+      "TOOL_CALL_START",
+      "TOOL_CALL_ARGS",
+      "TOOL_CALL_END",
+    ]);
+    assertEquals(emitted[1]?.delta, '{"path":"a.md"}');
   });
 });

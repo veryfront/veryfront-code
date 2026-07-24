@@ -56,6 +56,11 @@ export function runStreamLifecycle<TProviderPart>(
     | null = null;
   let reducer = createInitialReducerState();
   let cleanupRequested = false;
+  let attemptStartMs: number | null = null;
+  const elapsedMs = (): number => {
+    if (attemptStartMs === null) return 0;
+    return Math.max(0, policy.clock.nowMs() - attemptStartMs);
+  };
 
   const settleCancelled = (source: StreamCancellationSource) => {
     if (outcome.settled) return;
@@ -63,7 +68,7 @@ export function runStreamLifecycle<TProviderPart>(
     reducer = terminateReducer(reducer, "cancelled");
     outcome.settle(resolveStreamOutcome({
       snapshot,
-      elapsedMs: policy.clock.nowMs(),
+      elapsedMs: elapsedMs(),
       cancellation: source,
     }));
   };
@@ -79,13 +84,13 @@ export function runStreamLifecycle<TProviderPart>(
   };
 
   const consume = async function* (): AsyncGenerator<StreamLifecycleFrame> {
+    attemptStartMs = policy.clock.nowMs();
     const activeCancellation = createCancellationCoordinator(
       input.cancellations ?? [],
       settleCancelled,
     );
     cancellation = activeCancellation;
     const disposeController = new AbortController();
-    const attemptStartMs = policy.clock.nowMs();
     const attemptDeadlineMs = attemptStartMs + policy.attemptTimeoutMs;
     let lastProgressMs: number | null = null;
     const deadlines = createStreamDeadlineController({
@@ -99,7 +104,7 @@ export function runStreamLifecycle<TProviderPart>(
       notifyObserver(() => observer?.onDeadline("attempt"));
       const failed = resolveStreamOutcome({
         snapshot: reducer.snapshot,
-        elapsedMs: policy.clock.nowMs(),
+        elapsedMs: elapsedMs(),
         lifecycleError: {
           code: "STREAM_ATTEMPT_TIMEOUT",
           phase: reducer.snapshot.phase,
@@ -171,11 +176,11 @@ export function runStreamLifecycle<TProviderPart>(
             );
             reducer = resolved.reduction.state;
             if (resolved.kind === "handoff") {
-              settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
+              settleReducerTerminal(outcome, reducer, elapsedMs());
             } else {
               const failed = resolveStreamOutcome({
                 snapshot: reducer.snapshot,
-                elapsedMs: policy.clock.nowMs(),
+                elapsedMs: elapsedMs(),
                 lifecycleError: {
                   code: resolved.code,
                   phase: reducer.snapshot.phase,
@@ -199,7 +204,7 @@ export function runStreamLifecycle<TProviderPart>(
               : "SEMANTIC_IDLE_TIMEOUT" as const;
             const failed = resolveStreamOutcome({
               snapshot: reducer.snapshot,
-              elapsedMs: policy.clock.nowMs(),
+              elapsedMs: elapsedMs(),
               lifecycleError: {
                 code,
                 phase: reducer.snapshot.phase,
@@ -230,7 +235,7 @@ export function runStreamLifecycle<TProviderPart>(
             reducer,
             raced.error,
             input.provider.classifyError(raced.error, reducer.snapshot),
-            policy.clock.nowMs(),
+            elapsedMs(),
           );
           return;
         }
@@ -239,11 +244,11 @@ export function runStreamLifecycle<TProviderPart>(
         const next = raced.result;
         if (next.done) {
           if (reducer.terminal) {
-            settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
+            settleReducerTerminal(outcome, reducer, elapsedMs());
           } else {
             outcome.settle(resolveStreamOutcome({
               snapshot: reducer.snapshot,
-              elapsedMs: policy.clock.nowMs(),
+              elapsedMs: elapsedMs(),
             }));
           }
           return;
@@ -271,7 +276,7 @@ export function runStreamLifecycle<TProviderPart>(
               reducer,
               undefined,
               signal.error,
-              policy.clock.nowMs(),
+              elapsedMs(),
             );
             return;
           }
@@ -291,7 +296,7 @@ export function runStreamLifecycle<TProviderPart>(
             const progressPhase = reducer.snapshot.phase;
             notifyObserver(() =>
               observer?.onSemanticProgress({
-                elapsedMs: progressAtMs - attemptStartMs,
+                elapsedMs: progressAtMs - (attemptStartMs ?? progressAtMs),
                 sincePreviousProgressMs,
                 phase: progressPhase,
               })
@@ -299,7 +304,7 @@ export function runStreamLifecycle<TProviderPart>(
           }
           const terminalCommitted = reducer.terminal;
           if (terminalCommitted) {
-            settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
+            settleReducerTerminal(outcome, reducer, elapsedMs());
           }
           for (const frame of reduced.frames) {
             if (!terminalCommitted && outcome.settled) return;

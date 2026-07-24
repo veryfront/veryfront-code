@@ -150,6 +150,7 @@ describe("stream lifecycle deadlines", () => {
 
   it("discards a cached provider result when the attempt deadline wins", async () => {
     const clock = new ManualMonotonicClock();
+    clock.advanceBy(1_000);
     const provider = createControllableSignalProvider();
     const run = runStreamLifecycle({
       provider,
@@ -194,6 +195,7 @@ describe("stream lifecycle deadlines", () => {
       assertEquals(outcome.error.code, "STREAM_ATTEMPT_TIMEOUT");
       assertEquals(outcome.error.source, "runtime");
     }
+    assertEquals(outcome.elapsedMs, 30_000);
     assertEquals((await iterator.next()).done, true);
   });
 });

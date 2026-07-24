@@ -96,4 +96,48 @@ describe("conversation run lifecycle read adapter", () => {
       assertEquals(result.code, "UNSUPPORTED_DURABLE_EVENT");
     }
   });
+
+  it("preserves stored version 2 tool arguments when replaying a committed call", () => {
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          type: "TOOL_CALL_START",
+          toolCallId: "tool-1",
+          toolName: "create_file",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "tool:1",
+        },
+        {
+          type: "TOOL_CALL_ARGS",
+          toolCallId: "tool-1",
+          delta: '{"path":"a.md"}',
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "tool:2",
+        },
+        {
+          type: "TOOL_CALL_END",
+          toolCallId: "tool-1",
+          toolName: "create_file",
+          stream_protocol_version: 2,
+          logical_sequence: 3,
+          idempotency_key: "tool:3",
+        },
+      ],
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    const ready = result.frames.find((frame) =>
+      frame.class === "semantic" && frame.event.type === "tool_input_ready"
+    );
+    assertEquals(ready?.event, {
+      type: "tool_input_ready",
+      toolCallId: "tool-1",
+      toolName: "create_file",
+      input: { path: "a.md" },
+    });
+  });
 });

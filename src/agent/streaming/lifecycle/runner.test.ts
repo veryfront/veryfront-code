@@ -91,6 +91,30 @@ describe("runStreamLifecycle", () => {
     if (outcome.status === "cancelled") assertEquals(outcome.source, "runtime");
   });
 
+  it("reports cancellation elapsed time relative to the attempt start", async () => {
+    const clock = new ManualMonotonicClock();
+    clock.advanceBy(1_000);
+    const controller = new AbortController();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      cancellations: [{ source: "runtime", signal: controller.signal }],
+      policy: {
+        clock,
+        attemptTimeoutMs: 30_000,
+      },
+    });
+
+    const pending = run.frames[Symbol.asyncIterator]().next();
+    clock.advanceBy(5);
+    controller.abort("runtime stop");
+    await pending;
+    const outcome = await run.outcome;
+
+    assertEquals(outcome.status, "cancelled");
+    assertEquals(outcome.elapsedMs, 5);
+  });
+
   it("reports cleanup failure without replacing the committed outcome", async () => {
     const cleanupError = new Error("cleanup sentinel");
     const reported: StreamDiagnosticEvent[] = [];
@@ -180,5 +204,40 @@ describe("runStreamLifecycle", () => {
     }
     assertEquals(provider.openCount, 0);
     assertEquals(provider.returnCount, 0);
+  });
+
+  it("reports early stream end elapsed time relative to a non-zero attempt start", async () => {
+    const clock = new ManualMonotonicClock();
+    clock.advanceBy(1_000);
+    const provider = createScriptedStreamProvider([]);
+    const run = runStreamLifecycle({
+      provider,
+      policy: { clock },
+    });
+
+    await run.frames[Symbol.asyncIterator]().next();
+    const outcome = await run.outcome;
+
+    assertEquals(outcome.status, "failed");
+    assertEquals(outcome.elapsedMs, 0);
+  });
+
+  it("reports provider error elapsed time relative to the attempt start", async () => {
+    const clock = new ManualMonotonicClock();
+    clock.advanceBy(1_000);
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: { clock, attemptTimeoutMs: 30_000 },
+    });
+
+    const pending = run.frames[Symbol.asyncIterator]().next();
+    clock.advanceBy(37);
+    provider.rejectNext(new Error("provider sentinel"));
+    await pending;
+    const outcome = await run.outcome;
+
+    assertEquals(outcome.status, "failed");
+    assertEquals(outcome.elapsedMs, 37);
   });
 });
