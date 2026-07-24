@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAWSClient } from '../../lib/aws-client';
+import { getAWSClient } from '../lib/aws-client';
 
 export const listEC2InstancesTool = tool({
-  id: 'list-ec2-instances',
+  id: 'aws-list-ec2-instances',
   description:
     'List all EC2 instances in your AWS account. Returns instance details including ID, type, state, and IP addresses.',
   inputSchema: defineSchema((v) =>

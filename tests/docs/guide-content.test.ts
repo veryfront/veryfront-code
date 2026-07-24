@@ -24,6 +24,11 @@ describe("guide content contracts", () => {
       guide.includes("tokenStore.get(userId, githubConfig.id)"),
       false,
     );
+    assertStringIncludes(
+      guide,
+      "HubSpot's provider metadata is retained for source compatibility",
+    );
+    assertEquals(guide.includes("Google Drive, HubSpot, Jira"), false);
   });
 
   it("documents feature-gated integrations without describing them as removed", async () => {

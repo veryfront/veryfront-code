@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "send-draft",
+  id: "gmail-send-draft",
   description: "Send an existing Gmail draft.",
   inputSchema: defineSchema((v) =>
     v.object({

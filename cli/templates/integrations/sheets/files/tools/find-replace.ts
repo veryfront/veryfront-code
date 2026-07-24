@@ -4,7 +4,7 @@ import { createSheetsClient } from "../lib/sheets-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "find-replace",
+  id: "sheets-find-replace",
   description:
     "Find and replace text in a spreadsheet, optionally limited to a single sheet ID.",
   inputSchema: defineSchema((v) =>

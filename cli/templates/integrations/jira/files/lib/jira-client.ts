@@ -1,5 +1,6 @@
-import { fetchOAuthJson } from "./oauth.ts";
+import { atlassianOAuthScopePolicy } from "./atlassian-oauth.generated.ts";
 import { resolveAtlassianCloudId } from "./atlassian-cloud.ts";
+import { fetchOAuthJsonWithScopePolicy } from "./oauth.ts";
 
 const JIRA_API_VERSION = "3";
 
@@ -122,7 +123,11 @@ function buildAdfDescription(text: string): Record<string, unknown> {
 }
 
 export function createJiraClient(userId: string) {
-  const cloudId = resolveAtlassianCloudId(userId, "jira");
+  const cloudId = resolveAtlassianCloudId(
+    userId,
+    "jira",
+    atlassianOAuthScopePolicy,
+  );
 
   async function jiraFetch<T>(
     endpoint: string,
@@ -134,14 +139,20 @@ export function createJiraClient(userId: string) {
       `https://api.atlassian.com/ex/jira/${resolvedCloudId}/rest/api/${JIRA_API_VERSION}`;
     const url = `${baseUrl}${endpoint}`;
 
-    return await fetchOAuthJson<T>(userId, "jira", url, {
-      ...options,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...options.headers,
+    return await fetchOAuthJsonWithScopePolicy<T>(
+      userId,
+      "jira",
+      url,
+      atlassianOAuthScopePolicy,
+      {
+        ...options,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
       },
-    });
+    );
   }
 
   async function searchIssues(

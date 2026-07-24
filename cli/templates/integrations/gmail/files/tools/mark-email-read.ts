@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "mark-email-read",
+  id: "gmail-mark-email-read",
   description: "Mark a Gmail message as read by removing the UNREAD label.",
   inputSchema: defineSchema((v) =>
     v.object({

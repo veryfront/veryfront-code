@@ -7,7 +7,7 @@ import { resolveUserId } from "../lib/context.ts";
 const MESSAGE_FORMATS = ["full", "metadata", "minimal", "raw"] as const;
 
 export default tool({
-  id: "get-draft",
+  id: "gmail-get-draft",
   description: "Get a Gmail draft by ID.",
   inputSchema: defineSchema((v) =>
     v.object({

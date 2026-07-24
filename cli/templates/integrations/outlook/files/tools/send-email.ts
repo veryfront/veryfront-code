@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "send-email",
+  id: "outlook-send-email",
   description:
     "Send a new email message. Supports multiple recipients, CC, BCC, and importance levels.",
   inputSchema: defineSchema((v) =>

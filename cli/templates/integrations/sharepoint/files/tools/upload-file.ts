@@ -4,7 +4,7 @@ import { createSharePointClient } from "../lib/sharepoint-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "upload-file",
+  id: "sharepoint-upload-file",
   description:
     "Upload a file to a SharePoint document library. Can upload to root or a specific folder.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createGitLabClient } from "../lib/gitlab-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "add-merge-request-comment",
+  id: "gitlab-add-merge-request-comment",
   description: "Add a Markdown comment/note to a GitLab merge request.",
   inputSchema: defineSchema((v) =>
     v.object({

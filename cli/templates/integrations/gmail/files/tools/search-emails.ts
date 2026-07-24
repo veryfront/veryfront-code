@@ -4,7 +4,7 @@ import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "search-emails",
+  id: "gmail-search-emails",
   description:
     "Search emails using Gmail's search syntax. Supports queries like 'from:person@email.com', 'subject:meeting', 'after:2024/01/01', etc.",
   inputSchema: defineSchema((v) =>

@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-page",
+  id: "notion-create-page",
   description:
     "Create a new page in Notion. Can create as a subpage of an existing page or as a new entry in a database.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createOneDriveClient } from "../lib/onedrive-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "download-file",
+  id: "onedrive-download-file",
   description:
     "Download file content from OneDrive. Returns the file content and metadata.",
   inputSchema: defineSchema((v) =>

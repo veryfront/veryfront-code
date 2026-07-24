@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "linear-list-projects",
   description:
     "List all projects in the Linear workspace. Returns project details including name, state, progress, and associated teams.",
   inputSchema: defineSchema((v) =>

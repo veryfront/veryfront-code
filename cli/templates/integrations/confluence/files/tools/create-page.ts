@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-page",
+  id: "confluence-create-page",
   description:
     "Create a new page in a Confluence space. Can optionally be created as a child of an existing page.",
   inputSchema: defineSchema((v) =>

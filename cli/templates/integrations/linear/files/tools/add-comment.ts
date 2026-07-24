@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "add-comment",
+  id: "linear-add-comment",
   description: "Add a comment to a Linear issue.",
   inputSchema: defineSchema((v) =>
     v.object({

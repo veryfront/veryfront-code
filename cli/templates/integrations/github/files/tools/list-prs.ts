@@ -24,7 +24,7 @@ type PullRequest = {
 };
 
 export default tool({
-  id: "list-prs",
+  id: "github-list-prs",
   description: "List pull requests for a GitHub repository",
   inputSchema: defineSchema((v) =>
     v.object({

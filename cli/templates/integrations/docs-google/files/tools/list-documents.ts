@@ -7,7 +7,7 @@ import { requireUserIdFromContext } from "../lib/user-id.ts";
 const ORDER_BY_VALUES = ["createdTime", "modifiedTime", "name"] as const;
 
 export default tool({
-  id: "list-documents",
+  id: "docs-google-list-documents",
   description:
     "List recent Google Docs documents from Google Drive. Returns document names, IDs, and metadata.",
   inputSchema: defineSchema((v) =>

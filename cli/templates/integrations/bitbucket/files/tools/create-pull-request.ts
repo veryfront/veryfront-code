@@ -4,7 +4,7 @@ import { createBitbucketClient } from "../lib/bitbucket-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-pull-request",
+  id: "bitbucket-create-pull-request",
   description: "Create a new pull request in a Bitbucket repository",
   inputSchema: defineSchema((v) =>
     v.object({

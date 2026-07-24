@@ -28,7 +28,7 @@ type GitHubRepo = {
 };
 
 export default tool({
-  id: "list-repos",
+  id: "github-list-repos",
   description: "List GitHub repositories for the authenticated user",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -4,7 +4,7 @@ import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "list-emails",
+  id: "gmail-list-emails",
   description:
     "List recent emails from Gmail inbox. Returns email subjects, senders, and snippets.",
   inputSchema: defineSchema((v) =>

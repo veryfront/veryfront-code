@@ -13,7 +13,7 @@ type SlackMessage = {
 };
 
 export default tool({
-  id: "get-messages",
+  id: "slack-get-messages",
   description: "Get recent messages from a Slack channel",
   inputSchema: defineSchema((v) =>
     v.object({

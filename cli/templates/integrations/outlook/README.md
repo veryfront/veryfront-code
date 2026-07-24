@@ -67,11 +67,11 @@ outlook/
 │   │   ├── route.ts                 # OAuth initiation
 │   │   └── callback/route.ts        # OAuth callback handler
 │   └── tools/
-│       ├── list-emails.ts           # List recent emails
-│       ├── get-email.ts             # Get email details
-│       ├── send-email.ts            # Send email
-│       ├── search-emails.ts         # Search emails
-│       └── list-folders.ts          # List mail folders
+│       ├── outlook-list-emails.ts           # List recent emails
+│       ├── outlook-get-email.ts             # Get email details
+│       ├── outlook-send-email.ts            # Send email
+│       ├── outlook-search-emails.ts         # Search emails
+│       └── outlook-list-folders.ts          # List mail folders
 ```
 
 ## API Client (`outlook-client.ts`)
@@ -117,7 +117,7 @@ List all mail folders in the mailbox.
 
 ## AI Tools
 
-### 1. `list-emails`
+### 1. `outlook-list-emails`
 List recent emails from inbox or folder.
 
 **Parameters:**
@@ -136,7 +136,7 @@ List recent emails from inbox or folder.
 }
 ```
 
-### 2. `get-email`
+### 2. `outlook-get-email`
 Get detailed email information.
 
 **Parameters:**
@@ -151,7 +151,7 @@ Get detailed email information.
 }
 ```
 
-### 3. `send-email`
+### 3. `outlook-send-email`
 Send a new email message.
 
 **Parameters:**
@@ -175,7 +175,7 @@ Send a new email message.
 }
 ```
 
-### 4. `search-emails`
+### 4. `outlook-search-emails`
 Search emails across all fields.
 
 **Parameters:**
@@ -190,7 +190,7 @@ Search emails across all fields.
 }
 ```
 
-### 5. `list-folders`
+### 5. `outlook-list-folders`
 List all mail folders.
 
 **Parameters:** None

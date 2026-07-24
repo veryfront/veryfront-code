@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-bases",
+  id: "airtable-list-bases",
   description:
     "List all accessible Airtable bases in the connected account. Returns base IDs, names, and permission levels.",
   inputSchema: defineSchema((v) => v.object({}))(),

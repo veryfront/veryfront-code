@@ -5,11 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests the init command types and options validation.
  */
 
-import {
-  assertEquals,
-  assertExists,
-  assertRejects,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { cwd } from "veryfront/platform";
@@ -89,6 +85,89 @@ describe("InitCommand Types", () => {
         assertEquals(route.includes("hasUsableOAuthTokens"), true);
         assertEquals(
           route.includes("token.expiresAt > now || hasRefreshToken"),
+          true,
+        );
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("requires the complete selected Atlassian grant in shared connection status", async () => {
+      const parentDir = await makeTempDir({
+        prefix: "veryfront-init-atlassian-status-",
+      });
+      const name = `atlassian-status-${crypto.randomUUID()}`;
+
+      try {
+        await initCommand({
+          name,
+          parentDir,
+          template: "minimal",
+          integrations: ["confluence", "jira"],
+          skipInstall: true,
+          skipEnvPrompt: true,
+          quiet: true,
+        });
+
+        const route = await Deno.readTextFile(
+          join(parentDir, name, "app/api/integrations/status/route.ts"),
+        );
+        assertEquals(route.includes("satisfiesOAuthScopePolicy"), true);
+        assertEquals(route.includes("requiredOAuthScopes"), true);
+        assertEquals(route.includes("forbiddenOAuthScopes"), true);
+        assertEquals(route.includes("resolveAtlassianCloudId"), true);
+        assertEquals(route.includes("integration.atlassianService"), true);
+        for (
+          const scope of [
+            "read:jira-work",
+            "write:jira-work",
+            "read:jira-user",
+            "read:confluence-content.all",
+            "write:confluence-content",
+            "read:confluence-space.summary",
+            "read:confluence-user",
+            "search:confluence",
+            "read:page:confluence",
+            "write:page:confluence",
+            "offline_access",
+          ]
+        ) {
+          assertEquals(route.includes(JSON.stringify(scope)), true);
+        }
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("rejects stale scopes from an unselected Atlassian product", async () => {
+      const parentDir = await makeTempDir({
+        prefix: "veryfront-init-atlassian-contraction-",
+      });
+      const name = `atlassian-contraction-${crypto.randomUUID()}`;
+
+      try {
+        await initCommand({
+          name,
+          parentDir,
+          template: "minimal",
+          integrations: ["jira"],
+          skipInstall: true,
+          skipEnvPrompt: true,
+          quiet: true,
+        });
+
+        const route = await Deno.readTextFile(
+          join(parentDir, name, "app/api/integrations/status/route.ts"),
+        );
+        assertEquals(route.includes('atlassianService: "jira"'), true);
+        assertEquals(
+          route.includes('"read:confluence-content.all"'),
+          true,
+        );
+        assertEquals(
+          route.includes(
+            "satisfiesOAuthScopePolicy(token.scope, requiredScopes, forbiddenScopes)",
+          ),
           true,
         );
       } finally {

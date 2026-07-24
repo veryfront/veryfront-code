@@ -9,7 +9,7 @@ function formatRecipients(value?: string | string[]): string | undefined {
 }
 
 export default tool({
-  id: "send-email",
+  id: "gmail-send-email",
   description:
     "Send an email via Gmail. Can send to multiple recipients with CC and BCC support.",
   inputSchema: defineSchema((v) =>

@@ -22,9 +22,14 @@ import {
 } from "../../src/integrations/schema.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import {
+  generateAtlassianOAuthFiles,
+  isAtlassianProductCallbackPath,
+} from "./atlassian-oauth-composition.ts";
+import {
   buildIntegrationDirectory,
   buildUnknownIntegrationErrors,
   mergeIntegrationFiles,
+  namespaceIntegrationTemplateFiles,
   resolveIntegrationModuleDir,
 } from "./integration-loader-helpers.ts";
 import type {
@@ -49,12 +54,11 @@ export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
  * Default available integrations that can be added via --integrations flag.
  * Prefer getAvailableIntegrations() when runtime feature-flag changes matter.
  */
-export const AVAILABLE_INTEGRATIONS: IntegrationName[] =
-  filterVisibleIntegrations(
-    ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
-  ).map((integration) => integration.id as IntegrationName).filter(
-    isIntegrationTemplateGeneratable,
-  );
+export const AVAILABLE_INTEGRATIONS: IntegrationName[] = filterVisibleIntegrations(
+  ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
+).map((integration) => integration.id as IntegrationName).filter(
+  isIntegrationTemplateGeneratable,
+);
 
 export function getAvailableIntegrations(): IntegrationName[] {
   return filterVisibleIntegrations(
@@ -147,9 +151,7 @@ export class IntegrationConfigLoadError extends Error {
     options?: ErrorOptions,
   ) {
     super(
-      `Failed to ${
-        failure === "not-found" ? "find" : failure
-      } integration config ` +
+      `Failed to ${failure === "not-found" ? "find" : failure} integration config ` +
         `${integrationName} at ${configPath}`,
       options,
     );
@@ -289,12 +291,16 @@ export async function loadIntegration(
   const config = await loadIntegrationConfig(integrationName);
   if (!config) return null;
 
-  const files = await loadTemplateFromDirectory(
+  const sourceFiles = await loadTemplateFromDirectory(
     `integration:${integrationName}`,
   );
-  if (files.length === 0) {
+  if (sourceFiles.length === 0) {
     throw new IntegrationTemplateLoadError(integrationName);
   }
+  const files = namespaceIntegrationTemplateFiles(
+    integrationName,
+    sourceFiles,
+  );
 
   return { config, files };
 }
@@ -352,9 +358,21 @@ export async function loadIntegrations(
     integrations.push(integration);
   }
 
+  const atlassianOAuthFiles = generateAtlassianOAuthFiles(
+    integrations.map((integration) => integration.config.name),
+  );
+  const integrationFileSets = atlassianOAuthFiles.length === 0
+    ? integrations
+    : integrations.map((integration) => ({
+      files: integration.files.filter((file) => !isAtlassianProductCallbackPath(file.path)),
+    }));
+
   return {
     integrations,
-    files: mergeIntegrationFiles(integrations),
+    files: mergeIntegrationFiles([
+      ...integrationFileSets,
+      ...(atlassianOAuthFiles.length > 0 ? [{ files: atlassianOAuthFiles }] : []),
+    ]),
     errors,
   };
 }

@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-record",
+  id: "airtable-get-record",
   description:
     "Get a specific record from an Airtable table by its ID. Returns the full record with all field values.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "untrash-thread",
+  id: "gmail-untrash-thread",
   description: "Remove a Gmail thread from trash.",
   inputSchema: defineSchema((v) =>
     v.object({

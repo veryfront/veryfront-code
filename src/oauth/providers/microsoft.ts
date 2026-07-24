@@ -27,11 +27,11 @@ export const outlookConfig: OAuthServiceConfig = {
     "Mail.Read",
     "Mail.Send",
     "Mail.ReadWrite",
+    "Mail.Read.Shared",
     "Calendars.Read",
     "Calendars.ReadWrite",
     "Group.Read.All",
     "Group-Conversation.Read.All",
-    "User.Read",
     "offline_access",
   ],
 };
@@ -47,10 +47,8 @@ export const teamsConfig: OAuthServiceConfig = {
     "Chat.Read",
     "Chat.ReadWrite",
     "ChannelMessage.Send",
-    "ChannelMessage.Read.All",
     "Channel.ReadBasic.All",
     "Team.ReadBasic.All",
-    "User.Read",
     "offline_access",
   ],
 };

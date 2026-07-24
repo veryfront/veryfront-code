@@ -4,7 +4,7 @@ import { createLinearClient } from "../lib/linear-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-workflow-states",
+  id: "linear-list-workflow-states",
   description:
     "List workflow states for a Linear team. Use this to find a state ID before updating an issue status.",
   inputSchema: defineSchema((v) =>

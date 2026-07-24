@@ -448,6 +448,7 @@ describe("integration endpoint specs", () => {
     const toolIds = getLocalToolIds("hubspot", hubspot.tools);
 
     assertEquals(hubspot.auth.provider, "hubspot");
+    assertEquals(hubspot.auth.tokenUrl, "https://api.hubapi.com/oauth/v3/token");
     assertEquals(hubspot.auth.scopes?.includes("oauth"), true);
     assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.read"), true);
     assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.write"), false);
@@ -851,6 +852,18 @@ describe("integration endpoint specs", () => {
 
     const jira = getConnector("jira");
     assertEquals(
+      jira.envVars?.find((envVar) => envVar.name === "JIRA_CLOUD_ID"),
+      {
+        name: "JIRA_CLOUD_ID",
+        description:
+          "Optional Atlassian site ID; required when the user can access multiple Jira sites",
+        required: false,
+        sensitive: false,
+        docsUrl:
+          "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/#get-list-of-resources",
+      },
+    );
+    assertEquals(
       getLocalToolIds("jira", jira.tools),
       [
         "list_sites",
@@ -1059,9 +1072,28 @@ describe("integration endpoint specs", () => {
     assertEquals(teamsSendChatMessage.endpoint?.params?.chatId?.required, true);
     assertEquals(teamsSendChatMessage.endpoint?.body?.body?.required, true);
     const teams = getConnector("teams");
-    assertEquals(teams.auth.scopes?.includes("Channel.ReadBasic.All"), true);
+    assertEquals(teams.auth.scopes, [
+      "Chat.Read",
+      "Chat.ReadWrite",
+      "ChannelMessage.Send",
+      "Channel.ReadBasic.All",
+      "Team.ReadBasic.All",
+      "offline_access",
+    ]);
 
     const confluence = getConnector("confluence");
+    assertEquals(
+      confluence.envVars?.find((envVar) => envVar.name === "CONFLUENCE_CLOUD_ID"),
+      {
+        name: "CONFLUENCE_CLOUD_ID",
+        description:
+          "Optional Atlassian site ID; required when the user can access multiple Confluence sites",
+        required: false,
+        sensitive: false,
+        docsUrl:
+          "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/#get-list-of-resources",
+      },
+    );
     assertEquals(
       confluence.auth.additionalAuthParams?.audience,
       "api.atlassian.com",
@@ -1104,6 +1136,31 @@ describe("integration endpoint specs", () => {
     );
 
     const docsCreateDocument = getTool("docs-google", "create_document");
+    const googleDocs = getConnector("docs-google");
+    assertEquals(googleDocs.auth.scopes, [
+      "https://www.googleapis.com/auth/documents.readonly",
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/drive.readonly",
+    ]);
+    assertEquals(
+      googleDocs.setupGuide?.title,
+      "Google Docs Integration Setup",
+    );
+    const googleDocsSetup =
+      googleDocs.setupGuide?.steps.map((step) => step.description).join("\n") ?? "";
+    assertStringIncludes(
+      googleDocsSetup,
+      "https://www.googleapis.com/auth/documents",
+    );
+    assertStringIncludes(
+      googleDocsSetup,
+      "https://www.googleapis.com/auth/drive.readonly",
+    );
+    assertEquals(
+      googleDocsSetup.includes("https://www.googleapis.com/auth/docs"),
+      false,
+    );
+    assertEquals(googleDocsSetup.includes("in-memory token store"), false);
     assertEquals(
       docsCreateDocument.endpoint?.url,
       "https://docs.googleapis.com/v1/documents",
@@ -1704,6 +1761,7 @@ describe("integration endpoint specs", () => {
       "Mail.Read",
       "Mail.Send",
       "Mail.ReadWrite",
+      "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "Group.Read.All",

@@ -4,7 +4,7 @@ import { createGitLabClient } from "../lib/gitlab-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "add-issue-comment",
+  id: "gitlab-add-issue-comment",
   description: "Add a Markdown comment/note to a GitLab issue.",
   inputSchema: defineSchema((v) =>
     v.object({

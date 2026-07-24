@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "trash-email",
+  id: "gmail-trash-email",
   description: "Move a Gmail message to trash.",
   inputSchema: defineSchema((v) =>
     v.object({

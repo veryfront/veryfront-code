@@ -29,7 +29,7 @@ const getLabelInput = defineSchema((v) =>
 );
 
 export default tool({
-  id: "create-label",
+  id: "gmail-create-label",
   description: "Create a Gmail user label.",
   inputSchema: getLabelInput(),
   execute: async (

@@ -5,7 +5,7 @@ import { requireAllowedValue } from "../lib/allowed-value.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-merge-requests",
+  id: "gitlab-list-merge-requests",
   description:
     "List merge requests in GitLab. Can filter by scope, state, labels, and specific project. Returns MR titles, states, branches, assignees, and reviewers.",
   inputSchema: defineSchema((v) =>

@@ -14,7 +14,7 @@
       "read:jira-user",
       "offline_access"
     ],
-    "callbackPath": "/api/auth/jira/callback",
+    "callbackPath": "/api/auth/atlassian/callback",
     "tokenAuthMethod": "body",
     "additionalAuthParams": {
       "audience": "api.atlassian.com",

@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "batch-delete-emails",
+  id: "gmail-batch-delete-emails",
   description: "Permanently delete multiple Gmail messages.",
   inputSchema: defineSchema((v) =>
     v.object({

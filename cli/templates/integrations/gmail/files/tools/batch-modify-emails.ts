@@ -26,7 +26,7 @@ const getBatchModifyInput = defineSchema((v) =>
 );
 
 export default tool({
-  id: "batch-modify-emails",
+  id: "gmail-batch-modify-emails",
   description: "Modify labels on multiple Gmail messages.",
   inputSchema: getBatchModifyInput(),
   execute: async ({ messageIds, addLabelIds, removeLabelIds }, context) => {

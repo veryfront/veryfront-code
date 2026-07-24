@@ -4,7 +4,7 @@ import { createNotionClient } from "../lib/notion-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "append-blocks",
+  id: "notion-append-blocks",
   description: "Append child blocks to a Notion page or block.",
   inputSchema: defineSchema((v) =>
     v.object({

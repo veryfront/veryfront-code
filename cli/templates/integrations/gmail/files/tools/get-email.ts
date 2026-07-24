@@ -7,7 +7,7 @@ import { resolveUserId } from "../lib/context.ts";
 const MESSAGE_FORMATS = ["full", "metadata", "minimal", "raw"] as const;
 
 export default tool({
-  id: "get-email",
+  id: "gmail-get-email",
   description:
     "Get a Gmail message by ID, including headers, labels, snippet, and payload data.",
   inputSchema: defineSchema((v) =>

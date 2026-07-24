@@ -4,7 +4,7 @@ import { createJiraClient } from "../lib/jira-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-issue",
+  id: "jira-create-issue",
   description:
     "Create a new Jira issue in a project. Requires project key, summary, and issue type. Optionally set description, priority, assignee, and labels.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createFigmaClient } from "../lib/figma-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-file",
+  id: "figma-get-file",
   description:
     "Get detailed information about a Figma file including components, styles, and structure. Returns file metadata, component list, and style information.",
   inputSchema: defineSchema((v) =>

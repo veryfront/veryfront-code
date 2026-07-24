@@ -1,9 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertRejects,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { OAuthTokens, StoredOAuthState } from "veryfront/oauth";
 import {
@@ -13,6 +9,14 @@ import {
   type OAuthStorageStatus,
   readOAuthStorageStatus,
 } from "./integrations/_base/files/lib/oauth-store-registry.ts";
+import {
+  ATLASSIAN_OAUTH_TOKEN_SERVICE_ALIASES,
+  createOAuthTokenStoreWithServiceAliases,
+} from "./integrations/_base/files/lib/oauth-token-service-aliases.ts";
+import {
+  hasRequiredOAuthScopes,
+  satisfiesOAuthScopePolicy,
+} from "./integrations/_base/files/lib/oauth-scope-utils.ts";
 import {
   installRequestIdentityResolver,
   requireUserIdFromRequest,
@@ -39,6 +43,82 @@ function createApplicationStore(): ApplicationOAuthTokenStore {
       durable: true,
       encrypted: null,
     }),
+  };
+}
+
+function createStatefulApplicationStore() {
+  let revision = 0;
+  let storageStatusReads = 0;
+  const tokenRows = new Map<
+    string,
+    { revision: string; tokens: OAuthTokens }
+  >();
+  const stateRows = new Map<string, StoredOAuthState>();
+  const refreshLocks: Array<{ serviceId: string; userId: string }> = [];
+  const tokenKey = (serviceId: string, userId: string) => JSON.stringify([serviceId, userId]);
+
+  const store: ApplicationOAuthTokenStore = {
+    getTokens: (serviceId, userId) =>
+      Promise.resolve(tokenRows.get(tokenKey(serviceId, userId))?.tokens ?? null),
+    setTokens: (serviceId, userId, tokens) => {
+      tokenRows.set(tokenKey(serviceId, userId), {
+        revision: `revision-${++revision}`,
+        tokens,
+      });
+      return Promise.resolve();
+    },
+    clearTokens: (serviceId, userId) => {
+      tokenRows.delete(tokenKey(serviceId, userId));
+      return Promise.resolve();
+    },
+    getTokenSnapshot: (serviceId, userId) =>
+      Promise.resolve(tokenRows.get(tokenKey(serviceId, userId)) ?? null),
+    compareAndSetTokens: (
+      serviceId,
+      userId,
+      expectedRevision,
+      tokens,
+    ) => {
+      const key = tokenKey(serviceId, userId);
+      const current = tokenRows.get(key);
+      if (!current || current.revision !== expectedRevision) {
+        return Promise.resolve(false);
+      }
+      tokenRows.set(key, {
+        revision: `revision-${++revision}`,
+        tokens,
+      });
+      return Promise.resolve(true);
+    },
+    withTokenRefreshLock: (serviceId, userId, operation) => {
+      refreshLocks.push({ serviceId, userId });
+      return operation();
+    },
+    setState: (state, meta) => {
+      stateRows.set(state, meta);
+      return Promise.resolve();
+    },
+    consumeState: (state) => {
+      const meta = stateRows.get(state) ?? null;
+      stateRows.delete(state);
+      return Promise.resolve(meta);
+    },
+    getStorageStatus: () => {
+      storageStatusReads++;
+      return {
+        mode: "custom",
+        durable: true,
+        encrypted: true,
+      };
+    },
+  };
+
+  return {
+    refreshLocks,
+    stateRows,
+    store,
+    storageStatusReads: () => storageStatusReads,
+    tokenRows,
   };
 }
 
@@ -75,8 +155,7 @@ describe("generated OAuth application seams", () => {
       "setTokens",
     );
 
-    const { getStorageStatus: _getStorageStatus, ...storeWithoutStatus } =
-      createApplicationStore();
+    const { getStorageStatus: _getStorageStatus, ...storeWithoutStatus } = createApplicationStore();
     assertThrows(
       () =>
         installOAuthTokenStore(
@@ -126,6 +205,205 @@ describe("generated OAuth application seams", () => {
       () => readOAuthStorageStatus(store),
       TypeError,
       "storage mode must be one of",
+    );
+  });
+});
+
+describe("generated OAuth token service aliases", () => {
+  it("rejects aliases that cannot identify one stable physical slot", () => {
+    const backend = createStatefulApplicationStore();
+
+    assertThrows(
+      () => createOAuthTokenStoreWithServiceAliases(backend.store, { "": "atlassian" }),
+      TypeError,
+      "alias keys",
+    );
+    assertThrows(
+      () => createOAuthTokenStoreWithServiceAliases(backend.store, { jira: " atlassian" }),
+      TypeError,
+      "alias values",
+    );
+    assertThrows(
+      () => createOAuthTokenStoreWithServiceAliases(backend.store, { jira: "jira" }),
+      TypeError,
+      "different service ID",
+    );
+    assertThrows(
+      () =>
+        createOAuthTokenStoreWithServiceAliases(backend.store, {
+          confluence: "atlassian",
+          jira: "confluence",
+        }),
+      TypeError,
+      "physical service ID",
+    );
+  });
+
+  it("shares Atlassian tokens across Jira and Confluence without changing users", async () => {
+    const backend = createStatefulApplicationStore();
+    const store = createOAuthTokenStoreWithServiceAliases(
+      backend.store,
+      ATLASSIAN_OAUTH_TOKEN_SERVICE_ALIASES,
+    );
+
+    await store.setTokens("jira", "alice", { accessToken: "shared-token" });
+    await store.setTokens("github", "alice", { accessToken: "github-token" });
+
+    assertEquals(await store.getTokens("confluence", "alice"), {
+      accessToken: "shared-token",
+    });
+    assertEquals(await store.getTokens("jira", "bob"), null);
+    assertEquals(
+      backend.tokenRows.has(JSON.stringify(["atlassian", "alice"])),
+      true,
+    );
+    assertEquals(
+      backend.tokenRows.has(JSON.stringify(["github", "alice"])),
+      true,
+    );
+
+    await store.clearTokens("confluence", "alice");
+    assertEquals(await store.getTokens("jira", "alice"), null);
+    assertEquals(await store.getTokens("github", "alice"), {
+      accessToken: "github-token",
+    });
+  });
+
+  it("uses one Atlassian revision and refresh lock slot", async () => {
+    const backend = createStatefulApplicationStore();
+    const store = createOAuthTokenStoreWithServiceAliases(
+      backend.store,
+      ATLASSIAN_OAUTH_TOKEN_SERVICE_ALIASES,
+    );
+
+    await store.setTokens("jira", "alice", { accessToken: "before-refresh" });
+    const snapshot = await store.getTokenSnapshot("confluence", "alice");
+    assertEquals(snapshot?.tokens.accessToken, "before-refresh");
+
+    assertEquals(
+      await store.compareAndSetTokens(
+        "jira",
+        "alice",
+        snapshot?.revision ?? "",
+        { accessToken: "after-refresh" },
+      ),
+      true,
+    );
+    assertEquals(
+      await store.compareAndSetTokens(
+        "confluence",
+        "alice",
+        snapshot?.revision ?? "",
+        { accessToken: "stale-refresh" },
+      ),
+      false,
+    );
+    assertEquals(
+      await store.withTokenRefreshLock(
+        "confluence",
+        "bob",
+        () => Promise.resolve("locked"),
+      ),
+      "locked",
+    );
+    assertEquals(backend.refreshLocks, [
+      { serviceId: "atlassian", userId: "bob" },
+    ]);
+  });
+
+  it("keeps OAuth state logical and delegates storage capabilities", async () => {
+    const backend = createStatefulApplicationStore();
+    const store = createOAuthTokenStoreWithServiceAliases(
+      backend.store,
+      ATLASSIAN_OAUTH_TOKEN_SERVICE_ALIASES,
+    );
+    const state: StoredOAuthState = {
+      userId: "alice",
+      serviceId: "jira",
+      createdAt: 1,
+    };
+
+    await store.setState("opaque-state", state);
+    assertEquals(backend.stateRows.get("opaque-state"), state);
+    assertEquals(await store.consumeState("opaque-state"), state);
+    assertEquals(backend.stateRows.has("opaque-state"), false);
+    assertEquals(store.getStorageStatus(), {
+      mode: "custom",
+      durable: true,
+      encrypted: true,
+    });
+    assertEquals(backend.storageStatusReads(), 1);
+  });
+});
+
+describe("generated OAuth scope validation", () => {
+  it("requires every selected scope without accepting malformed scope rows", () => {
+    const required = [
+      "read:jira-work",
+      "write:jira-work",
+      "offline_access",
+    ] as const;
+
+    assertEquals(
+      hasRequiredOAuthScopes(
+        "read:jira-work write:jira-work offline_access extra:scope",
+        required,
+      ),
+      true,
+    );
+    assertEquals(
+      hasRequiredOAuthScopes("read:jira-work offline_access", required),
+      false,
+    );
+    assertEquals(
+      hasRequiredOAuthScopes(
+        "read:jira-work read:jira-work write:jira-work offline_access",
+        required,
+      ),
+      false,
+    );
+    assertEquals(
+      hasRequiredOAuthScopes(
+        " read:jira-work write:jira-work offline_access",
+        required,
+      ),
+      false,
+    );
+    assertEquals(
+      hasRequiredOAuthScopes("x".repeat(4_097), required),
+      false,
+    );
+    assertEquals(hasRequiredOAuthScopes(undefined, required), false);
+    assertEquals(hasRequiredOAuthScopes(undefined, []), true);
+  });
+
+  it("rejects known retired product scopes while allowing provider-added scopes", () => {
+    const required = ["read:jira-work", "offline_access"] as const;
+    const retired = ["read:confluence-content.all"] as const;
+
+    assertEquals(
+      satisfiesOAuthScopePolicy(
+        "read:jira-work offline_access provider:implied",
+        required,
+        retired,
+      ),
+      true,
+    );
+    assertEquals(
+      satisfiesOAuthScopePolicy(
+        "read:jira-work read:confluence-content.all offline_access",
+        required,
+        retired,
+      ),
+      false,
+    );
+    assertEquals(
+      satisfiesOAuthScopePolicy(
+        "read:jira-work offline_access",
+        required,
+        ["read:jira-work"],
+      ),
+      false,
     );
   });
 });

@@ -3,8 +3,8 @@
  */
 
 import { defineSchema } from "veryfront/schemas";
-import { getServiceNowClient } from "../../lib/servicenow-client.ts";
-import { isServiceNowConnected } from "../../lib/token-store.ts";
+import { getServiceNowClient } from "../lib/servicenow-client.ts";
+import { isServiceNowConnected } from "../lib/token-store.ts";
 
 function getDisplayValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;

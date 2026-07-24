@@ -4,7 +4,7 @@ import { createAirtableClient } from "../lib/airtable-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-record",
+  id: "airtable-update-record",
   description:
     "Update fields on an existing Airtable record. Returns the updated record with all visible fields.",
   inputSchema: defineSchema((v) =>

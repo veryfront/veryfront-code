@@ -4,7 +4,7 @@ import { createJiraClient } from "../lib/jira-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-transitions",
+  id: "jira-get-transitions",
   description: "List available workflow transitions for a Jira issue.",
   inputSchema: defineSchema((v) =>
     v.object({

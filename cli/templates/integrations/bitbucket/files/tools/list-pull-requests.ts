@@ -35,7 +35,7 @@ type PullRequest = {
 };
 
 export default tool({
-  id: "list-pull-requests",
+  id: "bitbucket-list-pull-requests",
   description: "List pull requests for a Bitbucket repository",
   inputSchema: defineSchema((v) =>
     v.object({

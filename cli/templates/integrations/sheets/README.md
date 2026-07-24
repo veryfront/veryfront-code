@@ -30,22 +30,22 @@ sheets/
     │   ├── route.ts                        # OAuth initiation endpoint
     │   └── callback/route.ts               # OAuth callback handler
     └── tools/
-        ├── list-spreadsheets.ts            # List recent spreadsheets
-        ├── get-spreadsheet.ts              # Get spreadsheet metadata
-        ├── read-range.ts                   # Read cell data from range
-        ├── write-range.ts                  # Write data to range
-        ├── append-rows.ts                  # Append rows to a range
-        ├── clear-range.ts                  # Clear values from a range
-        ├── batch-update.ts                 # Advanced Sheets batchUpdate
-        ├── add-sheet.ts                    # Add a sheet/tab
-        ├── delete-sheet.ts                 # Delete a sheet/tab
-        ├── rename-sheet.ts                 # Rename a sheet/tab
-        ├── delete-spreadsheet.ts           # Trash/delete a spreadsheet file
-        ├── find-replace.ts                 # Find and replace text
-        ├── copy-sheet.ts                   # Copy a sheet to another spreadsheet
-        ├── create-chart.ts                 # Add an embedded chart
-        ├── set-data-validation.ts          # Set data validation rules
-        └── create-spreadsheet.ts           # Create new spreadsheet
+        ├── sheets-list-spreadsheets.ts            # List recent spreadsheets
+        ├── sheets-get-spreadsheet.ts              # Get spreadsheet metadata
+        ├── sheets-read-range.ts                   # Read cell data from range
+        ├── sheets-write-range.ts                  # Write data to range
+        ├── sheets-append-rows.ts                  # Append rows to a range
+        ├── sheets-clear-range.ts                  # Clear values from a range
+        ├── sheets-batch-update.ts                 # Advanced Sheets batchUpdate
+        ├── sheets-add-sheet.ts                    # Add a sheet/tab
+        ├── sheets-delete-sheet.ts                 # Delete a sheet/tab
+        ├── sheets-rename-sheet.ts                 # Rename a sheet/tab
+        ├── sheets-delete-spreadsheet.ts           # Trash/delete a spreadsheet file
+        ├── sheets-find-replace.ts                 # Find and replace text
+        ├── sheets-copy-sheet.ts                   # Copy a sheet to another spreadsheet
+        ├── sheets-create-chart.ts                 # Add an embedded chart
+        ├── sheets-set-data-validation.ts          # Set data validation rules
+        └── sheets-create-spreadsheet.ts           # Create new spreadsheet
 ```
 
 ## Setup Instructions
@@ -151,7 +151,7 @@ const newSpreadsheet = await client.createSpreadsheet({
 
 ## AI Tools
 
-### 1. list-spreadsheets
+### 1. sheets-list-spreadsheets
 
 List recent Google Sheets from Drive.
 
@@ -162,7 +162,7 @@ List recent Google Sheets from Drive.
 }
 ```
 
-### 2. get-spreadsheet
+### 2. sheets-get-spreadsheet
 
 Get spreadsheet metadata including all sheets and properties.
 
@@ -172,7 +172,7 @@ Get spreadsheet metadata including all sheets and properties.
 }
 ```
 
-### 3. read-range
+### 3. sheets-read-range
 
 Read cell data from a range using A1 notation.
 
@@ -183,7 +183,7 @@ Read cell data from a range using A1 notation.
 }
 ```
 
-### 4. write-range
+### 4. sheets-write-range
 
 Write data to a spreadsheet range.
 
@@ -196,7 +196,7 @@ Write data to a spreadsheet range.
 }
 ```
 
-### 5. create-spreadsheet
+### 5. sheets-create-spreadsheet
 
 Create a new spreadsheet with optional initial data.
 
@@ -212,7 +212,7 @@ Create a new spreadsheet with optional initial data.
 }
 ```
 
-### 6. append-rows
+### 6. sheets-append-rows
 
 Append rows to an existing table/range.
 
@@ -226,7 +226,7 @@ Append rows to an existing table/range.
 }
 ```
 
-### 7. clear-range
+### 7. sheets-clear-range
 
 Clear values while preserving formatting.
 
@@ -234,7 +234,7 @@ Clear values while preserving formatting.
 { spreadsheetId: "abc123...", range: "Sheet1!A2:D100" }
 ```
 
-### 8. batch-update
+### 8. sheets-batch-update
 
 Run raw Google Sheets `batchUpdate` requests for formatting and structural
 changes.
@@ -250,12 +250,12 @@ changes.
 
 Additional tools cover common spreadsheet automation:
 
-- `add-sheet` / `delete-sheet` / `rename-sheet`
-- `delete-spreadsheet`
-- `find-replace`
-- `copy-sheet`
-- `create-chart`
-- `set-data-validation`
+- `sheets-add-sheet` / `sheets-delete-sheet` / `sheets-rename-sheet`
+- `sheets-delete-spreadsheet`
+- `sheets-find-replace`
+- `sheets-copy-sheet`
+- `sheets-create-chart`
+- `sheets-set-data-validation`
 
 ## Suggested Prompts
 

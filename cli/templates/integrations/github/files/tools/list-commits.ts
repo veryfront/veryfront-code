@@ -4,7 +4,7 @@ import { createGitHubClient, type GitHubCommit } from "../lib/github-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "list-commits",
+  id: "github-list-commits",
   description: "List commits for a repository, branch, or file path",
   inputSchema: defineSchema((v) =>
     v.object({

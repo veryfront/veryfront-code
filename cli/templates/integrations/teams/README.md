@@ -64,7 +64,7 @@ Users need to authenticate with Microsoft Teams before using the tools:
 
 ### AI Tools
 
-#### list-chats
+#### teams-list-chats
 
 List recent Teams chats:
 
@@ -77,13 +77,13 @@ List recent Teams chats:
 
 Returns chat IDs, names, types, and timestamps.
 
-#### get-messages
+#### teams-get-messages
 
 Get messages from a specific chat:
 
 ```typescript
 {
-  chatId: "19:...",       // Chat ID from list-chats
+  chatId: "19:...",       // Chat ID from teams-list-chats
   limit: 20,              // Number of messages (1-50)
   includeHtml: false      // Include HTML formatted content
 }
@@ -91,7 +91,7 @@ Get messages from a specific chat:
 
 Returns message content, sender info, attachments, and reactions.
 
-#### send-message
+#### teams-send-message
 
 Send a message to a chat or channel:
 
@@ -115,7 +115,7 @@ Send a message to a chat or channel:
 }
 ```
 
-#### list-teams
+#### teams-list-teams
 
 List all teams the user has joined:
 
@@ -127,7 +127,7 @@ List all teams the user has joined:
 
 Returns team IDs, names, descriptions, and metadata.
 
-#### list-channels
+#### teams-list-channels
 
 List channels in a specific team:
 
@@ -165,7 +165,6 @@ import {
 - `listTeams(options)` - List joined teams
 - `listChannels(teamId, options)` - List team channels
 - `sendChannelMessage(teamId, channelId, content, contentType, subject)` - Send channel message
-- `getCurrentUser()` - Get current user profile
 
 ### Helper Functions
 

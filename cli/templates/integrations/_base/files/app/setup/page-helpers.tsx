@@ -136,6 +136,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     steps: [
       "Uses same Google OAuth credentials",
       "Enable Docs API in Google Cloud Console",
+      "Authorize scopes: https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, https://www.googleapis.com/auth/drive.readonly",
       "Add redirect URI: http://localhost:3000/api/auth/docs-google/callback",
     ],
     link: "https://console.cloud.google.com/apis/library/docs.googleapis.com",
@@ -149,7 +150,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Click App registrations > New registration",
       "Set redirect URI: http://localhost:3000/api/auth/outlook/callback",
       "Go to API permissions > Add Microsoft Graph permissions",
-      "Add permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Calendars.Read, Calendars.ReadWrite, Group.Read.All, Group-Conversation.Read.All, User.Read, offline_access",
+      "Add permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite, Group.Read.All, Group-Conversation.Read.All, offline_access",
       "Go to Certificates & secrets > New client secret",
       "Copy Application ID and Secret to .env",
     ],
@@ -162,7 +163,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     category: "microsoft",
     steps: [
       "Uses same Microsoft OAuth credentials as Outlook",
-      "Add permissions: Chat.Read, Chat.ReadWrite, ChannelMessage.Send, ChannelMessage.Read.All, Channel.ReadBasic.All, Team.ReadBasic.All, User.Read, offline_access",
+      "Add permissions: Chat.Read, Chat.ReadWrite, ChannelMessage.Send, Channel.ReadBasic.All, Team.ReadBasic.All, offline_access",
       "Add redirect URI: http://localhost:3000/api/auth/teams/callback",
     ],
     link:
@@ -199,9 +200,12 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     steps: [
       "Go to Atlassian Developer Console",
       "Click Create > OAuth 2.0 integration",
+      "Choose account-level access across permitted sites or resource-level access limited to consent-selected sites",
       "Add Jira API scopes: read:jira-work, write:jira-work, read:jira-user, offline_access",
-      "Set callback URL: http://localhost:3000/api/auth/jira/callback",
+      "Set the single callback URL: http://localhost:3000/api/auth/atlassian/callback",
       "Copy Client ID and Secret to .env",
+      "If Confluence is also selected, either connect route requests the combined Jira and Confluence scope grant",
+      "If the authenticated user can access multiple Jira sites, set JIRA_CLOUD_ID to the selected accessible-resource ID",
     ],
     link: "https://developer.atlassian.com/console/myapps/",
     envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"],
@@ -211,8 +215,11 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     category: "atlassian",
     steps: [
       "Uses same Atlassian OAuth credentials as Jira",
+      "Choose account-level access across permitted sites or resource-level access limited to consent-selected sites",
       "Add Confluence scopes: read:confluence-content.all, write:confluence-content, read:confluence-space.summary, read:confluence-user, search:confluence, read:page:confluence, write:page:confluence, offline_access",
-      "Add callback URL: http://localhost:3000/api/auth/confluence/callback",
+      "Use the single callback URL: http://localhost:3000/api/auth/atlassian/callback",
+      "If Jira is also selected, either connect route requests the combined Jira and Confluence scope grant",
+      "If the authenticated user can access multiple Confluence sites, set CONFLUENCE_CLOUD_ID to the selected accessible-resource ID",
     ],
     link: "https://developer.atlassian.com/console/myapps/",
     envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"],

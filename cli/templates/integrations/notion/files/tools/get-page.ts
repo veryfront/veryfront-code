@@ -4,7 +4,7 @@ import { createNotionClient } from "../lib/notion-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-page",
+  id: "notion-get-page",
   description:
     "Get Notion page metadata and properties without reading child block content.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createDocsClient } from "../lib/docs-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-document",
+  id: "docs-google-create-document",
   description:
     "Create a new Google Docs document with optional initial content. Returns the new document ID and URL.",
   inputSchema: defineSchema((v) =>

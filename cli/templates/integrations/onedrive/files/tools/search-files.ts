@@ -4,7 +4,7 @@ import { createOneDriveClient } from "../lib/onedrive-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-files",
+  id: "onedrive-search-files",
   description:
     "Search for files and folders in OneDrive by name or content. Returns matching items with their paths and metadata.",
   inputSchema: defineSchema((v) =>

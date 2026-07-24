@@ -287,7 +287,7 @@
       {
         "step": 8,
         "title": "Verify Access",
-        "description": "Test the integration by calling the get-organization tool to confirm your admin key has the correct permissions"
+        "description": "Test the integration by calling the anthropic-get-organization tool to confirm your admin key has the correct permissions"
       }
     ],
     "notes": [

@@ -29,9 +29,9 @@ A complete Figma integration for Veryfront following the established Notion inte
 - `app/api/auth/figma/callback/route.ts` (44 lines) - OAuth callback handler
 
 ### AI Tools
-1. `tools/get-file.ts` (46 lines) - Deep file inspection
-2. `tools/get-comments.ts` (71 lines) - Comment thread reading
-3. `tools/post-comment.ts` (47 lines) - Comment posting
+1. `tools/figma-get-file.ts` (46 lines) - Deep file inspection
+2. `tools/figma-get-comments.ts` (71 lines) - Comment thread reading
+3. `tools/figma-post-comment.ts` (47 lines) - Comment posting
 
 ### Documentation
 - `README.md` (783 lines) - Comprehensive documentation
@@ -89,7 +89,7 @@ getFileSummary(file) → FileSummary
 
 ### AI Tool Capabilities
 
-#### 1. get-file
+#### 1. figma-get-file
 **Purpose**: Deep inspection of file structure
 
 **Parameters**:
@@ -100,7 +100,7 @@ getFileSummary(file) → FileSummary
 
 **Returns**: Complete file data with components, styles, pages
 
-#### 2. get-comments
+#### 2. figma-get-comments
 **Purpose**: Read design feedback and discussions
 
 **Parameters**:
@@ -110,7 +110,7 @@ getFileSummary(file) → FileSummary
 
 **Returns**: Threaded comments with metadata and location data
 
-#### 3. post-comment
+#### 3. figma-post-comment
 **Purpose**: Provide design feedback
 
 **Parameters**:
@@ -189,22 +189,22 @@ Figma marks project endpoints as limited access. Team and project file listing r
 
 ### 1. Design Review
 ```
-get-file → get-comments → post-comment
+figma-get-file → figma-get-comments → figma-post-comment
 ```
 
 ### 2. Component Audit
 ```
-get-file (with components) → extract & document
+figma-get-file (with components) → extract & document
 ```
 
 ### 3. Design System Documentation
 ```
-get-file → extract components → extract styles → generate docs
+figma-get-file → extract components → extract styles → generate docs
 ```
 
 ### 4. Feedback Loop
 ```
-get-comments → analyze → post-comment with replies
+figma-get-comments → analyze → figma-post-comment with replies
 ```
 
 ## Integration Synergies
@@ -245,8 +245,8 @@ describe('FigmaClient', () => {
 
 ### Integration Tests
 ```typescript
-// tools/get-file.test.ts
-describe('get-file tool', () => {
+// tools/figma-get-file.test.ts
+describe('figma-get-file tool', () => {
   it('should return file summary')
   it('should include components when requested')
   it('should respect depth parameter')

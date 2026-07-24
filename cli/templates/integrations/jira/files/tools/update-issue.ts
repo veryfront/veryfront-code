@@ -4,7 +4,7 @@ import { createJiraClient } from "../lib/jira-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "update-issue",
+  id: "jira-update-issue",
   description:
     'Update an existing Jira issue. Can update fields like summary, description, priority, assignee, labels, or transition the status (e.g., move to "In Progress", "Done").',
   inputSchema: defineSchema((v) =>

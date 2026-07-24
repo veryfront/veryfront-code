@@ -18,7 +18,7 @@ type CalendarEvent = {
 };
 
 export default tool({
-  id: "list-events",
+  id: "calendar-list-events",
   description:
     "List upcoming calendar events. By default shows events from now onwards.",
   inputSchema: defineSchema((v) =>

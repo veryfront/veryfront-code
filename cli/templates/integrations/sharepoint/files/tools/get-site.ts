@@ -4,7 +4,7 @@ import { createSharePointClient } from "../lib/sharepoint-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-site",
+  id: "sharepoint-get-site",
   description:
     "Get detailed information about a specific SharePoint site including its document libraries (drives).",
   inputSchema: defineSchema((v) =>

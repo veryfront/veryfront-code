@@ -4,7 +4,7 @@ import { createGitHubClient } from "../lib/github-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-pr-diff",
+  id: "github-get-pr-diff",
   description: "Get the diff for a pull request to review code changes",
   inputSchema: defineSchema((v) =>
     v.object({

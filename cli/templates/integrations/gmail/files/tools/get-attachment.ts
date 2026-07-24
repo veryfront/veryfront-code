@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "get-attachment",
+  id: "gmail-get-attachment",
   description:
     "Get a Gmail message attachment by message ID and attachment ID.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createOutlookClient } from "../lib/outlook-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "search-emails",
+  id: "outlook-search-emails",
   description:
     "Search emails by query string. Searches across subject, body, sender, and recipients. Supports advanced search syntax.",
   inputSchema: defineSchema((v) =>
