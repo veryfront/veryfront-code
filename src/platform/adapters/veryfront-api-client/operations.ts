@@ -1,5 +1,10 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
+import {
+  createCanonicalVeryfrontApiTransport,
+  type TransportRequestInit,
+  type TransportRetryConfig,
+  type VeryfrontApiTransport,
+} from "../veryfront-api-transport.ts";
 import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
 import {
   getBranchFileDetailSchema,
@@ -186,16 +191,22 @@ async function listAllFiles(
 
 export class VeryfrontAPIOperations {
   private tokenProvider: TokenProvider;
+  private transport: VeryfrontApiTransport<unknown>;
 
   constructor(
     private apiBaseUrl: string,
     tokenOrProvider: string | TokenProvider,
-    private retryConfig: RetryConfig,
+    retryConfig: TransportRetryConfig,
     private projectId?: string,
   ) {
     this.tokenProvider = typeof tokenOrProvider === "string"
       ? () => tokenOrProvider
       : tokenOrProvider;
+    this.transport = createCanonicalVeryfrontApiTransport(
+      apiBaseUrl,
+      () => this.tokenProvider(),
+      retryConfig,
+    );
   }
 
   setTokenProvider(provider: TokenProvider): void {
@@ -699,16 +710,10 @@ export class VeryfrontAPIOperations {
     return getReleaseAssetManifestResponseSchema().parse(raw);
   }
 
-  private request(endpoint: string, options: RequestOptions = {}): Promise<unknown> {
+  private request(endpoint: string, options: TransportRequestInit = {}): Promise<unknown> {
     return withSpan(
       SpanNames.API_REQUEST,
-      () =>
-        requestWithRetry(
-          `${this.apiBaseUrl}${endpoint}`,
-          this.tokenProvider(),
-          this.retryConfig,
-          options,
-        ),
+      () => this.transport.request(`${this.apiBaseUrl}${endpoint}`, options),
       { "api.endpoint": endpoint, "api.base_url": this.apiBaseUrl },
     );
   }
