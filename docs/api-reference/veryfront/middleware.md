@@ -55,7 +55,7 @@ Add a middleware handler that only runs for matching URL patterns.
 
 ### `middlewarePipeline.onTeardown(cb)`
 
-Register a cleanup callback that runs after the response is sent.
+Register a cleanup callback that runs once per request, after each `execute()`/`handle()` call produces its response.
 
 **Returns:** `this`
 
@@ -79,7 +79,7 @@ Run the middleware pipeline with a final request handler. Unlike {@link execute}
 
 ### `middlewarePipeline.teardown()`
 
-Run all registered teardown callbacks.
+Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by {@link execute} / {@link handle}, this clears the callbacks so they never run again - use it for one-shot lifecycle cleanup, e.g. draining a long-lived pipeline on server shutdown.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 

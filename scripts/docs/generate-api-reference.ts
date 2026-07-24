@@ -1786,7 +1786,8 @@ const METHOD_DESCRIPTIONS: Record<
       params: { pattern: "URL pattern to match", "": "Middleware handler" },
     },
     onTeardown: {
-      desc: "Register a cleanup callback that runs after the response is sent.",
+      desc:
+        "Register a cleanup callback that runs once per request, after each `execute()`/`handle()` call produces its response.",
       params: { cb: "Cleanup callback" },
     },
     compose: {
@@ -1802,7 +1803,8 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     teardown: {
-      desc: "Run all registered teardown callbacks.",
+      desc:
+        "Run every registered teardown callback once and discard them, for one-shot cleanup on shutdown (unlike the per-request run of `onTeardown`).",
     },
     getMiddleware: {
       desc: "List registered middleware with metadata.",
