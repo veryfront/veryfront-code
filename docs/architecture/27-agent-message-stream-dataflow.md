@@ -305,3 +305,37 @@ domain outcome as an infrastructure failure.
 - [Kimi models overview](https://platform.kimi.ai/docs/models)
 - [Kimi K2.6 quickstart](https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart)
 - [Kimi OpenAI migration guide](https://platform.kimi.ai/docs/guide/migrating-from-openai-to-kimi)
+
+## Stream Lifecycle frames and delivery boundary
+
+Every provider stream attempt is interpreted once by the Stream Lifecycle
+module into three frame classes:
+
+- **Semantic** frames change the reconstructable run state (text, reasoning,
+  committed tool input, provider tool output, usage, step finish).
+- **Telemetry** frames are observational (tool input status, heartbeats).
+  Status telemetry cannot extend semantic deadlines or turn an empty response
+  into a valid one.
+- **Diagnostic** frames are restricted evidence (protocol repairs, deadline
+  decisions) and are never public run history.
+
+Local tool execution occurs after a `tool_handoff` Stream Outcome in the outer
+agent loop; a provider-attempt boundary never terminates the agent run.
+
+```text
+provider attempt
+  RuntimeStreamPart -> Provider Adapter -> Stream Lifecycle -> Live Adapter -> Data Stream bytes
+                                              |
+                                              +-> Stream Outcome
+
+agent loop
+  provider attempt -> local tool execution -> provider attempt -> finalization
+
+hosted compatibility through Gate 4
+  Data Stream bytes -> ChatUiMessageChunk -> durable mirror / AG-UI
+
+Phase 5 target
+  lifecycle frames + outcomes + local tool events + fallback + child progress
+                              -> source-tagged Stream Delivery envelope
+                              -> live / durable / AG-UI Adapters
+```
