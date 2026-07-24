@@ -381,6 +381,223 @@ today. Adapter packages must:
 
 The appendix records the per-engine SSR specifics that this rule has to absorb.
 
+### 6.9 Worked example — one Popover, three engines
+
+This is the whole proposal in code. The consumer call-site and the Skin are
+written **once**; the same `PopoverParts` contract is satisfied by the builtin,
+Base UI (parts archetype), and React Aria (hook archetype) adapters. Nothing in
+the first two blocks changes when the engine changes.
+
+**The consumer call-site — never changes, whatever engine is selected:**
+
+```tsx
+import { Popover, PopoverTrigger, PopoverContent, Button } from "veryfront/ui";
+
+<Popover>
+  <PopoverTrigger asChild>
+    <Button variant="outline">Filters</Button>
+  </PopoverTrigger>
+  <PopoverContent align="end">…</PopoverContent>
+</Popover>;
+```
+
+**The Skin (`src/react/components/ui/popover.tsx`) — one engine-agnostic file.**
+It owns only classes + variants; it resolves the active adapter and forwards:
+
+```tsx
+import * as React from "react";
+import { cva, cx } from "./cva.ts";
+import { useAdapter } from "./adapter/context.ts";
+import type { PopoverContentProps, PopoverTriggerProps } from "./adapter/contract.ts";
+
+const contentVariants = cva(
+  "z-50 rounded-md border border-[var(--border)] bg-[var(--popover)] p-4 " +
+    "text-[var(--popover-foreground)] shadow-md outline-none " +
+    // state classes key off the adapter-NORMALISED attribute, never the engine's:
+    "data-[vf-state=open]:animate-in data-[vf-state=closed]:animate-out",
+);
+
+export function Popover(props: React.ComponentProps<typeof PopoverRoot>) {
+  const { popover } = useAdapter();
+  return <popover.Root {...props} />;
+}
+
+export function PopoverTrigger({ className, asChild, ...props }: PopoverTriggerProps) {
+  const { popover } = useAdapter();
+  return <popover.Trigger asChild={asChild} className={cx(className)} {...props} />;
+}
+
+export function PopoverContent({ className, align = "start", ...props }: PopoverContentProps) {
+  const { popover } = useAdapter();
+  return (
+    <popover.Content align={align} className={cx(contentVariants(), className)} {...props} />
+  );
+}
+```
+
+**Adapter A — builtin (default, zero-dep).** Pure wrapper over today's machinery,
+so behaviour on `main` is unchanged:
+
+```tsx
+// src/react/components/ui/adapter/builtin/popover.tsx
+import { createAnchoredSurfaceParts } from "../../anchored-surface.tsx";
+import type { PopoverParts } from "../contract.ts";
+
+const parts = createAnchoredSurfaceParts(); // existing hand-rolled Root/Trigger/Content
+
+export const builtinPopover: PopoverParts = {
+  Root: parts.AnchoredRoot,
+  Trigger: (p) => <parts.AnchoredTrigger haspopup="dialog" {...p} />,
+  Content: parts.AnchoredContent, // already portals via Floating + UI_SCOPE_SELECTOR
+};
+```
+
+**Adapter B — Base UI (parts archetype).** Note the three normalisations the
+contract demands: `onOpenChange` drops Base UI's 2nd arg; positioning goes to
+`Positioner` while our classes land on `Popup`; the portal `container` keeps the
+surface inside the token scope; and we re-emit `data-vf-state`:
+
+```tsx
+// @veryfront/ui-adapter-base-ui/popover.tsx
+import * as React from "react";
+import { Popover as Base } from "@base-ui/react/popover";
+import { useTokenScopeRef } from "@veryfront/ui-adapter-shared";
+import type { PopoverParts } from "veryfront/ui/adapter";
+
+export const baseUiPopover: PopoverParts = {
+  Root: ({ open, defaultOpen, onOpenChange, children }) => (
+    <Base.Root
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={(next) => onOpenChange?.(next)} // drop eventDetails → contract vocab
+    >
+      {children}
+    </Base.Root>
+  ),
+
+  Trigger: ({ asChild, children, ...props }) =>
+    asChild
+      ? <Base.Trigger render={children as React.ReactElement} {...props} />
+      : <Base.Trigger {...props}>{children}</Base.Trigger>,
+
+  Content: ({ align = "start", sideOffset = 4, className, children, ...props }) => {
+    const scopeRef = useTokenScopeRef(); // node carrying [data-vf-ui]
+    return (
+      <Base.Portal container={scopeRef}>
+        {/* Positioner takes the position props … */}
+        <Base.Positioner align={align} sideOffset={sideOffset}>
+          {/* … Popup takes our styled surface + the normalised state attr */}
+          <Base.Popup
+            className={className}
+            data-vf-state={/* mirror Base UI's data-[open]/[closed] */ "open"}
+            {...props}
+          >
+            {children}
+          </Base.Popup>
+        </Base.Positioner>
+      </Base.Portal>
+    );
+  },
+};
+```
+
+**Adapter C — React Aria (hook archetype).** The hardest shape: no compound
+parts, so the adapter *owns the DOM* and spreads prop-getters, absorbs the
+`isOpen` naming and the two-step `useOverlayTrigger → useButton` trigger:
+
+```tsx
+// @veryfront/ui-adapter-react-aria/popover.tsx
+import * as React from "react";
+import { DismissButton, Overlay, useButton, useOverlayTrigger, usePopover } from "react-aria";
+import { useOverlayTriggerState } from "react-stately";
+import { useTokenScopeRef } from "@veryfront/ui-adapter-shared";
+import type { PopoverParts } from "veryfront/ui/adapter";
+
+const Ctx = React.createContext<any>(null);
+
+export const reactAriaPopover: PopoverParts = {
+  Root: ({ open, defaultOpen, onOpenChange, children }) => {
+    const state = useOverlayTriggerState({ isOpen: open, defaultOpen, onOpenChange });
+    const triggerRef = React.useRef<HTMLButtonElement>(null);
+    const { triggerProps, overlayProps } = useOverlayTrigger({ type: "dialog" }, state, triggerRef);
+    return (
+      <Ctx.Provider value={{ state, triggerRef, triggerProps, overlayProps }}>
+        {children}
+      </Ctx.Provider>
+    );
+  },
+
+  Trigger: ({ children, className, ...props }) => {
+    const { triggerRef, triggerProps } = React.useContext(Ctx);
+    const { buttonProps } = useButton(triggerProps, triggerRef); // the RA two-step
+    return (
+      <button ref={triggerRef} className={className} {...buttonProps} {...props}>
+        {children}
+      </button>
+    );
+  },
+
+  Content: ({ align = "start", className, children }) => {
+    const { state, triggerRef, overlayProps } = React.useContext(Ctx);
+    const popoverRef = React.useRef<HTMLDivElement>(null);
+    const scopeRef = useTokenScopeRef();
+    const { popoverProps } = usePopover(
+      { triggerRef, popoverRef, placement: align === "end" ? "bottom end" : "bottom start" },
+      state,
+    );
+    if (!state.isOpen) return null;
+    return (
+      <Overlay portalContainer={scopeRef.current ?? undefined}>
+        <div
+          ref={popoverRef}
+          className={className}
+          data-vf-state={state.isOpen ? "open" : "closed"}
+          {...popoverProps}
+          {...overlayProps}
+        >
+          <DismissButton onDismiss={state.close} />
+          {children}
+          <DismissButton onDismiss={state.close} />
+        </div>
+      </Overlay>
+    );
+  },
+};
+```
+
+**Selecting the adapter — build-time (primary):**
+
+```ts
+// veryfront.config.ts
+import { defineConfig } from "veryfront/config";
+
+export default defineConfig({
+  ui: { adapter: "base-ui" }, // "builtin" (default) | "base-ui" | "radix" | "react-aria" | "ariakit"
+});
+```
+
+The resolver aliases the internal `veryfront/ui/adapter` specifier to the chosen
+package, so `useAdapter()` returns that engine's parts and **only that engine is
+bundled**.
+
+**Selecting the adapter — runtime provider (fallback, for non-Veryfront apps):**
+
+```tsx
+import { UIAdapterProvider } from "veryfront/ui";
+import { reactAriaAdapter } from "@veryfront/ui-adapter-react-aria";
+
+export default function App({ children }: { children: React.ReactNode }) {
+  return <UIAdapterProvider adapter={reactAriaAdapter}>{children}</UIAdapterProvider>;
+}
+```
+
+With neither a config alias nor a provider, `useAdapter()` falls back to
+`BuiltinAdapter` — so the out-of-the-box experience needs no setup.
+
+> These blocks are illustrative (final types live in code), but they are complete
+> enough to show the load-bearing claim: **one Skin, one call-site, three engines,
+> zero call-site changes.**
+
 ## 7. Recommendation
 
 The survey (§13) drives four concrete calls.
