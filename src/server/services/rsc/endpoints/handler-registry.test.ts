@@ -44,15 +44,17 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
     const cache = createStubCache();
     __injectCacheForTests(cache);
     const originalStat = Deno.stat;
+    const projectDir = "/project/lazy-react-version";
     let statCalls = 0;
 
     Deno.stat = (path: string | URL) => {
-      statCalls++;
+      if (String(path).includes(projectDir)) statCalls++;
       return originalStat(path);
     };
 
     try {
-      getRSCHandler("/project/lazy-react-version");
+      getRSCHandler(projectDir);
+      await Deno.stat(".");
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       assertEquals(statCalls, 0);

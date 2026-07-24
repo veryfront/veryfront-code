@@ -231,6 +231,7 @@ export { __injectCachesForTests };
 
 async function cacheHttpModuleInternal(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
+  const safeUrl = sanitizeUrlForSpan(normalizedUrl);
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
   const cacheIdentity = await buildHttpCacheIdentity(normalizedUrl, options);
   const identityMetadata = await buildHttpCacheIdentityMetadata(normalizedUrl, options);
@@ -254,7 +255,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       // dependency could not be prefetched. Retry the prefetch instead of
       // handing the degradation on.
       httpCacheLog.debug("Local cache holds a degraded artifact, will re-fetch", {
-        url: normalizedUrl,
+        url: safeUrl,
         hash,
       });
     } else {
@@ -264,7 +265,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         const depsValid = await validateBundleDepsExist(deps, cacheDir);
         if (!depsValid) {
           httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
-            url: normalizedUrl,
+            url: safeUrl,
             hash,
             missingDeps: deps.length,
           });
@@ -301,11 +302,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   if (processingStack.has(cacheIdentity)) {
     if (await exists(cachePath)) {
       httpCacheLog.debug("Circular dependency detected, file exists", {
-        url: normalizedUrl,
+        url: safeUrl,
       });
     } else {
       httpCacheLog.debug("Circular dependency detected, file pending write", {
-        url: normalizedUrl,
+        url: safeUrl,
         cachePath,
       });
     }
@@ -335,7 +336,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         const depsExist = await validateBundleDepsExist(deps, cacheDir);
         if (!depsExist) {
           httpCacheLog.debug("Cached code has missing bundle deps, will re-fetch", {
-            url: normalizedUrl,
+            url: safeUrl,
             hash,
             missingDeps: deps.length,
           });
@@ -344,7 +345,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
             cacheResult.wasGzipped
               ? "[HTTP-CACHE] Distributed cache hit (gzip decoded)"
               : "[HTTP-CACHE] Distributed cache hit",
-            { url: normalizedUrl, hash },
+            { url: safeUrl, hash },
           );
           await fs.mkdir(cacheDir, { recursive: true });
           await fs.writeTextFile(cachePath, cachedCode);
@@ -364,7 +365,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           cacheResult.wasGzipped
             ? "[HTTP-CACHE] Distributed cache hit (gzip decoded, no deps)"
             : "[HTTP-CACHE] Distributed cache hit",
-          { url: normalizedUrl, hash },
+          { url: safeUrl, hash },
         );
         await fs.mkdir(cacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
@@ -381,12 +382,12 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       }
     } else if (cacheResult.failReason && cacheResult.failReason !== "not_found") {
       httpCacheLog.debug("Distributed cache get failed", {
-        url: normalizedUrl,
+        url: safeUrl,
         reason: cacheResult.failReason,
       });
     }
 
-    httpCacheLog.debug("Fetching from network", { url: normalizedUrl });
+    httpCacheLog.debug("Fetching from network", { url: safeUrl });
     const fetchedModule = await fetchHttpModule(normalizedUrl);
     let code = fetchedModule.code;
 
@@ -397,14 +398,13 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       logger.error(
         "[HTTP-CACHE] Received HTML instead of JavaScript, likely an esm.sh error page",
         {
-          url: normalizedUrl,
+          url: safeUrl,
           contentType,
-          preview: code.slice(0, 200),
         },
       );
       throw BUNDLE_ERROR.create({
         detail:
-          `Received HTML instead of JavaScript from ${normalizedUrl}. The package may not exist or failed to build on esm.sh.`,
+          `Received HTML instead of JavaScript from ${safeUrl}. The package may not exist or failed to build on esm.sh.`,
       });
     }
 
@@ -443,9 +443,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       // retries the prefetch instead of inheriting one upstream blip for the
       // lifetime of the distributed entry.
       httpCacheLog.warn("Not caching a module with unresolved dynamic imports", {
-        url: normalizedUrl,
+        url: safeUrl,
         hash,
-        degraded,
+        degraded: degraded.map(sanitizeUrlForSpan),
       });
       return cachePath;
     }
@@ -462,7 +462,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       if (error instanceof VeryfrontError && error.slug === "cache-invariant-violation") {
         throw error;
       }
-      httpCacheLog.debug("Distributed cache set failed", { url: normalizedUrl, error });
+      httpCacheLog.debug("Distributed cache set failed", { url: safeUrl, error });
     }
 
     getCachedPaths().set(cacheKey, cachePath);

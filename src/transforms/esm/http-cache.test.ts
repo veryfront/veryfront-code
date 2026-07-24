@@ -222,6 +222,27 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("does not expose URL credentials when an upstream returns HTML", async () => {
+    const secretUrl = "https://esm.sh/html-failure?access_token=super-secret";
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("<!doctype html><title>upstream failure</title>", {
+          headers: { "content-type": "text/html" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-html-failure-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(secretUrl, tempDir),
+        Error,
+      );
+
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+      assert(error.message.includes("https://esm.sh/html-failure"));
+    });
+  });
+
   it("bounds transient failure attempts and cancels every response body", async () => {
     let fetchCount = 0;
     let cancelledBodies = 0;
