@@ -32,8 +32,8 @@ const NativeTextEncoder = TextEncoder;
 const NativeUint8Array = Uint8Array;
 const scopeTextEncoder = new NativeTextEncoder();
 const textEncoderEncode = NativeTextEncoder.prototype.encode;
-const subtleDigest = SubtleCrypto.prototype.digest;
 const nativeSubtleCrypto = crypto.subtle;
+const subtleDigest = nativeSubtleCrypto.digest;
 const API_HANDLER_CACHE_KEY_VERSION = "api-handler-v2";
 
 export interface HandlerCache<T> {

@@ -59,6 +59,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"es-module-lexer",
 	"jszip",
 	"pdf-lib",
+	"protobufjs",
 	"esbuild",
 	"github-slugger",
 	"jose",

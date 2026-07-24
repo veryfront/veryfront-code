@@ -78,8 +78,9 @@ const NativeUint8Array = Uint8Array;
 const NativeTextEncoder = TextEncoder;
 const semanticTextEncoder = new NativeTextEncoder();
 const textEncoderEncode = NativeTextEncoder.prototype.encode;
-const nativeSubtleCrypto = crypto.subtle;
-const subtleDigest = SubtleCrypto.prototype.digest;
+const nativeCrypto = crypto;
+const nativeSubtleCrypto = nativeCrypto.subtle;
+const subtleDigest = nativeSubtleCrypto.digest;
 const requestUrlGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "url")!.get!;
 const requestMethodGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "method")!.get!;
 const requestHeadersGetter = getOwnPropertyDescriptor(NativeRequest.prototype, "headers")!.get!;
@@ -104,7 +105,7 @@ const arrayIncludes = Array.prototype.includes;
 const arraySort = Array.prototype.sort;
 const arrayJoin = Array.prototype.join;
 const arrayIsArray = Array.isArray;
-const cryptoRandomUUID = Crypto.prototype.randomUUID;
+const cryptoRandomUUID = nativeCrypto.randomUUID;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
 const stringToUpperCase = String.prototype.toUpperCase;
@@ -153,7 +154,7 @@ function uppercaseMethod(method: string): string {
 }
 
 function randomUUID(): string {
-  return apply(cryptoRandomUUID, crypto, []) as string;
+  return apply(cryptoRandomUUID, nativeCrypto, []) as string;
 }
 
 function findSerializedHeader(

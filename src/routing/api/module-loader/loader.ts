@@ -53,7 +53,8 @@ const NativeTextEncoder = TextEncoder;
 const NativeUint8Array = Uint8Array;
 const utf8Encoder = new NativeTextEncoder();
 const textEncoderEncode = NativeTextEncoder.prototype.encode;
-const subtleDigest = SubtleCrypto.prototype.digest;
+const nativeSubtleCrypto = crypto.subtle;
+const subtleDigest = nativeSubtleCrypto.digest;
 const numberToString = Number.prototype.toString;
 const stringPadStart = String.prototype.padStart;
 const arrayJoin = Array.prototype.join;
@@ -72,7 +73,7 @@ const denoNotFoundPrototype = (
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
 async function hashPreparedSource(bytes: Uint8Array): Promise<string> {
-  const digest = await apply(subtleDigest, crypto.subtle, ["SHA-256", bytes]) as ArrayBuffer;
+  const digest = await apply(subtleDigest, nativeSubtleCrypto, ["SHA-256", bytes]) as ArrayBuffer;
   const digestBytes = new NativeUint8Array(digest);
   const hex = new NativeArray<string>(digestBytes.byteLength);
   for (let index = 0; index < digestBytes.byteLength; index++) {

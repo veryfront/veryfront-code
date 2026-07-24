@@ -36,8 +36,21 @@ const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const messagePortClose = MessagePort.prototype.close;
 const messagePortPostMessage = MessagePort.prototype.postMessage;
 const messagePortStart = MessagePort.prototype.start;
-const workerPostMessage = Worker.prototype.postMessage;
 const arrayIncludes = Array.prototype.includes;
+let workerPostMessage: ((...args: never[]) => unknown) | undefined;
+
+function postWorkerMessage(
+  worker: Worker,
+  message: unknown,
+  transfer?: readonly Transferable[],
+): void {
+  const postMessage = workerPostMessage ??= worker.postMessage as (...args: never[]) => unknown;
+  apply(
+    postMessage,
+    worker,
+    transfer === undefined ? [message] : [message, transfer],
+  );
+}
 
 // Intersection with the DOM `WorkerOptions` so the value is assignable to the
 // `Worker` constructor without suppression — Deno reads the extra `deno` field
@@ -217,7 +230,8 @@ export class ProjectWorker {
         ]);
         apply(messagePortStart, controlPort, []);
 
-        apply(workerPostMessage, startedWorker, [
+        postWorkerMessage(
+          startedWorker,
           {
             type: "initialize-egress",
             options: {
@@ -228,7 +242,7 @@ export class ProjectWorker {
             controlPort: channel.port2,
           },
           [channel.port2],
-        ]);
+        );
       }
 
       startedWorker.onerror = (event) => {
@@ -520,7 +534,7 @@ export class ProjectWorker {
     if (!this.worker) {
       throw UNKNOWN_ERROR.create({ detail: "Worker not available" });
     }
-    apply(workerPostMessage, this.worker, [message]);
+    postWorkerMessage(this.worker, message);
   }
 
   private failWorker(status: "crashed" | "terminated", reason: string): void {
