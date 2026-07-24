@@ -175,6 +175,11 @@ function toOpenAIResponsesTools(
         type: "function",
         name: tool.name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+        // Responses otherwise attempts to normalize omitted strictness into
+        // strict mode, which turns every declared property into a required
+        // argument. Runtime and remote tool schemas use normal JSON Schema
+        // optional properties, so preserve that contract explicitly.
+        strict: false,
         parameters: unwrapToolInputSchema(tool.inputSchema),
       });
       continue;
