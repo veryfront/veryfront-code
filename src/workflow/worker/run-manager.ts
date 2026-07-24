@@ -14,20 +14,12 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import {
-  hasLockSupport,
-  hasWorkerSupport,
-  updateRunIfStatus,
-  type WorkflowBackend,
-} from "../backends/types.ts";
+import { hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
-import {
-  requireWorkflowSourceIntegrationPolicy,
-  runWithWorkflowSourceIntegrationPolicy,
-} from "../source-integration-policy.ts";
 import { generateId } from "../types.ts";
-import type { RunExecutionConfig, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
+import type { RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { claimWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 
 const logger = baseLogger.component("workflow-run-manager");
 
@@ -312,59 +304,7 @@ export class WorkflowRunManager {
           continue;
         }
 
-        let pendingLockToken: string | null = null;
-        let runToProcess: WorkflowRun | null = run;
-
-        try {
-          // For stalled runs, try to claim first
-          if (run.status === "running" && hasWorkerSupport(this.config.backend)) {
-            const claimed = await this.config.backend.claimStalledRun(
-              run.id,
-              `mgr:${this.managerId}`,
-              this.config.stalledThreshold,
-            );
-            if (!claimed) {
-              // Another manager claimed it
-              continue;
-            }
-          }
-
-          // For pending runs, acquire a short lock to avoid duplicate execution creation
-          // across managers between listRuns() and updateRun().
-          if (run.status === "pending" && hasLockSupport(this.config.backend)) {
-            pendingLockToken = await this.config.backend.acquireLock(
-              run.id,
-              this.config.stalledThreshold,
-            );
-            if (!pendingLockToken) {
-              continue;
-            }
-
-            // Re-read after locking to ensure status hasn't changed concurrently.
-            const latest = await this.config.backend.getRun(run.id);
-            if (!latest || latest.status !== "pending") {
-              continue;
-            }
-            runToProcess = latest;
-          }
-
-          if (!runToProcess) {
-            continue;
-          }
-
-          await this.createExecutionForWorkflow(runToProcess);
-        } finally {
-          if (pendingLockToken) {
-            try {
-              await this.config.backend.releaseLock?.(run.id, pendingLockToken);
-            } catch (error) {
-              logger.warn(
-                `[WorkflowRunManager] Failed to release pending lock for ${run.id}:`,
-                error,
-              );
-            }
-          }
-        }
+        await this.createExecutionForWorkflow(run);
       }
     } catch (error) {
       this.recordError(error);
@@ -451,48 +391,24 @@ export class WorkflowRunManager {
    */
   private async createExecutionForWorkflow(run: WorkflowRun): Promise<void> {
     const executionId = generateId("run_exec");
-    const workerId = `run-execution:${executionId}`;
-
-    const executionConfig: RunExecutionConfig = {
-      executionId,
+    const outcome = await claimWorkflowRunControl({
+      backend: this.config.backend,
       run,
       managerId: this.managerId,
-      timeout: this.config.executionTimeout,
+      executionId,
+      stalledThreshold: this.config.stalledThreshold,
+      executionTimeout: this.config.executionTimeout,
       env: this.config.env ?? {},
       debug: this.config.debug,
-    };
+      createRunExecution: (config) => this.config.executor.createRunExecution(config),
+    });
 
-    let claimed = false;
-    try {
-      requireWorkflowSourceIntegrationPolicy(run);
-
-      // Mark running BEFORE spawning the execution. If we spawned first and then
-      // crashed before this update, a live process would sit behind a "pending"
-      // run that the next poll would execute again (duplicate execution). With
-      // the order reversed, a crash after this point leaves a "running" run with
-      // no process, which stalled-run recovery reclaims cleanly. A spawn failure
-      // is handled by the catch below, which marks the run failed.
-      if (run.status !== "pending" && run.status !== "waiting" && run.status !== "running") {
-        return;
-      }
-      claimed = await updateRunIfStatus(this.config.backend, run.id, [run.status], {
-        status: "running",
-        startedAt: new Date(),
-        heartbeatAt: new Date(),
-        workerId,
-      });
-      if (!claimed) return;
-
-      await runWithWorkflowSourceIntegrationPolicy(
-        run,
-        () => this.config.executor.createRunExecution(executionConfig),
-      );
-
+    if (outcome.status === "created" && outcome.execution) {
       const tracked: TrackedExecution = {
-        executionId,
-        runId: run.id,
-        status: "pending",
-        createdAt: new Date(),
+        executionId: outcome.execution.executionId,
+        runId: outcome.execution.runId,
+        status: outcome.execution.status,
+        createdAt: outcome.execution.createdAt,
         missingPolls: 0,
       };
 
@@ -502,35 +418,12 @@ export class WorkflowRunManager {
       if (this.config.debug) {
         logger.info(`Created run execution ${executionId} for workflow ${run.id}`);
       }
-    } catch (error) {
-      logger.error(`Failed to create run execution for ${run.id}:`, error);
+      return;
+    }
+
+    if (outcome.status === "failed-before-claim" || outcome.status === "failed-after-claim") {
       this.stats.executionsFailed++;
-
-      const failure = {
-        status: "failed" as const,
-        error: {
-          message: `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        },
-        completedAt: new Date(),
-      };
-
-      if (claimed) {
-        // We own the run: only fail it while it is still running under our id, so
-        // a run reclaimed by a new owner after a lock loss is left untouched.
-        await updateRunIfStatus(this.config.backend, run.id, ["running"], failure, workerId);
-      } else {
-        // The failure happened before we claimed the run (e.g. a missing source
-        // policy snapshot). The run is still unowned, so fail it while it remains
-        // in a pre-execution state rather than clobbering a terminal run.
-        await updateRunIfStatus(
-          this.config.backend,
-          run.id,
-          ["pending", "waiting", "running"],
-          failure,
-        );
-      }
+      logger.error(`Failed to create run execution for ${run.id}:`, outcome.error);
     }
   }
 

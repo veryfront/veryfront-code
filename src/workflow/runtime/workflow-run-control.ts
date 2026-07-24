@@ -1,8 +1,18 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError, ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
-import { hasLockSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasLockSupport,
+  hasWorkerSupport,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
 import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import {
+  requireWorkflowSourceIntegrationPolicy,
+  runWithWorkflowSourceIntegrationPolicy,
+} from "../source-integration-policy.ts";
+import type { RunExecutionConfig } from "../worker/executors/types.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -52,6 +62,169 @@ export interface WorkflowRunControlExecuteOutcome {
     | "skipped"
     | "ownership-lost";
   run?: WorkflowRun;
+}
+
+export interface WorkflowRunControlClaimInput {
+  backend: WorkflowBackend;
+  run: WorkflowRun;
+  managerId: string;
+  executionId: string;
+  stalledThreshold: number;
+  executionTimeout: number;
+  env: Record<string, string>;
+  debug: boolean;
+  createRunExecution(config: RunExecutionConfig): Promise<string>;
+}
+
+export interface WorkflowRunControlClaimCreatedExecution {
+  executionId: string;
+  runId: string;
+  status: "pending";
+  createdAt: Date;
+}
+
+export interface WorkflowRunControlClaimOutcome {
+  status:
+    | "created"
+    | "skipped-lock-held"
+    | "skipped-status-changed"
+    | "skipped-stalled-claim-lost"
+    | "failed-before-claim"
+    | "failed-after-claim";
+  execution?: WorkflowRunControlClaimCreatedExecution;
+  error?: Error;
+}
+
+export async function claimWorkflowRunControl(
+  input: WorkflowRunControlClaimInput,
+): Promise<WorkflowRunControlClaimOutcome> {
+  const {
+    backend,
+    run,
+    managerId,
+    executionId,
+    stalledThreshold,
+    executionTimeout,
+    env,
+    debug,
+  } = input;
+  const runId = run.id;
+  const workerId = `run-execution:${executionId}`;
+  let pendingLockToken: string | null = null;
+  let runToProcess: WorkflowRun | null = run;
+  let claimed = false;
+
+  try {
+    if (run.status === "running") {
+      if (!hasWorkerSupport(backend)) return { status: "skipped-stalled-claim-lost" };
+      const stalledClaimed = await backend.claimStalledRun(
+        runId,
+        `mgr:${managerId}`,
+        stalledThreshold,
+      );
+      if (!stalledClaimed) return { status: "skipped-stalled-claim-lost" };
+    }
+
+    if (run.status === "pending" && hasLockSupport(backend)) {
+      pendingLockToken = await backend.acquireLock(runId, stalledThreshold);
+      if (!pendingLockToken) return { status: "skipped-lock-held" };
+
+      const latest = await backend.getRun(runId);
+      if (!latest || latest.status !== "pending") {
+        return { status: "skipped-status-changed" };
+      }
+      runToProcess = latest;
+    }
+
+    if (!runToProcess || !["pending", "waiting", "running"].includes(runToProcess.status)) {
+      return { status: "skipped-status-changed" };
+    }
+
+    requireWorkflowSourceIntegrationPolicy(runToProcess);
+
+    const now = new Date();
+    const expectedWorkerId = run.status === "running" ? `mgr:${managerId}` : undefined;
+    claimed = await updateRunIfStatus(
+      backend,
+      runId,
+      [runToProcess.status],
+      {
+        status: "running",
+        startedAt: runToProcess.startedAt || now,
+        heartbeatAt: now,
+        workerId,
+      },
+      expectedWorkerId,
+    );
+    if (!claimed) {
+      return await failClaim(input, runToProcess, workerId, false);
+    }
+
+    const executionConfig: RunExecutionConfig = {
+      executionId,
+      run: runToProcess,
+      managerId,
+      timeout: executionTimeout,
+      env,
+      debug,
+    };
+
+    await runWithWorkflowSourceIntegrationPolicy(
+      runToProcess,
+      () => input.createRunExecution(executionConfig),
+    );
+
+    return {
+      status: "created",
+      execution: {
+        executionId,
+        runId,
+        status: "pending",
+        createdAt: new Date(),
+      },
+    };
+  } catch (error) {
+    logger.error(`Failed to claim workflow run ${runId}:`, error);
+    return await failClaim(input, runToProcess ?? run, workerId, claimed, ensureError(error));
+  } finally {
+    if (pendingLockToken) {
+      try {
+        await backend.releaseLock?.(runId, pendingLockToken);
+      } catch (error) {
+        logger.warn(`Failed to release pending claim lock for ${runId}:`, error);
+      }
+    }
+  }
+}
+
+async function failClaim(
+  input: WorkflowRunControlClaimInput,
+  run: WorkflowRun,
+  workerId: string,
+  claimed: boolean,
+  error?: Error,
+): Promise<WorkflowRunControlClaimOutcome> {
+  const message = `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
+    error?.message ?? "run ownership changed before execution creation"
+  }`;
+  const failure = {
+    status: "failed" as const,
+    error: { message },
+    completedAt: new Date(),
+  };
+
+  if (claimed) {
+    await updateRunIfStatus(input.backend, run.id, ["running"], failure, workerId);
+    return { status: "failed-after-claim", error };
+  }
+
+  await updateRunIfStatus(
+    input.backend,
+    run.id,
+    ["pending", "waiting", "running"],
+    failure,
+  );
+  return { status: "failed-before-claim", error };
 }
 
 export async function executeWorkflowRunControl(

@@ -4,7 +4,10 @@ import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { RunExecutionConfig } from "../worker/executors/types.ts";
 import {
+  claimWorkflowRunControl,
   executeWorkflowRunControl,
   type WorkflowRunControlExecuteResult,
 } from "./workflow-run-control.ts";
@@ -133,6 +136,123 @@ class WaitingReleaseBackend extends MemoryBackend {
     await super.releaseLock(runId, lockId);
     if (!this.callbackStarted) this.releaseBeforeCallback = true;
   }
+}
+
+class ClaimLockHeldBackend extends MemoryBackend {
+  acquireAttempts = 0;
+
+  override acquireLock(): Promise<string | null> {
+    this.acquireAttempts++;
+    return Promise.resolve(null);
+  }
+}
+
+class ClaimStatusChangedAfterLockBackend extends MemoryBackend {
+  readonly lockToken = "pending-token";
+  releaseCalls: Array<{ runId: string; lockId?: string }> = [];
+
+  override async acquireLock(): Promise<string | null> {
+    return this.lockToken;
+  }
+
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await super.getRun(runId);
+    if (run?.status === "pending") {
+      await super.updateRun(runId, { status: "waiting" });
+      return { ...run, status: "waiting" };
+    }
+    return run;
+  }
+
+  override releaseLock(runId: string, lockId?: string): Promise<void> {
+    this.releaseCalls.push({ runId, lockId });
+    return super.releaseLock(runId, lockId);
+  }
+}
+
+class ClaimDelayedRunningUpdateBackend extends MemoryBackend {
+  readonly runningUpdateStarted = Promise.withResolvers<void>();
+  readonly continueRunningUpdate = Promise.withResolvers<void>();
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "running" && patch.workerId) {
+      this.runningUpdateStarted.resolve();
+      await this.continueRunningUpdate.promise;
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
+class ClaimRejectingRunningUpdateBackend extends MemoryBackend {
+  override updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "running" && patch.workerId) {
+      return Promise.resolve(false);
+    }
+    return super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
+class ClaimReclaimedAfterFailureBackend extends MemoryBackend {
+  replacementWorkerId = "run-execution:replacement";
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "failed" && expectedWorkerId.startsWith("run-execution:")) {
+      await super.updateRun(runId, {
+        status: "running",
+        workerId: this.replacementWorkerId,
+      });
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class ClaimMissingPolicyBackend extends MemoryBackend {
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await super.getRun(runId);
+    return run ? withoutSourcePolicy(run) : null;
+  }
+}
+
+function withoutSourcePolicy(run: WorkflowRun): WorkflowRun {
+  const { sourceIntegrationPolicy: _sourceIntegrationPolicy, ...missingSnapshot } = run;
+  return missingSnapshot as unknown as WorkflowRun;
+}
+
+async function claim(
+  backend: MemoryBackend,
+  run: WorkflowRun,
+  options: Partial<Parameters<typeof claimWorkflowRunControl>[0]> = {},
+) {
+  return await claimWorkflowRunControl({
+    backend,
+    run,
+    managerId: "manager-a",
+    executionId: "execution-a",
+    stalledThreshold: 60_000,
+    executionTimeout: 120_000,
+    env: { MODE: "test" },
+    debug: false,
+    createRunExecution: () => Promise.resolve("execution-a"),
+    ...options,
+  });
 }
 
 describe("workflow/runtime/workflow-run-control execute", () => {
@@ -356,5 +476,150 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       env: { PUBLIC_VALUE: "kept" },
       finish: { ok: true },
     });
+  });
+});
+
+describe("workflow/runtime/workflow-run-control claim", () => {
+  it("skips pending runs when the pending lock cannot be acquired", async () => {
+    const backend = new ClaimLockHeldBackend();
+    const run = createRun("claim-lock-held");
+    await backend.createRun(run);
+    const created: RunExecutionConfig[] = [];
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: (config) => {
+        created.push(config);
+        return Promise.resolve(config.executionId);
+      },
+    });
+
+    assertEquals(outcome.status, "skipped-lock-held");
+    assertEquals(created.length, 0);
+    assertEquals(backend.acquireAttempts, 1);
+    assertEquals((await backend.getRun(run.id))?.status, "pending");
+  });
+
+  it("skips pending runs that change status after the pending lock", async () => {
+    const backend = new ClaimStatusChangedAfterLockBackend();
+    const run = createRun("claim-status-changed");
+    await backend.createRun(run);
+    const created: RunExecutionConfig[] = [];
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: (config) => {
+        created.push(config);
+        return Promise.resolve(config.executionId);
+      },
+    });
+
+    assertEquals(outcome.status, "skipped-status-changed");
+    assertEquals(created.length, 0);
+    assertEquals(backend.releaseCalls, [{ runId: run.id, lockId: backend.lockToken }]);
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("marks pending runs running before isolated execution creation", async () => {
+    const backend = new ClaimDelayedRunningUpdateBackend();
+    const run = createRun("claim-running-before-create");
+    await backend.createRun(run);
+    let createCalled = false;
+
+    const claiming = claim(backend, run, {
+      createRunExecution: async (config) => {
+        createCalled = true;
+        assertEquals((await backend.getRun(run.id))?.status, "running");
+        assertEquals((await backend.getRun(run.id))?.workerId, "run-execution:execution-a");
+        return config.executionId;
+      },
+    });
+
+    await backend.runningUpdateStarted.promise;
+    assertEquals(createCalled, false);
+    backend.continueRunningUpdate.resolve();
+    const outcome = await claiming;
+
+    assertEquals(outcome.status, "created");
+    assertEquals(outcome.execution?.executionId, "execution-a");
+    assertEquals(createCalled, true);
+  });
+
+  it("fails before claim when the running update is not acquired", async () => {
+    const backend = new ClaimRejectingRunningUpdateBackend();
+    const run = createRun("claim-before-claim-failure");
+    await backend.createRun(run);
+
+    const outcome = await claim(backend, run);
+
+    assertEquals(outcome.status, "failed-before-claim");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "failed");
+    assertEquals(persisted?.workerId, undefined);
+  });
+
+  it("fails after claim only under the claimed isolated owner", async () => {
+    const backend = new ClaimReclaimedAfterFailureBackend();
+    const run = createRun("claim-after-claim-fencing");
+    await backend.createRun(run);
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: () => Promise.reject(new Error("spawn failed")),
+    });
+
+    assertEquals(outcome.status, "failed-after-claim");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, backend.replacementWorkerId);
+    assertEquals(persisted?.error, undefined);
+  });
+
+  it("recovers stalled runs through the manager owner before isolated owner assignment", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("claim-stalled"),
+      status: "running" as const,
+      heartbeatAt: new Date(Date.now() - 120_000),
+      workerId: "run-execution:stale",
+    };
+    await backend.createRun(run);
+    const ownerTransitions: string[] = [];
+
+    const outcome = await claim(backend, run, {
+      managerId: "manager-stalled",
+      executionId: "execution-stalled",
+      createRunExecution: async (config) => {
+        ownerTransitions.push((await backend.getRun(run.id))?.workerId ?? "");
+        return config.executionId;
+      },
+    });
+
+    assertEquals(outcome.status, "created");
+    assertEquals(ownerTransitions, ["run-execution:execution-stalled"]);
+    assertEquals((await backend.getRun(run.id))?.workerId, "run-execution:execution-stalled");
+  });
+
+  it("requires the persisted source policy and restores it while creating execution", async () => {
+    const backend = new MemoryBackend();
+    const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy({
+      allow: { confluence: { allowedTools: ["get_page"] } },
+    });
+    const run = { ...createRun("claim-source-policy"), sourceIntegrationPolicy };
+    await backend.createRun(run);
+    const observedPolicies: unknown[] = [];
+
+    const created = await claim(backend, run, {
+      createRunExecution: (config) => {
+        observedPolicies.push(getActiveSourceIntegrationPolicy());
+        return Promise.resolve(config.executionId);
+      },
+    });
+    const missingPolicyBackend = new ClaimMissingPolicyBackend();
+    const missingPolicyRun = createRun("claim-missing-source-policy");
+    await missingPolicyBackend.createRun(missingPolicyRun);
+    const failed = await claim(missingPolicyBackend, missingPolicyRun);
+
+    assertEquals(created.status, "created");
+    assertEquals(observedPolicies, [sourceIntegrationPolicy]);
+    assertEquals(failed.status, "failed-before-claim");
+    assertEquals((await missingPolicyBackend.getRun(missingPolicyRun.id))?.status, "failed");
   });
 });
