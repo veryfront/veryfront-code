@@ -86,6 +86,27 @@ function createMockAdapter(
   };
 }
 
+function createExtendedMockAdapter(
+  options: { onRunWithContext?: () => never | void } = {},
+): RuntimeAdapter {
+  const base = createMockAdapter();
+  const extendedFs = {
+    ...base.fs,
+    isVeryfrontAdapter: () => true,
+    getUnderlyingAdapter: () => ({}),
+    isMultiProjectMode: () => false,
+    runWithContext: (
+      _slug: string,
+      _token: string,
+      fn: () => Promise<unknown>,
+    ) => {
+      options.onRunWithContext?.();
+      return fn();
+    },
+  };
+  return { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+}
+
 function makeRuntimeContextInput(
   overrides: Record<string, unknown> = {},
 ): Parameters<typeof resolveProjectRuntimeContext>[0] {
@@ -693,5 +714,107 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(standaloneProduction.environment.releaseId, "standalone-dev");
     assertExists(standaloneProduction.handlerContext);
     assertEquals(standaloneProduction.handlerContext.releaseId, "standalone-dev");
+  });
+
+  it("notifies environment resolution before source policy access and later failures", async () => {
+    const events: string[] = [];
+    const config = {} as VeryfrontConfig;
+    Object.defineProperty(config, "integrations", {
+      get: () => {
+        events.push("source-policy");
+        throw new Error("source policy read failed");
+      },
+    });
+
+    await assertRejects(
+      () =>
+        resolveProjectRuntimeContext(makeRuntimeContextInput({
+          config,
+          onEnvironmentResolved: () => {
+            events.push("environment");
+          },
+        })),
+      Error,
+      "source policy read failed",
+    );
+
+    assertEquals(events, ["environment", "source-policy"]);
+  });
+
+  it("keeps exact-source control-plane config undefined at the runtime-context boundary", async () => {
+    let outerContextCalls = 0;
+    const adapter = createExtendedMockAdapter({
+      onRunWithContext: () => {
+        outerContextCalls += 1;
+        throw new Error("outer source must not be read");
+      },
+    });
+    const req = new Request("http://localhost/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+      headers: {
+        "x-project-slug": "proxy-project",
+        "x-project-id": "proj-proxy",
+        "x-token": "proxy-token",
+      },
+    });
+    const url = new URL(req.url);
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      adapter,
+      headers: extractRequestHeaders(req, url),
+      requestContext: createRequestContext(req),
+      isProxyMode: true,
+      projectIdentity: {
+        projectSlug: "proxy-project",
+        projectId: "proj-proxy",
+        releaseId: undefined,
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(outerContextCalls, 0);
+    assertEquals(result.adapter.config, undefined);
+    assertEquals(result.handlerContext?.config, undefined);
+  });
+
+  it("rejects proxy config load failures at the runtime-context boundary", async () => {
+    const adapter = createExtendedMockAdapter({
+      onRunWithContext: () => {
+        throw new Error("proxy config fail");
+      },
+    });
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "proxy-project",
+        "x-project-id": "proj-proxy",
+        "x-token": "proxy-token",
+      },
+    });
+    const url = new URL(req.url);
+
+    await assertRejects(
+      () =>
+        resolveProjectRuntimeContext(makeRuntimeContextInput({
+          req,
+          url,
+          adapter,
+          headers: extractRequestHeaders(req, url),
+          requestContext: createRequestContext(req),
+          isProxyMode: true,
+          projectIdentity: {
+            projectSlug: "proxy-project",
+            projectId: "proj-proxy",
+            releaseId: "rel-proxy",
+            environmentName: "Preview",
+            proxyEnv: "preview",
+            parsedDomain: defaultParsedDomain,
+          },
+        })),
+      Error,
+      "proxy config fail",
+    );
   });
 });

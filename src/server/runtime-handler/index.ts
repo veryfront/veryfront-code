@@ -542,6 +542,9 @@ export function createVeryfrontHandler(
             envVarCache,
             profileAdapter: (operation) => profilePhase("runtime.resolve_adapter", operation),
             profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
+            onEnvironmentResolved: (envRes) => {
+              updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
+            },
             logDebug,
           });
           const adapterRes = runtimeContext.adapter;
@@ -550,7 +553,6 @@ export function createVeryfrontHandler(
           if (envRes.errorResponse) {
             return envRes.errorResponse;
           }
-          updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
 
           const ctx = runtimeContext.handlerContext!;
           const envVarsForRequest = runtimeContext.rawEnvVars;

@@ -95,6 +95,7 @@ export interface ResolveProjectRuntimeContextInput {
   envVarCache: ProjectEnvVarCacheLike;
   profileAdapter?: RuntimeContextProfiler;
   profileEnvVars?: RuntimeContextProfiler;
+  onEnvironmentResolved?: (environment: ProjectEnvironmentResolution) => void;
   logDebug?: (message: string, extra?: Record<string, unknown>) => void;
 }
 
@@ -231,6 +232,7 @@ export async function resolveProjectRuntimeContext(
     pathname: input.url.pathname,
     defaultEnvironment: input.defaultEnvironment,
   });
+  input.onEnvironmentResolved?.(envRes);
 
   const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
     adapterRes.config?.integrations,
