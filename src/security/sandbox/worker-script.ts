@@ -39,6 +39,7 @@ import {
   createJsonHelper,
   createTextHelper,
 } from "#veryfront/routing/api/context-builder.ts";
+import { createWorkerExitControls } from "./worker-exit-controls.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
@@ -55,6 +56,8 @@ function installWorkerExitNotifier(): void {
   const postMessage = self.postMessage.bind(self);
   const notifyExit = () => postMessage({ type: "worker-exit" });
   const closeWorker = globalThis.close.bind(globalThis);
+  const exitWorker = typeof Deno.exit === "function" ? Deno.exit.bind(Deno) : undefined;
+  const controls = createWorkerExitControls({ notifyExit, closeWorker, exitWorker });
   Object.defineProperty(self, "postMessage", {
     configurable: false,
     get: () => postMessage,
@@ -62,39 +65,23 @@ function installWorkerExitNotifier(): void {
       // Project code must not be able to silence worker lifecycle messages.
     },
   });
-  const controlledClose = () => {
-    try {
-      notifyExit();
-    } finally {
-      closeWorker();
-    }
-  };
   Object.defineProperty(globalThis, "close", {
     configurable: false,
     writable: false,
-    value: controlledClose,
+    value: controls.close,
   });
   if (self !== globalThis) {
     Object.defineProperty(self, "close", {
       configurable: false,
       writable: false,
-      value: controlledClose,
+      value: controls.close,
     });
   }
-  if (typeof Deno.exit === "function") {
-    const exitWorker = Deno.exit.bind(Deno);
-    const controlledExit = ((code?: number): never => {
-      try {
-        notifyExit();
-      } catch {
-        // Preserve the native, uncatchable exit even if notification fails.
-      }
-      return exitWorker(code);
-    }) as typeof Deno.exit;
+  if (controls.exit !== undefined) {
     Object.defineProperty(Deno, "exit", {
       configurable: false,
       writable: false,
-      value: controlledExit,
+      value: controls.exit,
     });
   }
   exitNotifierInstalled = true;
