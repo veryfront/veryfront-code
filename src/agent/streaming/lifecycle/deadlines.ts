@@ -222,3 +222,54 @@ export function createStreamDeadlineController(input: {
     },
   };
 }
+
+/**
+ * One absolute timer primitive shared by the lifecycle runner and the
+ * compatibility watchdog. The callback fires when the schedule elapses;
+ * dispose() releases it without firing.
+ */
+export interface AbsoluteDeadlineTimer {
+  schedule(callback: () => void, delayMs: number): unknown;
+  cancel(handle: unknown): void;
+}
+
+export function createClockDeadlineTimer(
+  clock: MonotonicClock,
+): AbsoluteDeadlineTimer {
+  return {
+    schedule(callback, delayMs) {
+      const controller = new AbortController();
+      void clock.waitUntil(clock.nowMs() + delayMs, controller.signal).then(
+        (result) => {
+          if (result === "deadline") callback();
+        },
+      );
+      return controller;
+    },
+    cancel(handle) {
+      const controller = handle as AbortController;
+      if (!controller.signal.aborted) controller.abort();
+    },
+  };
+}
+
+export function createAbsoluteDeadline(input: {
+  timer: AbsoluteDeadlineTimer;
+  delayMs: number;
+  onDeadline: () => void;
+}) {
+  let fired = false;
+  let disposed = false;
+  const handle = input.timer.schedule(() => {
+    if (disposed) return;
+    fired = true;
+    input.onDeadline();
+  }, input.delayMs);
+  return {
+    dispose() {
+      if (disposed || fired) return;
+      disposed = true;
+      input.timer.cancel(handle);
+    },
+  };
+}

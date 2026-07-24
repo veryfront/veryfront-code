@@ -1,6 +1,8 @@
 import { resolveStreamOutcome } from "#veryfront/agent/streaming/stream-outcome.ts";
 import { createCancellationCoordinator } from "./cancellation.ts";
 import {
+  createAbsoluteDeadline,
+  createClockDeadlineTimer,
   createStreamDeadlineController,
   type TrackedProviderRead,
   trackProviderRead,
@@ -99,10 +101,11 @@ export function runStreamLifecycle<TProviderPart>(
       );
       cleanup();
     };
-    void policy.clock.waitUntil(attemptDeadlineMs, disposeController.signal)
-      .then((result) => {
-        if (result === "deadline") settleAttemptTimeout();
-      });
+    const attemptDeadline = createAbsoluteDeadline({
+      timer: createClockDeadlineTimer(policy.clock),
+      delayMs: policy.attemptTimeoutMs,
+      onDeadline: settleAttemptTimeout,
+    });
     try {
       if (activeCancellation.source) return;
       providerIterator = input.provider.open(activeCancellation.signal)
@@ -277,6 +280,7 @@ export function runStreamLifecycle<TProviderPart>(
       if (!outcome.settled) settleCancelled("consumer_stopped");
       cleanup();
       deadlines.dispose();
+      attemptDeadline.dispose();
       disposeController.abort();
       activeCancellation.dispose();
     }
