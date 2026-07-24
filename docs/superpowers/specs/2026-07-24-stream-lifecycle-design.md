@@ -289,6 +289,26 @@ export type StreamLifecycleFrame =
   };
 ```
 
+`StreamSignal` is the provider-neutral input to the lifecycle reducer:
+
+```ts
+export type StreamSignal =
+  | { kind: "protocol"; event: StreamProtocolEvent }
+  | { kind: "usage"; usage: StreamUsage }
+  | { kind: "provider_error"; error: StreamProviderError }
+  | {
+    kind: "diagnostic_candidate";
+    candidate: StreamRawDiagnosticCandidate;
+  };
+```
+
+`StreamProtocolEvent` covers provider-neutral message, text, reasoning, tool,
+step, finish, and registered custom events. A Provider Adapter cannot emit a
+`StreamLifecycleFrame`, cannot classify a signal as semantic progress, and
+cannot synthesize lifecycle status telemetry. The lifecycle reducer owns those
+decisions. An unknown provider-specific event becomes a diagnostic candidate,
+not an implicitly semantic custom event.
+
 Semantic events cover these concepts:
 
 - Message and step start.
@@ -342,9 +362,19 @@ attempt:
 ```text
 input_open
   -> input_streaming
-  -> input_ready
-  -> tool_handoff
+       -> input_ready
+            -> tool_handoff
+       -> input_rejected
+  -> input_rejected
 ```
+
+`input_rejected` means the proposed local input never became a valid tool call,
+for example malformed input, failed input validation, or an unavailable tool
+before handoff. It is terminal for that tool input and cannot proceed to local
+execution. `denied` means a valid tool call was blocked by authorization, human
+approval, or provider policy. Local denial occurs after handoff in the tool
+execution module. Only a provider-executed denial can appear inside the same
+provider stream attempt.
 
 Local tool execution happens after `StreamOutcome.status === "tool_handoff"` in
 the runtime tool-execution module. Its success, error, denial, or cancellation
@@ -417,8 +447,10 @@ it.
 ## Deadline engine
 
 All lifecycle deadlines are absolute values derived from one injected monotonic
-clock. The implementation keeps one pending provider read and one timer for the
-nearest active deadline.
+clock. The implementation keeps one pending provider read, one phase scheduler
+timer for the nearest active provider deadline or status due time, and one
+independent absolute stream-attempt timer. The attempt timer can terminate the
+attempt even while the consumer holds a yielded frame.
 
 ```ts
 export interface MonotonicClock {
@@ -439,26 +471,73 @@ The default policy preserves current behavioral budgets initially:
 - Tool input status interval: 5 seconds.
 
 The exact defaults remain centralized and configurable through policy. A status
-interval is not a deadline and cannot change one.
+interval is a scheduler wake-up, not a failure deadline, and cannot change one.
+
+### Provider wait accounting
+
+First-progress, semantic-idle, tool-input-idle, and commit-grace deadlines
+measure provider wait time. They accrue only while the lifecycle is actively
+waiting for the pending provider read and the consumer is not holding a yielded
+frame.
+
+When a provider read settles, the lifecycle pauses provider-wait accounting and
+stores the remaining duration for every active provider deadline before
+reducing the part or yielding any derived frames. The clocks stay paused until
+all frames derived from that part have been consumed and the lifecycle is ready
+to await the next provider read. It then resumes each deadline as a new absolute
+monotonic value using the stored remaining duration. It does not grant a new
+full timeout budget.
+
+When a status wake-up wins while a provider read remains pending, the lifecycle
+also pauses provider-wait accounting before yielding telemetry. That same read
+may stay in flight while the consumer holds the telemetry frame. If it resolves
+during that interval, the lifecycle caches the result without reducing it. If
+the consumer resumes before the absolute attempt limit, the lifecycle consumes
+the cached result. Otherwise, the attempt limit wins, the cached result is
+discarded, and iterator cleanup is requested. This is intentional: the absolute
+limit bounds total wall-clock ownership of an attempt, not provider availability.
+It is classified as a runtime attempt timeout, never provider semantic idle.
+The lifecycle does not create a second provider read. A semantic frame does not
+trigger prefetch: the next provider read starts only after every frame derived
+from the current part has been consumed.
+
+The absolute stream-attempt limit and external cancellation do not pause during
+consumer backpressure. The attempt timer remains armed, may abort the provider,
+and settles the Stream Outcome independently of whether the consumer has
+requested another frame. The frame iterator returns done when the consumer next
+resumes. Delivery latency is measured by Stream Delivery and is never reported
+as provider semantic idle time.
 
 The engine also supports an absolute stream-attempt limit. No tool name or
 prefix disables all time limits. A long-running tool must use an explicit
 execution policy and, when appropriate, a durable child run that reports
 bounded semantic progress.
 
-When a provider part and a deadline become ready together, the implementation
-first consumes a provider read that has already resolved. It then evaluates the
-monotonic clock. Otherwise, the deadline wins when `nowMs() >= deadlineMs`.
-This rule makes race tests deterministic.
+When a provider part and a provider-wait deadline become ready together, the
+implementation first consumes a provider read that has already resolved. It
+then evaluates the monotonic clock. Otherwise, the provider-wait deadline wins
+when `nowMs() >= deadlineMs`. The absolute attempt timer is different: the
+lifecycle checks `nowMs() >= attemptDeadlineMs` before reducing any provider
+part that is not already reduced, so the attempt deadline wins ties. Once it
+fires, it settles the outcome even if the consumer still holds a non-terminal
+frame. This rule makes race tests deterministic.
 
 ## Status telemetry
 
 Tool input status is synthesized from the lifecycle snapshot, not inserted into
-the true-external provider iterator.
+the true-external provider iterator. Stream Lifecycle owns status cadence.
 
-The Live Adapter may emit `data-tool-call-status` at the existing cadence for
-compatibility. These events remain available to active clients but cannot
-satisfy provider reads or affect lifecycle deadlines.
+While a provider read is pending, the phase scheduler races that one read
+promise against the nearest provider deadline and status due time. The separate
+attempt-limit signal can abort that race at any time. When status becomes due
+first, the lifecycle emits a telemetry frame and retains the same provider read
+promise. It schedules the next status time only after iteration resumes. Status
+emission cannot reset or advance a provider deadline.
+
+The Live Adapter maps lifecycle telemetry to `data-tool-call-status` for
+compatibility. It does not own a second cadence timer. These events remain
+available to active clients but cannot satisfy provider reads or affect
+lifecycle deadlines.
 
 The Durable Adapter records a status transition at most once per state. It may
 include final duration and heartbeat count when the state closes. It does not
@@ -475,6 +554,7 @@ export interface StreamOutcomeBase {
   snapshot: StreamSnapshot;
   usage: StreamUsage;
   elapsedMs: number;
+  phase: StreamLifecyclePhase;
 }
 
 export type StreamOutcome =
@@ -514,9 +594,14 @@ Initial error codes include:
 - `SEMANTIC_IDLE_TIMEOUT`
 - `TOOL_INPUT_TIMEOUT`
 - `TOOL_INPUT_INCOMPLETE`
+- `STREAM_ATTEMPT_TIMEOUT`
 - `PROTOCOL_VIOLATION`
 - `PROVIDER_STREAM_ERROR`
 - `PROVIDER_TERMINAL_ERROR`
+
+`STREAM_ATTEMPT_TIMEOUT` is a failed runtime outcome, not an external
+cancellation. Its independent timer settles the outcome and aborts the provider
+even when downstream delivery currently holds a frame.
 
 Cancellation uses `StreamCancellationSource`, not failure error codes. Sources
 include `user`, `parent`, `runtime`, `consumer_stopped`, and
@@ -525,6 +610,11 @@ read, precedence is `user`, `parent`, `runtime`, then `client_disconnected`.
 The first source observed after streaming begins wins and cannot be replaced.
 The compatibility caller decides whether a client disconnect becomes an input
 or only detaches a live projection.
+
+`phase` is present on `StreamOutcomeBase`, so completed, tool-handoff,
+cancelled, and failed outcomes all identify the lifecycle phase at termination.
+`StreamSnapshot.phase` contains the same value for projection and diagnostic
+consumers.
 
 Public messages remain concise and sanitized. Detailed provider errors and raw
 abort reasons stay in restricted diagnostics. The existing late body-read
@@ -643,6 +733,14 @@ The follow-up Stream Delivery module must apply bounded backpressure.
 - Retrying durable writes uses idempotency keys and expected cursors.
 - Retry attempts do not create duplicate canonical events.
 
+If `streamDelivery.publish(frame)` throws, `for await` closes the lifecycle
+iterator. A cancelled `consumer_stopped` Stream Outcome is the expected record
+of how provider consumption ended. Stream Delivery keeps its delivery failure
+as the primary run-finalization error and may attach the Stream Outcome as
+secondary cleanup evidence. It must not replace the delivery error with
+`consumer_stopped`, and it must not rewrite an outcome that was already
+committed before delivery failed.
+
 ## Compatibility
 
 Existing public exports and event shapes remain available during migration.
@@ -673,8 +771,12 @@ defects. The rollout does not rewrite old events.
 
 - Add the Stream Lifecycle types, reducer, fake clock, and scripted Provider
   Adapter.
-- Feed the same already-read provider parts to the existing logic and the shadow
-  reducer. Never issue a second provider request.
+- Add a shadow tap in `processStream()` after `const part = next.value` and the
+  abort check, but before the `data-*` branch and main part switch, currently
+  `src/agent/runtime/chat-stream-handler.ts:613-622`.
+- Feed each already-read part from that tap to the existing logic and the shadow
+  Provider Adapter plus reducer. Never call `iterator.next()` from the shadow
+  path and never issue a second provider request.
 - Compare semantic snapshots and Stream Outcomes.
 - Record low-cardinality divergence metrics without content.
 
@@ -770,10 +872,17 @@ AbortController.
 
 ### Lifecycle tests
 
+- Provider Adapters return only defined `StreamSignal` variants and cannot
+  inject pre-classified lifecycle frames.
+- Unknown provider-specific events become diagnostic candidates or protocol
+  violations according to policy. They do not become semantic progress.
 - Text, reasoning, and tool transitions are balanced.
 - Content after end receives a new content identifier.
 - Parallel tool calls remain independent.
 - Tool output cannot precede ready input in canonical state.
+- Malformed, invalid, and unavailable local inputs transition to
+  `input_rejected` and never reach `tool_handoff`.
+- Local authorization denial remains outside this provider stream attempt.
 - Local tool execution events cannot occur after local `tool_handoff` in the
   same provider stream attempt.
 - Provider-executed tool events require the provider-executed marker.
@@ -797,6 +906,17 @@ AbortController.
 - Empty deltas cannot extend a semantic idle deadline.
 - Real tool input content advances the correct deadline.
 - Provider-read and deadline races follow the documented ordering rule.
+- Holding a yielded frame for 20 seconds does not consume a 15-second provider
+  idle budget.
+- Provider idle time resumes with the prior remaining duration after consumer
+  backpressure ends.
+- The absolute stream-attempt limit settles the outcome and aborts the provider
+  while the consumer holds a frame; iteration returns done when resumed.
+- A provider part that resolves behind a held telemetry frame is reduced when
+  the consumer resumes before the absolute limit, but discarded when the
+  attempt timer fires first.
+- Status cadence uses the phase scheduler and retains one in-flight provider
+  read across repeated status frames.
 - Long-running execution still has an absolute limit.
 - Fake clock tests do not depend on wall time.
 
@@ -812,6 +932,8 @@ AbortController.
 - The first cancellation observed after start wins.
 - Iterator cleanup is requested once.
 - Cleanup failure cannot replace a committed outcome.
+- Every cancelled outcome records the termination phase directly and in its
+  snapshot.
 
 ### Diagnostic policy tests
 
@@ -839,6 +961,9 @@ AbortController.
 - A post-tool text continuation produces a new balanced segment and one rendered
   summary.
 - A live client can disconnect without corrupting a detached durable run.
+- A delivery publish failure remains the primary run-finalization error, with a
+  delivery-triggered `consumer_stopped` outcome retained only as secondary
+  cleanup evidence.
 
 ### Shadow verification
 
@@ -881,6 +1006,17 @@ AbortController.
     Outcome, while provider-executed tools are explicitly marked.
 15. Raw diagnostic capture is disabled by default and redaction runs before any
     raw diagnostic frame is published.
+16. Consumer-held delivery time does not consume provider idle budgets, while
+    the absolute stream-attempt limit continues to accrue.
+17. Stream Lifecycle owns status cadence, emits status through one phase
+    scheduler, retains one in-flight provider read across status frames, and
+    keeps the absolute attempt limit independent.
+18. Provider Adapters emit only defined `StreamSignal` values. The lifecycle
+    reducer alone classifies semantic, telemetry, and diagnostic frames.
+19. Invalid local tool input reaches `input_rejected`; `denied` remains reserved
+    for a valid tool call blocked by policy or authorization.
+20. All Stream Outcome variants expose lifecycle phase, and delivery-triggered
+    `consumer_stopped` remains secondary to the primary delivery failure.
 
 ## Risks and mitigations
 
