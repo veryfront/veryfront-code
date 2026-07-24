@@ -180,7 +180,14 @@ describe("normalizeFrontmatter", () => {
 
     const normalized = normalizeFrontmatter({ date });
 
-    assertEquals(normalized.date, date);
+    assertEquals(normalized.date === date, false);
+    assertEquals(
+      Date.prototype.getTime.call(normalized.date),
+      Date.parse("2026-07-21T00:00:00.000Z"),
+    );
     assertEquals(accessorReads, 0);
+
+    date.setUTCFullYear(2030);
+    assertEquals(normalized.date, new Date("2026-07-21T00:00:00.000Z"));
   });
 });

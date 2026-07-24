@@ -174,6 +174,32 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       assertEquals(body1.components.A, body2.components.A);
       assertEquals(body2.components.B, undefined);
     });
+
+    it("detaches cached manifest exports from caller-owned metadata", async () => {
+      const exports = ["default"];
+      const manifest = new Map([
+        [
+          "Widget",
+          {
+            id: "Widget",
+            path: "/widget.js",
+            exports,
+          },
+        ],
+      ]);
+      const handler = new ManifestHandler("/project");
+
+      const first = await (await handler.handle(manifest)).json();
+      exports.push("Widget");
+      const second = await (await handler.handle(manifest)).json();
+      const rebuilt = await (await new ManifestHandler("/project").handle(manifest)).json();
+
+      assertEquals(first.modules[0].exports, ["default"]);
+      assertEquals(second.modules[0].exports, ["default"]);
+      assertEquals(second.hash, first.hash);
+      assertEquals(rebuilt.modules[0].exports, ["default", "Widget"]);
+      assertEquals(rebuilt.hash === first.hash, false);
+    });
   });
 
   describe("handle with injected CacheRepository", () => {

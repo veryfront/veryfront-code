@@ -16,6 +16,7 @@ import {
   appendClientModuleVersion,
   buildClientModuleUrl,
 } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import { snapshotClientComponentMeta } from "#veryfront/rendering/rsc/client-manifest-snapshot.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /** TTL in seconds for external cache repository */
@@ -54,7 +55,7 @@ export class ManifestHandler {
     ].join(":");
   }
 
-  async handle(clientManifest: Map<string, ClientComponentMeta> | null): Promise<Response> {
+  async handle(clientManifest: ReadonlyMap<string, ClientComponentMeta> | null): Promise<Response> {
     while (true) {
       const generation = this.generation;
       await this.cacheMutation;
@@ -71,7 +72,7 @@ export class ManifestHandler {
   }
 
   private getOrStartBuild(
-    clientManifest: Map<string, ClientComponentMeta> | null,
+    clientManifest: ReadonlyMap<string, ClientComponentMeta> | null,
     generation: number,
   ): Promise<ManifestData> {
     if (this.inFlightBuild?.generation === generation) return this.inFlightBuild.promise;
@@ -86,7 +87,7 @@ export class ManifestHandler {
   }
 
   private async buildAndPublish(
-    clientManifest: Map<string, ClientComponentMeta> | null,
+    clientManifest: ReadonlyMap<string, ClientComponentMeta> | null,
     generation: number,
   ): Promise<ManifestData> {
     const data = await this.buildManifest(clientManifest);
@@ -131,7 +132,7 @@ export class ManifestHandler {
   }
 
   private async buildManifest(
-    clientManifest: Map<string, ClientComponentMeta> | null,
+    clientManifest: ReadonlyMap<string, ClientComponentMeta> | null,
   ): Promise<ManifestData> {
     const manifest = clientManifest ??
       (await buildClientManifest(this.projectDir, this.appDir, this.fs));
@@ -140,7 +141,8 @@ export class ManifestHandler {
     const graphIds: ManifestData["graphIds"] = { client: [], server: [] };
     const contentVersions: string[] = [];
 
-    for (const [id, meta] of [...manifest].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [id, sourceMeta] of [...manifest].sort(([a], [b]) => a.localeCompare(b))) {
+      const meta = snapshotClientComponentMeta(sourceMeta);
       const rel = meta.rel;
       if (!this.isLocalProject && !rel) {
         throw new Error(`Client component ${id} is missing its project-relative module path`);

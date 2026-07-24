@@ -121,6 +121,34 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
       assertStringIncludes(payload.html, "Save");
     });
 
+    it("detaches renderer metadata from caller-owned export arrays", async () => {
+      function ClientComponent() {
+        return React.createElement("button", null, "client");
+      }
+      (ClientComponent as typeof ClientComponent & { __rsc_client?: boolean }).__rsc_client = true;
+      const exports = ["default"];
+      const metadata = {
+        id: "ClientComponent",
+        path: "/_veryfront/fs/client-component.js",
+        exports,
+      };
+      const renderer = new RSCRenderer({
+        clientManifest: new Map([
+          ["ClientComponent", metadata],
+        ]),
+        projectDir: "/tmp/test-project",
+      });
+
+      metadata.path = "/_veryfront/fs/mutated.js";
+      exports.splice(0, exports.length, "ClientComponent");
+      const payload = await renderer.renderToPayload(ClientComponent);
+
+      assertStringIncludes(
+        payload.html,
+        'data-client-ref="/_veryfront/fs/client-component.js#default"',
+      );
+    });
+
     it("preserves nested server and client children in a hydratable boundary payload", async () => {
       function ClientShell(_props: { children?: React.ReactNode }) {
         return React.createElement("main", null, "client shell");
