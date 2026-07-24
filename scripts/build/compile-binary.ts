@@ -23,6 +23,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-eval-report-mlflow/src/index.ts",
   "extensions/ext-observability-opentelemetry/src/index.ts",
   "extensions/ext-parser-babel/src/index.ts",
+  "extensions/ext-parser-babel/src/parser-only.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",
   // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
   "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
@@ -46,11 +47,13 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "--unstable-worker-options",
   ];
 
-  for (const include of [
-    ...DEFAULT_INCLUDES,
-    ...getBinaryPluginBundleIncludes(),
-    ...options.extraIncludes,
-  ]) {
+  for (
+    const include of [
+      ...DEFAULT_INCLUDES,
+      ...getBinaryPluginBundleIncludes(),
+      ...options.extraIncludes,
+    ]
+  ) {
     args.push("--include", include);
   }
 
@@ -62,7 +65,9 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
   return args;
 }
 
-export async function compileBinary(options: CompileBinaryOptions): Promise<void> {
+export async function compileBinary(
+  options: CompileBinaryOptions,
+): Promise<void> {
   const result = await new Deno.Command("deno", {
     args: createCompileArgs(options),
     cwd: PROJECT_ROOT,

@@ -14,7 +14,6 @@
  * @module extensions/ext-parser-babel
  */
 
-import * as parser from "@babel/parser";
 import * as traverseModule from "@babel/traverse";
 import * as generateModule from "@babel/generator";
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -25,10 +24,10 @@ import type {
   GenerateOptions,
   GenerateResult,
   InjectJsxNodePositionsOptions,
-  ParseOptions,
   TraverseVisitor,
 } from "veryfront/extensions/parser";
 import { injectNodePositions } from "./inject-node-positions.ts";
+import { BabelParseOnlyParser } from "./parser-only.ts";
 
 type TraverseFunction = (ast: unknown, opts: Record<string, unknown>) => void;
 type GenerateFunction = (
@@ -50,8 +49,12 @@ function resolveDefaultExport<T>(mod: unknown): T {
   return mod as T;
 }
 
-const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(traverseModule);
-const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(generateModule);
+const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(
+  traverseModule,
+);
+const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(
+  generateModule,
+);
 
 const FUNCTION_NODE_TYPES = [
   "ArrowFunctionExpression",
@@ -68,7 +71,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function functionHasDirective(node: ASTNode, directive: string): boolean {
   const body = node.body;
-  if (!isRecord(body) || body.type !== "BlockStatement" || !Array.isArray(body.directives)) {
+  if (
+    !isRecord(body) || body.type !== "BlockStatement" ||
+    !Array.isArray(body.directives)
+  ) {
     return false;
   }
 
@@ -77,36 +83,7 @@ function functionHasDirective(node: ASTNode, directive: string): boolean {
   );
 }
 
-function pickPlugins(filePath?: string): parser.ParserPlugin[] {
-  const normalizedPath = filePath?.toLowerCase() ?? "";
-  const isTypeScript = /\.(?:tsx?|[cm]ts)$/.test(normalizedPath);
-  const supportsJsx = !filePath || /\.(?:tsx|jsx|js|mjs|cjs)$/.test(normalizedPath);
-  const plugins: parser.ParserPlugin[] = [
-    "classProperties",
-    "classPrivateProperties",
-    "classPrivateMethods",
-    "decorators-legacy",
-    "decoratorAutoAccessors",
-    "deprecatedImportAssert",
-    "dynamicImport",
-    "importAttributes",
-    "topLevelAwait",
-  ];
-  if (isTypeScript || !filePath) plugins.push("typescript");
-  if (supportsJsx) plugins.push("jsx");
-  return plugins;
-}
-
-class BabelCodeParser implements CodeParser {
-  parse(options: ParseOptions): Promise<ASTNode> {
-    const ast = parser.parse(options.code, {
-      sourceType: "unambiguous",
-      allowReturnOutsideFunction: options.filePath?.toLowerCase().endsWith(".cjs") === true,
-      plugins: pickPlugins(options.filePath),
-    });
-    return Promise.resolve(ast as unknown as ASTNode);
-  }
-
+class BabelCodeParser extends BabelParseOnlyParser implements CodeParser {
   traverse(ast: ASTNode, visitor: TraverseVisitor): void {
     traverse(ast, visitor as unknown as Record<string, unknown>);
   }
@@ -122,11 +99,15 @@ class BabelCodeParser implements CodeParser {
     });
   }
 
-  async hasFunctionDirective(options: FunctionDirectiveOptions): Promise<boolean> {
+  async hasFunctionDirective(
+    options: FunctionDirectiveOptions,
+  ): Promise<boolean> {
     const ast = await this.parse(options);
     let found = false;
     const visit = (path: { node: ASTNode }) => {
-      if (!found && functionHasDirective(path.node, options.directive)) found = true;
+      if (!found && functionHasDirective(path.node, options.directive)) {
+        found = true;
+      }
     };
     const visitor: TraverseVisitor = {};
     for (const nodeType of FUNCTION_NODE_TYPES) visitor[nodeType] = visit;
@@ -134,7 +115,10 @@ class BabelCodeParser implements CodeParser {
     return found;
   }
 
-  injectJsxNodePositions(source: string, options: InjectJsxNodePositionsOptions): string {
+  injectJsxNodePositions(
+    source: string,
+    options: InjectJsxNodePositionsOptions,
+  ): string {
     return injectNodePositions(source, options);
   }
 }
