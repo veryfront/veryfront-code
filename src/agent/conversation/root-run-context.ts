@@ -34,6 +34,7 @@ function normalizeProvidedRun(input: {
     waitingToolCallId: null,
     waitingToolName: null,
     status: "running",
+    streamProtocolVersion: 1,
   };
 }
 

@@ -70,6 +70,7 @@ describe("agent/durable-contracts", () => {
         waitingToolCallId: "tool-call-1",
         waitingToolName: "form_input",
         status: "waiting_for_tool",
+        streamProtocolVersion: 1,
       },
     );
 
@@ -91,8 +92,56 @@ describe("agent/durable-contracts", () => {
         waitingToolCallId: null,
         waitingToolName: null,
         status: "running",
+        streamProtocolVersion: 1,
       },
     );
+  });
+
+  it("defaults unversioned and unknown run metadata to protocol version 1", () => {
+    assertEquals(
+      ConversationRunProjectionSchema.parse({
+        run_id: "run-old",
+        conversation_id: CONVERSATION_ID,
+        message_id: MESSAGE_ID,
+        latest_event_id: 0,
+        latest_external_event_sequence: 0,
+        status: "completed",
+      }).streamProtocolVersion,
+      1,
+    );
+
+    assertEquals(
+      ConversationRunProjectionSchema.parse({
+        run_id: "run-unknown",
+        conversation_id: CONVERSATION_ID,
+        message_id: MESSAGE_ID,
+        latest_event_id: 0,
+        latest_external_event_sequence: 0,
+        status: "completed",
+        metadata: { stream_protocol_version: 99 },
+      }).streamProtocolVersion,
+      1,
+    );
+  });
+
+  it("reads protocol version 2 only from canonical run metadata", () => {
+    for (
+      const status of ["running", "completed", "failed", "cancelled"] as const
+    ) {
+      assertEquals(
+        ConversationRunProjectionSchema.parse({
+          run_id: `run-v2-${status}`,
+          conversation_id: CONVERSATION_ID,
+          message_id: MESSAGE_ID,
+          latest_event_id: 0,
+          latest_external_event_sequence: 0,
+          status,
+          metadata: { stream_protocol_version: 2 },
+        }).streamProtocolVersion,
+        2,
+        status,
+      );
+    }
   });
 
   it("rejects durable run projections without external event sequence metadata", () => {
