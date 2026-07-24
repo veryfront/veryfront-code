@@ -1,4 +1,8 @@
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
+import {
+  hasCompletedStepSignal,
+  isLateProviderBodyReadError,
+} from "../streaming/stream-outcome.ts";
 
 /** Error shape for hosted terminal. */
 export interface HostedTerminalError {
@@ -81,29 +85,6 @@ async function cleanupAfterFinalization(cleanup: () => Promise<void> | void): Pr
   await cleanup();
 }
 
-function getStreamErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (
-    typeof error === "object" && error !== null && "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-function isLateProviderBodyReadError(error: unknown): boolean {
-  return /error reading a body from connection/i.test(getStreamErrorMessage(error));
-}
-
 function hasFinalStepCompletionSignal(finalStep: unknown): boolean {
   if (
     typeof finalStep !== "object" || finalStep === null || !("finishReason" in finalStep) ||
@@ -112,16 +93,7 @@ function hasFinalStepCompletionSignal(finalStep: unknown): boolean {
     return false;
   }
 
-  switch (finalStep.finishReason) {
-    case "stop":
-    case "length":
-    case "tool-calls":
-    case "content-filter":
-    case "other":
-      return true;
-    default:
-      return false;
-  }
+  return hasCompletedStepSignal(finalStep.finishReason);
 }
 
 function shouldFailStreamError(input: {
