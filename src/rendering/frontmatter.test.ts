@@ -164,6 +164,77 @@ describe("toMDXFrontmatter", () => {
 
     assertEquals(toMDXFrontmatter(unreadable), {});
   });
+
+  it("monotonically bounds reflective work across rejected shared branches", () => {
+    const measureInspections = (
+      createSharedValue: (inspect: () => void) => unknown,
+    ): number => {
+      let inspections = 0;
+      const inspect = () => {
+        inspections++;
+      };
+      const sharedValue = createSharedValue(inspect);
+      const sourceTarget = Object.fromEntries(
+        Array.from({ length: 10_000 }, (_, index) => [`branch${index}`, sharedValue]),
+      );
+      const source = new Proxy(sourceTarget, {
+        ownKeys(target) {
+          inspect();
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          inspect();
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      assertEquals(toMDXFrontmatter(source), {});
+      return inspections;
+    };
+
+    const arrayInspections = measureInspections((inspect) =>
+      new Proxy(["safe", "safe", "safe", "safe", () => "unsupported"], {
+        ownKeys(target) {
+          inspect();
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          inspect();
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      })
+    );
+    const objectInspections = measureInspections((inspect) =>
+      new Proxy(
+        Object.fromEntries(
+          Array.from({ length: 5 }, (_, index) => [`unsupported${index}`, () => index]),
+        ),
+        {
+          getPrototypeOf(target) {
+            inspect();
+            return Reflect.getPrototypeOf(target);
+          },
+          ownKeys(target) {
+            inspect();
+            return Reflect.ownKeys(target);
+          },
+          getOwnPropertyDescriptor(target, key) {
+            inspect();
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        },
+      )
+    );
+
+    assert(
+      arrayInspections <= 50_000,
+      `expected bounded array inspection, received ${arrayInspections}`,
+    );
+    assert(
+      objectInspections <= 50_000,
+      `expected bounded object inspection, received ${objectInspections}`,
+    );
+  });
 });
 
 describe("toHTMLFrontmatter", () => {
@@ -239,27 +310,5 @@ describe("toHTMLFrontmatter", () => {
       customNested: { unsafe: true },
     });
     assertEquals(getterCalls, 0);
-  });
-
-  it("bounds repeated inspection of invalid shared branches", () => {
-    let descriptorInspections = 0;
-    const sharedInvalid = new Proxy(
-      [...Array.from({ length: 99 }, () => "safe"), () => "unsupported"],
-      {
-        getOwnPropertyDescriptor(target, key) {
-          descriptorInspections++;
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-      },
-    );
-    const source = Object.fromEntries(
-      Array.from({ length: 600 }, (_, index) => [`branch${index}`, sharedInvalid]),
-    );
-
-    assertEquals(toMDXFrontmatter(source), {});
-    assert(
-      descriptorInspections <= 50_500,
-      `expected a bounded inspection count, received ${descriptorInspections}`,
-    );
   });
 });

@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CachePayload } from "./types.ts";
-import { cloneCachePayload, parseCachePayload, serializeCachePayload } from "./cache-payload.ts";
+import {
+  cloneCachePayload,
+  parseCachePayload,
+  parseSerializedCachePayload,
+  serializeCachePayload,
+} from "./cache-payload.ts";
 
 function payloadWithNodeMap(): CachePayload {
   const node = { attrs: { className: "title" } };
@@ -62,13 +67,111 @@ describe("rendering/cache/cache-payload", () => {
     );
   });
 
+  it("rehydrates only declared Dates in arrays and node-map values", () => {
+    const payload = payloadWithNodeMap();
+    const intentionalIsoString = "2026-07-24T08:30:00.000Z";
+    payload.result.frontmatter = {
+      values: [
+        intentionalIsoString,
+        new Date("2025-01-02T03:04:05.000Z"),
+      ],
+    };
+    payload.result.nodeMap = new Map([[
+      1,
+      {
+        createdAt: new Date("2024-02-03T04:05:06.000Z"),
+        label: intentionalIsoString,
+      },
+    ]]);
+    payload.nodeMapEntries = Array.from(payload.result.nodeMap.entries());
+
+    const parsed = parseCachePayload(
+      JSON.parse(serializeCachePayload(payload)),
+    );
+
+    assertEquals(parsed?.result.frontmatter, {
+      values: [
+        intentionalIsoString,
+        new Date("2025-01-02T03:04:05.000Z"),
+      ],
+    });
+    assertEquals(parsed?.result.nodeMap?.get(1), {
+      createdAt: new Date("2024-02-03T04:05:06.000Z"),
+      label: intentionalIsoString,
+    });
+    assertEquals(parsed?.nodeMapEntries?.[0]?.[1], parsed?.result.nodeMap?.get(1));
+  });
+
+  it("round-trips Dates for every accepted safe-integer node ID", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.nodeMap = new Map([[
+      -1,
+      { createdAt: new Date("2024-02-03T04:05:06.000Z") },
+    ]]);
+    payload.nodeMapEntries = Array.from(payload.result.nodeMap.entries());
+
+    const parsed = parseSerializedCachePayload(serializeCachePayload(payload));
+
+    assertEquals(parsed?.result.nodeMap?.get(-1), {
+      createdAt: new Date("2024-02-03T04:05:06.000Z"),
+    });
+  });
+
+  it("writes payloads that origin/main Redis and API readers can consume", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.frontmatter = {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+    };
+
+    const raw = serializeCachePayload(payload);
+    const wire = JSON.parse(raw) as Record<string, unknown>;
+    const redisPayload = JSON.parse(raw) as CachePayload;
+    const apiResult = (wire.result ?? {}) as Record<string, unknown>;
+    const apiPayload: CachePayload = {
+      result: {
+        html: apiResult.html as string,
+        css: apiResult.css as string | undefined,
+        frontmatter: apiResult.frontmatter as CachePayload["result"]["frontmatter"],
+        headings: apiResult.headings as CachePayload["result"]["headings"],
+        nodeMap: Array.isArray(apiResult.nodeMapEntries)
+          ? new Map(apiResult.nodeMapEntries as Array<[number, unknown]>)
+          : undefined,
+        stream: null,
+        pageModule: apiResult.pageModule as CachePayload["result"]["pageModule"],
+        ssrHash: apiResult.ssrHash as string | undefined,
+      },
+      storedAt: wire.storedAt as number,
+      expiresAt: wire.expiresAt as number | undefined,
+      staleUntil: wire.staleUntil as number | undefined,
+    };
+
+    assertEquals(wire.$veryfrontCachePayload, undefined);
+    assertEquals(redisPayload.result.html, payload.result.html);
+    assertEquals(redisPayload.result.frontmatter, {
+      date: "2026-07-24T08:30:00.000Z",
+    });
+    assertEquals(redisPayload.nodeMapEntries, payload.nodeMapEntries);
+    assertEquals(apiPayload.result.frontmatter, redisPayload.result.frontmatter);
+    assertEquals(apiPayload.result.nodeMap, payload.result.nodeMap);
+    assertEquals(
+      parseCachePayload(wire)?.result.frontmatter,
+      payload.result.frontmatter,
+    );
+  });
+
   it("does not confuse user records with cache codec markers", () => {
     const payload = payloadWithNodeMap();
     const markerLikeRecords = ["date", "record", "unknown"].map((tag) => ({
       $veryfrontCacheValue: tag,
       value: "2026-07-24T08:30:00.000Z",
     }));
-    (payload.result.frontmatter as Record<string, unknown>).custom = markerLikeRecords;
+    (payload.result.frontmatter as Record<string, unknown>).custom = {
+      $veryfrontCacheCodec: {
+        version: 1,
+        datePaths: [["frontmatter", "date"]],
+      },
+      markerLikeRecords,
+    };
 
     const serialized = parseCachePayload(
       JSON.parse(serializeCachePayload(payload)),
@@ -76,23 +179,125 @@ describe("rendering/cache/cache-payload", () => {
 
     assertEquals(
       (serialized?.result.frontmatter as Record<string, unknown>).custom,
-      markerLikeRecords,
+      {
+        $veryfrontCacheCodec: {
+          version: 1,
+          datePaths: [["frontmatter", "date"]],
+        },
+        markerLikeRecords,
+      },
     );
   });
 
-  it("continues to read legacy unversioned cache payloads", () => {
+  it("supports Date values under arbitrary own data-property names", () => {
     const payload = payloadWithNodeMap();
-    const legacyWirePayload = JSON.parse(JSON.stringify({
-      ...payload,
-      result: {
-        ...payload.result,
-        nodeMap: undefined,
+    const special = Object.create(null) as Record<string, Date>;
+    Object.defineProperty(special, "__proto__", {
+      value: new Date("2026-07-24T08:30:00.000Z"),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    payload.result.frontmatter = { special };
+
+    const parsed = parseCachePayload(
+      JSON.parse(serializeCachePayload(payload)),
+    );
+    const parsedSpecial = parsed?.result.frontmatter.special as Record<string, unknown>;
+
+    assertEquals(Object.hasOwn(parsedSpecial, "__proto__"), true);
+    assertEquals(
+      parsedSpecial.__proto__,
+      new Date("2026-07-24T08:30:00.000Z"),
+    );
+    assertEquals(({} as { polluted?: unknown }).polluted, undefined);
+  });
+
+  it("continues to read the previous tagged envelope format", () => {
+    const previousEnvelope = {
+      $veryfrontCachePayload: 1,
+      value: {
+        result: {
+          html: "<p>cached</p>",
+          frontmatter: {
+            date: {
+              $veryfrontCacheValue: "date",
+              value: "2026-07-24T08:30:00.000Z",
+            },
+          },
+          stream: null,
+        },
+        storedAt: 1_000,
+        expiresAt: 2_000,
       },
-    }));
+    };
+
+    assertEquals(parseCachePayload(previousEnvelope)?.result.frontmatter, {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+    });
+  });
+
+  it("continues to read exact origin/main Redis payloads", () => {
+    const payload = payloadWithNodeMap();
+    const legacyWirePayload = JSON.parse(JSON.stringify(payload));
 
     const parsed = parseCachePayload(legacyWirePayload);
 
     assertEquals(parsed, cloneCachePayload(payload));
+  });
+
+  it("continues to read exact origin/main API payloads", () => {
+    const payload = payloadWithNodeMap();
+    const legacyWirePayload = {
+      result: {
+        html: payload.result.html,
+        css: payload.result.css,
+        frontmatter: payload.result.frontmatter,
+        headings: payload.result.headings,
+        nodeMapEntries: payload.nodeMapEntries,
+        pageModule: payload.result.pageModule,
+        ssrHash: payload.result.ssrHash,
+      },
+      storedAt: payload.storedAt,
+      expiresAt: payload.expiresAt,
+      staleUntil: payload.staleUntil,
+    };
+
+    assertEquals(
+      parseCachePayload(JSON.parse(JSON.stringify(legacyWirePayload))),
+      cloneCachePayload(payload),
+    );
+  });
+
+  it("rejects malformed Date codec paths without mutating prototypes", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.frontmatter = {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+    };
+    const wire = JSON.parse(serializeCachePayload(payload)) as Record<string, unknown>;
+    const codec = wire.$veryfrontCacheCodec as {
+      version: number;
+      datePaths: Array<Array<string | number>>;
+    };
+    codec.datePaths[0] = ["frontmatter", "__proto__", "polluted"];
+
+    assertEquals(parseCachePayload(wire), undefined);
+    assertEquals(({} as { polluted?: unknown }).polluted, undefined);
+  });
+
+  it("rejects duplicate Date codec paths", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.frontmatter = {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+    };
+    const wire = JSON.parse(serializeCachePayload(payload)) as Record<string, unknown>;
+    const codec = wire.$veryfrontCacheCodec as {
+      version: number;
+      datePaths: Array<Array<string | number>>;
+    };
+    codec.datePaths.push(codec.datePaths[0]!.slice());
+
+    assertEquals(parseCachePayload(wire), undefined);
   });
 
   it("rejects sparse JSON-like arrays", () => {
@@ -183,5 +388,9 @@ describe("rendering/cache/cache-payload", () => {
 
     assertEquals(parseCachePayload(payload), undefined);
     assertEquals(getterCalls, 0);
+  });
+
+  it("rejects malformed serialized payloads", () => {
+    assertEquals(parseSerializedCachePayload("{not-json"), undefined);
   });
 });

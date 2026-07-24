@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ContextAwareCacheCoordinator } from "./context-aware-cache.ts";
 import type { CachePayload, CacheStore } from "../cache/types.ts";
+import { parseSerializedCachePayload, serializeCachePayload } from "../cache/cache-payload.ts";
 import type { RenderContext } from "../context/render-context.ts";
 
 function createInMemoryStore(): CacheStore & { data: Map<string, CachePayload> } {
@@ -160,6 +161,51 @@ describe("rendering/shared/context-aware-cache", () => {
       assertEquals(typeof lookup.lookupDurationMs, "number");
       assertEquals(lookup.cachedResult?.html, "<h1>Hello</h1>");
       assertEquals(lookup.cachedResult?.ssrHash, "abc123");
+    });
+
+    it("preserves Date frontmatter through the production coordinator wire path", async () => {
+      let serialized: string | undefined;
+      const store: CacheStore = {
+        get: () =>
+          Promise.resolve(
+            serialized === undefined ? undefined : parseSerializedCachePayload(serialized),
+          ),
+        set: (_key, value) => {
+          serialized = serializeCachePayload(value);
+          return Promise.resolve();
+        },
+        delete: () => {
+          serialized = undefined;
+          return Promise.resolve();
+        },
+        clear: () => {
+          serialized = undefined;
+          return Promise.resolve();
+        },
+        destroy: () => Promise.resolve(),
+      };
+      const cache = new ContextAwareCacheCoordinator({ store });
+      const ctx = makeMockCtx();
+      const publishedAt = new Date("2026-07-24T08:30:00.000Z");
+
+      await cache.persistResult(
+        {
+          html: "<h1>Dated</h1>",
+          frontmatter: { publishedAt },
+          headings: [],
+          stream: null,
+        },
+        "dated",
+        ctx,
+      );
+      const lookup = await cache.checkCache("dated", ctx);
+
+      assertEquals(lookup.status, "hit");
+      assertEquals(
+        lookup.cachedResult?.frontmatter.publishedAt,
+        new Date("2026-07-24T08:30:00.000Z"),
+      );
+      assertEquals(lookup.cachedResult?.frontmatter.publishedAt === publishedAt, false);
     });
 
     it("should not cache results with streams", async () => {

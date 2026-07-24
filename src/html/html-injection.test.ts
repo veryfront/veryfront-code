@@ -460,5 +460,48 @@ describe("html/html-injection", () => {
 
       assertEquals(html.includes('<link rel="stylesheet" href="/_vf/css/abc123.css">'), true);
     });
+
+    it("escapes production project stylesheet hrefs before injecting them", () => {
+      const hostileHref =
+        '/_vf/css/app.css" onload="globalThis.pwned=1"><script>globalThis.pwned=2</script>';
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: hostileHref,
+        },
+      );
+
+      assertStringIncludes(
+        html,
+        '<link rel="stylesheet" href="/_vf/css/app.css&quot; onload=&quot;globalThis.pwned=1&quot;&gt;&lt;script&gt;globalThis.pwned=2&lt;/script&gt;">',
+      );
+      assertEquals(html.includes('" onload="'), false);
+      assertEquals(html.includes("<script>globalThis.pwned=2</script>"), false);
+    });
+
+    it("keeps replacement tokens literal in production project stylesheet hrefs", () => {
+      const stylesheetHref = "/_vf/css/$&-$`-$'.css";
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          environment: "production",
+          slug: "test",
+          projectStylesheetHref: stylesheetHref,
+        },
+      );
+
+      assertStringIncludes(
+        html,
+        '<link rel="stylesheet" href="/_vf/css/$&amp;-$`-$&#39;.css">',
+      );
+    });
   });
 });
