@@ -3,9 +3,10 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { WorkflowClient } from "../api/workflow-client.ts";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import type { WorkflowBackend } from "../backends/types.ts";
 import type { StepExecutorConfig } from "../executor/step-executor.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
+import { reconcileWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 import type { CapturedTenantContext, WorkflowRun } from "../types.ts";
 
 interface EntrypointLogger {
@@ -79,21 +80,16 @@ export async function hydrateRunContextEnv(
     return run;
   }
 
-  const updated = await updateRunIfStatus(
+  const outcome = await reconcileWorkflowRunControl({
     backend,
-    runId,
-    [run.status],
-    {
-      context: {
-        ...run.context,
-        env: injectedEnv,
-      },
+    operation: {
+      type: "hydrate-env",
+      run,
+      env: injectedEnv,
+      expectedWorkerId,
     },
-    expectedWorkerId,
-  );
-  if (!updated) return (await backend.getRun(runId)) ?? run;
-
-  return (await backend.getRun(runId)) ?? run;
+  });
+  return outcome.run ?? (await backend.getRun(runId)) ?? run;
 }
 
 export function getFinalRunExitCode(
@@ -136,14 +132,15 @@ export async function failRunExecution(
 ): Promise<number> {
   logger.error("Execution error:", error);
 
-  await updateRunIfStatus(backend, runId, ["pending", "running"], {
-    status: "failed",
-    error: {
-      message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
-      stack: error instanceof Error ? error.stack : undefined,
+  await reconcileWorkflowRunControl({
+    backend,
+    operation: {
+      type: "fail-execution",
+      runId,
+      error,
+      expectedWorkerId,
     },
-    completedAt: new Date(),
-  }, expectedWorkerId);
+  });
 
   return exitCodes.WORKFLOW_FAILED;
 }

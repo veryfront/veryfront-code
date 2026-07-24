@@ -2,13 +2,14 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
 import {
   claimWorkflowRunControl,
   executeWorkflowRunControl,
+  reconcileWorkflowRunControl,
   type WorkflowRunControlExecuteResult,
 } from "./workflow-run-control.ts";
 
@@ -265,6 +266,56 @@ class ClaimMissingPolicyBackend extends MemoryBackend {
   }
 }
 
+class ReconcileCancelOnPatchBackend extends MemoryBackend {
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "failed") {
+      await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class ReconcileOwnerChangesBackend extends MemoryBackend {
+  readonly attemptedOwners: string[] = [];
+  readonly replacementOwners: string[];
+
+  constructor(replacementOwners: string[]) {
+    super();
+    this.replacementOwners = replacementOwners;
+  }
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.context?.review) {
+      this.attemptedOwners.push(expectedWorkerId);
+      const replacement = this.replacementOwners.shift();
+      if (replacement) {
+        await super.updateRun(runId, { workerId: replacement });
+      }
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
 function withoutSourcePolicy(run: WorkflowRun): WorkflowRun {
   const { sourceIntegrationPolicy: _sourceIntegrationPolicy, ...missingSnapshot } = run;
   return missingSnapshot as unknown as WorkflowRun;
@@ -287,6 +338,10 @@ async function claim(
     createRunExecution: () => Promise.resolve("execution-a"),
     ...options,
   });
+}
+
+function approvalDecision(approved: boolean, comment?: string): ApprovalDecision {
+  return { approved, approver: "reviewer", comment };
 }
 
 describe("workflow/runtime/workflow-run-control execute", () => {
@@ -702,5 +757,149 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(observedPolicies, [sourceIntegrationPolicy]);
     assertEquals(failed.status, "failed-before-claim");
     assertEquals((await missingPolicyBackend.getRun(missingPolicyRun.id))?.status, "failed");
+  });
+});
+
+describe("workflow/runtime/workflow-run-control reconcile", () => {
+  it("keeps cancellation terminal during approval rejection", async () => {
+    const backend = new ReconcileCancelOnPatchBackend();
+    const run = {
+      ...createRun("reconcile-rejection-cancelled"),
+      status: "waiting" as const,
+      workerId: "run-execution:owner",
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: run.id,
+        approvalId: "approval-a",
+        nodeId: "review",
+        decision: approvalDecision(false, "not ready"),
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+        maxAttempts: 3,
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "skipped-terminal");
+    assertEquals(persisted?.status, "cancelled");
+    assertEquals(persisted?.error, undefined);
+  });
+
+  it("persists approval decisions against the current owner and retries on owner change", async () => {
+    const backend = new ReconcileOwnerChangesBackend([
+      "run-execution:owner-b",
+      "run-execution:owner-c",
+    ]);
+    const run = {
+      ...createRun("reconcile-owner-retry"),
+      status: "waiting" as const,
+      workerId: "run-execution:owner-a",
+    };
+    await backend.createRun(run);
+    const resumeCalls: Array<{ runId: string; expectedWorkerId?: string }> = [];
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: run.id,
+        approvalId: "approval-b",
+        nodeId: "review",
+        decision: approvalDecision(true, "ship"),
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+        maxAttempts: 4,
+        resume: (runId, expectedWorkerId) => {
+          resumeCalls.push({ runId, expectedWorkerId });
+          return Promise.resolve();
+        },
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(backend.attemptedOwners, [
+      "run-execution:owner-a",
+      "run-execution:owner-b",
+      "run-execution:owner-c",
+    ]);
+    assertEquals(persisted?.workerId, "run-execution:owner-c");
+    assertEquals(persisted?.context.review, {
+      approved: true,
+      approver: "reviewer",
+      comment: "ship",
+      decidedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assertEquals(persisted?.nodeStates.review?.status, "completed");
+    assertEquals(resumeCalls, [{ runId: run.id, expectedWorkerId: "run-execution:owner-c" }]);
+  });
+
+  it("does nothing for terminal approval decisions", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-terminal-noop"),
+      status: "completed" as const,
+      workerId: "run-execution:owner",
+      output: { ok: true },
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: run.id,
+        approvalId: "approval-terminal",
+        nodeId: "review",
+        decision: approvalDecision(true),
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "skipped-terminal");
+    assertEquals(persisted?.status, "completed");
+    assertEquals(persisted?.context.review, undefined);
+    assertEquals(persisted?.output, { ok: true });
+  });
+
+  it("does not hydrate env or persist failure for stale entrypoint owners", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-stale-entrypoint"),
+      status: "running" as const,
+      workerId: "run-execution:new-owner",
+      context: { input: {}, env: { EXISTING: "1" } },
+    };
+    await backend.createRun(run);
+
+    const hydrated = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "hydrate-env",
+        run,
+        env: { EXISTING: "1", SECRET: "redacted" },
+        expectedWorkerId: "run-execution:old-owner",
+      },
+    });
+    const failed = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "fail-execution",
+        runId: run.id,
+        error: new Error("lost lock"),
+        expectedWorkerId: "run-execution:old-owner",
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(hydrated.status, "stale-owner");
+    assertEquals(failed.status, "stale-owner");
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, "run-execution:new-owner");
+    assertEquals(persisted?.context.env, { EXISTING: "1" });
+    assertEquals(persisted?.error, undefined);
   });
 });

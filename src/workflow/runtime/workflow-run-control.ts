@@ -7,7 +7,7 @@ import {
   type WorkflowBackend,
 } from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
-import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import {
   requireWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
@@ -93,6 +93,65 @@ export interface WorkflowRunControlClaimOutcome {
     | "failed-after-claim";
   execution?: WorkflowRunControlClaimCreatedExecution;
   error?: Error;
+}
+
+export interface WorkflowRunControlApprovalDecisionOperation {
+  type: "approval-decision";
+  runId: string;
+  approvalId: string;
+  nodeId: string;
+  decision: ApprovalDecision;
+  decidedAt?: Date;
+  maxAttempts?: number;
+  resume?(runId: string, expectedWorkerId?: string): Promise<void>;
+}
+
+export interface WorkflowRunControlHydrateEnvOperation {
+  type: "hydrate-env";
+  run: WorkflowRun;
+  env: Record<string, string>;
+  expectedWorkerId?: string;
+}
+
+export interface WorkflowRunControlFailExecutionOperation {
+  type: "fail-execution";
+  runId: string;
+  error: unknown;
+  expectedWorkerId?: string;
+}
+
+export interface WorkflowRunControlReconcileInput {
+  backend: WorkflowBackend;
+  operation:
+    | WorkflowRunControlApprovalDecisionOperation
+    | WorkflowRunControlHydrateEnvOperation
+    | WorkflowRunControlFailExecutionOperation;
+}
+
+export interface WorkflowRunControlReconcileOutcome {
+  status:
+    | "reconciled"
+    | "unchanged"
+    | "skipped-terminal"
+    | "stale-owner"
+    | "ownership-changing";
+  run?: WorkflowRun;
+}
+
+const DEFAULT_DECISION_RECONCILIATION_ATTEMPTS = 8;
+const ACTIVE_RECONCILE_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
+
+export async function reconcileWorkflowRunControl(
+  input: WorkflowRunControlReconcileInput,
+): Promise<WorkflowRunControlReconcileOutcome> {
+  switch (input.operation.type) {
+    case "approval-decision":
+      return await reconcileApprovalDecision(input.backend, input.operation);
+    case "hydrate-env":
+      return await reconcileHydrateEnv(input.backend, input.operation);
+    case "fail-execution":
+      return await reconcileExecutionFailure(input.backend, input.operation);
+  }
 }
 
 export async function claimWorkflowRunControl(
@@ -196,6 +255,170 @@ export async function claimWorkflowRunControl(
       }
     }
   }
+}
+
+async function reconcileApprovalDecision(
+  backend: WorkflowBackend,
+  operation: WorkflowRunControlApprovalDecisionOperation,
+): Promise<WorkflowRunControlReconcileOutcome> {
+  const maxAttempts = operation.maxAttempts ?? DEFAULT_DECISION_RECONCILIATION_ATTEMPTS;
+  const decidedAt = operation.decidedAt ?? new Date();
+  const decisionContext = {
+    approved: operation.decision.approved,
+    approver: operation.decision.approver,
+    comment: operation.decision.comment,
+    decidedAt: decidedAt.toISOString(),
+  };
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const run = await backend.getRun(operation.runId);
+    if (!run) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${operation.runId}` });
+    }
+    if (!ACTIVE_RECONCILE_STATUSES.includes(run.status)) {
+      return { status: "skipped-terminal", run };
+    }
+
+    const expectedWorkerId = run.workerId;
+    const runPatch: Partial<WorkflowRun> = {
+      context: {
+        ...run.context,
+        [operation.nodeId]: decisionContext,
+      },
+      nodeStates: {
+        ...run.nodeStates,
+        [operation.nodeId]: {
+          nodeId: operation.nodeId,
+          status: "completed",
+          output: {
+            approved: operation.decision.approved,
+            approver: operation.decision.approver,
+            comment: operation.decision.comment,
+          },
+          attempt: 1,
+          completedAt: decidedAt,
+        },
+      },
+    };
+
+    const updated = await updateRunIfStatus(
+      backend,
+      operation.runId,
+      ACTIVE_RECONCILE_STATUSES,
+      operation.decision.approved ? runPatch : {
+        ...runPatch,
+        status: "failed",
+        error: {
+          message: `Approval "${operation.approvalId}" was rejected${
+            operation.decision.comment ? `: ${operation.decision.comment}` : ""
+          }`,
+        },
+        completedAt: new Date(),
+      },
+      expectedWorkerId,
+    );
+    if (!updated) {
+      const latest = await backend.getRun(operation.runId);
+      if (!latest || !ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
+        return { status: "skipped-terminal", run: latest ?? undefined };
+      }
+      continue;
+    }
+
+    const reconciledRun = await backend.getRun(operation.runId);
+    if (!operation.decision.approved || !operation.resume) {
+      return { status: "reconciled", run: reconciledRun ?? undefined };
+    }
+
+    try {
+      await operation.resume(operation.runId, expectedWorkerId);
+      return { status: "reconciled", run: reconciledRun ?? undefined };
+    } catch (error) {
+      const latestRun = await backend.getRun(operation.runId);
+      if (
+        latestRun && ACTIVE_RECONCILE_STATUSES.includes(latestRun.status) &&
+        latestRun.workerId !== expectedWorkerId
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw ORCHESTRATION_ERROR.create({
+    detail:
+      `Workflow execution ownership kept changing while applying approval "${operation.approvalId}"`,
+  });
+}
+
+async function reconcileHydrateEnv(
+  backend: WorkflowBackend,
+  operation: WorkflowRunControlHydrateEnvOperation,
+): Promise<WorkflowRunControlReconcileOutcome> {
+  const run = operation.run;
+  const currentSerialized = run.context.env ? JSON.stringify(run.context.env) : "";
+  const nextSerialized = JSON.stringify(operation.env);
+  if (currentSerialized === nextSerialized) {
+    return { status: "unchanged", run };
+  }
+
+  const updated = await updateRunIfStatus(
+    backend,
+    run.id,
+    [run.status],
+    {
+      context: {
+        ...run.context,
+        env: operation.env,
+      },
+    },
+    operation.expectedWorkerId,
+  );
+  const latest = (await backend.getRun(run.id)) ?? run;
+  if (updated) return { status: "reconciled", run: latest };
+  if (!ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
+    return { status: "skipped-terminal", run: latest };
+  }
+  if (
+    operation.expectedWorkerId !== undefined &&
+    latest.workerId !== operation.expectedWorkerId
+  ) {
+    return { status: "stale-owner", run: latest };
+  }
+  return { status: "ownership-changing", run: latest };
+}
+
+async function reconcileExecutionFailure(
+  backend: WorkflowBackend,
+  operation: WorkflowRunControlFailExecutionOperation,
+): Promise<WorkflowRunControlReconcileOutcome> {
+  const error = operation.error;
+  const updated = await updateRunIfStatus(
+    backend,
+    operation.runId,
+    ["pending", "running"],
+    {
+      status: "failed",
+      error: {
+        message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+      completedAt: new Date(),
+    },
+    operation.expectedWorkerId,
+  );
+  const latest = await backend.getRun(operation.runId);
+  if (updated) return { status: "reconciled", run: latest ?? undefined };
+  if (!latest || !ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
+    return { status: "skipped-terminal", run: latest ?? undefined };
+  }
+  if (
+    operation.expectedWorkerId !== undefined &&
+    latest.workerId !== operation.expectedWorkerId
+  ) {
+    return { status: "stale-owner", run: latest };
+  }
+  return { status: "ownership-changing", run: latest };
 }
 
 async function failClaim(
