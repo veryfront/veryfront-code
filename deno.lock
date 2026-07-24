@@ -60,6 +60,7 @@
     "npm:pdf-lib@1.17.1": "1.17.1",
     "npm:playwright@*": "1.60.0",
     "npm:playwright@1.60.0": "1.60.0",
+    "npm:protobufjs@7.6.5": "7.6.5",
     "npm:redis@5.11.0": "5.11.0",
     "npm:rehype-highlight@7.0.2": "7.0.2",
     "npm:rehype-raw@7.0.0": "7.0.0",
@@ -3600,8 +3601,8 @@
     "property-information@7.2.0": {
       "integrity": "sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg=="
     },
-    "protobufjs@7.6.3": {
-      "integrity": "sha512-+k0vdJKNdW+Vu+dYe8tZA/VvQb6XKNWexC6URwBFXxNnjLJz9nQJCemGyNgRAWD+B7+nGNc9qMPGwcD7s4nzUw==",
+    "protobufjs@7.6.5": {
+      "integrity": "sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==",
       "dependencies": [
         "@protobufjs/aspromise",
         "@protobufjs/base64",
@@ -3609,7 +3610,6 @@
         "@protobufjs/eventemitter",
         "@protobufjs/fetch",
         "@protobufjs/float",
-        "@protobufjs/inquire",
         "@protobufjs/path",
         "@protobufjs/pool",
         "@protobufjs/utf8",
@@ -5266,7 +5266,8 @@
           "npm:@opentelemetry/sdk-metrics@2.9.0",
           "npm:@opentelemetry/sdk-node@0.220.0",
           "npm:@opentelemetry/sdk-trace-base@2.9.0",
-          "npm:@opentelemetry/semantic-conventions@1.43.0"
+          "npm:@opentelemetry/semantic-conventions@1.43.0",
+          "npm:protobufjs@7.6.5"
         ]
       },
       "extensions/ext-parser-babel": {

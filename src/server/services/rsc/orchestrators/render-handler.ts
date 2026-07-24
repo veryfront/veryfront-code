@@ -26,7 +26,7 @@ interface RenderHandlerModuleOptions {
   projectId?: string;
   projectSlug?: string;
   contentSourceId?: string;
-  reactVersion?: Promise<string>;
+  reactVersion?: () => Promise<string>;
 }
 
 const logger = serverLogger.component("rsc");
@@ -115,7 +115,7 @@ export class RenderHandler {
         this.projectDir,
         this.moduleOptions.projectSlug,
         this.moduleOptions.contentSourceId,
-        await this.moduleOptions.reactVersion,
+        await this.moduleOptions.reactVersion?.(),
       ) as Record<string, unknown>;
     }
 
@@ -130,7 +130,7 @@ export class RenderHandler {
       contentSourceId: this.moduleOptions.contentSourceId,
       dev: this.mode === "development",
       mode: this.mode === "development" ? "preview" : "production",
-      reactVersion: await this.moduleOptions.reactVersion,
+      reactVersion: await this.moduleOptions.reactVersion?.(),
     });
   }
 

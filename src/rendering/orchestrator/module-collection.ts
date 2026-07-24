@@ -22,6 +22,17 @@ export const DATA_FETCH_TIMEOUT_MS = 15_000;
 /** Timeout for SSR rendering stage */
 export const SSR_RENDER_TIMEOUT_MS = 20_000;
 
+/**
+ * Human-readable label for the module-loading timeout.
+ *
+ * Falls back to the route pathname when the slug is empty — the index route's
+ * slug is `""`, which otherwise produced a blank timeout label
+ * (`"Module loading for "`) that named no route when a cold load stalled.
+ */
+export function moduleLoadLabel(slug: string, pathname: string): string {
+  return `Module loading for ${slug || pathname || "unknown route"}`;
+}
+
 /** Module to load for data fetching */
 export interface ModuleToLoad {
   type: "page" | "layout";

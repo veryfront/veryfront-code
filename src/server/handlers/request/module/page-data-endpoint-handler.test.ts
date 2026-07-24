@@ -241,6 +241,62 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 
+  it("does not encode a non-http(s) redirect destination for the client to follow", async () => {
+    // The client follows the destination with window.location.href, which would
+    // EXECUTE a javascript:/data: URL. Such destinations must NOT be emitted as a
+    // 200 redirect payload — they fall through to normal error handling instead.
+    for (const destination of ["javascript:alert(1)", "data:text/html,x", "//evil.example"]) {
+      setRendererInitializer(
+        createInitializer(() =>
+          Promise.reject(
+            Object.assign(new Error(`Redirect to ${destination}`), {
+              slug: "render-error",
+              context: { redirect: { destination, permanent: false } },
+            }),
+          )
+        ),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+        makeCtx(),
+      );
+
+      assertEquals(res.status, 500);
+      const body = await res.json();
+      assertEquals(body.redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
+  it("does not encode root-relative redirects that URL parsing normalizes across origins", async () => {
+    for (const destination of ["/\\evil.example", "/\t//evil.example"]) {
+      const parsedOrigin = parseOrigin(destination, "https://app.example");
+      assertEquals(parsedOrigin === null || parsedOrigin !== "https://app.example", true);
+
+      setRendererInitializer(
+        createInitializer(() =>
+          Promise.reject(
+            Object.assign(new Error(`Redirect to ${destination}`), {
+              slug: "render-error",
+              context: { redirect: { destination, permanent: false } },
+            }),
+          )
+        ),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+        makeCtx(),
+      );
+
+      assertEquals(res.status, 500);
+      const body = await res.json();
+      assertEquals(body.redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
   it("keeps speculative prefetch work and cache state out of foreground page data", async () => {
     const producers: string[] = [];
     const prefetchGate = Promise.withResolvers<void>();
@@ -680,3 +736,11 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 });
+
+function parseOrigin(destination: string, base: string): string | null {
+  try {
+    return new URL(destination, base).origin;
+  } catch {
+    return null;
+  }
+}
