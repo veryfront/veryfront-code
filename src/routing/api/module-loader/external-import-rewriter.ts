@@ -5,6 +5,7 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { resolveContainedPackagePath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");
@@ -261,8 +262,8 @@ export async function resolveEsmUserDependencies(
       // package directory so a crafted package.json cannot turn into a file://
       // import that escapes node_modules. This mirrors the containment guard the
       // CJS loader shim enforces via __vf_assertContained.
-      const entryPath = resolveContainedPackagePath(packageDir, entry);
-      if (!entryPath) {
+      const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
+      if (!isWithinDirectory(packageDir, entryPath)) {
         logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
         continue;
       }

@@ -234,6 +234,43 @@ describe("external-import-rewriter", () => {
 
       assertEquals(deps.size, 0);
     });
+
+    for (
+      const [name, packageJson, entryUrl] of [
+        [
+          "leading-slash",
+          { type: "module", module: "/index.mjs" },
+          "file:///srv/app/node_modules/leading-slash/index.mjs",
+        ],
+        [
+          "leading-backslash",
+          { type: "module", module: "\\index.mjs" },
+          "file:///srv/app/node_modules/leading-backslash/index.mjs",
+        ],
+        [
+          "windows-drive",
+          { type: "module", main: "C:\\evil\\index.mjs" },
+          "file:///srv/app/node_modules/windows-drive/C:/evil/index.mjs",
+        ],
+      ] as const
+    ) {
+      it(`preserves package-relative ESM entry resolution for ${name} entries`, async () => {
+        const fs = createFakeFileSystem({
+          [`/srv/app/node_modules/${name}/package.json`]: JSON.stringify(packageJson),
+        });
+
+        const deps = await resolveEsmUserDependencies(
+          "/srv/app",
+          fs,
+          new Map([[name, "^1"]]),
+        );
+
+        assertEquals(deps.get(name), {
+          entryUrl,
+          packageDir: `/srv/app/node_modules/${name}`,
+        });
+      });
+    }
   });
 
   describe("rewriteDenoNpmDependencyImports", () => {
