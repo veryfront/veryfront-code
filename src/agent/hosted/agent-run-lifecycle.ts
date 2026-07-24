@@ -176,6 +176,7 @@ export function createHostedRootRunLifecycleRuntimeAdapter(
           waitingToolCallId: null,
           waitingToolName: null,
           status: "running",
+          streamProtocolVersion: 1,
         }
         : null,
       fallbackModelId: input.modelId,

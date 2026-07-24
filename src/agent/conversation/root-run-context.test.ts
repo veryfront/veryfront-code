@@ -89,6 +89,7 @@ describe("agent/conversation-root-run-context", () => {
       waitingToolCallId: null,
       waitingToolName: null,
       status: "running",
+      streamProtocolVersion: 1,
     });
   });
 

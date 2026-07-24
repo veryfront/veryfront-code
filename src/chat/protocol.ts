@@ -271,6 +271,7 @@ export type ChatStreamEvent =
     type: "tool-output-available";
     toolCallId: string;
     output: unknown;
+    preliminary?: boolean;
   } & ChatStreamEventBase)
   | {
     type: "tool-output-denied";
@@ -425,6 +426,7 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
   })
   | (ToolCallChunk<"tool-output-available"> & {
     output: unknown;
+    preliminary?: boolean;
   })
   | ToolErrorChunk<"tool-output-error">
   | ToolCallChunk<"tool-output-denied">

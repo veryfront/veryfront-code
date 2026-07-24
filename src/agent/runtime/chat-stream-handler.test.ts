@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -13,8 +13,17 @@ import { createMockResult, createSSECollector } from "./chat-stream-handler.test
 import {
   createStreamState,
   processStream,
+  processStreamInternal,
   summarizeProviderToolDebugValue,
 } from "./chat-stream-handler.ts";
+import {
+  type createStreamLifecycleShadow,
+  type StreamLifecycleShadowReport,
+} from "./stream-lifecycle-shadow.ts";
+import {
+  ManualMonotonicClock,
+  StreamLifecycleFailure,
+} from "#veryfront/agent/streaming/lifecycle/index.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -1771,5 +1780,352 @@ describe("chat-stream-handler", () => {
         { type: "text-end", id: "t" },
       ]);
     });
+  });
+});
+
+describe("stream lifecycle shadow mode", () => {
+  type FixtureProcess = typeof processStream;
+
+  async function runTextFixture(input: {
+    mode: "legacy" | "shadow";
+    process?: FixtureProcess;
+  }) {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    let report: StreamLifecycleShadowReport | undefined;
+    await (input.process ?? processStream)(
+      createMockResult([
+        { type: "text-delta", text: "hello" },
+        { type: "finish", finishReason: "stop" },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: input.mode,
+        onLifecycleShadowReport: (next) => report = next,
+      },
+      undefined,
+    );
+    return { events, state, report };
+  }
+
+  it("keeps SSE and state identical when the shadow observer throws", async () => {
+    const throwingShadowFactory: typeof createStreamLifecycleShadow = () => ({
+      observePart() {
+        throw new Error("shadow-only failure");
+      },
+      compareLegacySnapshot() {
+        return { count: 1, categories: ["shadow_error"] };
+      },
+    });
+
+    const legacy = await runTextFixture({ mode: "legacy" });
+    const shadow = await runTextFixture({
+      mode: "shadow",
+      process: (
+        result,
+        state,
+        controller,
+        encoder,
+        textPartId,
+        callbacks,
+        abortSignal,
+      ) =>
+        processStreamInternal(
+          result,
+          state,
+          controller,
+          encoder,
+          textPartId,
+          callbacks,
+          abortSignal,
+          { createShadow: throwingShadowFactory },
+        ),
+    });
+
+    assertEquals(shadow.events, legacy.events);
+    assertEquals(shadow.state, legacy.state);
+    assertEquals(shadow.report, { count: 1, categories: ["shadow_error"] });
+  });
+
+  it("reports zero divergences for a matching text stream", async () => {
+    const shadow = await runTextFixture({ mode: "shadow" });
+    assertEquals(shadow.report, { count: 0, categories: [] });
+  });
+
+  it("does not build a shadow or report in legacy mode", async () => {
+    const legacy = await runTextFixture({ mode: "legacy" });
+    assertEquals(legacy.report, undefined);
+  });
+});
+
+describe("processStream active mode", () => {
+  async function runMode(mode: "legacy" | "active", parts: Record<string, unknown>[]) {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const chunks: string[] = [];
+    let usage: unknown;
+    await processStream(
+      createMockResult(parts),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: mode,
+        onChunk: (chunk) => chunks.push(chunk),
+        onUsage: (next) => usage = next,
+        providerExecutedToolNames: ["web_search"],
+        availableToolNames: ["create_file", "web_search"],
+      },
+      undefined,
+    );
+    return { events, state, chunks, usage };
+  }
+
+  async function assertModeParity(parts: Record<string, unknown>[]) {
+    const legacy = await runMode("legacy", parts);
+    const active = await runMode("active", parts);
+
+    assertEquals(active.events, legacy.events);
+    assertEquals(active.chunks, legacy.chunks);
+    assertEquals(active.usage, legacy.usage);
+    assertEquals(active.state.accumulatedText, legacy.state.accumulatedText);
+    assertEquals(active.state.finishReason, legacy.state.finishReason);
+    assertEquals(active.state.reasoningParts, legacy.state.reasoningParts);
+    assertEquals(
+      active.state.suppressedToolCalls,
+      legacy.state.suppressedToolCalls,
+    );
+    assertEquals(active.state.usage, legacy.state.usage);
+    assertEquals(
+      [...active.state.toolCalls.values()].map((tool) => ({
+        id: tool.id,
+        name: tool.name,
+        arguments: tool.arguments,
+        inputAvailable: tool.inputAvailable,
+      })),
+      [...legacy.state.toolCalls.values()].map((tool) => ({
+        id: tool.id,
+        name: tool.name,
+        arguments: tool.arguments,
+        inputAvailable: tool.inputAvailable,
+      })),
+    );
+    assertEquals(
+      active.state.toolResults.map((result) => ({
+        toolCallId: result.toolCallId,
+        toolName: result.toolName,
+        output: result.output,
+        providerExecuted: result.providerExecuted,
+      })),
+      legacy.state.toolResults.map((result) => ({
+        toolCallId: result.toolCallId,
+        toolName: result.toolName,
+        output: result.output,
+        providerExecuted: result.providerExecuted,
+      })),
+    );
+    return { legacy, active };
+  }
+
+  it("matches legacy SSE and state for accumulated text", async () => {
+    const { active } = await assertModeParity([
+      { type: "text-delta", text: "Hello " },
+      { type: "text-delta", text: "world" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+    assertEquals(active.state.streamOutcome?.status, "completed");
+  });
+
+  it("matches legacy SSE and state for reasoning segments", async () => {
+    await assertModeParity([
+      { type: "reasoning-start", id: "r1" },
+      { type: "reasoning-delta", id: "r1", delta: "thinking" },
+      { type: "reasoning-end", id: "r1", signature: "sig" },
+      { type: "text-delta", text: "answer" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+  });
+
+  it("matches legacy SSE and state for a committed local tool call", async () => {
+    const { active } = await assertModeParity([
+      { type: "tool-input-start", id: "local-1", toolName: "create_file" },
+      { type: "tool-input-delta", id: "local-1", delta: '{"path":"a.md"}' },
+      { type: "tool-input-end", id: "local-1" },
+      { type: "finish", finishReason: "tool-calls", totalUsage: null },
+    ]);
+    assertEquals(active.state.streamOutcome?.status, "tool_handoff");
+  });
+
+  it("matches legacy SSE and state for a provider-executed tool", async () => {
+    await assertModeParity([
+      { type: "tool-input-start", id: "native-1", toolName: "web_search" },
+      { type: "tool-input-delta", id: "native-1", delta: '{"query":"x"}' },
+      {
+        type: "tool-input-available",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        input: { query: "x" },
+      },
+      {
+        type: "tool-result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        result: { answer: 42 },
+      },
+      { type: "text-delta", text: "done" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+  });
+
+  it("matches legacy usage propagation", async () => {
+    const { active, legacy } = await assertModeParity([
+      { type: "text-delta", text: "hi" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        totalUsage: {
+          inputTokens: 2,
+          outputTokens: 3,
+          totalTokens: 5,
+          cacheReadInputTokens: 1,
+          costUsd: 0.25,
+          costSource: "gateway",
+        },
+      },
+    ]);
+    assertEquals(legacy.state.usage.promptTokens, 2);
+    assertEquals(active.state.usage.promptTokens, 2);
+  });
+
+  it("matches legacy suppression of unavailable tools", async () => {
+    await assertModeParity([
+      { type: "tool-input-start", id: "missing-1", toolName: "missing_tool" },
+      { type: "tool-input-delta", id: "missing-1", delta: '{"a":1}' },
+      { type: "text-delta", text: "recovered" },
+      { type: "finish", finishReason: "stop", totalUsage: null },
+    ]);
+  });
+});
+
+describe("active mode heartbeat regression", () => {
+  it("heartbeat telemetry cannot extend tool input idle", async () => {
+    const clock = new ManualMonotonicClock();
+    let nextCalls = 0;
+    let pendingResolve: ((r: IteratorResult<unknown>) => void) | null = null;
+    const queue: IteratorResult<unknown>[] = [
+      {
+        done: false,
+        value: { type: "tool-input-start", id: "t1", toolName: "create_file" },
+      },
+    ];
+    const fullStream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            nextCalls++;
+            const queued = queue.shift();
+            if (queued) return Promise.resolve(queued);
+            return new Promise<IteratorResult<unknown>>((resolve) => pendingResolve = resolve);
+          },
+          return() {
+            pendingResolve?.({ done: true, value: undefined });
+            pendingResolve = null;
+            return Promise.resolve(
+              { done: true, value: undefined } as IteratorResult<unknown>,
+            );
+          },
+        };
+      },
+    };
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const waitTick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    const outcome = processStream(
+      {
+        fullStream,
+        textStream: (async function* (): AsyncGenerator<string> {})(),
+      },
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "active",
+        availableToolNames: ["create_file"],
+        providerExecutedToolNames: [],
+        streamLifecyclePolicy: {
+          clock,
+          toolInputIdleTimeoutMs: 15_000,
+          statusIntervalMs: 5_000,
+        },
+      },
+      undefined,
+    ).then(() => null, (error: unknown) => error);
+
+    await waitTick();
+    clock.advanceBy(5_000);
+    await waitTick();
+    clock.advanceBy(5_000);
+    await waitTick();
+    clock.advanceBy(5_000);
+    const error = await outcome;
+
+    assertEquals(error instanceof StreamLifecycleFailure, true);
+    if (error instanceof StreamLifecycleFailure) {
+      assertEquals(error.lifecycleError.code, "TOOL_INPUT_TIMEOUT");
+    }
+    assertEquals(
+      events.filter((event) => (event as { type: string }).type === "data-tool-call-status"),
+      [
+        {
+          type: "data-tool-call-status",
+          data: { toolCallId: "t1", status: "pending_input" },
+        },
+        {
+          type: "data-tool-call-status",
+          data: { toolCallId: "t1", status: "pending_input" },
+        },
+      ],
+    );
+    assertEquals(nextCalls, 2);
+  });
+});
+
+describe("active mode delivery failure precedence", () => {
+  it("keeps a delivery failure primary over the consumer_stopped outcome", async () => {
+    const deliveryError = new Error("delivery sentinel");
+    const throwingController = {
+      enqueue() {
+        throw deliveryError;
+      },
+    } as unknown as ReadableStreamDefaultController;
+    const state = createStreamState();
+    let caught: unknown;
+    try {
+      await processStream(
+        createMockResult([
+          { type: "text-delta", text: "hello" },
+          { type: "finish", finishReason: "stop", totalUsage: null },
+        ]),
+        state,
+        throwingController,
+        new TextEncoder(),
+        "text-1",
+        { streamLifecycleMode: "active" },
+        undefined,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    assertStrictEquals(caught, deliveryError);
+    assertEquals(state.streamOutcome?.status, "cancelled");
+    if (state.streamOutcome?.status === "cancelled") {
+      assertEquals(state.streamOutcome.source, "consumer_stopped");
+    }
   });
 });

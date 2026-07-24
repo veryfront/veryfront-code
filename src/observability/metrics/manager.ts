@@ -61,6 +61,16 @@ export class MetricsManager {
       heapTotalGauge: null,
       heapPercentGauge: null,
       errorCounter: null,
+      streamLifecycleOutcomeCounter: null,
+      streamLifecycleDeadlineCounter: null,
+      streamLifecycleTelemetryCounter: null,
+      streamLifecycleRepairCounter: null,
+      streamLifecycleShadowDivergenceCounter: null,
+      streamLifecycleAttemptDuration: null,
+      streamLifecycleFirstProgressDuration: null,
+      streamLifecycleSemanticIdleDuration: null,
+      streamLifecycleToolInputDuration: null,
+      streamLifecycleToolExecutionDuration: null,
     };
   }
 

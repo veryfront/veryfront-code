@@ -82,6 +82,21 @@ export const getConversationRunStatusSchema = defineSchema((v) =>
  */
 export const ConversationRunStatusSchema = lazySchema(getConversationRunStatusSchema);
 
+/** Stream protocol version recorded on canonical run metadata. */
+export type StreamProtocolVersion = 1 | 2;
+
+/**
+ * Resolve the stream protocol version from canonical run metadata. Absent or
+ * unrecognized metadata is version 1; version 2 is never inferred from event
+ * shapes or finalization metadata.
+ */
+function resolveStreamProtocolVersion(metadata: unknown): StreamProtocolVersion {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return 1;
+  }
+  return (metadata as Record<string, unknown>).stream_protocol_version === 2 ? 2 : 1;
+}
+
 /** Public API contract for conversation run projection. */
 export interface ConversationRunProjection {
   runId: string;
@@ -92,6 +107,7 @@ export interface ConversationRunProjection {
   waitingToolCallId: string | null;
   waitingToolName: string | null;
   status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
+  streamProtocolVersion: StreamProtocolVersion;
 }
 
 /** Zod schema for get conversation run projection. */
@@ -151,6 +167,7 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
           null,
         waitingToolName: ((d.waitingToolName ?? d.waiting_tool_name) as string | null) ?? null,
         status: d.status as ConversationRunProjection["status"],
+        streamProtocolVersion: resolveStreamProtocolVersion(d.metadata),
       };
     })
 );

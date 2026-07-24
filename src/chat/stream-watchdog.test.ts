@@ -198,9 +198,12 @@ describe("chat/stream-watchdog", () => {
     watchdog.dispose();
   });
 
-  it("does not arm a timer while a configured long-running tool is running", () => {
+  it("keeps an absolute limit for configured long-running tools", () => {
     using time = new FakeTime();
-    const watchdog = createChatStreamWatchdog(watchdogOptions);
+    const watchdog = createChatStreamWatchdog({
+      ...watchdogOptions,
+      toolRunningTimeoutMs: 300,
+    });
     watchdog.observe({
       type: "tool-input-available",
       toolCallId: "fork-2",
@@ -208,10 +211,33 @@ describe("chat/stream-watchdog", () => {
       input: {},
     });
 
-    time.tick(10_000);
+    time.tick(301);
 
+    assertEquals(watchdog.signal.aborted, true);
+    assertEquals(watchdog.lastTimeoutState?.phase, "tool_running");
+    watchdog.dispose();
+  });
+
+  it("does not let heartbeat metadata or status telemetry advance the deadline", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+
+    time.tick(100);
+    watchdog.observe({ type: "message-metadata", messageMetadata: {} });
+    watchdog.observe({
+      type: "message-metadata",
+      messageMetadata: { modelId: "anthropic/claude-sonnet-4-6" },
+    });
+    watchdog.observe({
+      type: "data-tool-call-status",
+      data: { toolCallId: "tool-1", status: "pending_input" },
+    });
     assertEquals(watchdog.signal.aborted, false);
-    assertEquals(watchdog.lastTimeoutState, null);
+
+    time.tick(21);
+
+    assertEquals(watchdog.signal.aborted, true);
+    assertEquals(watchdog.lastTimeoutState?.phase, "response_pending");
     watchdog.dispose();
   });
 });

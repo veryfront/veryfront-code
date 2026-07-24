@@ -58,6 +58,17 @@ export interface MetricsInstruments {
   heapPercentGauge: ObservableGauge | null;
 
   errorCounter: Counter | null;
+
+  streamLifecycleOutcomeCounter: Counter | null;
+  streamLifecycleDeadlineCounter: Counter | null;
+  streamLifecycleTelemetryCounter: Counter | null;
+  streamLifecycleRepairCounter: Counter | null;
+  streamLifecycleShadowDivergenceCounter: Counter | null;
+  streamLifecycleAttemptDuration: Histogram | null;
+  streamLifecycleFirstProgressDuration: Histogram | null;
+  streamLifecycleSemanticIdleDuration: Histogram | null;
+  streamLifecycleToolInputDuration: Histogram | null;
+  streamLifecycleToolExecutionDuration: Histogram | null;
 }
 
 /** Configuration used by metrics. */

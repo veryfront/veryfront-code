@@ -338,6 +338,7 @@ describe("agent/durable", () => {
       waitingToolCallId: null,
       waitingToolName: null,
       status: "running",
+      streamProtocolVersion: 1,
     });
   });
 
@@ -437,6 +438,7 @@ describe("agent/durable", () => {
       waitingToolCallId: null,
       waitingToolName: null,
       status: "running",
+      streamProtocolVersion: 1,
     });
   });
 
@@ -459,6 +461,7 @@ describe("agent/durable", () => {
       waitingToolCallId: "tool-call-1",
       waitingToolName: "form_input",
       status: "waiting_for_tool",
+      streamProtocolVersion: 1,
     });
   });
 
@@ -1151,6 +1154,7 @@ describe("agent/durable", () => {
           waitingToolCallId: null,
           waitingToolName: null,
           status: "running",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1174,6 +1178,7 @@ describe("agent/durable", () => {
           waitingToolCallId: null,
           waitingToolName: null,
           status: "running",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1197,6 +1202,7 @@ describe("agent/durable", () => {
           waitingToolCallId: "tool-call-1",
           waitingToolName: "form_input",
           status: "waiting_for_tool",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1220,6 +1226,7 @@ describe("agent/durable", () => {
           waitingToolCallId: "tool-call-2",
           waitingToolName: "form_input",
           status: "waiting_for_tool",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1274,6 +1281,7 @@ describe("agent/durable", () => {
           waitingToolCallId: null,
           waitingToolName: null,
           status: "running",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1307,6 +1315,7 @@ describe("agent/durable", () => {
           waitingToolCallId: "tool-call-2",
           waitingToolName: "form_input",
           status: "waiting_for_tool",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1406,6 +1415,7 @@ describe("agent/durable", () => {
           waitingToolCallId: null,
           waitingToolName: null,
           status: "running",
+          streamProtocolVersion: 1,
         },
       },
     );
@@ -1508,6 +1518,7 @@ describe("agent/durable", () => {
           waitingToolCallId: "tool-call-3",
           waitingToolName: "form_input",
           status: "waiting_for_tool",
+          streamProtocolVersion: 1,
         },
       },
     );

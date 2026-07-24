@@ -31,7 +31,6 @@ import {
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   unwrapToolInputSchema,
-  withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
 import {
@@ -61,7 +60,6 @@ export {
   ProviderRequestError,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   unwrapToolInputSchema,
-  withToolInputStatusTransitions,
 };
 
 export interface GoogleRuntimeConfig {
@@ -217,7 +215,7 @@ export function createGoogleModelRuntime(
         const drained = warnings.drain();
         return {
           stream: ReadableStream.from(
-            withToolInputStatusTransitions(streamGoogleCompatibleParts(responseStream)),
+            streamGoogleCompatibleParts(responseStream),
           ),
           ...(drained.length > 0 ? { warnings: drained } : {}),
         };
