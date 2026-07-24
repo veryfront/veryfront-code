@@ -26,8 +26,10 @@ Veryfront can then choose the engine behind our components:
 
 - **Built-in** (default) — our current zero-dependency fork. Nothing changes for
   people who want no extra deps.
-- **Base UI**, **Radix UI**, **Ariakit**, **React Aria** — first-party adapter
-  packages that delegate Mechanics to a best-in-class accessible engine.
+- **Base UI**, **Radix UI**, **Ariakit**, **React Aria** — reference adapters that
+  delegate Mechanics to a best-in-class accessible engine, selected via a
+  per-component map (§6.5) and *vendored* into the app, not published as packages
+  we version (§6.6). The engine is the developer's own dependency.
 - **shadcn-compatible** — not a separate engine (see §9); a documented mode where
   our tokens and class conventions line up with a shadcn/Radix project.
 
@@ -302,53 +304,70 @@ behaviour** as `BuiltinAdapter`. This guarantees:
 
 ### 6.5 Binding — how a developer "brings their own"
 
-Two mechanisms, because Veryfront is consumed two ways.
-
-**(a) Build-time, for Veryfront apps (primary).** Veryfront owns its module
-resolver and import map (`src/modules/import-map/`, `deno.json`). We add a config
-field resolved at build/dev time:
-
-```ts
-// veryfront.config.ts
-import { defineConfig } from "veryfront/config";
-
-export default defineConfig({
-  ui: { adapter: "base-ui" }, // "builtin" (default) | "base-ui" | "radix" | "ariakit" | "react-aria"
-});
-```
-
-The resolver aliases the internal `veryfront/ui/adapter` specifier to the chosen
-adapter package (e.g. `@veryfront/ui-adapter-base-ui`). Only the selected adapter
-and its engine are bundled — clean tree-shaking, zero runtime cost, no context
-reads. This is a genuine Veryfront advantage: because we control the loader, the
-swap is a resolution detail, invisible to component code.
-
-**(b) Runtime provider, for non-Veryfront consumers (fallback).** Someone
-importing `veryfront/ui` into a plain Vite/Next app has no Veryfront resolver.
-For them, an optional provider supplies the adapter via context:
+**Primary mechanism: a per-component adapter map, injected via context.** The
+`UIAdapter` interface from §6.3 *is* the map (`{ popover, dialog, menu, … }`). A
+developer passes a **partial** map; it merges over `BuiltinAdapter`:
 
 ```tsx
 import { UIAdapterProvider } from "veryfront/ui";
-import { radixAdapter } from "@veryfront/ui-adapter-radix";
+import { baseUiPopover, baseUiDialog } from "./ui-adapters/base-ui.tsx"; // vendored — see §6.6
 
-<UIAdapterProvider adapter={radixAdapter}>{app}</UIAdapterProvider>;
+// Override just these two; everything else stays on the zero-dep builtin.
+<UIAdapterProvider adapter={{ popover: baseUiPopover, dialog: baseUiDialog }}>
+  {app}
+</UIAdapterProvider>;
 ```
 
-With no provider and no build alias, components resolve `BuiltinAdapter` — so the
-out-of-the-box experience needs no setup at all.
+- **Partial + per-component.** Unmapped primitives fall back to `BuiltinAdapter`,
+  so adoption is incremental — put Base UI behind Popover, leave the rest alone.
+- **No build integration required.** Identical in a Veryfront app, a Vite app, or
+  a Next app. With no provider at all, everything is builtin — zero setup.
+- **One API, not two.** Every primitive resolves its parts through `useAdapter()`,
+  which reads this context (or the builtin default). There is no second code path.
 
-> Design note: (a) is preferred because it avoids bundling unused adapters and
-> avoids a context read in every overlay. (b) exists so `veryfront/ui` remains a
-> useful standalone package. The contract is identical for both; only resolution
-> differs.
+Optional optimisation (Veryfront apps only): because we own the module resolver
+(`src/modules/import-map/`), a `ui.adapter` config field can statically bind the
+map at build time so the context read is elided and only the chosen adapter is
+bundled. This is a perf layer over the *same* contract, not a different mechanism:
 
-### 6.6 Packaging
+```ts
+// veryfront.config.ts — optional; the context map is the source of truth
+import { defineConfig } from "veryfront/config";
+export default defineConfig({ ui: { adapter: "base-ui" } });
+```
 
-- `veryfront/ui` — skins + contract + `BuiltinAdapter` + `UIAdapterProvider`.
-  Still zero-dependency.
-- `@veryfront/ui-adapter-base-ui`, `-radix`, `-ariakit`, `-react-aria` —
-  thin packages, each declaring its engine as a **peer dependency** so the app
-  controls the engine version. Each is only ~one small module per primitive.
+### 6.6 Packaging — and why drift is not our problem
+
+The maintenance objection is the real one: *"when a new engine version ships, do
+we have to bump and align a bunch of packages? Drift is highly likely."* The
+design answers it by **publishing no adapter packages and depending on no
+engine.**
+
+- **Core (`veryfront/ui`) ships exactly three things** beyond the skins: the
+  `UIAdapter` contract (types), `BuiltinAdapter`, and `UIAdapterProvider`. It has
+  **zero engine dependencies** — nothing for *us* to bump when Base UI or React
+  Aria releases. Core's version is decoupled from every engine's version. This is
+  the opposite of the `@veryfront/ui-adapter-*`-package model, which would put us
+  on the hook to re-release and re-align on every engine bump — rejected for
+  exactly the drift reason.
+- **The engine is the developer's dependency.** They already have `@base-ui/react`
+  in their app and bump it on their own schedule. We never pin, track, or chase
+  an engine version.
+- **Reference adapters are vendored, not versioned (the shadcn model).** We ship
+  Base UI / Radix / React Aria adapter *source* via a registry /
+  `npx veryfront add adapter base-ui` that copies one file into the developer's
+  repo. They own it; we don't publish or semver it. There is no adapter release
+  train to keep in lockstep, so there is nothing to drift *from*.
+- **Drift is detected, not prevented — by the conformance suite (§6.7).** The
+  contract is a small, stable, versioned interface. If an engine's new version
+  changes an API an adapter uses, the shared conformance test **fails loudly**
+  against that engine version and names what broke. The fix is a one-line edit in
+  one vendored file the developer owns — not a coordinated multi-package release
+  on our side.
+
+Net: our surface stays tiny and version-independent. The only party who bumps an
+engine is the developer who chose it; the only thing that can drift is a single
+file they own, guarded by a test we ship.
 
 ### 6.7 Conformance — proving an adapter is correct
 
@@ -371,7 +390,7 @@ rather than comments.
 ### 6.8 SSR / RSC / Deno constraints
 
 Every Tier-1 primitive is a client component (`"use client"`), consistent with
-today. Adapter packages must:
+today. Adapters (and the engines they wrap) must:
 
 - import cleanly under the Deno + `esm.sh` loader (already proven: the sample app
   loads Radix via `esm.sh` today — `projects/veryfront/shared/ui/*`);
@@ -458,11 +477,10 @@ contract demands: `onOpenChange` drops Base UI's 2nd arg; positioning goes to
 surface inside the token scope; and we re-emit `data-vf-state`:
 
 ```tsx
-// @veryfront/ui-adapter-base-ui/popover.tsx
+// ./ui-adapters/base-ui.tsx — vendored into YOUR repo (npx veryfront add adapter base-ui)
 import * as React from "react";
-import { Popover as Base } from "@base-ui/react/popover";
-import { useTokenScopeRef } from "@veryfront/ui-adapter-shared";
-import type { PopoverParts } from "veryfront/ui/adapter";
+import { Popover as Base } from "@base-ui/react/popover"; // YOUR dependency, YOUR version
+import { useTokenScopeRef, type PopoverParts } from "veryfront/ui/adapter";
 
 export const baseUiPopover: PopoverParts = {
   Root: ({ open, defaultOpen, onOpenChange, children }) => (
@@ -506,12 +524,11 @@ parts, so the adapter *owns the DOM* and spreads prop-getters, absorbs the
 `isOpen` naming and the two-step `useOverlayTrigger → useButton` trigger:
 
 ```tsx
-// @veryfront/ui-adapter-react-aria/popover.tsx
+// ./ui-adapters/react-aria.tsx — vendored into YOUR repo (npx veryfront add adapter react-aria)
 import * as React from "react";
 import { DismissButton, Overlay, useButton, useOverlayTrigger, usePopover } from "react-aria";
 import { useOverlayTriggerState } from "react-stately";
-import { useTokenScopeRef } from "@veryfront/ui-adapter-shared";
-import type { PopoverParts } from "veryfront/ui/adapter";
+import { useTokenScopeRef, type PopoverParts } from "veryfront/ui/adapter";
 
 const Ctx = React.createContext<any>(null);
 
@@ -565,34 +582,29 @@ export const reactAriaPopover: PopoverParts = {
 };
 ```
 
-**Selecting the adapter — build-time (primary):**
-
-```ts
-// veryfront.config.ts
-import { defineConfig } from "veryfront/config";
-
-export default defineConfig({
-  ui: { adapter: "base-ui" }, // "builtin" (default) | "base-ui" | "radix" | "react-aria" | "ariakit"
-});
-```
-
-The resolver aliases the internal `veryfront/ui/adapter` specifier to the chosen
-package, so `useAdapter()` returns that engine's parts and **only that engine is
-bundled**.
-
-**Selecting the adapter — runtime provider (fallback, for non-Veryfront apps):**
+**Selecting the adapter — the per-component map via context (primary; §6.5).**
+The map is *partial* and *vendored* — no `@veryfront/ui-adapter-*` package, no
+version to align. Override only what you want; the rest stays builtin:
 
 ```tsx
 import { UIAdapterProvider } from "veryfront/ui";
-import { reactAriaAdapter } from "@veryfront/ui-adapter-react-aria";
+import { baseUiPopover } from "./ui-adapters/base-ui.tsx";       // you own these files
+import { reactAriaPopover } from "./ui-adapters/react-aria.tsx"; // (pick one per primitive)
 
 export default function App({ children }: { children: React.ReactNode }) {
-  return <UIAdapterProvider adapter={reactAriaAdapter}>{children}</UIAdapterProvider>;
+  return (
+    <UIAdapterProvider adapter={{ popover: baseUiPopover /*, dialog: …, menu: … */ }}>
+      {children}
+    </UIAdapterProvider>
+  );
 }
 ```
 
-With neither a config alias nor a provider, `useAdapter()` falls back to
-`BuiltinAdapter` — so the out-of-the-box experience needs no setup.
+With no provider at all, `useAdapter()` falls back to `BuiltinAdapter` — the
+out-of-the-box experience needs no setup. A Veryfront app may *optionally* hoist
+this selection into `veryfront.config.ts` (`ui: { adapter: "base-ui" }`) so the
+resolver binds it statically and elides the context read (§6.5) — same map, one
+fewer runtime lookup.
 
 > These blocks are illustrative (final types live in code), but they are complete
 > enough to show the load-bearing claim: **one Skin, one call-site, three engines,
@@ -712,9 +724,9 @@ We should say "shadcn-compatible," not "shadcn-powered," and mean it precisely
 | Combinatorial test surface (N primitives × M adapters) | One shared conformance suite (§6.7); adapters are thin. |
 | Styling seam differences (`asChild`/`render`/prop-getters) leak into skins | Normalised to our `asChild` at the contract; adapters translate (§6.3 rule 3). |
 | Portal escapes token scope under a third-party portal | Mandatory scope-attribute conformance test (§6.7). |
-| Bundle bloat if adapters aren't tree-shaken | Build-time binding (6.5a) bundles exactly one adapter; engines are peer deps. |
-| Maintenance of 4+ adapter packages | Start with **one** flagship third-party adapter (§7); add others on demand/community. |
-| Engine churn (Radix maintenance, Base UI beta) | The abstraction is the hedge — we can retarget an adapter without touching skins. |
+| Bundle bloat if adapters aren't tree-shaken | Partial per-component map: unmapped primitives are builtin; optional build-time bind (§6.5) statically includes only the chosen adapter. Engines are the developer's own dep. |
+| Version drift / "bump and align" burden on us | **Core depends on no engine and publishes no adapter package** (§6.6). Reference adapters are vendored (shadcn model); the developer owns the file and bumps their own engine; the conformance suite (§6.7) detects breakage. Nothing on our side to align. |
+| Engine churn (Radix maintenance, Base UI major) | The abstraction is the hedge — retarget a vendored adapter file without touching skins. |
 
 ## 11. Alternatives considered
 
@@ -733,15 +745,20 @@ We should say "shadcn-compatible," not "shadcn-powered," and mean it precisely
 
 ## 12. Open questions
 
-1. Build-time alias vs runtime provider as the *documented default* — do we
-   push (6.5a) for Veryfront apps and treat (6.5b) as advanced, or expose both
-   equally?
+1. **Distribution of reference adapters — leaning resolved (§6.6).** The RFC now
+   recommends the context-injected per-component map + *vendored* reference
+   adapters (shadcn model), so core publishes **no** `@veryfront/ui-adapter-*`
+   packages and depends on no engine — directly to kill the version-bump/drift
+   burden. Open sub-question: do we ship the vendor step as `npx veryfront add
+   adapter <name>`, a copy-paste docs registry, or both?
 2. Do Tier-2 primitives ship in this RFC's milestone or a follow-up?
-3. Which engine is the flagship third-party adapter (§7, pending survey)?
-4. Do we publish adapters under `@veryfront/*` or fold them into the main package
-   behind subpath exports?
-5. How do adapters that lack a primitive (survey gaps) degrade — fall back to
-   `BuiltinAdapter` per-primitive, or hard-error at config time?
+3. Confirm **Base UI** as the flagship reference adapter (§7.1) and the Base-UI +
+   React-Aria "two archetypes first" rollout order (§7.2).
+4. How do adapters that lack a primitive (survey gaps — e.g. Ariakit has no
+   Slider) degrade — fall back to `BuiltinAdapter` per-primitive (map merge already
+   does this), or hard-error so the gap is explicit?
+5. Is the optional build-time bind (§6.5) worth the module-resolver work in v1, or
+   is the context map alone enough until profiling shows the read matters?
 
 ## 13. Appendix — engine survey
 
