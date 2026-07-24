@@ -77,10 +77,11 @@ describe("provider/model-registry", () => {
     assertEquals(requestedBody?.model, "gpt-5.4-nano");
     assertEquals(requestedBody?.store, false);
     assertEquals(requestedBody?.reasoning, { effort: "medium" });
-    assertEquals(
-      (requestedBody?.tools as Array<{ name?: string }> | undefined)?.[0]?.name,
-      "lookup_order",
-    );
+    const requestedTool = (requestedBody?.tools as
+      | Array<Record<string, unknown>>
+      | undefined)?.[0];
+    assertEquals(requestedTool?.name, "lookup_order");
+    assertEquals(requestedTool?.strict, false);
     assertEquals(result.content, [{ type: "text", text: "Found order." }]);
   });
 
