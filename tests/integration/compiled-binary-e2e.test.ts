@@ -555,6 +555,57 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     });
   });
 
+  it("should expose getServerData props to a layout via usePageContext().data at SSR", async () => {
+    const projectDir = await createTestProject(
+      "page-context-server-data-test",
+      `
+import type { DataContext } from "veryfront";
+
+export async function getServerData(_ctx: DataContext) {
+  return { props: { greeting: "hello-from-server-data" } };
+}
+
+export default function Home() {
+  return <div id="page-content">page</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // The layout was never passed the page's server data as a prop; it reads it
+  // from the page context. This must work during the server render.
+  const ctx = usePageContext();
+  const greeting = (ctx?.data?.greeting as string) || "MISSING";
+  return (
+    <div id="layout-wrapper">
+      <header id="layout-data">Layout data: {greeting}</header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      const normalizedHtml = stripReactSSRMarkers(html);
+      // The layout rendered the page's getServerData value at SSR — proving
+      // server data reaches a layout via usePageContext().data without drilling.
+      assertStringIncludes(normalizedHtml, "Layout data: hello-from-server-data");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") || l.includes("Module not found")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
   it("should handle API routes returning JSON", async () => {
     const projectDir = await createTestProject(
       "api-json-test",

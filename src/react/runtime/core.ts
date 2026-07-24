@@ -70,6 +70,14 @@ export interface PageContextValue {
   query: Record<string, string>;
   /** Parsed page frontmatter. */
   frontmatter: Record<string, unknown>;
+  /**
+   * Props returned by the page's `getServerData` (the object under its
+   * `props` key). Exposed here so layouts and nested components can read
+   * server data without prop-drilling from the page. Empty object when the
+   * page has no `getServerData`. Populated identically on the server render,
+   * the hydration seed, and client navigation.
+   */
+  data: Record<string, unknown>;
   /** Headings discovered in the page content. */
   headings: MdxHeading[];
   /** MDX headings discovered in the page content. */
@@ -104,6 +112,7 @@ const defaultPageContext: PageContextValue = {
   params: {},
   query: {},
   frontmatter: {},
+  data: {},
   headings: [],
   mdxHeadings: [],
 };

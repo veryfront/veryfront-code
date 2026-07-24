@@ -150,6 +150,25 @@ function PageTitle() {
 }
 ```
 
+### Reading server data from a layout or nested component
+
+A page's [`getServerData`](./data-fetching.md) props are passed to the page
+component. To read them from a layout or a deeply-nested component — without
+prop-drilling — use `usePageContext().data`:
+
+```tsx
+import { usePageContext } from "veryfront/context";
+
+function Greeting() {
+  const { data } = usePageContext();
+  return <p>{data.greeting as string}</p>;
+}
+```
+
+`data` is the object your page returned as `getServerData`'s `props`. It is
+populated identically on the server render, in the hydration markup, and after
+client-side navigation. A page without `getServerData` sees an empty object.
+
 ## Client components
 
 By default, components render on the server. Add `'use client'` to make a component interactive:

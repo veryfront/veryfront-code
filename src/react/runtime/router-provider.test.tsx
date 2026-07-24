@@ -59,13 +59,17 @@ function seedRouter(href: string, params: Record<string, string> = {}): RouterVa
 }
 
 /** A page-context seed carrying only the page-authored fields. */
-function seedPage(frontmatter: Record<string, unknown> = {}): PageContextValue {
+function seedPage(
+  frontmatter: Record<string, unknown> = {},
+  data: Record<string, unknown> = {},
+): PageContextValue {
   return {
     slug: "/",
     path: "/",
     params: {},
     query: {},
     frontmatter,
+    data,
     headings: [],
     mdxHeadings: [],
   };
@@ -327,6 +331,47 @@ describe("react/runtime/RouterProvider (reactive)", () => {
       });
 
       assertStringIncludes(rootElement.textContent ?? "", "42|comments|Hello");
+
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("exposes getServerData props as usePageContext().data to nested consumers", async () => {
+    const restore = installDom("https://example.com/dash?tab=x");
+    installFakeRouter();
+    try {
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+
+      // A deeply-nested consumer reads the page's server data without any
+      // props threaded to it — the whole point of exposing `data` on context.
+      const Deep = (): React.ReactElement => {
+        const { data } = usePageContext();
+        return <span>data:{String(data.serverValue)}</span>;
+      };
+      const Consumer = (): React.ReactElement => (
+        <div>
+          <Deep />
+        </div>
+      );
+
+      flushSync(() => {
+        root.render(
+          <RouterProvider router={seedRouter("/dash?tab=x")}>
+            <PageContextProvider
+              pageContext={seedPage({}, { serverValue: "from-server" })}
+            >
+              <Consumer />
+            </PageContextProvider>
+          </RouterProvider>,
+        );
+      });
+
+      // `data` is the page's server data — NOT derived from the router, unlike
+      // query/params.
+      assertStringIncludes(rootElement.textContent ?? "", "data:from-server");
 
       root.unmount();
     } finally {
