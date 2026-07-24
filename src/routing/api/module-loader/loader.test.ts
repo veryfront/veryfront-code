@@ -529,6 +529,30 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js"/);
   });
 
+  it("preserves route user dependency subpath rewrites despite package export maps", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(
+      join(depDir, "package.json"),
+      JSON.stringify({
+        exports: {
+          ".": "./dist/index.js",
+          "./feature": "./dist/exported-feature.js",
+        },
+      }),
+    );
+
+    const rewritten = await rewriteNodeExternalImports(
+      'import feature from "my-lib/feature";',
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/feature"/);
+  });
+
   it("rewrites only parsed Node import specifiers", async () => {
     const tmpDir = await makeTempDir();
     const depDir = join(tmpDir, "node_modules", "my-lib");
