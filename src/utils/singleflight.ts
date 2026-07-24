@@ -17,6 +17,46 @@ interface SingleflightEntry<T> {
   staleTimer?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * Wait for shared work while allowing this caller to detach independently.
+ * Aborting `signal` rejects only this waiter; it never cancels `shared`.
+ */
+export async function waitForSharedPromise<T>(
+  shared: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return await shared;
+
+  const abortReason = (): unknown =>
+    signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+
+  if (signal.aborted) {
+    // The shared operation can still fail after this caller detaches.
+    // Observe that rejection so a sole detached caller cannot leave it unhandled.
+    void shared.catch(() => {});
+    throw abortReason();
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason());
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    shared.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export class Singleflight<T> {
   private inflight = new Map<string, SingleflightEntry<T>>();
 

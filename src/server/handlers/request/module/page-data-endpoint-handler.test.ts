@@ -442,6 +442,7 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
 
     const responsePromise = callPageDataEndpoint(
       new Request("http://localhost/_veryfront/page-data/index.json", {
+        headers: { cookie: "session=caller" },
         signal: caller.signal,
       }),
       makeCtx(),
@@ -456,6 +457,57 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(response.status, 500);
     assertEquals(observedSignal?.aborted, true);
     assertEquals(observedSignal?.reason, reason);
+  });
+
+  it("detaches a cancelled request without aborting a shared page-data fill", async () => {
+    const caller = new AbortController();
+    const resolveStarted = Promise.withResolvers<void>();
+    const resolveGate = Promise.withResolvers<void>();
+    let calls = 0;
+    let observedSignal: AbortSignal | undefined;
+    let observedRequestSignal: AbortSignal | undefined;
+
+    setRendererInitializer(
+      createInitializer((slug, _ctx, options) => {
+        calls++;
+        observedSignal = options?.abortSignal;
+        observedRequestSignal = options?.request?.signal;
+        resolveStarted.resolve();
+        return new Promise<PageDataResponse>((resolve, reject) => {
+          const onAbort = () => reject(options?.abortSignal?.reason);
+          options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+          resolveGate.promise.then(() => {
+            options?.abortSignal?.removeEventListener("abort", onAbort);
+            resolve(createPageData(slug, calls));
+          });
+        });
+      }),
+    );
+
+    const ctx = makeCtx();
+    const url = "http://localhost/_veryfront/page-data/index.json";
+    const cancelledResponse = callPageDataEndpoint(
+      new Request(url, { signal: caller.signal }),
+      ctx,
+    );
+    await resolveStarted.promise;
+
+    const followerResponse = callPageDataEndpoint(new Request(url), ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    caller.abort(new Error("client disconnected"));
+    assertEquals((await cancelledResponse).status, 500);
+    assertEquals(observedSignal?.aborted, false);
+    assertEquals(observedRequestSignal?.aborted, false);
+
+    resolveGate.resolve();
+    const response = await followerResponse;
+    assertEquals(response.status, 200);
+    assertEquals(calls, 1);
+
+    const cached = await callPageDataEndpoint(new Request(url), ctx);
+    assertEquals(cached.status, 200);
+    assertEquals(calls, 1);
   });
 
   it("can disable the page-data cache with max entries set to zero", async () => {

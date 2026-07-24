@@ -7,7 +7,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { markRequestProfilePhase } from "#veryfront/observability";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 import { serverLogger } from "#veryfront/utils";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   type QueryParamCacheOptions,
@@ -83,19 +83,21 @@ async function resolvePageDataWithinDeadline(
   slug: string,
   request: Request,
   url: URL,
+  callerSignal: AbortSignal | undefined,
 ): Promise<PageDataResponse> {
   const controller = new AbortController();
+  const workRequest = callerSignal ? request : new Request(request, { signal: controller.signal });
 
   return await withTimeoutThrow(
     renderer.resolvePageData(slug, {
-      request,
+      request: workRequest,
       url,
       abortSignal: controller.signal,
     }),
     PAGE_DATA_TIMEOUT_MS,
     `resolvePageData for ${slug}`,
     {
-      signal: request.signal,
+      signal: callerSignal,
       onAbort: (reason) => controller.abort(reason),
       onTimeout: (error) => controller.abort(error),
     },
@@ -133,13 +135,16 @@ export function handlePageDataEndpoint(
         const cachePolicy = cacheKey ? getPageDataCachePolicy(ctx) : null;
 
         const payload = cacheKey
-          ? await resolveCachedPageData(
-            cacheKey,
-            () => resolvePageDataWithinDeadline(renderer, slug, req, url),
-            cachePolicy!,
+          ? await waitForSharedPromise(
+            resolveCachedPageData(
+              cacheKey,
+              () => resolvePageDataWithinDeadline(renderer, slug, req, url, undefined),
+              cachePolicy!,
+            ),
+            req.signal,
           )
           : await resolveUncachedPageData(() =>
-            resolvePageDataWithinDeadline(renderer, slug, req, url)
+            resolvePageDataWithinDeadline(renderer, slug, req, url, req.signal)
           );
         const cacheStrategy = cacheKey
           ? {

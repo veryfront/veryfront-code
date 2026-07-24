@@ -442,14 +442,18 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh render</html>");
   });
 
-  it("preserves the original request while refreshing stale HTML", async () => {
+  it("preserves request metadata while refreshing stale HTML after disconnect", async () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
       adapter: { fs: { exists: async () => true } },
     } as unknown as RenderContext;
     const url = new URL("https://example.com/data?filter=recent");
-    const request = new Request(url, { headers: { "accept-language": "en" } });
+    const requestAbort = new AbortController();
+    const request = new Request(url, {
+      headers: { "accept-language": "en" },
+      signal: requestAbort.signal,
+    });
     const requestCacheKey = "/data?filter=recent";
     const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
     store.data.set(cacheKey, {
@@ -514,7 +518,9 @@ describe("Renderer release asset cache isolation", () => {
       pipeline: {
         renderPage: (_slug, options) => {
           assertEquals(options?.skipCacheCheck, true);
-          assertEquals(options?.request, request);
+          assertEquals(options?.request?.url, request.url);
+          assertEquals(options?.request?.headers.get("accept-language"), "en");
+          assertEquals(options?.request?.signal.aborted, false);
           assertEquals(options?.url, url);
           return Promise.resolve({
             html: "<html>fresh data render</html>",
@@ -536,6 +542,7 @@ describe("Renderer release asset cache isolation", () => {
 
     assertEquals(result.html, "<html>stale data render</html>");
 
+    requestAbort.abort(new Error("request disconnected"));
     await waitForProductionPrewarm(renderer);
 
     assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh data render</html>");
@@ -1008,6 +1015,84 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
   });
 
+  it("detaches a cancelled caller without aborting a shared cacheable render", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    const renderStarted = Promise.withResolvers<void>();
+    const renderGate = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    let observedSignal: AbortSignal | undefined;
+    let observedRequestSignal: AbortSignal | undefined;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal; request?: Request },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          renderCalls++;
+          observedSignal = options?.abortSignal;
+          observedRequestSignal = options?.request?.signal;
+          renderStarted.resolve();
+          return new Promise((resolve, reject) => {
+            const onAbort = () => reject(options?.abortSignal?.reason);
+            options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+            renderGate.promise.then(() => {
+              options?.abortSignal?.removeEventListener("abort", onAbort);
+              resolve({
+                html: `<html>${slug}</html>`,
+                frontmatter: {},
+                headings: [],
+                stream: null,
+              });
+            });
+          });
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const sharedOptions = {
+      cacheKey: "shared-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const cancelledRender = renderer.renderPage("/shared", ctx, {
+      ...sharedOptions,
+      request: new Request("https://example.com/shared", { signal: caller.signal }),
+    });
+    await renderStarted.promise;
+
+    const followerRender = renderer.renderPage("/shared", ctx, sharedOptions);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reason = new Error("caller disconnected");
+    caller.abort(reason);
+    renderGate.resolve();
+    await assertRejects(() => cancelledRender, Error, reason.message);
+
+    assertEquals(observedSignal?.aborted, false);
+    assertEquals(observedRequestSignal?.aborted, false);
+
+    const result = await followerRender;
+    assertEquals(result.html, "<html>/shared</html>");
+    assertEquals(renderCalls, 1);
+  });
+
   it("aborts underlying render work when the pipeline deadline expires", async () => {
     using time = new FakeTime();
     const store = createInMemoryStore();
@@ -1092,6 +1177,10 @@ describe("Renderer release asset cache isolation", () => {
       abortSignal: caller.signal,
       environment: "production",
       releaseAssetManifest: null,
+      request: new Request("https://example.com/caller-abort", {
+        headers: { cookie: "session=caller" },
+        signal: caller.signal,
+      }),
     });
     const rejected = assertRejects(() => render, Error, "request aborted");
     await started.promise;
