@@ -739,6 +739,8 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 10
           command: |
+            set -euo pipefail
+
             VERSION="${{ needs.version-check.outputs.version }}"
 
             # Download binaries and calculate checksums

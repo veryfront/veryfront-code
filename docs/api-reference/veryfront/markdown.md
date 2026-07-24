@@ -1,7 +1,7 @@
 ---
 title: "veryfront/markdown"
 description: "Markdown rendering with syntax highlighting and diagrams."
-order: 14
+order: 15
 ---
 
 ## Import
@@ -24,11 +24,11 @@ import { Markdown } from "veryfront/markdown";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Markdown` | Render markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L191) |
+| `Markdown` | Render markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L190) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CodeBlockProps` | Props accepted by code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L43) |
-| `MarkdownProps` | Props accepted by markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L22) |
+| `CodeBlockProps` | Props accepted by code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L42) |
+| `MarkdownProps` | Props accepted by markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L21) |

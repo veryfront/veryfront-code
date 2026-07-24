@@ -1,7 +1,7 @@
 ---
 title: "veryfront/schedule"
 description: "Source-defined schedules for Veryfront projects."
-order: 27
+order: 28
 ---
 
 ## Import
@@ -33,21 +33,21 @@ export default schedule({
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `discoverSchedules` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L18) |
-| `isScheduleDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L53) |
-| `schedule` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/factory.ts#L223) |
+| `discoverSchedules` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L17) |
+| `isScheduleDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L52) |
+| `schedule` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/factory.ts#L222) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ScheduleConcurrencyPolicy` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L3) |
-| `ScheduleConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L47) |
-| `ScheduleDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L31) |
-| `ScheduleDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L9) |
-| `ScheduleDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L16) |
-| `ScheduleHealth` | Marks a schedule unhealthy when it has not succeeded within the given budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L6) |
-| `ScheduleIntegrationRequirement` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L19) |
-| `ScheduleIntegrationRequirementConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L25) |
-| `ScheduleIntegrationResource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L15) |
-| `ScheduleIntegrationResourceIdentity` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L10) |
+| `ScheduleConcurrencyPolicy` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L2) |
+| `ScheduleConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L46) |
+| `ScheduleDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L30) |
+| `ScheduleDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L8) |
+| `ScheduleDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L15) |
+| `ScheduleHealth` | Marks a schedule unhealthy when it has not succeeded within the given budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L5) |
+| `ScheduleIntegrationRequirement` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L18) |
+| `ScheduleIntegrationRequirementConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L24) |
+| `ScheduleIntegrationResource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L14) |
+| `ScheduleIntegrationResourceIdentity` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L9) |
