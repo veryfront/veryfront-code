@@ -73,7 +73,6 @@
     "cycle-sensitive:src/platform/adapters/token/veryfront/types.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/adapters/veryfront-api-client/client.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/veryfront-api-client/operations.ts -> #veryfront/utils",
-    "cycle-sensitive:src/platform/adapters/veryfront-api-client/retry-handler.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/compat/http/websocket.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/compat/kv/factory.ts -> #veryfront/utils",
     "cycle-sensitive:src/types/entities/getEntityInfo.ts -> #veryfront/utils",

@@ -1,9 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { type VeryfrontTokenConfig } from "./types.ts";
 import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
-import { retryWithBackoff } from "#veryfront/errors/error-handlers.ts";
+import {
+  createVeryfrontApiTransport,
+  type VeryfrontApiTransport,
+} from "../../veryfront-api-transport.ts";
 
 const logger = baseLogger.component("token-storage-api-client");
 
@@ -26,19 +28,48 @@ async function cancelResponseBody(response: Response, operation: string): Promis
 
 export class TokenStorageApiClient {
   private config: VeryfrontTokenConfig;
+  private transport: VeryfrontApiTransport<Response>;
 
   constructor(config: VeryfrontTokenConfig) {
     this.config = config;
+
+    const { maxRetries, initialDelay, maxDelay } = config.retry;
+    const timeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+
+    this.transport = createVeryfrontApiTransport<Response>({
+      baseUrl: config.apiBaseUrl,
+      getToken: () => config.apiToken,
+      retry: { maxRetries, initialDelay, maxDelay },
+      timeoutMs,
+      defaultHeaders: { "Accept": "application/json" },
+
+      onResponse: async (response) => {
+        // 4xx non-429: pass the response through so callers handle it.
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          return response;
+        }
+        // 5xx / 429: throw to trigger retry logic.
+        if (!response.ok && (response.status >= 500 || response.status === 429)) {
+          throw TOKEN_STORAGE_ERROR.create({
+            detail: `Server error: ${response.status}`,
+            status: response.status,
+          });
+        }
+        return response;
+      },
+
+      wrapFinalError: (lastError) =>
+        TOKEN_STORAGE_ERROR.create({
+          detail: `Request failed after ${maxRetries} retries: ${lastError.message}`,
+        }),
+    });
   }
 
   async get(key: string): Promise<string | null> {
     const url = this.buildUrl(key);
 
     try {
-      const response = await this.fetchWithRetry(url, {
-        method: "GET",
-        headers: this.buildHeaders(),
-      });
+      const response = await this.transport.request(url);
 
       if (response.status === 404) {
         return null;
@@ -63,12 +94,9 @@ export class TokenStorageApiClient {
     const url = this.buildUrl(key);
 
     try {
-      const response = await this.fetchWithRetry(url, {
+      const response = await this.transport.request(url, {
         method: "PUT",
-        headers: {
-          ...this.buildHeaders(),
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value }),
       });
 
@@ -88,10 +116,7 @@ export class TokenStorageApiClient {
     const url = this.buildUrl(key);
 
     try {
-      const response = await this.fetchWithRetry(url, {
-        method: "DELETE",
-        headers: this.buildHeaders(),
-      });
+      const response = await this.transport.request(url, { method: "DELETE" });
 
       if (response.ok || response.status === 404) {
         return;
@@ -118,10 +143,7 @@ export class TokenStorageApiClient {
     }
 
     try {
-      const response = await this.fetchWithRetry(url.toString(), {
-        method: "GET",
-        headers: this.buildHeaders(),
-      });
+      const response = await this.transport.request(url.toString());
 
       if (!response.ok) {
         await cancelResponseBody(response, "list");
@@ -167,13 +189,6 @@ export class TokenStorageApiClient {
     }/tokens/${encodeURIComponent(key)}`;
   }
 
-  private buildHeaders(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.config.apiToken}`,
-      Accept: "application/json",
-    };
-  }
-
   private wrapError(
     error: unknown,
     action: "Get" | "Set" | "Delete",
@@ -189,64 +204,5 @@ export class TokenStorageApiClient {
     logger.error(`${action} failed`, { key, error: message });
 
     return TOKEN_STORAGE_ERROR.create({ detail: `${prefixMessage}: ${message}` });
-  }
-
-  private logTimedOut(url: string, timeoutMs: number, attempt: number): void {
-    logger.warn("Request timed out", {
-      url: url.replace(/token=[^&]+/, "token=***"),
-      timeoutMs,
-      attempt: attempt + 1,
-    });
-  }
-
-  private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
-    const { maxRetries, initialDelay, maxDelay } = this.config.retry;
-    const timeoutMs = this.config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-
-    return retryWithBackoff(
-      (signal) => {
-        const headers = new Headers(init.headers);
-        injectContext(headers);
-
-        return fetch(url, { ...init, headers, signal }).then((response) => {
-          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-            return response;
-          }
-
-          if (!response.ok && (response.status >= 500 || response.status === 429)) {
-            throw TOKEN_STORAGE_ERROR.create({
-              detail: `Server error: ${response.status}`,
-              status: response.status,
-            });
-          }
-
-          return response;
-        });
-      },
-      {
-        maxAttempts: maxRetries + 1,
-        initialDelay,
-        maxDelay,
-        timeoutMs,
-        onRetry: ({ error, attempt, delay, isTimeout }) => {
-          if (isTimeout) this.logTimedOut(url, timeoutMs, attempt);
-
-          logger.warn("Request failed, retrying...", {
-            attempt: attempt + 1,
-            maxRetries,
-            delay,
-            error: error.message,
-            timeout: isTimeout,
-          });
-        },
-        wrapFinalError: (lastError, lastAttempt) => {
-          if (lastError.name === "AbortError") this.logTimedOut(url, timeoutMs, lastAttempt);
-
-          return TOKEN_STORAGE_ERROR.create({
-            detail: `Request failed after ${maxRetries} retries: ${lastError.message}`,
-          });
-        },
-      },
-    );
   }
 }
