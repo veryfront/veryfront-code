@@ -230,20 +230,20 @@ export async function writeDistributedCache(
   const writes: Promise<unknown>[] = [
     distributedCache.set(transformCacheKey, portableCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
       (error) => {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
-        normalizedPath,
-        error,
-      });
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
+          normalizedPath,
+          error,
+        });
       },
     ),
     distributedCache
       .set(moduleRecoveryKey, serializedRecoveryPayload, TRANSFORM_CACHE_TTL_SECONDS)
       .catch((error) => {
-      log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed vfmod recovery set failed`, {
-        normalizedPath,
-        moduleRecoveryKey,
-        error,
-      });
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed vfmod recovery set failed`, {
+          normalizedPath,
+          moduleRecoveryKey,
+          error,
+        });
       }),
   ];
 

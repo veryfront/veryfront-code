@@ -77,7 +77,8 @@ function isOwnedModulePath(absolutePath: string, tenantCacheDir: string): boolea
   }
   const resolvedPath = resolve(absolutePath);
   const resolvedTenantDir = resolve(tenantCacheDir);
-  return dirname(resolvedPath) === resolvedTenantDir && basename(resolvedPath) === basename(absolutePath);
+  return dirname(resolvedPath) === resolvedTenantDir &&
+    basename(resolvedPath) === basename(absolutePath);
 }
 
 async function ensureHttpBundleDependencies(code: string, log: Logger): Promise<boolean> {
@@ -119,7 +120,9 @@ async function ensureModuleFileAndDeps(
   const localFs = getLocalFs();
 
   try {
-    const lstat = localFs.lstat ? await localFs.lstat(resolvedPath) : await localFs.stat(resolvedPath);
+    const lstat = localFs.lstat
+      ? await localFs.lstat(resolvedPath)
+      : await localFs.stat(resolvedPath);
     if (lstat?.isSymlink) return false;
     if (lstat?.isFile) {
       if ((lstat.size ?? 0) > MAX_MDX_MODULE_CODE_BYTES) return false;

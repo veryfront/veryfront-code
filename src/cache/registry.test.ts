@@ -740,17 +740,15 @@ describe("CacheRegistry", () => {
         "preview-main:src/page.tsx",
       )
     }`;
-    const moduleKey = `vf:module:${
-      await buildReleaseModuleResponseCacheKey({
-        projectIdentity: "target",
-        projectDir: "/workspace/target",
-        projectSlug: "target",
-        branch: "main",
-        releaseId: "release-1",
-        runtimeVersion: "1",
-        modulePath: "/@vite/env",
-      })
-    }`;
+    const moduleKey = `vf:module:${await buildReleaseModuleResponseCacheKey({
+      projectIdentity: "target",
+      projectDir: "/workspace/target",
+      projectSlug: "target",
+      branch: "main",
+      releaseId: "release-1",
+      runtimeVersion: "1",
+      modulePath: "/@vite/env",
+    })}`;
     const opaqueConfiguredKey = `${configuredPrefix}blob:target:opaque`;
     const keysByPattern = new Map<string, string[]>([
       ["vf:cache:*", [fileKey]],

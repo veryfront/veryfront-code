@@ -187,10 +187,12 @@ export class HMRHandler extends BaseHandler {
 
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       if (!isLocal) {
-        return this.respond(new Response("WebSocket upgrade required", {
-          status: 426,
-          headers: { "cache-control": "no-store" },
-        }));
+        return this.respond(
+          new Response("WebSocket upgrade required", {
+            status: 426,
+            headers: { "cache-control": "no-store" },
+          }),
+        );
       }
       return this.respond(
         new Response(
@@ -232,10 +234,12 @@ export class HMRHandler extends BaseHandler {
         globalClientLimit,
         projectClientLimit,
       });
-      return this.respond(new Response("HMR connection capacity reached", {
-        status: 503,
-        headers: { "retry-after": "5", "cache-control": "no-store" },
-      }));
+      return this.respond(
+        new Response("HMR connection capacity reached", {
+          status: 503,
+          headers: { "retry-after": "5", "cache-control": "no-store" },
+        }),
+      );
     }
 
     try {

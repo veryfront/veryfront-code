@@ -1,8 +1,5 @@
 import { hasHardcodedCachePaths } from "#veryfront/cache/paths.ts";
-import {
-  buildMdxEsmModuleFileName,
-  MDX_ESM_CACHE_NAMESPACE,
-} from "../cache-format.ts";
+import { buildMdxEsmModuleFileName, MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 import { hashString } from "../utils/hash.ts";
 
 export const MDX_RECOVERY_PAYLOAD_VERSION = 1;

@@ -25,24 +25,15 @@ import {
 } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
 import { hashString } from "../utils/hash.ts";
-import {
-  MAX_MDX_MODULE_CODE_BYTES,
-  utf8ByteLength,
-} from "../module-fetcher/recovery-payload.ts";
+import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "../module-fetcher/recovery-payload.ts";
 import { findStaticImportFromSpans } from "../utils/source-spans.ts";
 import {
   formatCacheVersionSegment,
   isCacheVersionSegment,
 } from "#veryfront/utils/cache-version.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
-import {
-  getMdxEsmSsrCacheDir,
-  getMdxEsmSsrCacheDirs,
-} from "../cache-paths.ts";
-export {
-  getMdxEsmSsrCacheDir,
-  getMdxEsmSsrCacheDirs,
-} from "../cache-paths.ts";
+import { getMdxEsmSsrCacheDir, getMdxEsmSsrCacheDirs } from "../cache-paths.ts";
+export { getMdxEsmSsrCacheDir, getMdxEsmSsrCacheDirs } from "../cache-paths.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
 
@@ -902,7 +893,9 @@ export async function lookupMdxEsmCache(
       cache.delete(cacheKey);
       return {
         status: "corrupted",
-        reason: stat?.isFile ? "Cached file exceeds size limit" : "Cached file no longer exists on disk",
+        reason: stat?.isFile
+          ? "Cached file exceeds size limit"
+          : "Cached file no longer exists on disk",
         filePath,
       };
     }

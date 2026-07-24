@@ -1441,7 +1441,7 @@ export async function initializeRenderer(options?: RendererOptions): Promise<Ren
 
   const nextRenderer = new Renderer(options);
   const generation = rendererGeneration;
-  const initialization: Promise<Renderer> = (async () => {
+  const initialization = (async () => {
     await nextRenderer.initialize(options?.shared);
     if (generation !== rendererGeneration) {
       await nextRenderer.destroy();

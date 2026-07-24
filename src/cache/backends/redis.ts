@@ -15,10 +15,7 @@ import {
   expiresImmediately,
   resolveIntegerCacheTtlSeconds,
 } from "./ttl.ts";
-import {
-  escapeRedisCacheGlobLiteral,
-  validateRedisCacheKeyPrefix,
-} from "./redis-keyspace.ts";
+import { escapeRedisCacheGlobLiteral, validateRedisCacheKeyPrefix } from "./redis-keyspace.ts";
 
 const logger = baseLogger.component("redis-cache-backend");
 const REDIS_PATTERN_DELETE_SCAN_COUNT = 100;

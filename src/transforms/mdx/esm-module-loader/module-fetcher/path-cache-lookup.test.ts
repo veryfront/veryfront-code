@@ -5,10 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
-import {
-  buildMdxEsmModuleFileName,
-  buildMdxEsmPathCacheKey,
-} from "../cache-format.ts";
+import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
 
 async function withTempCache<T>(
   test: (fixture: { cacheDir: string }) => Promise<T>,

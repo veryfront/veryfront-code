@@ -53,11 +53,13 @@ function formatMdxEsmPathCacheKey(
 ): string {
   // This cache is local and needs to support selective path invalidation. Keep
   // the framed identity parseable while binding it to the full source digest.
-  return `${namespace}:path:${JSON.stringify([
-    reactVersion,
-    normalizedPath,
-    sourceContentHash ?? null,
-  ])}`;
+  return `${namespace}:path:${
+    JSON.stringify([
+      reactVersion,
+      normalizedPath,
+      sourceContentHash ?? null,
+    ])
+  }`;
 }
 
 function formatMdxEsmModuleFileName(namespace: string, contentHash: string): string {
