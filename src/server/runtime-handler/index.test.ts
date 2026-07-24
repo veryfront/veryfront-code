@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
@@ -42,9 +42,9 @@ function createProxyModeHandler() {
 }
 
 describe("server/runtime-handler/index", () => {
-  afterEach(() => {
+  afterEach(async () => {
     injectIsolationDepsForTests(null);
-    HMRHandler.shutdown();
+    await HMRHandler.shutdown();
   });
 
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
@@ -121,19 +121,15 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
-  it("skips the proxy header guard for websocket requests", async () => {
+  it("skips the proxy header guard for server-resolved preview websocket requests", async () => {
     const handler = createProxyModeHandler();
 
     const response = await handler(
-      new Request(
-        "http://localhost/_ws?x-environment=preview&x-project-slug=test-project",
-      ),
+      new Request("http://test-project.preview.veryfront.com/_ws"),
     );
 
-    assertEquals(response.status, 200);
-    const body = await response.json();
-    assertEquals(body.status, "ok");
-    assertExists(body.metrics);
+    assertEquals(response.status, 426);
+    assertEquals(await response.text(), "WebSocket upgrade required");
   });
 
   it("skips the proxy header guard for lightweight module requests", async () => {
