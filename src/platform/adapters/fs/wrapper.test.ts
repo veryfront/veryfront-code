@@ -4,9 +4,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FSAdapterWrapper,
   isExtendedFSAdapter,
+  isVirtualFilesystem,
   NotSupportedError,
   wrapFSAdapter,
 } from "./wrapper.ts";
+import { denoAdapter } from "../deno.ts";
 import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
 import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
 
@@ -109,6 +111,51 @@ describe("isExtendedFSAdapter", () => {
     };
 
     assertEquals(isExtendedFSAdapter(partialFs as any), false);
+  });
+});
+
+describe("isVirtualFilesystem", () => {
+  it("should classify every factory wrapper as virtual regardless of underlying type", () => {
+    class FutureRemoteAdapter {
+      readFile = () => Promise.resolve("content");
+      exists = () => Promise.resolve(true);
+      stat = () =>
+        Promise.resolve({
+          size: 0,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: null,
+        });
+    }
+
+    const wrappers = [
+      wrapFSAdapter(createMockFSAdapter()),
+      new FSAdapterWrapper(new FutureRemoteAdapter() as FSAdapter),
+    ];
+
+    for (const wrapper of wrappers) {
+      assertEquals(isVirtualFilesystem(wrapper), true);
+    }
+  });
+
+  it("should classify structural ExtendedFileSystemAdapter implementations as virtual", () => {
+    const extendedFs = Object.assign(Object.create(denoAdapter.fs) as typeof denoAdapter.fs, {
+      getUnderlyingAdapter: () => createMockFSAdapter(),
+      getAdapterType: () => {
+        throw new Error("classification must not inspect implementation names");
+      },
+      isVeryfrontAdapter: () => {
+        throw new Error("classification must not invoke adapter capabilities");
+      },
+      isMultiProjectMode: () => false,
+    });
+
+    assertEquals(isVirtualFilesystem(extendedFs), true);
+  });
+
+  it("should classify an ordinary local filesystem as non-virtual", () => {
+    assertEquals(isVirtualFilesystem(denoAdapter.fs), false);
   });
 });
 
