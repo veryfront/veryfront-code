@@ -19,7 +19,7 @@ import {
 } from "./types.ts";
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
-import { safeJsonParse } from "../utils/json.ts";
+import { safeJsonParse } from "#veryfront/utils/json.ts";
 
 /** Tunable limits used while preparing chat history for model context. */
 export type MessagePrepLimits = {

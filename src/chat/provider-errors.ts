@@ -1,3 +1,7 @@
+import { safeJsonParse } from "#veryfront/utils/json.ts";
+export { safeJsonParse };
+export type { SafeJsonParseResult } from "#veryfront/utils/json.ts";
+
 /** Error shape for parsed provider. */
 export interface ParsedProviderError {
   code: string;
@@ -39,10 +43,6 @@ const AI_PROVIDER_BILLING_ERROR = {
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-import { safeJsonParse } from "../utils/json.ts";
-export { safeJsonParse };
-export type { SafeJsonParseResult } from "../utils/json.ts";
 
 function parseErrorJson(value: string): unknown | null {
   const parsed = safeJsonParse(value);
