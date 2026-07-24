@@ -1,4 +1,4 @@
-import { store } from "../../../store";
+import { store } from "../../../store.ts";
 
 export async function POST() {
   await store.indexContentDir();

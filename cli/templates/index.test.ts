@@ -164,17 +164,17 @@ describe("cli/templates", () => {
     const files = await getTemplate("docs-agent");
     assertExists(files);
 
-    const extensionImportOffenders = files
-      .filter((file) => file.path.endsWith(".ts") || file.path.endsWith(".tsx"))
-      .filter((file) => /from\s+["'][^"']+\.ts["']/.test(file.content))
-      .map((file) => file.path);
-
+    const tsconfig = files.find((file) => file.path === "tsconfig.json");
+    assertExists(tsconfig, "docs-agent should declare consumer TypeScript options");
     assertEquals(
-      extensionImportOffenders,
-      [],
-      `docs-agent local imports must not require allowImportingTsExtensions: ${
-        extensionImportOffenders.join(", ")
-      }`,
+      tsconfig.content.includes('"allowImportingTsExtensions": true'),
+      true,
+      "docs-agent should allow Deno-native .ts app route imports during consumer tsc",
+    );
+    assertEquals(
+      tsconfig.content.includes('"noEmit": true'),
+      true,
+      "docs-agent should keep allowImportingTsExtensions valid for consumer tsc",
     );
 
     const globalTypes = files.find((file) => file.path === "globals.d.ts");
@@ -188,6 +188,18 @@ describe("cli/templates", () => {
       true,
       "docs-agent should type the Tabs callback against published consumer declarations",
     );
+  });
+
+  it("keeps docs-agent app route modules importable by Deno", async () => {
+    const routePaths = [
+      "app/api/ag-ui/route.ts",
+      "app/api/ingest/route.ts",
+      "app/api/uploads/route.ts",
+    ];
+
+    for (const routePath of routePaths) {
+      await import(new URL(`./files/docs-agent/${routePath}`, import.meta.url).href);
+    }
   });
 
   it("integration token store fails closed instead of silently using memory in production", async () => {
