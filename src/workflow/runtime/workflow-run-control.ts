@@ -150,14 +150,16 @@ export async function claimWorkflowRunControl(
       [runToProcess.status],
       {
         status: "running",
-        startedAt: runToProcess.startedAt || now,
+        startedAt: now,
         heartbeatAt: now,
         workerId,
       },
       expectedWorkerId,
     );
     if (!claimed) {
-      return await failClaim(input, runToProcess, workerId, false);
+      return {
+        status: run.status === "running" ? "skipped-stalled-claim-lost" : "skipped-status-changed",
+      };
     }
 
     const executionConfig: RunExecutionConfig = {
@@ -184,7 +186,6 @@ export async function claimWorkflowRunControl(
       },
     };
   } catch (error) {
-    logger.error(`Failed to claim workflow run ${runId}:`, error);
     return await failClaim(input, runToProcess ?? run, workerId, claimed, ensureError(error));
   } finally {
     if (pendingLockToken) {

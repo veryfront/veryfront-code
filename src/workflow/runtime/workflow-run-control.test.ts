@@ -187,13 +187,19 @@ class ClaimDelayedRunningUpdateBackend extends MemoryBackend {
   }
 }
 
-class ClaimRejectingRunningUpdateBackend extends MemoryBackend {
-  override updateRunIfStatus(
+class ClaimPendingClaimLostBackend extends MemoryBackend {
+  replacementWorkerId = "run-execution:replacement";
+
+  override async updateRunIfStatus(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
     if (patch.status === "running" && patch.workerId) {
+      await super.updateRun(runId, {
+        status: "running",
+        workerId: this.replacementWorkerId,
+      });
       return Promise.resolve(false);
     }
     return super.updateRunIfStatus(runId, expectedStatuses, patch);
@@ -210,6 +216,34 @@ class ClaimReclaimedAfterFailureBackend extends MemoryBackend {
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
     if (patch.status === "failed" && expectedWorkerId.startsWith("run-execution:")) {
+      await super.updateRun(runId, {
+        status: "running",
+        workerId: this.replacementWorkerId,
+      });
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class ClaimStalledOwnerLostBackend extends MemoryBackend {
+  replacementWorkerId = "run-execution:replacement";
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (
+      patch.status === "running" &&
+      patch.workerId?.startsWith("run-execution:") &&
+      expectedWorkerId.startsWith("mgr:")
+    ) {
       await super.updateRun(runId, {
         status: "running",
         workerId: this.replacementWorkerId,
@@ -543,17 +577,18 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(createCalled, true);
   });
 
-  it("fails before claim when the running update is not acquired", async () => {
-    const backend = new ClaimRejectingRunningUpdateBackend();
-    const run = createRun("claim-before-claim-failure");
+  it("skips pending runs when another owner wins the running claim", async () => {
+    const backend = new ClaimPendingClaimLostBackend();
+    const run = createRun("claim-pending-owner-lost");
     await backend.createRun(run);
 
     const outcome = await claim(backend, run);
 
-    assertEquals(outcome.status, "failed-before-claim");
+    assertEquals(outcome.status, "skipped-status-changed");
     const persisted = await backend.getRun(run.id);
-    assertEquals(persisted?.status, "failed");
-    assertEquals(persisted?.workerId, undefined);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, backend.replacementWorkerId);
+    assertEquals(persisted?.error, undefined);
   });
 
   it("fails after claim only under the claimed isolated owner", async () => {
@@ -595,6 +630,52 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(outcome.status, "created");
     assertEquals(ownerTransitions, ["run-execution:execution-stalled"]);
     assertEquals((await backend.getRun(run.id))?.workerId, "run-execution:execution-stalled");
+  });
+
+  it("skips stalled runs when the manager owner is replaced before isolated assignment", async () => {
+    const backend = new ClaimStalledOwnerLostBackend();
+    const run = {
+      ...createRun("claim-stalled-owner-lost"),
+      status: "running" as const,
+      heartbeatAt: new Date(Date.now() - 120_000),
+      workerId: "run-execution:stale",
+    };
+    await backend.createRun(run);
+
+    const outcome = await claim(backend, run, {
+      managerId: "manager-stalled-lost",
+      executionId: "execution-stalled-lost",
+    });
+
+    assertEquals(outcome.status, "skipped-stalled-claim-lost");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, backend.replacementWorkerId);
+    assertEquals(persisted?.error, undefined);
+  });
+
+  it("resets startedAt to the new claim time when recovering a stalled run", async () => {
+    using _time = new FakeTime(new Date("2026-01-01T00:00:00.000Z"));
+    const backend = new MemoryBackend();
+    const originalStartedAt = new Date("2025-01-01T00:00:00.000Z");
+    const run = {
+      ...createRun("claim-stalled-started-at"),
+      status: "running" as const,
+      startedAt: originalStartedAt,
+      heartbeatAt: new Date(Date.now() - 120_000),
+      workerId: "run-execution:stale",
+    };
+    await backend.createRun(run);
+
+    const outcome = await claim(backend, run, {
+      managerId: "manager-stalled-started-at",
+      executionId: "execution-stalled-started-at",
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "created");
+    assertEquals(persisted?.startedAt, new Date("2026-01-01T00:00:00.000Z"));
+    assertEquals(persisted?.startedAt === originalStartedAt, false);
   });
 
   it("requires the persisted source policy and restores it while creating execution", async () => {
