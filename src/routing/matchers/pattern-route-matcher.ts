@@ -27,7 +27,9 @@ export class PageRouteMatcher {
 
   addRoute(pattern: string, page: string): void {
     const route = parseRoute(pattern, page);
-    this.routes.push(route);
+    const existingIndex = this.routes.findIndex((candidate) => candidate.pattern === pattern);
+    if (existingIndex === -1) this.routes.push(route);
+    else this.routes[existingIndex] = route;
     this.routes.sort((left, right) => compareRouteDefinitions(right, left));
     // A path may have been negatively cached (null / 404) before this route was
     // registered (dev hot-reload / late route discovery). Invalidate so the newly
