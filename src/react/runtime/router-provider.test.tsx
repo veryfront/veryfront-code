@@ -379,6 +379,35 @@ describe("react/runtime/RouterProvider (reactive)", () => {
     }
   });
 
+  it("defaults usePageContext().data to an empty object for a seed that omits it", () => {
+    // A seed built before `data` existed omits the field entirely. The provider
+    // must merge it over the defaults so consumers read `{}`, never `undefined`
+    // — the backward-compatibility contract for older PageContext seeds. If this
+    // regressed to `undefined`, `Object.keys(data)` below would throw.
+    const legacySeed = {
+      slug: "/",
+      path: "/",
+      params: {},
+      query: {},
+      frontmatter: {},
+      headings: [],
+      mdxHeadings: [],
+    };
+
+    const Consumer = (): React.ReactElement => {
+      const { data } = usePageContext();
+      return <span>type:{typeof data} keys:{Object.keys(data).length}</span>;
+    };
+
+    const html = renderToStaticMarkup(
+      <PageContextProvider pageContext={legacySeed}>
+        <Consumer />
+      </PageContextProvider>,
+    );
+
+    assertStringIncludes(html, "type:object keys:0");
+  });
+
   it("wrapForHydration seeds the provider from location + params (no React passed in)", () => {
     // The hydration path wraps a child by calling this export on the app's own
     // React — nothing is threaded across the module boundary. It seeds params
