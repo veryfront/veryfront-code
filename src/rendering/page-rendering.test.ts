@@ -76,7 +76,7 @@ describe("rendering/page-rendering", () => {
     assertEquals(serverModuleCode.includes("/_veryfront/fs/"), false);
   });
 
-  it("publishes canonical frontmatter in a newly constructed PageBundle", async () => {
+  it("publishes detached parsed frontmatter in a newly constructed PageBundle", async () => {
     const pageInfo = createMDXPageInfo("# Canonical bundle");
     const sourceDate = new Date("2026-07-24T08:30:00.000Z");
     pageInfo.entity.frontmatter = {
@@ -92,8 +92,9 @@ describe("rendering/page-rendering", () => {
 
     assertEquals(pageBundle.frontmatter, {
       title: "Bundle boundary",
-      tags: ["release"],
-      date: "2026-07-24T08:30:00.000Z",
+      tags: "release",
+      date: new Date("2026-07-24T08:30:00.000Z"),
+      nested: { unsafe: true },
     });
     assertEquals(pageInfo.entity.frontmatter.tags, "release");
     assertEquals(pageInfo.entity.frontmatter.date, sourceDate);
@@ -212,7 +213,7 @@ describe("rendering/page-rendering", () => {
     }
   });
 
-  it("passes canonical public frontmatter to generateMetadata", async () => {
+  it("passes detached parsed frontmatter to generateMetadata", async () => {
     const pageInfo = createMDXPageInfo("# Frontmatter boundary");
     pageInfo.entity.frontmatter = {
       title: "Boundary",
@@ -249,8 +250,10 @@ describe("rendering/page-rendering", () => {
 
       assertEquals(receivedFrontmatter, {
         title: "Boundary",
-        tags: ["release"],
-        date: "2026-07-24T08:30:00.000Z",
+        tags: "release",
+        date: new Date("2026-07-24T08:30:00.000Z"),
+        nested: { unsafe: true },
+        mixed: ["valid", 1],
       });
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;

@@ -33,6 +33,68 @@ describe("rendering/cache/cache-payload", () => {
     );
   });
 
+  it("round-trips detached Date values without changing cached frontmatter", () => {
+    const payload = payloadWithNodeMap();
+    const publicationDate = new Date("2026-07-24T08:30:00.000Z");
+    const nestedDate = new Date("2025-01-02T03:04:05.000Z");
+    payload.result.frontmatter = {
+      date: publicationDate,
+      metadata: { nestedDate },
+    };
+
+    const memory = cloneCachePayload(payload);
+    const serialized = parseCachePayload(
+      JSON.parse(serializeCachePayload(payload)),
+    );
+
+    assertEquals(memory.result.frontmatter, {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+      metadata: {
+        nestedDate: new Date("2025-01-02T03:04:05.000Z"),
+      },
+    });
+    assertEquals(serialized?.result.frontmatter, memory.result.frontmatter);
+    assertEquals(memory.result.frontmatter.date === publicationDate, false);
+    assertEquals(
+      (memory.result.frontmatter.metadata as { nestedDate: Date }).nestedDate ===
+        nestedDate,
+      false,
+    );
+  });
+
+  it("does not confuse user records with cache codec markers", () => {
+    const payload = payloadWithNodeMap();
+    const markerLikeRecords = ["date", "record", "unknown"].map((tag) => ({
+      $veryfrontCacheValue: tag,
+      value: "2026-07-24T08:30:00.000Z",
+    }));
+    (payload.result.frontmatter as Record<string, unknown>).custom = markerLikeRecords;
+
+    const serialized = parseCachePayload(
+      JSON.parse(serializeCachePayload(payload)),
+    );
+
+    assertEquals(
+      (serialized?.result.frontmatter as Record<string, unknown>).custom,
+      markerLikeRecords,
+    );
+  });
+
+  it("continues to read legacy unversioned cache payloads", () => {
+    const payload = payloadWithNodeMap();
+    const legacyWirePayload = JSON.parse(JSON.stringify({
+      ...payload,
+      result: {
+        ...payload.result,
+        nodeMap: undefined,
+      },
+    }));
+
+    const parsed = parseCachePayload(legacyWirePayload);
+
+    assertEquals(parsed, cloneCachePayload(payload));
+  });
+
   it("rejects sparse JSON-like arrays", () => {
     const payload = payloadWithNodeMap();
     const sparse = new Array(2);

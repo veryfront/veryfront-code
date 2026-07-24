@@ -3,6 +3,7 @@ import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { MAX_CACHE_TTL_SECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parseCachePayload } from "../cache-payload.ts";
 import type { CachePayload } from "../types.ts";
 import { APICacheStore } from "./api-store.ts";
 import { escapeRedisCacheGlobLiteral } from "#veryfront/cache/backends/redis-keyspace.ts";
@@ -165,9 +166,12 @@ describe("rendering/cache/stores/api-store", () => {
       assertEquals((second?.result.nodeMap?.get(1) as { type: string }).type, "heading");
       assertEquals(backend.getCount, 0);
 
-      const serialized = JSON.parse(backend.values.get("page")!);
-      assertEquals(Array.isArray(serialized.nodeMapEntries), true);
-      assertEquals("nodeMap" in serialized.result, false);
+      const serialized = parseCachePayload(JSON.parse(backend.values.get("page")!));
+      assertEquals(serialized?.nodeMapEntries, [[1, { type: "heading" }]]);
+      assertEquals(
+        (serialized?.result.nodeMap?.get(1) as { type: string }).type,
+        "heading",
+      );
     });
 
     it("reads through and populates local cache when enabled", async () => {
@@ -220,7 +224,10 @@ describe("rendering/cache/stores/api-store", () => {
       await assertRejects(() => store.set("page", payload("new")), Error, "write unavailable");
 
       assertEquals((await store.get("page"))?.result.html, "old");
-      assertEquals(JSON.parse(backend.values.get("page")!).result.html, "old");
+      assertEquals(
+        parseCachePayload(JSON.parse(backend.values.get("page")!))?.result.html,
+        "old",
+      );
     });
 
     it("rejects streams instead of reporting a successful no-op", async () => {

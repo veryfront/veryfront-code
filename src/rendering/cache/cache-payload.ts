@@ -11,6 +11,10 @@ const MAX_HEADINGS = 10_000;
 const MAX_NODE_MAP_ENTRIES = 100_000;
 const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000;
 const utf8Encoder = new TextEncoder();
+const SERIALIZED_CACHE_ENVELOPE_KEY = "$veryfrontCachePayload";
+const SERIALIZED_CACHE_ENVELOPE_VERSION = 1;
+const CACHE_VALUE_TAG = "$veryfrontCacheValue";
+const CACHE_VALUE_FIELD = "value";
 
 interface CloneState {
   nodes: number;
@@ -70,6 +74,9 @@ function cloneJsonValue(value: unknown, state: CloneState, depth = 0): unknown {
   }
   if (value === undefined) return undefined;
   if (typeof value !== "object") fail(`contains unsupported ${typeof value} data`);
+
+  const date = cloneDateValue(value);
+  if (date) return date;
   if (state.ancestors.has(value)) fail("contains a cycle");
 
   state.ancestors.add(value);
@@ -111,6 +118,17 @@ function cloneJsonValue(value: unknown, state: CloneState, depth = 0): unknown {
   } finally {
     state.ancestors.delete(value);
   }
+}
+
+function cloneDateValue(value: object): Date | undefined {
+  let timestamp: number;
+  try {
+    timestamp = Date.prototype.getTime.call(value);
+  } catch {
+    return undefined;
+  }
+  if (!Number.isFinite(timestamp)) fail("contains an invalid date");
+  return new Date(timestamp);
 }
 
 function optionalTimestamp(
@@ -204,6 +222,12 @@ function nodeMapEntriesEqual(
 
 function jsonValuesEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
+  const leftDate = typeof left === "object" && left !== null ? cloneDateValue(left) : undefined;
+  const rightDate = typeof right === "object" && right !== null ? cloneDateValue(right) : undefined;
+  if (leftDate || rightDate) {
+    return !!leftDate && !!rightDate &&
+      leftDate.getTime() === rightDate.getTime();
+  }
   if (Array.isArray(left) || Array.isArray(right)) {
     return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
       left.every((entry, index) => jsonValuesEqual(entry, right[index]));
@@ -215,6 +239,249 @@ function jsonValuesEqual(left: unknown, right: unknown): boolean {
     leftKeys.every((key, index) =>
       key === rightKeys[index] && jsonValuesEqual(left[key], right[key])
     );
+}
+
+function encodeCacheWireValue(
+  value: unknown,
+  state: CloneState,
+  depth = 0,
+): unknown {
+  countNode(state, depth);
+
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return cloneBoundedString(
+      value,
+      state,
+      "serialized cache string",
+      MAX_EMBEDDED_STRING_UTF8_BYTES,
+    );
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) fail("contains a non-finite number");
+    return value;
+  }
+  if (value === undefined) return undefined;
+  if (typeof value !== "object") {
+    fail(`contains unsupported ${typeof value} data`);
+  }
+
+  const date = cloneDateValue(value);
+  if (date) {
+    return {
+      [CACHE_VALUE_TAG]: "date",
+      [CACHE_VALUE_FIELD]: date.toISOString(),
+    };
+  }
+  if (state.ancestors.has(value)) fail("contains a cycle");
+
+  state.ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const length = ownDataValue(value, "length");
+      if (
+        typeof length !== "number" || !Number.isSafeInteger(length) ||
+        length < 0
+      ) {
+        fail("contains an invalid array");
+      }
+      const encoded: unknown[] = [];
+      for (let index = 0; index < length; index++) {
+        if (!Object.hasOwn(value, index)) fail("contains a sparse array");
+        const entry = encodeCacheWireValue(
+          ownDataValue(value, index),
+          state,
+          depth + 1,
+        );
+        if (entry === undefined) fail("contains undefined array data");
+        encoded.push(entry);
+      }
+      return encoded;
+    }
+
+    if (!isPlainRecord(value)) fail("contains an unsupported object type");
+
+    const encoded: Record<string, unknown> = {};
+    for (const key of Object.keys(value)) {
+      cloneBoundedString(
+        key,
+        state,
+        "serialized cache key",
+        MAX_METADATA_STRING_UTF8_BYTES,
+      );
+      const entry = encodeCacheWireValue(
+        ownDataValue(value, key),
+        state,
+        depth + 1,
+      );
+      if (entry !== undefined) defineDataProperty(encoded, key, entry);
+    }
+
+    if (Object.hasOwn(value, CACHE_VALUE_TAG)) {
+      return {
+        [CACHE_VALUE_TAG]: "record",
+        [CACHE_VALUE_FIELD]: encoded,
+      };
+    }
+    return encoded;
+  } finally {
+    state.ancestors.delete(value);
+  }
+}
+
+function decodeSerializedCacheEnvelope(value: unknown): unknown {
+  if (!isPlainRecord(value)) return value;
+  const keys = Object.keys(value);
+  if (
+    keys.length !== 2 ||
+    !Object.hasOwn(value, SERIALIZED_CACHE_ENVELOPE_KEY) ||
+    !Object.hasOwn(value, CACHE_VALUE_FIELD) ||
+    ownDataValue(value, SERIALIZED_CACHE_ENVELOPE_KEY) !==
+      SERIALIZED_CACHE_ENVELOPE_VERSION
+  ) {
+    return value;
+  }
+
+  return decodeCacheWireValue(
+    ownDataValue(value, CACHE_VALUE_FIELD),
+    {
+      nodes: 0,
+      stringBytes: 0,
+      ancestors: new WeakSet<object>(),
+    },
+  );
+}
+
+function decodeCacheWireValue(
+  value: unknown,
+  state: CloneState,
+  depth = 0,
+): unknown {
+  countNode(state, depth);
+
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return cloneBoundedString(
+      value,
+      state,
+      "serialized cache string",
+      MAX_EMBEDDED_STRING_UTF8_BYTES,
+    );
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) fail("contains a non-finite number");
+    return value;
+  }
+  if (typeof value !== "object") {
+    fail(`contains unsupported ${typeof value} data`);
+  }
+  if (state.ancestors.has(value)) fail("contains a cycle");
+
+  state.ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const length = ownDataValue(value, "length");
+      if (
+        typeof length !== "number" || !Number.isSafeInteger(length) ||
+        length < 0
+      ) {
+        fail("contains an invalid array");
+      }
+      const decoded: unknown[] = [];
+      for (let index = 0; index < length; index++) {
+        if (!Object.hasOwn(value, index)) fail("contains a sparse array");
+        const entry = decodeCacheWireValue(
+          ownDataValue(value, index),
+          state,
+          depth + 1,
+        );
+        if (entry === undefined) fail("contains undefined array data");
+        decoded.push(entry);
+      }
+      return decoded;
+    }
+
+    if (!isPlainRecord(value)) fail("contains an unsupported object type");
+    const marker = readCacheWireMarker(value);
+    if (marker?.tag === "date") {
+      if (typeof marker.value !== "string") fail("contains an invalid date");
+      const serializedDate = cloneBoundedString(
+        marker.value,
+        state,
+        "serialized cache date",
+        MAX_METADATA_STRING_UTF8_BYTES,
+      );
+      const timestamp = Date.parse(serializedDate);
+      if (!Number.isFinite(timestamp)) fail("contains an invalid date");
+      const date = new Date(timestamp);
+      if (date.toISOString() !== serializedDate) {
+        fail("contains an invalid date");
+      }
+      return date;
+    }
+    if (marker?.tag === "record") {
+      if (!isPlainRecord(marker.value)) {
+        fail("contains an invalid escaped record");
+      }
+      return decodeCacheWireRecord(marker.value, state, depth);
+    }
+    return decodeCacheWireRecord(value, state, depth);
+  } finally {
+    state.ancestors.delete(value);
+  }
+}
+
+function decodeCacheWireRecord(
+  value: Record<string, unknown>,
+  state: CloneState,
+  depth: number,
+): Record<string, unknown> {
+  const decoded: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    cloneBoundedString(
+      key,
+      state,
+      "serialized cache key",
+      MAX_METADATA_STRING_UTF8_BYTES,
+    );
+    const entry = decodeCacheWireValue(
+      ownDataValue(value, key),
+      state,
+      depth + 1,
+    );
+    if (entry !== undefined) defineDataProperty(decoded, key, entry);
+  }
+  return decoded;
+}
+
+function readCacheWireMarker(
+  value: Record<string, unknown>,
+): { tag: unknown; value: unknown } | undefined {
+  const keys = Object.keys(value);
+  if (
+    keys.length !== 2 ||
+    !Object.hasOwn(value, CACHE_VALUE_TAG) ||
+    !Object.hasOwn(value, CACHE_VALUE_FIELD)
+  ) {
+    return undefined;
+  }
+  return {
+    tag: ownDataValue(value, CACHE_VALUE_TAG),
+    value: ownDataValue(value, CACHE_VALUE_FIELD),
+  };
+}
+
+function defineDataProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
 function cloneHeadings(
@@ -368,19 +635,35 @@ export function cloneCachePayload(value: CachePayload): CachePayload {
 /** Serialize without relying on JSON's lossy Map representation. */
 export function serializeCachePayload(value: CachePayload): string {
   const snapshot = cloneCachePayload(value);
-  return JSON.stringify({
+  const wirePayload = {
     ...snapshot,
     result: {
       ...snapshot.result,
       nodeMap: undefined,
     },
+  };
+  const encoded = encodeCacheWireValue(
+    wirePayload,
+    {
+      nodes: 0,
+      stringBytes: 0,
+      ancestors: new WeakSet<object>(),
+    },
+  );
+  const serialized = JSON.stringify({
+    [SERIALIZED_CACHE_ENVELOPE_KEY]: SERIALIZED_CACHE_ENVELOPE_VERSION,
+    [CACHE_VALUE_FIELD]: encoded,
   });
+  if (utf8Encoder.encode(serialized).byteLength > MAX_CACHE_PAYLOAD_UTF8_BYTES) {
+    fail("serialized data is too large");
+  }
+  return serialized;
 }
 
 /** Validate untrusted store data and return a detached snapshot on success. */
 export function parseCachePayload(value: unknown): CachePayload | undefined {
   try {
-    return buildCachePayload(value);
+    return buildCachePayload(decodeSerializedCacheEnvelope(value));
   } catch {
     return undefined;
   }

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
+import { serializeCachePayload } from "./cache-payload.ts";
 import type { CachePayload, CacheStore } from "./types.ts";
 
 function makeResult(html: string): RenderResult {
@@ -79,6 +80,52 @@ describe("CacheCoordinator", () => {
     assertEquals(lookupHit.cacheStatus, "hit");
     assertEquals(typeof lookupHit.lookupDurationMs, "number");
 
+    await coordinator.destroy();
+  });
+
+  it("preserves Date frontmatter across the second-render cache hit", async () => {
+    let stored: CachePayload | undefined;
+    const serializedStore: CacheStore = {
+      get: () => Promise.resolve(stored),
+      set: (_key, value) => {
+        stored = JSON.parse(serializeCachePayload(value)) as CachePayload;
+        return Promise.resolve();
+      },
+      delete: () => {
+        stored = undefined;
+        return Promise.resolve();
+      },
+      clear: () => {
+        stored = undefined;
+        return Promise.resolve();
+      },
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({
+      store: serializedStore,
+      ttlMs: 10_000,
+      projectId: "date-project",
+    });
+    const result = makeResult("<html>dated</html>");
+    const publicationDate = new Date("2026-07-24T08:30:00.000Z");
+    result.frontmatter = {
+      date: publicationDate,
+      metadata: {
+        revisedAt: new Date("2026-07-25T09:45:00.000Z"),
+      },
+    };
+
+    await coordinator.persistResult(result, "dated");
+    const lookup = await coordinator.checkCache("dated");
+
+    assertEquals(lookup.cacheStatus, "hit");
+    assertEquals(lookup.cachedResult?.frontmatter, {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+      metadata: {
+        revisedAt: new Date("2026-07-25T09:45:00.000Z"),
+      },
+    });
+    assertEquals(lookup.cachedResult?.frontmatter.date === publicationDate, false);
     await coordinator.destroy();
   });
 

@@ -68,7 +68,7 @@ describe("render-result-assembly", () => {
     assertEquals(persisted.result, result);
   });
 
-  it("canonicalizes PageBundle frontmatter at the RenderResult boundary", () => {
+  it("snapshots PageBundle frontmatter at the RenderResult boundary", () => {
     const result = assembleRenderResult({
       slug: "/frontmatter",
       ssrResult: {
@@ -87,8 +87,9 @@ describe("render-result-assembly", () => {
     });
 
     assertEquals(result.frontmatter, {
-      tags: ["release"],
-      date: "2026-07-24T08:30:00.000Z",
+      tags: "release",
+      date: new Date("2026-07-24T08:30:00.000Z"),
+      nested: { unsafe: true },
     });
   });
 
