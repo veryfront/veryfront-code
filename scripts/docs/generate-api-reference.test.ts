@@ -179,6 +179,59 @@ describe("generate-api-reference", () => {
         "### AI & Automation",
       );
 
+      const middlewareReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/middleware.md`,
+      );
+      assertStringIncludes(
+        middlewareReference,
+        "### `middlewarePipeline.useFor(pattern, ...handlers)`",
+      );
+      assertStringIncludes(
+        middlewareReference,
+        "Unlike `execute`, which returns a 404",
+      );
+      assertEquals(
+        middlewareReference.includes("useFor(pattern, )"),
+        false,
+        "rest parameters must retain their names in generated method signatures",
+      );
+
+      const sandboxReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/sandbox.md`,
+      );
+      for (
+        const signature of [
+          "Sandbox.create(options)",
+          "Sandbox.get(id, options)",
+          "Sandbox.list(options)",
+          "Sandbox.createLazy(options)",
+        ]
+      ) {
+        assertStringIncludes(
+          sandboxReference,
+          `### \`${signature}\``,
+          `default-valued parameter name must be preserved for ${signature}`,
+        );
+      }
+      for (
+        const falseSignature of [
+          "Sandbox.create(arg)",
+          "Sandbox.get(id, arg)",
+          "Sandbox.list(arg)",
+          "Sandbox.createLazy(arg)",
+          "Sandbox.create()",
+          "Sandbox.get(id, )",
+          "Sandbox.list()",
+          "Sandbox.createLazy()",
+        ]
+      ) {
+        assertEquals(
+          sandboxReference.includes(`### \`${falseSignature}\``),
+          false,
+          `generated docs must not contain false signature ${falseSignature}`,
+        );
+      }
+
       for await (const entry of Deno.readDir(`${outputDir}/veryfront`)) {
         if (!entry.isFile || !entry.name.endsWith(".md")) continue;
         const markdown = await Deno.readTextFile(
@@ -191,6 +244,11 @@ describe("generate-api-reference", () => {
             cause: error,
           });
         }
+        assertEquals(
+          markdown.includes("{@link"),
+          false,
+          `${entry.name} must not expose raw JSDoc link syntax`,
+        );
         for (const line of markdown.split("\n")) {
           const description =
             line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
