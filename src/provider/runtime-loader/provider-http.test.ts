@@ -216,6 +216,67 @@ describe("provider-http", () => {
       });
     });
 
+    it("preserves structured Veryfront 402 problems for internal classification", async () => {
+      const responseBody = JSON.stringify({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        balance: 0,
+        required: 4,
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(JSON.stringify(err).includes("AI credit limit exceeded"), false);
+      assertEquals(err.message, "Provider request failed with status 402");
+      assertEquals(parseProviderError(err), {
+        code: "INSUFFICIENT_CREDITS",
+        message: "AI credit limit exceeded",
+        status: 402,
+      });
+    });
+
+    it("preserves structured Veryfront resource limit problems for classification", async () => {
+      const responseBody = JSON.stringify({
+        slug: "resource-limit-exceeded",
+        error: "Resource limit exceeded",
+        suggestion: "Reduce the request size and try again.",
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, responseBody),
+      );
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(parseProviderError(err), {
+        code: "RESOURCE_LIMIT_EXCEEDED",
+        message: "Reduce the request size and try again.",
+        status: 402,
+      });
+    });
+
+    it("does not preserve arbitrary provider 402 response details", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, {
+          error: {
+            message: "private provider payload <TOKEN>",
+          },
+        }),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(JSON.stringify(err).includes("<TOKEN>"), false);
+      assertEquals(parseProviderError(err), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    });
+
     it("does not preserve arbitrary provider api error messages", async () => {
       const err = await buildProviderError(
         "anthropic",
