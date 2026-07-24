@@ -175,6 +175,10 @@ describe("repository hardening", () => {
       "expected Homebrew updates to query tap PRs through the Pulls API",
     );
     assert(
+      updateHomebrew.includes("--method GET"),
+      "expected gh api fields to remain query parameters instead of switching the lookup to POST",
+    );
+    assert(
       updateHomebrew.includes('-f head="veryfront:${BRANCH}"'),
       "expected Homebrew tap PR lookup to be scoped to the pushed repository owner and branch",
     );

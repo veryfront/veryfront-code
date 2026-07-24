@@ -776,6 +776,7 @@ jobs:
 
             export GH_TOKEN="${HOMEBREW_TAP_TOKEN}"
             PR_NUMBER=$(gh api repos/veryfront/homebrew-tap/pulls \
+              --method GET \
               -f state=open \
               -f head="veryfront:${BRANCH}" \
               -f base=main \
