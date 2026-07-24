@@ -127,7 +127,7 @@ ring while active, followed by the text `Step {stepIndex + 1}`. Always renders.
 
 ## Context (what the parts read)
 
-`useStepIndicator()` — a **per-boundary context reader**; throws outside a `StepIndicator`:
+`useStepIndicator(step?)` — a **per-boundary reader**: pass the boundary explicitly at L3, or omit the arg to read the nearest `StepIndicator.Root` context (explicit arg › context › default):
 
 ```ts
 {
@@ -167,11 +167,24 @@ Style each step off `[data-state]` — no boolean props.
 
 ### Headless (L3)
 
-The hook is a per-boundary context reader, so a custom divider sits inside a `StepIndicator.Root`:
+Pass the boundary explicitly and the hook needs no `StepIndicator.Root` — the L3 eject runs standalone (mirrors `useToolCall(part?)` / `useReasoning(input?)`):
 
 ```tsx
-function MyStepDivider() {
-  const { stepIndex, state } = useStepIndicator(); // per-boundary; throws outside a StepIndicator
+function MyStepDivider({ stepIndex, state }: { stepIndex: number; state: StepState }) {
+  const step = useStepIndicator({ stepIndex, state }); // explicit — no Root required
+  return (
+    <div className="anything" data-state={step.state}>
+      Step {step.stepIndex + 1}
+    </div>
+  );
+}
+```
+
+Or omit the arg to read the surrounding `StepIndicator.Root` context (the L2 path):
+
+```tsx
+function ContextDivider() {
+  const { stepIndex, state } = useStepIndicator(); // argless — reads the nearest Root
   return (
     <div className="anything" data-state={state}>
       Step {stepIndex + 1}
@@ -180,7 +193,7 @@ function MyStepDivider() {
 }
 
 <StepIndicator.Root stepIndex={stepIndex}>
-  <MyStepDivider />
+  <ContextDivider />
 </StepIndicator.Root>;
 ```
 

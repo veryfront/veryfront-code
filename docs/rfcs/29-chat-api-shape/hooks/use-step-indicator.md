@@ -13,7 +13,7 @@ import { useStepIndicator } from "veryfront/chat";
 ## Signature
 
 ```ts
-function useStepIndicator(): UseStepIndicatorResult;
+function useStepIndicator(step?: { stepIndex: number; state: StepState }): UseStepIndicatorResult;
 
 type StepState = "pending" | "active" | "complete";
 
@@ -24,11 +24,15 @@ interface UseStepIndicatorResult {
 }
 ```
 
-> A **per-boundary context reader** — one hook call per step boundary, inside a `StepIndicator`. Steps derive from the message's `step-start` parts; `'active'` is the latest boundary while the message streams. One shape, shared with the [`StepIndicator`](../components/step-indicator.md) context section.
+> A **per-boundary reader** — one hook call per step boundary. Steps derive from the message's `step-start` parts; `'active'` is the latest boundary while the message streams. One shape, shared with the [`StepIndicator`](../components/step-indicator.md) context section.
 
 ## Options
 
-This hook takes no options; it reads the surrounding `StepIndicator` context (and throws outside one).
+Explicit at L3, context at L2 — the same **explicit arg › nearest context › default** precedence the other readers follow (mirrors `useToolCall(part?)` / `useSources(message?)` / `useReasoning(input?)`).
+
+| Option | Type | Default | Description |
+| ------ | ---- | ------- | ----------- |
+| `step` | `{ stepIndex: number; state: StepState }` | nearest `StepIndicator.Root` context | Pass the boundary explicitly so the L3 eject works **without** a `StepIndicator.Root`. Argless, the hook reads the surrounding `StepIndicator` context. |
 
 ## Returns
 
