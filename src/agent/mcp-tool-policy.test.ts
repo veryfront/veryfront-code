@@ -157,6 +157,7 @@ describe("agent/mcp-tool-policy", () => {
     const source = remoteSource([remoteTool("search_docs"), remoteTool("delete_docs")]);
     const wrapped = wrapRemoteToolSourceWithMcpPolicy(source, policy);
 
+    assertStrictEquals(wrapped.id, source.id);
     assertEquals((await wrapped.listTools()).map((tool) => tool.name), ["search_docs"]);
 
     policy.allow = ["delete_docs"];
@@ -170,12 +171,13 @@ describe("agent/mcp-tool-policy", () => {
     const wrapped = wrapRemoteToolSourceWithMcpPolicy(source, { deny: ["delete_docs"] }, {
       deniedDetail: (toolName, sourceId) => `Tool ${toolName} denied for ${sourceId}`,
     });
+    const detail = "Tool delete_docs denied for docs";
 
-    await assertRejects(
+    assertStrictEquals(wrapped.id, source.id);
+    const error = await assertRejects(
       () => wrapped.executeTool("delete_docs", { value: "blocked" }, { projectId: "project-1" }),
-      VeryfrontError,
-      "Tool delete_docs denied for docs",
     );
+    assertPermissionDenied(error, detail);
     assertEquals(calls, []);
 
     assertEquals(
