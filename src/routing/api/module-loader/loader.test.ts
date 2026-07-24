@@ -146,6 +146,45 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("resolves the built-in @/ alias through adapter when files are not local", async () => {
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "lib"), { recursive: true });
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "lib", "greeting.ts"),
+      `export const greeting = "virtual alias";`,
+    );
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "aliased.ts"),
+      [
+        `import { greeting } from "@/lib/greeting.ts";`,
+        `export function GET() { return new Response(greeting); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "pages", "api", "aliased.ts"),
+      adapter: virtualAdapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
   // Deno resolves the direct import itself and knows nothing about `@/`, so the
   // route only loads if the failed direct import falls back to bundling, where
   // the import map plugin resolves the alias.

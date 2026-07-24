@@ -168,9 +168,13 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
       enableDurableInvokeAgent: false,
       config: { mcpServers: [] },
       options: {
+        resolveProjectReference: ({ projectReference }) => {
+          assertEquals(projectReference, "target-project");
+          return Promise.resolve({ projectId: "target-project-id", slug: "target-project" });
+        },
         resolveChildAgentExecutionConfig: (childAgentId, projectId) => {
           assertEquals(childAgentId, "extraction-agent");
-          assertEquals(projectId, "target-project");
+          assertEquals(projectId, "target-project-id");
           return Promise.resolve({
             system: "Follow the extraction policy.",
             model: "configured-model",
@@ -181,7 +185,7 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
           });
         },
         buildGlobalTools: (context, childAgentId, childConfig) => {
-          assertEquals(context.projectId, "target-project");
+          assertEquals(context.projectId, "target-project-id");
           assertEquals(childAgentId, "extraction-agent");
           assertEquals(childConfig?.toolNames, ["lookup_job"]);
           return {
@@ -239,7 +243,7 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
       prompt: "Extract the application.",
       context: {},
       agent_id: "extraction-agent",
-      project_id: "target-project",
+      project_reference: "target-project",
     },
     "extraction-agent",
     { toolCallId: "tool-call-configured-child" },

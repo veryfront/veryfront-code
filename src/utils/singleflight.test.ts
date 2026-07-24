@@ -2,9 +2,22 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import { Singleflight } from "./singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "./singleflight.ts";
 
 describe("Singleflight", () => {
+  it("lets one waiter detach without cancelling shared work", async () => {
+    const controller = new AbortController();
+    const shared = Promise.withResolvers<number>();
+    const detached = waitForSharedPromise(shared.promise, controller.signal);
+    const follower = waitForSharedPromise(shared.promise);
+
+    controller.abort(new Error("caller stopped waiting"));
+    await assertRejects(() => detached, Error, "caller stopped waiting");
+
+    shared.resolve(42);
+    assertEquals(await follower, 42);
+  });
+
   it("should execute operation and return result", async () => {
     const sf = new Singleflight<number>();
     const result = await sf.do("key", () => Promise.resolve(42));

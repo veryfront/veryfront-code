@@ -2,6 +2,7 @@ import type { Middleware } from "./types.ts";
 import { getRequest } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
   type EnvironmentConfig,
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
@@ -9,13 +10,12 @@ import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 const logger = serverLogger.component("timeout");
 
-const DEFAULT_TIMEOUT_MS = 60_000;
 const TIMEOUT_SENTINEL = Symbol("timeout");
 const DEFAULT_EXCLUDE_PATHS = ["/healthz", "/readyz", "/_health"];
 
 /** Options accepted by timeout. */
 export interface TimeoutOptions {
-  /** Timeout in milliseconds (default: 60000) */
+  /** Timeout in milliseconds (default: 75000) */
   timeoutMs?: number;
 
   /** Custom message for timeout response */
@@ -50,7 +50,7 @@ function timeoutResponse(pathname: string, timeoutMs: number, message: string): 
  * returns a 504 Gateway Timeout response.
  */
 export function timeout(options?: TimeoutOptions): Middleware {
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const message = options?.message ?? "Request timeout";
   const exclude = options?.exclude ?? DEFAULT_EXCLUDE_PATHS;
 
@@ -93,7 +93,7 @@ export function timeout(options?: TimeoutOptions): Middleware {
  */
 export function getTimeoutFromEnv(env: EnvironmentConfig = getEnvironmentConfig()): number {
   const timeoutMs = env.requestTimeoutMs;
-  return timeoutMs && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS;
+  return timeoutMs && timeoutMs > 0 ? timeoutMs : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 /**

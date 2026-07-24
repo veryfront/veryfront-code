@@ -4,7 +4,9 @@
     "jsr:@std/assert@1.0.19": "1.0.19",
     "jsr:@std/assert@^1.0.17": "1.0.19",
     "jsr:@std/assert@^1.0.19": "1.0.19",
+    "jsr:@std/async@^1.1.0": "1.4.0",
     "jsr:@std/cli@1.0.28": "1.0.28",
+    "jsr:@std/data-structures@^1.0.10": "1.0.11",
     "jsr:@std/dotenv@0.225.6": "0.225.6",
     "jsr:@std/expect@1.0.18": "1.0.18",
     "jsr:@std/fmt@1.0.9": "1.0.9",
@@ -82,8 +84,14 @@
         "jsr:@std/internal"
       ]
     },
+    "@std/async@1.4.0": {
+      "integrity": "4d70b008634f571cff9b554090d628c76141c32613aae0ff283fd5fa23d0c379"
+    },
     "@std/cli@1.0.28": {
       "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
+    },
+    "@std/data-structures@1.0.11": {
+      "integrity": "53b98ed7efa61f107dfc14244bd2ec5557f7f7ee0bbaef6d449d7937facacb89"
     },
     "@std/dotenv@0.225.6": {
       "integrity": "1d6f9db72f565bd26790fa034c26e45ecb260b5245417be76c2279e5734c421b"
@@ -119,6 +127,8 @@
       "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
       "dependencies": [
         "jsr:@std/assert@^1.0.17",
+        "jsr:@std/async",
+        "jsr:@std/data-structures",
         "jsr:@std/internal"
       ]
     },

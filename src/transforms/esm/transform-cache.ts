@@ -1,7 +1,7 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
   type CacheBackend,
   CacheBackends,
@@ -510,24 +510,10 @@ export async function getOrComputeTransform(
       },
     );
 
-    if (!signal) return await flight;
-
     // A caller timeout must detach that request without cancelling the shared
     // singleflight leader: another concurrent render may still depend on the
     // same cold transform, and completing it warms the cache for later work.
-    return await new Promise<TransformCacheResult>((resolve, reject) => {
-      const onAbort = (): void => reject(signal.reason);
-      if (signal.aborted) {
-        // The shared flight can still fail after this caller detaches. Attach a
-        // rejection observer so an already-aborted sole caller does not leave
-        // the coordinating promise unhandled.
-        void flight.catch(() => {});
-        onAbort();
-        return;
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-      flight.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-    });
+    return await waitForSharedPromise(flight, signal);
   } finally {
     unsubscribe();
   }

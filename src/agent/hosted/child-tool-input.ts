@@ -19,8 +19,8 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
     context: v.record(v.string(), getJsonValueSchema()).default({}).describe(
       "Structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Defaults to {} when the delegation has no record or evidence payload.",
     ),
-    project_id: v.string().optional().describe(
-      "Override project context. Use after studio_open_project.",
+    project_reference: v.string().optional().describe(
+      "Override project context by UUID or slug. Use after studio_open_project.",
     ),
     tools: v.array(v.string()).optional().describe(
       "Tool subset for this fork. Omit = inherit all parent tools.",

@@ -291,8 +291,12 @@ export class RenderPipeline {
   ): Promise<LoadedModule[]> {
     const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
     if (timeoutControl) {
+      const completedMilestones = new Set<string>();
       moduleLoaderConfig.signal = timeoutControl.signal;
       moduleLoaderConfig.onProgress = ({ phase, filePath }) => {
+        const milestone = `${phase}:${filePath ?? ""}`;
+        if (completedMilestones.has(milestone)) return;
+        completedMilestones.add(milestone);
         const fileName = filePath?.split("/").pop();
         timeoutControl.mark(fileName ? `${phase}:${fileName}` : phase);
       };
@@ -424,8 +428,9 @@ export class RenderPipeline {
               (control) => this.loadModulesInParallel(modulesToLoad, options, control),
               {
                 idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
-                hardTimeoutMs: MODULE_LOAD_HARD_TIMEOUT_MS,
+                hardTimeoutMs: options.abortSignal ? undefined : MODULE_LOAD_HARD_TIMEOUT_MS,
                 label: moduleLoadLabel(slug, options.url?.pathname ?? ""),
+                signal: options.abortSignal,
               },
             ),
           { "render.module_count": modulesToLoad.length },
