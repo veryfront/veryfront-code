@@ -592,7 +592,7 @@ export const getRouterScript = () => `
     // ============================================
     // SPA navigation handler
     // ============================================
-    async function navigateSPA(href, pushState = true, restoreScroll = false) {
+    async function navigateSPA(href, historyMode = 'push', restoreScroll = false) {
       currentAbortController?.abort();
 
       if (isNavigating) return;
@@ -632,8 +632,10 @@ export const getRouterScript = () => `
           return;
         }
 
-        if (pushState) {
+        if (historyMode === 'push') {
           window.history.pushState({ pageData, scrollY: 0 }, '', href);
+        } else if (historyMode === 'replace') {
+          window.history.replaceState({ pageData, scrollY: 0 }, '', href);
         }
 
         // Update the shared router snapshot BEFORE rendering. RouterProvider
@@ -666,7 +668,11 @@ export const getRouterScript = () => `
 
         hideNavigationProgress();
         perfEnd('nav:total:' + href);
-        emitRouteTiming('total', targetPath, navigationStartedAt, { href, pushState, restoreScroll });
+        emitRouteTiming('total', targetPath, navigationStartedAt, {
+          href,
+          historyMode,
+          restoreScroll
+        });
         log('SPA navigation complete');
       } catch (error) {
         hideNavigationProgress();
@@ -1076,10 +1082,10 @@ export const getRouterScript = () => `
       domain: window.location.origin,
       path: window.location.pathname,
       push: (path) => {
-        void navigateSPA(path, true);
+        void navigateSPA(path, 'push');
       },
       replace: (path) => {
-        void navigateSPA(path, false);
+        void navigateSPA(path, 'replace');
       },
       back: () => {
         window.history.back();
@@ -1105,7 +1111,7 @@ export const getRouterScript = () => `
       })(),
       isPreview: false,
       isMounted: true,
-      navigate: (path) => navigateSPA(path, true),
+      navigate: (path) => navigateSPA(path, 'push'),
       reload: () => window.location.reload()
     };
 
@@ -1117,7 +1123,8 @@ export const getRouterScript = () => `
     // to a full-page location.assign (finding #7: push() full-reloads).
     getNavigationStore().setNavigator((href, options) => {
       const mode = options && options.history;
-      return navigateSPA(href, mode !== 'replace' && mode !== 'none');
+      const historyMode = mode === 'replace' ? 'replace' : mode === 'none' ? 'none' : 'push';
+      return navigateSPA(href, historyMode);
     });
 
     // ============================================
@@ -1130,7 +1137,7 @@ export const getRouterScript = () => `
       saveScrollPosition(currentPath);
 
       if (!e.state?.pageData) {
-        await navigateSPA(path, false, true);
+        await navigateSPA(path, 'none', true);
         return;
       }
 
@@ -1186,7 +1193,7 @@ export const getRouterScript = () => `
 
       e.preventDefault();
       cancelScheduledPrefetch();
-      void navigateSPA(href, true);
+      void navigateSPA(href, 'push');
     });
 
     document.addEventListener(

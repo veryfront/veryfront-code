@@ -33,8 +33,13 @@ interface FakeStore {
 
 interface RuntimeHandle {
   router: RuntimeRouter;
-  navigateSPA: (href: string, pushState?: boolean, restoreScroll?: boolean) => Promise<void>;
+  navigateSPA: (
+    href: string,
+    historyMode?: "push" | "replace" | "none",
+    restoreScroll?: boolean,
+  ) => Promise<void>;
   store: FakeStore;
+  historyCalls: Array<{ method: "push" | "replace"; href: string }>;
   win: { location: RuntimeLocation; __veryfrontHydrationComplete?: () => void };
   setNextPageData: (data: unknown) => void;
 }
@@ -75,6 +80,7 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
     addEventListener,
   };
 
+  const historyCalls: RuntimeHandle["historyCalls"] = [];
   const win = {
     location: {
       origin: "https://veryfront.test",
@@ -84,7 +90,16 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
         return "https://veryfront.test" + this.pathname + this.search;
       },
     } as RuntimeLocation,
-    history: { pushState() {}, replaceState() {}, back() {}, forward() {} },
+    history: {
+      pushState(_state: unknown, _unused: string, href: string) {
+        historyCalls.push({ method: "push", href });
+      },
+      replaceState(_state: unknown, _unused: string, href: string) {
+        historyCalls.push({ method: "replace", href });
+      },
+      back() {},
+      forward() {},
+    },
     addEventListener,
     dispatchEvent() {
       return true;
@@ -159,6 +174,7 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
     router: handle.router,
     navigateSPA: handle.navigateSPA,
     store,
+    historyCalls,
     win,
     setNextPageData: (data: unknown) => {
       nextPageData = data;
@@ -199,5 +215,6 @@ describe("hydration-script-builder/templates/router — push SPA navigator (find
 
     assertEquals(runtime.store.assignFallbackCount, 0);
     assertEquals(runtime.router.pathname, "/replaced");
+    assertEquals(runtime.historyCalls, [{ method: "replace", href: "/replaced" }]);
   });
 });

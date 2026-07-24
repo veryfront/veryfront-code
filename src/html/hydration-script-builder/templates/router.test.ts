@@ -144,7 +144,7 @@ describe("hydration-script-builder/templates/router", () => {
     it("should cancel hover prefetch before click navigation", () => {
       const result = getRouterScript();
       assertIncludes(result, "function cancelScheduledPrefetch()");
-      assertIncludes(result, "cancelScheduledPrefetch();\n      void navigateSPA(href, true);");
+      assertIncludes(result, "cancelScheduledPrefetch();\n      void navigateSPA(href, 'push');");
     });
 
     it("should skip page-data prefetches while navigation is active", () => {
@@ -233,7 +233,7 @@ describe("hydration-script-builder/templates/router", () => {
     });
 
     it("should define navigateSPA function", () => {
-      assertIncludes(getRouterScript(), "async function navigateSPA(href, pushState");
+      assertIncludes(getRouterScript(), "async function navigateSPA(href, historyMode");
     });
 
     it("should define renderPageFromData function", () => {
