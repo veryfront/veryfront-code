@@ -7,6 +7,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
+import { getEffectiveRequestHost } from "../utils/request-host.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
@@ -217,8 +218,11 @@ export async function resolveProjectRuntimeContext(
     })
   );
 
-  const host = input.req.headers.get("x-forwarded-host") ||
-    input.req.headers.get("host") || input.url.host;
+  const host = getEffectiveRequestHost(
+    input.req,
+    input.url,
+    input.proxyTrust.proxyTrusted,
+  );
   const envRes = resolveEnvironment({
     proxyEnv: projectRes.proxyEnv,
     reqCtxMode: reqCtx.mode,
