@@ -3,7 +3,7 @@
  * Type definitions for response construction
  */
 
-export type { CORSConfig } from "../cors/index.ts";
+export type { CORSConfig, SyncCORSConfig } from "../cors/index.ts";
 
 import type { SecurityConfig } from "#veryfront/types";
 export type { SecurityConfig } from "#veryfront/types";

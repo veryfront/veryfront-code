@@ -2,20 +2,22 @@ import type { Context, MiddlewareHandler } from "#veryfront/middleware/core/inde
 import type { CORSConfig } from "./types.ts";
 import { handleCORSPreflight, isPreflightRequest } from "./preflight.ts";
 import { applyCORSHeaders } from "./headers.ts";
-import { validateCORSConfig } from "./validators.ts";
+import { normalizeCORSConfig } from "./validators.ts";
 import { createError, toError } from "#veryfront/errors";
+import { getDefaultCORSMethods } from "./constants.ts";
 
 /** Create CORS middleware. */
 export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
-  const validation = validateCORSConfig(config);
-  if (!validation.valid) {
+  const normalized = normalizeCORSConfig(config);
+  if (!normalized.valid) {
     throw toError(
       createError({
         type: "config",
-        message: `[CORS] Invalid configuration: ${validation.error}`,
+        message: `[CORS] Invalid configuration: ${normalized.error}`,
       }),
     );
   }
+  const corsConfig = normalized.config;
 
   return async (
     c: Context,
@@ -24,13 +26,13 @@ export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
     const request = c.req;
 
     if (isPreflightRequest(request)) {
-      return handleCORSPreflight({ request, config });
+      return handleCORSPreflight({ request, config: corsConfig });
     }
 
     const response = await next();
     if (!response) return undefined;
 
-    return (await applyCORSHeaders({ request, response, config })) ?? response;
+    return (await applyCORSHeaders({ request, response, config: corsConfig })) ?? response;
   };
 }
 
@@ -38,6 +40,6 @@ export function corsSimple(origin: string = "*"): MiddlewareHandler {
   return cors({
     origin,
     credentials: false,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    methods: [...getDefaultCORSMethods()],
   });
 }

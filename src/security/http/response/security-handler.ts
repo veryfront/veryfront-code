@@ -1,7 +1,12 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "#veryfront/observability";
 import { HOSTED_STUDIO_ORIGINS } from "#veryfront/security/http/studio-origin-policy.ts";
+import { isCorsPolicyResponseHeaderName } from "#veryfront/utils/cors-policy-limits.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import type { SecurityConfig } from "./types.ts";
+
+const logger = serverLogger.component("security-headers");
+const warnedReservedCorsHeaderConfigs = new WeakSet<object>();
 
 /** HSTS max-age default: 1 year in seconds */
 const HSTS_MAX_AGE_SECONDS = 31_536_000;
@@ -214,9 +219,23 @@ export function applySecurityHeaders(
 
   const extraHeaders = config?.headers;
   if (extraHeaders) {
+    let ignoredCorsPolicyHeader = false;
     for (const [key, value] of Object.entries(extraHeaders)) {
       if (value === undefined) continue;
+      if (isCorsPolicyResponseHeaderName(key)) {
+        ignoredCorsPolicyHeader = true;
+        continue;
+      }
       headers.set(key, value);
+    }
+    if (
+      ignoredCorsPolicyHeader &&
+      !warnedReservedCorsHeaderConfigs.has(extraHeaders)
+    ) {
+      warnedReservedCorsHeaderConfigs.add(extraHeaders);
+      logger.warn(
+        "Ignored reserved Access-Control-* entries in security.headers; configure security.cors instead",
+      );
     }
   }
 
