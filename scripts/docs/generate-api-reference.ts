@@ -815,7 +815,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/server": "Server runtime helpers.",
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
-  "veryfront/ui": "UI primitives - the base layer for veryfront/chat components.",
+  "veryfront/ui":
+    "UI primitives - the base layer for veryfront/chat components.",
   "veryfront/utils": "Runtime utilities.",
   "veryfront/workflow": "Workflows.",
 };
@@ -985,6 +986,17 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 
 function normalizePublicDocText(text: string): string {
   return text
+    .replace(
+      /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
+      (_match, rawTarget: string) => {
+        const target = rawTarget.trim();
+        const pipeIndex = target.indexOf("|");
+        const display = pipeIndex >= 0
+          ? target.slice(pipeIndex + 1).trim()
+          : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
+        return `\`${display.replace(/`/g, "\\`")}\``;
+      },
+    )
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
@@ -2070,10 +2082,7 @@ function oneLineDoc(doc: string): string {
     lines.push(line);
   }
 
-  return lines.join(" ")
-    .replace(/[\u2014\u2013]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizePublicDocText(lines.join(" "));
 }
 
 function renderPropertyTable(

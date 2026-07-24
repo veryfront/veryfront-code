@@ -46,6 +46,9 @@ describe("generate-api-reference", () => {
       const clientReference = await Deno.readTextFile(
         `${outputDir}/veryfront/index.client.md`,
       );
+      const uiReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/ui.md`,
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
@@ -57,6 +60,10 @@ describe("generate-api-reference", () => {
         clientReference.includes("#veryfront/"),
         false,
         "generated client reference must not expose internal import specifiers",
+      );
+      assertStringIncludes(
+        uiReference,
+        "| `AppShellProps` | Props accepted by `AppShell`. |",
       );
       assertStringIncludes(
         routerReference,
@@ -176,6 +183,11 @@ describe("generate-api-reference", () => {
           markdown.includes("#L0"),
           false,
           `${entry.name} must not contain invalid source line anchors`,
+        );
+        assertEquals(
+          markdown.includes("{@"),
+          false,
+          `${entry.name} must not contain raw inline JSDoc tags`,
         );
       }
     } finally {
