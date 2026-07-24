@@ -622,6 +622,16 @@ export const getRouterScript = () => `
 
         if (signal.aborted) return;
 
+        // getServerData redirect(): the page-data endpoint encodes it as a 200
+        // { redirect: { destination } } payload. Follow it with a document
+        // navigation to the target (the same net effect as the full-page 302),
+        // instead of trying to render a page that does not exist here.
+        if (pageData && pageData.redirect && typeof pageData.redirect.destination === 'string') {
+          log('SPA navigation redirect -> ' + pageData.redirect.destination);
+          window.location.href = pageData.redirect.destination;
+          return;
+        }
+
         if (pushState) {
           window.history.pushState({ pageData, scrollY: 0 }, '', href);
         }
