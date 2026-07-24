@@ -1,8 +1,6 @@
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
-import {
-  hasCompletedStepSignal,
-  isLateProviderBodyReadError,
-} from "../streaming/stream-outcome.ts";
+import { hasCompletedStepSignal, resolveStreamOutcome } from "../streaming/stream-outcome.ts";
+import type { StreamSnapshot } from "../streaming/lifecycle/types.ts";
 
 /** Error shape for hosted terminal. */
 export interface HostedTerminalError {
@@ -85,15 +83,40 @@ async function cleanupAfterFinalization(cleanup: () => Promise<void> | void): Pr
   await cleanup();
 }
 
-function hasFinalStepCompletionSignal(finalStep: unknown): boolean {
+/** Read a completed finish reason from a hosted final step, or null. */
+export function readHostedFinishReason(
+  finalStep: unknown,
+): StreamSnapshot["finishReason"] {
   if (
-    typeof finalStep !== "object" || finalStep === null || !("finishReason" in finalStep) ||
-    typeof finalStep.finishReason !== "string"
+    typeof finalStep !== "object" || finalStep === null ||
+    !("finishReason" in finalStep) || typeof finalStep.finishReason !== "string"
   ) {
-    return false;
+    return null;
   }
+  return hasCompletedStepSignal(finalStep.finishReason)
+    ? finalStep.finishReason as StreamSnapshot["finishReason"]
+    : null;
+}
 
-  return hasCompletedStepSignal(finalStep.finishReason);
+function createHostedCompatibilitySnapshot(input: {
+  hasOutput: boolean;
+  finishReason: StreamSnapshot["finishReason"];
+}): StreamSnapshot {
+  const phase = input.finishReason === "tool-calls"
+    ? "tool_handoff" as const
+    : input.finishReason === null
+    ? "streaming" as const
+    : "completed" as const;
+  return {
+    phase,
+    accumulatedText: input.hasOutput ? "<COMPATIBILITY_OUTPUT>" : "",
+    reasoning: [],
+    tools: [],
+    finishReason: input.finishReason,
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    hasStreamOutput: input.hasOutput,
+    hasSemanticProgress: input.hasOutput || input.finishReason !== null,
+  };
 }
 
 function shouldFailStreamError(input: {
@@ -106,15 +129,15 @@ function shouldFailStreamError(input: {
     return false;
   }
 
-  if (
-    input.hasOutput &&
-    hasFinalStepCompletionSignal(input.finalStep) &&
-    isLateProviderBodyReadError(input.streamError)
-  ) {
-    return false;
-  }
-
-  return true;
+  const streamOutcome = resolveStreamOutcome({
+    snapshot: createHostedCompatibilitySnapshot({
+      hasOutput: input.hasOutput,
+      finishReason: readHostedFinishReason(input.finalStep),
+    }),
+    elapsedMs: 0,
+    thrownError: input.streamError,
+  });
+  return streamOutcome.status === "failed";
 }
 
 /** Response payload for finalize hosted. */

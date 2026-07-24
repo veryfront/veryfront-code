@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -2093,5 +2093,39 @@ describe("active mode heartbeat regression", () => {
       ],
     );
     assertEquals(nextCalls, 2);
+  });
+});
+
+describe("active mode delivery failure precedence", () => {
+  it("keeps a delivery failure primary over the consumer_stopped outcome", async () => {
+    const deliveryError = new Error("delivery sentinel");
+    const throwingController = {
+      enqueue() {
+        throw deliveryError;
+      },
+    } as unknown as ReadableStreamDefaultController;
+    const state = createStreamState();
+    let caught: unknown;
+    try {
+      await processStream(
+        createMockResult([
+          { type: "text-delta", text: "hello" },
+          { type: "finish", finishReason: "stop", totalUsage: null },
+        ]),
+        state,
+        throwingController,
+        new TextEncoder(),
+        "text-1",
+        { streamLifecycleMode: "active" },
+        undefined,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    assertStrictEquals(caught, deliveryError);
+    assertEquals(state.streamOutcome?.status, "cancelled");
+    if (state.streamOutcome?.status === "cancelled") {
+      assertEquals(state.streamOutcome.source, "consumer_stopped");
+    }
   });
 });

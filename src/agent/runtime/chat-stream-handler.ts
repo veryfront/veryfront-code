@@ -418,18 +418,33 @@ async function processActiveStream(
     cancellations: abortSignal ? [{ source: "runtime", signal: abortSignal }] : [],
   });
   const live = createStreamLifecycleLiveAdapter({ textPartId });
-  for await (const frame of run.frames) {
-    if (frame.class === "semantic" && frame.event.type === "text_content") {
-      callbacks?.onChunk?.(frame.event.delta);
+  let deliveryError: unknown;
+  let streamOutcome!: StreamOutcome;
+  try {
+    for await (const frame of run.frames) {
+      if (frame.class === "semantic" && frame.event.type === "text_content") {
+        callbacks?.onChunk?.(frame.event.delta);
+      }
+      if (frame.class === "semantic" && frame.event.type === "usage") {
+        callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
+      }
+      for (const event of live.encode(frame)) {
+        sendSSE(controller, encoder, event);
+      }
     }
-    if (frame.class === "semantic" && frame.event.type === "usage") {
-      callbacks?.onUsage?.(toLegacyRuntimeUsage(frame.event.usage));
+  } catch (error) {
+    // A delivery failure is the primary run-finalization error. The
+    // consumer_stopped Stream Outcome recorded below is secondary cleanup
+    // evidence and must never replace it.
+    deliveryError = error;
+    throw error;
+  } finally {
+    streamOutcome = await run.outcome;
+    state.streamOutcome = streamOutcome;
+    if (deliveryError === undefined) {
+      applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
     }
-    for (const event of live.encode(frame)) sendSSE(controller, encoder, event);
   }
-  const streamOutcome = await run.outcome;
-  applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
-  state.streamOutcome = streamOutcome;
   if (streamOutcome.status === "failed") {
     throw new StreamLifecycleFailure(streamOutcome.error);
   }

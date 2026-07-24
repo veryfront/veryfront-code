@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { finalizeHostedDetached, finalizeHostedResponse } from "./stream-finalization.ts";
+import {
+  finalizeHostedDetached,
+  finalizeHostedResponse,
+  readHostedFinishReason,
+} from "./stream-finalization.ts";
 
 describe("agent/hosted-stream-finalization", () => {
   it("finalizes hosted responses with fallback chunks and resolved terminal state", async () => {
@@ -434,5 +438,25 @@ describe("agent/hosted-stream-finalization", () => {
     );
 
     assertEquals(calls, ["flush", "dispatch:completed", "cleanup"]);
+  });
+});
+
+describe("readHostedFinishReason", () => {
+  it("returns completed finish reasons and null for everything else", () => {
+    assertEquals(readHostedFinishReason({ finishReason: "stop" }), "stop");
+    assertEquals(readHostedFinishReason({ finishReason: "length" }), "length");
+    assertEquals(
+      readHostedFinishReason({ finishReason: "content-filter" }),
+      "content-filter",
+    );
+    assertEquals(readHostedFinishReason({ finishReason: "other" }), "other");
+    assertEquals(
+      readHostedFinishReason({ finishReason: "tool-calls" }),
+      "tool-calls",
+    );
+    assertEquals(readHostedFinishReason({ finishReason: "unknown" }), null);
+    assertEquals(readHostedFinishReason({}), null);
+    assertEquals(readHostedFinishReason(null), null);
+    assertEquals(readHostedFinishReason("stop"), null);
   });
 });

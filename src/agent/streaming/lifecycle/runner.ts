@@ -1,7 +1,4 @@
-import {
-  hasCompletedStepSignal,
-  isLateProviderBodyReadError,
-} from "#veryfront/agent/streaming/stream-outcome.ts";
+import { resolveStreamOutcome } from "#veryfront/agent/streaming/stream-outcome.ts";
 import { createCancellationCoordinator } from "./cancellation.ts";
 import {
   createStreamDeadlineController,
@@ -24,14 +21,11 @@ import {
 } from "./reducer.ts";
 import type {
   StreamCancellationSource,
-  StreamCommittedToolCall,
-  StreamLifecycleError,
   StreamLifecycleFrame,
   StreamLifecycleInput,
   StreamLifecycleRun,
   StreamOutcome,
   StreamProviderError,
-  StreamSnapshot,
   StreamTelemetryEvent,
 } from "./types.ts";
 
@@ -52,10 +46,13 @@ export function runStreamLifecycle<TProviderPart>(
 
   const settleCancelled = (source: StreamCancellationSource) => {
     if (outcome.settled) return;
+    const snapshot = reducer.snapshot;
     reducer = terminateReducer(reducer, "cancelled");
-    outcome.settle(
-      createCancelledOutcome(reducer.snapshot, source, policy.clock.nowMs()),
-    );
+    outcome.settle(resolveStreamOutcome({
+      snapshot,
+      elapsedMs: policy.clock.nowMs(),
+      cancellation: source,
+    }));
   };
   const cleanup = () => {
     if (cleanupRequested) return;
@@ -84,11 +81,16 @@ export function runStreamLifecycle<TProviderPart>(
     });
     const settleAttemptTimeout = () => {
       if (outcome.settled) return;
-      const failed = createFailedOutcome(reducer.snapshot, policy.clock.nowMs(), {
-        code: "STREAM_ATTEMPT_TIMEOUT",
-        source: "runtime",
-        retryable: true,
-        publicMessage: "Stream attempt exceeded its time limit",
+      const failed = resolveStreamOutcome({
+        snapshot: reducer.snapshot,
+        elapsedMs: policy.clock.nowMs(),
+        lifecycleError: {
+          code: "STREAM_ATTEMPT_TIMEOUT",
+          phase: reducer.snapshot.phase,
+          source: "runtime",
+          retryable: true,
+          publicMessage: "Stream attempt exceeded its time limit",
+        },
       });
       reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
       outcome.settle(failed);
@@ -152,18 +154,19 @@ export function runStreamLifecycle<TProviderPart>(
             if (resolved.kind === "handoff") {
               settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
             } else {
-              const failed = createFailedOutcome(
-                reducer.snapshot,
-                policy.clock.nowMs(),
-                {
+              const failed = resolveStreamOutcome({
+                snapshot: reducer.snapshot,
+                elapsedMs: policy.clock.nowMs(),
+                lifecycleError: {
                   code: resolved.code,
+                  phase: reducer.snapshot.phase,
                   source: "tool",
                   retryable: false,
                   publicMessage: resolved.code === "TOOL_INPUT_TIMEOUT"
                     ? "Tool input did not arrive before the deadline"
                     : "Tool input ended before a valid object was complete",
                 },
-              );
+              });
               reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
               outcome.settle(failed);
             }
@@ -172,18 +175,19 @@ export function runStreamLifecycle<TProviderPart>(
             const code = raced.deadline === "first_progress"
               ? "FIRST_PROGRESS_TIMEOUT" as const
               : "SEMANTIC_IDLE_TIMEOUT" as const;
-            const failed = createFailedOutcome(
-              reducer.snapshot,
-              policy.clock.nowMs(),
-              {
+            const failed = resolveStreamOutcome({
+              snapshot: reducer.snapshot,
+              elapsedMs: policy.clock.nowMs(),
+              lifecycleError: {
                 code,
+                phase: reducer.snapshot.phase,
                 source: "provider",
                 retryable: true,
                 publicMessage: code === "FIRST_PROGRESS_TIMEOUT"
                   ? "Provider did not produce semantic progress"
                   : "Provider stopped producing semantic progress",
               },
-            );
+            });
             reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
             outcome.settle(failed);
           }
@@ -212,7 +216,14 @@ export function runStreamLifecycle<TProviderPart>(
         pendingRead = null;
         const next = raced.result;
         if (next.done) {
-          settleProviderEnd(outcome, reducer, policy.clock.nowMs());
+          if (reducer.terminal) {
+            settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
+          } else {
+            outcome.settle(resolveStreamOutcome({
+              snapshot: reducer.snapshot,
+              elapsedMs: policy.clock.nowMs(),
+            }));
+          }
           return;
         }
         for (const signal of input.provider.decode(next.value, reducer.snapshot)) {
@@ -330,57 +341,6 @@ function terminateReducer(
   };
 }
 
-function createCancelledOutcome(
-  snapshot: StreamSnapshot,
-  source: StreamCancellationSource,
-  elapsedMs: number,
-): StreamOutcome {
-  const terminal = { ...snapshot, phase: "cancelled" as const };
-  return {
-    status: "cancelled",
-    source,
-    publicMessage: "Stream was cancelled",
-    snapshot: terminal,
-    usage: terminal.usage,
-    elapsedMs,
-    phase: terminal.phase,
-  };
-}
-
-function createFailedOutcome(
-  snapshot: StreamSnapshot,
-  elapsedMs: number,
-  error: Omit<StreamLifecycleError, "phase">,
-): StreamOutcome {
-  const failedFrom = snapshot.phase;
-  const terminal = { ...snapshot, phase: "failed" as const };
-  return {
-    status: "failed",
-    snapshot: terminal,
-    usage: terminal.usage,
-    elapsedMs,
-    phase: terminal.phase,
-    error: { ...error, phase: failedFrom },
-  };
-}
-
-function settleProviderEnd(
-  outcome: OutcomeDeferred,
-  reducer: StreamReducerState,
-  elapsedMs: number,
-): void {
-  if (reducer.terminal) {
-    settleReducerTerminal(outcome, reducer, elapsedMs);
-    return;
-  }
-  outcome.settle(createFailedOutcome(reducer.snapshot, elapsedMs, {
-    code: "PROVIDER_STREAM_ERROR",
-    source: "provider",
-    retryable: true,
-    publicMessage: "Provider stream ended before completion",
-  }));
-}
-
 function settleProviderFailure(
   outcome: OutcomeDeferred,
   reducer: StreamReducerState,
@@ -388,40 +348,12 @@ function settleProviderFailure(
   providerError: StreamProviderError,
   elapsedMs: number,
 ): void {
-  if (
-    thrownError !== undefined &&
-    reducer.snapshot.hasStreamOutput &&
-    hasCompletedStepSignal(reducer.snapshot.finishReason) &&
-    isLateProviderBodyReadError(thrownError)
-  ) {
-    settleReducerTerminal(outcome, reducer, elapsedMs);
-    return;
-  }
-  outcome.settle(createFailedOutcome(reducer.snapshot, elapsedMs, {
-    code: providerError.terminal ? "PROVIDER_TERMINAL_ERROR" : "PROVIDER_STREAM_ERROR",
-    source: "provider",
-    retryable: providerError.retryable,
-    publicMessage: providerError.publicMessage,
-    ...(providerError.code ? { providerCode: providerError.code } : {}),
-    ...(providerError.diagnosticId ? { diagnosticId: providerError.diagnosticId } : {}),
+  outcome.settle(resolveStreamOutcome({
+    snapshot: reducer.snapshot,
+    elapsedMs,
+    ...(thrownError !== undefined ? { thrownError } : {}),
+    providerError,
   }));
-}
-
-function collectCommittedLocalToolCalls(
-  snapshot: Readonly<StreamSnapshot>,
-): StreamCommittedToolCall[] {
-  return snapshot.tools
-    .filter((tool) => tool.phase === "input_ready" && tool.providerExecuted !== true)
-    .map((tool) => ({
-      id: tool.id,
-      name: tool.name,
-      arguments: tool.inputText,
-      inputDeltas: [...tool.inputDeltas],
-      inputAnnounced: true,
-      inputAvailable: true,
-      providerExecuted: false,
-      ...(tool.dynamic ? { dynamic: true } : {}),
-    }));
 }
 
 function settleReducerTerminal(
@@ -429,50 +361,10 @@ function settleReducerTerminal(
   reducer: StreamReducerState,
   elapsedMs: number,
 ): void {
-  const snapshot = reducer.snapshot;
-  if (snapshot.phase === "failed" && reducer.terminalError) {
-    outcome.settle({
-      status: "failed",
-      error: reducer.terminalError,
-      snapshot,
-      usage: snapshot.usage,
-      elapsedMs,
-      phase: snapshot.phase,
-    });
-    return;
-  }
-  if (snapshot.phase === "tool_handoff") {
-    outcome.settle({
-      status: "tool_handoff",
-      finishReason: "tool-calls",
-      toolCalls: collectCommittedLocalToolCalls(snapshot),
-      snapshot,
-      usage: snapshot.usage,
-      elapsedMs,
-      phase: snapshot.phase,
-    });
-    return;
-  }
-  if (
-    snapshot.phase === "completed" &&
-    snapshot.finishReason !== null &&
-    snapshot.finishReason !== "tool-calls"
-  ) {
-    outcome.settle({
-      status: "completed",
-      finishReason: snapshot.finishReason,
-      snapshot,
-      usage: snapshot.usage,
-      elapsedMs,
-      phase: snapshot.phase,
-    });
-    return;
-  }
-  outcome.settle(createFailedOutcome(snapshot, elapsedMs, {
-    code: "PROTOCOL_VIOLATION",
-    source: "runtime",
-    retryable: false,
-    publicMessage: "Provider stream ended in an invalid lifecycle state",
+  outcome.settle(resolveStreamOutcome({
+    snapshot: reducer.snapshot,
+    elapsedMs,
+    ...(reducer.terminalError ? { lifecycleError: reducer.terminalError } : {}),
   }));
 }
 
