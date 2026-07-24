@@ -3,6 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NotFoundHandler } from "./not-found.ts";
 import { ErrorPages } from "#veryfront/server/utils/error-html.ts";
+import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 
 describe("server/handlers/response/not-found", () => {
   describe("NotFoundHandler metadata", () => {
@@ -38,12 +39,20 @@ describe("server/handlers/response/not-found", () => {
       assertEquals(result.response?.status, 404);
     });
 
-    it("renders the SAME 404 page as the SSR miss path (ErrorPages.notFound)", async () => {
+    it("renders the SAME 404 page as the SSR miss path (nonce-injected ErrorPages)", async () => {
       // The fallback handler and the SSR miss path must produce an identical 404,
       // so a fallthrough like /_veryfront/<missing> looks the same as a normal
       // page miss — not the old divergent card design.
       const body = await getBody("http://localhost/some-path");
-      assertEquals(body, ErrorPages.notFound("/some-path"));
+
+      // The inline <style>/<script> must carry the CSP nonce (like the SSR
+      // response builder), otherwise a strict nonce-based CSP would block the
+      // styling and the page would render unstyled.
+      const nonce = body.match(/<style nonce="([^"]+)"/)?.[1] ?? "";
+      assertEquals(nonce.length > 0, true);
+      // ...and the body is exactly the canonical ErrorPages 404 with that nonce.
+      assertEquals(body, addNonceToHtmlTags(ErrorPages.notFound("/some-path"), nonce));
+
       assertEquals(body.includes("Page Not Found"), false);
       assertEquals(body.includes("Go Home"), false);
     });
