@@ -105,10 +105,9 @@ export class GitHubApiClient {
         return response.json();
       },
       {
-        // This client's config.retry.maxRetries has always meant TOTAL attempts
-        // (the old loop ran `attempt = 1..maxRetries`), unlike the veryfront-api
-        // clients where maxRetries means retries after the first try.
-        maxAttempts: this.config.retry.maxRetries,
+        // Positive values retain this client's historical TOTAL-attempts
+        // meaning. Zero disables retries but still performs the initial request.
+        maxAttempts: Math.max(1, this.config.retry.maxRetries),
         initialDelay: this.config.retry.initialDelay,
         maxDelay: this.config.retry.maxDelay,
         shouldRetry: (error) => {
