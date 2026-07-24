@@ -185,6 +185,26 @@ describe("import edit core", () => {
 });
 
 describe("package resolution core", () => {
+  const windowsLikePathHelper = {
+    SEPARATOR: "\\",
+    resolve(packagePath: string, entryPoint: string): string {
+      const parts = [
+        ...packagePath.replaceAll("\\", "/").split("/"),
+        ...entryPoint.replaceAll("\\", "/").split("/"),
+      ];
+      const resolved: string[] = [];
+      for (const part of parts) {
+        if (!part || part === ".") continue;
+        if (part === "..") {
+          resolved.pop();
+          continue;
+        }
+        resolved.push(part);
+      }
+      return resolved.join("/");
+    },
+  };
+
   it("splits scoped and unscoped package subpaths", () => {
     assertEquals(splitPackageSubpath("react"), {
       name: "react",
@@ -255,6 +275,33 @@ describe("package resolution core", () => {
     );
     assertEquals(
       resolveContainedPackagePath("/app/node_modules/pkg", "./sub/../../../secret.js"),
+      null,
+    );
+  });
+
+  it("contains Windows-like normalized child paths without allowing escapes", () => {
+    assertEquals(
+      resolveContainedPackagePath(
+        "C:/app/node_modules/pkg",
+        "./sub.js",
+        windowsLikePathHelper,
+      ),
+      "C:/app/node_modules/pkg/sub.js",
+    );
+    assertEquals(
+      resolveContainedPackagePath(
+        "C:/app/node_modules/pkg",
+        "../pkg-evil/index.js",
+        windowsLikePathHelper,
+      ),
+      null,
+    );
+    assertEquals(
+      resolveContainedPackagePath(
+        "C:/app/node_modules/pkg",
+        "./sub/../../../secret.js",
+        windowsLikePathHelper,
+      ),
       null,
     );
   });

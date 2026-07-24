@@ -1,5 +1,13 @@
 import * as pathHelper from "#veryfront/compat/path";
 
+interface PackagePathHelper {
+  resolve(packagePath: string, entryPoint: string): string;
+}
+
+function normalizePathSeparators(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
 // Split `react/jsx-runtime` -> { name: "react", subpath: "./jsx-runtime" } and
 // `@scope/pkg/sub/path` -> { name: "@scope/pkg", subpath: "./sub/path" }.
 export function splitPackageSubpath(specifier: string): { name: string; subpath: string } {
@@ -66,10 +74,16 @@ export function resolvePackageExportPath(exports: unknown, subpath: string): str
 export function resolveContainedPackagePath(
   packagePath: string,
   entryPoint: string,
+  helper: PackagePathHelper = pathHelper,
 ): string | null {
-  const resolved = pathHelper.resolve(packagePath, entryPoint);
-  const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
-    ? packagePath
-    : packagePath + pathHelper.SEPARATOR;
-  return resolved === packagePath || resolved.startsWith(packagePathPrefix) ? resolved : null;
+  const resolved = helper.resolve(packagePath, entryPoint);
+  const normalizedPackagePath = normalizePathSeparators(packagePath);
+  const normalizedResolved = normalizePathSeparators(resolved);
+  const packagePathPrefix = normalizedPackagePath.endsWith("/")
+    ? normalizedPackagePath
+    : `${normalizedPackagePath}/`;
+  return normalizedResolved === normalizedPackagePath ||
+      normalizedResolved.startsWith(packagePathPrefix)
+    ? resolved
+    : null;
 }
