@@ -23,7 +23,7 @@ function topLevelJobNames(workflow: string): string[] {
 
   const jobsBlock = workflow.slice(jobsStart + "\njobs:\n".length);
   const matches = jobsBlock.matchAll(/^[ ]{2}([A-Za-z0-9_-]+):\s*$/gm);
-  return Array.from(matches, (match) => match[1]);
+  return Array.from(matches, (match) => match[1]!);
 }
 
 function jobBlock(workflow: string, jobName: string): string {
@@ -159,6 +159,37 @@ describe("repository hardening", () => {
         `expected workflows to use ${required}`,
       );
     }
+  });
+
+  it("uses the gh pr command for Homebrew tap pull request management", async () => {
+    const workflow = await readText(".github/workflows/cicd.yml");
+    const updateHomebrew = jobBlock(workflow, "update-homebrew");
+
+    assertEquals(updateHomebrew.includes("gh api"), false);
+    assert(
+      updateHomebrew.includes("gh pr list"),
+      "expected Homebrew updates to find existing tap PRs with gh pr list",
+    );
+    assert(
+      updateHomebrew.includes("gh pr create"),
+      "expected Homebrew updates to create tap PRs with gh pr create",
+    );
+    assert(
+      updateHomebrew.includes("--repo veryfront/homebrew-tap"),
+      "expected Homebrew tap PR commands to stay scoped to the tap repository",
+    );
+    assert(
+      updateHomebrew.includes('--head "${BRANCH}"'),
+      "expected Homebrew tap PR lookup to filter on the pushed tap branch",
+    );
+    assert(
+      updateHomebrew.includes('--head "veryfront:${BRANCH}"'),
+      "expected Homebrew tap PR creation to use same-repository heads",
+    );
+    assert(
+      updateHomebrew.includes('GH_TOKEN="${HOMEBREW_TAP_TOKEN}"'),
+      "expected Homebrew tap PR commands to use the scoped App token",
+    );
   });
 
   it("does not run npm lifecycle scripts while building the npm package", async () => {
