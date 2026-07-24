@@ -1,4 +1,5 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "./knowledge-source-document.ts";
 
 /** Check whether a durable chunk mirrors tool output. */
 export function isDurableMirroredOutputChunk(
@@ -250,23 +251,38 @@ export async function* createHostedMirroredUiStream(
   input: CreateHostedMirroredUiStreamInput,
 ): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {
   let streamError: unknown = null;
+  const emittedKnowledgeSourceIds = new Set<string>();
 
   try {
-    for await (const chunk of input.sourceStream) {
-      input.rootStreamWatchdog.observe(chunk);
-      if (isDurableMirroredOutputChunk(chunk)) {
-        input.setMirroredOutput?.(true);
+    for await (const sourceChunk of input.sourceStream) {
+      const derivedSource = sourceChunk.type === "tool-output-available"
+        ? deriveKnowledgeSourceDocumentChunk({
+          toolName: input.mirroredToolChunkState.toolCallNames.get(sourceChunk.toolCallId),
+          output: sourceChunk.output,
+        })
+        : null;
+      const chunks = [sourceChunk];
+      if (derivedSource && !emittedKnowledgeSourceIds.has(derivedSource.sourceId)) {
+        emittedKnowledgeSourceIds.add(derivedSource.sourceId);
+        chunks.push(derivedSource);
       }
-      recordMirroredToolChunkState(input.mirroredToolChunkState, chunk);
-      if (input.appendChunk) {
-        await Promise.resolve(input.appendChunk(chunk)).catch((error: unknown) => {
-          input.logger?.error("Durable run mirror failed to handle chunk", {
-            chunkType: chunk.type,
-            error: error instanceof Error ? error.message : String(error),
+
+      for (const chunk of chunks) {
+        input.rootStreamWatchdog.observe(chunk);
+        if (isDurableMirroredOutputChunk(chunk)) {
+          input.setMirroredOutput?.(true);
+        }
+        recordMirroredToolChunkState(input.mirroredToolChunkState, chunk);
+        if (input.appendChunk) {
+          await Promise.resolve(input.appendChunk(chunk)).catch((error: unknown) => {
+            input.logger?.error("Durable run mirror failed to handle chunk", {
+              chunkType: chunk.type,
+              error: error instanceof Error ? error.message : String(error),
+            });
           });
-        });
+        }
+        yield chunk;
       }
-      yield chunk;
     }
   } catch (error) {
     streamError = error;
