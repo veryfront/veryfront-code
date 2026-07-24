@@ -54,7 +54,7 @@ import {
   rememberReleaseModuleResponse,
 } from "./module-response-cache.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
-import { classifyModuleRequest } from "./classify.ts";
+import { classifyModuleRequest, DEV_MODULE_PREFIX } from "./classify.ts";
 import { transformModuleToServable } from "./module-transform.ts";
 
 const logger = serverLogger.component("module-server");
@@ -128,9 +128,6 @@ export default {};
   // dnt rewrites #deno-config to relative deno.js in npm framework modules.
   "deno": `export default ${JSON.stringify({ version: VERSION })};\n`,
 };
-
-/** Prefix shared by all module URL shapes; used for path stripping in the dev-module handler. */
-const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
   if (

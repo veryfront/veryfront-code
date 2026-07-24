@@ -408,18 +408,20 @@ async function transformModule(
       reactVersion: options.reactVersion,
     },
     isSSR: options.ssr,
-    ssrRewriteOptions: {
-      projectSlug: options.projectSlug,
-      branch: options.branch,
-      resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
-        projectDir,
-        secureFs,
-        currentModulePath: modulePath,
-      }),
-    },
+    ssrRewriteOptions: options.ssr
+      ? {
+        projectSlug: options.projectSlug,
+        branch: options.branch,
+        resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
+          projectDir,
+          secureFs,
+          currentModulePath: modulePath,
+        }),
+      }
+      : undefined,
     // No releaseRewriteOptions: the batch handler does not rewrite release
     // dependency imports on the non-SSR path (intentional difference vs
-    // the module-server paths — reported in module-transform.ts JSDoc).
+    // the module-server paths; noted in module-transform.ts JSDoc).
   });
 }
 

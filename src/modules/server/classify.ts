@@ -8,7 +8,8 @@
  * @module modules/server/classify
  */
 
-const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
+/** Prefix for dev-module URLs; exported for path stripping in module-server. */
+export const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 // Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>
 const CROSS_PROJECT_VERSIONED_PREFIX =
