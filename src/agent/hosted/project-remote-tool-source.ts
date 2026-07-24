@@ -210,9 +210,9 @@ export function createHostedProjectRemoteToolSource(
       }
 
       if (isProjectNavigationRemoteTool(toolName, input.projectScopedRemoteToolOptions)) {
-        const requestedProjectId = trustedToolInput.project_id;
-        const confirmedProjectId = typeof requestedProjectId === "string"
-          ? getConfirmedProjectContextSwitchId(result, requestedProjectId)
+        const requestedProjectReference = trustedToolInput.project_reference;
+        const confirmedProjectId = typeof requestedProjectReference === "string"
+          ? getConfirmedProjectContextSwitchId(result, requestedProjectReference)
           : null;
 
         if (confirmedProjectId) {

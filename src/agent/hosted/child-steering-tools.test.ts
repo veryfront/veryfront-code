@@ -88,7 +88,9 @@ Deno.test("wrapHostedChildProjectSwitchTool reports confirmed project switches",
   const switchedProjectIds: string[] = [];
   const tools: HostToolSet = {
     studio_open_project: {
-      execute: () => ({ structuredContent: { success: true, project_id: "project-2" } }),
+      execute: () => ({
+        structuredContent: { success: true, project_id: "project-2", slug: "project-two" },
+      }),
     },
   };
 
@@ -99,10 +101,38 @@ Deno.test("wrapHostedChildProjectSwitchTool reports confirmed project switches",
     },
   });
 
-  const result = await tools.studio_open_project?.execute?.({ project_id: "project-2" });
+  const result = await tools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
-  assertEquals(result, { structuredContent: { success: true, project_id: "project-2" } });
+  assertEquals(result, {
+    structuredContent: { success: true, project_id: "project-2", slug: "project-two" },
+  });
   assertEquals(switchedProjectIds, ["project-2"]);
+});
+
+Deno.test("wrapHostedChildProjectSwitchTool confirms slug requests from returned canonical project output", async () => {
+  const switchedProjectIds: string[] = [];
+  const tools: HostToolSet = {
+    studio_open_project: {
+      execute: () => ({
+        structuredContent: {
+          success: true,
+          project_id: "11111111-1111-4111-8111-111111111111",
+          slug: "demo-project",
+        },
+      }),
+    },
+  };
+
+  wrapHostedChildProjectSwitchTool({
+    tools,
+    onConfirmedProjectSwitch: (projectId) => {
+      switchedProjectIds.push(projectId);
+    },
+  });
+
+  await tools.studio_open_project?.execute?.({ project_reference: "demo-project" });
+
+  assertEquals(switchedProjectIds, ["11111111-1111-4111-8111-111111111111"]);
 });
 
 Deno.test("wrapHostedChildProjectSwitchTool ignores mismatched or failed project switches", async () => {
@@ -120,7 +150,7 @@ Deno.test("wrapHostedChildProjectSwitchTool ignores mismatched or failed project
     },
   });
 
-  await tools.studio_open_project?.execute?.({ project_id: "project-2" });
+  await tools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
   assertEquals(switchedProjectIds, []);
 });

@@ -315,7 +315,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
 
   let inFlight = inFlightHttpFetches.get(cacheKey);
   while (inFlight) {
-    const result = await waitForInFlightFetch(inFlight, cacheKey, HTTP_MODULE_FETCH_MAX_WAIT_MS);
+    const result = await waitForInFlightFetch(inFlight, HTTP_MODULE_FETCH_MAX_WAIT_MS);
     if (result !== undefined) return result;
 
     if (inFlightHttpFetches.get(cacheKey) === inFlight) {

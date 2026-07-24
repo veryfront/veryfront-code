@@ -49,7 +49,6 @@ const IN_FLIGHT_JITTER_MS = 5_000;
  */
 export async function waitForInFlightFetch(
   promise: Promise<string | null>,
-  cacheKey: string,
   waitTimeoutMs?: number,
 ): Promise<string | null | undefined> {
   const timeoutMs = waitTimeoutMs === undefined
@@ -60,7 +59,6 @@ export async function waitForInFlightFetch(
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
       logger.warn("In-flight fetch wait timed out, will retry", {
-        cacheKey,
         timeoutMs,
       });
       resolve(undefined);
