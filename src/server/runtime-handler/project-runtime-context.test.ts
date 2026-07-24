@@ -8,6 +8,12 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { DomainLookupResult } from "../utils/domain-lookup.ts";
 import type { ParsedDomain } from "#veryfront/types";
@@ -164,6 +170,9 @@ function makeRuntimeContextInput(
 afterEach(() => {
   defaultDiscoveryCache.projects.clear();
   defaultDiscoveryCache.adapters.clear();
+  Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+  __resetLogRecordEmitterForTests();
+  __resetLoggerConfigForTests();
 });
 
 async function assertJsonResponse(
@@ -758,6 +767,46 @@ describe("resolveProjectRuntimeContext", () => {
       mode: "unrestricted",
     });
     assertEquals(sourcePolicyReads, 0);
+  });
+
+  it("honors host-level forwarded trust when runtime proxy trust is unresolved", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    __resetLoggerConfigForTests();
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+
+    const req = new Request("http://internal.local/page", {
+      headers: {
+        host: "internal.local",
+        "x-forwarded-host": "remote-project.production.veryfront.com",
+        "x-project-slug": "remote-project",
+        "x-project-id": "proj-remote",
+      },
+    });
+    const url = new URL(req.url);
+
+    await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      headers: extractRequestHeaders(req, url, undefined),
+      requestContext: createRequestContext(req, { proxyTrusted: undefined }),
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: undefined },
+      projectIdentity: {
+        projectSlug: "remote-project",
+        projectId: "proj-remote",
+        releaseId: undefined,
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    const warning = entries.find((entry) =>
+      entry.component === "environment-resolution" &&
+      entry.message === "No active release found (proxy mode)"
+    );
+    assertEquals(warning?.context?.host, "remote-project.production.veryfront.com");
   });
 
   it("notifies environment resolution before source policy access and later failures", async () => {

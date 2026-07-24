@@ -221,7 +221,7 @@ export async function resolveProjectRuntimeContext(
   const host = getEffectiveRequestHost(
     input.req,
     input.url,
-    input.proxyTrust.proxyTrusted,
+    input.proxyTrust.proxyTrusted ?? getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1",
   );
   const envRes = resolveEnvironment({
     proxyEnv: projectRes.proxyEnv,
