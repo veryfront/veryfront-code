@@ -22,9 +22,9 @@ import type { ResolvedNodeVeryfrontCloudAgentServiceOptions } from "./cloud-agen
 import {
   resolveBaseDir,
   resolveDefaultProcessTarget,
+  resolveEnvironment,
   resolveProjectDir,
 } from "./cloud-agent-paths.ts";
-import { resolveEnvironment } from "./cloud-agent-paths.ts";
 
 /**
  * Full runtime context for a running cloud agent service instance.

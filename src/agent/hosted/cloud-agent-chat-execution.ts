@@ -1,6 +1,5 @@
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
-import { sleepTool } from "#veryfront/tool";
-import type { HostToolSet } from "#veryfront/tool";
+import { createRemoteMCPToolSource, type HostToolSet, sleepTool } from "#veryfront/tool";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -24,7 +23,6 @@ import { createDefaultHostedProjectSteeringRefresh } from "./default-project-ste
 import type { HostedChatContextBudgetOptions } from "./chat-preparation.ts";
 import { applyAgentProjectContextChange } from "../project/context.ts";
 import { runWithProjectAgentRuntime } from "../project/agent-runtime.ts";
-import { createRemoteMCPToolSource } from "#veryfront/tool";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   type AgentServiceRuntimeConfig,
