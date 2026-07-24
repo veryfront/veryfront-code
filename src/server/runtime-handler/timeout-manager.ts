@@ -7,6 +7,7 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
+import { errorToResponse, isVeryfrontError } from "#veryfront/errors";
 import { getRequestTimeout, HTTP_GATEWAY_TIMEOUT, TIMEOUT_SENTINEL } from "./request-utils.ts";
 import { ErrorPages } from "../utils/error-html.ts";
 
@@ -97,6 +98,16 @@ export async function withRequestTimeout(
       );
 
       return { response, settled };
+    }
+
+    if (isVeryfrontError(e)) {
+      const response = errorToResponse(e, pathname);
+      logger.error("Registered error in request handler", {
+        path: pathname,
+        method,
+        status: response.status,
+      });
+      return { response, error: e, settled };
     }
 
     const error = e instanceof Error ? e : new Error(String(e));

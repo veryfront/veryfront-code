@@ -34,6 +34,26 @@ function isFileNotFoundError(error: unknown): boolean {
   return veryfrontError?.type === "file" && veryfrontError.message.startsWith("File not found:");
 }
 
+interface SearchFileMatch {
+  id?: string;
+  path: string;
+}
+
+function assertValidSearchMatches(matches: unknown): asserts matches is SearchFileMatch[] {
+  const valid = Array.isArray(matches) &&
+    matches.every((match) => {
+      if (typeof match !== "object" || match === null) return false;
+      const { id, path } = match as { id?: unknown; path?: unknown };
+      return typeof path === "string" && (id === undefined || typeof id === "string");
+    });
+
+  if (!valid) {
+    throw new TypeError(
+      "Malformed searchFiles response: expected an array of { path: string, id?: string } matches",
+    );
+  }
+}
+
 export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
@@ -111,6 +131,7 @@ export class StatOperations extends VeryfrontOperationsBase {
         try {
           // Search for the exact file path
           const matches = await this.client.searchFiles(normalizedPath);
+          assertValidSearchMatches(matches);
           this.apiSearchCircuitBreaker.recordSuccess();
 
           const exactMatch = matches.find((m) => m.path === normalizedPath);
@@ -135,16 +156,24 @@ export class StatOperations extends VeryfrontOperationsBase {
             };
           }
         } catch (error) {
-          const result = this.apiSearchCircuitBreaker.recordFailure();
-          if (result.tripped) {
-            logger.warn("stat API search circuit breaker tripped", {
-              failures: result.failures,
+          if (isFileNotFoundError(error)) {
+            this.apiSearchCircuitBreaker.recordSuccess();
+            logger.debug("stat API search returned no matching file", {
+              normalizedPath,
             });
+          } else {
+            const result = this.apiSearchCircuitBreaker.recordFailure();
+            if (result.tripped) {
+              logger.warn("stat API search circuit breaker tripped", {
+                failures: result.failures,
+              });
+            }
+            logger.error("stat API search failed", {
+              normalizedPath,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
           }
-          logger.debug("stat API search failed", {
-            normalizedPath,
-            error: error instanceof Error ? error.message : String(error),
-          });
         }
       }
     }
@@ -336,6 +365,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     for (const pattern of patterns) {
       try {
         const matches = await this.client.searchFiles(pattern);
+        assertValidSearchMatches(matches);
         sawSuccessfulSearch = true;
         this.apiSearchCircuitBreaker.recordSuccess();
 
@@ -363,14 +393,20 @@ export class StatOperations extends VeryfrontOperationsBase {
           return first.path;
         }
       } catch (error) {
+        if (isFileNotFoundError(error)) {
+          sawSuccessfulSearch = true;
+          this.apiSearchCircuitBreaker.recordSuccess();
+          continue;
+        }
+
         const result = this.apiSearchCircuitBreaker.recordFailure();
         if (result.tripped) {
           logger.warn("API search circuit breaker tripped", {
             failures: result.failures,
           });
-          return undefined;
         }
         logger.error("API pattern search failed", { pattern, error });
+        throw error;
       }
 
       if (!this.apiSearchCircuitBreaker.canSearch()) {

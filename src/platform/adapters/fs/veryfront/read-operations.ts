@@ -10,7 +10,6 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import {
   assertProjectSourcePath,
-  buildContentPreview,
   buildExtensionCandidatePaths,
   buildReadFetchState,
   createNotFoundLikeError,
@@ -120,7 +119,6 @@ export class ReadOperations {
       path: normalizedPath,
       cacheKey,
       contentLength: requestCached.length,
-      preview: buildContentPreview(requestCached).replace(/\n/g, "\\n"),
     });
     return requestCached;
   }
@@ -161,7 +159,6 @@ export class ReadOperations {
       path: normalizedPath,
       cacheKey,
       contentLength: cached.length,
-      preview: buildContentPreview(cached).replace(/\n/g, "\\n"),
     });
     setRequestScopedFile(cacheKey, cached);
     return cached;
@@ -782,7 +779,6 @@ export class ReadOperations {
     logger.debug("API_FETCH_DONE - got content from API", {
       path: normalizedPath,
       contentLength: content.length,
-      preview: buildContentPreview(content).replace(/\n/g, "\\n"),
       willCache: shouldCache,
     });
 

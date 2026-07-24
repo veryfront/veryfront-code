@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { CONFIG_PARSE_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { HTTP_GATEWAY_TIMEOUT } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 
@@ -34,6 +35,42 @@ describe("timeout-manager", () => {
       assertEquals(response.status, 500);
       assertExists(error);
       assertEquals(error.message, "Handler failed");
+    });
+
+    it("preserves registered client-error status as problem details", async () => {
+      const handler = async (): Promise<Response> => {
+        throw CONFIG_PARSE_ERROR.create({
+          detail: "Rejected hosted configuration source",
+        });
+      };
+
+      const { response, error } = await withRequestTimeout(handler, "/config", "GET");
+      const body = await response.json();
+
+      assertEquals(response.status, 400);
+      assertEquals(response.headers.get("content-type"), "application/problem+json");
+      assertEquals(body.type, "https://veryfront.com/docs/errors/config-parse-error");
+      assertEquals(body.status, 400);
+      assertEquals(body.detail, "Rejected hosted configuration source");
+      assertExists(error);
+    });
+
+    it("preserves retryable registered service status without leaking detail", async () => {
+      const handler = async (): Promise<Response> => {
+        throw SERVICE_OVERLOADED.create({
+          detail: "Evaluator worker pool unavailable: tenant-specific diagnostic",
+        });
+      };
+
+      const { response, error } = await withRequestTimeout(handler, "/config", "GET");
+      const body = await response.json();
+
+      assertEquals(response.status, 503);
+      assertEquals(response.headers.get("content-type"), "application/problem+json");
+      assertEquals(body.type, "https://veryfront.com/docs/errors/service-overloaded");
+      assertEquals(body.status, 503);
+      assertEquals("detail" in body, false);
+      assertExists(error);
     });
 
     it("returns error wrapper when a handler throws before returning a promise", async () => {

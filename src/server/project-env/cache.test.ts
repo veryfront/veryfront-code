@@ -71,6 +71,64 @@ describe("project-env/cache", () => {
     assertEquals(fetchCount, 1);
   });
 
+  it("cancels one waiter without canceling or duplicating shared work", async () => {
+    let fetchCount = 0;
+    const started = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<Record<string, string>>();
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount += 1;
+      started.resolve();
+      return await resume.promise;
+    });
+    const controller = new AbortController();
+
+    const cancelledWaiter = cache.get(
+      "env-1",
+      "token",
+      "my-project",
+      controller.signal,
+    );
+    await started.promise;
+    const survivingWaiter = cache.get("env-1", "token", "my-project");
+    const cancellation = new Error("request cancelled");
+    controller.abort(cancellation);
+
+    assertEquals(
+      await assertRejects(() => cancelledWaiter, Error, "request cancelled"),
+      cancellation,
+    );
+    assertEquals(fetchCount, 1);
+
+    resume.resolve({ API_KEY: "secret" });
+    assertEquals(await survivingWaiter, { API_KEY: "secret" });
+    assertEquals(
+      await cache.get("env-1", "token", "my-project"),
+      { API_KEY: "secret" },
+    );
+    assertEquals(fetchCount, 1);
+  });
+
+  it("does not start work for an already-cancelled waiter", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount += 1;
+      return { API_KEY: "secret" };
+    });
+    const controller = new AbortController();
+    const cancellation = new Error("request cancelled");
+    controller.abort(cancellation);
+
+    assertEquals(
+      await assertRejects(
+        () => cache.get("env-1", "token", "my-project", controller.signal),
+        Error,
+        "request cancelled",
+      ),
+      cancellation,
+    );
+    assertEquals(fetchCount, 0);
+  });
+
   it("fails closed instead of returning expired data on fetch error", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(async () => {

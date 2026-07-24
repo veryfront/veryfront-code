@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { API_CLIENT_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -662,6 +668,98 @@ describe("StatOperations", () => {
     });
   });
 
+  describe("API search failure semantics", () => {
+    it("should propagate stat API search failures without converting them to file-not-found", async () => {
+      const apiFailure = new Error("search service unavailable");
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.reject(apiFailure),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      const error = await assertRejects(() => statOps.stat("pages/missing.tsx"));
+      assertStrictEquals(error, apiFailure);
+    });
+
+    it("should propagate resolveFile API 404 failures for missing project resources", async () => {
+      const apiFailure = API_CLIENT_ERROR.create({
+        detail: "Project not found",
+        status: 404,
+      });
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.reject(apiFailure),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([]),
+      );
+
+      const error = await assertRejects(() => statOps.resolveFile("pages/missing"));
+      assertStrictEquals(error, apiFailure);
+    });
+
+    it("should reject malformed stat search responses", async () => {
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.resolve([{ path: 42 }]),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      await assertRejects(
+        () => statOps.stat("pages/missing.tsx"),
+        TypeError,
+        "Malformed searchFiles response",
+      );
+    });
+
+    it("should reject malformed resolveFile search responses", async () => {
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.resolve(null),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([]),
+      );
+
+      await assertRejects(
+        () => statOps.resolveFile("pages/missing"),
+        TypeError,
+        "Malformed searchFiles response",
+      );
+    });
+
+    it("should preserve canonical file-not-found search misses", async () => {
+      const canonicalMiss = FILE_NOT_FOUND.create({
+        detail: "File not found: pages/missing.tsx",
+      });
+      const client = createMockClient({
+        searchFiles: () => Promise.reject(canonicalMiss),
+      });
+
+      const statOps = createStatOps(
+        client,
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+      await assertRejects(
+        () => statOps.stat("pages/missing.tsx"),
+        Error,
+        "File not found: pages/missing.tsx",
+      );
+
+      const resolveOps = createStatOps(
+        client,
+        new PathNormalizer(),
+        createBranchContextWithFiles([]),
+      );
+      assertEquals(await resolveOps.resolveFile("pages/missing"), null);
+    });
+  });
+
   describe("circuit breaker for API search", () => {
     it("should disable API search after repeated failures", async () => {
       let searchCallCount = 0;
@@ -690,12 +788,16 @@ describe("StatOperations", () => {
       );
 
       for (let i = 0; i < 5; i++) {
-        await statOps.resolveFile(`nonexistent-${i}`);
+        await assertRejects(
+          () => statOps.resolveFile(`nonexistent-${i}`),
+          Error,
+          "API error",
+        );
       }
 
       const searchCallsBefore = searchCallCount;
 
-      await statOps.resolveFile("nonexistent-6");
+      assertEquals(await statOps.resolveFile("nonexistent-6"), null);
 
       assertEquals(searchCallCount, searchCallsBefore);
     });
@@ -722,19 +824,25 @@ describe("StatOperations", () => {
         );
 
         for (let i = 0; i < 5; i++) {
-          await statOps.resolveFile(`missing-trip-${i}`);
+          await assertRejects(
+            () => statOps.resolveFile(`missing-trip-${i}`),
+            Error,
+            "API error",
+          );
         }
         assertEquals(searchCallCount, 5);
 
-        await statOps.resolveFile("missing-while-open");
+        assertEquals(await statOps.resolveFile("missing-while-open"), null);
         assertEquals(searchCallCount, 5);
 
         now += 30_001;
 
-        await statOps.resolveFile("missing-after-cooldown");
-        // First request exhausts 4 patterns, second request trips the breaker on its first pattern,
-        // and the post-cooldown request gets another full 4-pattern attempt.
-        assertEquals(searchCallCount, 9);
+        await assertRejects(
+          () => statOps.resolveFile("missing-after-cooldown"),
+          Error,
+          "API error",
+        );
+        assertEquals(searchCallCount, 6);
       } finally {
         Date.now = originalNow;
       }

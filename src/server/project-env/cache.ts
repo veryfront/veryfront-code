@@ -41,6 +41,9 @@ const HEX_DIGITS = "0123456789abcdef";
 const IntrinsicAbortController = AbortController;
 const IntrinsicMap = Map;
 const IntrinsicUint8Array = Uint8Array;
+const AbortSignalPrototypeThrowIfAborted = AbortSignal.prototype.throwIfAborted;
+const EventTargetPrototypeAddEventListener = EventTarget.prototype.addEventListener;
+const EventTargetPrototypeRemoveEventListener = EventTarget.prototype.removeEventListener;
 const MapPrototypeClear = Map.prototype.clear;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeEntries = Map.prototype.entries;
@@ -98,6 +101,60 @@ function mapKeys<K, V>(map: Map<K, V>): Iterator<K> {
 
 function iteratorNext<T>(iterator: Iterator<T>): IteratorResult<T> {
   return ReflectApply(intrinsicMapIteratorNext, iterator, []) as IteratorResult<T>;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal) {
+    ReflectApply(AbortSignalPrototypeThrowIfAborted, signal, []);
+  }
+}
+
+function waitForPromiseWithSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      ReflectApply(
+        EventTargetPrototypeRemoveEventListener,
+        signal,
+        ["abort", onAbort],
+      );
+      callback();
+    };
+    const onAbort = (): void => {
+      finish(() => {
+        try {
+          throwIfAborted(signal);
+          reject(new TypeError("AbortSignal fired without becoming aborted"));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    };
+
+    ReflectApply(
+      EventTargetPrototypeAddEventListener,
+      signal,
+      ["abort", onAbort, { once: true }],
+    );
+    // Close the check/listen race without making the caller's signal control
+    // shared work used by other waiters.
+    if (signal.aborted) {
+      onAbort();
+    }
+
+    void promise.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
 }
 
 export interface EnvironmentVariableCacheOptions {
@@ -250,7 +307,9 @@ export class EnvironmentVariableCache {
     environmentId: string,
     token: string,
     projectSlug: string,
+    signal?: AbortSignal,
   ): Promise<ProjectEnvSnapshot> {
+    throwIfAborted(signal);
     const validProjectSlug = requireCacheIdentity(projectSlug, "projectSlug");
     const validEnvironmentId = requireCacheIdentity(environmentId, "environmentId");
     const cacheKey = buildCacheKey(
@@ -258,6 +317,7 @@ export class EnvironmentVariableCache {
       validEnvironmentId,
       await fingerprintToken(token),
     );
+    throwIfAborted(signal);
     const cached = mapGet(this.cache, cacheKey);
     const now = monotonicNow();
 
@@ -271,7 +331,7 @@ export class EnvironmentVariableCache {
 
     // Deduplicate only within the exact project/environment capability.
     const existing = mapGet(this.inflight, cacheKey);
-    if (existing) return existing.promise;
+    if (existing) return await waitForPromiseWithSignal(existing.promise, signal);
 
     this.admitFetch(validProjectSlug);
     // Construct fallible request state before reserving capacity.
@@ -292,14 +352,14 @@ export class EnvironmentVariableCache {
       marker,
       promise,
     });
-
-    try {
-      return await promise;
-    } finally {
+    const removeSettledInflight = (): void => {
       if (mapGet(this.inflight, cacheKey)?.promise === promise) {
         mapDelete(this.inflight, cacheKey);
       }
-    }
+    };
+    void promise.then(removeSettledInflight, removeSettledInflight);
+
+    return await waitForPromiseWithSignal(promise, signal);
   }
 
   invalidate(environmentId?: string, projectSlug?: string): void {

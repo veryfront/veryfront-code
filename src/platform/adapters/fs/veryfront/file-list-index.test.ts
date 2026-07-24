@@ -1,7 +1,36 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { FileListIndex } from "./file-list-index.ts";
+
+async function captureDebugLogEntries<T>(
+  operation: () => Promise<T>,
+): Promise<{ entries: LogEntry[]; result: T }> {
+  const previousLogLevel = Deno.env.get("LOG_LEVEL");
+  const originalDebug = console.debug;
+  const entries: LogEntry[] = [];
+
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+  console.debug = () => {};
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+
+  try {
+    return { entries, result: await operation() };
+  } finally {
+    __resetLogRecordEmitterForTests();
+    console.debug = originalDebug;
+    if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", previousLogLevel);
+    __resetLoggerConfigForTests();
+  }
+}
 
 describe("platform/adapters/fs/veryfront/file-list-index", () => {
   describe("lookup without getFileListCache", () => {
@@ -69,6 +98,36 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
           fresh: true,
           path: "pages/home.tsx",
         },
+      );
+    });
+
+    it("should never emit indexed source text to log sinks", async () => {
+      const sourceSentinel = "VF_INDEXED_SOURCE_MUST_NOT_REACH_LOGS_94c2";
+      const source = `export const marker = "${sourceSentinel}";`;
+      const index = new FileListIndex(async () => [
+        { path: "pages/welcome.tsx", content: source },
+      ]);
+
+      const { entries, result } = await captureDebugLogEntries(
+        () => index.lookup("pages/welcome.tsx"),
+      );
+
+      assertEquals(result, source);
+      const indexEntries = entries.filter((entry) => entry.component === "read-operations");
+      const messages = indexEntries.map((entry) => entry.message);
+      assertEquals(
+        messages.includes("getOrBuildFileListIndex: got file list from cache"),
+        true,
+      );
+      assertEquals(messages.includes("Built file list index"), true);
+      assertEquals(
+        messages.includes("FILE_LIST_CACHE_HIT - serving from file list cache"),
+        true,
+      );
+      assertEquals(JSON.stringify(indexEntries).includes(sourceSentinel), false);
+      assertEquals(
+        indexEntries.some((entry) => entry.context?.contentLength === source.length),
+        true,
       );
     });
   });

@@ -1,12 +1,41 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import { runWithRequestContext } from "./multi-project-adapter.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
+
+async function captureDebugLogEntries<T>(
+  operation: () => Promise<T>,
+): Promise<{ entries: LogEntry[]; result: T }> {
+  const previousLogLevel = Deno.env.get("LOG_LEVEL");
+  const originalDebug = console.debug;
+  const entries: LogEntry[] = [];
+
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+  console.debug = () => {};
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+
+  try {
+    return { entries, result: await operation() };
+  } finally {
+    __resetLogRecordEmitterForTests();
+    console.debug = originalDebug;
+    if (previousLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", previousLogLevel);
+    __resetLoggerConfigForTests();
+  }
+}
 
 function createMockClient(
   overrides: Record<string, unknown> = {},
@@ -235,6 +264,67 @@ describe("ReadOperations", () => {
       assertEquals(first, "published content 1");
       assertEquals(second, "published content 1");
       assertEquals(fetchCount, 1);
+    });
+
+    it("should never emit fetched or cached source text to log sinks", async () => {
+      const sourceSentinel = "VF_SOURCE_TEXT_MUST_NOT_REACH_LOGS_7a5f";
+      const source = `export const marker = "${sourceSentinel}";`;
+      const branchOps = createReadyReadOps(
+        createMockClient({
+          getFileContent: () => Promise.resolve(source),
+        }),
+        false,
+        createBranchContext(),
+      );
+      const releaseOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContent: () => Promise.resolve(source),
+        }),
+        true,
+        createReleaseContext("rel-log-safety"),
+      );
+
+      const { entries } = await captureDebugLogEntries(async () => {
+        await runWithRequestContext(
+          { projectSlug: "test", token: "token-1", productionMode: false },
+          async () => {
+            assertEquals(await branchOps.readTextFile("pages/private.tsx"), source);
+            assertEquals(await branchOps.readTextFile("pages/private.tsx"), source);
+          },
+        );
+
+        const releaseContext = {
+          projectSlug: "test",
+          token: "token-1",
+          productionMode: true,
+          releaseId: "rel-log-safety",
+        };
+        assertEquals(
+          await runWithRequestContext(
+            releaseContext,
+            () => releaseOps.readTextFile("pages/private.tsx"),
+          ),
+          source,
+        );
+        assertEquals(
+          await runWithRequestContext(
+            releaseContext,
+            () => releaseOps.readTextFile("pages/private.tsx"),
+          ),
+          source,
+        );
+      });
+
+      const readEntries = entries.filter((entry) => entry.component === "read-operations");
+      const messages = readEntries.map((entry) => entry.message);
+      assertEquals(messages.includes("API_FETCH_DONE - got content from API"), true);
+      assertEquals(messages.includes("REQUEST_CACHE_HIT"), true);
+      assertEquals(messages.includes("PERSISTENT_CACHE_HIT"), true);
+      assertEquals(JSON.stringify(readEntries).includes(sourceSentinel), false);
+      assertEquals(
+        readEntries.some((entry) => entry.context?.contentLength === source.length),
+        true,
+      );
     });
 
     it("should serve content from file list cache in production mode", async () => {
