@@ -35,7 +35,7 @@ interface RuntimeHandle {
   router: RuntimeRouter;
   navigateSPA: (href: string, pushState?: boolean, restoreScroll?: boolean) => Promise<void>;
   store: FakeStore;
-  win: { __veryfrontHydrationComplete?: () => void };
+  win: { location: RuntimeLocation; __veryfrontHydrationComplete?: () => void };
   setNextPageData: (data: unknown) => void;
 }
 
