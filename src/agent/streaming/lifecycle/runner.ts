@@ -37,7 +37,18 @@ export function runStreamLifecycle<TProviderPart>(
   const policy = resolveStreamLifecyclePolicy(input.policy);
   const diagnostics = input.diagnostics ?? createDefaultDiagnosticPolicy();
   const diagnosticSink = input.diagnosticSink ?? createDefaultDiagnosticSink();
-  const outcome = createOutcomeDeferred();
+  const observer = input.observer ?? null;
+  const notifyObserver = (notify: () => void): void => {
+    if (!observer) return;
+    try {
+      notify();
+    } catch {
+      // Observability is fail-open and cannot alter lifecycle behavior.
+    }
+  };
+  const outcome = createOutcomeDeferred((settledOutcome) =>
+    notifyObserver(() => observer?.onOutcome(settledOutcome))
+  );
   let consumed = false;
   let providerIterator: AsyncIterator<TProviderPart> | null = null;
   let cancellation:
@@ -74,7 +85,9 @@ export function runStreamLifecycle<TProviderPart>(
     );
     cancellation = activeCancellation;
     const disposeController = new AbortController();
-    const attemptDeadlineMs = policy.clock.nowMs() + policy.attemptTimeoutMs;
+    const attemptStartMs = policy.clock.nowMs();
+    const attemptDeadlineMs = attemptStartMs + policy.attemptTimeoutMs;
+    let lastProgressMs: number | null = null;
     const deadlines = createStreamDeadlineController({
       clock: policy.clock,
       policy,
@@ -83,6 +96,7 @@ export function runStreamLifecycle<TProviderPart>(
     });
     const settleAttemptTimeout = () => {
       if (outcome.settled) return;
+      notifyObserver(() => observer?.onDeadline("attempt"));
       const failed = resolveStreamOutcome({
         snapshot: reducer.snapshot,
         elapsedMs: policy.clock.nowMs(),
@@ -138,12 +152,14 @@ export function runStreamLifecycle<TProviderPart>(
               toolCallId,
               status: tool.phase === "input_streaming" ? "streaming_input" : "pending_input",
             }, policy.clock.nowMs());
+            notifyObserver(() => observer?.onFrame(frame));
             yield frame;
             if (outcome.settled) return;
           }
           continue;
         }
         if (raced.kind === "provider_deadline") {
+          notifyObserver(() => observer?.onDeadline(raced.deadline));
           if (
             raced.deadline === "tool_input_idle" ||
             raced.deadline === "tool_commit_grace"
@@ -173,7 +189,10 @@ export function runStreamLifecycle<TProviderPart>(
               reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
               outcome.settle(failed);
             }
-            for (const frame of resolved.reduction.frames) yield frame;
+            for (const frame of resolved.reduction.frames) {
+              notifyObserver(() => observer?.onFrame(frame));
+              yield frame;
+            }
           } else {
             const code = raced.deadline === "first_progress"
               ? "FIRST_PROGRESS_TIMEOUT" as const
@@ -240,6 +259,7 @@ export function runStreamLifecycle<TProviderPart>(
                 policy.clock.nowMs(),
               );
               if (outcome.settled) return;
+              notifyObserver(() => observer?.onFrame(frame));
               yield frame;
               if (outcome.settled) return;
             }
@@ -263,6 +283,19 @@ export function runStreamLifecycle<TProviderPart>(
           reducer = reduced.state;
           if (reduced.semanticProgress) {
             deadlines.noteSemanticProgress(reducer.snapshot);
+            const progressAtMs = policy.clock.nowMs();
+            const sincePreviousProgressMs = lastProgressMs === null
+              ? null
+              : progressAtMs - lastProgressMs;
+            lastProgressMs = progressAtMs;
+            const progressPhase = reducer.snapshot.phase;
+            notifyObserver(() =>
+              observer?.onSemanticProgress({
+                elapsedMs: progressAtMs - attemptStartMs,
+                sincePreviousProgressMs,
+                phase: progressPhase,
+              })
+            );
           }
           const terminalCommitted = reducer.terminal;
           if (terminalCommitted) {
@@ -270,6 +303,7 @@ export function runStreamLifecycle<TProviderPart>(
           }
           for (const frame of reduced.frames) {
             if (!terminalCommitted && outcome.settled) return;
+            notifyObserver(() => observer?.onFrame(frame));
             yield frame;
             if (!terminalCommitted && outcome.settled) return;
           }
@@ -317,7 +351,9 @@ interface OutcomeDeferred {
   settle(outcome: StreamOutcome): void;
 }
 
-function createOutcomeDeferred(): OutcomeDeferred {
+function createOutcomeDeferred(
+  onSettle?: (outcome: StreamOutcome) => void,
+): OutcomeDeferred {
   let settled = false;
   let resolvePromise!: (outcome: StreamOutcome) => void;
   const promise = new Promise<StreamOutcome>((resolve) => resolvePromise = resolve);
@@ -329,6 +365,7 @@ function createOutcomeDeferred(): OutcomeDeferred {
     settle(outcome) {
       if (settled) return;
       settled = true;
+      onSettle?.(outcome);
       resolvePromise(outcome);
     },
   };

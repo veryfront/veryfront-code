@@ -3,6 +3,7 @@ export * from "./clock.ts";
 export * from "./deadlines.ts";
 export * from "./diagnostics.ts";
 export * from "./errors.ts";
+export * from "./observability.ts";
 export * from "./live-adapter.ts";
 export * from "./reducer.ts";
 export * from "./runner.ts";

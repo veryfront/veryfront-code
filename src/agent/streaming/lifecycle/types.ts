@@ -340,9 +340,22 @@ export interface StreamLifecycleInput<TProviderPart> {
   cancellations?: readonly StreamCancellationInput[];
   diagnostics?: StreamDiagnosticPolicy;
   diagnosticSink?: StreamDiagnosticSink;
+  observer?: StreamLifecycleObserver;
 }
 
 export interface StreamLifecycleRun {
   frames: AsyncIterable<StreamLifecycleFrame>;
   outcome: Promise<StreamOutcome>;
+}
+
+/** Fail-open observer for lifecycle ownership points. */
+export interface StreamLifecycleObserver {
+  onFrame(frame: StreamLifecycleFrame): void;
+  onSemanticProgress(input: {
+    elapsedMs: number;
+    sincePreviousProgressMs: number | null;
+    phase: StreamLifecyclePhase;
+  }): void;
+  onDeadline(deadline: StreamProviderDeadlineKind | "attempt"): void;
+  onOutcome(outcome: StreamOutcome): void;
 }
