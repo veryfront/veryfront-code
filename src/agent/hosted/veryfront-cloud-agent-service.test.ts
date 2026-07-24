@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
-import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type NodeTelemetryProvider,
+  NodeTelemetryProviderName,
+} from "#veryfront/extensions/observability/index.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -22,6 +26,7 @@ import {
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
+import { cloudAgentProviderBootstrapInternals } from "./cloud-agent-provider-bootstrap.ts";
 
 async function withTempDir(
   fn: (dir: string) => Promise<void> | void,
@@ -105,6 +110,19 @@ function registerTestSandboxShellToolsProvider(): void {
   register(SandboxShellToolsProviderName, createBashTool);
 }
 
+function withIsolatedNodeTelemetryProvider(run: () => void): void {
+  const previousProvider = tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName);
+  unregister(NodeTelemetryProviderName);
+  try {
+    run();
+  } finally {
+    unregister(NodeTelemetryProviderName);
+    if (previousProvider !== undefined) {
+      register(NodeTelemetryProviderName, previousProvider);
+    }
+  }
+}
+
 function getRuntimeAgent(
   bundle: Awaited<ReturnType<typeof createNodeVeryfrontCloudAgentServiceRuntime>>,
   agentId: string,
@@ -113,6 +131,133 @@ function getRuntimeAgent(
   assert(runtimeAgent);
   return runtimeAgent;
 }
+
+Deno.test("cloud provider bootstrap only ignores a missing telemetry extension", () => {
+  const missingExtension = Object.assign(
+    new Error(
+      "Cannot find package '@veryfront/ext-observability-opentelemetry' imported from /app/loader.js",
+    ),
+    { code: "ERR_MODULE_NOT_FOUND" },
+  );
+  assertEquals(
+    cloudAgentProviderBootstrapInternals.isMissingOpenTelemetryExtension(
+      missingExtension,
+    ),
+    true,
+  );
+
+  const missingTransitiveDependency = Object.assign(
+    new Error(
+      "Cannot find package '@opentelemetry/sdk-node' imported from /app/node_modules/@veryfront/ext-observability-opentelemetry/esm/index.js",
+    ),
+    { code: "ERR_MODULE_NOT_FOUND" },
+  );
+  assertEquals(
+    cloudAgentProviderBootstrapInternals.isMissingOpenTelemetryExtension(
+      missingTransitiveDependency,
+    ),
+    false,
+  );
+});
+
+Deno.test("cloud provider bootstrap rejects malformed telemetry extension exports", () => {
+  const {
+    createOptionalOpenTelemetryProvider,
+    resolveOptionalOpenTelemetryProviderConstructor,
+  } = cloudAgentProviderBootstrapInternals;
+
+  assertEquals(resolveOptionalOpenTelemetryProviderConstructor(null), null);
+  assertThrows(
+    () => resolveOptionalOpenTelemetryProviderConstructor(undefined),
+    TypeError,
+    "expected a module namespace",
+  );
+  assertThrows(
+    () => resolveOptionalOpenTelemetryProviderConstructor({}),
+    TypeError,
+    'export "OpenTelemetryNodeTelemetryProvider" must be constructible',
+  );
+  assertThrows(
+    () =>
+      resolveOptionalOpenTelemetryProviderConstructor({
+        OpenTelemetryNodeTelemetryProvider: () => ({}),
+      }),
+    TypeError,
+    'export "OpenTelemetryNodeTelemetryProvider" must be constructible',
+  );
+
+  class EmptyTelemetryProviderFixture {}
+  assertThrows(
+    () =>
+      createOptionalOpenTelemetryProvider({
+        OpenTelemetryNodeTelemetryProvider: EmptyTelemetryProviderFixture,
+      }),
+    TypeError,
+    'instance must implement method "initialize"',
+  );
+
+  class TelemetryProviderFixture {
+    initialize(): Promise<boolean> {
+      return Promise.resolve(true);
+    }
+  }
+  assertEquals(
+    resolveOptionalOpenTelemetryProviderConstructor({
+      OpenTelemetryNodeTelemetryProvider: TelemetryProviderFixture,
+    }),
+    TelemetryProviderFixture,
+  );
+});
+
+Deno.test("cloud provider bootstrap preserves telemetry providers registered during loading", () => {
+  withIsolatedNodeTelemetryProvider(() => {
+    const explicitProvider: NodeTelemetryProvider = {
+      initialize: () => Promise.resolve(true),
+    };
+    register(NodeTelemetryProviderName, explicitProvider);
+
+    let defaultConstructions = 0;
+    class DefaultTelemetryProviderFixture {
+      constructor() {
+        defaultConstructions += 1;
+      }
+
+      initialize(): Promise<boolean> {
+        return Promise.resolve(false);
+      }
+    }
+
+    cloudAgentProviderBootstrapInternals.registerOpenTelemetryProviderIfMissing({
+      OpenTelemetryNodeTelemetryProvider: DefaultTelemetryProviderFixture,
+    });
+
+    assertEquals(tryResolve(NodeTelemetryProviderName), explicitProvider);
+    assertEquals(defaultConstructions, 0);
+  });
+});
+
+Deno.test("cloud provider bootstrap preserves a provider registered by default construction", () => {
+  withIsolatedNodeTelemetryProvider(() => {
+    const explicitProvider: NodeTelemetryProvider = {
+      initialize: () => Promise.resolve(true),
+    };
+    class ReentrantTelemetryProviderFixture {
+      constructor() {
+        register(NodeTelemetryProviderName, explicitProvider);
+      }
+
+      initialize(): Promise<boolean> {
+        return Promise.resolve(false);
+      }
+    }
+
+    cloudAgentProviderBootstrapInternals.registerOpenTelemetryProviderIfMissing({
+      OpenTelemetryNodeTelemetryProvider: ReentrantTelemetryProviderFixture,
+    });
+
+    assertEquals(tryResolve(NodeTelemetryProviderName), explicitProvider);
+  });
+});
 
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
   try {
