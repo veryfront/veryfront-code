@@ -46,11 +46,34 @@ describe("html/metadata-extraction", () => {
       assertEquals(meta.meta[0]?.name, "twitter:card");
     });
 
+    it("preserves finite numeric and boolean social metadata values", () => {
+      const meta = extractHTMLMetadata({
+        og: { imageWidth: 1200 },
+        twitter: { enabled: true },
+      });
+
+      assertEquals(meta.meta, [
+        { property: "og:imageWidth", content: "1200" },
+        { name: "twitter:enabled", content: "true" },
+      ]);
+    });
+
     it("should handle nested metadata object", () => {
       const meta = extractHTMLMetadata({
         metadata: { title: "Nested Title" },
       });
       assertEquals(meta.title, "Nested Title");
+      assertEquals(meta.metadata, { title: "Nested Title" });
+    });
+
+    it("preserves legacy layout and heading passthrough fields", () => {
+      const meta = extractHTMLMetadata({
+        layout: false,
+        headings: [{ text: "Introduction", level: 2 }],
+      });
+
+      assertEquals(meta.layout, false);
+      assertEquals(meta.headings, [{ text: "Introduction", level: 2 }]);
     });
 
     it("should pass through non-reserved keys", () => {
@@ -74,6 +97,38 @@ describe("html/metadata-extraction", () => {
       assertEquals(meta.links.length, 1);
       assertEquals(meta.scripts.length, 1);
       assertEquals(meta.styles.length, 1);
+    });
+
+    it("does not mutate or alias structured metadata across extractions", () => {
+      const source = {
+        meta: [{ name: "robots", content: "index" }],
+        links: [{ rel: "canonical", href: "https://example.com/original" }],
+        scripts: [{ src: "/app.js" }],
+        styles: [{ href: "/app.css" }],
+        og: { title: "OpenGraph title" },
+      };
+
+      const first = extractHTMLMetadata(source);
+      const second = extractHTMLMetadata(source);
+
+      assertEquals(source.meta, [{ name: "robots", content: "index" }]);
+      assertEquals(first.meta, [
+        { name: "robots", content: "index" },
+        { property: "og:title", content: "OpenGraph title" },
+      ]);
+      assertEquals(second.meta, first.meta);
+      assertEquals(first.meta === second.meta, false);
+
+      first.links![0]!.href = "https://example.com/changed";
+      first.scripts![0]!.src = "/changed.js";
+      first.styles![0]!.href = "/changed.css";
+
+      assertEquals(source.links[0]?.href, "https://example.com/original");
+      assertEquals(source.scripts[0]?.src, "/app.js");
+      assertEquals(source.styles[0]?.href, "/app.css");
+      assertEquals(second.links?.[0]?.href, "https://example.com/original");
+      assertEquals(second.scripts?.[0]?.src, "/app.js");
+      assertEquals(second.styles?.[0]?.href, "/app.css");
     });
   });
 });

@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { injectHTMLContent } from "./html-injection.ts";
+import { escapeHTML } from "./html-escape.ts";
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
 
 const baseTemplate = `<!DOCTYPE html>
@@ -52,6 +58,121 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes("My Description"), true);
+    });
+
+    it("keeps replacement tokens literal in every dynamic placeholder", () => {
+      const tokens = "$&|$`|$'";
+      const escapedTokens = escapeHTML(tokens);
+      const html = injectHTMLContent(
+        [
+          "<title>{{ title }}</title>",
+          '<meta data-description="{{ description }}">',
+          "{{ meta }}{{ links }}{{ scripts }}{{ styles }}",
+          "<body>{{ content }}</body>",
+        ].join(""),
+        tokens,
+        {
+          title: tokens,
+          description: tokens,
+          meta: [{ name: "tokens", content: tokens }],
+          links: [{ rel: "canonical", href: tokens }],
+          scripts: [{ content: tokens }],
+          styles: [{ content: tokens }],
+        },
+        { mode: "production", slug: "test" },
+      );
+
+      assertStringIncludes(html, `<title>${escapedTokens}</title>`);
+      assertStringIncludes(html, `data-description="${escapedTokens}"`);
+      assertStringIncludes(html, `name="tokens" content="${escapedTokens}"`);
+      assertStringIncludes(html, `rel="canonical" href="${escapedTokens}"`);
+      assertStringIncludes(html, `<script >${tokens}</script>`);
+      assertStringIncludes(html, `<style >${tokens}</style>`);
+      assertStringIncludes(html, `<body>${tokens}`);
+    });
+
+    it("does not execute accessor-backed public inputs", () => {
+      let metadataAccessorCalls = 0;
+      let optionsAccessorCalls = 0;
+      const metadata = Object.defineProperty(
+        { description: "safe" },
+        "title",
+        {
+          enumerable: true,
+          get() {
+            metadataAccessorCalls++;
+            return "unsafe";
+          },
+        },
+      );
+      const options = Object.defineProperty(
+        { mode: "production" },
+        "slug",
+        {
+          enumerable: true,
+          get() {
+            optionsAccessorCalls++;
+            return "unsafe";
+          },
+        },
+      );
+
+      assertThrows(
+        () =>
+          injectHTMLContent("{{ title }}", "", metadata as never, {
+            mode: "production",
+            slug: "test",
+          }),
+        Error,
+        "cannot be inspected",
+      );
+      assertThrows(
+        () => injectHTMLContent("", "", minMeta, options as never),
+        Error,
+        "cannot be inspected",
+      );
+      assertEquals(metadataAccessorCalls, 0);
+      assertEquals(optionsAccessorCalls, 0);
+    });
+
+    it("passes the response nonce to all metadata script and style tags", () => {
+      const html = injectHTMLContent(
+        "<head>{{ scripts }}{{ styles }}</head><body></body>",
+        "",
+        {
+          scripts: [
+            { src: "/external.js", nonce: "metadata-nonce" },
+            { content: "globalThis.inline=true", nonce: "metadata-nonce" },
+          ],
+          styles: [
+            { href: "/external.css", nonce: "metadata-nonce" },
+            { content: "body{color:red}", nonce: "metadata-nonce" },
+          ],
+        },
+        {
+          mode: "production",
+          slug: "test",
+          nonce: "response-nonce",
+        },
+      );
+
+      assertStringIncludes(
+        html,
+        '<script src="/external.js" nonce="response-nonce"></script>',
+      );
+      assertStringIncludes(
+        html,
+        '<script nonce="response-nonce">globalThis.inline=true</script>',
+      );
+      assertStringIncludes(
+        html,
+        '<link rel="stylesheet" href="/external.css" nonce="response-nonce">',
+      );
+      assertStringIncludes(
+        html,
+        '<style nonce="response-nonce">body{color:red}</style>',
+      );
+      assertEquals(html.includes("metadata-nonce"), false);
     });
 
     it("should inject dev scripts in development mode", () => {

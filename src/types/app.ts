@@ -1,6 +1,9 @@
-import type { ReactElement } from "react";
+import type * as React from "react";
 
-export interface AppProps {
-  Component: (props: Record<string, unknown>) => ReactElement | null;
-  pageProps: Record<string, unknown>;
+/** Props passed to a custom Veryfront application wrapper. */
+export interface AppProps<TPageProps extends object = Record<string, unknown>> {
+  /** Page component selected for the current route. */
+  Component: React.ComponentType<TPageProps>;
+  /** Props resolved for the selected page component. */
+  pageProps: TPageProps;
 }

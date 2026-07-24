@@ -1,7 +1,7 @@
 import { dirname, join, relative, SEPARATOR } from "#veryfront/compat/path/index.ts";
 import { walk } from "#veryfront/compat/std/fs.ts";
 import { logger } from "#veryfront/utils";
-import type { BrowserTargets } from "#veryfront/types";
+import type { BrowserTargets } from "./types/index.ts";
 import { createError, toError } from "#veryfront/errors";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 

@@ -1,14 +1,16 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { dirname, join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
+import { symlink } from "#veryfront/platform/compat/fs.ts";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getEntityBySlug,
   getEntityInfo,
   getLayoutEntity,
 } from "../../../src/types/entities/getEntityInfo.ts";
 import { createMockAdapter } from "../../../src/platform/adapters/mock.ts";
-import { NotSupportedError } from "../../../src/platform/adapters/fs/wrapper.ts";
+import { VeryfrontError } from "../../../src/errors/types.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function createTestFile(path: string, content: string): Promise<void> {
@@ -22,6 +24,14 @@ function rejectingAsyncIterable(error: unknown): AsyncIterable<never> {
       return { next: () => Promise.reject(error) };
     },
   };
+}
+
+async function assertRouteConflict(operation: () => Promise<unknown>): Promise<void> {
+  const error = await assertRejects(operation, VeryfrontError);
+  if (!(error instanceof VeryfrontError)) {
+    throw new Error("Expected a VeryfrontError route conflict");
+  }
+  assertEquals(error.slug, "route-conflict");
 }
 
 describe("getEntityInfo", () => {
@@ -96,6 +106,77 @@ Layout content`,
     assertEquals(info, null);
   });
 
+  it("propagates adapter failures without falling through to the host filesystem", async () => {
+    await withTestContext("entity-adapter-isolation", async (context) => {
+      const testFile = join(context.projectDir, "adapter-only.mdx");
+      await createTestFile(testFile, "# Host filesystem content");
+
+      const adapter = {
+        fs: {
+          stat: () => Promise.resolve({ isFile: true }),
+          readFile: () => Promise.reject(new Error("adapter read failed")),
+        },
+      } as unknown as RuntimeAdapter;
+
+      await assertRejects(
+        () => getEntityInfo(testFile, adapter),
+        Error,
+        "adapter read failed",
+      );
+    });
+  });
+
+  it("extracts entity metadata from Windows-style paths", async () => {
+    const windowsPath = "C:\\project\\pages\\about.mdx";
+    const adapter = {
+      fs: {
+        stat: () => Promise.resolve({ isFile: true }),
+        readFile: () => Promise.resolve("# About"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityInfo(windowsPath, adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.slug, "about");
+    assertEquals(info.entity.type, "page");
+    assertEquals(info.entity.isPage, true);
+  });
+
+  it("leaves hosted filesystem path normalization to the adapter", async () => {
+    const projectDir = "/workspace/pages/project";
+    const filePath = `${projectDir}/pages/about.mdx`;
+    const reads: string[] = [];
+    const entityLookups: string[] = [];
+    const normalize = (path: string): string =>
+      path.startsWith(projectDir) ? path.slice(projectDir.length).replace(/^\/+/, "") : path;
+    const underlyingAdapter = {
+      getEntityIdForPath(path: string): string {
+        const normalized = normalize(path);
+        entityLookups.push(normalized);
+        return `id:${normalized}`;
+      },
+    };
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        readFile: (path: string) => {
+          reads.push(normalize(path));
+          return Promise.resolve("# About");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityInfo(filePath, adapter);
+
+    assertExists(info);
+    assertEquals(reads, ["pages/about.mdx"]);
+    assertEquals(entityLookups, ["pages/about.mdx"]);
+    assertEquals(info.entity.id, "id:pages/about.mdx");
+  });
+
   it("extracts slug correctly", async () => {
     await withTestContext("entity-slug-extraction", async (context) => {
       const file1 = join(context.projectDir, "about.mdx");
@@ -138,6 +219,26 @@ Content`,
       const info = await getEntityInfo(testFile);
       assertExists(info);
       assertEquals(info.entity.content.includes("---"), true);
+    });
+  });
+
+  it("rejects non-record YAML roots as frontmatter", async () => {
+    await withTestContext("entity-frontmatter-root", async (context) => {
+      const testFile = join(context.projectDir, "array-frontmatter.mdx");
+      await createTestFile(
+        testFile,
+        `---
+- private
+- draft
+---
+# Content`,
+      );
+
+      const info = await getEntityInfo(testFile);
+
+      assertExists(info);
+      assertEquals(info.entity.frontmatter, {});
+      assertEquals(info.entity.content, "# Content");
     });
   });
 
@@ -231,19 +332,24 @@ Content`,
     });
   });
 
-  it("retains local compatibility for explicitly unsupported adapter operations", async () => {
-    await withTestContext("entity-adapter-unsupported-fallback", async (context) => {
-      const testFile = join(context.projectDir, "local-compatible.mdx");
-      await createTestFile(testFile, "# Local compatibility content");
+  it("does not bridge a virtual adapter failure into the host filesystem", async () => {
+    await withTestContext("entity-virtual-adapter-authority", async (context) => {
+      const testFile = join(context.projectDir, "remote-only.mdx");
+      await createTestFile(testFile, "# Host content must not be returned");
 
       const adapter = createMockAdapter();
-      adapter.fs.stat = () => Promise.reject(new NotSupportedError("stat", "TestAdapter"));
-      adapter.fs.readFile = () => Promise.reject(new NotSupportedError("readFile", "TestAdapter"));
+      Object.assign(adapter.fs, {
+        getAdapterType: () => "GitHubFSAdapter",
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => false,
+      });
+      const backendError = new Error("virtual backend unavailable");
+      adapter.fs.stat = () => Promise.reject(backendError);
 
-      const info = await getEntityInfo(testFile, adapter);
+      const error = await assertRejects(() => getEntityInfo(testFile, adapter), Error);
 
-      assertExists(info);
-      assertEquals(info.entity.content, "# Local compatibility content");
+      assertEquals(error, backendError);
     });
   });
 
@@ -294,6 +400,192 @@ describe("getEntityBySlug", () => {
 
       assertExists(info);
       assertEquals(info.entity.content.includes("# About"), true);
+
+      const relativeInfo = await getEntityBySlug(context.projectDir, "./about");
+      assertExists(relativeInfo);
+      assertEquals(relativeInfo.entity.content.includes("# About"), true);
+    });
+  });
+
+  it("does not resolve slugs outside the pages directory", async () => {
+    await withTestContext("entity-byslug-traversal", async (context) => {
+      await createTestFile(join(context.projectDir, "outside.mdx"), "# Outside");
+
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "../outside"),
+        null,
+      );
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "nested/../../outside"),
+        null,
+      );
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "..\\outside"),
+        null,
+      );
+    });
+  });
+
+  it("rejects pages directories that escape the project", async () => {
+    await withTestContext("entity-pages-directory-traversal", async (context) => {
+      const projectDir = join(context.projectDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await createTestFile(
+        join(context.projectDir, "outside", "secret.mdx"),
+        "# Outside",
+      );
+
+      assertEquals(
+        await getEntityBySlug(projectDir, "secret", undefined, "../outside"),
+        null,
+      );
+    });
+  });
+
+  it("does not follow page symlinks outside the project", async () => {
+    await withTestContext("entity-page-symlink", async (context) => {
+      const projectDir = join(context.projectDir, "project");
+      const outsideFile = join(context.projectDir, "outside.mdx");
+      const linkedPage = join(projectDir, "pages", "linked.mdx");
+      await createTestFile(outsideFile, "# Outside");
+      await mkdir(dirname(linkedPage), { recursive: true });
+      await symlink(outsideFile, linkedPage);
+
+      assertEquals(await getEntityBySlug(projectDir, "linked"), null);
+    });
+  });
+
+  it("does not follow a pages directory symlink outside the project", async () => {
+    await withTestContext("entity-pages-directory-symlink", async (context) => {
+      const projectDir = join(context.projectDir, "project");
+      const outsidePages = join(context.projectDir, "outside-pages");
+      await mkdir(projectDir, { recursive: true });
+      await createTestFile(join(outsidePages, "secret.mdx"), "# Outside");
+      await symlink(outsidePages, join(projectDir, "pages"));
+
+      assertEquals(await getEntityBySlug(projectDir, "secret"), null);
+    });
+  });
+
+  it("rejects absolute paths returned outside an adapter project root", async () => {
+    const adapter = {
+      fs: {
+        resolveFile: () => Promise.resolve("/tenant-b/secret.mdx"),
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => Promise.resolve("# Tenant B"),
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    assertEquals(await getEntityBySlug("/tenant-a", "secret", adapter), null);
+  });
+
+  it("accepts project-relative paths from virtual filesystem adapters", async () => {
+    const underlyingAdapter = {};
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        resolveFile: () => Promise.resolve("pages/about.mdx"),
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => Promise.resolve("# About"),
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityBySlug("/project", "about", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "# About");
+  });
+
+  it("reads a root index candidate once", async () => {
+    const underlyingAdapter = {};
+    let readCount = 0;
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        stat: (path: string) =>
+          Promise.resolve({
+            isFile: path.endsWith("/pages/index.mdx"),
+            isDirectory: false,
+          }),
+        readFile: () => {
+          readCount++;
+          return Promise.resolve("# Home");
+        },
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityBySlug("/project", "index", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "# Home");
+    assertEquals(readCount, 1);
+  });
+
+  it("resolves an explicit index base once", async () => {
+    const underlyingAdapter = {};
+    let resolveCount = 0;
+    const adapter = {
+      fs: {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => underlyingAdapter,
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "GitHubFSAdapter",
+        resolveFile: () => {
+          resolveCount++;
+          return Promise.resolve("pages/index.mdx");
+        },
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => Promise.resolve("# Home"),
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    const info = await getEntityBySlug("/project", "index", adapter);
+
+    assertExists(info);
+    assertEquals(info.entity.content, "# Home");
+    assertEquals(resolveCount, 1);
+  });
+
+  it("fails closed when an adapter cannot canonicalize local paths", async () => {
+    let readCount = 0;
+    const adapter = {
+      fs: {
+        resolveFile: () => Promise.resolve("/project/pages/linked.mdx"),
+        stat: () => Promise.resolve({ isFile: true, isDirectory: false }),
+        readFile: () => {
+          readCount++;
+          return Promise.resolve("# Outside through symlink");
+        },
+        readDir: async function* () {},
+      },
+    } as unknown as RuntimeAdapter;
+
+    assertEquals(await getEntityBySlug("/project", "linked", adapter), null);
+    assertEquals(readCount, 0);
+  });
+
+  it("resolves page names that contain layout", async () => {
+    await withTestContext("entity-layout-page-name", async (context) => {
+      await createTestFile(
+        join(context.projectDir, "pages", "layout-guide.mdx"),
+        "# Layout guide",
+      );
+
+      const info = await getEntityBySlug(context.projectDir, "layout-guide");
+
+      assertExists(info);
+      assertEquals(info.entity.type, "page");
+      assertEquals(info.entity.content, "# Layout guide");
     });
   });
 
@@ -320,6 +612,42 @@ describe("getEntityBySlug", () => {
       const contactInfo = await getEntityBySlug(context.projectDir, "contact");
       assertExists(contactInfo);
       assertEquals(contactInfo.entity.content, "// Contact JSX");
+    });
+  });
+
+  it("matches dynamic pages according to segment arity", async () => {
+    await withTestContext("entity-slug-dynamic-arity", async (context) => {
+      const pagesDir = join(context.projectDir, "pages");
+      await createTestFile(join(pagesDir, "blog", "[slug].mdx"), "# Single segment");
+      await createTestFile(join(pagesDir, "docs", "[...slug].mdx"), "# Catch all");
+      await createTestFile(
+        join(pagesDir, "optional", "[[...slug]].mdx"),
+        "# Optional catch all",
+      );
+
+      const single = await getEntityBySlug(context.projectDir, "blog/one");
+      assertExists(single);
+      assertEquals(single.entity.content, "# Single segment");
+      assertEquals(
+        await getEntityBySlug(context.projectDir, "blog/one/two"),
+        null,
+      );
+
+      const catchAll = await getEntityBySlug(context.projectDir, "docs/one/two");
+      assertExists(catchAll);
+      assertEquals(catchAll.entity.content, "# Catch all");
+      assertEquals(await getEntityBySlug(context.projectDir, "docs"), null);
+
+      const optionalBase = await getEntityBySlug(context.projectDir, "optional");
+      assertExists(optionalBase);
+      assertEquals(optionalBase.entity.content, "# Optional catch all");
+
+      const optionalNested = await getEntityBySlug(
+        context.projectDir,
+        "optional/one/two",
+      );
+      assertExists(optionalNested);
+      assertEquals(optionalNested.entity.content, "# Optional catch all");
     });
   });
 
@@ -427,15 +755,13 @@ describe("getEntityBySlug", () => {
     assertEquals(info.entity.content, "// higher-priority required catch-all");
   });
 
-  it("fails closed when equally specific dynamic routes are ambiguous", async () => {
+  it("reports equally specific dynamic routes as a structured conflict", async () => {
     const adapter = createMockAdapter();
     const projectDir = "/project";
     adapter.fs.files.set(join(projectDir, "pages", "[id].tsx"), "// id route");
     adapter.fs.files.set(join(projectDir, "pages", "[slug].tsx"), "// slug route");
 
-    const info = await getEntityBySlug(projectDir, "post", adapter);
-
-    assertEquals(info, null);
+    await assertRouteConflict(() => getEntityBySlug(projectDir, "post", adapter));
   });
 
   it("propagates a dynamic-directory stat failure with its original provenance", async () => {
@@ -472,26 +798,6 @@ describe("getEntityBySlug", () => {
     );
 
     assertEquals(error, backendError);
-  });
-
-  it("uses host dynamic routes only for explicitly unsupported adapter operations", async () => {
-    await withTestContext("entity-dynamic-unsupported-fallback", async (context) => {
-      await createTestFile(
-        join(context.projectDir, "pages", "[id].tsx"),
-        "// explicit unsupported fallback",
-      );
-
-      const adapter = createMockAdapter();
-      adapter.fs.stat = () => Promise.reject(new NotSupportedError("stat", "TestAdapter"));
-      adapter.fs.readFile = () => Promise.reject(new NotSupportedError("readFile", "TestAdapter"));
-      adapter.fs.readDir = () =>
-        rejectingAsyncIterable(new NotSupportedError("readDir", "TestAdapter"));
-
-      const info = await getEntityBySlug(context.projectDir, "post", adapter);
-
-      assertExists(info);
-      assertEquals(info.entity.content, "// explicit unsupported fallback");
-    });
   });
 });
 
@@ -643,27 +949,35 @@ Default nested layout`,
       assertExists(layout);
       assertEquals(layout.entity.isLayout, true);
       assertEquals(layout.entity.content.includes("Default nested layout"), true);
+
+      const relativeLayout = await getLayoutEntity(
+        context.projectDir,
+        "./components/layouts/DefaultLayout.mdx",
+      );
+      assertExists(relativeLayout);
+      assertEquals(relativeLayout.entity.isLayout, true);
     });
   });
 
-  it("resolves an optional catch-all at its own root (/optional and deeper)", async () => {
-    await withTestContext("entity-optional-catch-all-root", async (context) => {
+  it("does not resolve layout names outside layout directories", async () => {
+    await withTestContext("entity-layout-traversal", async (context) => {
+      await mkdir(join(context.projectDir, "layouts"), { recursive: true });
       await createTestFile(
-        join(context.projectDir, "pages", "optional", "[[...slug]].tsx"),
-        `export default function Optional() { return null; }`,
+        join(context.projectDir, "RootLayout.mdx"),
+        `---
+isLayout: true
+---
+Root layout`,
       );
 
-      // Regression: the bare parent path must resolve the optional catch-all
-      // matching zero remaining segments, not 404. Before the fix the dynamic
-      // resolver never looked inside pages/optional/ for /optional, so only
-      // /optional/a/b worked.
-      const root = await getEntityBySlug(context.projectDir, "optional");
-      assertExists(root);
-      assertEquals(root.entity.isPage, true);
-
-      const deep = await getEntityBySlug(context.projectDir, "optional/a/b");
-      assertExists(deep);
-      assertEquals(deep.entity.isPage, true);
+      assertEquals(
+        await getLayoutEntity(context.projectDir, "../RootLayout"),
+        null,
+      );
+      assertEquals(
+        await getLayoutEntity(context.projectDir, "..\\RootLayout"),
+        null,
+      );
     });
   });
 });

@@ -2,7 +2,6 @@ import { rendererLogger } from "#veryfront/utils";
 import { getNavigationStore, type HistoryMode, type NavigateOptions } from "./navigation-store.ts";
 import ReactDOM from "react-dom/client";
 import type { Root } from "react-dom/client";
-import type { GlobalWithReactDOM } from "#veryfront/types/global-guards.ts";
 import {
   extractPageDataFromScript,
   NavigationHandlers,
@@ -11,6 +10,10 @@ import {
   ViewportPrefetch,
 } from "#veryfront/routing";
 import type { RouteData, SpaPageData } from "#veryfront/routing";
+
+interface GlobalWithReactDOM {
+  ReactDOM?: typeof import("react-dom/client");
+}
 
 const logger = rendererLogger.component("veryfront");
 

@@ -9,6 +9,7 @@ import { getProjectReact } from "#veryfront/react";
 import { flattenRouteParams } from "#veryfront/routing";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { toHTMLFrontmatter, toMDXFrontmatter } from "./frontmatter.ts";
 
 interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -93,7 +94,13 @@ export async function prepareMDXPageBundles(
     options?.studioEmbed,
   );
 
-  const pageBundle = ssrBundle as PageBundle;
+  const pageBundle: PageBundle = {
+    compiledCode: ssrBundle.compiledCode,
+    frontmatter: toMDXFrontmatter(ssrBundle.frontmatter),
+    globals: ssrBundle.globals,
+    headings: ssrBundle.headings,
+    nodeMap: ssrBundle.nodeMap,
+  };
 
   if (options?.precompiledModule) {
     pageBundle.clientModuleCode = options.precompiledModule;
@@ -155,6 +162,7 @@ export function handleMDXPage(
     "rendering.handleMDXPage",
     async () => {
       const { frontmatter, path } = pageInfo.entity;
+      const publicFrontmatter = toMDXFrontmatter(frontmatter);
       const { pageBundle, serverModuleCode } = await prepareMDXPageBundles(pageInfo, projectDir, {
         precompiledModule: options?.precompiledModule,
         studioEmbed: options?.studioEmbed,
@@ -181,7 +189,10 @@ export function handleMDXPage(
         }
 
         if (mod.metadata && typeof mod.metadata === "object") {
-          collectedMetadata = { ...collectedMetadata, ...mod.metadata };
+          collectedMetadata = {
+            ...collectedMetadata,
+            ...toHTMLFrontmatter(mod.metadata),
+          };
         }
 
         if (typeof mod.generateMetadata === "function") {
@@ -194,11 +205,14 @@ export function handleMDXPage(
               query,
               slug,
               path,
-              frontmatter: frontmatter || {},
+              frontmatter: publicFrontmatter,
             });
 
             if (gen && typeof gen === "object") {
-              collectedMetadata = { ...collectedMetadata, ...(gen as Record<string, unknown>) };
+              collectedMetadata = {
+                ...collectedMetadata,
+                ...toHTMLFrontmatter(gen),
+              };
             }
           } catch (e) {
             const normalizedError = ensureError(e);

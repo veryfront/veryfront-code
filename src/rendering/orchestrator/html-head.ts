@@ -1,10 +1,12 @@
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
-import type { MdxBundle, MDXFrontmatter } from "#veryfront/types";
+import type { MdxBundle } from "#veryfront/types";
+import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import {
   buildAttributes,
   escapeInlineScriptContent,
   escapeInlineStyleContent,
 } from "#veryfront/html/html-escape.ts";
+import { toHTMLFrontmatter } from "../frontmatter.ts";
 
 interface FrontmatterContextLike {
   pageInfo: { entity: { frontmatter?: Record<string, unknown> } };
@@ -73,9 +75,9 @@ export function buildHeadElements(head?: CollectedHead): { scripts: string; othe
 }
 
 export function mergeFrontmatter(context: FrontmatterContextLike): MDXFrontmatter {
-  return {
-    ...context.pageInfo.entity.frontmatter,
-    ...context.pageBundle.frontmatter,
-    ...(context.collectedMetadata ?? {}),
-  } as MDXFrontmatter;
+  return toHTMLFrontmatter({
+    ...toHTMLFrontmatter(context.pageInfo.entity.frontmatter),
+    ...toHTMLFrontmatter(context.pageBundle.frontmatter),
+    ...toHTMLFrontmatter(context.collectedMetadata),
+  });
 }

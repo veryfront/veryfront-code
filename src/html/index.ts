@@ -17,7 +17,7 @@ export {
   getProdScripts,
 } from "./hydration-script-builder/index.ts";
 export { processMetadata } from "./metadata-builder.ts";
-export type { ProcessedMetadata } from "./metadata-builder.ts";
+export type { HTMLRenderMetadata, ProcessedMetadata } from "./metadata-builder.ts";
 export { extractHTMLMetadata } from "./metadata-extraction.ts";
 export {
   generateLinkTags,

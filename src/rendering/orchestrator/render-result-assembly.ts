@@ -1,4 +1,5 @@
 import type { PageBundle, RenderResult } from "#veryfront/types";
+import { toMDXFrontmatter } from "../frontmatter.ts";
 
 interface RenderResultAssemblyCache {
   persistResult(result: RenderResult, slug: string, cacheKey?: string): Promise<void>;
@@ -38,7 +39,7 @@ export function assembleRenderResult(options: AssembleRenderResultOptions): Rend
 
   const result: RenderResult = {
     html: options.ssrResult.fullHtml,
-    frontmatter: options.pageBundle.frontmatter || {},
+    frontmatter: toMDXFrontmatter(options.pageBundle.frontmatter),
     headings: options.pageBundle.headings || [],
     nodeMap: options.pageBundle.nodeMap,
     stream: options.ssrResult.finalStream,

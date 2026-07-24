@@ -5,7 +5,7 @@ import type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSOptimizerStats,
-} from "#veryfront/types";
+} from "./types/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs, type SecureFs } from "#veryfront/security/secure-fs.ts";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";

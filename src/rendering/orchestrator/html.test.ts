@@ -217,6 +217,40 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(result.title, "From Metadata");
     });
 
+    it("validates rich HTML metadata while merging source precedence", () => {
+      const result = mergeFrontmatter({
+        pageInfo: {
+          entity: {
+            frontmatter: {
+              tags: "source",
+              date: new Date("2026-07-24T08:30:00.000Z"),
+              nested: { unsafe: true },
+              og: { title: "Entity title" },
+            },
+          },
+        },
+        pageBundle: {
+          frontmatter: {
+            tags: ["bundle"],
+          },
+        },
+        collectedMetadata: {
+          og: { title: "Generated title" },
+          meta: [{ name: "robots", content: "index,follow" }],
+          scripts: [{ src: "/metadata.js", defer: "true" }],
+        },
+      } as never);
+
+      assertEquals(result, {
+        tags: ["bundle"],
+        date: new Date("2026-07-24T08:30:00.000Z"),
+        nested: { unsafe: true },
+        og: { title: "Generated title" },
+        meta: [{ name: "robots", content: "index,follow" }],
+        scripts: [{ src: "/metadata.js", defer: "true" }],
+      });
+    });
+
     it("should handle missing frontmatter gracefully", () => {
       const context = {
         pageInfo: { entity: { frontmatter: undefined } },
@@ -266,6 +300,107 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateFullHTML", () => {
+    it("applies collected metadata precedence to full HTML documents", async () => {
+      const html = await createHTMLGenerator().generateFullHTML(
+        createHTMLContext({
+          html:
+            "<!DOCTYPE html><html><head><title>{{title}}</title>{{meta}}{{links}}{{styles}}</head><body><main>Hello</main>{{scripts}}</body></html>",
+          pageInfo: {
+            entity: {
+              path: "/project/app/page.tsx",
+              frontmatter: {
+                title: "Source title",
+                description: "Source description",
+                og: { title: "Source OpenGraph title" },
+              },
+            },
+          } as never,
+          collectedMetadata: {
+            title: "Generated title",
+            description: "Generated description",
+            og: { title: "Generated OpenGraph title" },
+          },
+        }),
+      );
+
+      assertStringIncludes(html, "<title>Generated title</title>");
+      assertStringIncludes(html, 'name="description" content="Generated description"');
+      assertStringIncludes(
+        html,
+        'property="og:title" content="Generated OpenGraph title"',
+      );
+      assertEquals(html.includes("Source OpenGraph title"), false);
+    });
+
+    it("does not invoke layout frontmatter accessors for fragment documents", async () => {
+      let getterCalls = 0;
+      const layoutFrontmatter: Record<string, unknown> = {
+        description: "Safe layout description",
+      };
+      Object.defineProperty(layoutFrontmatter, "title", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "Unsafe layout title";
+        },
+      });
+
+      const html = await createHTMLGenerator().generateFullHTML(
+        createHTMLContext({
+          html: "<main>Hello</main>",
+          layoutBundle: { frontmatter: layoutFrontmatter } as never,
+        }),
+      );
+
+      assertEquals(getterCalls, 0);
+      assertEquals(html.includes("Unsafe layout title"), false);
+      assertStringIncludes(html, 'name="description" content="Safe layout description"');
+    });
+
+    it("validates structured metadata before injecting a full HTML document", async () => {
+      let getterCalls = 0;
+      const frontmatter: Record<string, unknown> = {
+        description: "Validated description",
+        og: { title: "Validated OpenGraph title" },
+        links: [{ rel: "canonical", href: "https://example.com/page" }],
+        icons: [{ href: "/icon.svg", type: "image/svg+xml" }],
+        scripts: [{ content: "window.__METADATA__ = true" }],
+        styles: [{ content: "body { color: navy; }" }],
+      };
+      Object.defineProperty(frontmatter, "title", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "Unsafe title";
+        },
+      });
+
+      const html = await createHTMLGenerator().generateFullHTML(
+        createHTMLContext({
+          html:
+            "<!DOCTYPE html><html><head>{{meta}}{{links}}{{styles}}</head><body><main>Hello</main>{{scripts}}</body></html>",
+          pageInfo: {
+            entity: {
+              path: "/project/app/page.tsx",
+              frontmatter,
+            },
+          } as never,
+        }),
+      );
+
+      assertEquals(getterCalls, 0);
+      assertStringIncludes(html, 'name="description" content="Validated description"');
+      assertStringIncludes(
+        html,
+        'property="og:title" content="Validated OpenGraph title"',
+      );
+      assertStringIncludes(html, 'rel="canonical" href="https://example.com/page"');
+      assertStringIncludes(html, 'rel="icon" href="/icon.svg" type="image/svg+xml"');
+      assertStringIncludes(html, "window.__METADATA__ = true");
+      assertStringIncludes(html, "body { color: navy; }");
+      assertEquals(html.includes("Unsafe title"), false);
+    });
+
     it("does not hydrate full documents for non-prologue use-client text", async () => {
       const serverSources = [
         "// 'use client';\nexport default function Page() {}",

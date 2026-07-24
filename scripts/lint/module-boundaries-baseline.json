@@ -75,8 +75,6 @@
     "cycle-sensitive:src/platform/adapters/veryfront-api-client/operations.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/compat/http/websocket.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/compat/kv/factory.ts -> #veryfront/utils",
-    "cycle-sensitive:src/types/entities/getEntityInfo.ts -> #veryfront/utils",
-    "cycle-sensitive:src/types/global-guards.ts -> #veryfront/utils",
     "cycle-sensitive:src/utils/redis-client.ts -> #veryfront/errors"
   ],
   "cycleEdges": [

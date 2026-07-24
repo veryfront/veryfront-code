@@ -10,6 +10,7 @@ import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
+import { toMDXFrontmatter } from "../frontmatter.ts";
 
 const logger = rendererLogger.component("layout-collector");
 
@@ -284,7 +285,7 @@ export class LayoutCollector {
 
     const layoutBundle = await this.compileMDX(
       layoutInfo.entity.content,
-      { ...layoutInfo.entity.frontmatter, isLayout: true },
+      { ...toMDXFrontmatter(layoutInfo.entity.frontmatter), isLayout: true },
       layoutPath,
     );
 

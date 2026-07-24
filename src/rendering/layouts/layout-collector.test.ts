@@ -4,9 +4,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   discoverComponentsLayoutPath,
   type FileExistenceChecker,
+  LayoutCollector,
   resolveLayoutRouterRootDir,
 } from "./layout-collector.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { EntityInfo } from "#veryfront/types";
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
@@ -214,6 +217,55 @@ describe("LayoutCollector", () => {
 
     it("should not detect true as explicit layout", () => {
       assertEquals(hasExplicitLayout(true), false);
+    });
+
+    it("preserves nested custom layout frontmatter passed to MDX compilation", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/layouts/main.mdx",
+        [
+          "---",
+          "theme:",
+          "  palette:",
+          "    accent: blue",
+          "features:",
+          "  - search",
+          "  - analytics",
+          "---",
+          "# Main layout",
+        ].join("\n"),
+      );
+      let compiledFrontmatter: Record<string, unknown> | undefined;
+      const collector = new LayoutCollector({
+        projectDir: "/project",
+        adapter,
+        config: { layout: "layouts/main.mdx" } as VeryfrontConfig,
+        compileMDX: (_content, frontmatter) => {
+          compiledFrontmatter = frontmatter;
+          return Promise.resolve({
+            compiledCode: "export default function Layout() {}",
+          });
+        },
+      });
+      const pageInfo: EntityInfo = {
+        entity: {
+          id: "page",
+          path: "/project/pages/index.mdx",
+          slug: "",
+          type: "page",
+          content: "# Page",
+          frontmatter: {},
+          isPage: true,
+        },
+      };
+
+      await collector.collectLayouts(pageInfo);
+
+      assertEquals(compiledFrontmatter, {
+        theme: { palette: { accent: "blue" } },
+        features: ["search", "analytics"],
+        isLayout: true,
+      });
     });
   });
 
