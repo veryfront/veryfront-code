@@ -136,4 +136,71 @@ export class MetricsRecorder {
   recordError(attributes?: Record<string, string>): void {
     this.instruments.errorCounter?.add(1, attributes);
   }
+
+  recordStreamLifecycleOutcome(attributes: Record<string, string>): void {
+    this.instruments.streamLifecycleOutcomeCounter?.add(1, attributes);
+  }
+
+  recordStreamLifecycleDeadline(attributes: Record<string, string>): void {
+    this.instruments.streamLifecycleDeadlineCounter?.add(1, attributes);
+  }
+
+  recordStreamLifecycleTelemetry(attributes: Record<string, string>): void {
+    this.instruments.streamLifecycleTelemetryCounter?.add(1, attributes);
+  }
+
+  recordStreamLifecycleRepair(attributes: Record<string, string>): void {
+    this.instruments.streamLifecycleRepairCounter?.add(1, attributes);
+  }
+
+  recordStreamLifecycleShadowDivergence(
+    attributes: Record<string, string>,
+  ): void {
+    this.instruments.streamLifecycleShadowDivergenceCounter?.add(1, attributes);
+  }
+
+  recordStreamLifecycleDuration(
+    kind:
+      | "attempt"
+      | "first_progress"
+      | "semantic_idle"
+      | "tool_input"
+      | "tool_execution",
+    durationMs: number,
+    attributes: Record<string, string>,
+  ): void {
+    const value = Math.max(0, durationMs);
+    switch (kind) {
+      case "attempt":
+        this.instruments.streamLifecycleAttemptDuration?.record(
+          value,
+          attributes,
+        );
+        return;
+      case "first_progress":
+        this.instruments.streamLifecycleFirstProgressDuration?.record(
+          value,
+          attributes,
+        );
+        return;
+      case "semantic_idle":
+        this.instruments.streamLifecycleSemanticIdleDuration?.record(
+          value,
+          attributes,
+        );
+        return;
+      case "tool_input":
+        this.instruments.streamLifecycleToolInputDuration?.record(
+          value,
+          attributes,
+        );
+        return;
+      case "tool_execution":
+        this.instruments.streamLifecycleToolExecutionDuration?.record(
+          value,
+          attributes,
+        );
+        return;
+    }
+  }
 }
