@@ -15,6 +15,7 @@ import type {
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
+import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -60,7 +61,8 @@ export class BareStrategy implements ImportRewriteStrategy {
       specifier === "react-dom" ||
       specifier.startsWith("react/") ||
       specifier.startsWith("react-dom/") ||
-      specifier.startsWith("node:")
+      specifier.startsWith("node:") ||
+      isCrossProjectImport(specifier)
     ) {
       return false;
     }
