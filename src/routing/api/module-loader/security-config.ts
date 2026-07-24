@@ -24,5 +24,5 @@ export async function loadSecurityConfig(
     logger.warn("Failed to load security.remoteHosts", e);
   }
 
-  return DEFAULT_ALLOWED_CDN_HOSTS;
+  return [...DEFAULT_ALLOWED_CDN_HOSTS];
 }

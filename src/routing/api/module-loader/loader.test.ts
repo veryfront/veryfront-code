@@ -5,7 +5,6 @@ import { join } from "#veryfront/compat/path";
 import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
-  isSpecifierResolutionError,
   loadHandlerModule,
   resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
@@ -20,6 +19,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 
 const fs = createFileSystem();
 
@@ -252,6 +252,50 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("keeps project agent auto-discovery in the shared runtime registry", async () => {
+    const projectDir = await makeTempDir();
+    const agentId = `bundled-route-agent-${crypto.randomUUID()}`;
+    const agentsDir = join(projectDir, "agents");
+    const routesDir = join(projectDir, "pages", "api");
+    const modulePath = join(routesDir, "agent-route.ts");
+
+    await fs.mkdir(agentsDir, { recursive: true });
+    await fs.mkdir(routesDir, { recursive: true });
+    await fs.writeTextFile(
+      join(agentsDir, "assistant.ts"),
+      [
+        `import { agent } from "veryfront/agent";`,
+        `export default agent({`,
+        `  id: ${JSON.stringify(agentId)},`,
+        `  system: "Test agent",`,
+        `  skills: false,`,
+        `  security: false,`,
+        `});`,
+      ].join("\n"),
+    );
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import "../../agents/assistant.ts";`,
+        `export function GET() { return new Response("ok"); }`,
+      ].join("\n"),
+    );
+
+    try {
+      const route = await loadHandlerModule({
+        projectDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+
+      assertEquals(typeof route?.GET, "function");
+      assertEquals(agentRegistry.get(agentId)?.id, agentId);
+    } finally {
+      agentRegistry.delete(agentId);
+    }
+  });
+
   // esbuild applies tsconfig `paths` before any plugin's onResolve runs, so a
   // boundary check that lives in a resolver plugin never sees the result. An
   // alias that climbs out of the project must not load.
@@ -286,10 +330,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  // Bundling reads the route through the adapter; a direct import does not. A
-  // module that threw while evaluating must surface its own error rather than
-  // be evaluated a second time under bundling semantics.
-  it("does not retry a module whose own error quotes a resolver phrase", async () => {
+  // A module that throws while evaluating must surface its own error without
+  // triggering a second source read or evaluation attempt.
+  it("reads a broken module only once when its error quotes a resolver phrase", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "handler.ts");
 
@@ -321,7 +364,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     }
 
     assertMatch(caught, /Cannot find module 'config'/);
-    assertEquals(readCount, 0, "the broken module was re-read for bundling");
+    assertEquals(readCount, 1, "the broken module was read more than once");
   });
 
   it("throws on missing file", async () => {
@@ -873,6 +916,40 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  for (const extension of [".js", ".ts"]) {
+    it(`rejects a direct ${extension} handler symlink that escapes the project`, async () => {
+      const rootDir = await makeTempDir();
+      const projectDir = join(rootDir, "project");
+      const outsideDir = join(rootDir, "outside");
+      const modulePath = join(projectDir, `handler${extension}`);
+      const outsidePath = join(outsideDir, `outside${extension}`);
+
+      await fs.mkdir(projectDir, { recursive: true });
+      await fs.mkdir(outsideDir, { recursive: true });
+      await fs.writeTextFile(
+        outsidePath,
+        `export function GET() { return new Response("OUTSIDE_EXECUTED"); }`,
+      );
+      await Deno.symlink(outsidePath, modulePath);
+
+      try {
+        await assertRejects(
+          () =>
+            loadHandlerModule({
+              projectDir,
+              modulePath,
+              adapter,
+              config: undefined,
+            }),
+          Error,
+          "module path escapes project directory",
+        );
+      } finally {
+        await fs.remove(rootDir, { recursive: true });
+      }
+    });
+  }
+
   it("rejects import map entries that escape project directory", async () => {
     const realDir = await makeTempDir();
     const modulePath = join(realDir, "handler.ts");
@@ -1216,56 +1293,5 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
     try {
       await fs.remove(realProject, { recursive: true });
     } catch (_) { /* best effort */ }
-  });
-});
-
-describe("isSpecifierResolutionError", () => {
-  // Direct import leaves specifier resolution to the runtime, which knows
-  // nothing about the project's `@/` alias — those routes used to 500 with a
-  // flat "Handler not found". Only resolution failures may fall back to
-  // bundling; a genuinely broken module must still surface its own error.
-  it("recognises an unresolved bare or aliased specifier", () => {
-    for (
-      const message of [
-        // Deno appends a hint on later lines; the specifier opens the message.
-        `Import "@/lib/uses-crypto" not a dependency\n  hint: try running \`deno add\``,
-        `Module not found "file:///p/lib/x.js".`,
-        `Relative import path "lib/x.ts" not prefixed with / or ./ or ../`,
-      ]
-    ) {
-      assertEquals(isSpecifierResolutionError(new TypeError(message)), true, message);
-    }
-  });
-
-  it("does not treat a genuine module error as a resolution failure", () => {
-    assertEquals(isSpecifierResolutionError(new SyntaxError("Unexpected token }")), false);
-    assertEquals(isSpecifierResolutionError(new TypeError("x is not a function")), false);
-    assertEquals(isSpecifierResolutionError(new Error("boom")), false);
-  });
-
-  // A route is free to throw whatever it likes. Matching those phrases anywhere
-  // in the message used to hand a broken module to the bundling loader, which
-  // evaluates it a second time under different semantics.
-  it("does not match a module's own error that quotes a resolver phrase", () => {
-    for (
-      const message of [
-        `Cannot find module 'config'`,
-        `Setup failed: Module not found "config"`,
-        `Import "x" not a dependency, said the module`,
-      ]
-    ) {
-      assertEquals(isSpecifierResolutionError(new Error(message)), false, message);
-    }
-
-    // Not even when the module throws the type Deno's resolver uses.
-    assertEquals(
-      isSpecifierResolutionError(new TypeError(`config error: Module not found "db"`)),
-      false,
-    );
-  });
-
-  it("ignores non-Error values", () => {
-    assertEquals(isSpecifierResolutionError(null), false);
-    assertEquals(isSpecifierResolutionError("not a dependency"), false);
   });
 });

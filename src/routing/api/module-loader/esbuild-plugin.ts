@@ -12,17 +12,25 @@ import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs
 import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost } from "./http-validator.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 
 const logger = serverLogger.component("api");
 const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
+const HTTP_MODULE_MAX_REDIRECTS = 10;
+const MAX_CONFIGURED_HTTP_MODULE_SIZE_BYTES = 64 * 1024 * 1024;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 interface HTTPPluginOptions {
   allowedHosts: string[];
   lockfile?: LockfileManager;
   projectDir?: string;
   strict?: boolean;
+  maxResponseBytes?: number;
+  timeoutMs?: number;
 }
 
 interface CachedHTTPModuleMetadata {
@@ -40,6 +48,23 @@ interface HTTPModuleCache {
     resolvedUrl: string,
     integrity: string,
   ): Promise<void>;
+}
+
+class RemoteImportBlockedError extends Error {
+  override readonly name = "RemoteImportBlockedError";
+}
+
+class RemoteModuleFetchError extends Error {
+  override readonly name = "RemoteModuleFetchError";
+}
+
+function cancelResponseBody(response: Response): void {
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation) void cancellation.catch(() => undefined);
+  } catch {
+    /* cancellation is best-effort cleanup */
+  }
 }
 
 function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache | null {
@@ -136,6 +161,23 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
 export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin {
   const opts: HTTPPluginOptions = Array.isArray(options) ? { allowedHosts: options } : options;
   const { allowedHosts, strict = false } = opts;
+  const timeoutMs = normalizeTimerDurationMs(
+    opts.timeoutMs ?? HTTP_MODULE_FETCH_TIMEOUT_MS,
+    "HTTP module timeout",
+  );
+  if (timeoutMs === 0) {
+    throw new RangeError("HTTP module timeout must be greater than zero");
+  }
+  const maxResponseBytes = opts.maxResponseBytes ?? MAX_BUNDLE_CHUNK_SIZE_BYTES;
+  if (
+    !Number.isSafeInteger(maxResponseBytes) ||
+    maxResponseBytes <= 0 ||
+    maxResponseBytes > MAX_CONFIGURED_HTTP_MODULE_SIZE_BYTES
+  ) {
+    throw new RangeError(
+      `maxResponseBytes must be a positive safe integer no greater than ${MAX_CONFIGURED_HTTP_MODULE_SIZE_BYTES}`,
+    );
+  }
   const lockfile = opts.lockfile ??
     (opts.projectDir ? createLockfileManager(opts.projectDir) : null);
   const moduleCache = createHTTPModuleCache(opts.projectDir);
@@ -147,18 +189,94 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
       const resolvedUrls: string[] = [];
       const nodeMapped: Array<{ from: string; to: string }> = [];
 
+      function blockedRemoteImport(url: URL): RemoteImportBlockedError {
+        const remediation =
+          `Add "${url.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
+        return new RemoteImportBlockedError(
+          `Remote import blocked by allow-list: ${url.origin}. ${remediation}`,
+        );
+      }
+
+      function requireAllowedRemoteUrl(candidate: string): URL {
+        let url: URL;
+        try {
+          url = new URL(candidate);
+        } catch (_) {
+          throw new RemoteImportBlockedError(
+            "Remote import blocked: expected an absolute HTTP(S) URL.",
+          );
+        }
+
+        if (
+          (url.protocol !== "http:" && url.protocol !== "https:") ||
+          url.username.length > 0 ||
+          url.password.length > 0
+        ) {
+          throw new RemoteImportBlockedError(
+            "Remote import blocked: URLs must use HTTP(S) without embedded credentials.",
+          );
+        }
+        if (!isAllowedRemoteHost(url, allowedHosts)) throw blockedRemoteImport(url);
+        return url;
+      }
+
+      function pluginError(error: RemoteImportBlockedError | RemoteModuleFetchError): {
+        errors: Message[];
+      } {
+        return { errors: [{ text: error.message } as Message] };
+      }
+
       async function fetchWithTimeout(url: string): Promise<Response> {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
           return await fetch(url, {
             headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
             signal: controller.signal,
-            redirect: "follow",
+            redirect: "manual",
           });
         } finally {
           clearTimeout(timeout);
+        }
+      }
+
+      async function fetchAllowedRedirectChain(url: string): Promise<{
+        response: Response;
+        resolvedUrl: string;
+      }> {
+        let currentUrl = requireAllowedRemoteUrl(url);
+
+        for (let redirectCount = 0;; redirectCount++) {
+          const response = await fetchWithTimeout(currentUrl.toString());
+          if (REDIRECT_STATUSES.has(response.status)) {
+            const location = response.headers.get("location");
+            if (!location) {
+              cancelResponseBody(response);
+              return { response, resolvedUrl: currentUrl.toString() };
+            }
+            if (redirectCount >= HTTP_MODULE_MAX_REDIRECTS) {
+              cancelResponseBody(response);
+              throw new RemoteModuleFetchError(
+                `Remote module exceeded ${HTTP_MODULE_MAX_REDIRECTS} redirects`,
+              );
+            }
+
+            cancelResponseBody(response);
+            currentUrl = requireAllowedRemoteUrl(new URL(location, currentUrl).toString());
+            continue;
+          }
+
+          let resolvedUrl: string;
+          try {
+            resolvedUrl = requireAllowedRemoteUrl(
+              response.url || currentUrl.toString(),
+            ).toString();
+          } catch (error) {
+            cancelResponseBody(response);
+            throw error;
+          }
+          return { response, resolvedUrl };
         }
       }
 
@@ -211,26 +329,88 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         }
       }
 
-      async function fetchRemoteModule(url: string): Promise<Response> {
+      async function fetchRemoteModule(url: string): Promise<{
+        response: Response;
+        resolvedUrl: string;
+      }> {
         for (let attempt = 1; attempt <= HTTP_MODULE_FETCH_MAX_ATTEMPTS; attempt += 1) {
-          const response = await fetchWithTimeout(url).catch((error) =>
-            new Response(String(error?.message ?? error), {
-              status: HTTP_NETWORK_CONNECT_TIMEOUT,
-            })
-          );
+          let result: { response: Response; resolvedUrl: string };
+          try {
+            result = await fetchAllowedRedirectChain(url);
+          } catch (error) {
+            if (
+              error instanceof RemoteImportBlockedError ||
+              error instanceof RemoteModuleFetchError
+            ) {
+              throw error;
+            }
+            result = {
+              response: new Response(error instanceof Error ? error.message : String(error), {
+                status: HTTP_NETWORK_CONNECT_TIMEOUT,
+              }),
+              resolvedUrl: url,
+            };
+          }
+          const { response } = result;
           if (!shouldRetryFetch(response.status) || attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS) {
-            return response;
+            if (!response.ok) cancelResponseBody(response);
+            return result;
           }
 
           logger.warn(
             `[http] fetch attempt ${attempt} failed ${url} ${response.status}; retrying`,
           );
+          cancelResponseBody(response);
           await sleep(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
         }
 
-        return new Response("Remote module fetch failed", {
-          status: HTTP_NETWORK_CONNECT_TIMEOUT,
-        });
+        return {
+          response: new Response("Remote module fetch failed", {
+            status: HTTP_NETWORK_CONNECT_TIMEOUT,
+          }),
+          resolvedUrl: url,
+        };
+      }
+
+      async function readRemoteModuleText(response: Response): Promise<string> {
+        const rawContentLength = response.headers.get("content-length");
+        if (rawContentLength && /^\d+$/.test(rawContentLength)) {
+          const contentLength = Number(rawContentLength);
+          if (Number.isSafeInteger(contentLength) && contentLength > maxResponseBytes) {
+            cancelResponseBody(response);
+            throw new RemoteModuleFetchError(
+              `Remote module exceeded ${maxResponseBytes} bytes`,
+            );
+          }
+        }
+
+        const controller = new AbortController();
+        const timeoutError = new RemoteModuleFetchError(
+          `Remote module body timed out after ${timeoutMs}ms`,
+        );
+        const timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);
+
+        try {
+          const result = await readResponseTextPrefix(
+            response,
+            maxResponseBytes + 1,
+            controller.signal,
+          );
+          if (
+            result.truncated ||
+            new TextEncoder().encode(result.text).byteLength > maxResponseBytes
+          ) {
+            throw new RemoteModuleFetchError(
+              `Remote module exceeded ${maxResponseBytes} bytes`,
+            );
+          }
+          return result.text;
+        } catch (error) {
+          if (controller.signal.aborted) throw timeoutError;
+          throw error;
+        } finally {
+          clearTimeout(timeout);
+        }
       }
 
       build.onResolve({ filter: /^(http|https):\/\// }, (args) => ({
@@ -276,21 +456,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         let requestUrl = args.path;
 
         try {
-          const u = new URL(args.path);
-
-          if (allowedHosts?.length) {
-            if (!isAllowedRemoteHost(u, allowedHosts)) {
-              const remediation =
-                `Add "${u.origin}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
-              return {
-                errors: [
-                  {
-                    text: `Remote import blocked by allow-list: ${u.origin}. ${remediation}`,
-                  } as Message,
-                ],
-              };
-            }
-          }
+          const u = requireAllowedRemoteUrl(args.path);
 
           if (u.hostname === "esm.sh") {
             if (u.pathname.includes("/denonext/")) {
@@ -302,7 +468,13 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             requestUrl = u.toString();
           }
         } catch (e) {
+          if (e instanceof RemoteImportBlockedError) return pluginError(e);
           logger.warn("API URL parse failed", e);
+          return pluginError(
+            new RemoteImportBlockedError(
+              "Remote import blocked: expected an absolute HTTP(S) URL.",
+            ),
+          );
         }
 
         const readCachedModule = async (
@@ -319,17 +491,18 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           let canUseLockfileCacheFallback = true;
           logger.debug(`[http] lockfile hit: ${args.path}`);
           try {
-            const res = await fetchRemoteModule(lockfileEntry.resolved);
+            const fetched = await fetchRemoteModule(lockfileEntry.resolved);
+            const res = fetched.response;
             if (res.ok) {
-              const text = await res.text();
+              const text = await readRemoteModuleText(res);
               const integrity = await computeIntegrity(text);
 
               if (integrity === lockfileEntry.integrity) {
-                await moduleCache?.write(args.path, text, lockfileEntry.resolved, integrity);
+                await moduleCache?.write(args.path, text, fetched.resolvedUrl, integrity);
                 await moduleCache?.write(
                   lockfileEntry.resolved,
                   text,
-                  lockfileEntry.resolved,
+                  fetched.resolvedUrl,
                   integrity,
                 );
                 return { contents: text, loader: "js" } as const;
@@ -353,7 +526,13 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 `[http] cached URL returned ${res.status}, trying module cache: ${args.path}`,
               );
             }
-          } catch (_error) {
+          } catch (error) {
+            if (
+              error instanceof RemoteImportBlockedError ||
+              error instanceof RemoteModuleFetchError
+            ) {
+              return pluginError(error);
+            }
             logger.warn(`[http] cached URL failed, trying module cache: ${args.path}`);
           }
 
@@ -368,7 +547,19 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           }
         }
 
-        const res = await fetchRemoteModule(requestUrl);
+        let fetched: { response: Response; resolvedUrl: string };
+        try {
+          fetched = await fetchRemoteModule(requestUrl);
+        } catch (error) {
+          if (
+            error instanceof RemoteImportBlockedError ||
+            error instanceof RemoteModuleFetchError
+          ) {
+            return pluginError(error);
+          }
+          throw error;
+        }
+        const res = fetched.response;
 
         if (!res.ok) {
           const cachedText =
@@ -390,8 +581,14 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           };
         }
 
-        const text = await res.text();
-        const resolvedUrl = res.url || requestUrl;
+        let text: string;
+        try {
+          text = await readRemoteModuleText(res);
+        } catch (error) {
+          if (error instanceof RemoteModuleFetchError) return pluginError(error);
+          throw error;
+        }
+        const resolvedUrl = fetched.resolvedUrl;
         const integrity = await computeIntegrity(text);
 
         await persistLockfileEntry(args.path, {

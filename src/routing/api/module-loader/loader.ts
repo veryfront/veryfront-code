@@ -1,5 +1,6 @@
 import { serverLogger } from "#veryfront/utils";
-import type { BuildResult, Plugin } from "veryfront/extensions/bundler";
+import type { BuildResult, ModuleLexer, Plugin } from "veryfront/extensions/bundler";
+import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -8,7 +9,7 @@ import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
@@ -16,7 +17,7 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { isWithinDirectory, validatePath } from "#veryfront/security/path-validation.ts";
 import {
   generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
@@ -75,76 +76,50 @@ async function loadModule(args: {
   config?: VeryfrontConfig;
 }): Promise<APIRoute> {
   const { modulePath, projectDir, adapter, fs, config } = args;
+  const resolved = await resolveLocalModuleLocation(modulePath, projectDir, fs);
+  return loadAndTranspileModule(
+    resolved.modulePath,
+    resolved.projectDir,
+    adapter,
+    fs,
+    config,
+  );
+}
 
-  if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
+/**
+ * Canonicalize a handler that exists on the host filesystem before an adapter
+ * or bundler can read it.
+ *
+ * Remote adapters use virtual paths that do not exist on the host and therefore
+ * retain their lexical path. A local entry point is pinned to its canonical
+ * target, preventing a symlink from escaping the project or being swapped
+ * between validation and the subsequent adapter read.
+ */
+async function resolveLocalModuleLocation(
+  modulePath: string,
+  projectDir: string,
+  fs: FileSystem,
+): Promise<{ modulePath: string; projectDir: string }> {
+  for (const extension of FILE_EXTENSIONS) {
+    const candidate = extension ? modulePath + extension : modulePath;
+    if (!await fs.exists(candidate)) continue;
 
-  // Always transpile TypeScript in compiled binaries - they can't import raw .ts files
-  if (!isDeno || isCompiledBinary()) {
-    return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    const [canonicalProjectDir, canonicalModulePath] = await Promise.all([
+      realPath(pathHelper.resolve(projectDir)),
+      realPath(pathHelper.resolve(candidate)),
+    ]);
+    validateModulePath(canonicalModulePath, canonicalProjectDir);
+    return {
+      modulePath: canonicalModulePath,
+      projectDir: canonicalProjectDir,
+    };
   }
 
-  const fileExistsLocally = await fs.exists(modulePath);
-  if (fileExistsLocally) {
-    try {
-      return await loadTSModuleDirect(modulePath);
-    } catch (error) {
-      // A direct import shares the dev server's runtime context, which is what
-      // makes auto-discovery (agentRegistry and friends) work — but it leaves
-      // specifier resolution to Deno, which knows nothing about the project's
-      // `@/` alias. Bundling can resolve that import map path, so fall back to
-      // it rather than reporting a routing-shaped 500.
-      if (!isSpecifierResolutionError(error)) throw error;
-
-      logger.debug("Direct import could not resolve a specifier, bundling instead", {
-        modulePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
-    }
-  }
-
-  logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
-  return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+  return { modulePath, projectDir };
 }
 
-/**
- * Directly import a TypeScript module in Deno without bundling.
- * This allows the module to share the same runtime context as the dev server,
- * enabling auto-discovery features like agentRegistry to work.
- */
-
-/**
- * Deno's resolver reports an unresolvable import as a TypeError whose message
- * opens by naming the specifier it could not resolve. Anchoring on that opening
- * is what keeps a module's own error out: a route that throws
- * `Error("Cannot find module x")` at evaluation time is broken, and re-running
- * it under bundling would evaluate broken code a second time.
- */
-const SPECIFIER_RESOLUTION_MESSAGE =
-  /^(?:Import "[^"]+" not a dependency|Module not found "[^"]+"|Relative import path "[^"]+" not prefixed)/;
-
-/**
- * True when a module failed to load because Deno could not resolve one of its
- * import specifiers, rather than because the module itself is broken.
- */
-export function isSpecifierResolutionError(error: unknown): boolean {
-  // Every other error shape the direct import can produce belongs to the module.
-  if (!(error instanceof TypeError)) return false;
-  return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
-}
-
-function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
-  const cacheBuster = `?v=${Date.now()}`;
-  const url = modulePath.startsWith("file://")
-    ? `${modulePath}${cacheBuster}`
-    : `file://${modulePath}${cacheBuster}`;
-
-  logger.debug(`Direct import (Deno): ${url}`);
-  return import(url);
-}
-
-function loadJSModule(modulePath: string): Promise<APIRoute> {
-  return import(`file://${modulePath}`);
+function toModuleFileUrl(modulePath: string): URL {
+  return modulePath.startsWith("file:") ? new URL(modulePath) : pathHelper.toFileUrl(modulePath);
 }
 
 function createImportMapPlugin(
@@ -348,9 +323,10 @@ function createAdapterResolvePlugin(
  *
  * This runs at load time instead, which is the one point every resolution
  * strategy converges on. Returning `undefined` defers to normal loading, so the
- * plugin only ever subtracts. Package code is exempt: `node_modules` is
- * resolved by esbuild's own node resolution rather than by a project alias, and
- * is legitimately hoisted above the project root in a monorepo.
+ * plugin only ever subtracts. Package code in a `node_modules` directory that
+ * Node's resolver can reach from the project is exempt. This includes packages
+ * hoisted above the project in a monorepo without trusting an unrelated path
+ * merely because one of its segments happens to be named `node_modules`.
  *
  * `roots` carries both the project path as configured and its symlink-resolved
  * form, because esbuild reports the real path of a file it loaded. A project
@@ -374,12 +350,25 @@ async function resolveProjectRoots(projectDir: string): Promise<string[]> {
 }
 
 function createProjectBoundaryPlugin(roots: string[]): Plugin {
+  const packageSearchRoots = new Set<string>();
+  for (const root of roots) {
+    let directory = pathHelper.resolve(root);
+    while (true) {
+      packageSearchRoots.add(pathHelper.join(directory, "node_modules"));
+      const parent = pathHelper.dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+
   return {
     name: "vf-project-boundary",
     setup(build) {
       build.onLoad({ filter: /.*/ }, (args) => {
         if (roots.some((root) => isWithinDirectory(root, args.path))) return undefined;
-        if (args.path.split(/[\\/]/).includes("node_modules")) return undefined;
+        if ([...packageSearchRoots].some((root) => isWithinDirectory(root, args.path))) {
+          return undefined;
+        }
 
         logger.error(`[API] Resolved import escapes project: ${args.path}`);
         return {
@@ -391,6 +380,31 @@ function createProjectBoundaryPlugin(roots: string[]): Plugin {
       });
     },
   };
+}
+
+/**
+ * Reject dynamic imports whose target remains unknown after bundling.
+ *
+ * Literal dynamic imports are resolved by the bundler and therefore pass
+ * through the project-boundary plugin. An expression such as `import(path)`
+ * survives in the generated module and would otherwise execute later from the
+ * unrestricted server process, outside every resolver guard.
+ */
+async function assertNoUnresolvedDynamicImports(code: string): Promise<void> {
+  const lexer = resolveExtensionContract<ModuleLexer>("ModuleLexer");
+  await lexer.init?.();
+
+  if (!lexer.parse(code).some((specifier) => specifier.d >= 0 && specifier.n === undefined)) {
+    return;
+  }
+
+  throw toError(
+    createError({
+      type: "api",
+      message:
+        "[API] handler build rejected: non-literal dynamic import targets cannot be constrained to the project directory",
+    }),
+  );
 }
 
 function loadAndTranspileModule(
@@ -510,6 +524,7 @@ function loadAndTranspileModule(
 
       logger.info(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
+      await assertNoUnresolvedDynamicImports(js);
       logger.debug(`transpiled size ${js.length} bytes`);
 
       return loadModuleFromCode(js, projectDir, fs, userDeps);
@@ -541,10 +556,14 @@ async function readFileWithExtensions(
       }
     }
 
+    const readPath = resolvedProjectDir
+      ? await resolveAdapterReadPath(adapter, filePath, resolvedProjectDir)
+      : filePath;
     try {
-      const contents = await adapter.fs.readFile(filePath);
-      return { filePath, contents };
-    } catch (_) {
+      const contents = await adapter.fs.readFile(readPath);
+      return { filePath: readPath, contents };
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       /* expected: trying next file extension candidate */
     }
   }
@@ -555,6 +574,43 @@ async function readFileWithExtensions(
       message: `File not found: ${basePath}`,
     }),
   );
+}
+
+/** @internal Exported for cross-runtime path-boundary regression tests. */
+export async function resolveAdapterReadPath(
+  adapter: RuntimeAdapter,
+  filePath: string,
+  projectDir: string,
+): Promise<string> {
+  if (typeof adapter.fs.realPath !== "function") {
+    if (typeof adapter.fs.lstat === "function") {
+      throw toError(
+        createError({
+          type: "api",
+          message:
+            "[API] cannot safely load local modules: adapter.fs.realPath is required when symlinks are supported",
+        }),
+      );
+    }
+    return filePath;
+  }
+
+  const validation = await validatePath(filePath, {
+    level: "normal",
+    baseDir: projectDir,
+    followSymlinks: true,
+    adapter,
+    allowAbsolute: true,
+  });
+  if (!validation.valid || !validation.canonicalPath) {
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] file path escapes project directory: ${filePath}`,
+      }),
+    );
+  }
+  return validation.canonicalPath;
 }
 
 async function loadModuleFromCode(
@@ -602,7 +658,9 @@ async function loadModuleFromCode(
   await fs.writeTextFile(tempFile, transformedCode);
 
   try {
-    return await import(`file://${tempFile}?v=${Date.now()}`);
+    const importUrl = toModuleFileUrl(tempFile);
+    importUrl.searchParams.set("v", Date.now().toString());
+    return await import(importUrl.href);
   } catch (e: unknown) {
     const errorMessage = e instanceof Error && e.stack ? e.stack : String(e);
     logger.error(`dynamic import failed ${tempFile}: ${errorMessage}`);
