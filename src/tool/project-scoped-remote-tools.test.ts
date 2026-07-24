@@ -370,7 +370,7 @@ Deno.test("listProjectScopedRemoteToolNames returns sorted unique visible names"
       assertEquals(context, { projectId: "project-1" });
       return [
         toolDefinition({ name: "list_files", required: ["project_reference"] }),
-        toolDefinition({ name: "studio_open_project", required: ["project_id"] }),
+        toolDefinition({ name: "studio_open_project", required: ["project_reference"] }),
       ];
     },
     async executeTool() {

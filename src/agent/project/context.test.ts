@@ -61,6 +61,22 @@ Deno.test("getConfirmedProjectContextSwitchId reads matching successful structur
   );
 });
 
+Deno.test("getConfirmedProjectContextSwitchId confirms slug requests from returned slug and UUID", () => {
+  assertEquals(
+    getConfirmedProjectContextSwitchId(
+      {
+        structuredContent: {
+          success: true,
+          project_id: "11111111-1111-4111-8111-111111111111",
+          slug: "demo-project",
+        },
+      },
+      "demo-project",
+    ),
+    "11111111-1111-4111-8111-111111111111",
+  );
+});
+
 Deno.test("getConfirmedProjectContextSwitchId reads matching successful direct content", () => {
   assertEquals(
     getConfirmedProjectContextSwitchId(
@@ -82,6 +98,13 @@ Deno.test("getConfirmedProjectContextSwitchId ignores failed, missing, or mismat
   assertEquals(getConfirmedProjectContextSwitchId({ success: true }, "project-2"), null);
   assertEquals(
     getConfirmedProjectContextSwitchId({ success: true, project_id: "project-3" }, "project-2"),
+    null,
+  );
+  assertEquals(
+    getConfirmedProjectContextSwitchId(
+      { success: true, project_id: "project-3", slug: "other-project" },
+      "demo-project",
+    ),
     null,
   );
   assertEquals(getConfirmedProjectContextSwitchId(null, "project-2"), null);
