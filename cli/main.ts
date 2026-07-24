@@ -15,36 +15,36 @@ await import("veryfront/platform/esbuild-init");
 await import("veryfront/discovery/runtime-modules-bootstrap");
 
 // All imports below must be dynamic to ensure esbuild init completes first
-const { getArgs } = await import("veryfront/platform");
-const { hasEnvLoaded, loadEnv, markEnvLoaded, supportsEnvFiles } = await import(
-  "veryfront/utils/env-loader"
-);
-
-/** Load `.env` files and initialize environment config if not already done. */
-async function ensureEnvLoaded(): Promise<void> {
-  if (hasEnvLoaded()) return;
-
-  if (supportsEnvFiles()) {
-    try {
-      await loadEnv();
-    } catch (e) {
-      // Missing .env is fine; log other errors for debuggability
-      if (e instanceof Deno.errors.NotFound === false) {
-        console.error(`Warning: failed to load .env: ${e instanceof Error ? e.message : e}`);
-      }
-    }
-  }
-
-  markEnvLoaded();
-
-  const { initEnvironmentConfig } = await import(
-    "veryfront/config"
-  );
-  initEnvironmentConfig();
-}
-
-await ensureEnvLoaded();
+const { exit, getArgs, getEnv } = await import("veryfront/platform");
 const args = getArgs();
+const {
+  isCliStartupDebugEnabled,
+  reportCliEnvironmentStartupFailure,
+} = await import(
+  "./startup-error.ts"
+);
+const startupDebugEnabled = isCliStartupDebugEnabled(
+  getEnv("VERYFRONT_DEBUG"),
+);
+try {
+  const { hasEnvLoaded, loadEnv, markEnvLoaded, supportsEnvFiles } = await import(
+    "veryfront/utils/env-loader"
+  );
+  const { initializeCliEnvironment } = await import("./startup-env.ts");
+  await initializeCliEnvironment({
+    hasEnvLoaded,
+    supportsEnvFiles,
+    loadEnv,
+    markEnvLoaded,
+    initializeEnvironmentConfig: async () => {
+      const { initEnvironmentConfig } = await import("veryfront/config");
+      initEnvironmentConfig();
+    },
+  });
+} catch {
+  reportCliEnvironmentStartupFailure(args, { debug: startupDebugEnabled });
+  exit(1);
+}
 const { parseCliArgs } = await import("./shared/args.ts");
 const { routeCommand } = await import("./router.ts");
 await routeCommand(parseCliArgs(args));

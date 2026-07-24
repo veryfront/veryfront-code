@@ -17,19 +17,28 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   _resetShimForTests,
   getGlobalTelemetryAPISnapshot,
   type GlobalTelemetryAPISnapshot,
 } from "#veryfront/observability/tracing/api-shim.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { deleteEnv, getEnv } from "#veryfront/platform/compat/process.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
+import { __resetEnvLoaderForTests, hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
 import { __resetLogRecordEmitterForTests, logger } from "#veryfront/utils/logger/index.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
 import {
+  bootstrap,
   createRetryableDisposer,
   createStartupFailureCleanup,
+  ensureEnvLoaded,
   orchestrateOrDisposeFS,
   replaceLifecycleResource,
+  validateProductionEnvironment,
   wireTracingShim,
 } from "./bootstrap.ts";
 import { ExtensionLoader } from "veryfront/extensions";
@@ -40,6 +49,145 @@ const noopLogger = {
   warn: () => {},
   error: () => {},
 };
+
+describe("validateProductionEnvironment()", () => {
+  it("rejects a hosted proxy whose host NODE_ENV is not production", async () => {
+    await withEnv(
+      {
+        PROXY_MODE: "1",
+        NODE_ENV: "development",
+        CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "host-public-key",
+      },
+      async () => {
+        assertThrows(
+          () => validateProductionEnvironment(),
+          Error,
+          "NODE_ENV must be set to 'production'",
+        );
+      },
+    );
+  });
+
+  it("rejects a hosted proxy without a signing key regardless of NODE_ENV", async () => {
+    for (const nodeEnv of ["development", "production"]) {
+      await withEnv(
+        {
+          PROXY_MODE: "1",
+          NODE_ENV: nodeEnv,
+          CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "",
+        },
+        async () => {
+          assertThrows(
+            () => validateProductionEnvironment(),
+            Error,
+            "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+          );
+        },
+      );
+    }
+  });
+
+  it("does not let a tenant environment overlay replace hosted runtime settings", async () => {
+    await withEnv(
+      {
+        PROXY_MODE: "1",
+        NODE_ENV: "development",
+        CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "host-public-key",
+      },
+      async () => {
+        runWithProjectEnv(
+          {
+            PROXY_MODE: "0",
+            NODE_ENV: "production",
+            CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "tenant-public-key",
+          },
+          () => {
+            assertThrows(
+              () => validateProductionEnvironment(),
+              Error,
+              "NODE_ENV must be set to 'production'",
+            );
+          },
+        );
+      },
+    );
+  });
+
+  it("does not let a caller-provided local proxy claim bypass hosted validation", async () => {
+    await withEnv(
+      {
+        PROXY_MODE: "1",
+        NODE_ENV: "development",
+        CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: "",
+      },
+      async () => {
+        assertThrows(
+          () =>
+            (
+              validateProductionEnvironment as unknown as (
+                startupClaim: unknown,
+              ) => void
+            )({ kind: "local-cli-proxy" }),
+          Error,
+          "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+        );
+      },
+    );
+  });
+});
+
+describe("ensureEnvLoaded()", () => {
+  it("rejects malformed files without marking the environment loaded and permits retry", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "bootstrap-env-" });
+    const key = `VERYFRONT_BOOTSTRAP_ENV_${Date.now()}`;
+
+    try {
+      __resetEnvLoaderForTests();
+      _resetEnvironmentConfig();
+      await Deno.writeTextFile(`${projectDir}/.env`, `${key}="unterminated`);
+
+      await assertRejects(
+        () => ensureEnvLoaded(projectDir, createMockAdapter()),
+        Error,
+        "Unterminated quoted environment value",
+      );
+      assertEquals(hasEnvLoaded(), false);
+      assertEquals(getEnv(key), undefined);
+
+      await Deno.writeTextFile(`${projectDir}/.env`, `${key}=recovered`);
+      await ensureEnvLoaded(projectDir, createMockAdapter());
+
+      assertEquals(hasEnvLoaded(), true);
+      assertEquals(getEnv(key), "recovered");
+    } finally {
+      deleteEnv(key);
+      _resetEnvironmentConfig();
+      __resetEnvLoaderForTests();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
+
+describe("bootstrap() ownership", () => {
+  it("releases process ownership when adapter metadata throws before initialization", async () => {
+    const adapter = new Proxy(createMockAdapter(), {
+      get(target, property, receiver) {
+        if (property === "id") {
+          throw new Error("adapter id getter failed");
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assertRejects(
+        () => bootstrap("/metadata-failure", adapter),
+        Error,
+        "adapter id getter failed",
+      );
+    }
+  });
+});
 
 describe("createRetryableDisposer()", () => {
   it("shares an in-flight attempt and permits a retry only after failure", async () => {

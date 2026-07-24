@@ -15,7 +15,14 @@ import "../../_helpers/contract-init.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
+import {
+  bootstrap,
+  bootstrapDev,
+  bootstrapLocalCliProxy,
+  bootstrapProd,
+  type BootstrapResult,
+} from "../../../src/server/bootstrap.ts";
+import { ensureDefaultBundlerContracts } from "../../../src/extensions/bundler/defaults.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { join } from "#veryfront/compat/path";
 import { mkdir } from "#veryfront/compat/fs.ts";
@@ -26,11 +33,26 @@ import {
   cleanupTempDir,
   createBasicConfig,
   createTempDir,
-  expectBootstrapThrows,
   withEnvOverrides,
   withTempProjectDir,
   writeConfigFile,
 } from "./bootstrap.test-helpers.ts";
+
+async function withBootstrapResult<T>(
+  start: () => Promise<BootstrapResult>,
+  use: (result: BootstrapResult) => T | Promise<T>,
+): Promise<T> {
+  // A disposed bootstrap tears down its extension generation, including the
+  // Bundler and ModuleLexer contracts installed by contract-init.ts. Each
+  // independent startup must therefore restore the normal test prerequisites.
+  await ensureDefaultBundlerContracts();
+  const result = await start();
+  try {
+    return await use(result);
+  } finally {
+    await result.dispose?.();
+  }
+}
 
 // ============================================================================
 // 1. Basic Bootstrap Flow (10 tests)
@@ -45,13 +67,16 @@ describe("bootstrap - Basic Flow", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("default", async (projectDir) => {
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.adapter);
-      assertExists(result.config);
-      assertEquals(result.usingFSAdapter, false);
-      assertEquals(result.config.title, "Veryfront App");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.adapter);
+          assertExists(result.config);
+          assertEquals(result.usingFSAdapter, false);
+          assertEquals(result.config.title, "Veryfront App");
+        },
+      );
     });
   });
 
@@ -61,11 +86,14 @@ describe("bootstrap - Basic Flow", () => {
     await withTempProjectDir("custom", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Test Bootstrap App");
-      assertEquals(result.usingFSAdapter, false);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.config.title, "Test Bootstrap App");
+          assertEquals(result.usingFSAdapter, false);
+        },
+      );
     });
   });
 
@@ -75,10 +103,13 @@ describe("bootstrap - Basic Flow", () => {
     await withTempProjectDir("custom_path", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Test Bootstrap App");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.config.title, "Test Bootstrap App");
+        },
+      );
     });
   });
 
@@ -92,10 +123,13 @@ describe("bootstrap - Basic Flow", () => {
         `export default { title: 'Local FS App', fs: { type: 'local' } };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.usingFSAdapter, false);
-      assertEquals(result.fsAdapterType, undefined);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertEquals(result.usingFSAdapter, false);
+          assertEquals(result.fsAdapterType, undefined);
+        },
+      );
     });
   });
 
@@ -109,10 +143,13 @@ describe("bootstrap - Basic Flow", () => {
         `export default { title: 'No FS Config' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.usingFSAdapter, false);
-      assertEquals(result.fsAdapterType, undefined);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertEquals(result.usingFSAdapter, false);
+          assertEquals(result.fsAdapterType, undefined);
+        },
+      );
     });
   });
 
@@ -122,9 +159,10 @@ describe("bootstrap - Basic Flow", () => {
     await withTempProjectDir("same_adapter", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.adapter, adapter);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.adapter, adapter),
+      );
     });
   });
 
@@ -138,9 +176,10 @@ describe("bootstrap - Basic Flow", () => {
         `export default { title: 'TypeScript Config' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.config.title, "TypeScript Config");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "TypeScript Config"),
+      );
     });
   });
 
@@ -154,9 +193,10 @@ describe("bootstrap - Basic Flow", () => {
         `export default { title: 'MJS Config' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.config.title, "MJS Config");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "MJS Config"),
+      );
     });
   });
 
@@ -175,13 +215,16 @@ describe("bootstrap - Basic Flow", () => {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.config.title, "Nested Config");
-      assertEquals(result.config.dev?.port, 4000);
-      assertEquals(result.config.dev?.host, "example.com");
-      assertEquals(result.config.build?.outDir, "build");
-      assertEquals(result.config.theme?.colors?.primary, "#ff0000");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertEquals(result.config.title, "Nested Config");
+          assertEquals(result.config.dev?.port, 4000);
+          assertEquals(result.config.dev?.host, "example.com");
+          assertEquals(result.config.build?.outDir, "build");
+          assertEquals(result.config.theme?.colors?.primary, "#ff0000");
+        },
+      );
     });
   });
 
@@ -195,12 +238,15 @@ describe("bootstrap - Basic Flow", () => {
         `export default { title: 'Merged', dev: { port: 5000 } };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.config.title, "Merged");
-      assertEquals(result.config.dev?.port, 5000);
-      assertEquals(result.config.dev?.host, "localhost");
-      assertExists(result.config.build);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertEquals(result.config.title, "Merged");
+          assertEquals(result.config.dev?.port, 5000);
+          assertEquals(result.config.dev?.host, "localhost");
+          assertExists(result.config.build);
+        },
+      );
     });
   });
 });
@@ -230,10 +276,13 @@ describe("bootstrap - FSAdapter Initialization", {
         `export default { title: 'Skip FS', fs: { type: 'local' } };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.usingFSAdapter, false);
-      assertEquals(result.adapter, adapter);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertEquals(result.usingFSAdapter, false);
+          assertEquals(result.adapter, adapter);
+        },
+      );
     });
   });
 
@@ -247,9 +296,10 @@ describe("bootstrap - FSAdapter Initialization", {
         `export default { title: 'No FS' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.usingFSAdapter, false);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.usingFSAdapter, false),
+      );
     });
   });
 
@@ -262,13 +312,14 @@ describe("bootstrap - FSAdapter Initialization", {
         "veryfront.config.js",
         `export default {
           title: 'Undefined Type',
-          fs: { veryfront: { projectSlug: 'test' } }
+          fs: {}
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.usingFSAdapter, false);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.usingFSAdapter, false),
+      );
     });
   });
 
@@ -281,13 +332,14 @@ describe("bootstrap - FSAdapter Initialization", {
         "veryfront.config.js",
         `export default {
           title: 'Missing Creds',
-          fs: { type: 'veryfront-api' }
+          fs: { type: 'veryfront-api', veryfront: {} }
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertExists(result),
+      );
     });
   });
 
@@ -298,14 +350,20 @@ describe("bootstrap - FSAdapter Initialization", {
       await writeConfigFile(
         projectDir,
         "veryfront.config.js",
-        createBasicConfig({ fsType: "memory" }),
+        `export default {
+          title: 'Memory FS Fallback',
+          fs: { type: 'memory', memory: {} }
+        };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config);
-      assertEquals(result.usingFSAdapter, false);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.config);
+          assertEquals(result.usingFSAdapter, false);
+        },
+      );
     });
   });
 
@@ -322,7 +380,11 @@ describe("bootstrap - FSAdapter Initialization", {
         };`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "Invalid veryfront.config");
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        "Invalid veryfront.config",
+      );
     });
   });
 
@@ -332,11 +394,14 @@ describe("bootstrap - FSAdapter Initialization", {
     await withTempProjectDir("preserve_platform", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(projectDir, adapter);
-
-      if (isDeno) assertEquals(result.adapter.id, "deno");
-      else if (isNode) assertEquals(result.adapter.id, "node");
-      else if (isBun) assertEquals(result.adapter.id, "bun");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          if (isDeno) assertEquals(result.adapter.id, "deno");
+          else if (isNode) assertEquals(result.adapter.id, "node");
+          else if (isBun) assertEquals(result.adapter.id, "bun");
+        },
+      );
     });
   });
 
@@ -346,11 +411,14 @@ describe("bootstrap - FSAdapter Initialization", {
     await withTempProjectDir("preserve_features", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result.adapter.capabilities);
-      if (isDeno || isBun) assertEquals(result.adapter.capabilities.typescript, true);
-      else if (isNode) assertEquals(result.adapter.capabilities.typescript, false);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result.adapter.capabilities);
+          if (isDeno || isBun) assertEquals(result.adapter.capabilities.typescript, true);
+          else if (isNode) assertEquals(result.adapter.capabilities.typescript, false);
+        },
+      );
     });
   });
 });
@@ -378,8 +446,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Original' };`,
       );
 
-      const result1 = await bootstrap(projectDir, adapter);
-      assertEquals(result1.config.title, "Original");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Original"),
+      );
 
       clearConfigCache();
       await delay(50);
@@ -390,8 +460,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Updated' };`,
       );
 
-      const result2 = await bootstrap(projectDir, adapter);
-      assertEquals(result2.config.title, "Updated");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Updated"),
+      );
     });
   });
 
@@ -405,7 +477,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Cached' };`,
       );
 
-      const result1 = await bootstrap(projectDir, adapter);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Cached"),
+      );
 
       await writeConfigFile(
         projectDir,
@@ -413,10 +488,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Should Not See This' };`,
       );
 
-      const result2 = await bootstrap(projectDir, adapter);
-
-      assertEquals(result1.config.title, "Cached");
-      assertEquals(result2.config.title, "Cached");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Cached"),
+      );
     });
   });
 
@@ -430,8 +505,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Pre-Cache', dev: { port: 3000 } };`,
       );
 
-      const result1 = await bootstrap(projectDir, adapter);
-      assertEquals(result1.config.dev?.port, 3000);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.dev?.port, 3000),
+      );
 
       clearConfigCache();
       await delay(50);
@@ -442,9 +519,13 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Post-Cache', dev: { port: 5000 } };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-      assertEquals(result.config.title, "Post-Cache");
-      assertEquals(result.config.dev?.port, 5000);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertEquals(result.config.title, "Post-Cache");
+          assertEquals(result.config.dev?.port, 5000);
+        },
+      );
     });
   });
 
@@ -458,14 +539,18 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Valid Config' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-      assertEquals(result.config.title, "Valid Config");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Valid Config"),
+      );
 
       clearConfigCache();
 
       await writeConfigFile(projectDir, "veryfront.config.js", `export default { invalid syntax`);
 
-      await expectBootstrapThrows(projectDir, adapter);
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+      );
     });
   });
 
@@ -486,11 +571,14 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Project 2' };`,
       );
 
-      const result1 = await bootstrap(projectDir1, adapter);
-      const result2 = await bootstrap(projectDir2, adapter);
-
-      assertEquals(result1.config.title, "Project 1");
-      assertEquals(result2.config.title, "Project 2");
+      await withBootstrapResult(
+        () => bootstrap(projectDir1, adapter),
+        (result) => assertEquals(result.config.title, "Project 1"),
+      );
+      await withBootstrapResult(
+        () => bootstrap(projectDir2, adapter),
+        (result) => assertEquals(result.config.title, "Project 2"),
+      );
     } finally {
       await cleanupTempDir(projectDir1);
       await cleanupTempDir(projectDir2);
@@ -509,16 +597,22 @@ describe("bootstrap - Config Reloading", () => {
 
       clearConfigCache();
 
-      const result1 = await bootstrap(projectDir, adapter);
-      assertEquals(result1.config.title, "Concurrent");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Concurrent"),
+      );
 
       clearConfigCache();
-      const result2 = await bootstrap(projectDir, adapter);
-      assertEquals(result2.config.title, "Concurrent");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Concurrent"),
+      );
 
       clearConfigCache();
-      const result3 = await bootstrap(projectDir, adapter);
-      assertEquals(result3.config.title, "Concurrent");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Concurrent"),
+      );
     });
   });
 
@@ -528,14 +622,17 @@ describe("bootstrap - Config Reloading", () => {
     await withTempProjectDir("preserve_state", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result1 = await bootstrap(projectDir, adapter);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.usingFSAdapter, false),
+      );
 
       clearConfigCache();
 
-      const result2 = await bootstrap(projectDir, adapter);
-
-      assertEquals(result1.usingFSAdapter, false);
-      assertEquals(result2.usingFSAdapter, false);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.usingFSAdapter, false),
+      );
     });
   });
 
@@ -549,8 +646,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'First', description: 'First config', dev: { port: 3010 } };`,
       );
 
-      const result1 = await bootstrap(projectDir, adapter);
-      assertEquals(result1.config.description, "First config");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.description, "First config"),
+      );
 
       clearConfigCache();
       await delay(10);
@@ -561,8 +660,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Second', description: 'Second config', dev: { port: 4010 } };`,
       );
 
-      const result2 = await bootstrap(projectDir, adapter);
-      assertEquals(result2.config.description, "Second config");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.description, "Second config"),
+      );
     });
   });
 
@@ -579,8 +680,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Empty Cache' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-      assertEquals(result.config.title, "Empty Cache");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "Empty Cache"),
+      );
     });
   });
 
@@ -594,8 +697,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'V1', description: 'Version 1' };`,
       );
 
-      const result1 = await bootstrap(projectDir, adapter);
-      assertEquals(result1.config.description, "Version 1");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.description, "Version 1"),
+      );
 
       clearConfigCache();
       await delay(50);
@@ -606,8 +711,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'V2', description: 'Version 2' };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-      assertEquals(result.config.description, "Version 2");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.description, "Version 2"),
+      );
     });
   });
 });
@@ -625,11 +732,14 @@ describe("bootstrap - Error Handling", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("missing_config", async (projectDir) => {
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config);
-      assertEquals(result.config.title, "Veryfront App");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.config);
+          assertEquals(result.config.title, "Veryfront App");
+        },
+      );
     });
   });
 
@@ -643,7 +753,9 @@ describe("bootstrap - Error Handling", () => {
         `export default { invalid syntax here`,
       );
 
-      await expectBootstrapThrows(projectDir, adapter);
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+      );
     });
   });
 
@@ -657,7 +769,9 @@ describe("bootstrap - Error Handling", () => {
         `throw new Error('Runtime error'); export default {};`,
       );
 
-      await expectBootstrapThrows(projectDir, adapter);
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+      );
     });
   });
 
@@ -676,7 +790,11 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "security.cors.origin");
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        "security.cors",
+      );
     });
   });
 
@@ -693,7 +811,11 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "Invalid veryfront.config");
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        "Invalid veryfront.config",
+      );
     });
   });
 
@@ -710,7 +832,11 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "Invalid veryfront.config");
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        "Invalid veryfront.config",
+      );
     });
   });
 
@@ -727,10 +853,13 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.description, "Has description");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.config.description, "Has description");
+        },
+      );
     });
   });
 
@@ -744,7 +873,9 @@ describe("bootstrap - Error Handling", () => {
         `const x = undefined; x.property; export default {};`,
       );
 
-      await expectBootstrapThrows(projectDir, adapter);
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+      );
     });
   });
 
@@ -760,7 +891,11 @@ describe("bootstrap - Error Handling", () => {
          export default config;`,
       );
 
-      await assertRejects(() => bootstrap(projectDir, adapter), Error, "Unknown config keys: self");
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        "Unknown config keys: self",
+      );
     });
   });
 
@@ -778,7 +913,7 @@ describe("bootstrap - Error Handling", () => {
       );
 
       await assertRejects(
-        () => bootstrap(projectDir, adapter),
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
         Error,
         "Unknown config keys: onBuild",
       );
@@ -801,11 +936,14 @@ describe("bootstrap - Dev and Prod Modes", () => {
     await withTempProjectDir("dev_mode", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrapDev(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config);
-      assertEquals(result.config.title, "Test Bootstrap App");
+      await withBootstrapResult(
+        () => bootstrapDev(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.config);
+          assertEquals(result.config.title, "Test Bootstrap App");
+        },
+      );
     });
   });
 
@@ -815,11 +953,14 @@ describe("bootstrap - Dev and Prod Modes", () => {
     await withTempProjectDir("prod_mode", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrapProd(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config);
-      assertEquals(result.config.title, "Test Bootstrap App");
+      await withBootstrapResult(
+        () => bootstrapProd(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.config);
+          assertEquals(result.config.title, "Test Bootstrap App");
+        },
+      );
     });
   });
 
@@ -833,7 +974,10 @@ describe("bootstrap - Dev and Prod Modes", () => {
         `export default { security: { cors: { origin: 123 } } };`,
       );
 
-      await assertRejects(() => bootstrapProd(projectDir, adapter), Error);
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrapProd(projectDir, adapter), () => undefined),
+        Error,
+      );
     });
   });
 
@@ -850,9 +994,36 @@ describe("bootstrap - Dev and Prod Modes", () => {
         await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
         await assertRejects(
-          () => bootstrapProd(projectDir, adapter),
+          () => withBootstrapResult(() => bootstrapProd(projectDir, adapter), () => undefined),
           Error,
           "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY must be set",
+        );
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("allows the internal local CLI proxy entrypoint without weakening hosted bootstrap", async () => {
+    const adapter = await getAdapter();
+    const restore = withEnvOverrides({
+      NODE_ENV: "development",
+      PROXY_MODE: "1",
+      CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: undefined,
+      VERYFRONT_API_BASE_URL: "https://api.veryfront.test",
+    });
+
+    try {
+      await withTempProjectDir("local_cli_proxy", async (projectDir) => {
+        await writeConfigFile(
+          projectDir,
+          "veryfront.config.js",
+          `export default { title: "Local CLI Proxy" };`,
+        );
+
+        await withBootstrapResult(
+          () => bootstrapLocalCliProxy(projectDir, adapter),
+          (result) => assertEquals(result.config.title, "Local CLI Proxy"),
         );
       });
     } finally {
@@ -866,10 +1037,13 @@ describe("bootstrap - Dev and Prod Modes", () => {
     await withTempProjectDir("dev_fs_log", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrapDev(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.usingFSAdapter, false);
+      await withBootstrapResult(
+        () => bootstrapDev(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.usingFSAdapter, false);
+        },
+      );
     });
   });
 
@@ -877,13 +1051,21 @@ describe("bootstrap - Dev and Prod Modes", () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("default_modes", async (projectDir) => {
-      const devResult = await bootstrapDev(projectDir, adapter);
+      const devTitle = await withBootstrapResult(
+        () => bootstrapDev(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          return result.config.title;
+        },
+      );
       clearConfigCache();
-      const prodResult = await bootstrapProd(projectDir, adapter);
-
-      assertExists(devResult);
-      assertExists(prodResult);
-      assertEquals(devResult.config.title, prodResult.config.title);
+      await withBootstrapResult(
+        () => bootstrapProd(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(devTitle, result.config.title);
+        },
+      );
     });
   });
 });
@@ -906,9 +1088,10 @@ describe("bootstrap - Edge Cases", () => {
       await mkdir(deepPath, { recursive: true });
       await writeConfigFile(deepPath, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(deepPath, adapter);
-
-      assertExists(result);
+      await withBootstrapResult(
+        () => bootstrap(deepPath, adapter),
+        (result) => assertExists(result),
+      );
     } finally {
       await cleanupTempDir(baseDir);
     }
@@ -929,10 +1112,13 @@ describe("bootstrap - Edge Cases", () => {
         `export default ${JSON.stringify(largeConfig)};`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Large Config");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.config.title, "Large Config");
+        },
+      );
     });
   });
 
@@ -942,14 +1128,12 @@ describe("bootstrap - Edge Cases", () => {
     await withTempProjectDir("concurrent_same", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result1 = await bootstrap(projectDir, adapter);
-      assertEquals(result1.config.title, "Test Bootstrap App");
-
-      const result2 = await bootstrap(projectDir, adapter);
-      assertEquals(result2.config.title, "Test Bootstrap App");
-
-      const result3 = await bootstrap(projectDir, adapter);
-      assertEquals(result3.config.title, "Test Bootstrap App");
+      for (let invocation = 0; invocation < 3; invocation++) {
+        await withBootstrapResult(
+          () => bootstrap(projectDir, adapter),
+          (result) => assertEquals(result.config.title, "Test Bootstrap App"),
+        );
+      }
     });
   });
 
@@ -976,14 +1160,18 @@ describe("bootstrap - Edge Cases", () => {
         `export default { title: 'Project 3' };`,
       );
 
-      const result1 = await bootstrap(projectDir1, adapter);
-      assertEquals(result1.config.title, "Project 1");
-
-      const result2 = await bootstrap(projectDir2, adapter);
-      assertEquals(result2.config.title, "Project 2");
-
-      const result3 = await bootstrap(projectDir3, adapter);
-      assertEquals(result3.config.title, "Project 3");
+      await withBootstrapResult(
+        () => bootstrap(projectDir1, adapter),
+        (result) => assertEquals(result.config.title, "Project 1"),
+      );
+      await withBootstrapResult(
+        () => bootstrap(projectDir2, adapter),
+        (result) => assertEquals(result.config.title, "Project 2"),
+      );
+      await withBootstrapResult(
+        () => bootstrap(projectDir3, adapter),
+        (result) => assertEquals(result.config.title, "Project 3"),
+      );
     } finally {
       await cleanupTempDir(projectDir1);
       await cleanupTempDir(projectDir2);
@@ -1014,12 +1202,15 @@ describe("bootstrap - Edge Cases", () => {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Complete Config");
-      assertEquals(result.config.router, "app");
-      assertEquals(result.config.experimental?.esmLayouts, true);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.config.title, "Complete Config");
+          assertEquals(result.config.router, "app");
+          assertEquals(result.config.experimental?.esmLayouts, true);
+        },
+      );
     });
   });
 
@@ -1029,12 +1220,15 @@ describe("bootstrap - Edge Cases", () => {
     await withTempProjectDir("empty_config", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", `export default {};`);
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config);
-      assertExists(result.config.title);
-      assertExists(result.config.build);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.config);
+          assertExists(result.config.title);
+          assertExists(result.config.build);
+        },
+      );
     });
   });
 
@@ -1046,9 +1240,10 @@ describe("bootstrap - Edge Cases", () => {
       await writeConfigFile(projectDir, "veryfront.config.ts", `export default { title: 'TS' };`);
       await writeConfigFile(projectDir, "veryfront.config.mjs", `export default { title: 'MJS' };`);
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertEquals(result.config.title, "JS");
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => assertEquals(result.config.title, "JS"),
+      );
     });
   });
 
@@ -1065,10 +1260,13 @@ describe("bootstrap - Edge Cases", () => {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertExists(result.config.title);
+      await withBootstrapResult(
+        () => bootstrap(projectDir, adapter),
+        (result) => {
+          assertExists(result);
+          assertExists(result.config.title);
+        },
+      );
     });
   });
 
@@ -1078,13 +1276,12 @@ describe("bootstrap - Edge Cases", () => {
     await withTempProjectDir("rapid_sequential", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const result1 = await bootstrap(projectDir, adapter);
-      const result2 = await bootstrap(projectDir, adapter);
-      const result3 = await bootstrap(projectDir, adapter);
-
-      assertExists(result1);
-      assertExists(result2);
-      assertExists(result3);
+      for (let invocation = 0; invocation < 3; invocation++) {
+        await withBootstrapResult(
+          () => bootstrap(projectDir, adapter),
+          (result) => assertExists(result),
+        );
+      }
     });
   });
 
@@ -1100,18 +1297,19 @@ describe("bootstrap - Edge Cases", () => {
         `export default { security: { cors: { origin: 123 } } };`,
       );
 
-      try {
-        await bootstrap(projectDir1, adapter);
-      } catch {
-        // Expected to fail
-      }
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir1, adapter), () => undefined),
+      );
 
       await writeConfigFile(projectDir2, "veryfront.config.js", createBasicConfig());
 
-      const result = await bootstrap(projectDir2, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Test Bootstrap App");
+      await withBootstrapResult(
+        () => bootstrap(projectDir2, adapter),
+        (result) => {
+          assertExists(result);
+          assertEquals(result.config.title, "Test Bootstrap App");
+        },
+      );
     } finally {
       await cleanupTempDir(projectDir1);
       await cleanupTempDir(projectDir2);
