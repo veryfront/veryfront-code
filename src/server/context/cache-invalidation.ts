@@ -137,7 +137,10 @@ export async function invalidateProjectCaches(
     await runPhase("router detection cache", () => clearRouterDetectionCacheForProject(projectId));
   }
 
-  await runPhase("renderer cache", () => clearRendererCacheForProject(projectId ?? scopedProjectSlug));
+  await runPhase(
+    "renderer cache",
+    () => clearRendererCacheForProject(projectId ?? scopedProjectSlug),
+  );
   await runPhase("snippet cache", () => clearSnippetCacheForProject(scopedProjectSlug));
   await runPhase("API route handler cache", () => resetApiHandlerForProject(scopedProjectSlug));
 

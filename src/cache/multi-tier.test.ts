@@ -582,10 +582,12 @@ describe("MultiTierCache", () => {
         set: () => Promise.resolve(),
         getBatch: (keys) => {
           received.push([...keys]);
-          return Promise.resolve(new Map([
-            ["a", "value-a"],
-            ["b", "value-b"],
-          ]));
+          return Promise.resolve(
+            new Map([
+              ["a", "value-a"],
+              ["b", "value-b"],
+            ]),
+          );
         },
       };
       const cache = new MultiTierCache({ name: "test", l1, asyncBackfill: false });

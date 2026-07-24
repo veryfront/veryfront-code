@@ -118,19 +118,15 @@ export function buildTransformCacheKey(
   const target = ssr ? "ssr" : "browser";
   const projectId = options?.projectId ?? "";
   const normalizedPath = normalizeFilePath(filePath);
-  const depsHash = options?.depsHash === undefined
-    ? "none"
-    : `value:${options.depsHash}`;
-  const configHash = options?.configHash === undefined
-    ? "none"
-    : `value:${options.configHash}`;
+  const depsHash = options?.depsHash === undefined ? "none" : `value:${options.depsHash}`;
+  const configHash = options?.configHash === undefined ? "none" : `value:${options.configHash}`;
 
   return assertBoundedCacheKey(
-    `transform:v3:${encodeCacheKeySegment(String(VERSION))}:${
-      encodeCacheKeySegment(projectId)
-    }:${encodeCacheKeySegment(normalizedPath)}:${encodeCacheKeySegment(contentHash)}:${target}:${
-      studioEmbed ? "studio" : "standard"
-    }:${encodeCacheKeySegment(depsHash)}:${encodeCacheKeySegment(configHash)}`,
+    `transform:v3:${encodeCacheKeySegment(String(VERSION))}:${encodeCacheKeySegment(projectId)}:${
+      encodeCacheKeySegment(normalizedPath)
+    }:${encodeCacheKeySegment(contentHash)}:${target}:${studioEmbed ? "studio" : "standard"}:${
+      encodeCacheKeySegment(depsHash)
+    }:${encodeCacheKeySegment(configHash)}`,
     "Transform cache key",
   );
 }

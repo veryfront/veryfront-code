@@ -38,10 +38,7 @@ import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { ssrVfModulesPlugin } from "../../pipeline/stages/ssr-vf-modules.ts";
-import {
-  fingerprintPipelineImportMap,
-  snapshotImportMap,
-} from "../../pipeline/cache-identity.ts";
+import { fingerprintPipelineImportMap, snapshotImportMap } from "../../pipeline/cache-identity.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
 import {

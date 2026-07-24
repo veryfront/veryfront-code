@@ -323,10 +323,10 @@ async function readBoundedCacheFile(
       if (
         candidate &&
         candidate.integrity === await computeEnvelopeIntegrity(
-          candidate.key,
-          candidate.value,
-          candidate.expiresAt,
-        )
+            candidate.key,
+            candidate.value,
+            candidate.expiresAt,
+          )
       ) {
         envelope = candidate;
       }

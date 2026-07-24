@@ -1,11 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  generateOpenAPISpec,
-  OpenAPISpecGenerationError,
-  specToYaml,
-} from "./spec-generator.ts";
+import { generateOpenAPISpec, OpenAPISpecGenerationError, specToYaml } from "./spec-generator.ts";
 import type { OpenAPISpec } from "./types.ts";
 import { ApiRouteMatcher } from "../api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
