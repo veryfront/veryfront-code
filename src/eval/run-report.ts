@@ -1,6 +1,8 @@
-import { join } from "@std/path";
-import { compareEvalReports, createEvalRunId, EVAL_REPORT_SCHEMA_VERSION } from "./index.ts";
+import { join, relative } from "@std/path";
+import { compareEvalReports } from "./baseline.ts";
 import type { DiscoveredEval } from "./discovery.ts";
+import { EVAL_REPORT_SCHEMA_VERSION } from "./report.ts";
+import { createEvalRunId } from "./run-id.ts";
 import type {
   EvalMetricResult,
   EvalRecord,
@@ -65,8 +67,7 @@ type EvalRunReportSingleInput = {
   baseline?: string;
   writeBaseline?: string;
   baselinePolicy?: EvalReportComparisonPolicy;
-  exportRequired?: boolean;
-  exportContext?: EvalReportExportConfig["context"];
+  exportConfig?: EvalReportExportConfig;
   provenance?: EvalRunProvenance;
   evalItem: DiscoveredEval;
   targetKind: EvalReport["targetKind"];
@@ -284,7 +285,7 @@ function createEvalMarkdownReport(
     "## Metrics",
     "",
     "| Metric | Severity | Passed | Failed | Pass rate |",
-    "| --- | ---: | ---: | ---: | ---: |",
+    "| --- | --- | ---: | ---: | ---: |",
   ];
 
   for (const metric of report.summary.metrics) {
@@ -452,9 +453,9 @@ async function writeEvalArtifacts(
 function createEvalExitCode(
   report: EvalReport,
   baseline?: EvalReportComparison,
-  exportRequired = false,
+  exportIsRequired = false,
 ): 0 | 1 {
-  const exportFailed = exportRequired &&
+  const exportFailed = exportIsRequired &&
     (!(report.exports?.length) || report.exports.some((result) => !result.ok));
   return report.summary.failed === 0 && baseline?.regressed !== true && !exportFailed ? 0 : 1;
 }
@@ -476,6 +477,19 @@ function createRunId(clock: EvalRunReportClock | undefined): string {
   return createEvalRunId(clock?.now?.() ?? new Date(), clock?.createSuffix);
 }
 
+function stripFileProtocol(path: string): string {
+  if (!path.startsWith("file://")) return path;
+  return decodeURIComponent(new URL(path).pathname);
+}
+
+function displaySourcePath(filePath: string, projectDir: string): string {
+  const normalized = stripFileProtocol(filePath);
+  if (normalized.startsWith(projectDir)) {
+    return relative(projectDir, normalized);
+  }
+  return normalized;
+}
+
 function createMetadata(input: EvalRunReportSingleInput): EvalReport["metadata"] {
   return {
     ...(input.provenance ? { provenance: input.provenance } : {}),
@@ -491,6 +505,22 @@ async function readBaselineComparison(
   if (!input.baseline) return undefined;
   const baseline = JSON.parse(await artifacts.readTextFile(input.baseline)) as EvalReport;
   return compareEvalReports(report, baseline, input.baselinePolicy);
+}
+
+function createEvalReportExportConfig(
+  input: EvalRunReportSingleInput,
+  artifactPaths: EvalArtifactPaths,
+): EvalReportExportConfig | undefined {
+  if (!input.exportConfig) return undefined;
+  return {
+    ...input.exportConfig,
+    context: {
+      evalId: input.evalItem.id,
+      sourcePath: displaySourcePath(input.evalItem.filePath, input.projectDir),
+      reportPath: input.report ?? artifactPaths.summary,
+      ...input.exportConfig.context,
+    },
+  };
 }
 
 export async function runEvalReport(
@@ -520,15 +550,8 @@ export async function runEvalReport(
         metadata,
       }),
   );
-  const report = await adapters.exporters.exportReport(finalizedReport, {
-    required: input.exportRequired,
-    context: {
-      ...input.exportContext,
-      evalId: input.evalItem.id,
-      sourcePath: input.evalItem.filePath,
-      reportPath: input.report ?? artifactPaths.summary,
-    },
-  });
+  const exportConfig = createEvalReportExportConfig(input, artifactPaths);
+  const report = await adapters.exporters.exportReport(finalizedReport, exportConfig);
   const baseline = await readBaselineComparison(report, input, adapters.artifacts);
 
   await writeEvalArtifacts(report, artifactPaths, adapters.artifacts, baseline);
@@ -554,7 +577,7 @@ export async function runEvalReport(
     summary: summarizeReportForCli(report),
     ...(baseline ? { baseline } : {}),
     artifacts: artifactPaths,
-    exitCode: createEvalExitCode(report, baseline, input.exportRequired),
+    exitCode: createEvalExitCode(report, baseline, exportConfig?.required),
     outputHints: createOutputHints(artifactPaths, input),
   };
 }
