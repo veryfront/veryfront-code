@@ -77,7 +77,7 @@ import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts"
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
   acquireProjectSlot,
   projectRenderCounts,
@@ -324,6 +324,7 @@ export class Renderer {
           effectiveOptions,
           startTime,
           cacheKey,
+          effectiveOptions.abortSignal ?? effectiveOptions.request?.signal,
         );
         this.scheduleProductionRenderPrewarm(slug, effectiveCtx, effectiveOptions, cacheKey);
         return result;
@@ -528,7 +529,7 @@ export class Renderer {
     this.rememberProductionPrewarm(refreshKey, promise);
 
     setTimeout(() => {
-      void this.doRenderPage(slug, ctx, refreshOptions, performance.now(), cacheKey)
+      void this.doRenderPage(slug, ctx, refreshOptions, performance.now(), cacheKey, undefined)
         .then(() => {
           this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cacheKey);
           resolvePromise();
@@ -608,6 +609,7 @@ export class Renderer {
     options: RenderOptions | undefined,
     startTime: number,
     cacheKey: string | null,
+    callerSignal: AbortSignal | undefined,
   ): Promise<RenderResult> {
     const effectiveKey = cacheKey ?? crypto.randomUUID();
     const flightKey = this.getSingleflightKey(effectiveKey, ctx, options?.colorScheme);
@@ -615,7 +617,14 @@ export class Renderer {
 
     const runRender = async () => {
       try {
-        return await this.runRenderWithCapacity(slug, ctx, options, startTime, cacheKey);
+        return await this.runRenderWithCapacity(
+          slug,
+          ctx,
+          options,
+          startTime,
+          cacheKey,
+          callerSignal,
+        );
       } catch (error) {
         if (error instanceof TimeoutError) {
           logger.error("Render pipeline timeout - aborting", {
@@ -629,7 +638,10 @@ export class Renderer {
     };
 
     const cachedData = cacheKey !== null
-      ? await this.renderFlight.do(flightKey, runRender)
+      ? await waitForSharedPromise(
+        this.renderFlight.do(flightKey, runRender),
+        callerSignal,
+      )
       : await runRender();
 
     if (isFollower) {
@@ -657,6 +669,7 @@ export class Renderer {
     options: RenderOptions | undefined,
     startTime: number,
     cacheKey: string | null,
+    callerSignal: AbortSignal | undefined,
   ): Promise<CachedRenderData> {
     if (!(await acquireProjectSlot(ctx.projectId))) {
       const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
@@ -696,9 +709,15 @@ export class Renderer {
 
     try {
       const services = this.createServicesForContext(ctx, options?.colorScheme);
+      const renderAbortController = new AbortController();
+      const request = cacheKey !== null && options?.request
+        ? new Request(options.request, { signal: renderAbortController.signal })
+        : options?.request;
       const result = await withTimeoutThrow(
         services.pipeline.renderPage(slug, {
           ...options,
+          request,
+          abortSignal: renderAbortController.signal,
           delivery: "string",
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,
@@ -709,6 +728,11 @@ export class Renderer {
         }),
         RENDER_PIPELINE_TIMEOUT_MS,
         `Render pipeline for ${ctx.projectId}:${slug}`,
+        {
+          signal: cacheKey === null ? callerSignal : undefined,
+          onAbort: (reason) => renderAbortController.abort(reason),
+          onTimeout: (error) => renderAbortController.abort(error),
+        },
       );
 
       if (cacheKey !== null) {

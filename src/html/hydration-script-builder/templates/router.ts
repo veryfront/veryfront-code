@@ -626,10 +626,18 @@ export const getRouterScript = () => `
         // { redirect: { destination } } payload. Follow it with a document
         // navigation to the target (the same net effect as the full-page 302),
         // instead of trying to render a page that does not exist here.
+        // Only follow http(s)/relative destinations: assigning a javascript:/data:
+        // URL to location.href would EXECUTE it (the server also filters these, so
+        // this is defense in depth). Fall through to the normal error path otherwise.
         if (pageData && pageData.redirect && typeof pageData.redirect.destination === 'string') {
-          log('SPA navigation redirect -> ' + pageData.redirect.destination);
-          window.location.href = pageData.redirect.destination;
-          return;
+          try {
+            var redirectTarget = new URL(pageData.redirect.destination, window.location.origin);
+            if (redirectTarget.protocol === 'http:' || redirectTarget.protocol === 'https:') {
+              log('SPA navigation redirect -> ' + redirectTarget.href);
+              window.location.href = redirectTarget.href;
+              return;
+            }
+          } catch (e) { /* invalid destination — do not follow */ }
         }
 
         if (pushState) {
