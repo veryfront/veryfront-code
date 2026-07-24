@@ -1,4 +1,6 @@
+export * from "./cancellation.ts";
 export * from "./clock.ts";
+export * from "./deadlines.ts";
 export * from "./diagnostics.ts";
 export * from "./errors.ts";
 export * from "./reducer.ts";

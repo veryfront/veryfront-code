@@ -4,6 +4,11 @@ import {
 } from "#veryfront/agent/streaming/stream-outcome.ts";
 import { createCancellationCoordinator } from "./cancellation.ts";
 import {
+  createStreamDeadlineController,
+  type TrackedProviderRead,
+  trackProviderRead,
+} from "./deadlines.ts";
+import {
   acceptDiagnosticCandidate,
   createDefaultDiagnosticPolicy,
   createDefaultDiagnosticSink,
@@ -14,6 +19,7 @@ import { resolveStreamLifecyclePolicy } from "./policy.ts";
 import {
   createInitialReducerState,
   reduceStreamSignal,
+  resolveLocalToolDeadline,
   type StreamReducerState,
 } from "./reducer.ts";
 import type {
@@ -26,6 +32,7 @@ import type {
   StreamOutcome,
   StreamProviderError,
   StreamSnapshot,
+  StreamTelemetryEvent,
 } from "./types.ts";
 
 export function runStreamLifecycle<TProviderPart>(
@@ -67,24 +74,143 @@ export function runStreamLifecycle<TProviderPart>(
       settleCancelled,
     );
     cancellation = activeCancellation;
+    const disposeController = new AbortController();
+    const attemptDeadlineMs = policy.clock.nowMs() + policy.attemptTimeoutMs;
+    const deadlines = createStreamDeadlineController({
+      clock: policy.clock,
+      policy,
+      attemptDeadlineMs,
+      disposeSignal: disposeController.signal,
+    });
+    const settleAttemptTimeout = () => {
+      if (outcome.settled) return;
+      const failed = createFailedOutcome(reducer.snapshot, policy.clock.nowMs(), {
+        code: "STREAM_ATTEMPT_TIMEOUT",
+        source: "runtime",
+        retryable: true,
+        publicMessage: "Stream attempt exceeded its time limit",
+      });
+      reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
+      outcome.settle(failed);
+      activeCancellation.abortProvider(
+        new DOMException("Stream attempt timed out", "AbortError"),
+      );
+      cleanup();
+    };
+    void policy.clock.waitUntil(attemptDeadlineMs, disposeController.signal)
+      .then((result) => {
+        if (result === "deadline") settleAttemptTimeout();
+      });
     try {
       if (activeCancellation.source) return;
       providerIterator = input.provider.open(activeCancellation.signal)
         [Symbol.asyncIterator]();
+      let pendingRead: TrackedProviderRead<TProviderPart> | null = null;
       while (!outcome.settled) {
-        let next: IteratorResult<TProviderPart>;
-        try {
-          next = await providerIterator.next();
-        } catch (error) {
+        pendingRead ??= trackProviderRead(
+          providerIterator.next(),
+          policy.clock,
+        );
+        deadlines.resumeProviderWait(reducer.snapshot);
+        const raced = await deadlines.raceProviderRead(
+          pendingRead,
+          activeCancellation.signal,
+        );
+        deadlines.pauseProviderWait();
+
+        if (raced.kind === "status") {
+          for (const toolCallId of raced.toolCallIds) {
+            if (outcome.settled) return;
+            const tool = reducer.snapshot.tools.find((entry) => entry.id === toolCallId);
+            if (
+              !tool ||
+              (tool.phase !== "input_open" && tool.phase !== "input_streaming")
+            ) {
+              continue;
+            }
+            const frame = sequenceTelemetry(reducer, {
+              type: "tool_input_status",
+              toolCallId,
+              status: tool.phase === "input_streaming" ? "streaming_input" : "pending_input",
+            }, policy.clock.nowMs());
+            yield frame;
+            if (outcome.settled) return;
+          }
+          continue;
+        }
+        if (raced.kind === "provider_deadline") {
+          if (
+            raced.deadline === "tool_input_idle" ||
+            raced.deadline === "tool_commit_grace"
+          ) {
+            const resolved = resolveLocalToolDeadline(
+              reducer,
+              raced.deadline,
+              policy.clock.nowMs(),
+            );
+            reducer = resolved.reduction.state;
+            if (resolved.kind === "handoff") {
+              settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
+            } else {
+              const failed = createFailedOutcome(
+                reducer.snapshot,
+                policy.clock.nowMs(),
+                {
+                  code: resolved.code,
+                  source: "tool",
+                  retryable: false,
+                  publicMessage: resolved.code === "TOOL_INPUT_TIMEOUT"
+                    ? "Tool input did not arrive before the deadline"
+                    : "Tool input ended before a valid object was complete",
+                },
+              );
+              reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
+              outcome.settle(failed);
+            }
+            for (const frame of resolved.reduction.frames) yield frame;
+          } else {
+            const code = raced.deadline === "first_progress"
+              ? "FIRST_PROGRESS_TIMEOUT" as const
+              : "SEMANTIC_IDLE_TIMEOUT" as const;
+            const failed = createFailedOutcome(
+              reducer.snapshot,
+              policy.clock.nowMs(),
+              {
+                code,
+                source: "provider",
+                retryable: true,
+                publicMessage: code === "FIRST_PROGRESS_TIMEOUT"
+                  ? "Provider did not produce semantic progress"
+                  : "Provider stopped producing semantic progress",
+              },
+            );
+            reducer = { ...reducer, terminal: true, snapshot: failed.snapshot };
+            outcome.settle(failed);
+          }
+          activeCancellation.abortProvider(
+            new DOMException("Stream provider deadline reached", "AbortError"),
+          );
+          cleanup();
+          return;
+        }
+        if (raced.kind === "attempt_timeout") {
+          settleAttemptTimeout();
+          return;
+        }
+        if (raced.kind === "cancelled") return;
+        if (raced.kind === "read_error") {
           settleProviderFailure(
             outcome,
             reducer,
-            error,
-            input.provider.classifyError(error, reducer.snapshot),
+            raced.error,
+            input.provider.classifyError(raced.error, reducer.snapshot),
             policy.clock.nowMs(),
           );
           return;
         }
+
+        pendingRead = null;
+        const next = raced.result;
         if (next.done) {
           settleProviderEnd(outcome, reducer, policy.clock.nowMs());
           return;
@@ -93,11 +219,15 @@ export function runStreamLifecycle<TProviderPart>(
           if (signal.kind === "diagnostic_candidate") {
             const safe = acceptDiagnosticCandidate(diagnostics, signal.candidate);
             if (safe) {
-              yield sequenceDiagnostic(
+              if (outcome.settled) return;
+              const frame = sequenceDiagnostic(
                 reducer,
                 { type: "provider_diagnostic", event: safe },
                 policy.clock.nowMs(),
               );
+              if (outcome.settled) return;
+              yield frame;
+              if (outcome.settled) return;
             }
             continue;
           }
@@ -117,16 +247,26 @@ export function runStreamLifecycle<TProviderPart>(
             policy.clock.nowMs(),
           );
           reducer = reduced.state;
-          if (reducer.terminal) {
+          if (reduced.semanticProgress) {
+            deadlines.noteSemanticProgress(reducer.snapshot);
+          }
+          const terminalCommitted = reducer.terminal;
+          if (terminalCommitted) {
             settleReducerTerminal(outcome, reducer, policy.clock.nowMs());
           }
-          for (const frame of reduced.frames) yield frame;
+          for (const frame of reduced.frames) {
+            if (!terminalCommitted && outcome.settled) return;
+            yield frame;
+            if (!terminalCommitted && outcome.settled) return;
+          }
           if (reducer.terminal) return;
         }
       }
     } finally {
       if (!outcome.settled) settleCancelled("consumer_stopped");
       cleanup();
+      deadlines.dispose();
+      disposeController.abort();
       activeCancellation.dispose();
     }
   };
@@ -334,6 +474,19 @@ function settleReducerTerminal(
     retryable: false,
     publicMessage: "Provider stream ended in an invalid lifecycle state",
   }));
+}
+
+function sequenceTelemetry(
+  reducer: StreamReducerState,
+  event: StreamTelemetryEvent,
+  elapsedMs: number,
+): StreamLifecycleFrame {
+  return {
+    class: "telemetry",
+    event,
+    sequence: ++reducer.sequence,
+    elapsedMs,
+  };
 }
 
 function sequenceDiagnostic(

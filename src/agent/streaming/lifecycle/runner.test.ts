@@ -3,7 +3,11 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StreamAlreadyConsumedError } from "./errors.ts";
 import { runStreamLifecycle } from "./runner.ts";
-import { createScriptedStreamProvider } from "./testing.ts";
+import {
+  createControllableSignalProvider,
+  createScriptedStreamProvider,
+  ManualMonotonicClock,
+} from "./testing.ts";
 import type { StreamDiagnosticEvent } from "./types.ts";
 
 describe("runStreamLifecycle", () => {
@@ -114,6 +118,54 @@ describe("runStreamLifecycle", () => {
       JSON.stringify(reported).includes(cleanupError.message),
       false,
     );
+  });
+
+  it("reduces a cached provider result when the consumer resumes before the attempt limit", async () => {
+    const clock = new ManualMonotonicClock();
+    const provider = createControllableSignalProvider();
+    const run = runStreamLifecycle({
+      provider,
+      policy: {
+        clock,
+        statusIntervalMs: 5_000,
+        toolInputIdleTimeoutMs: 60_000,
+        attemptTimeoutMs: 30_000,
+      },
+    });
+    const iterator = run.frames[Symbol.asyncIterator]();
+    const firstRead = iterator.next();
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: {
+          type: "tool_input_start",
+          toolCallId: "t1",
+          toolName: "create_file",
+        },
+      },
+    });
+    await firstRead;
+
+    const status = iterator.next();
+    clock.advanceBy(5_000);
+    await status;
+    provider.resolveNext({
+      done: false,
+      value: {
+        kind: "protocol",
+        event: {
+          type: "tool_input_content",
+          toolCallId: "t1",
+          delta: '{"path":"a.md"}',
+        },
+      },
+    });
+    clock.advanceBy(24_999);
+    const cached = await iterator.next();
+    assertEquals(cached.value?.class, "semantic");
+    assertEquals(cached.value?.event.type, "tool_input_content");
+    await iterator.return?.();
   });
 
   it("can stop before the first read without opening the provider", async () => {

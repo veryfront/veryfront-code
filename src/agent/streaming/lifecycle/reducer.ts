@@ -1,4 +1,7 @@
-import { mergeToolInputDelta } from "#veryfront/agent/streaming/data-stream.ts";
+import {
+  mergeToolInputDelta,
+  stripLeadingEmptyObjectPlaceholder,
+} from "#veryfront/agent/streaming/data-stream.ts";
 import { parseCanonicalToolInput } from "./tool-input.ts";
 import type {
   StreamLifecycleError,
@@ -554,4 +557,94 @@ function commitPendingLocalInputs(
     });
   }
   syncToolSnapshot(state, state.snapshot.phase);
+}
+
+export type LocalToolDeadlineResolution =
+  | { kind: "handoff"; reduction: StreamReduction }
+  | {
+    kind: "failed";
+    reduction: StreamReduction;
+    code: "TOOL_INPUT_TIMEOUT" | "TOOL_INPUT_INCOMPLETE";
+  };
+
+export function resolveLocalToolDeadline(
+  current: StreamReducerState,
+  _reason: "tool_input_idle" | "tool_commit_grace",
+  elapsedMs: number,
+): LocalToolDeadlineResolution {
+  const state = cloneReducerState(current);
+  const frames: StreamLifecycleFrame[] = [];
+  const emit: FrameEmitter = (frame) =>
+    frames.push(
+      { ...frame, sequence: ++state.sequence, elapsedMs } as StreamLifecycleFrame,
+    );
+
+  let receivedInput = false;
+  for (const [toolCallId, tool] of state.tools) {
+    if (tool.providerExecuted === true) continue;
+    if (tool.phase !== "input_open" && tool.phase !== "input_streaming") {
+      continue;
+    }
+    const hadInput = stripLeadingEmptyObjectPlaceholder(tool.inputText).length > 0;
+    if (hadInput) receivedInput = true;
+    const parsed = parseCanonicalToolInput(tool.inputText);
+    if (parsed.ok) {
+      state.tools.set(toolCallId, {
+        ...tool,
+        phase: "input_ready",
+        input: parsed.value,
+      });
+      emit({
+        class: "semantic",
+        event: {
+          type: "tool_input_ready",
+          toolCallId,
+          toolName: tool.name,
+          input: parsed.value,
+          ...(tool.dynamic ? { dynamic: true } : {}),
+        },
+      });
+      continue;
+    }
+    state.tools.set(toolCallId, {
+      ...tool,
+      phase: "input_rejected",
+      rejectionReason: parsed.reason,
+    });
+    if (hadInput) {
+      emit({
+        class: "semantic",
+        event: {
+          type: "tool_input_rejected",
+          toolCallId,
+          toolName: tool.name,
+          reason: parsed.reason,
+        },
+      });
+    }
+  }
+
+  const ready = [...state.tools.values()].filter((tool) =>
+    tool.phase === "input_ready" && tool.providerExecuted !== true
+  );
+  state.terminal = true;
+  if (ready.length > 0) {
+    state.snapshot = {
+      ...state.snapshot,
+      finishReason: "tool-calls",
+      phase: "tool_handoff",
+      hasSemanticProgress: true,
+      tools: [...state.tools.values()].map((tool) => ({ ...tool })),
+    };
+    return { kind: "handoff", reduction: { state, frames, semanticProgress: true } };
+  }
+  state.snapshot = {
+    ...state.snapshot,
+    tools: [...state.tools.values()].map((tool) => ({ ...tool })),
+  };
+  return {
+    kind: "failed",
+    reduction: { state, frames, semanticProgress: false },
+    code: receivedInput ? "TOOL_INPUT_INCOMPLETE" : "TOOL_INPUT_TIMEOUT",
+  };
 }
