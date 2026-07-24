@@ -36,14 +36,161 @@ import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-ty
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isCompiledBinary } from "#veryfront/utils";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
+import { resolvePreparedRemoteHosts } from "./module-loader/security-config.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
 /** Max in-flight/cached prepared source promises retained by one handler. */
 const PREPARED_HANDLER_CACHE_MAX_ENTRIES = 256;
+const NativeTypeError = TypeError;
+const arrayIsArray = Array.isArray;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectPrototype = Object.prototype;
 const apply = Reflect.apply;
 const randomUUID = crypto.randomUUID;
+
+type ResolvedProjectConfig = Awaited<ReturnType<typeof getConfig>>;
+type PreparedPolicyConfig = Pick<ResolvedProjectConfig, "resolve" | "security">;
+type PlainRecord = Record<string, unknown>;
+
+function freezeSnapshot<T extends object>(value: T): T {
+  return apply(objectFreeze, undefined, [value]) as T;
+}
+
+function malformedPreparedPolicy(): TypeError {
+  return new NativeTypeError("Resolved API preparation policy is unavailable or malformed");
+}
+
+function requirePlainRecord(value: unknown): PlainRecord {
+  if (value === null || typeof value !== "object" || arrayIsArray(value)) {
+    throw malformedPreparedPolicy();
+  }
+
+  const prototype = apply(objectGetPrototypeOf, undefined, [value]);
+  if (prototype !== null && prototype !== objectPrototype) {
+    throw malformedPreparedPolicy();
+  }
+  return value as PlainRecord;
+}
+
+function readOwnDataProperty(record: PlainRecord, key: string): unknown {
+  const descriptor = apply(objectGetOwnPropertyDescriptor, undefined, [record, key]);
+  if (descriptor === undefined) return undefined;
+  if (!("value" in descriptor) || descriptor.enumerable !== true) {
+    throw malformedPreparedPolicy();
+  }
+  return descriptor.value;
+}
+
+function readOptionalRecord(record: PlainRecord, key: string): PlainRecord | undefined {
+  const value = readOwnDataProperty(record, key);
+  return value === undefined ? undefined : requirePlainRecord(value);
+}
+
+function createSnapshotRecord(): PlainRecord {
+  return apply(objectCreate, undefined, [null]) as PlainRecord;
+}
+
+function defineSnapshotProperty(record: PlainRecord, key: string, value: unknown): void {
+  apply(objectDefineProperty, undefined, [
+    record,
+    key,
+    {
+      configurable: false,
+      enumerable: true,
+      value,
+      writable: false,
+    },
+  ]);
+}
+
+function ownRecordKeys(record: PlainRecord): string[] {
+  const symbols = apply(objectGetOwnPropertySymbols, undefined, [record]) as symbol[];
+  if (symbols.length > 0) throw malformedPreparedPolicy();
+  return apply(objectGetOwnPropertyNames, undefined, [record]) as string[];
+}
+
+function snapshotStringRecord(value: PlainRecord): PlainRecord {
+  const snapshot = createSnapshotRecord();
+  for (const key of ownRecordKeys(value)) {
+    const entry = readOwnDataProperty(value, key);
+    if (typeof entry !== "string") throw malformedPreparedPolicy();
+    defineSnapshotProperty(snapshot, key, entry);
+  }
+  return freezeSnapshot(snapshot);
+}
+
+function snapshotScopes(value: PlainRecord): PlainRecord {
+  const snapshot = createSnapshotRecord();
+  for (const scope of ownRecordKeys(value)) {
+    const entries = requirePlainRecord(readOwnDataProperty(value, scope));
+    defineSnapshotProperty(snapshot, scope, snapshotStringRecord(entries));
+  }
+  return freezeSnapshot(snapshot);
+}
+
+function snapshotImportMap(value: PlainRecord): PlainRecord {
+  const snapshot = createSnapshotRecord();
+  const imports = readOptionalRecord(value, "imports");
+  const scopes = readOptionalRecord(value, "scopes");
+  if (imports !== undefined) {
+    defineSnapshotProperty(snapshot, "imports", snapshotStringRecord(imports));
+  }
+  if (scopes !== undefined) {
+    defineSnapshotProperty(snapshot, "scopes", snapshotScopes(scopes));
+  }
+  return freezeSnapshot(snapshot);
+}
+
+function snapshotResolve(config: PlainRecord): PlainRecord | undefined {
+  const resolve = readOptionalRecord(config, "resolve");
+  if (resolve === undefined) return undefined;
+
+  const snapshot = createSnapshotRecord();
+  const importMap = readOptionalRecord(resolve, "importMap");
+  if (importMap !== undefined) {
+    defineSnapshotProperty(snapshot, "importMap", snapshotImportMap(importMap));
+  }
+  return freezeSnapshot(snapshot);
+}
+
+/**
+ * Detach the config subtrees consumed during worker preparation.
+ *
+ * The network allow-list and import map both influence which source enters the
+ * worker. Snapshotting and freezing them prevents another config consumer from
+ * widening the admitted graph after this handler validates the config.
+ */
+function createPreparedConfigSnapshot(
+  config: ResolvedProjectConfig,
+): PreparedPolicyConfig {
+  try {
+    const source = requirePlainRecord(config);
+    readOptionalRecord(source, "security");
+
+    const remoteHosts = freezeSnapshot(resolvePreparedRemoteHosts(config));
+    const security = createSnapshotRecord();
+    defineSnapshotProperty(security, "remoteHosts", remoteHosts);
+    freezeSnapshot(security);
+
+    const snapshot = createSnapshotRecord();
+    defineSnapshotProperty(snapshot, "security", security);
+    const resolve = snapshotResolve(source);
+    if (resolve !== undefined) {
+      defineSnapshotProperty(snapshot, "resolve", resolve);
+    }
+    return freezeSnapshot(snapshot) as PreparedPolicyConfig;
+  } catch {
+    throw malformedPreparedPolicy();
+  }
+}
 
 function isAppRouteModule(modulePath: string): boolean {
   return /\/route\.(ts|js|tsx|jsx)$/.test(modulePath);
@@ -175,6 +322,7 @@ export class APIRouteHandler {
   private destroyed = false;
   private workerUsed = false;
   private isolationUnavailableReason: string | null = null;
+  private configUnavailable = false;
 
   private adapter: RuntimeAdapter | null;
   private adapterPromise: Promise<RuntimeAdapter> | null = null;
@@ -183,7 +331,8 @@ export class APIRouteHandler {
   private corsConfigLoaded = false;
   private corsConfigPromise: Promise<void> | null = null;
 
-  private config: Awaited<ReturnType<typeof getConfig>> | null = null;
+  private config: ResolvedProjectConfig | null = null;
+  private preparedConfig: PreparedPolicyConfig | null = null;
   private configPromise: Promise<void> | null = null;
 
   constructor(
@@ -197,8 +346,13 @@ export class APIRouteHandler {
 
     if (initialConfig) {
       this.config = initialConfig;
-      this.corsConfig = initialConfig.security?.cors ?? null;
-      this.corsConfigLoaded = true;
+      try {
+        this.preparedConfig = createPreparedConfigSnapshot(initialConfig);
+        this.corsConfig = initialConfig.security?.cors ?? null;
+        this.corsConfigLoaded = true;
+      } catch {
+        this.configUnavailable = true;
+      }
     }
   }
 
@@ -491,7 +645,7 @@ export class APIRouteHandler {
           projectDir: this.projectDir,
           modulePath,
           adapter,
-          config: this.config ?? undefined,
+          config: this.preparedConfig ?? undefined,
         });
         this.preparedRouteCache.set(modulePath, preparation);
 
@@ -627,6 +781,10 @@ export class APIRouteHandler {
       return "Worker-isolated API routes require a prepared virtual-filesystem capability";
     }
 
+    if (this.configUnavailable || !this.preparedConfig) {
+      return "Worker-isolated API routes require a valid project configuration";
+    }
+
     const discovery = createProjectDiscoveryConfig({
       projectDir: this.projectDir,
       config: this.config,
@@ -672,8 +830,17 @@ export class APIRouteHandler {
 
   private async loadCorsConfig(adapter: RuntimeAdapter): Promise<void> {
     try {
-      const deps = getDeps();
-      const config = await deps.getConfig(this.projectDir, adapter);
+      if (this.config) {
+        this.corsConfig = this.config.security?.cors ?? null;
+        return;
+      }
+
+      if (isWorkerIsolationEnabled() && this.configUnavailable) {
+        this.corsConfig = null;
+        return;
+      }
+
+      const config = await getDeps().getConfig(this.projectDir, adapter);
       this.corsConfig = config.security?.cors ?? null;
     } catch (error) {
       this.corsConfig = null;
@@ -694,9 +861,15 @@ export class APIRouteHandler {
   private async loadFullConfig(adapter: RuntimeAdapter): Promise<void> {
     try {
       const deps = getDeps();
-      this.config = await deps.getConfig(this.projectDir, adapter);
+      const config = await deps.getConfig(this.projectDir, adapter);
+      const preparedConfig = createPreparedConfigSnapshot(config);
+      this.config = config;
+      this.preparedConfig = preparedConfig;
+      this.configUnavailable = false;
     } catch (error) {
       this.config = null;
+      this.preparedConfig = null;
+      this.configUnavailable = true;
       logger.warn("Failed to load config", error);
     } finally {
       this.configPromise = null;

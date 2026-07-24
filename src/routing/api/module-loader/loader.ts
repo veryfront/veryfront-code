@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
-import { loadSecurityConfig } from "./security-config.ts";
+import { loadSecurityConfig, resolvePreparedRemoteHosts } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
@@ -57,8 +57,11 @@ const subtleDigest = SubtleCrypto.prototype.digest;
 const numberToString = Number.prototype.toString;
 const stringPadStart = String.prototype.padStart;
 const arrayJoin = Array.prototype.join;
+const arrayFilter = Array.prototype.filter;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
+const objectEntries = Object.entries;
+const objectKeys = Object.keys;
 const MAX_NOT_FOUND_CAUSE_DEPTH = 16;
 const denoNotFoundPrototype = (
   globalThis as typeof globalThis & {
@@ -295,7 +298,7 @@ function createImportMapPlugin(
   config?: VeryfrontConfig,
 ): Plugin {
   const importMap = config?.resolve?.importMap?.imports ?? {};
-  const importMapEntries = Object.keys(importMap);
+  const importMapEntries = objectKeys(importMap);
 
   if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
@@ -323,7 +326,7 @@ function createImportMapPlugin(
 
         let resolvedPath = importMap[args.path];
         if (!resolvedPath) {
-          for (const [key, value] of Object.entries(importMap)) {
+          for (const [key, value] of objectEntries(importMap)) {
             if (key.endsWith("/") && args.path.startsWith(key)) {
               resolvedPath = value + args.path.slice(key.length);
               break;
@@ -603,7 +606,9 @@ function buildAndTranspileModule(
 
       const loader = getEsbuildLoader(resolvedPath);
 
-      const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+      const allowedHosts = strictRemoteImports
+        ? resolvePreparedRemoteHosts(config)
+        : await loadSecurityConfig(projectDir, adapter);
       validateHTTPImports(source, allowedHosts);
 
       const allDeps = await readProjectDependencies(projectDir, fs);
@@ -993,7 +998,9 @@ function generateSubpathShim(subpath: string): string {
     return `throw new Error("veryfront/${subpath} runtime not registered in compiled binary context");`;
   }
 
-  const exportNames = Object.keys(mod).filter((k) => k !== "default" && k !== "__esModule");
+  const exportNames = apply(arrayFilter, objectKeys(mod), [
+    (key: string) => key !== "default" && key !== "__esModule",
+  ]) as string[];
   const lines: string[] = [
     `// Auto-generated shim for veryfront/${subpath}`,
     `const _mod = globalThis.__vfModules["${subpath}"];`,

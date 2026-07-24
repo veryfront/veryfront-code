@@ -5,8 +5,27 @@ import { validateHTTPImports } from "./http-validator.ts";
 
 describe("routing/api/module-loader/http-validator", () => {
   describe("validateHTTPImports", () => {
-    it("should do nothing when allowedHosts is empty", () => {
-      validateHTTPImports('import foo from "https://evil.com/lib.js";', []);
+    it("blocks every remote import when allowedHosts is empty", () => {
+      assertThrows(
+        () => validateHTTPImports('import foo from "https://evil.com/lib.js";', []),
+        Error,
+        "Remote import blocked",
+      );
+    });
+
+    it("keeps deny-all effective after ambient Array.prototype poisoning", () => {
+      const originalSome = Array.prototype.some;
+      Array.prototype.some = (() => true) as typeof Array.prototype.some;
+
+      try {
+        assertThrows(
+          () => validateHTTPImports('import foo from "https://evil.com/lib.js";', []),
+          Error,
+          "Remote import blocked",
+        );
+      } finally {
+        Array.prototype.some = originalSome;
+      }
     });
 
     it("should allow imports from allowed hosts", () => {

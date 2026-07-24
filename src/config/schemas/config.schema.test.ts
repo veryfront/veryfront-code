@@ -9,6 +9,10 @@ import {
   MAX_CORS_TOKEN_COUNT,
   MAX_CORS_TOKEN_LENGTH,
 } from "#veryfront/utils/cors-policy-limits.ts";
+import {
+  MAX_REMOTE_HOST_COUNT,
+  MAX_REMOTE_HOST_URL_LENGTH,
+} from "#veryfront/utils/remote-host-policy-limits.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
@@ -216,6 +220,43 @@ describe("configSchema", () => {
     assertEquals(config.dev?.port, 1);
     assertEquals(config.dev?.hmrPort, 65535);
     assertEquals(config.ai?.mcp?.port, 3001);
+  });
+
+  it("accepts remote host policies at their exact count and URL length limits", () => {
+    const prefix = "https://example.com/";
+    const exactLengthUrl = prefix + "a".repeat(MAX_REMOTE_HOST_URL_LENGTH - prefix.length);
+    const remoteHosts = Array.from(
+      { length: MAX_REMOTE_HOST_COUNT },
+      (_, index) => `https://host-${index}.example`,
+    );
+    remoteHosts[0] = exactLengthUrl;
+
+    const config = validateVeryfrontConfig({ security: { remoteHosts } });
+
+    assertEquals(config.security?.remoteHosts?.length, MAX_REMOTE_HOST_COUNT);
+    assertEquals(config.security?.remoteHosts?.[0], exactLengthUrl);
+    assertEquals(
+      validateVeryfrontConfig({ security: { remoteHosts: [] } }).security?.remoteHosts,
+      [],
+    );
+  });
+
+  it("rejects remote host policies above their count or URL length limits", () => {
+    const prefix = "https://example.com/";
+    const overLengthUrl = prefix +
+      "a".repeat(MAX_REMOTE_HOST_URL_LENGTH + 1 - prefix.length);
+    const overCountHosts = Array.from(
+      { length: MAX_REMOTE_HOST_COUNT + 1 },
+      (_, index) => `https://host-${index}.example`,
+    );
+
+    for (const remoteHosts of [overCountHosts, [overLengthUrl]]) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { remoteHosts } }),
+        Error,
+        "Invalid veryfront.config at security.remoteHosts",
+      );
+    }
   });
 
   it("gives helpful error for invalid cors", () => {

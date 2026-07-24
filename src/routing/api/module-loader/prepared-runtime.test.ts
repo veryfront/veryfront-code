@@ -11,6 +11,7 @@ import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-ty
 import { computeIntegrity } from "#veryfront/utils";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { prepareHandlerModule } from "./loader.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 const testSuite = isDeno ? describe : describe.skip;
 const SOURCE_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -46,6 +47,8 @@ async function prepareFixture(options: {
   source: string;
   dependencies?: Record<string, string>;
   install?: string[];
+  config?: VeryfrontConfig;
+  files?: Record<string, string>;
 }): Promise<PreparedFixture> {
   const projectDir = await Deno.makeTempDir({ prefix: "vf-prepared-runtime-" });
   const modulePath = join(projectDir, "route.ts");
@@ -60,6 +63,11 @@ async function prepareFixture(options: {
   for (const dependency of options.install ?? []) {
     await installRepositoryDependency(projectDir, dependency);
   }
+  for (const [relativePath, contents] of Object.entries(options.files ?? {})) {
+    const filePath = join(projectDir, relativePath);
+    await Deno.mkdir(dirname(filePath), { recursive: true });
+    await Deno.writeTextFile(filePath, contents);
+  }
   await Deno.writeTextFile(modulePath, options.source);
 
   try {
@@ -70,6 +78,7 @@ async function prepareFixture(options: {
         projectDir,
         modulePath,
         adapter: nodeAdapter,
+        config: options.config,
       }),
       cleanupDir: projectDir,
     };
@@ -228,6 +237,9 @@ testSuite(
             `import { marker } from ${JSON.stringify(requestUrl)};`,
             `export function GET() { return new Response(marker); }`,
           ].join("\n"),
+          config: {
+            security: { remoteHosts: ["https://esm.sh"] },
+          },
         });
       } finally {
         globalThis.fetch = originalFetch;
@@ -277,17 +289,135 @@ testSuite(
           new Response(`export const marker = "first";`, {
             status: 200,
           })) as typeof fetch;
-        await prepareHandlerModule({ projectDir, modulePath, adapter: nodeAdapter });
+        const config = {
+          security: { remoteHosts: ["https://esm.sh"] },
+        } satisfies VeryfrontConfig;
+        await prepareHandlerModule({ projectDir, modulePath, adapter: nodeAdapter, config });
 
         globalThis.fetch = (async () =>
           new Response(`export const marker = "changed";`, {
             status: 200,
           })) as typeof fetch;
         await assertRejects(
-          () => prepareHandlerModule({ projectDir, modulePath, adapter: nodeAdapter }),
+          () => prepareHandlerModule({ projectDir, modulePath, adapter: nodeAdapter, config }),
           Error,
           "Integrity mismatch",
         );
+      } finally {
+        globalThis.fetch = originalFetch;
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("uses the supplied config snapshot without evaluating the on-disk config again", async () => {
+      const originalFetch = globalThis.fetch;
+      const sideEffectKey = `__vf_config_reload_${crypto.randomUUID().replaceAll("-", "_")}`;
+      const globals = globalThis as unknown as Record<string, unknown>;
+      globals[sideEffectKey] = 0;
+      let fixture: PreparedFixture | undefined;
+
+      try {
+        globalThis.fetch = (async () =>
+          new Response(`export const marker = "snapshot-ok";`, {
+            status: 200,
+          })) as typeof fetch;
+        fixture = await prepareFixture({
+          source: [
+            `import { marker } from "https://esm.sh/vf-config-snapshot@1.0.0";`,
+            `export function GET() { return new Response(marker); }`,
+          ].join("\n"),
+          config: {
+            security: { remoteHosts: ["https://esm.sh"] },
+          },
+          files: {
+            "veryfront.config.ts": [
+              `globalThis[${JSON.stringify(sideEffectKey)}] =`,
+              `  Number(globalThis[${JSON.stringify(sideEffectKey)}] ?? 0) + 1;`,
+              `throw new Error("prepared loader must not reload config");`,
+            ].join("\n"),
+          },
+        });
+
+        assertEquals(globals[sideEffectKey], 0);
+        assertEquals(await executePreparedFixture(fixture), "snapshot-ok");
+      } finally {
+        globalThis.fetch = originalFetch;
+        delete globals[sideEffectKey];
+        if (fixture) await removeFixture(fixture);
+      }
+    });
+
+    it("blocks remote imports before fetch when the config snapshot is missing or deny-all", async () => {
+      for (
+        const config of [
+          undefined,
+          { security: { remoteHosts: [] } } satisfies VeryfrontConfig,
+        ]
+      ) {
+        const projectDir = await Deno.makeTempDir({ prefix: "vf-prepared-config-deny-" });
+        const modulePath = join(projectDir, "route.ts");
+        await Deno.writeTextFile(
+          join(projectDir, "package.json"),
+          JSON.stringify({ name: "config-deny-fixture", private: true }),
+        );
+        await Deno.writeTextFile(
+          modulePath,
+          `import "https://esm.sh/blocked"; export function GET() { return new Response("no"); }`,
+        );
+        const originalFetch = globalThis.fetch;
+        let fetches = 0;
+
+        try {
+          globalThis.fetch = (async () => {
+            fetches++;
+            return new Response(`export {};`, { status: 200 });
+          }) as typeof fetch;
+          await assertRejects(
+            () => prepareHandlerModule({ projectDir, modulePath, adapter: nodeAdapter, config }),
+            Error,
+            "Remote import blocked",
+          );
+          assertEquals(fetches, 0);
+        } finally {
+          globalThis.fetch = originalFetch;
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      }
+    });
+
+    it("rejects malformed config before any remote fetch", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-prepared-config-malformed-" });
+      const modulePath = join(projectDir, "route.ts");
+      await Deno.writeTextFile(
+        join(projectDir, "package.json"),
+        JSON.stringify({ name: "config-malformed-fixture", private: true }),
+      );
+      await Deno.writeTextFile(
+        modulePath,
+        `import "https://esm.sh/blocked"; export function GET() { return new Response("no"); }`,
+      );
+      const originalFetch = globalThis.fetch;
+      let fetches = 0;
+
+      try {
+        globalThis.fetch = (async () => {
+          fetches++;
+          return new Response(`export {};`, { status: 200 });
+        }) as typeof fetch;
+        await assertRejects(
+          () =>
+            prepareHandlerModule({
+              projectDir,
+              modulePath,
+              adapter: nodeAdapter,
+              config: {
+                security: { remoteHosts: "https://esm.sh" },
+              } as unknown as VeryfrontConfig,
+            }),
+          Error,
+          "unavailable or malformed",
+        );
+        assertEquals(fetches, 0);
       } finally {
         globalThis.fetch = originalFetch;
         await Deno.remove(projectDir, { recursive: true });

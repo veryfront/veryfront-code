@@ -4,9 +4,10 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { computeHash, HTTP_OK } from "#veryfront/utils";
 import type { HandlerContext } from "#veryfront/types";
-import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
+import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import {
   __injectDepsForTests,
   type APIRoute,
@@ -300,6 +301,240 @@ describe("APIRouteHandler", () => {
         assertEquals(capabilities, { status: "unavailable" });
         assertEquals(preparations, 0);
         assertEquals(hostLoads, 0);
+      });
+    });
+
+    it("makes isolation unavailable without preparation, fetch, or worker admission when config loading fails", async () => {
+      await withApiWorkerIsolation(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `import "https://esm.sh/unreachable"; export function GET() { return new Response("unreachable"); }`,
+        );
+        let configLoads = 0;
+        let hostLoads = 0;
+        let preparations = 0;
+        let fetches = 0;
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = ((..._args: Parameters<typeof fetch>) => {
+          fetches++;
+          return Promise.reject(new Error("fetch must not run"));
+        }) as typeof fetch;
+
+        try {
+          __injectDepsForTests({
+            getConfig: () => {
+              configLoads++;
+              return Promise.reject(new Error("synthetic config failure"));
+            },
+            loadHandlerModule: () => {
+              hostLoads++;
+              return Promise.resolve({});
+            },
+            prepareHandlerModule: () => {
+              preparations++;
+              return Promise.reject(new Error("preparation must not run"));
+            },
+          });
+          const handler = await createInitializedHandler("/test/project", adapter);
+
+          const response = await handler.handle(
+            new Request("http://localhost/api/resource"),
+            { isLocalProject: false } as HandlerContext,
+          );
+          const capabilities = await handler.resolveRouteMethods("/api/resource");
+
+          assertEquals(response?.status, 503);
+          assertEquals(await response?.text(), "API route unavailable");
+          assertEquals(capabilities, { status: "unavailable" });
+          assertEquals(configLoads, 1);
+          assertEquals(preparations, 0);
+          assertEquals(hostLoads, 0);
+          assertEquals(fetches, 0);
+          assertEquals(getWorkerPool().getStats().poolSize, 0);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    });
+
+    it("classifies null and malformed resolved configs as isolation-unavailable before preparation", async () => {
+      await withApiWorkerIsolation(async () => {
+        for (
+          const invalidConfig of [
+            null,
+            [],
+            Object.create({ inherited: true }),
+            { security: { remoteHosts: "https://esm.sh" } },
+            { resolve: null },
+            { resolve: [] },
+            { resolve: { importMap: null } },
+            { resolve: { importMap: [] } },
+            { resolve: { importMap: { imports: null } } },
+            { resolve: { importMap: { imports: [] } } },
+            { resolve: { importMap: { imports: { alias: 42 } } } },
+            { resolve: { importMap: { scopes: null } } },
+            { resolve: { importMap: { scopes: [] } } },
+            { resolve: { importMap: { scopes: { "/scope/": null } } } },
+            { resolve: { importMap: { scopes: { "/scope/": [] } } } },
+            { resolve: { importMap: { scopes: { "/scope/": { package: 42 } } } } },
+          ]
+        ) {
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(
+            "/test/project/app/api/resource/route.ts",
+            `export function GET() { return new Response("unreachable"); }`,
+          );
+          let preparations = 0;
+          __injectDepsForTests({
+            getConfig: () => Promise.resolve(invalidConfig as unknown as VeryfrontConfig),
+            prepareHandlerModule: () => {
+              preparations++;
+              return Promise.reject(new Error("preparation must not run"));
+            },
+          });
+          const handler = await createInitializedHandler("/test/project", adapter);
+
+          const response = await handler.handle(
+            new Request("http://localhost/api/resource"),
+            { isLocalProject: false } as HandlerContext,
+          );
+
+          assertEquals(response?.status, 503);
+          assertEquals(preparations, 0);
+          assertEquals(getWorkerPool().getStats().poolSize, 0);
+        }
+      });
+    });
+
+    it("does not invoke prepared-policy accessors and makes isolation unavailable", async () => {
+      await withApiWorkerIsolation(async () => {
+        let accessorCalls = 0;
+        const accessorRecord = (key: string, value: unknown): Record<string, unknown> => {
+          const record: Record<string, unknown> = {};
+          Object.defineProperty(record, key, {
+            enumerable: true,
+            get() {
+              accessorCalls++;
+              return value;
+            },
+          });
+          return record;
+        };
+        const accessorConfigs: unknown[] = [
+          accessorRecord("resolve", {}),
+          { resolve: accessorRecord("importMap", {}) },
+          { resolve: { importMap: accessorRecord("imports", {}) } },
+          { resolve: { importMap: accessorRecord("scopes", {}) } },
+          {
+            resolve: {
+              importMap: {
+                scopes: accessorRecord("/scope/", {}),
+              },
+            },
+          },
+          {
+            resolve: {
+              importMap: {
+                scopes: {
+                  "/scope/": accessorRecord("package", "./target.ts"),
+                },
+              },
+            },
+          },
+        ];
+
+        for (const invalidConfig of accessorConfigs) {
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(
+            "/test/project/app/api/resource/route.ts",
+            `export function GET() { return new Response("unreachable"); }`,
+          );
+          let preparations = 0;
+          __injectDepsForTests({
+            getConfig: () => Promise.resolve(invalidConfig as VeryfrontConfig),
+            prepareHandlerModule: () => {
+              preparations++;
+              return Promise.reject(new Error("preparation must not run"));
+            },
+          });
+          const handler = await createInitializedHandler("/test/project", adapter);
+
+          const response = await handler.handle(
+            new Request("http://localhost/api/resource"),
+            { isLocalProject: false } as HandlerContext,
+          );
+          const capabilities = await handler.resolveRouteMethods("/api/resource");
+
+          assertEquals(response?.status, 503);
+          assertEquals(capabilities, { status: "unavailable" });
+          assertEquals(preparations, 0);
+          assertEquals(accessorCalls, 0);
+          assertEquals(getWorkerPool().getStats().poolSize, 0);
+        }
+      });
+    });
+
+    it("preparation receives an immutable source-policy snapshot", async () => {
+      await withApiWorkerIsolation(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("unreachable"); }`,
+        );
+        const resolvedConfig = {
+          security: { remoteHosts: [] as string[] },
+          resolve: {
+            importMap: {
+              imports: { alias: "./before.ts" },
+              scopes: { "/scope/": { package: "./before.ts" } },
+            },
+          },
+        } as VeryfrontConfig;
+        let preparedConfig: VeryfrontConfig | undefined;
+        const preparedSource = `export function GET() { return new Response("snapshot"); }`;
+        __injectDepsForTests({
+          getConfig: () => Promise.resolve(resolvedConfig),
+          prepareHandlerModule: async (options) => {
+            preparedConfig = options.config;
+            return {
+              source: preparedSource,
+              sha256: await computeHash(preparedSource),
+            };
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+
+        resolvedConfig.security?.remoteHosts?.push("https://esm.sh");
+        if (resolvedConfig.resolve?.importMap?.imports) {
+          resolvedConfig.resolve.importMap.imports.alias = "./after.ts";
+        }
+        if (resolvedConfig.resolve?.importMap?.scopes?.["/scope/"]) {
+          resolvedConfig.resolve.importMap.scopes["/scope/"].package = "./after.ts";
+        }
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: true } as HandlerContext,
+        );
+
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "snapshot");
+        assertEquals(preparedConfig?.security?.remoteHosts, []);
+        assertEquals(preparedConfig?.resolve?.importMap?.imports?.alias, "./before.ts");
+        assertEquals(
+          preparedConfig?.resolve?.importMap?.scopes?.["/scope/"]?.package,
+          "./before.ts",
+        );
+        assertEquals(Object.isFrozen(preparedConfig), true);
+        assertEquals(Object.isFrozen(preparedConfig?.security), true);
+        assertEquals(Object.isFrozen(preparedConfig?.security?.remoteHosts), true);
+        assertEquals(Object.isFrozen(preparedConfig?.resolve), true);
+        assertEquals(Object.isFrozen(preparedConfig?.resolve?.importMap), true);
+        assertEquals(Object.isFrozen(preparedConfig?.resolve?.importMap?.imports), true);
+        assertEquals(
+          Object.isFrozen(preparedConfig?.resolve?.importMap?.scopes?.["/scope/"]),
+          true,
+        );
       });
     });
   });
