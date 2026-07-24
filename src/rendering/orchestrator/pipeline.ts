@@ -96,6 +96,7 @@ import {
   type LoadedModule,
   MODULE_LOAD_HARD_TIMEOUT_MS,
   MODULE_LOAD_TIMEOUT_MS,
+  moduleLoadLabel,
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
@@ -424,7 +425,7 @@ export class RenderPipeline {
               {
                 idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
                 hardTimeoutMs: MODULE_LOAD_HARD_TIMEOUT_MS,
-                label: `Module loading for ${slug}`,
+                label: moduleLoadLabel(slug, options.url?.pathname ?? ""),
               },
             ),
           { "render.module_count": modulesToLoad.length },
