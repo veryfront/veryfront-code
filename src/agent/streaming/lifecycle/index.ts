@@ -2,6 +2,7 @@ export * from "./clock.ts";
 export * from "./diagnostics.ts";
 export * from "./errors.ts";
 export * from "./reducer.ts";
+export * from "./runner.ts";
 export * from "./testing.ts";
 export * from "./tool-input.ts";
 export * from "./policy.ts";
