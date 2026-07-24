@@ -944,4 +944,41 @@ describe("routing/api/route-executor", () => {
       assertEquals(await response.json(), policy);
     });
   });
+
+  describe("response helpers (isolated pages execution)", () => {
+    afterEach(() => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+    });
+
+    it("drops ctx.text bodies for null-body statuses", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+
+      const modulePath = new URL(
+        "./fixtures/null-body-pages-route.ts",
+        import.meta.url,
+      ).pathname;
+      const projectDir = new URL("../../../", import.meta.url).pathname;
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePagesRoute(
+            { GET: () => new Response("unreachable") },
+            new Request("http://localhost/api/no-content", { method: "GET" }),
+            makeMatch("/api/no-content", modulePath),
+            "/api/no-content",
+            makeAdapter(),
+            undefined,
+            { modulePath, projectDir, isLocalProject: true },
+          ),
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(response.body, null);
+    });
+  });
 });

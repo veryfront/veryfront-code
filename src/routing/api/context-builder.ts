@@ -69,6 +69,16 @@ export function createJsonHelper(_request: Request): APIContext["json"] {
 }
 
 /**
+ * Build the `ctx.text` response helper.
+ *
+ * Exported for the isolation Worker so both execution modes share Fetch's
+ * null-body status handling instead of maintaining separate implementations.
+ */
+export function createTextHelper(): APIContext["text"] {
+  return (data: string, init?: ResponseInit): Response => createResponse(data, "text/plain", init);
+}
+
+/**
  * Build the `ctx.body` request-body reader.
  *
  * The parse is memoised on the first call, so a validation helper and a handler
@@ -107,9 +117,7 @@ export function createContext(
   const url = new URL(request.url);
   const json = createJsonHelper(request);
   const body = createBodyReader(request);
-
-  const text = (data: string, init?: ResponseInit): Response =>
-    createResponse(data, "text/plain", init);
+  const text = createTextHelper();
 
   return {
     request,
