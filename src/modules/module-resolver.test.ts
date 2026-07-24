@@ -208,22 +208,41 @@ describe("modules/module-resolver", () => {
     });
 
     it("should clear cache by pattern", async () => {
+      const virtualModules = new Map([
+        ["virtual:theme", "theme"],
+        ["virtual:utils", "utils"],
+      ]);
       const resolver = createResolver({
-        virtualModules: new Map([
-          ["virtual:theme", "theme"],
-          ["virtual:utils", "utils"],
-        ]),
+        virtualModules,
       });
 
       await resolver.resolve("virtual:theme");
       await resolver.resolve("virtual:utils");
+      virtualModules.set("virtual:theme", "theme-updated");
+      virtualModules.set("virtual:utils", "utils-updated");
 
       resolver.clearCache("theme");
 
       const theme = await resolver.resolve("virtual:theme");
       const utils = await resolver.resolve("virtual:utils");
-      assertEquals(theme?.content, "theme");
+      assertEquals(theme?.content, "theme-updated");
       assertEquals(utils?.content, "utils");
+    });
+
+    it("should clear only referrer-matched cache entries", async () => {
+      const virtualModules = new Map([["virtual:shared", "old"]]);
+      const resolver = createResolver({ virtualModules });
+
+      await resolver.resolve("virtual:shared", "/project/theme.ts");
+      await resolver.resolve("virtual:shared", "/project/utils.ts");
+      virtualModules.set("virtual:shared", "new");
+
+      resolver.clearCache("theme.ts");
+
+      const theme = await resolver.resolve("virtual:shared", "/project/theme.ts");
+      const utils = await resolver.resolve("virtual:shared", "/project/utils.ts");
+      assertEquals(theme?.content, "new");
+      assertEquals(utils?.content, "old");
     });
   });
 
@@ -243,22 +262,26 @@ describe("modules/module-resolver", () => {
         virtualModules: new Map([["virtual:removable", "code"]]),
       });
 
+      await resolver.resolve("virtual:removable");
       resolver.removeVirtualModule("virtual:removable");
 
       const result = await resolver.resolve("virtual:removable");
       assertEquals(result?.type, "npm");
     });
 
-    it("should invalidate cache when adding virtual module", async () => {
+    it("should invalidate all referrer-specific entries when updating a virtual module", async () => {
       const resolver = createResolver({
         virtualModules: new Map([["virtual:mutable", "old"]]),
       });
 
-      await resolver.resolve("virtual:mutable");
+      await resolver.resolve("virtual:mutable", "/project/a.ts");
+      await resolver.resolve("virtual:mutable", "/project/b.ts");
       resolver.addVirtualModule("virtual:mutable", "new");
 
-      const result = await resolver.resolve("virtual:mutable");
-      assertEquals(result?.content, "new");
+      const resultA = await resolver.resolve("virtual:mutable", "/project/a.ts");
+      const resultB = await resolver.resolve("virtual:mutable", "/project/b.ts");
+      assertEquals(resultA?.content, "new");
+      assertEquals(resultB?.content, "new");
     });
   });
 });

@@ -560,15 +560,18 @@ describe("ModuleResolver", () => {
 
     it("should clear cache with pattern matching", async () => {
       await withTestContext("cache-clear-pattern", async (context) => {
+        const virtualModules = new Map([
+          ["virtual:config", "config"],
+          ["virtual:data", "data"],
+        ]);
         const r = await createTestResolver(context, {
-          virtualModules: new Map([
-            ["virtual:config", "config"],
-            ["virtual:data", "data"],
-          ]),
+          virtualModules,
         });
 
         await r.resolve("virtual:config");
         await r.resolve("virtual:data");
+        virtualModules.set("virtual:config", "config-updated");
+        virtualModules.set("virtual:data", "data-updated");
 
         r.clearCache("config");
 
@@ -578,6 +581,8 @@ describe("ModuleResolver", () => {
         ]);
         assertExists(config);
         assertExists(data);
+        assertEquals(config.content, "config-updated");
+        assertEquals(data.content, "data");
       });
     });
 
@@ -585,15 +590,21 @@ describe("ModuleResolver", () => {
       await withTestContext("cache-invalidate-add", async (context) => {
         const r = await createTestResolver(context);
 
-        let resolved = await r.resolve("virtual:dynamic");
-        assertEquals(resolved?.type, "npm");
+        const beforeA = await r.resolve("virtual:dynamic", "/project/a.ts");
+        const beforeB = await r.resolve("virtual:dynamic", "/project/b.ts");
+        assertEquals(beforeA?.type, "npm");
+        assertEquals(beforeB?.type, "npm");
 
         r.addVirtualModule("virtual:dynamic", "export const x = 1");
 
-        resolved = await r.resolve("virtual:dynamic");
-        assertExists(resolved);
-        assertEquals(resolved.type, "virtual");
-        assertEquals(resolved.content, "export const x = 1");
+        const resolvedA = await r.resolve("virtual:dynamic", "/project/a.ts");
+        const resolvedB = await r.resolve("virtual:dynamic", "/project/b.ts");
+        assertExists(resolvedA);
+        assertExists(resolvedB);
+        assertEquals(resolvedA.type, "virtual");
+        assertEquals(resolvedB.type, "virtual");
+        assertEquals(resolvedA.content, "export const x = 1");
+        assertEquals(resolvedB.content, "export const x = 1");
       });
     });
 
@@ -603,14 +614,19 @@ describe("ModuleResolver", () => {
           virtualModules: new Map([["virtual:temp", "temp"]]),
         });
 
-        let resolved = await r.resolve("virtual:temp");
-        assertExists(resolved);
-        assertEquals(resolved.type, "virtual");
+        const beforeA = await r.resolve("virtual:temp", "/project/a.ts");
+        const beforeB = await r.resolve("virtual:temp", "/project/b.ts");
+        assertExists(beforeA);
+        assertExists(beforeB);
+        assertEquals(beforeA.type, "virtual");
+        assertEquals(beforeB.type, "virtual");
 
         r.removeVirtualModule("virtual:temp");
 
-        resolved = await r.resolve("virtual:temp");
-        assertEquals(resolved?.type, "npm");
+        const resolvedA = await r.resolve("virtual:temp", "/project/a.ts");
+        const resolvedB = await r.resolve("virtual:temp", "/project/b.ts");
+        assertEquals(resolvedA?.type, "npm");
+        assertEquals(resolvedB?.type, "npm");
       });
     });
 

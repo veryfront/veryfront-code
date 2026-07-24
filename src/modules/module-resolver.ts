@@ -21,25 +21,36 @@ export interface ModuleResolverOptions {
   cacheSize?: number;
 }
 
+interface CachedResolution {
+  specifier: string;
+  referrer?: string;
+  resolved: ResolvedModule;
+}
+
 const MODULE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 export class ModuleResolver {
   private importMap: Record<string, string>;
   private virtualModules: Map<string, string>;
-  private cache: LRUCache<string, ResolvedModule>;
+  private cache: LRUCache<string, CachedResolution>;
   private adapter: RuntimeAdapter;
 
   constructor(private options: ModuleResolverOptions) {
     this.adapter = options.adapter;
     this.importMap = options.importMap ?? {};
     this.virtualModules = options.virtualModules ?? new Map();
-    this.cache = new LRUCache<string, ResolvedModule>({
+    this.cache = new LRUCache<string, CachedResolution>({
       maxEntries: options.cacheSize ?? CACHE_MAX_ENTRIES_LARGE,
     });
   }
 
-  private cacheAndReturn(cacheKey: string, resolved: ResolvedModule): ResolvedModule {
-    this.cache.set(cacheKey, resolved);
+  private cacheAndReturn(
+    cacheKey: string,
+    specifier: string,
+    referrer: string | undefined,
+    resolved: ResolvedModule,
+  ): ResolvedModule {
+    this.cache.set(cacheKey, { specifier, referrer, resolved });
     return resolved;
   }
 
@@ -47,26 +58,37 @@ export class ModuleResolver {
     return withSpan(
       "modules.resolver.resolve",
       async () => {
+        const requestedSpecifier = specifier;
         const cacheKey = buildModuleResolveCacheKey(specifier, referrer);
         const cached = this.cache.get(cacheKey);
-        if (cached) return cached;
+        if (cached) return cached.resolved;
 
         logger.debug(`Resolving module: ${specifier} from ${referrer ?? "root"}`);
 
         const virtualContent = this.virtualModules.get(specifier);
         if (virtualContent !== undefined) {
-          return this.cacheAndReturn(cacheKey, {
-            path: specifier,
-            type: "virtual",
-            content: virtualContent,
-            transformed: true,
-          });
+          return this.cacheAndReturn(
+            cacheKey,
+            requestedSpecifier,
+            referrer,
+            {
+              path: specifier,
+              type: "virtual",
+              content: virtualContent,
+              transformed: true,
+            },
+          );
         }
 
         const mapped = this.importMap[specifier];
         if (mapped) {
           if (mapped.startsWith("http://") || mapped.startsWith("https://")) {
-            return this.cacheAndReturn(cacheKey, { path: mapped, type: "external" });
+            return this.cacheAndReturn(
+              cacheKey,
+              requestedSpecifier,
+              referrer,
+              { path: mapped, type: "external" },
+            );
           }
           specifier = mapped;
         }
@@ -82,7 +104,12 @@ export class ModuleResolver {
           for (const ext of MODULE_EXTENSIONS) {
             const pathWithExt = fullPath + ext;
             if (await this.adapter.fs.exists(pathWithExt)) {
-              return this.cacheAndReturn(cacheKey, { path: pathWithExt, type: "file" });
+              return this.cacheAndReturn(
+                cacheKey,
+                requestedSpecifier,
+                referrer,
+                { path: pathWithExt, type: "file" },
+              );
             }
           }
 
@@ -99,17 +126,27 @@ export class ModuleResolver {
           }
 
           if (await this.adapter.fs.exists(fullPath)) {
-            return this.cacheAndReturn(cacheKey, { path: fullPath, type: "file" });
+            return this.cacheAndReturn(
+              cacheKey,
+              requestedSpecifier,
+              referrer,
+              { path: fullPath, type: "file" },
+            );
           }
 
           return null;
         }
 
         if (!specifier.startsWith(".")) {
-          return this.cacheAndReturn(cacheKey, {
-            path: `https://esm.sh/${specifier}`,
-            type: "npm",
-          });
+          return this.cacheAndReturn(
+            cacheKey,
+            requestedSpecifier,
+            referrer,
+            {
+              path: `https://esm.sh/${specifier}`,
+              type: "npm",
+            },
+          );
         }
 
         return null;
@@ -124,18 +161,29 @@ export class ModuleResolver {
       return;
     }
 
-    for (const key of [...this.cache.keys()]) {
-      if (key.includes(pattern)) this.cache.delete(key);
+    for (const [key, cached] of [...this.cache.entries()]) {
+      if (
+        cached.specifier.includes(pattern) ||
+        (cached.referrer ?? "root").includes(pattern)
+      ) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  private invalidateSpecifier(specifier: string): void {
+    for (const [key, cached] of [...this.cache.entries()]) {
+      if (cached.specifier === specifier) this.cache.delete(key);
     }
   }
 
   addVirtualModule(path: string, content: string): void {
     this.virtualModules.set(path, content);
-    this.clearCache(path);
+    this.invalidateSpecifier(path);
   }
 
   removeVirtualModule(path: string): void {
     this.virtualModules.delete(path);
-    this.clearCache(path);
+    this.invalidateSpecifier(path);
   }
 }
