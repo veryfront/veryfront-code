@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NotFoundHandler } from "./not-found.ts";
+import { ErrorPages } from "#veryfront/server/utils/error-html.ts";
 
 describe("server/handlers/response/not-found", () => {
   describe("NotFoundHandler metadata", () => {
@@ -37,43 +38,31 @@ describe("server/handlers/response/not-found", () => {
       assertEquals(result.response?.status, 404);
     });
 
-    it("should return HTML content", async () => {
+    it("renders the SAME 404 page as the SSR miss path (ErrorPages.notFound)", async () => {
+      // The fallback handler and the SSR miss path must produce an identical 404,
+      // so a fallthrough like /_veryfront/<missing> looks the same as a normal
+      // page miss — not the old divergent card design.
       const body = await getBody("http://localhost/some-path");
-      assertEquals(body.includes("<!DOCTYPE html>"), true);
-      assertEquals(body.includes("404"), true);
-      assertEquals(body.includes("Page Not Found"), true);
+      assertEquals(body, ErrorPages.notFound("/some-path"));
+      assertEquals(body.includes("Page Not Found"), false);
+      assertEquals(body.includes("Go Home"), false);
     });
 
-    it("should include the requested path in the response", async () => {
+    it("should return styled HTML naming the missing path", async () => {
       const body = await getBody("http://localhost/my-missing-page");
+      assertEquals(body.includes("<!DOCTYPE html>"), true);
+      assertEquals(body.includes("Not Found"), true);
+      assertEquals(body.includes("could not be found"), true);
       assertEquals(body.includes("/my-missing-page"), true);
     });
 
     it("should escape HTML in the pathname", async () => {
-      // URL constructor encodes angle brackets, so the pathname becomes /%3Cscript%3E...
-      // The handler uses escapeHtml on it. We verify the path is safely included.
+      // URL keeps the angle brackets percent-encoded in the pathname, and
+      // ErrorPages escapes the message — the raw script tag must never appear.
       const body = await getBody(
         "http://localhost/%3Cscript%3Ealert(1)%3C/script%3E",
       );
       assertEquals(body.includes("<script>alert(1)</script>"), false);
-    });
-
-    it("should include Go Home and Go Back links", async () => {
-      const body = await getBody("http://localhost/test");
-      assertEquals(body.includes('href="/"'), true);
-      assertEquals(body.includes('href=".."'), true);
-      assertEquals(body.includes("Go Home"), true);
-      assertEquals(body.includes("Go Back"), true);
-    });
-
-    it("should avoid javascript: links in the fallback page", async () => {
-      const body = await getBody("http://localhost/test");
-      assertEquals(body.includes("javascript:history.back()"), false);
-    });
-
-    it("should add a nonce to the inline style block", async () => {
-      const body = await getBody("http://localhost/test");
-      assertEquals(body.includes("<style nonce="), true);
     });
   });
 });
