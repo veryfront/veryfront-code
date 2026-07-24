@@ -9,11 +9,19 @@
  */
 
 import type { Handler, HandlerContext, HandlerResult } from "#veryfront/types/server.ts";
-import { trace } from "#veryfront/observability/tracing/api-shim.ts";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
-import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
-import { attachErrorToActiveSpan } from "../tracing.ts";
-import { wrapUnknownError } from "./wrap-unknown.ts";
+import { extractRequestPathname } from "../request-instance.ts";
+import { createSafeProblemDetails, stringifySafeProblemDetails } from "../safe-diagnostics.ts";
+import { observeBoundaryErrorBestEffort } from "./boundary-observability.ts";
+import { detachBoundaryError } from "./wrap-unknown.ts";
+
+function isLocalProjectBestEffort(ctx: HandlerContext): boolean {
+  try {
+    return ctx.isLocalProject === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Wrap a handler with error boundary that catches all errors and converts them
@@ -44,19 +52,10 @@ export function httpErrorBoundary(
       return await handlerFn(req, ctx);
     } catch (error) {
       // Convert error and record observability
-      const vfError = wrapUnknownError(error);
+      const vfError = detachBoundaryError(error);
+      observeBoundaryErrorBestEffort(vfError);
 
-      // Record error metrics with slug, category, and status
-      recordErrorCount({
-        slug: vfError.slug,
-        category: vfError.category,
-        status: String(vfError.status),
-      });
-
-      // Attach error to active OpenTelemetry span
-      attachErrorToActiveSpan(vfError, trace);
-
-      const response = errorToRFC9457Response(error, ctx, req);
+      const response = errorToRFC9457Response(vfError, ctx, req);
       return { response };
     }
   };
@@ -93,39 +92,25 @@ export function errorToRFC9457Response(
   ctx: HandlerContext,
   req: Request,
 ): Response {
-  const isDev = !!ctx.isLocalProject;
-  const instance = new URL(req.url).pathname;
+  const isDev = isLocalProjectBestEffort(ctx);
+  const instance = extractRequestPathname(req);
 
-  // Convert to VeryfrontError (or wrap as unknown-error)
-  const vfError = wrapUnknownError(error);
-
-  // Set instance if not already set
-  if (!vfError.instance) {
-    vfError.instance = instance;
-  }
-
-  // Serialize to RFC 9457
-  const body = vfError.toRFC9457();
+  const body = createSafeProblemDetails(error, instance);
 
   // Apply environment-specific filtering
   if (!isDev) {
     // Production: omit stack
-    delete (body as { stack?: string }).stack;
+    delete body.stack;
+    delete body.cause;
 
     // Production: omit detail for 5xx errors (may contain sensitive info)
-    if (vfError.status >= 500) {
+    if (body.status >= 500) {
       delete body.detail;
-    }
-  } else {
-    // Dev mode: include stack trace if available
-    const stack = error instanceof Error ? error.stack : undefined;
-    if (stack) {
-      (body as { stack?: string }).stack = stack;
     }
   }
 
-  return new Response(JSON.stringify(body, null, isDev ? 2 : undefined), {
-    status: vfError.status,
+  return new Response(stringifySafeProblemDetails(body, isDev), {
+    status: body.status,
     headers: {
       "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
     },

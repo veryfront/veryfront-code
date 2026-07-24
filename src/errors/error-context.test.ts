@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createErrorScope, withErrorContext, withErrorContextSync } from "./error-context.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  createErrorScope,
+  safeReadDir,
+  withErrorContext,
+  withErrorContextSync,
+} from "./error-context.ts";
 
 describe("error-context", () => {
   describe("withErrorContext", () => {
@@ -49,6 +55,48 @@ describe("error-context", () => {
       );
       assertEquals(result, { data: [] });
     });
+
+    it("should fail closed for hostile runtime operation values", async () => {
+      let coercions = 0;
+      const hostileOperation = {
+        [Symbol.toPrimitive](): never {
+          coercions++;
+          throw new Error("blocked");
+        },
+      } as unknown as string;
+
+      const result = await withErrorContext(
+        () => Promise.reject(new Error("operation failed")),
+        { operation: hostileOperation },
+        { fallback: "fallback" },
+      );
+
+      assertEquals(result, "fallback");
+      assertEquals(coercions, 0);
+    });
+
+    it("should preserve the fallback when the error log sink throws", async () => {
+      const resultPromise = (() => {
+        const originalLogError = serverLogger.error;
+        serverLogger.error = () => {
+          throw new Error("log sink failed");
+        };
+
+        try {
+          return withErrorContext(
+            () => {
+              throw new Error("operation failed");
+            },
+            { operation: "test" },
+            { fallback: "fallback", logLevel: "error" },
+          );
+        } finally {
+          serverLogger.error = originalLogError;
+        }
+      })();
+
+      assertEquals(await resultPromise, "fallback");
+    });
   });
 
   describe("withErrorContextSync", () => {
@@ -92,6 +140,77 @@ describe("error-context", () => {
         { fallback: [] as string[] },
       );
       assertEquals(result, []);
+    });
+
+    it("should fail closed for hostile runtime operation values", () => {
+      let coercions = 0;
+      const hostileOperation = {
+        [Symbol.toPrimitive](): never {
+          coercions++;
+          throw new Error("blocked");
+        },
+      } as unknown as string;
+
+      const result = withErrorContextSync(
+        () => {
+          throw new Error("operation failed");
+        },
+        { operation: hostileOperation },
+        { fallback: "fallback" },
+      );
+
+      assertEquals(result, "fallback");
+      assertEquals(coercions, 0);
+    });
+
+    it("should preserve the fallback when the error log sink throws", () => {
+      const originalLogError = serverLogger.error;
+      serverLogger.error = () => {
+        throw new Error("log sink failed");
+      };
+
+      try {
+        const result = withErrorContextSync(
+          () => {
+            throw new Error("operation failed");
+          },
+          { operation: "test" },
+          { fallback: "fallback", logLevel: "error" },
+        );
+
+        assertEquals(result, "fallback");
+      } finally {
+        serverLogger.error = originalLogError;
+      }
+    });
+  });
+
+  describe("safeReadDir", () => {
+    it("should return an empty list when both iteration and debug logging fail", async () => {
+      const resultPromise = (() => {
+        const originalLogDebug = serverLogger.debug;
+        serverLogger.debug = () => {
+          throw new Error("log sink failed");
+        };
+
+        try {
+          return safeReadDir(
+            {
+              fs: {
+                readDir(): AsyncIterable<string> {
+                  throw new Error("directory iteration failed");
+                },
+              },
+            },
+            "/project",
+            "read-directory",
+          );
+        } finally {
+          serverLogger.debug = originalLogDebug;
+        }
+      })();
+
+      assertEquals(await resultPromise, []);
     });
   });
 
@@ -158,6 +277,24 @@ describe("error-context", () => {
         "warn",
       );
       assertEquals(result2, "fallback");
+    });
+
+    it("should preserve the fallback when scoped context getters throw", async () => {
+      const scope = createErrorScope("SafeScope");
+      const details = Object.defineProperty({}, "path", {
+        enumerable: true,
+        get(): never {
+          throw new Error("blocked");
+        },
+      }) as Parameters<typeof scope.run>[1];
+
+      const result = await scope.run(
+        () => Promise.reject(new Error("operation failed")),
+        details,
+        "fallback",
+      );
+
+      assertEquals(result, "fallback");
     });
   });
 });

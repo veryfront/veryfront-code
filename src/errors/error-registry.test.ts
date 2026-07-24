@@ -8,6 +8,7 @@ import {
   CONFIG_NOT_FOUND,
   CONFIG_VALIDATION_FAILED,
   ERROR_REGISTRY,
+  type ErrorSlug,
   FALLBACK_EXHAUSTED,
   getAllSlugs,
   getErrorBySlug,
@@ -128,6 +129,10 @@ describe("error-registry", () => {
       assertEquals(error.slug, "config-not-found");
       assertEquals(error.category, "CONFIG");
       assertEquals(error.status, 404);
+      assertEquals(
+        error.suggestion,
+        "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in the project root",
+      );
     });
 
     it("should return correct error for all slugs", () => {
@@ -137,6 +142,20 @@ describe("error-registry", () => {
         assertExists(error);
         assertEquals(error.slug, slug);
       }
+    });
+
+    it("should not return inherited object properties as errors", () => {
+      for (const slug of ["toString", "constructor", "__proto__"]) {
+        assertEquals(getErrorBySlug(slug as ErrorSlug), undefined);
+      }
+    });
+
+    it("should use the canonical build command in deployment recovery guidance", () => {
+      const error = getErrorBySlug("production-build-required");
+      const suggestion = error.suggestion;
+      assertExists(suggestion);
+      assertEquals(suggestion, "Run 'veryfront build' before deploying");
+      assertEquals(suggestion.includes("'vf build'"), false);
     });
   });
 

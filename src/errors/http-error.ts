@@ -9,29 +9,42 @@
 
 import {
   type ErrorCategory,
+  isVeryfrontErrorInstance,
   type RegisteredError,
   type RFC9457Response,
   VeryfrontError,
 } from "./types.ts";
-import { getErrorMessage } from "./veryfront-error.ts";
+import {
+  buildErrorDocsUrl,
+  createSafeProblemDetails,
+  limitRenderedErrorOutput,
+  sanitizeTerminalDiagnosticText,
+  snapshotErrorForBoundary,
+  stringifySafeProblemDetails,
+} from "./safe-diagnostics.ts";
+import { extractHandlerRequestPathname } from "./request-instance.ts";
 
 /**
  * Content-Type header for RFC 9457 responses
  */
 export const PROBLEM_JSON_CONTENT_TYPE = "application/problem+json";
 
-/**
- * Create an RFC 9457 compliant error Response
- */
-export function createErrorResponse(error: VeryfrontError): Response {
-  const body = error.toRFC9457();
-
-  return new Response(JSON.stringify(body), {
-    status: error.status,
+function createProblemDetailsResponse(body: RFC9457Response): Response {
+  return new Response(stringifySafeProblemDetails(body), {
+    status: body.status,
     headers: {
       "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
     },
   });
+}
+
+/**
+ * Create an RFC 9457 compliant error Response
+ */
+export function createErrorResponse(error: VeryfrontError): Response {
+  const body = createSafeProblemDetails(error);
+  delete body.stack;
+  return createProblemDetailsResponse(body);
 }
 
 /**
@@ -62,8 +75,8 @@ export function createProblemResponse(params: {
   suggestion?: string;
   cause?: string;
 }): Response {
-  const body: RFC9457Response = {
-    type: `https://veryfront.com/docs/errors/${params.slug}`,
+  const error = new VeryfrontError(params.title, {
+    slug: params.slug,
     title: params.title,
     status: params.status,
     category: params.category,
@@ -71,21 +84,15 @@ export function createProblemResponse(params: {
     instance: params.instance,
     suggestion: params.suggestion,
     cause: params.cause,
-  };
-
-  return new Response(JSON.stringify(body), {
-    status: params.status,
-    headers: {
-      "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
-    },
   });
+  return createErrorResponse(error);
 }
 
 /**
  * Check if an error is a VeryfrontError with slug-based identity
  */
 export function isVeryfrontError(error: unknown): error is VeryfrontError {
-  return error instanceof VeryfrontError;
+  return isVeryfrontErrorInstance(error);
 }
 
 /**
@@ -95,25 +102,15 @@ export function isVeryfrontError(error: unknown): error is VeryfrontError {
  * - Otherwise, wrap in a generic "unknown-error" response
  */
 export function errorToResponse(error: unknown, instance?: string): Response {
-  if (isVeryfrontError(error)) {
-    if (instance && !error.instance) {
-      error.instance = instance;
-    }
-    return createErrorResponse(error);
+  const body = createSafeProblemDetails(error, instance);
+  delete body.cause;
+  delete body.stack;
+
+  if (body.status >= 500) {
+    delete body.detail;
   }
 
-  // Wrap unknown errors
-  const message = getErrorMessage(error);
-
-  return createProblemResponse({
-    slug: "unknown-error",
-    title: "Unknown/unclassified error",
-    status: 500,
-    category: "GENERAL",
-    detail: message,
-    instance,
-    suggestion: "Check logs for more details",
-  });
+  return createProblemDetailsResponse(body);
 }
 
 /**
@@ -126,7 +123,7 @@ export function errorToResponse(error: unknown, instance?: string): Response {
  */
 export function createErrorHandler() {
   return (error: unknown, c: { req: { url: string } }): Response => {
-    const instance = new URL(c.req.url).pathname;
+    const instance = extractHandlerRequestPathname(c);
     return errorToResponse(error, instance);
   };
 }
@@ -135,23 +132,28 @@ export function createErrorHandler() {
  * Log format for errors (matches the plan's log format spec)
  *
  * Format:
- * [ERROR] {slug} ({category}) — {title}
+ * [ERROR] {slug} ({category}) - {title}
  *   Detail: {detail}
  *   Suggestion: {suggestion}
  *   Docs: https://veryfront.com/docs/errors/{slug}
  */
 export function formatErrorLog(error: VeryfrontError): string {
-  const lines = [`[ERROR] ${error.slug} (${error.category}) — ${error.title}`];
+  const snapshot = snapshotErrorForBoundary(error);
+  const slug = sanitizeTerminalDiagnosticText(snapshot.slug);
+  const docsUrl = buildErrorDocsUrl(snapshot.slug);
+  const lines = [
+    `[ERROR] ${slug} (${snapshot.category}) - ${sanitizeTerminalDiagnosticText(snapshot.title)}`,
+  ];
 
-  if (error.detail) {
-    lines.push(`  Detail: ${error.detail}`);
+  if (snapshot.detail) {
+    lines.push(`  Detail: ${sanitizeTerminalDiagnosticText(snapshot.detail)}`);
   }
 
-  if (error.suggestion) {
-    lines.push(`  Suggestion: ${error.suggestion}`);
+  if (snapshot.suggestion) {
+    lines.push(`  Suggestion: ${sanitizeTerminalDiagnosticText(snapshot.suggestion)}`);
   }
 
-  lines.push(`  Docs: ${error.getDocsUrl()}`);
+  lines.push(`  Docs: ${docsUrl}`);
 
-  return lines.join("\n");
+  return limitRenderedErrorOutput(lines.join("\n"));
 }

@@ -39,12 +39,14 @@ export const ERROR_CATALOG: PartialErrorCatalog = composeErrorCatalog(
 );
 
 export function getErrorSolution(slug: ErrorSlug): ErrorSolution | null {
-  return ERROR_CATALOG[slug] ?? null;
+  return Object.hasOwn(ERROR_CATALOG, slug) ? ERROR_CATALOG[slug] ?? null : null;
 }
 
 export function searchErrors(query: string): ErrorSolution[] {
-  const lowerQuery = query.toLowerCase();
-  const normalizedSlugQuery = query.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(
+  const lowerQuery = query.trim().toLowerCase();
+  if (!lowerQuery) return [];
+
+  const normalizedSlugQuery = lowerQuery.replace(/[\s_]+/g, "-").replace(
     /-+/g,
     "-",
   );

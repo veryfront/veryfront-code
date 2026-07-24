@@ -9,8 +9,8 @@ describe("errors/catalog/server-errors", () => {
       const expectedSlugs = [
         "port-in-use",
         "server-start-error",
-        "hmr-error",
         "cache-error",
+        "cache-path-mismatch",
         "file-watch-error",
         "request-error",
         "service-overloaded",
@@ -45,6 +45,16 @@ describe("errors/catalog/server-errors", () => {
       const solution = SERVER_ERROR_CATALOG["port-in-use"]!;
       assertEquals(typeof solution.example, "string");
       assertEquals(solution.example?.includes("port") ?? false, true);
+    });
+
+    it("cache-path-mismatch should only expose public recovery instructions", () => {
+      const solution = SERVER_ERROR_CATALOG["cache-path-mismatch"];
+      assertEquals(typeof solution?.example, "string");
+      const serialized = JSON.stringify(solution);
+      assertEquals(serialized.includes("/internal/"), false);
+      assertEquals(serialized.includes("ADMIN_TOKEN"), false);
+      assertEquals(serialized.includes("kubectl"), false);
+      assertEquals(solution?.example?.includes("veryfront clean --cache"), true);
     });
   });
 });
