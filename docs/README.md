@@ -23,6 +23,9 @@ boundaries, or docs structure.
   page is `api-reference/index.md`; do not use `README.md` for public pages.
 - `architecture/`: Private Veryfront Code architecture notes. These docs are
   not part of the public docs sync.
+- `rfcs/`: Proposed target-state designs and migration records. These docs are
+  not current-state architecture notes and must not claim merge readiness while
+  unresolved contract questions remain.
 
 Shared plans and unresolved work belong in the GitHub issue tracker. Local
 planning notes may use `docs/plans/`; that directory is Git-ignored and excluded
