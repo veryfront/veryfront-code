@@ -45,24 +45,18 @@ export function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSy
 }
 
 /**
- * Virtual filesystem adapters that fetch files remotely (API, GitHub, etc.)
- * rather than reading from a local disk.
- */
-const VIRTUAL_FS_ADAPTERS = new Set([
-  "VeryfrontFSAdapter",
-  "MultiProjectFSAdapter",
-  "GitHubFSAdapter",
-]);
-
-/**
  * Check if the adapter is using a virtual filesystem (Veryfront API, GitHub, etc.)
  * Centralized predicate — use this instead of inline checks.
+ *
+ * `ExtendedFileSystemAdapter` is the provenance contract installed by the
+ * remote-filesystem integration boundary, so every conforming wrapper is
+ * treated as virtual. Class names are deliberately not used: they are unstable
+ * under minification and prevent new wrapper implementations from being
+ * classified safely.
  */
 export function isVirtualFilesystem(fs: FileSystemAdapter): boolean {
   if (!fs || typeof fs !== "object") return false;
-  if (!isExtendedFSAdapter(fs)) return false;
-  if (fs.isVeryfrontAdapter()) return true;
-  return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
+  return isExtendedFSAdapter(fs);
 }
 
 export class NotSupportedError extends Error {

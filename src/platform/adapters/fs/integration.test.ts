@@ -93,29 +93,40 @@ describe("integration.ts", () => {
     assertEquals(getFSAdapterType({ fs: {} }), "local");
   });
 
-  describe("enhanceAdapterWithFS error fallback", () => {
-    it("should fall back to original adapter for unsupported type", async () => {
-      const adapter = await enhanceAdapterWithFS(denoAdapter, {
-        fs: { type: "unsupported-type" as any },
-      });
-      assertEquals(adapter, denoAdapter);
-    });
-
-    it("should fall back to original adapter for github type without config", async () => {
-      const adapter = await enhanceAdapterWithFS(denoAdapter, {
-        fs: { type: "github" },
-      });
-      assertEquals(adapter, denoAdapter);
-    });
-
-    it("should pass projectDir to FSAdapter config", async () => {
-      // With an unsupported type, it will fail and fall back, but the branch is exercised
-      const adapter = await enhanceAdapterWithFS(
-        denoAdapter,
-        { fs: { type: "unknown-type" as any } },
-        "/some/project/dir",
+  describe("enhanceAdapterWithFS error propagation", () => {
+    it("should reject rather than use local files for an unsupported remote type", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: { type: "unsupported-type" as any },
+          }),
+        Error,
+        'FSAdapter type "unsupported-type" is not implemented',
       );
-      assertEquals(adapter, denoAdapter);
+    });
+
+    it("should reject rather than use local files when remote configuration is invalid", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(denoAdapter, {
+            fs: { type: "github" },
+          }),
+        Error,
+        "GitHub adapter requires github configuration",
+      );
+    });
+
+    it("should preserve initialization failures when projectDir is provided", async () => {
+      await assertRejects(
+        () =>
+          enhanceAdapterWithFS(
+            denoAdapter,
+            { fs: { type: "unknown-type" as any } },
+            "/some/project/dir",
+          ),
+        Error,
+        'FSAdapter type "unknown-type" is not implemented',
+      );
     });
   });
 
