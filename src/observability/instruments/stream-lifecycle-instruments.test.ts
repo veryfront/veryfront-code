@@ -35,7 +35,7 @@ describe("stream lifecycle instruments", () => {
       "veryfront.stream.lifecycle.deadlines",
       "veryfront.stream.lifecycle.telemetry",
       "veryfront.stream.lifecycle.repairs",
-      "veryfront.stream.lifecycle.shadow_divergences",
+      "veryfront.stream.lifecycle.shadow.divergences",
     ]);
     assertEquals(histograms, [
       "veryfront.stream.lifecycle.attempt.duration",

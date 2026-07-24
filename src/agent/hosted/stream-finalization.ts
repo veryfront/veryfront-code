@@ -83,7 +83,13 @@ async function cleanupAfterFinalization(cleanup: () => Promise<void> | void): Pr
   await cleanup();
 }
 
-/** Read a completed finish reason from a hosted final step, or null. */
+/**
+ * Read a known step finish reason from a hosted final step, or null.
+ *
+ * Returns every finish reason that marks a completed provider step,
+ * including "tool-calls", which signals a tool handoff rather than run
+ * completion. Unknown reasons and malformed steps read as null.
+ */
 export function readHostedFinishReason(
   finalStep: unknown,
 ): StreamSnapshot["finishReason"] {

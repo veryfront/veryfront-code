@@ -58,7 +58,7 @@ export function createStreamLifecycleInstruments(
       },
     ),
     streamLifecycleShadowDivergenceCounter: meter.createCounter(
-      `${prefix}.stream.lifecycle.shadow_divergences`,
+      `${prefix}.stream.lifecycle.shadow.divergences`,
       {
         description: "Stream lifecycle shadow divergences by category",
         unit: "divergences",
