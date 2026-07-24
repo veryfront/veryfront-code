@@ -18,6 +18,7 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { metrics, profilePhase } from "#veryfront/observability";
 import { applySSRImportRewritesAsync, type SSRRewriteOptions } from "./ssr-import-rewriter.ts";
@@ -47,7 +48,8 @@ export interface TransformModuleToServableOptions {
    */
   postTransform?: (code: string) => string | Promise<string>;
   /**
-   * SSR import-rewrite options. Applied when `isSSR=true`.
+   * SSR import-rewrite options. Required when `isSSR=true` (the transform
+   * throws otherwise, so an SSR module can never be served un-rewritten).
    * Pass `projectSlug`/`branch` or `crossProjectRef` plus a `resolveCacheBuster`.
    */
   ssrRewriteOptions?: SSRRewriteOptions;
@@ -96,9 +98,13 @@ export async function transformModuleToServable(
   }
 
   if (isSSR) {
-    if (options.ssrRewriteOptions) {
-      code = await applySSRImportRewritesAsync(code, options.ssrRewriteOptions);
+    if (!options.ssrRewriteOptions) {
+      throw INVALID_ARGUMENT.create({
+        detail: "transformModuleToServable requires ssrRewriteOptions when isSSR is true",
+        context: { sourceFile },
+      });
     }
+    code = await applySSRImportRewritesAsync(code, options.ssrRewriteOptions);
   } else if (options.releaseRewriteOptions) {
     code = await rewriteReleaseDependencyImportsForModule(code, options.releaseRewriteOptions);
   }

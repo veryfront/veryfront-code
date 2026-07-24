@@ -83,7 +83,7 @@ describe(
         assertStringIncludes(code, "greeting");
       });
 
-      it("applies release rewrite when releaseRewriteOptions is provided and isSSR=false", async () => {
+      it("enters the non-SSR release branch without throwing when releaseRewriteOptions is provided", async () => {
         // No real manifest → rewriteReleaseDependencyImportsForModule returns code
         // unchanged (releaseId required; without it the function bails early).
         // This test verifies the non-SSR branch is entered without throwing.

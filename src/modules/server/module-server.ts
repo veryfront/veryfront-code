@@ -597,13 +597,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             reactVersion,
           };
 
-          // The dev-module path has two steps interleaved with the shared
-          // transform sequence that cannot be cleanly moved inside
-          // transformModuleToServable without complicating its API:
-          //   - HMR timestamp injection (after SSR rewrite; before non-SSR release rewrite in
-          //     original ordering — safe to reorder since they touch disjoint specifiers)
-          //   - addReleaseVersionToFallbackImports (after non-SSR release rewrite)
-          // Both remain here as explicit post-steps.
+          // The dev-module path has two post-steps that stay outside
+          // transformModuleToServable to keep its API small:
+          //   - HMR timestamp injection: runs after the full shared sequence
+          //     (originally between the SSR rewrite and the non-SSR release
+          //     rewrite; reordering is safe because they touch disjoint
+          //     specifiers)
+          //   - addReleaseVersionToFallbackImports: runs after the release rewrite
           code = await transformModuleToServable({
             source,
             sourceFile,

@@ -10,7 +10,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { classifyModuleRequest, type ModuleRequestKind } from "./classify.ts";
+import { classifyModuleRequest } from "./classify.ts";
 
 function url(pathname: string, host = "localhost:3000"): URL {
   return new URL(`http://${host}${pathname}`);
@@ -40,7 +40,6 @@ describe("classifyModuleRequest", () => {
       const result = classifyModuleRequest(
         url("/_vf_modules/_snippets/abc123def456.js"),
       );
-      assertEquals(result satisfies ModuleRequestKind, result);
       assertEquals(result.kind, "snippet");
       if (result.kind === "snippet") {
         assertEquals(result.hash, "abc123def456");
