@@ -49,20 +49,12 @@ type InitializeEgressMessage = {
 let egressInitialized = false;
 let exitNotifierInstalled = false;
 
-class WorkerExitSignal extends Error {
-  constructor(readonly code: number) {
-    super(`Worker exited with code ${code}`);
-    this.name = "WorkerExitSignal";
-  }
-}
-
 function installWorkerExitNotifier(): void {
   if (exitNotifierInstalled || typeof globalThis.close !== "function") return;
 
   const postMessage = self.postMessage.bind(self);
   const notifyExit = () => postMessage({ type: "worker-exit" });
   const closeWorker = globalThis.close.bind(globalThis);
-  let exitScheduled = false;
   Object.defineProperty(self, "postMessage", {
     configurable: false,
     get: () => postMessage,
@@ -70,20 +62,12 @@ function installWorkerExitNotifier(): void {
       // Project code must not be able to silence worker lifecycle messages.
     },
   });
-  const requestExit = (code = 0): never => {
+  const controlledClose = () => {
     try {
       notifyExit();
-    } catch {
-      // Exit even if the notification channel is already closed.
+    } finally {
+      closeWorker();
     }
-    if (!exitScheduled) {
-      exitScheduled = true;
-      setTimeout(() => closeWorker(), 0);
-    }
-    throw new WorkerExitSignal(code);
-  };
-  const controlledClose = () => {
-    requestExit(0);
   };
   Object.defineProperty(globalThis, "close", {
     configurable: true,
@@ -96,8 +80,14 @@ function installWorkerExitNotifier(): void {
     value: controlledClose,
   });
   if (typeof Deno.exit === "function") {
+    const exitWorker = Deno.exit.bind(Deno);
     Deno.exit = ((code?: number): never => {
-      return requestExit(code);
+      try {
+        notifyExit();
+      } catch {
+        // Preserve the native, uncatchable exit even if notification fails.
+      }
+      return exitWorker(code);
     }) as typeof Deno.exit;
   }
   exitNotifierInstalled = true;
@@ -689,7 +679,6 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
     };
     self.postMessage(result);
   } catch (error) {
-    if (error instanceof WorkerExitSignal) return;
     const errorResponse: WorkerErrorResponse = {
       type: "error",
       id: request.id,

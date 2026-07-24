@@ -219,20 +219,30 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       ]
     ) {
       const projectDir = await Deno.makeTempDir();
+      const markerPath = `${projectDir}/continued-after-${label}`;
       const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
       await Deno.writeTextFile(
         modulePath,
         `
           export function GET() {
             self.postMessage = () => {};
-            ${exitStatement};
+            try {
+              ${exitStatement};
+            } catch {
+              Deno.writeTextFileSync(${JSON.stringify(markerPath)}, "caught");
+            } finally {
+              Deno.writeTextFileSync(${JSON.stringify(markerPath)}, "continued");
+            }
             return Response.json({ exited: false });
           }
         `,
       );
       const worker = new ProjectWorker({
         projectId: `test-worker-${label}`,
-        permissions: buildWorkerPermissions([projectDir]),
+        permissions: {
+          ...buildWorkerPermissions([projectDir]),
+          write: true,
+        },
         requestTimeoutMs: 10_000,
       });
       let timeout: number | undefined;
@@ -266,6 +276,14 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         assertEquals(rejected, true, label);
         assertEquals(worker.status, "terminated", label);
         assertEquals(worker.hasPendingRequests, false, label);
+        assertEquals(
+          await Deno.stat(markerPath).then(
+            () => true,
+            () => false,
+          ),
+          false,
+          `${label} must not continue through catch or finally after exiting`,
+        );
       } finally {
         if (timeout !== undefined) clearTimeout(timeout);
         worker.terminate();
