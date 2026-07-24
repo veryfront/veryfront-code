@@ -188,6 +188,9 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(runtimeAgent.config.temperature === undefined
       ? {}
       : { temperature: runtimeAgent.config.temperature }),
+    ...(runtimeAgent.config.thinking === undefined
+      ? {}
+      : { thinking: runtimeAgent.config.thinking }),
     maxSteps: runtimeAgent.config.maxSteps,
     ...(runtimeAgent.config.providerTools
       ? { providerTools: runtimeAgent.config.providerTools }

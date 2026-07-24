@@ -34,6 +34,7 @@ import type {
   ToolCallPartWithArgs,
   ToolCallPartWithInput,
 } from "./schemas/index.ts";
+import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
 
 /**
  * Model configuration string format: "provider/model-name"
@@ -171,6 +172,8 @@ export interface AgentConfig {
   maxSteps?: number;
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
+  /** Provider-neutral reasoning / thinking configuration for hosted runtimes. */
+  thinking?: RuntimeAgentThinkingConfig;
   streaming?: boolean;
   /**
    * Conversation memory persisted across `stream()` / `generate()` calls on this
