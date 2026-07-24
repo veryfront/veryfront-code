@@ -1,10 +1,10 @@
 # Consumed from `veryfront/ui`
 
-Hooks that chat **consumes but does not own**. They live in `veryfront/ui`, are already shaped, and are documented **as-is** — this RFC does not reshape them. These pages exist only so the chat docs are complete; for full documentation, see the `veryfront/ui` reference.
+Layout primitives whose **shape is owned by `veryfront/ui`**, but which `veryfront/chat` **re-exports** so you can pull the shell straight from one import: `import { AppShell, useAppShell } from "veryfront/chat"`. They are part of chat's public surface; this RFC documents them but defers their contract to `veryfront/ui` rather than reshaping it.
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
-> Prefer this single reference over per-hook stub pages: none of these are chat surface. Chat renders them and reads their state; it never re-implements or re-exports them.
+> Grouped here rather than on per-hook pages because chat re-exports them verbatim from `veryfront/ui` (see `src/chat/index.ts`) — the chat RFC neither re-implements nor reshapes them. Any change to their shape (e.g. extracting a generic `useDisclosure` under `useAppShell`'s sidebar state) is a `veryfront/ui` decision that ripples through this re-export.
 
 ## `useAppShell`
 
@@ -33,6 +33,12 @@ import { useColorMode, ColorModeProvider, ColorModeToggle } from "veryfront/ui";
 - **`useColorMode`** — read and set the current color mode.
 - **`ColorModeProvider`** — provides color-mode state to the tree; renders **zero DOM nodes**.
 - **`ColorModeToggle`** — the ready-made toggle control, typically placed in an [`AppShell`](../components/app-shell.md) header.
+
+## Open question — is `useAppShell` too specific?
+
+Because `veryfront/chat` re-exports `useAppShell`, its shape is part of chat's public surface and is fair game to shape here. Its state core — `isOpen(side)` / `toggle(side)` / `setOpen(side, open)` — is just **keyed binary disclosure**, i.e. a generic `useDisclosure` / `useCollapsible`. What makes it shell-specific is layered on top: two docked sides, viewport-aware open state (desktop inline column vs mobile off-canvas overlay), `sidebarId(side)` for `aria-controls`, and the ⌘/Ctrl+B shortcut.
+
+**Proposed direction:** don't rename `useAppShell` to `useCollapsible` — that under-describes what it returns (shell context, not a lone toggle). Instead **extract a generic `useDisclosure` primitive in `veryfront/ui`** and have `useAppShell` compose it, so the reusable disclosure state is available on its own while the shell hook keeps its shell-scoped surface. Implementation lands in `veryfront/ui`; this RFC only records the target.
 
 ## Related
 
