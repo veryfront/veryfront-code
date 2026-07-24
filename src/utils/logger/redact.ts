@@ -22,6 +22,11 @@ import { isRecord } from "./core.ts";
 /** Replacement value substituted for any sensitive field. */
 export const REDACTED = "[REDACTED]";
 
+/** Strip all non-alphanumeric characters and lowercase, used for key normalization. */
+function normalizeToAlphanumeric(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 /**
  * Normalized substrings that mark a key as sensitive. Matching is done against
  * a lowercased, non-alphanumeric-stripped form of the key, so `API-Key`,
@@ -78,7 +83,7 @@ export function isSensitiveKey(key: string): boolean {
   const cached = sensitiveKeyCache.get(key);
   if (cached !== undefined) return cached;
 
-  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normalized = normalizeToAlphanumeric(key);
   const sensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern));
 
   if (sensitiveKeyCache.size >= SENSITIVE_KEY_CACHE_MAX_SIZE) {
@@ -199,6 +204,8 @@ const SENSITIVE_URL_PARAMS = [
   "auth",
 ] as const;
 
+const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(SENSITIVE_URL_PARAMS.map(normalizeToAlphanumeric));
+
 const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/?#@\s]+)@/gi;
 
 /**
@@ -234,10 +241,7 @@ export function sanitizeUrlCredentials(input: string): string {
   out = out.replace(
     /([?&;])([a-z0-9_.\-]+)=([^&#;\s]*)/gi,
     (match, sep: string, key: string, _val: string) => {
-      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const sensitive = SENSITIVE_URL_PARAMS.some((p) =>
-        normalized === p.replace(/[^a-z0-9]/g, "")
-      );
+      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(key));
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
   );

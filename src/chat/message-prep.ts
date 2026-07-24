@@ -19,6 +19,7 @@ import {
 } from "./types.ts";
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
+import { safeJsonParse } from "#veryfront/utils/json.ts";
 
 /** Tunable limits used while preparing chat history for model context. */
 export type MessagePrepLimits = {
@@ -434,11 +435,8 @@ function stableHash(value: unknown): string {
 
 function tryParseJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
+  const r = safeJsonParse(value);
+  return r.ok ? r.value : value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

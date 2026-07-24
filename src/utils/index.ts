@@ -143,3 +143,5 @@ export {
 export { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./perf-timer.ts";
 
 export { parallelMap } from "./parallel.ts";
+
+export { safeJsonParse, type SafeJsonParseResult } from "./json.ts";

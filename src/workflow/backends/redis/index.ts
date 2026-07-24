@@ -17,7 +17,7 @@ import type {
   WorkflowStatus,
 } from "../../types.ts";
 import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
-import { agentLogger } from "#veryfront/utils";
+import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
@@ -399,21 +399,17 @@ export class RedisBackend implements WorkflowBackend {
       });
     }
 
-    function parseJson<T>(
-      runId: string,
-      field: string,
-      value: string,
-    ): T {
-      try {
-        return JSON.parse(value) as T;
-      } catch (e) {
+    function parseJson<T>(runId: string, field: string, value: string): T {
+      const r = safeJsonParse<T>(value);
+      if (!r.ok) {
         throw INVALID_ARGUMENT.create({
           detail:
             `Invalid workflow run data for run "${runId}": failed to parse '${field}' as JSON. ` +
-            `Error: ${e instanceof Error ? e.message : String(e)}`,
-          cause: e instanceof Error ? e : undefined,
+            `Error: ${r.error.message}`,
+          cause: r.error,
         });
       }
+      return r.value;
     }
 
     function parseJsonOr<T>(
