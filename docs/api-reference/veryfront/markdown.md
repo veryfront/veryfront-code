@@ -15,20 +15,20 @@ import { Markdown } from "veryfront/markdown";
 ```tsx
 import { Markdown } from "veryfront/markdown";
 
-<Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>;
+<Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>
 ```
 
 ## Exports
 
 ### Components
 
-| Name       | Description      | Source                                                                                                      |
-| ---------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| Name | Description | Source |
+|------|-------------|--------|
 | `Markdown` | Render markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L191) |
 
 ### Types
 
-| Name             | Description                   | Source                                                                                                     |
-| ---------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Name | Description | Source |
+|------|-------------|--------|
 | `CodeBlockProps` | Props accepted by code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L43) |
-| `MarkdownProps`  | Props accepted by markdown.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L22) |
+| `MarkdownProps` | Props accepted by markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L22) |

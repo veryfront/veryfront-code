@@ -20,6 +20,6 @@ import { Head } from "veryfront/head";
 
 ### Components
 
-| Name   | Description                                                     | Source                                                                                         |
-| ------ | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `Head` | Applies document head elements during SSR and client rendering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L417) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Head` | Applies document head elements during SSR and client rendering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L435) |

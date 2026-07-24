@@ -34,22 +34,22 @@ export default webhook({
 
 ### Functions
 
-| Name                  | Description | Source                                                                                       |
-| --------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `discoverWebhooks`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L18) |
-| `isWebhookDefinition` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L37)     |
-| `webhook`             |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/factory.ts#L54)   |
+| Name | Description | Source |
+|------|-------------|--------|
+| `discoverWebhooks` | Discover and validate source-defined webhooks beneath the configured directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L19) |
+| `isWebhookDefinition` | Return true only when every webhook field and nested invariant is valid. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L39) |
+| `webhook` | Validate and normalize a source-defined webhook configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/factory.ts#L10) |
 
 ### Types
 
-| Name                          | Description | Source                                                                                       |
-| ----------------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `WebhookAgentMessageMapping`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L22)     |
-| `WebhookConfig`               |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L35)     |
-| `WebhookDefinition`           |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L26)     |
-| `WebhookDiscoveryOptions`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L9)  |
-| `WebhookDiscoveryResult`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L16) |
-| `WebhookEventFilter`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L17)     |
-| `WebhookEventFilterCondition` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L11)     |
-| `WebhookEventFilterMode`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L3)      |
-| `WebhookEventFilterOperator`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L5)      |
+| Name | Description | Source |
+|------|-------------|--------|
+| `WebhookAgentMessageMapping` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L23) |
+| `WebhookConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L36) |
+| `WebhookDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L27) |
+| `WebhookDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L9) |
+| `WebhookDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L16) |
+| `WebhookEventFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L18) |
+| `WebhookEventFilterCondition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L12) |
+| `WebhookEventFilterMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L4) |
+| `WebhookEventFilterOperator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L6) |
