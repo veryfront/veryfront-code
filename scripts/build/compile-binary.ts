@@ -11,6 +11,8 @@ const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 export const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
+  // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
+  "src/config/declarative-evaluator-worker-entry.ts",
   "src/security/sandbox/worker-script.ts",
   "extensions/ext-auth-jwt/src/index.ts",
   "extensions/ext-bundler-esbuild/src/index.ts",

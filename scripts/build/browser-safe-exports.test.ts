@@ -5,6 +5,7 @@ import {
 	BROWSER_SAFE_EXPORTS,
 	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
 	createDntEntryPoints,
+	NPM_INTERNAL_ENTRY_POINTS,
 } from "./browser-safe-exports.mjs";
 
 Deno.test("ships the client root barrel without exposing it as a public package subpath", async () => {
@@ -18,6 +19,24 @@ Deno.test("ships the client root barrel without exposing it as a public package 
 		BROWSER_SAFE_INTERNAL_ENTRY_POINTS["./index.client"] ===
 			"./src/index.client.ts",
 	);
+	assert(
+		NPM_INTERNAL_ENTRY_POINTS["./config/declarative-evaluator"] ===
+			"./src/config/declarative-evaluator.ts",
+	);
+	assert(
+		NPM_INTERNAL_ENTRY_POINTS["./config/declarative-evaluator-worker-entry"] ===
+			"./src/config/declarative-evaluator-worker-entry.ts",
+	);
+	assert(
+		NPM_INTERNAL_ENTRY_POINTS["./config/declarative-evaluator-worker-runner"] ===
+			"./src/config/declarative-evaluator-worker-runner.ts",
+	);
+	assert(
+		!Object.hasOwn(
+			BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+			"./config/declarative-evaluator",
+		),
+	);
 });
 
 Deno.test("rejects overlap between public and build-only entry points", () => {
@@ -25,7 +44,7 @@ Deno.test("rejects overlap between public and build-only entry points", () => {
 		() =>
 			createDntEntryPoints(
 				{ "./index.client": "./src/public-client.ts" },
-				BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+				NPM_INTERNAL_ENTRY_POINTS,
 			),
 		Error,
 		"both public and internal",

@@ -149,7 +149,7 @@ export function createExtensionPackageSpec(input: {
       homepage:
         `https://github.com/veryfront/veryfront-code/tree/main/${manifestDir}`,
       engines: {
-        node: ">=18.0.0",
+        node: ">=18.18.0",
       },
       peerDependencies: {
         veryfront: veryfrontPeerRange,

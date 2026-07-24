@@ -27,3 +27,13 @@ Deno.test("compiled CLI embeds the Worker-safe Babel parser entry", () => {
     true,
   );
 });
+
+Deno.test("compiled CLI embeds the declarative evaluator worker entry", () => {
+  assertEquals(
+    DEFAULT_INCLUDES.includes(
+      "src/config/declarative-evaluator-worker-entry.ts",
+    ),
+    true,
+    "compile-binary DEFAULT_INCLUDES must embed the URL-loaded declarative evaluator worker",
+  );
+});

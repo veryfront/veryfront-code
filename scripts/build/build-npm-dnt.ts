@@ -18,6 +18,7 @@ import {
 	BROWSER_SAFE_EXPORTS,
 	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
 	createDntEntryPoints,
+	NPM_INTERNAL_ENTRY_POINTS,
 } from "./browser-safe-exports.mjs";
 import {
 	npmDependencyRange,
@@ -64,7 +65,7 @@ await emptyDir("./npm");
 // Convert deno.json exports to dnt entry points
 const entryPoints = createDntEntryPoints(
 	denoJson.exports as Record<string, string>,
-	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+	NPM_INTERNAL_ENTRY_POINTS,
 );
 
 // Auto-derive esm.sh URL mappings from deno.json imports so versions stay in sync.
@@ -162,6 +163,16 @@ await build({
 			version: reactRange,
 			subPath: "jsx-dev-runtime",
 		},
+		// Keep the worker entry behind the separately published parser-only
+		// package boundary. Without this mapping dnt follows the workspace
+		// export and rewrites the import to a bundled extensions/ source path,
+		// which relies on npm hoisting and breaks strict package layouts.
+		// Omitting version also keeps dnt from fetching an unpublished matching
+		// extension before postBuild pins the co-published package.
+		"./extensions/ext-parser-babel/src/parser-only.ts": {
+			name: "@veryfront/ext-parser-babel",
+			subPath: "parser-only",
+		},
 	},
 
 	package: {
@@ -179,7 +190,7 @@ await build({
 		},
 		homepage: "https://veryfront.com",
 		engines: {
-			node: ">=18.0.0",
+			node: ">=18.18.0",
 		},
 		// dnt can't detect dynamic imports, so we add them explicitly
 		dependencies: {
@@ -256,6 +267,9 @@ await build({
 		assertConsumerReactImport(
 			"./npm/esm/src/react/components/ui/app-shell.d.ts",
 		);
+		assertWorkerParserPackageImport(
+			"./npm/esm/src/config/declarative-evaluator-worker-entry.js",
+		);
 
 		// Keep browser-safe client exports free of dnt Node polyfill imports.
 		// These modules are consumed directly in browser bundles and do not rely on
@@ -328,7 +342,7 @@ await build({
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		removeInternalNpmEntryPointExports(
 			pkg,
-			Object.keys(BROWSER_SAFE_INTERNAL_ENTRY_POINTS),
+			Object.keys(NPM_INTERNAL_ENTRY_POINTS),
 		);
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
@@ -350,7 +364,7 @@ await build({
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 
 		const writtenPkg = JSON.parse(await Deno.readTextFile(pkgPath));
-		for (const entryPoint of Object.keys(BROWSER_SAFE_INTERNAL_ENTRY_POINTS)) {
+		for (const entryPoint of Object.keys(NPM_INTERNAL_ENTRY_POINTS)) {
 			if (Object.hasOwn(writtenPkg.exports ?? {}, entryPoint)) {
 				throw new Error(
 					`Published npm metadata still exposes internal entry point ${entryPoint}`,
@@ -456,6 +470,23 @@ function assertConsumerReactImport(path: string): void {
 	}
 	console.log(`✅ Verified consumer react import in ${path}`);
 }
+
+function assertWorkerParserPackageImport(path: string): void {
+	const content = Deno.readTextFileSync(path);
+	const packageSpecifier = "@veryfront/ext-parser-babel/parser-only";
+	if (
+		!content.includes(packageSpecifier) ||
+		content.includes("extensions/ext-parser-babel")
+	) {
+		throw new Error(
+			`Declarative worker parser-boundary guard failed for ${path}: ` +
+				`the emitted worker must import ${packageSpecifier} directly and ` +
+				`must not depend on an inlined workspace extension path.`,
+		);
+	}
+	console.log(`✅ Verified declarative worker parser package import in ${path}`);
+}
+
 function stripPolyfillImportIfPresent(
 	path: string,
 	description: string,

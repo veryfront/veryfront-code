@@ -278,6 +278,11 @@ jobs:
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
         run: deno task typecheck:consumer
+      - name: Select minimum supported Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
+        with:
+          node-version: "18.18.0"
+          package-manager-cache: false
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 

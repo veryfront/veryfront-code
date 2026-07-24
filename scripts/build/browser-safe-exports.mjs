@@ -5,6 +5,17 @@ export const BROWSER_SAFE_INTERNAL_ENTRY_POINTS = Object.freeze({
   "./index.client": "./src/index.client.ts",
 });
 
+// Server-only implementation modules that dnt must emit for clean-room
+// runtime verification. Their temporary exports are removed before publish.
+export const NPM_INTERNAL_ENTRY_POINTS = Object.freeze({
+  ...BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+  "./config/declarative-evaluator": "./src/config/declarative-evaluator.ts",
+  "./config/declarative-evaluator-worker-entry":
+    "./src/config/declarative-evaluator-worker-entry.ts",
+  "./config/declarative-evaluator-worker-runner":
+    "./src/config/declarative-evaluator-worker-runner.ts",
+});
+
 /**
  * Compose dnt entry points without allowing a build-only implementation detail
  * to shadow a supported public package subpath.

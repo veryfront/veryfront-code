@@ -596,6 +596,22 @@ describe("npm supply-chain policy", () => {
 
     assertStringIncludes(source, "CodeParser was not registered");
     assertStringIncludes(source, "app/page.tsx");
+    assertStringIncludes(source, "@veryfront/ext-parser-babel/parser-only");
+    assertStringIncludes(
+      source,
+      "veryfront/esm/src/config/declarative-evaluator.js",
+    );
+    assertStringIncludes(
+      source,
+      "veryfront/esm/src/config/declarative-evaluator-worker-runner.js",
+    );
+    assertStringIncludes(
+      source,
+      "evaluatePreparedDeclarativeConfigInWorker",
+    );
+    assertStringIncludes(source, 'node --version)" = "v18.18.0"');
+    assertStringIncludes(source, "*/@babel/generator");
+    assertStringIncludes(source, "*/@babel/traverse");
   });
 
   it("loads CLI command handlers after global routing decisions", async () => {
@@ -808,6 +824,30 @@ describe("npm generated integration artifacts", () => {
       assertEquals(source.includes("_dnt.polyfills"), false);
       assertEquals(source.includes("_dnt.shims"), false);
     }
+  });
+
+  it("emits the declarative worker boundary without publishing import subpaths", async () => {
+    const pkg = JSON.parse(await Deno.readTextFile("npm/package.json"));
+    for (
+      const moduleName of [
+        "declarative-evaluator",
+        "declarative-evaluator-worker-entry",
+        "declarative-evaluator-worker-runner",
+      ]
+    ) {
+      assertEquals(pkg.exports[`./config/${moduleName}`], undefined);
+      await Deno.stat(`npm/esm/src/config/${moduleName}.js`);
+      await Deno.stat(`npm/esm/src/config/${moduleName}.d.ts`);
+    }
+
+    const workerEntry = await Deno.readTextFile(
+      "npm/esm/src/config/declarative-evaluator-worker-entry.js",
+    );
+    assertStringIncludes(
+      workerEntry,
+      "@veryfront/ext-parser-babel/parser-only",
+    );
+    assertEquals(workerEntry.includes("extensions/ext-parser-babel"), false);
   });
 
   it("does not publish the Deno-only react-dom client shim", () => {

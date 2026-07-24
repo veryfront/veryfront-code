@@ -5,10 +5,12 @@
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
 #      and activates the parser extension under Node
-#   2. the @huggingface/transformers optional peer is declared
-#   3. loading a missing extension fails naming the installable package
-#   4. installing @veryfront/ext-auth-jwt makes the extension load
-#   5. a broken transitive dependency surfaces the real error, not a
+#   2. the parser-only/evaluator path runs under Node 18 without full Babel
+#      traversal, generation, or debug tooling
+#   3. the @huggingface/transformers optional peer is declared
+#   4. loading a missing extension fails naming the installable package
+#   5. installing @veryfront/ext-auth-jwt makes the extension load
+#   6. a broken transitive dependency surfaces the real error, not a
 #      misleading "extension not installed" skip
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
@@ -77,14 +79,85 @@ if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await resolved.extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
 
-echo "== 2. root install: transformers optional peer declared"
+echo "== 2. parser-only evaluator runs under Node 18 without full Babel tooling"
+[ "$(node --version)" = "v18.18.0" ] ||
+  fail "pinned Node 18.18.0 runtime is unavailable"
+PARSER_ONLY_ENTRY="$(node -e "
+const p = require('./node_modules/@veryfront/ext-parser-babel/package.json');
+const entry = p.exports?.['./parser-only'];
+process.stdout.write(typeof entry === 'string' ? entry : entry?.import ?? '');
+")"
+[ -n "$PARSER_ONLY_ENTRY" ] ||
+  fail "@veryfront/ext-parser-babel/parser-only export is missing"
+PARSER_ONLY_ARTIFACT="node_modules/@veryfront/ext-parser-babel/${PARSER_ONLY_ENTRY#./}"
+[ -f "$PARSER_ONLY_ARTIFACT" ] ||
+  fail "parser-only export target is missing: $PARSER_ONLY_ENTRY"
+grep -Eq "(from|import) [\"'](@babel/(generator|traverse)|debug)([\"'/])" \
+  "$PARSER_ONLY_ARTIFACT" &&
+  fail "parser-only artifact statically loads full Babel tooling"
+
+FULL_BABEL_DIRS=()
+while IFS= read -r package_dir; do
+  FULL_BABEL_DIRS+=("$package_dir")
+done < <(
+  find node_modules -type d \
+    \( -path '*/@babel/generator' -o -path '*/@babel/traverse' -o -path '*/debug' \) \
+    -prune
+)
+for package_dir in "${FULL_BABEL_DIRS[@]}"; do
+  [ ! -d "$package_dir" ] || mv "$package_dir" "$package_dir.smoke-removed"
+done
+
+node --input-type=module -e "
+const parserOnly = await import('@veryfront/ext-parser-babel/parser-only');
+const parser = new parserOnly.BabelParseOnlyParser();
+const ast = await parser.parse({
+  code: 'export default { direct: true };',
+  filePath: 'veryfront.config.ts',
+});
+if (ast?.type !== 'File') throw new Error('parser-only subpath parse failed');
+
+const evaluator = await import(
+  './node_modules/veryfront/esm/src/config/declarative-evaluator.js'
+);
+const runner = await import(
+  './node_modules/veryfront/esm/src/config/declarative-evaluator-worker-runner.js'
+);
+const context = await evaluator.prepareDeclarativeConfigContext({
+  environmentName: 'production',
+  environment: {},
+});
+const payload = evaluator.createPreparedDeclarativeConfigWorkerPayload(
+  'export default { ready: true, nested: { value: 18 } };',
+  context,
+);
+const snapshot = await runner.evaluatePreparedDeclarativeConfigInWorker(payload);
+if (snapshot.ready !== true || snapshot.nested?.value !== 18) {
+  throw new Error('declarative evaluator returned the wrong snapshot');
+}
+if (
+  Object.getPrototypeOf(snapshot) !== null ||
+  Object.getPrototypeOf(snapshot.nested) !== null ||
+  !Object.isFrozen(snapshot) ||
+  !Object.isFrozen(snapshot.nested)
+) {
+  throw new Error('declarative evaluator snapshot invariants failed');
+}
+" || fail "parser-only declarative evaluator failed under Node 18"
+
+for package_dir in "${FULL_BABEL_DIRS[@]}"; do
+  [ ! -d "$package_dir.smoke-removed" ] ||
+    mv "$package_dir.smoke-removed" "$package_dir"
+done
+
+echo "== 3. root install: transformers optional peer declared"
 node -e "
 const p = require('./node_modules/veryfront/package.json');
 if (!p.peerDependencies?.['@huggingface/transformers']) process.exit(1);
 if (p.peerDependenciesMeta?.['@huggingface/transformers']?.optional !== true) process.exit(1);
 " || fail "@huggingface/transformers optional peer missing from root package.json"
 
-echo "== 3. root install: missing extension failure names the installable package"
+echo "== 4. root install: missing extension failure names the installable package"
 set +e
 MISSING_OUTPUT="$(node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -98,7 +171,7 @@ set -e
 echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside veryfront" ||
   fail "missing-extension error lacks the install hint: $MISSING_OUTPUT"
 
-echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
+echo "== 5. with @veryfront/ext-auth-jwt installed: extension loads"
 npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
 node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
@@ -107,7 +180,7 @@ import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then
 });
 " || fail "ext-auth-jwt did not load after installing @veryfront/ext-auth-jwt"
 
-echo "== 5. broken transitive dependency surfaces the real error"
+echo "== 6. broken transitive dependency surfaces the real error"
 mv node_modules/jose node_modules/jose.smoke-removed
 set +e
 BROKEN_OUTPUT="$(node -e "

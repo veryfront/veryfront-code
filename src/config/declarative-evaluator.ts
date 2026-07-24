@@ -58,7 +58,9 @@ interface CapturedSubtleCrypto {
 const intrinsicSubtleCrypto = captureSubtleCrypto();
 
 const AST_SCAN_ENTRY_LIMIT = 131_072;
-const CONFIG_FILE_NAME = "veryfront.config.ts";
+/** Stable source label used in hosted evaluator diagnostics. */
+export const DECLARATIVE_CONFIG_FILE_NAME = "veryfront.config.ts";
+const CONFIG_FILE_NAME = DECLARATIVE_CONFIG_FILE_NAME;
 const FIRST_PARTY_PARSER_DIRECTORY = "ext-parser-babel";
 const FIRST_PARTY_PARSER_PACKAGE = "@veryfront/ext-parser-babel";
 const FIRST_PARTY_PARSER_SOURCE_ENTRY = "parser-only";
@@ -78,8 +80,9 @@ type TrustedParserModule = Readonly<{
 /**
  * Fixed limits for parsing and interpreting hosted configuration source.
  *
- * A killable subprocess remains responsible for the hard wall-clock and
- * memory boundary because Babel parsing is synchronous.
+ * A one-shot worker supplies the killable wall-clock boundary because Babel
+ * parsing is synchronous. Deployments that require hard memory isolation must
+ * additionally use a subprocess or container boundary.
  */
 export interface DeclarativeConfigLimits {
   readonly maxSourceBytes: number;
@@ -157,7 +160,8 @@ export type DeclarativeConfigErrorPhase =
   | "parse"
   | "validate"
   | "evaluate"
-  | "result";
+  | "result"
+  | "worker";
 
 export interface DeclarativeConfigSourceLocation {
   /** One-based line number. */
@@ -223,7 +227,12 @@ export type DeclarativeConfigErrorReason =
   | "unsupported-export"
   | "unsupported-expression"
   | "unsupported-import"
-  | "unsupported-statement";
+  | "unsupported-statement"
+  | "worker-aborted"
+  | "worker-overloaded"
+  | "worker-protocol"
+  | "worker-timeout"
+  | "worker-unavailable";
 
 /** Typed failure emitted for every rejected source or bounded-resource case. */
 export class DeclarativeConfigEvaluationError extends Error {
