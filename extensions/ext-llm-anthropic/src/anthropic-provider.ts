@@ -29,7 +29,6 @@ import {
   requestStream,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
 import {
   buildAnthropicMessagesRequest,
@@ -52,7 +51,6 @@ export {
   ProviderRateLimitError,
   ProviderRequestError,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  withToolInputStatusTransitions,
 };
 
 export interface AnthropicRuntimeConfig {
@@ -307,9 +305,7 @@ export function createAnthropicModelRuntime(
         const drained = warnings.drain();
         return {
           stream: ReadableStream.from(
-            withToolInputStatusTransitions(
-              streamAnthropicCompatibleParts(responseStream, streamOptions),
-            ),
+            streamAnthropicCompatibleParts(responseStream, streamOptions),
           ),
           ...(drained.length > 0 ? { warnings: drained } : {}),
         };

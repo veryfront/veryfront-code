@@ -20,6 +20,10 @@ import {
   type createStreamLifecycleShadow,
   type StreamLifecycleShadowReport,
 } from "./stream-lifecycle-shadow.ts";
+import {
+  ManualMonotonicClock,
+  StreamLifecycleFailure,
+} from "#veryfront/agent/streaming/lifecycle/index.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -2004,5 +2008,90 @@ describe("processStream active mode", () => {
       { type: "text-delta", text: "recovered" },
       { type: "finish", finishReason: "stop", totalUsage: null },
     ]);
+  });
+});
+
+describe("active mode heartbeat regression", () => {
+  it("heartbeat telemetry cannot extend tool input idle", async () => {
+    const clock = new ManualMonotonicClock();
+    let nextCalls = 0;
+    let pendingResolve: ((r: IteratorResult<unknown>) => void) | null = null;
+    const queue: IteratorResult<unknown>[] = [
+      {
+        done: false,
+        value: { type: "tool-input-start", id: "t1", toolName: "create_file" },
+      },
+    ];
+    const fullStream: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            nextCalls++;
+            const queued = queue.shift();
+            if (queued) return Promise.resolve(queued);
+            return new Promise<IteratorResult<unknown>>((resolve) => pendingResolve = resolve);
+          },
+          return() {
+            pendingResolve?.({ done: true, value: undefined });
+            pendingResolve = null;
+            return Promise.resolve(
+              { done: true, value: undefined } as IteratorResult<unknown>,
+            );
+          },
+        };
+      },
+    };
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const waitTick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    const outcome = processStream(
+      {
+        fullStream,
+        textStream: (async function* (): AsyncGenerator<string> {})(),
+      },
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "active",
+        availableToolNames: ["create_file"],
+        providerExecutedToolNames: [],
+        streamLifecyclePolicy: {
+          clock,
+          toolInputIdleTimeoutMs: 15_000,
+          statusIntervalMs: 5_000,
+        },
+      },
+      undefined,
+    ).then(() => null, (error: unknown) => error);
+
+    await waitTick();
+    clock.advanceBy(5_000);
+    await waitTick();
+    clock.advanceBy(5_000);
+    await waitTick();
+    clock.advanceBy(5_000);
+    const error = await outcome;
+
+    assertEquals(error instanceof StreamLifecycleFailure, true);
+    if (error instanceof StreamLifecycleFailure) {
+      assertEquals(error.lifecycleError.code, "TOOL_INPUT_TIMEOUT");
+    }
+    assertEquals(
+      events.filter((event) => (event as { type: string }).type === "data-tool-call-status"),
+      [
+        {
+          type: "data-tool-call-status",
+          data: { toolCallId: "t1", status: "pending_input" },
+        },
+        {
+          type: "data-tool-call-status",
+          data: { toolCallId: "t1", status: "pending_input" },
+        },
+      ],
+    );
+    assertEquals(nextCalls, 2);
   });
 });

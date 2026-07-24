@@ -27,6 +27,7 @@ import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, SpanKind } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { withToolInputStatusTransitions } from "#veryfront/provider/runtime-loader/tool-input-status.ts";
 import {
   applyLifecycleSnapshotToChatStreamState,
   createRuntimeStreamProviderAdapter,
@@ -382,6 +383,15 @@ export function resolveRuntimeLifecyclePolicy(
   });
 }
 
+function wrapLegacyRuntimeStreamResult(
+  result: RuntimeStreamResult,
+): RuntimeStreamResult {
+  return {
+    ...result,
+    fullStream: withToolInputStatusTransitions(result.fullStream),
+  };
+}
+
 async function processActiveStream(
   source: RuntimeStreamSource,
   state: ChatStreamState,
@@ -405,9 +415,7 @@ async function processActiveStream(
   const run = runStreamLifecycle({
     provider: adapter,
     policy: resolveRuntimeLifecyclePolicy(callbacks),
-    cancellations: abortSignal
-      ? [{ source: "runtime", signal: abortSignal }]
-      : [],
+    cancellations: abortSignal ? [{ source: "runtime", signal: abortSignal }] : [],
   });
   const live = createStreamLifecycleLiveAdapter({ textPartId });
   for await (const frame of run.frames) {
@@ -497,8 +505,14 @@ export function processStreamInternal(
     );
   }
 
+  // Production legacy streams previously received status parts from the
+  // provider wrappers. After Gate 2 the extensions emit raw streams, so the
+  // legacy compatibility boundary reinstates the wrapper for source-opened
+  // streams only; pre-opened results keep their historical unwrapped shape.
   const result = isRuntimeStreamSource(resultOrSource)
-    ? resultOrSource.open(abortSignal ?? new AbortController().signal)
+    ? wrapLegacyRuntimeStreamResult(
+      resultOrSource.open(abortSignal ?? new AbortController().signal),
+    )
     : resultOrSource;
 
   const process = async () => {
