@@ -12,8 +12,8 @@ The Module exposes one private Interface to `chat-execution-runtime.ts`:
 
 ```ts
 type FinalizeHostedChatRunInput =
-  HostedChatFinalizationCommon &
-  (
+  & HostedChatFinalizationCommon
+  & (
     | { kind: "response"; responseMessage: ChatUiMessage; isAborted: boolean }
     | { kind: "detached"; isAborted: boolean; mirroredDurableOutput: boolean }
   );
@@ -27,16 +27,16 @@ The Interface is private to `src/agent/hosted`. Do not export it from `src/agent
 
 Current finalization behavior is split across these files:
 
-| File | Current responsibility |
-| --- | --- |
-| `src/agent/hosted/chat-execution-runtime.ts` | Runtime bootstrap, response/detached arbitration, `lastStreamError` capture, cleanup suppression, root watchdog disposal, runtime helper exports, and calls into the generic finalizer. |
-| `src/agent/hosted/stream-finalization.ts` | Generic response and detached finalization state machine. It currently owns fallback ordering, mirror flush, terminal dispatch, cleanup, stream-error decisions, and late body-read handling. |
-| `src/agent/hosted/finalized-message.ts` | Response message sanitization, detached fallback message construction, missing text chunks, and missing Tool chunks. |
-| `src/agent/hosted/stream-terminal-error.ts` | Empty-output, provider-error, timeout, and stream-error terminal mapping. |
-| `src/agent/conversation/hosted-terminal.ts` | Terminal state resolution and dispatch through the concrete hosted lifecycle adapter. |
-| `src/agent/streaming/stream-outcome.ts` | Late provider body-read detection and finish-reason completion classification. The current exported completion helper is `hasCompletedStepSignal(finishReason)`. |
-| `src/chat/final-step-fallback.ts` | `getLastStreamStep` and final-step fallback extraction. |
-| `src/agent/index.ts` | Public `veryfront/agent` re-exports, including hosted runtime, message, finalizer, terminal-error, and lifecycle helpers. |
+| File                                         | Current responsibility                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/agent/hosted/chat-execution-runtime.ts` | Runtime bootstrap, response/detached arbitration, `lastStreamError` capture, cleanup suppression, root watchdog disposal, runtime helper exports, and calls into the generic finalizer.       |
+| `src/agent/hosted/stream-finalization.ts`    | Generic response and detached finalization state machine. It currently owns fallback ordering, mirror flush, terminal dispatch, cleanup, stream-error decisions, and late body-read handling. |
+| `src/agent/hosted/finalized-message.ts`      | Response message sanitization, detached fallback message construction, missing text chunks, and missing Tool chunks.                                                                          |
+| `src/agent/hosted/stream-terminal-error.ts`  | Empty-output, provider-error, timeout, and stream-error terminal mapping.                                                                                                                     |
+| `src/agent/conversation/hosted-terminal.ts`  | Terminal state resolution and dispatch through the concrete hosted lifecycle adapter.                                                                                                         |
+| `src/agent/streaming/stream-outcome.ts`      | Late provider body-read detection and finish-reason completion classification. The current exported completion helper is `hasCompletedStepSignal(finishReason)`.                              |
+| `src/chat/final-step-fallback.ts`            | `getLastStreamStep` and final-step fallback extraction.                                                                                                                                       |
+| `src/agent/index.ts`                         | Public `veryfront/agent` re-exports, including hosted runtime, message, finalizer, terminal-error, and lifecycle helpers.                                                                     |
 
 Current tests that constrain this refactor:
 
@@ -118,8 +118,8 @@ export type HostedChatFinalizationCommon = {
 };
 
 export type FinalizeHostedChatRunInput =
-  HostedChatFinalizationCommon &
-  (
+  & HostedChatFinalizationCommon
+  & (
     | { kind: "response"; responseMessage: ChatUiMessage; isAborted: boolean }
     | { kind: "detached"; isAborted: boolean; mirroredDurableOutput: boolean }
   );
@@ -152,7 +152,7 @@ Response terminal states preserve metadata from `extractChatMessageMetadata(sani
 Detached empty-output failure remains conditional:
 
 ```ts
-!isAborted && !mirroredDurableOutput && !state.hasContent
+!isAborted && !mirroredDurableOutput && !state.hasContent;
 ```
 
 Late provider body-read errors remain successful only when output exists and the final step has a completed finish reason:
