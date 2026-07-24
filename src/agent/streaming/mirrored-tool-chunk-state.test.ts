@@ -318,7 +318,7 @@ describe("mirrored-tool-chunk-state", () => {
     assertEquals(mirroredOutput, true);
   });
 
-  it("emits one exact source document for repeated successful knowledge file reads", async () => {
+  it("passes through an upstream-derived source without synthesizing duplicates", async () => {
     const path =
       "knowledge/knowledge-ingest-20260723131451088-6d16440c-veryfront-equity-story-13july26.md";
     const sourceChunks: Chunk[] = [
@@ -328,14 +328,29 @@ describe("mirrored-tool-chunk-state", () => {
         toolName: "get_file",
         input: { path },
       },
-      { type: "tool-output-available", toolCallId: "tc-1", output: { path } },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { path, content: "# Equity story" },
+      },
+      {
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/markdown",
+        title: path,
+        filename: path,
+      },
       {
         type: "tool-input-available",
         toolCallId: "tc-2",
         toolName: "get_file",
         input: { path },
       },
-      { type: "tool-output-available", toolCallId: "tc-2", output: { path } },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-2",
+        output: { path, content: "# Equity story" },
+      },
     ];
     const appendedChunks: Chunk[] = [];
 
@@ -352,21 +367,7 @@ describe("mirrored-tool-chunk-state", () => {
         },
       }),
     );
-    const expectedSource: Chunk = {
-      type: "source-document",
-      sourceId: path,
-      mediaType: "text/markdown",
-      title: path,
-      filename: path,
-    };
-
-    assertEquals(outputChunks, [
-      sourceChunks[0],
-      sourceChunks[1],
-      expectedSource,
-      sourceChunks[2],
-      sourceChunks[3],
-    ]);
+    assertEquals(outputChunks, sourceChunks);
     assertEquals(appendedChunks, outputChunks);
   });
 

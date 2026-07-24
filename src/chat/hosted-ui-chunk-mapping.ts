@@ -1,4 +1,5 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "./knowledge-source-document.ts";
 
 /** Options accepted by hosted UI chunk mapping. */
 export type HostedUiChunkMappingOptions = {
@@ -294,8 +295,21 @@ export function mapHostedStreamPartToChatUiChunks(
         toolCallId: part.toolCall.toolCallId,
       }];
 
-    case "tool-result":
-      return [{ type: "tool-output-available", toolCallId: part.toolCallId, output: part.output }];
+    case "tool-result": {
+      const outputChunk = {
+        type: "tool-output-available" as const,
+        toolCallId: part.toolCallId,
+        output: part.output,
+      };
+      if (!sendSources) {
+        return [outputChunk];
+      }
+      const sourceChunk = deriveKnowledgeSourceDocumentChunk({
+        toolName: part.toolName,
+        output: part.output,
+      });
+      return sourceChunk ? [outputChunk, sourceChunk] : [outputChunk];
+    }
 
     case "tool-error":
       return mapToolErrorPartToUiChunks(part, onError);

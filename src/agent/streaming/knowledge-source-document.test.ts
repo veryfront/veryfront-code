@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { deriveKnowledgeSourceDocumentChunk } from "./knowledge-source-document.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "../../chat/knowledge-source-document.ts";
 
 const KNOWLEDGE_PATH =
   "knowledge/knowledge-ingest-20260723131451088-6d16440c-veryfront-equity-story-13july26.md";
@@ -27,7 +27,7 @@ describe("agent/streaming/knowledge-source-document", () => {
     assertEquals(
       deriveKnowledgeSourceDocumentChunk({
         toolName: "get_file",
-        output: { structuredContent: { path: KNOWLEDGE_PATH } },
+        output: { structuredContent: { path: KNOWLEDGE_PATH, content: "# Equity story" } },
       })?.sourceId,
       KNOWLEDGE_PATH,
     );
@@ -50,6 +50,13 @@ describe("agent/streaming/knowledge-source-document", () => {
     );
     assertEquals(
       deriveKnowledgeSourceDocumentChunk({ toolName: "get_file", output: {} }),
+      null,
+    );
+    assertEquals(
+      deriveKnowledgeSourceDocumentChunk({
+        toolName: "get_file",
+        output: { path: KNOWLEDGE_PATH },
+      }),
       null,
     );
   });

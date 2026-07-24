@@ -131,6 +131,58 @@ describe("createChatUiMessageStreamFromDataStream", () => {
     });
   });
 
+  it("persists one exact source document for repeated successful knowledge reads", async () => {
+    const path = "knowledge/knowledge-ingest-exact.md";
+    const output = { path, type: "file", content: "# Exact source" };
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const stream = createSseStream([
+      { type: "message-start", messageId: "framework-message" },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      { type: "tool-output-available", toolCallId: "tool-1", output },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-2",
+        toolName: "get_file",
+        input: { path },
+      },
+      { type: "tool-output-available", toolCallId: "tool-2", output },
+      { type: "message-finish" },
+    ]);
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        { stream },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+    const expectedSource = {
+      type: "source-document" as const,
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-document"),
+      [expectedSource],
+    );
+    assertEquals(
+      finish?.responseMessage.parts.filter((part) => part.type === "source-document"),
+      [expectedSource],
+    );
+  });
+
   it("preserves providerExecuted from data stream tool events into final dynamic tool parts", async () => {
     let finish: ChatUiMessageStreamFinish | undefined;
     const chunks = await collectChunks(
