@@ -1801,41 +1801,56 @@ describe("routing/api/route-executor", () => {
         `export function GET() { return new Response("unreachable"); }`,
         async (_modulePath, _projectDir, options) => {
           const accessorEnv = Object.create(null) as Record<string, string>;
+          let getterCalls = 0;
+          let routeCalls = 0;
           Object.defineProperty(accessorEnv, "SECRET", {
             enumerable: true,
             get() {
+              getterCalls += 1;
               throw new Error("tenant getter must not run");
             },
           });
 
-          const accessorResponse = await runWithProjectEnv(
-            accessorEnv,
+          assertThrows(
             () =>
-              executeAppRoute(
-                {},
-                new Request("http://localhost/api/env-invalid", { method: "GET" }),
-                makeMatch("/api/env-invalid", options.modulePath),
-                "/api/env-invalid",
-                makeAdapter("production"),
-                options,
-              ),
+              runWithProjectEnv(accessorEnv, () => {
+                routeCalls += 1;
+                return executeAppRoute(
+                  {},
+                  new Request("http://localhost/api/env-invalid", { method: "GET" }),
+                  makeMatch("/api/env-invalid", options.modulePath),
+                  "/api/env-invalid",
+                  makeAdapter("production"),
+                  options,
+                );
+              }),
+            TypeError,
+            "accessor properties are not allowed",
           );
-          assertEquals(accessorResponse.status, 500);
+          assertEquals(getterCalls, 0);
+          assertEquals(routeCalls, 0);
           assertEquals(getWorkerPool().getStats().poolSize, 0);
 
-          const oversizedResponse = await runWithProjectEnv(
-            { TOO_LARGE: "x".repeat(1024 * 1024 + 1) },
+          assertThrows(
             () =>
-              executeAppRoute(
-                {},
-                new Request("http://localhost/api/env-oversized", { method: "GET" }),
-                makeMatch("/api/env-oversized", options.modulePath),
-                "/api/env-oversized",
-                makeAdapter("production"),
-                options,
+              runWithProjectEnv(
+                { TOO_LARGE: "x".repeat(1024 * 1024 + 1) },
+                () => {
+                  routeCalls += 1;
+                  return executeAppRoute(
+                    {},
+                    new Request("http://localhost/api/env-oversized", { method: "GET" }),
+                    makeMatch("/api/env-oversized", options.modulePath),
+                    "/api/env-oversized",
+                    makeAdapter("production"),
+                    options,
+                  );
+                },
               ),
+            TypeError,
+            "value length exceeds",
           );
-          assertEquals(oversizedResponse.status, 500);
+          assertEquals(routeCalls, 0);
           assertEquals(getWorkerPool().getStats().poolSize, 0);
         },
       );

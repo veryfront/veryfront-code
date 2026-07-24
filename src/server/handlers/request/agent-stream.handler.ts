@@ -78,12 +78,16 @@ export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
   resolveRuntimeOwnerInvokeUrl?: typeof resolveRuntimeOwnerInvokeUrl;
   getLocalTools?: (agentId: string) => RuntimeAgentStreamExecutionDeps["localTools"];
+  /** Explicit HTTP capability used only for project environment discovery. */
+  projectEnvFetch?: typeof globalThis.fetch;
 }
 
+const defaultProjectEnvFetch = globalThis.fetch;
 const defaultDeps: AgentStreamHandlerDeps = {
   ...defaultChannelInvokeDeps,
   sessionManager: agentRunSessionManager,
   resolveRuntimeOwnerInvokeUrl,
+  projectEnvFetch: defaultProjectEnvFetch,
   getLocalTools: (agentId) =>
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
 };
@@ -100,30 +104,17 @@ const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   ] as const,
 );
 
-// Per-environment env var cache shared across all agent stream requests (60s TTL)
-const _agentEnvVarCache = new EnvironmentVariableCache(
-  (environmentId, token, projectSlug) => {
-    return fetchProjectEnvVars(
-      resolveVeryfrontApiBaseUrlFromHostEnv(),
-      projectSlug,
-      environmentId,
-      token,
-    );
-  },
-);
-
-// Cache: projectSlug → production environmentId (stable across restarts)
-const _productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
-
-async function _resolveProductionEnvironmentId(
+async function resolveProductionEnvironmentId(
   projectSlug: string,
   token: string,
+  cache: LRUCacheAdapter,
+  fetchImpl: typeof globalThis.fetch,
 ): Promise<string | null> {
-  const cached = _productionEnvIdCache.get<string>(projectSlug);
+  const cached = cache.get<string>(projectSlug);
   if (cached) return cached;
   const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
   try {
-    const res = await fetch(
+    const res = await fetchImpl(
       `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
       { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
     );
@@ -145,7 +136,7 @@ async function _resolveProductionEnvironmentId(
       });
       return null;
     }
-    _productionEnvIdCache.set(projectSlug, env.id);
+    cache.set(projectSlug, env.id);
     return env.id;
   } catch (error) {
     logger.warn("Unable to resolve production environment for agent stream", {
@@ -607,8 +598,25 @@ export class AgentStreamHandler extends BaseHandler {
     ],
   };
 
-  constructor(private readonly deps: AgentStreamHandlerDeps = defaultDeps) {
+  private readonly deps: AgentStreamHandlerDeps;
+  private readonly projectEnvFetch: typeof globalThis.fetch;
+  private readonly agentEnvVarCache: EnvironmentVariableCache;
+  private readonly productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
+
+  constructor(deps: AgentStreamHandlerDeps = defaultDeps) {
     super();
+    this.deps = deps;
+    this.projectEnvFetch = deps.projectEnvFetch ?? defaultProjectEnvFetch;
+    this.agentEnvVarCache = new EnvironmentVariableCache(
+      (environmentId, token, projectSlug, signal) =>
+        fetchProjectEnvVars(
+          resolveVeryfrontApiBaseUrlFromHostEnv(),
+          projectSlug,
+          environmentId,
+          token,
+          { signal, fetch: this.projectEnvFetch },
+        ),
+    );
   }
 
   private withAgentSourceContext<T>(
@@ -757,12 +765,14 @@ export class AgentStreamHandler extends BaseHandler {
                 let envVarsForAgent: Record<string, string> = {};
                 if (sourceScopedContext.projectSlug && apiAuthToken) {
                   const environmentId = sourceScopedContext.environmentId ??
-                    await _resolveProductionEnvironmentId(
+                    await resolveProductionEnvironmentId(
                       sourceScopedContext.projectSlug,
                       apiAuthToken,
+                      this.productionEnvIdCache,
+                      this.projectEnvFetch,
                     );
                   if (environmentId) {
-                    envVarsForAgent = await _agentEnvVarCache.get(
+                    envVarsForAgent = await this.agentEnvVarCache.get(
                       environmentId,
                       apiAuthToken,
                       sourceScopedContext.projectSlug,
