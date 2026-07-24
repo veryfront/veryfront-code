@@ -1862,7 +1862,7 @@ describe("stream lifecycle shadow mode", () => {
 });
 
 describe("processStream active mode", () => {
-  async function runMode(mode: "legacy" | "active", parts: unknown[]) {
+  async function runMode(mode: "legacy" | "active", parts: Record<string, unknown>[]) {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
     const chunks: string[] = [];
@@ -1885,7 +1885,7 @@ describe("processStream active mode", () => {
     return { events, state, chunks, usage };
   }
 
-  async function assertModeParity(parts: unknown[]) {
+  async function assertModeParity(parts: Record<string, unknown>[]) {
     const legacy = await runMode("legacy", parts);
     const active = await runMode("active", parts);
 
