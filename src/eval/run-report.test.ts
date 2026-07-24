@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import type {
+  EvalModelComparisonOptions,
   EvalReport,
   EvalReportComparisonPolicy,
   EvalReportExportConfig,
@@ -148,6 +149,22 @@ function createReport(
     metadata: { provenance },
     ...overrides,
   };
+}
+
+function createModelReport(
+  model: string,
+  runId: string,
+  overrides: Partial<EvalReport> = {},
+): EvalReport {
+  return createReport({
+    runId,
+    metadata: { provenance, model },
+    summary: {
+      ...createReport().summary,
+      usage: { totalTokens: model === "openai/gpt-5.2" ? 100 : 70, costUsd: 0.5 },
+    },
+    ...overrides,
+  });
 }
 
 function createFailingReport(): EvalReport {
@@ -1153,5 +1170,451 @@ Result: \`1/4 passed\`
         metadata: { owner: "caller-owner" },
       },
     }]);
+  });
+});
+
+describe("runEvalReport model comparison mode", () => {
+  it("runs unique baseline-first models with sanitized artifacts, comparison writes, and ordered output hints", async () => {
+    const evalItem = createDiscoveredEval();
+    const events: string[] = [];
+    const writes: WriteCall[] = [];
+    const targetRuns: TargetRun[] = [];
+    const exportConfigs: Array<EvalReportExportConfig | undefined> = [];
+    const targetAdapters: Array<{ model: string; adapter: unknown }> = [];
+    const policy: Omit<EvalModelComparisonOptions, "baselineModel"> = {
+      minTokenImprovementPct: 0.1,
+    };
+
+    const outcome = await runEvalReport({
+      kind: "model-comparison",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      datasetBase: "/repo/data",
+      evalItem,
+      baselineModel: " openai/gpt-5.2 ",
+      candidateModels: [
+        "moonshotai/kimi-k2.6",
+        "openai/gpt-5.2",
+        "anthropic/claude opus 4.6",
+        "moonshotai/kimi-k2.6",
+        " ",
+      ],
+      target: "agent:answers",
+      comparisonPolicy: policy,
+      report: "artifacts/comparison.json",
+      exportConfig: {
+        registry,
+        exporterIds: ["json"],
+        required: true,
+        context: {
+          projectReference: "project-a",
+          tags: ["caller-tag"],
+          metadata: { owner: "caller-owner" },
+        },
+      },
+      provenance,
+    }, {
+      targets: {
+        createModelTargetAdapter: (model: string) => {
+          const adapter = { kind: "agent-adapter", model };
+          targetAdapters.push({ model, adapter });
+          events.push(`adapter:${model}`);
+          return adapter;
+        },
+        runEval: (_evalItem: DiscoveredEval, runOptions: TargetRun) => {
+          events.push(`target:${runOptions.selectedModel}`);
+          targetRuns.push(runOptions);
+          return Promise.resolve(createModelReport(
+            runOptions.selectedModel!,
+            runOptions.runId,
+          ));
+        },
+      },
+      artifacts: {
+        readTextFile: () => Promise.resolve(""),
+        writeTextFileEnsuringDir: (path: string, content: string) => {
+          events.push(`write:${path}`);
+          writes.push({ path, content });
+          return Promise.resolve();
+        },
+      },
+      billing: {
+        runWithGatewayBillingGroup: async (
+          billingGroupId: string,
+          operation: () => Promise<EvalReport>,
+        ) => {
+          events.push(`billing:start:${billingGroupId}`);
+          const report = await operation();
+          events.push(`billing:end:${billingGroupId}`);
+          return report;
+        },
+      },
+      exporters: {
+        exportReport: (report: EvalReport, config?: EvalReportExportConfig) => {
+          events.push(`export:${report.metadata?.model}`);
+          exportConfigs.push(config);
+          return Promise.resolve({
+            ...report,
+            exports: [{ exporterId: "json", ok: true }],
+          });
+        },
+      },
+      clock: {
+        now: () => now,
+        createSuffix: () => "abcdef12",
+      },
+    });
+
+    assertEquals(outcome.kind, "model-comparison");
+    if (outcome.kind !== "model-comparison") throw new Error("expected model comparison outcome");
+    assertEquals(outcome.exitCode, 0);
+    assertEquals(targetAdapters.map((entry) => entry.model), [
+      "openai/gpt-5.2",
+      "moonshotai/kimi-k2.6",
+      "anthropic/claude opus 4.6",
+    ]);
+    assertEquals(
+      targetRuns.map((run) => ({
+        runId: run.runId,
+        targetKind: run.targetKind,
+        target: run.target,
+        selectedModel: run.selectedModel,
+        targetAdapter: run.targetAdapter,
+        metadata: run.metadata,
+      })),
+      [
+        {
+          runId: "evalrun_20260621_010203004_abcdef12_openai__gpt-5.2",
+          targetKind: "agent",
+          target: "agent:answers",
+          selectedModel: "openai/gpt-5.2",
+          targetAdapter: targetAdapters[0]!.adapter,
+          metadata: { provenance, model: "openai/gpt-5.2" },
+        },
+        {
+          runId: "evalrun_20260621_010203004_abcdef12_moonshotai__kimi-k2.6",
+          targetKind: "agent",
+          target: "agent:answers",
+          selectedModel: "moonshotai/kimi-k2.6",
+          targetAdapter: targetAdapters[1]!.adapter,
+          metadata: { provenance, model: "moonshotai/kimi-k2.6" },
+        },
+        {
+          runId: "evalrun_20260621_010203004_abcdef12_anthropic__claude__opus__4.6",
+          targetKind: "agent",
+          target: "agent:answers",
+          selectedModel: "anthropic/claude opus 4.6",
+          targetAdapter: targetAdapters[2]!.adapter,
+          metadata: { provenance, model: "anthropic/claude opus 4.6" },
+        },
+      ],
+    );
+    assertEquals(outcome.artifacts, {
+      directory: ".veryfront/evals/20260621_010203004_abcdef12-answers",
+      comparisonJson: ".veryfront/evals/20260621_010203004_abcdef12-answers/comparison.json",
+      comparisonMarkdown: ".veryfront/evals/20260621_010203004_abcdef12-answers/comparison.md",
+      models: {
+        "openai/gpt-5.2": {
+          directory: ".veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2",
+          summary:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/summary.json",
+          results:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/results.jsonl",
+          reportMarkdown:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/report.md",
+          junit:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/junit.xml",
+        },
+        "moonshotai/kimi-k2.6": {
+          directory:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6",
+          summary:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/summary.json",
+          results:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/results.jsonl",
+          reportMarkdown:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/report.md",
+          junit:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/junit.xml",
+        },
+        "anthropic/claude opus 4.6": {
+          directory:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6",
+          summary:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/summary.json",
+          results:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/results.jsonl",
+          reportMarkdown:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/report.md",
+          junit:
+            ".veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/junit.xml",
+        },
+      },
+    });
+    assertEquals(outcome.reports.map((report) => report.metadata?.model), [
+      "openai/gpt-5.2",
+      "moonshotai/kimi-k2.6",
+      "anthropic/claude opus 4.6",
+    ]);
+    assertEquals(outcome.comparison.baselineModel, "openai/gpt-5.2");
+    assertEquals(outcome.comparison.candidateModels, [
+      "moonshotai/kimi-k2.6",
+      "anthropic/claude opus 4.6",
+    ]);
+    assertEquals(outcome.outputHints, {
+      reportDirectory: outcome.artifacts.directory,
+      reportMarkdown: outcome.artifacts.comparisonMarkdown,
+      report: "artifacts/comparison.json",
+      models: outcome.outputHints.models,
+      comparisonJson: outcome.artifacts.comparisonJson,
+      comparisonMarkdown: outcome.artifacts.comparisonMarkdown,
+      recommendation: outcome.comparison.recommendation,
+    });
+    assertEquals(outcome.outputHints.models, [
+      { model: "openai/gpt-5.2", report: outcome.reports[0] },
+      { model: "moonshotai/kimi-k2.6", report: outcome.reports[1] },
+      { model: "anthropic/claude opus 4.6", report: outcome.reports[2] },
+    ]);
+    assertEquals(events, [
+      "adapter:openai/gpt-5.2",
+      "billing:start:evalrun_20260621_010203004_abcdef12_openai__gpt-5.2",
+      "target:openai/gpt-5.2",
+      "billing:end:evalrun_20260621_010203004_abcdef12_openai__gpt-5.2",
+      "export:openai/gpt-5.2",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/summary.json",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/results.jsonl",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/report.md",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/junit.xml",
+      "adapter:moonshotai/kimi-k2.6",
+      "billing:start:evalrun_20260621_010203004_abcdef12_moonshotai__kimi-k2.6",
+      "target:moonshotai/kimi-k2.6",
+      "billing:end:evalrun_20260621_010203004_abcdef12_moonshotai__kimi-k2.6",
+      "export:moonshotai/kimi-k2.6",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/summary.json",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/results.jsonl",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/report.md",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/junit.xml",
+      "adapter:anthropic/claude opus 4.6",
+      "billing:start:evalrun_20260621_010203004_abcdef12_anthropic__claude__opus__4.6",
+      "target:anthropic/claude opus 4.6",
+      "billing:end:evalrun_20260621_010203004_abcdef12_anthropic__claude__opus__4.6",
+      "export:anthropic/claude opus 4.6",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/summary.json",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/results.jsonl",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/report.md",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/junit.xml",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/comparison.json",
+      "write:.veryfront/evals/20260621_010203004_abcdef12-answers/comparison.md",
+      "write:artifacts/comparison.json",
+    ]);
+    assertEquals(
+      exportConfigs.map((config) => ({
+        registry: config?.registry,
+        exporterIds: config?.exporterIds,
+        required: config?.required,
+        context: config?.context,
+      })),
+      [
+        {
+          registry,
+          exporterIds: ["json"],
+          required: true,
+          context: {
+            evalId: "eval:answers",
+            sourcePath: "evals/answers.eval.ts",
+            reportPath:
+              ".veryfront/evals/20260621_010203004_abcdef12-answers/models/openai__gpt-5.2/summary.json",
+            projectReference: "project-a",
+            tags: ["caller-tag"],
+            metadata: { owner: "caller-owner" },
+          },
+        },
+        {
+          registry,
+          exporterIds: ["json"],
+          required: true,
+          context: {
+            evalId: "eval:answers",
+            sourcePath: "evals/answers.eval.ts",
+            reportPath:
+              ".veryfront/evals/20260621_010203004_abcdef12-answers/models/moonshotai__kimi-k2.6/summary.json",
+            projectReference: "project-a",
+            tags: ["caller-tag"],
+            metadata: { owner: "caller-owner" },
+          },
+        },
+        {
+          registry,
+          exporterIds: ["json"],
+          required: true,
+          context: {
+            evalId: "eval:answers",
+            sourcePath: "evals/answers.eval.ts",
+            reportPath:
+              ".veryfront/evals/20260621_010203004_abcdef12-answers/models/anthropic__claude__opus__4.6/summary.json",
+            projectReference: "project-a",
+            tags: ["caller-tag"],
+            metadata: { owner: "caller-owner" },
+          },
+        },
+      ],
+    );
+    assertEquals(writes.at(-3)?.content, JSON.stringify(outcome.comparison, null, 2));
+    assertEquals(writes.at(-2)?.content.startsWith("# Eval Model Comparison\n"), true);
+    assertEquals(writes.at(-1)?.content, JSON.stringify(outcome.comparison, null, 2));
+  });
+
+  it("gates comparison exit on failed reports and required export failures only", async () => {
+    const baseInput = {
+      kind: "model-comparison" as const,
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItem: createDiscoveredEval(),
+      baselineModel: "openai/gpt-5.2",
+      candidateModels: ["moonshotai/kimi-k2.6"],
+      target: "agent:answers",
+      comparisonPolicy: {} satisfies Omit<EvalModelComparisonOptions, "baselineModel">,
+      provenance,
+    };
+    const run = async (options: {
+      failedReport?: boolean;
+      exportRequired: boolean;
+      exportOk: boolean;
+    }) => {
+      return await runEvalReport({
+        ...baseInput,
+        exportConfig: { required: options.exportRequired },
+      }, {
+        targets: {
+          createModelTargetAdapter: (model: string) => ({ model }),
+          runEval: (_evalItem: DiscoveredEval, runOptions: TargetRun) => {
+            const failed = options.failedReport &&
+              runOptions.selectedModel === "moonshotai/kimi-k2.6";
+            return Promise.resolve(
+              failed
+                ? {
+                  ...createFailingReport(),
+                  runId: runOptions.runId,
+                  metadata: { provenance, model: runOptions.selectedModel! },
+                }
+                : createModelReport(runOptions.selectedModel!, runOptions.runId),
+            );
+          },
+        },
+        artifacts: {
+          readTextFile: () => Promise.resolve(""),
+          writeTextFileEnsuringDir: () => Promise.resolve(),
+        },
+        billing: {
+          runWithGatewayBillingGroup: (_id: string, operation: () => Promise<EvalReport>) =>
+            operation(),
+        },
+        exporters: {
+          exportReport: (report: EvalReport): Promise<EvalReport> => {
+            const exportResult = options.exportOk
+              ? { exporterId: "json", ok: true as const }
+              : { exporterId: "json", ok: false as const, error: "export unavailable" };
+            return Promise.resolve({
+              ...report,
+              metadata: report.metadata,
+              exports: [exportResult],
+            });
+          },
+        },
+        clock: {
+          now: () => now,
+          createSuffix: () => "abcdef12",
+        },
+      });
+    };
+
+    const failedReport = await run({ failedReport: true, exportRequired: false, exportOk: true });
+    const requiredExport = await run({ exportRequired: true, exportOk: false });
+    const bestEffortExport = await run({ exportRequired: false, exportOk: false });
+
+    assertEquals(failedReport.exitCode, 1);
+    if (failedReport.kind !== "model-comparison") {
+      throw new Error("expected model comparison outcome");
+    }
+    assertEquals(failedReport.reports.map((report) => report.metadata?.model), [
+      "openai/gpt-5.2",
+      "moonshotai/kimi-k2.6",
+    ]);
+    assertEquals(failedReport.comparison.candidateModels, ["moonshotai/kimi-k2.6"]);
+    assertEquals(requiredExport.exitCode, 1);
+    assertEquals(bestEffortExport.exitCode, 0);
+  });
+
+  it("preserves caller-resolved comparison export report paths when provided", async () => {
+    const exportConfigs: Array<EvalReportExportConfig | undefined> = [];
+
+    await runEvalReport({
+      kind: "model-comparison",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItem: createDiscoveredEval(),
+      baselineModel: "openai/gpt-5.2",
+      candidateModels: ["moonshotai/kimi-k2.6"],
+      target: "agent:answers",
+      exportConfig: {
+        exporterIds: ["json"],
+        required: false,
+        context: {
+          reportPath: "caller/report.json",
+          projectReference: "project-a",
+        },
+      },
+      provenance,
+    }, {
+      targets: {
+        createModelTargetAdapter: (model: string) => ({ model }),
+        runEval: (_evalItem: DiscoveredEval, runOptions: TargetRun) =>
+          Promise.resolve(createModelReport(runOptions.selectedModel!, runOptions.runId)),
+      },
+      artifacts: {
+        readTextFile: () => Promise.resolve(""),
+        writeTextFileEnsuringDir: () => Promise.resolve(),
+      },
+      billing: {
+        runWithGatewayBillingGroup: (_id: string, operation: () => Promise<EvalReport>) =>
+          operation(),
+      },
+      exporters: {
+        exportReport: (report: EvalReport, config?: EvalReportExportConfig) => {
+          exportConfigs.push(config);
+          return Promise.resolve(report);
+        },
+      },
+      clock: {
+        now: () => now,
+        createSuffix: () => "abcdef12",
+      },
+    });
+
+    assertEquals(exportConfigs.map((config) => config?.context?.reportPath), [
+      "caller/report.json",
+      "caller/report.json",
+    ]);
+  });
+
+  it("rejects unsupported report kinds inside the private API", async () => {
+    await runEvalReport(
+      {
+        kind: "unknown",
+        projectDir: "/repo",
+        frameworkVersion: "1.2.3",
+      } as unknown as Parameters<typeof runEvalReport>[0],
+      createAdapters().adapters,
+    ).then(
+      () => {
+        throw new Error("expected unsupported kind to reject");
+      },
+      (error) => {
+        assertEquals(
+          error instanceof Error ? error.message : String(error),
+          "Unsupported eval report kind: unknown",
+        );
+      },
+    );
   });
 });
