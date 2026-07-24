@@ -5,7 +5,9 @@
  */
 
 export {
+  createOAuthCallbackDispatcher,
   createOAuthCallbackHandler,
+  type OAuthCallbackDispatcherOptions,
   type OAuthCallbackHandlerOptions,
 } from "./callback-handler.ts";
 

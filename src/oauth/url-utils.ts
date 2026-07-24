@@ -1,5 +1,6 @@
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { isLoopbackHttpUrl } from "./url-validation.ts";
+import { MAX_OAUTH_SERVICE_ID_LENGTH } from "./limits.ts";
 
 const LOCAL_DEVELOPMENT_APP_URL = "http://localhost:3000";
 
@@ -60,7 +61,10 @@ export function resolveOAuthApplicationUrl(
 
 /** Build the exact callback URI used in both authorization and token requests. */
 export function buildOAuthCallbackUrl(appUrl: URL, serviceId: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceId)) {
+  if (
+    typeof serviceId !== "string" || serviceId.length > MAX_OAUTH_SERVICE_ID_LENGTH ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceId)
+  ) {
     throw new Error("OAuth serviceId contains unsupported characters");
   }
   return new URL(`/api/auth/${encodeURIComponent(serviceId)}/callback`, appUrl).toString();

@@ -961,12 +961,18 @@ export class OAuthService extends OAuthProvider {
             detail: "Atomic token refresh capability disappeared",
           });
         }
+        const refreshedTokens = {
+          ...result.tokens,
+          ...(result.tokens.scope === undefined && tokens.scope !== undefined
+            ? { scope: tokens.scope }
+            : {}),
+        };
         const replaced = await compareAndSetTokens.call(
           tokenStore,
           this.serviceId,
           userId,
           revision,
-          result.tokens,
+          refreshedTokens,
         );
         if (typeof replaced !== "boolean") {
           throw TOKEN_STORAGE_ERROR.create({
@@ -974,7 +980,7 @@ export class OAuthService extends OAuthProvider {
           });
         }
         return replaced
-          ? result.tokens.accessToken
+          ? refreshedTokens.accessToken
           : await this.readCurrentUnexpiredAccessToken(userId);
       },
     );
