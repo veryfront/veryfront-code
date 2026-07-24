@@ -28,6 +28,7 @@ import {
   resolvePackageExportPath,
   splitPackageSubpath,
 } from "./package-resolution.ts";
+import { rewriteSSRImportsCompat } from "./ssr-adapter.ts";
 
 function createRewriteContext(overrides?: Partial<RewriteContext>): RewriteContext {
   return {
@@ -328,5 +329,27 @@ describe("import rewrite core runner", () => {
     });
 
     assertEquals(out, `const x = "handled";`);
+  });
+});
+
+describe("SSR import Adapter", () => {
+  it("preserves legacy regex scope and query order", () => {
+    const code = [
+      `import X from "@/x";`,
+      `import Y from "./y.js";`,
+      `const text = 'import Z from "@/z";';`,
+    ].join("\n");
+    assertEquals(
+      rewriteSSRImportsCompat(code, {
+        projectSlug: "p",
+        branch: "b",
+        cacheBuster: "v",
+      }),
+      [
+        `import X from "/_vf_modules/x.js?ssr=true&project=p&branch=b&v=v";`,
+        `import Y from "./y.js?ssr=true&project=p&branch=b&v=v";`,
+        `const text = 'import Z from "/_vf_modules/z.js?ssr=true&project=p&branch=b&v=v";';`,
+      ].join("\n"),
+    );
   });
 });
