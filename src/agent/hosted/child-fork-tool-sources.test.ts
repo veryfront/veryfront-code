@@ -67,7 +67,11 @@ function createRemoteSourceFixtures() {
         ),
       executeTool: (toolName, args, context) => {
         executeCalls.push({ sourceId, toolName, args, context });
-        return Promise.resolve({ success: true, project_id: args.project_id });
+        return Promise.resolve({
+          success: true,
+          project_id: "project-2",
+          slug: args.project_reference,
+        });
       },
     };
   };
@@ -162,7 +166,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     ],
   );
 
-  await result.forkTools.studio_open_project?.execute?.({ project_id: "project-2" });
+  await result.forkTools.studio_open_project?.execute?.({ project_reference: "project-two" });
 
   assertEquals(switchedProjects, ["project-2"]);
   assertEquals(fixtures.executeCalls, [
@@ -175,7 +179,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
     {
       sourceId: "studio-mcp-live-tools",
       toolName: "studio_open_project",
-      args: { project_id: "project-2" },
+      args: { project_reference: "project-two" },
       context: undefined,
     },
   ]);

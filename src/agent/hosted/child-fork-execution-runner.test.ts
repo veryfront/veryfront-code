@@ -288,7 +288,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       description: "Review checkout",
       prompt: "Review the checkout flow.",
       context: {},
-      project_id: "project-2",
+      project_reference: "project-two",
       tools: ["noop"],
       model: "sonnet",
       temperature: 0.4,
@@ -301,6 +301,10 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
     contextModel: "opus",
     onRequestedProjectId: (projectId) => {
       callbacks.push(`project:${projectId}`);
+    },
+    resolveProjectReference: ({ projectReference }) => {
+      assertEquals(projectReference, "project-two");
+      return Promise.resolve({ projectId: "project-2", slug: "project-two" });
     },
     resolveModelId: (modelId) => `resolved-${modelId}`,
     resolveProvider: (modelId) => `provider-${modelId}`,

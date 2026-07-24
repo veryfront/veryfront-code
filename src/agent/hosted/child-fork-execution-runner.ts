@@ -55,6 +55,10 @@ import {
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import {
+  type HostedProjectReferenceResolver,
+  resolveHostedProjectReference,
+} from "./project-reference-resolver.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -219,6 +223,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     defaultMaxSteps: number;
     contextModel?: string;
     onRequestedProjectId?: (projectId: string) => void | Promise<void>;
+    resolveProjectReference?: HostedProjectReferenceResolver;
     prepareToolAssembly: (input: {
       runtimeConfig: HostedChildForkRuntimeConfig;
       requestedTools?: HostedChildForkToolInput["tools"];
@@ -247,8 +252,16 @@ export async function executeHostedChildForkToolInput<
 >(
   input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
 ): Promise<ChildRunExecutionResult> {
-  if (input.forkInput.project_id) {
-    await input.onRequestedProjectId?.(input.forkInput.project_id);
+  const requestedProjectReference = input.forkInput.project_reference;
+  if (requestedProjectReference) {
+    const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
+    const resolvedProject = await resolver({
+      projectReference: requestedProjectReference,
+      authToken: input.authToken,
+      apiUrl: input.apiUrl,
+      abortSignal: input.abortSignal,
+    });
+    await input.onRequestedProjectId?.(resolvedProject.projectId);
   }
 
   const forkInput = input.inputAlreadyHasInvocationContext

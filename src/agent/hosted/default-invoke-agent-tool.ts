@@ -70,6 +70,10 @@ import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
 import { buildHostedChildForkInstructions } from "./child-fork-instructions.ts";
+import {
+  type HostedProjectReferenceResolver,
+  resolveHostedProjectReference,
+} from "./project-reference-resolver.ts";
 
 /** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
@@ -173,6 +177,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
       childAgentId: string,
       projectId: string,
     ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
+    resolveProjectReference?: HostedProjectReferenceResolver;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
     /** Require durable child lifecycle even when legacy generic delegation is disabled. */
     requireDurableInvokeAgent?: boolean;
@@ -567,15 +572,32 @@ export async function executeDefaultHostedInvokeAgentTool<
 ): Promise<DefaultHostedInvokeAgentToolResult> {
   let executionSnapshot: ChildRunExecutionSnapshot | null = null;
   const config = options.getConfig();
-  const targetProjectId = input.project_id ?? options.context.projectId;
+  const toolCallId = getToolCallId(executionContext);
+  const abortSignal = getAbortSignal(executionContext);
+  const requestedProjectReference = input.project_reference;
+  let targetProjectId = options.context.projectId;
+  let resolvedInput = input;
+  if (requestedProjectReference) {
+    const resolver = options.resolveProjectReference ?? resolveHostedProjectReference;
+    const resolvedProject = await resolver({
+      projectReference: requestedProjectReference,
+      authToken: options.context.authToken,
+      apiUrl: config.apiUrl,
+      abortSignal,
+    });
+    targetProjectId = resolvedProject.projectId;
+    await applyRequestedProjectId(options, targetProjectId);
+    resolvedInput = {
+      ...input,
+      project_reference: undefined,
+    };
+  }
   const childConfig = await options.resolveChildAgentExecutionConfig?.(
     childAgentId,
     targetProjectId,
   );
-  const toolCallId = getToolCallId(executionContext);
-  const abortSignal = getAbortSignal(executionContext);
   const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-  const configuredInput = applyChildAgentExecutionConfig(input, childConfig);
+  const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
   const forkInput = configuredInput;
   const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
     traceBase: {

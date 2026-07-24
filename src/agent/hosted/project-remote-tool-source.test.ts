@@ -49,9 +49,9 @@ function navigationTool(name: string): ToolDefinition {
     parameters: {
       type: "object",
       properties: {
-        project_id: { type: "string" },
+        project_reference: { type: "string" },
       },
-      required: ["project_id"],
+      required: ["project_reference"],
     },
   };
 }
@@ -347,7 +347,7 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
       tools: [navigationTool("studio_open_project"), projectFileTool("update_file")],
       execute: (toolName) => {
         if (toolName === "studio_open_project") {
-          return { success: true, project_id: "project-2" };
+          return { success: true, project_id: "project-2", slug: "project-two" };
         }
         return { success: true };
       },
@@ -367,7 +367,7 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
     },
   });
 
-  await source.executeTool("studio_open_project", { project_id: "project-2" });
+  await source.executeTool("studio_open_project", { project_reference: "project-two" });
   await source.executeTool("update_file", { path: "AGENTS.md" });
 
   assertEquals(switchedProjects, ["project-2"]);
@@ -721,7 +721,7 @@ Deno.test("createHostedProjectRemoteToolSources applies API and Studio policies 
     ["studio_open_project"],
   );
   await assertRejects(
-    () => sources[0]!.executeTool("studio_open_project", { project_id: "project-2" }),
+    () => sources[0]!.executeTool("studio_open_project", { project_reference: "project-2" }),
     Error,
     'Tool "studio_open_project" is not advertised by remote source "veryfront-mcp"',
   );
@@ -869,7 +869,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
         execute: (toolName, args, context) => {
           executed.push({ toolName, args, context });
           if (config.id === "studio-mcp" && toolName === "studio_open_project") {
-            return { success: true, project_id: "project-2" };
+            return { success: true, project_id: "project-2", slug: "project-two" };
           }
           return { success: true };
         },
@@ -877,7 +877,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
   });
 
   await sources[0]?.executeTool("update_file", { path: "AGENTS.md" });
-  await sources[1]?.executeTool("studio_open_project", { project_id: "project-2" });
+  await sources[1]?.executeTool("studio_open_project", { project_reference: "project-two" });
 
   assertEquals(executed, [
     {
@@ -892,7 +892,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
     },
     {
       toolName: "studio_open_project",
-      args: { prepared: true, project_id: "project-2" },
+      args: { prepared: true, project_reference: "project-two" },
       context: { projectId: "project-1" },
     },
   ]);
