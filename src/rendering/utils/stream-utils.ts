@@ -36,9 +36,9 @@ export interface ProgressTimeoutOptions {
 export interface TimeoutOptions {
   /** Optional caller-owned abort signal that should reject the waiter immediately. */
   signal?: AbortSignal;
-  /** Called when the caller-owned signal aborts, before the waiter rejects. */
+  /** Called when the caller-owned signal aborts; failures do not replace the abort reason. */
   onAbort?: (reason: unknown) => void;
-  /** Called exactly when this helper's local timeout fires. */
+  /** Called when the local timeout fires; failures do not replace the timeout error. */
   onTimeout?: (error: TimeoutError) => void;
 }
 
@@ -79,8 +79,16 @@ export async function withTimeoutThrow<T>(
     timeoutId = setTimeout(() => {
       logger.error("TIMEOUT_HARD operation timed out (throwing)", { label, timeoutMs });
       const error = new TimeoutError(label, timeoutMs);
-      options?.onTimeout?.(error);
-      reject(error);
+      try {
+        options?.onTimeout?.(error);
+      } catch (callbackError) {
+        logger.error("TIMEOUT_HARD onTimeout callback failed", {
+          label,
+          error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+        });
+      } finally {
+        reject(error);
+      }
     }, timeoutMs);
   });
 
@@ -90,8 +98,16 @@ export async function withTimeoutThrow<T>(
       const abort = (): void => {
         const reason = abortSignal.reason ??
           new DOMException("The operation was aborted", "AbortError");
-        options?.onAbort?.(reason);
-        reject(reason);
+        try {
+          options?.onAbort?.(reason);
+        } catch (callbackError) {
+          logger.error("TIMEOUT_HARD onAbort callback failed", {
+            label,
+            error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+          });
+        } finally {
+          reject(reason);
+        }
       };
       if (abortSignal.aborted) {
         abort();

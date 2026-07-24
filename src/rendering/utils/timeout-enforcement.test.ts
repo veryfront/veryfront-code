@@ -84,6 +84,27 @@ describe("Timeout Enforcement", () => {
       assertEquals(observedReason, reason);
     });
 
+    it("preserves the caller abort reason when onAbort throws", async () => {
+      const controller = new AbortController();
+      const reason = new Error("client disconnected");
+      const result = withTimeoutThrow(hang(), 1000, "caller abort", {
+        signal: controller.signal,
+        onAbort: () => {
+          throw new Error("abort callback failed");
+        },
+      });
+
+      controller.abort(reason);
+
+      const error = await assertRejects(
+        () => result,
+        Error,
+        "client disconnected",
+      );
+
+      assertEquals(error, reason);
+    });
+
     it("invokes onTimeout exactly when the local timeout fires", async () => {
       let observedError: TimeoutError | undefined;
 
@@ -99,6 +120,23 @@ describe("Timeout Enforcement", () => {
       );
 
       assertEquals(observedError, error);
+    });
+
+    it("still rejects with TimeoutError when onTimeout throws", async () => {
+      using time = new FakeTime();
+      const result = withTimeoutThrow(hang(), 50, "owned timeout", {
+        onTimeout: () => {
+          throw new Error("timeout callback failed");
+        },
+      });
+      const rejected = assertRejects(
+        () => result,
+        TimeoutError,
+        "owned timeout timed out after 50ms",
+      );
+
+      await time.tickAsync(50);
+      await rejected;
     });
   });
 
@@ -223,26 +261,34 @@ describe("Timeout Enforcement", () => {
     });
 
     it("enforces the hard cap even while progress continues", async () => {
-      const error = await assertRejects(
-        () =>
-          withProgressTimeoutThrow(
-            ({ mark, signal }) =>
-              new Promise<never>((_, reject) => {
-                const intervalId = setInterval(() => mark("still transforming"), 10);
-                signal.addEventListener(
-                  "abort",
-                  () => {
-                    clearInterval(intervalId);
-                    reject(signal.reason);
-                  },
-                  { once: true },
-                );
-              }),
-            { label: "bounded module graph", idleTimeoutMs: 30, hardTimeoutMs: 75 },
-          ),
+      using time = new FakeTime();
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => markStarted = resolve);
+      const result = withProgressTimeoutThrow(
+        ({ mark, signal }) =>
+          new Promise<never>((_, reject) => {
+            const intervalId = setInterval(() => mark("still transforming"), 10);
+            markStarted();
+            signal.addEventListener(
+              "abort",
+              () => {
+                clearInterval(intervalId);
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        { label: "bounded module graph", idleTimeoutMs: 30, hardTimeoutMs: 75 },
+      );
+      const rejected = assertRejects(
+        () => result,
         TimeoutError,
         "bounded module graph timed out after 75ms",
       );
+
+      await started;
+      await time.tickAsync(75);
+      const error = await rejected;
 
       assertEquals((error as TimeoutError).timeoutKind, "hard");
       assertEquals((error as TimeoutError).lastProgress, "still transforming");
