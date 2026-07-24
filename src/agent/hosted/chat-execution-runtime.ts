@@ -2,7 +2,6 @@ import {
   buildChatStreamChunkMessageMetadata,
   extractChatMessageMetadata,
 } from "../../chat/chat-ui-message-helpers.ts";
-import { getLastStreamStep } from "../../chat/final-step-fallback.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
@@ -39,8 +38,6 @@ import {
   type MirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
 import {
-  finalizeHostedDetached,
-  finalizeHostedResponse,
   type FinalizeHostedResponseOptions,
   type HostedDetachedFinalizationState,
   type HostedResponseFinalizationState,
@@ -48,7 +45,6 @@ import {
 import {
   getEmptyHostedFinalizedMessageTerminalError,
   getHostedStreamErrorText,
-  shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
 import type { BuildChatStreamChunkMessageMetadataInput } from "../../chat/chat-ui-message-helpers.ts";
 import {
@@ -58,6 +54,7 @@ import {
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
+import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -627,28 +624,18 @@ async function finalizeResponseFinish(input: {
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
-  const hooks = createHostedChatStreamFinalizationHooks({
-    lifecycleAdapter: input.lifecycleAdapter,
-    cleanup: input.cleanup,
-    streamError: input.lastStreamError,
-    logger: input.logger,
-  });
-  const buildState = createHostedChatFinalizeResponseBuildState({
+  await finalizeHostedChatRun({
+    kind: "response",
     responseMessage: input.responseMessage,
     isAborted: input.isAborted,
+    streamResult: input.streamResult,
     lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
     capturedMessageId: input.capturedMessageId,
     incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-  });
-
-  await finalizeHostedResponse({
-    isAborted: input.isAborted,
-    getFinalStep: () => getLastStreamStep(input.streamResult),
-    buildState,
-    shouldFailEmptyMessage: ({ isAborted, message }) =>
-      shouldFailEmptyHostedFinalizedMessage({ isAborted, message }),
-    ...hooks,
+    cleanup: input.cleanup,
+    logger: input.logger,
+    streamError: input.lastStreamError,
   });
 }
 
@@ -664,27 +651,18 @@ async function finalizeDetachedStreamEnd(input: {
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
-  const hooks = createHostedChatStreamFinalizationHooks({
+  await finalizeHostedChatRun({
+    kind: "detached",
+    isAborted: input.isAborted,
+    mirroredDurableOutput: input.mirroredDurableOutput,
+    streamResult: input.streamResult,
     lifecycleAdapter: input.lifecycleAdapter,
-    cleanup: input.cleanup,
-    streamError: input.lastStreamError,
-    logger: input.logger,
-  });
-  const buildState = createHostedChatFinalizeDetachedBuildState({
     capturedMessageId: input.capturedMessageId,
-    isAborted: input.isAborted,
-    lifecycleAdapter: input.lifecycleAdapter,
     mirroredToolChunkState: input.mirroredToolChunkState,
-    mirroredDurableOutput: input.mirroredDurableOutput,
     incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
-  });
-
-  await finalizeHostedDetached({
-    isAborted: input.isAborted,
-    mirroredDurableOutput: input.mirroredDurableOutput,
-    getFinalStep: () => getLastStreamStep(input.streamResult),
-    buildState,
-    ...hooks,
+    cleanup: input.cleanup,
+    logger: input.logger,
+    streamError: input.lastStreamError,
   });
 }
 
