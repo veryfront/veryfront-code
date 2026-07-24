@@ -9,7 +9,7 @@
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger, sleep } from "#veryfront/utils";
 import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -74,9 +74,81 @@ import {
 
 /** Threshold in ms above which an HTTP module fetch is considered slow */
 const SLOW_HTTP_FETCH_THRESHOLD_MS = 500;
+const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
+const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
 
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
+
+function shouldRetryHttpModuleFetch(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function fetchHttpModule(url: string): Promise<Response> {
+  const urlObj = new URL(url);
+
+  for (let attempt = 1; attempt <= HTTP_MODULE_FETCH_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
+    const startedAt = performance.now();
+
+    try {
+      const response = await withSpan(
+        SpanNames.HTTP_CLIENT_FETCH,
+        () =>
+          fetch(url, {
+            headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+            signal: controller.signal,
+            redirect: "follow",
+          }),
+        {
+          "http.method": "GET",
+          "http.url": url,
+          "http.host": urlObj.host,
+          "http.scheme": urlObj.protocol.replace(":", ""),
+          "esm.package_fetch": true,
+        },
+      );
+
+      const duration = Math.round(performance.now() - startedAt);
+      contentMetricsLog.debug("HTTP_MODULE_FETCH", {
+        url: url.substring(0, 120),
+        host: urlObj.host,
+        duration_ms: duration,
+        status: response.status,
+        slow: duration > SLOW_HTTP_FETCH_THRESHOLD_MS,
+        attempt,
+      });
+
+      if (
+        response.ok || !shouldRetryHttpModuleFetch(response.status) ||
+        attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS
+      ) {
+        return response;
+      }
+
+      httpCacheLog.warn("Transient HTTP module fetch failed, retrying", {
+        url,
+        status: response.status,
+        attempt,
+      });
+      try {
+        await response.body?.cancel();
+      } catch (_) {
+        // A failed response is being discarded before retrying.
+      }
+    } catch (error) {
+      if (attempt === HTTP_MODULE_FETCH_MAX_ATTEMPTS) throw error;
+      httpCacheLog.warn("HTTP module fetch failed, retrying", { url, attempt, error });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    await sleep(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
+  }
+
+  throw BUILD_FAILED.create({ detail: `Failed to fetch ${url}` });
+}
 
 // Re-export for backwards compatibility
 export {
@@ -252,39 +324,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     httpCacheLog.debug("Fetching from network", { url: normalizedUrl });
-
-    const urlObj = new URL(normalizedUrl);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
-
-    const httpFetchStartTime = performance.now();
-
-    const response = await withSpan(
-      SpanNames.HTTP_CLIENT_FETCH,
-      () =>
-        fetch(normalizedUrl, {
-          headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-          signal: controller.signal,
-          redirect: "follow",
-        }),
-      {
-        "http.method": "GET",
-        "http.url": normalizedUrl,
-        "http.host": urlObj.host,
-        "http.scheme": urlObj.protocol.replace(":", ""),
-        "esm.package_fetch": true,
-      },
-    );
-    clearTimeout(timeout);
-
-    const httpFetchDuration = Math.round(performance.now() - httpFetchStartTime);
-    contentMetricsLog.debug("HTTP_MODULE_FETCH", {
-      url: normalizedUrl.substring(0, 120),
-      host: urlObj.host,
-      duration_ms: httpFetchDuration,
-      status: response.status,
-      slow: httpFetchDuration > SLOW_HTTP_FETCH_THRESHOLD_MS,
-    });
+    const response = await fetchHttpModule(normalizedUrl);
 
     if (!response.ok) {
       throw BUILD_FAILED.create({ detail: `Failed to fetch ${normalizedUrl}: ${response.status}` });

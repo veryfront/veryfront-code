@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache.test */
 
-import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
@@ -58,6 +58,72 @@ function createMemoryBackend(store: Map<string, string>): CacheBackend {
 }
 
 describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("retries transient esm.sh failures before failing a render", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-esm-retry-" });
+    const originalFetch = globalThis.fetch;
+    const moduleUrl = "https://esm.sh/react@19.0.0/jsx-runtime?target=es2022";
+    let fetchCount = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = (() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return Promise.resolve(new Response("upstream failure", { status: 502 }));
+      }
+      return Promise.resolve(
+        new Response("export const jsx = () => null;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const cachedUrl = await cacheModuleToLocal(moduleUrl, tempDir, "19.0.0");
+
+      assert(cachedUrl.startsWith("file://"));
+      assertEquals(fetchCount, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not retry permanent HTTP module failures", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-esm-permanent-failure-" });
+    const originalFetch = globalThis.fetch;
+    let fetchCount = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as typeof fetch;
+
+    try {
+      await assertRejects(() => cacheModuleToLocal("https://esm.sh/missing-package", tempDir));
+      assertEquals(fetchCount, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("preserves and shares canonical React versions across project import maps", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-react-singleton-cache-" });
     const originalFetch = globalThis.fetch;
