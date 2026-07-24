@@ -25,9 +25,6 @@ import {
   generateOperationId,
   type OpenAPIPathDescription,
 } from "./path-utils.ts";
-import { logger as baseLogger } from "#veryfront/utils";
-
-const logger = baseLogger.component("open-api");
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -45,11 +42,12 @@ interface GenerateSpecOptions {
 }
 
 export class OpenAPISpecGenerationError extends Error {
-  constructor(pattern: string, reason: string) {
+  constructor(pattern: string, reason: string, options?: ErrorOptions) {
     super(
       `Cannot generate a complete OpenAPI specification for route ${
         JSON.stringify(pattern)
       }: ${reason}.`,
+      options,
     );
     this.name = "OpenAPISpecGenerationError";
   }
@@ -81,6 +79,7 @@ export async function generateOpenAPISpec(
     entry: RouteEntry;
     openApiRoute: OpenAPIPathDescription;
   }> = [];
+  const routePatternsByShape = new Map<string, string>();
 
   const registeredRoutes = [...router.routes].sort(([left], [right]) => left.localeCompare(right));
   for (const [pattern, entry] of registeredRoutes) {
@@ -92,6 +91,17 @@ export async function generateOpenAPISpec(
         analysis.reason ?? "the route cannot be represented",
       );
     }
+
+    const routeShape = analysis.description.path.replace(/\{[^{}]+\}/g, "{}");
+    const conflictingPattern = routePatternsByShape.get(routeShape);
+    if (conflictingPattern !== undefined) {
+      throw new OpenAPISpecGenerationError(
+        pattern,
+        `route shape collides with ${JSON.stringify(conflictingPattern)}`,
+      );
+    }
+    routePatternsByShape.set(routeShape, pattern);
+
     routesToDocument.push({ pattern, entry, openApiRoute: analysis.description });
   }
 
@@ -109,7 +119,11 @@ export async function generateOpenAPISpec(
 
       spec.paths[openApiRoute.path] = pathItem;
     } catch (error) {
-      logger.warn(`Failed to process route ${pattern}:`, { error: String(error) });
+      throw new OpenAPISpecGenerationError(
+        pattern,
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
     }
   }
 

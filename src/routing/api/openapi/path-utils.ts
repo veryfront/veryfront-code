@@ -60,20 +60,33 @@ export function analyzeOpenAPIPath(pattern: string): OpenAPIPathAnalysis {
   const convertedSegments: string[] = [];
 
   for (const segment of pattern.split("/")) {
+    if (segment.includes("{") || segment.includes("}")) {
+      return {
+        description: null,
+        reason: "literal braces conflict with OpenAPI path-template syntax",
+      };
+    }
+
     const parameter = parseRouteParameterSegment(segment);
     if (!parameter) {
-      if (segment.includes("{") || segment.includes("}")) {
+      if (segment.includes("[") || segment.includes("]")) {
         return {
           description: null,
-          reason: "literal braces conflict with OpenAPI path-template syntax",
+          reason: `malformed bracket syntax in route segment ${JSON.stringify(segment)}`,
         };
       }
       convertedSegments.push(segment);
       continue;
     }
 
+    if (seen.has(parameter.name)) {
+      return {
+        description: null,
+        reason: `duplicate route parameter ${JSON.stringify(parameter.name)}`,
+      };
+    }
+
     convertedSegments.push(`{${parameter.name}}${parameter.suffix}`);
-    if (seen.has(parameter.name)) continue;
     seen.add(parameter.name);
     params.push({
       name: parameter.name,

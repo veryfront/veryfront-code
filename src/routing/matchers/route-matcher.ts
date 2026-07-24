@@ -37,11 +37,13 @@ export function matchRouteWithSpecificity(
 
   const patternMatch = extractRoutePatternMatch(compiled, match);
   const params: Record<string, string | string[]> = {};
+  const paramNames = route.paramNames ??
+    compiled.parameters.map((parameter) => parameter.name);
 
-  for (const [index, parameter] of compiled.parameters.entries()) {
-    const name = parameter.name;
+  for (const [index, name] of paramNames.entries()) {
+    const parameter = compiled.parameters[index];
     const value = match[index + 1] ?? "";
-    const decoded = parameter.kind !== "dynamic"
+    const decoded = parameter && parameter.kind !== "dynamic"
       ? decodeCatchAllValue(value)
       : safeDecodeParam(value);
     Object.defineProperty(params, name, {
