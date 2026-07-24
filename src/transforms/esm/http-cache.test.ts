@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache.test */
 
-import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
@@ -131,14 +137,17 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }) as typeof fetch;
 
     await withIsolatedHttpCache("vf-esm-permanent-failure-", mockFetch, async (tempDir) => {
-      const error = await assertRejects(() =>
-        cacheModuleToLocal(
-          "https://esm.sh/missing-package?access_token=super-secret",
-          tempDir,
-        )
+      const error = await assertRejects(
+        () =>
+          cacheModuleToLocal(
+            "https://esm.sh/missing-package?access_token=super-secret",
+            tempDir,
+          ),
+        Error,
       );
       assertEquals(fetchCount, 1);
       assertEquals(bodyCancelled, true);
+      assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
     });
   });
@@ -202,9 +211,13 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }) as typeof fetch;
 
     await withIsolatedHttpCache("vf-esm-network-failure-", mockFetch, async (tempDir) => {
-      const error = await assertRejects(() => cacheModuleToLocal(secretUrl, tempDir));
+      const error = await assertRejects(
+        () => cacheModuleToLocal(secretUrl, tempDir),
+        Error,
+      );
 
       assertEquals(fetchCount, 3);
+      assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
     });
   });
@@ -227,12 +240,14 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }) as typeof fetch;
 
     await withIsolatedHttpCache("vf-esm-exhausted-retry-", mockFetch, async (tempDir) => {
-      const error = await assertRejects(() =>
-        cacheModuleToLocal("https://esm.sh/exhausted", tempDir)
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/exhausted", tempDir),
+        Error,
       );
 
       assertEquals(fetchCount, 3);
       assertEquals(cancelledBodies, 3);
+      assertInstanceOf(error, Error);
       assert(error.message.includes("503"));
     });
   });
