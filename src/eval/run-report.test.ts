@@ -71,6 +71,31 @@ function createDiscoveredEval(): DiscoveredEval {
   };
 }
 
+function createSuiteEval(
+  id: string,
+  filePath: string,
+  target: string,
+  name = id,
+): DiscoveredEval {
+  return {
+    ...createDiscoveredEval(),
+    id,
+    name,
+    filePath,
+    exportName: sanitizeTestExportName(id),
+    definition: {
+      ...createDiscoveredEval().definition,
+      id,
+      name,
+      target,
+    },
+  };
+}
+
+function sanitizeTestExportName(id: string): string {
+  return id.replace(/^eval:/, "").replace(/[^A-Za-z0-9_]+/g, "_");
+}
+
 function createReport(
   overrides: Partial<EvalReport> = {},
 ): EvalReport {
@@ -351,6 +376,7 @@ describe("runEvalReport single mode", () => {
     }, adapters);
 
     assertEquals(outcome.kind, "single");
+    if (outcome.kind !== "single") throw new Error("expected single outcome");
     assertEquals(outcome.exitCode, 0);
     assertEquals(outcome.summary, {
       runId: "evalrun_20260621_010203004_abcdef12",
@@ -484,6 +510,7 @@ describe("runEvalReport single mode", () => {
     }, adapters);
 
     assertEquals(outcome.exitCode, 1);
+    if (outcome.kind !== "single") throw new Error("expected single outcome");
     assertEquals(outcome.report.summary.failed, 1);
     assertEquals(outcome.baseline?.regressed, true);
   });
@@ -522,6 +549,7 @@ describe("runEvalReport single mode", () => {
       provenance,
     }, adapters);
 
+    if (outcome.kind !== "single") throw new Error("expected single outcome");
     assertEquals(outcome.report.summary.failed, 0);
     assertEquals(outcome.baseline?.regressed, true);
     assertEquals(outcome.exitCode, 1);
@@ -612,5 +640,518 @@ describe("runEvalReport single mode", () => {
     assertEquals(bestEffort.writes.length, 3);
     assertEquals(required.writes.length, 3);
     assertEquals(required.events.includes("export"), true);
+  });
+});
+
+describe("runEvalReport suite mode", () => {
+  it("runs evals sorted by id and file path with sequential child ids, artifacts, and output events", async () => {
+    const beta = createSuiteEval("eval:beta", "/repo/evals/beta.eval.ts", "agent:beta", "Beta");
+    const alphaB = createSuiteEval(
+      "eval:alpha",
+      "/repo/evals/z-alpha.eval.ts",
+      "agent:missing",
+      "Alpha missing",
+    );
+    const alphaA = createSuiteEval(
+      "eval:alpha",
+      "/repo/evals/a-alpha.eval.ts",
+      "agent:alpha",
+      "Alpha",
+    );
+    const gamma = createSuiteEval("eval:gamma", "/external/gamma.eval.ts", "agent:gamma", "Gamma");
+    alphaA.definition.tags = ["alpha-default"];
+    alphaA.definition.metadata = { team: "evals" };
+    beta.definition.tags = ["beta-default"];
+    beta.definition.metadata = { priority: "high" };
+    const events: string[] = [];
+    const writes: WriteCall[] = [];
+    const targetRuns: TargetRun[] = [];
+    const exportConfigs: Array<EvalReportExportConfig | undefined> = [];
+    const betaFailure = createFailingReport();
+    const reportById = new Map([
+      ["eval:alpha", createReport({ definitionId: "eval:alpha", target: "agent:alpha" })],
+      ["eval:beta", { ...betaFailure, definitionId: "eval:beta", target: "agent:beta" }],
+      [
+        "eval:gamma",
+        createReport({
+          definitionId: "eval:gamma",
+          target: "agent:gamma",
+          records: [],
+          summary: {
+            records: 0,
+            passed: 0,
+            failed: 0,
+            passRate: 1,
+            metrics: [],
+            failedExamples: [],
+          },
+        }),
+      ],
+    ]);
+
+    const outcome = await runEvalReport({
+      kind: "suite",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      datasetBase: "/repo/data",
+      reportDir: "suite",
+      junit: "suite/junit.xml",
+      evalItems: [beta, alphaB, gamma, alphaA],
+      exportConfig: {
+        registry,
+        exporterIds: ["json"],
+        required: true,
+        context: {
+          projectReference: "project-a",
+        },
+      },
+      provenance,
+    }, {
+      targets: {
+        resolveTarget: (evalItem: DiscoveredEval) => {
+          events.push(`resolve:${evalItem.name}`);
+          if (evalItem.name === "Alpha missing") {
+            throw new Error('Agent "missing" was not found.');
+          }
+          return {
+            targetKind: evalItem.definition.targetKind,
+            target: evalItem.definition.target,
+            targetAdapter: { id: evalItem.definition.target },
+          };
+        },
+        runEval: (evalItem: DiscoveredEval, runOptions: TargetRun) => {
+          events.push(`target:${evalItem.name}`);
+          targetRuns.push(runOptions);
+          const report = reportById.get(evalItem.id);
+          if (!report) throw new Error(`missing report for ${evalItem.id}`);
+          return Promise.resolve({
+            ...report,
+            runId: runOptions.runId,
+            targetKind: runOptions.targetKind,
+            target: runOptions.target,
+            records: report.records.map((record) => ({ ...record, evalId: evalItem.id })),
+          });
+        },
+      },
+      artifacts: {
+        readTextFile: (path: string) => {
+          events.push(`read:${path}`);
+          return Promise.resolve("");
+        },
+        writeTextFileEnsuringDir: (path: string, content: string) => {
+          events.push(`write:${path}`);
+          writes.push({ path, content });
+          return Promise.resolve();
+        },
+      },
+      billing: {
+        runWithGatewayBillingGroup: async (
+          billingGroupId: string,
+          operation: () => Promise<EvalReport>,
+        ) => {
+          events.push(`billing:start:${billingGroupId}`);
+          const report = await operation();
+          events.push(`billing:end:${billingGroupId}`);
+          return report;
+        },
+      },
+      exporters: {
+        exportReport: (report: EvalReport, config?: EvalReportExportConfig) => {
+          events.push(`export:${report.definitionId}`);
+          exportConfigs.push(config);
+          if (report.definitionId === "eval:gamma") {
+            return Promise.resolve({
+              ...report,
+              exports: [{ exporterId: "json", ok: false, error: "export unavailable" }],
+            });
+          }
+          return Promise.resolve({
+            ...report,
+            exports: [{ exporterId: "json", ok: true }],
+          });
+        },
+      },
+      clock: {
+        now: () => now,
+        createSuffix: () => "abcdef12",
+      },
+    });
+
+    assertEquals(outcome.kind, "suite");
+    if (outcome.kind !== "suite") throw new Error("expected suite outcome");
+    assertEquals(outcome.exitCode, 1);
+    assertEquals(outcome.artifacts, {
+      directory: "suite",
+      summary: "suite/summary.json",
+      results: "suite/results.jsonl",
+      reportMarkdown: "suite/report.md",
+    });
+    assertEquals(outcome.outputHints, {
+      reportDirectory: "suite",
+      reportMarkdown: "suite/report.md",
+      junit: "suite/junit.xml",
+      children: outcome.outputHints.children,
+    });
+    assertEquals(outcome.outputHints.children, [
+      {
+        kind: "report",
+        evalId: "eval:alpha",
+        reportDirectory: "suite/001-alpha",
+        report: {
+          ...reportById.get("eval:alpha")!,
+          runId: "evalrun_20260621_010203004_abcdef12_001",
+          targetKind: "agent",
+          target: "agent:alpha",
+          records: reportById.get("eval:alpha")!.records.map((record) => ({
+            ...record,
+            evalId: "eval:alpha",
+          })),
+          exports: [{ exporterId: "json", ok: true }],
+        },
+      },
+      {
+        kind: "error",
+        evalId: "eval:alpha",
+        error: 'Agent "missing" was not found.',
+      },
+      {
+        kind: "report",
+        evalId: "eval:beta",
+        reportDirectory: "suite/003-beta",
+        report: {
+          ...reportById.get("eval:beta")!,
+          runId: "evalrun_20260621_010203004_abcdef12_003",
+          targetKind: "agent",
+          target: "agent:beta",
+          records: reportById.get("eval:beta")!.records.map((record) => ({
+            ...record,
+            evalId: "eval:beta",
+          })),
+          exports: [{ exporterId: "json", ok: true }],
+        },
+      },
+      {
+        kind: "report",
+        evalId: "eval:gamma",
+        reportDirectory: "suite/004-gamma",
+        report: {
+          ...reportById.get("eval:gamma")!,
+          runId: "evalrun_20260621_010203004_abcdef12_004",
+          targetKind: "agent",
+          target: "agent:gamma",
+          records: [],
+          exports: [{ exporterId: "json", ok: false, error: "export unavailable" }],
+        },
+      },
+    ]);
+    assertEquals(outcome.suite, {
+      kind: "eval-suite-summary",
+      runId: "evalrun_20260621_010203004_abcdef12",
+      startedAt: "2026-06-21T01:02:03.004Z",
+      endedAt: "2026-06-21T01:02:03.004Z",
+      total: 4,
+      passed: 1,
+      failed: 3,
+      results: [
+        {
+          id: "eval:alpha",
+          name: "Alpha",
+          target: "agent:alpha",
+          status: "passed",
+          artifacts: {
+            directory: "suite/001-alpha",
+            summary: "suite/001-alpha/summary.json",
+            results: "suite/001-alpha/results.jsonl",
+            reportMarkdown: "suite/001-alpha/report.md",
+          },
+          summary: {
+            runId: "evalrun_20260621_010203004_abcdef12_001",
+            evalId: "eval:alpha",
+            target: "agent:alpha",
+            records: 1,
+            passed: 1,
+            failed: 0,
+            passRate: 1,
+            metrics: createReport().summary.metrics,
+          },
+        },
+        {
+          id: "eval:alpha",
+          name: "Alpha missing",
+          target: "agent:missing",
+          status: "error",
+          artifacts: {
+            directory: "suite/002-alpha",
+            summary: "suite/002-alpha/summary.json",
+            results: "suite/002-alpha/results.jsonl",
+            reportMarkdown: "suite/002-alpha/report.md",
+          },
+          error: 'Agent "missing" was not found.',
+        },
+        {
+          id: "eval:beta",
+          name: "Beta",
+          target: "agent:beta",
+          status: "failed",
+          artifacts: {
+            directory: "suite/003-beta",
+            summary: "suite/003-beta/summary.json",
+            results: "suite/003-beta/results.jsonl",
+            reportMarkdown: "suite/003-beta/report.md",
+          },
+          summary: {
+            runId: "evalrun_20260621_010203004_abcdef12_003",
+            evalId: "eval:beta",
+            target: "agent:beta",
+            records: 1,
+            passed: 0,
+            failed: 1,
+            passRate: 0,
+            metrics: createFailingReport().summary.metrics,
+          },
+        },
+        {
+          id: "eval:gamma",
+          name: "Gamma",
+          target: "agent:gamma",
+          status: "failed",
+          artifacts: {
+            directory: "suite/004-gamma",
+            summary: "suite/004-gamma/summary.json",
+            results: "suite/004-gamma/results.jsonl",
+            reportMarkdown: "suite/004-gamma/report.md",
+          },
+          summary: {
+            runId: "evalrun_20260621_010203004_abcdef12_004",
+            evalId: "eval:gamma",
+            target: "agent:gamma",
+            records: 0,
+            passed: 0,
+            failed: 0,
+            passRate: 1,
+            metrics: [],
+          },
+        },
+      ],
+    });
+    assertEquals(targetRuns.map((run) => run.runId), [
+      "evalrun_20260621_010203004_abcdef12_001",
+      "evalrun_20260621_010203004_abcdef12_003",
+      "evalrun_20260621_010203004_abcdef12_004",
+    ]);
+    assertEquals(targetRuns.map((run) => run.metadata), [
+      { provenance },
+      { provenance },
+      { provenance },
+    ]);
+    assertEquals(events, [
+      "resolve:Alpha",
+      "billing:start:evalrun_20260621_010203004_abcdef12_001",
+      "target:Alpha",
+      "billing:end:evalrun_20260621_010203004_abcdef12_001",
+      "export:eval:alpha",
+      "write:suite/001-alpha/summary.json",
+      "write:suite/001-alpha/results.jsonl",
+      "write:suite/001-alpha/report.md",
+      "resolve:Alpha missing",
+      "resolve:Beta",
+      "billing:start:evalrun_20260621_010203004_abcdef12_003",
+      "target:Beta",
+      "billing:end:evalrun_20260621_010203004_abcdef12_003",
+      "export:eval:beta",
+      "write:suite/003-beta/summary.json",
+      "write:suite/003-beta/results.jsonl",
+      "write:suite/003-beta/report.md",
+      "resolve:Gamma",
+      "billing:start:evalrun_20260621_010203004_abcdef12_004",
+      "target:Gamma",
+      "billing:end:evalrun_20260621_010203004_abcdef12_004",
+      "export:eval:gamma",
+      "write:suite/004-gamma/summary.json",
+      "write:suite/004-gamma/results.jsonl",
+      "write:suite/004-gamma/report.md",
+      "write:suite/summary.json",
+      "write:suite/results.jsonl",
+      "write:suite/report.md",
+      "write:suite/junit.xml",
+    ]);
+    assertEquals(exportConfigs.map((config) => config?.context), [
+      {
+        evalId: "eval:alpha",
+        sourcePath: "evals/a-alpha.eval.ts",
+        reportPath: "suite/001-alpha/summary.json",
+        tags: ["alpha-default"],
+        metadata: { team: "evals" },
+        projectReference: "project-a",
+      },
+      {
+        evalId: "eval:beta",
+        sourcePath: "evals/beta.eval.ts",
+        reportPath: "suite/003-beta/summary.json",
+        tags: ["beta-default"],
+        metadata: { priority: "high" },
+        projectReference: "project-a",
+      },
+      {
+        evalId: "eval:gamma",
+        sourcePath: "/external/gamma.eval.ts",
+        reportPath: "suite/004-gamma/summary.json",
+        projectReference: "project-a",
+      },
+    ]);
+    assertEquals(
+      writes.find((write) => write.path === "suite/004-gamma/results.jsonl")?.content,
+      "",
+    );
+    assertEquals(
+      writes.find((write) => write.path === "suite/results.jsonl")?.content,
+      `${outcome.suite.results.map((result) => JSON.stringify(result)).join("\n")}\n`,
+    );
+    assertEquals(
+      writes.find((write) => write.path === "suite/report.md")?.content,
+      `# Eval suite report
+
+Run: \`evalrun_20260621_010203004_abcdef12\`
+Result: \`1/4 passed\`
+
+| Eval | Status | Records | Error |
+| --- | --- | --- | --- |
+| eval:alpha | passed | 1/1 |  |
+| eval:alpha | error | n/a | Agent "missing" was not found. |
+| eval:beta | failed | 0/1 |  |
+| eval:gamma | failed | 0/0 |  |
+`,
+    );
+    assertEquals(
+      writes.find((write) => write.path === "suite/junit.xml")?.content,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="3" skipped="0">
+  <testsuite name="veryfront eval suite" tests="4" failures="3" skipped="0">
+    <testcase classname="eval" name="eval:alpha" />
+    <testcase classname="eval" name="eval:alpha">
+      <failure message="Agent &quot;missing&quot; was not found.">Agent &quot;missing&quot; was not found.</failure>
+    </testcase>
+    <testcase classname="eval" name="eval:beta">
+      <failure message="1 record(s) failed">1 record(s) failed</failure>
+    </testcase>
+    <testcase classname="eval" name="eval:gamma">
+      <failure message="A required eval export failed.">A required eval export failed.</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
+`,
+    );
+  });
+
+  it("writes an empty suite JSONL file without a trailing newline", async () => {
+    const writes: WriteCall[] = [];
+
+    const outcome = await runEvalReport({
+      kind: "suite",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      reportDir: "empty-suite",
+      evalItems: [],
+      provenance,
+    }, {
+      ...createAdapters().adapters,
+      artifacts: {
+        readTextFile: () => Promise.resolve(""),
+        writeTextFileEnsuringDir: (path: string, content: string) => {
+          writes.push({ path, content });
+          return Promise.resolve();
+        },
+      },
+    });
+
+    assertEquals(outcome.exitCode, 0);
+    if (outcome.kind !== "suite") throw new Error("expected suite outcome");
+    assertEquals(outcome.suite.total, 0);
+    assertEquals(writes.find((write) => write.path === "empty-suite/results.jsonl")?.content, "");
+  });
+
+  it("defaults the suite report directory to the parent run id without a label suffix", async () => {
+    const outcome = await runEvalReport({
+      kind: "suite",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItems: [],
+      provenance,
+    }, {
+      ...createAdapters().adapters,
+      artifacts: {
+        readTextFile: () => Promise.resolve(""),
+        writeTextFileEnsuringDir: () => Promise.resolve(),
+      },
+      clock: {
+        now: () => now,
+        createSuffix: () => "abcdef12",
+      },
+    });
+
+    assertEquals(outcome.artifacts, {
+      directory: ".veryfront/evals/20260621_010203004_abcdef12",
+      summary: ".veryfront/evals/20260621_010203004_abcdef12/summary.json",
+      results: ".veryfront/evals/20260621_010203004_abcdef12/results.jsonl",
+      reportMarkdown: ".veryfront/evals/20260621_010203004_abcdef12/report.md",
+    });
+  });
+
+  it("preserves caller-resolved child export context fields", async () => {
+    const evalItem = createSuiteEval(
+      "eval:context",
+      "/repo/evals/context.eval.ts",
+      "agent:context",
+      "Context",
+    );
+    evalItem.definition.tags = ["default-tag"];
+    evalItem.definition.metadata = { owner: "definition-owner" };
+    const { adapters, exportConfigs } = createAdapters({
+      report: createReport({ definitionId: "eval:context", target: "agent:context" }),
+    });
+
+    await runEvalReport({
+      kind: "suite",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      reportDir: "suite-context",
+      evalItems: [evalItem],
+      exportConfig: {
+        registry,
+        exporterIds: ["json"],
+        required: false,
+        context: {
+          evalId: "caller-eval",
+          sourcePath: "caller/source.eval.ts",
+          reportPath: "caller/report.json",
+          tags: ["caller-tag"],
+          metadata: { owner: "caller-owner" },
+        },
+      },
+      provenance,
+    }, {
+      ...adapters,
+      targets: {
+        ...adapters.targets,
+        resolveTarget: () => ({
+          targetKind: "agent",
+          target: "agent:context",
+          targetAdapter: {},
+        }),
+      },
+    });
+
+    assertEquals(exportConfigs, [{
+      registry,
+      exporterIds: ["json"],
+      required: false,
+      context: {
+        evalId: "caller-eval",
+        sourcePath: "caller/source.eval.ts",
+        reportPath: "caller/report.json",
+        tags: ["caller-tag"],
+        metadata: { owner: "caller-owner" },
+      },
+    }]);
   });
 });

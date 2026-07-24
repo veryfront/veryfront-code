@@ -54,7 +54,21 @@ type EvalRunReportOutputHints = {
   report?: string;
   junit?: string;
   baselineWritten?: string;
+  children?: EvalRunReportChildOutputHint[];
 };
+
+type EvalRunReportChildOutputHint =
+  | {
+    kind: "report";
+    evalId: string;
+    reportDirectory: string;
+    report: EvalReport;
+  }
+  | {
+    kind: "error";
+    evalId: string;
+    error: string;
+  };
 
 type EvalRunReportSingleInput = {
   kind: "single";
@@ -77,7 +91,19 @@ type EvalRunReportSingleInput = {
   maxOutputTokens?: number;
 };
 
-type EvalRunReportInput = EvalRunReportSingleInput;
+type EvalRunReportSuiteInput = {
+  kind: "suite";
+  projectDir: string;
+  frameworkVersion: string;
+  datasetBase?: string;
+  reportDir?: string;
+  junit?: string;
+  exportConfig?: EvalReportExportConfig;
+  provenance?: EvalRunProvenance;
+  evalItems: DiscoveredEval[];
+};
+
+type EvalRunReportInput = EvalRunReportSingleInput | EvalRunReportSuiteInput;
 
 type EvalRunTargetOptions = {
   baseDir: string;
@@ -93,6 +119,11 @@ type EvalRunTargetOptions = {
 
 type EvalRunReportTargetAdapters = {
   runEval(evalItem: DiscoveredEval, options: EvalRunTargetOptions): Promise<EvalReport>;
+  resolveTarget?(
+    evalItem: DiscoveredEval,
+  ):
+    | Promise<Pick<EvalRunTargetOptions, "targetKind" | "target" | "targetAdapter">>
+    | Pick<EvalRunTargetOptions, "targetKind" | "target" | "targetAdapter">;
 };
 
 type EvalRunReportArtifactAdapters = {
@@ -132,6 +163,40 @@ type EvalRunReportOutcome = {
   artifacts: EvalArtifactPaths;
   exitCode: 0 | 1;
   outputHints: EvalRunReportOutputHints;
+} | {
+  kind: "suite";
+  suite: EvalSuiteSummary;
+  artifacts: EvalSuiteArtifactPaths;
+  exitCode: 0 | 1;
+  outputHints: EvalRunReportOutputHints;
+};
+
+type EvalSuiteArtifactPaths = {
+  directory: string;
+  summary: string;
+  results: string;
+  reportMarkdown: string;
+};
+
+type EvalSuiteResult = {
+  id: string;
+  name: string;
+  target: string;
+  status: "passed" | "failed" | "error";
+  artifacts?: EvalArtifactPaths;
+  summary?: CliEvalSummary;
+  error?: string;
+};
+
+type EvalSuiteSummary = {
+  kind: "eval-suite-summary";
+  runId: string;
+  startedAt: string;
+  endedAt: string;
+  total: number;
+  passed: number;
+  failed: number;
+  results: EvalSuiteResult[];
 };
 
 function createEvalReportDirTimestamp(runId: string): string {
@@ -161,6 +226,26 @@ function createEvalArtifactPaths(reportDir: string): EvalArtifactPaths {
   };
 }
 
+function createEvalSuiteArtifactPaths(reportDir: string): EvalSuiteArtifactPaths {
+  return {
+    directory: reportDir,
+    summary: join(reportDir, "summary.json"),
+    results: join(reportDir, "results.jsonl"),
+    reportMarkdown: join(reportDir, "report.md"),
+  };
+}
+
+function createEvalSuiteChildDirectory(
+  suiteDirectory: string,
+  index: number,
+  evalId: string,
+): string {
+  return join(
+    suiteDirectory,
+    `${String(index + 1).padStart(3, "0")}-${sanitizeEvalReportDirLabel(evalId)}`,
+  );
+}
+
 function sanitizeModelIdForPath(model: string): string {
   return model.trim().replace(/[^A-Za-z0-9._-]+/g, "__").replace(/^_+|_+$/g, "") || "model";
 }
@@ -176,6 +261,12 @@ function summarizeReportForCli(report: EvalReport): CliEvalSummary {
     passRate: report.summary.passRate,
     metrics: report.summary.metrics,
   };
+}
+
+function sortEvals(evals: DiscoveredEval[]): DiscoveredEval[] {
+  return [...evals].sort((left, right) =>
+    left.id.localeCompare(right.id) || left.filePath.localeCompare(right.filePath)
+  );
 }
 
 function createSummaryArtifact(
@@ -450,6 +541,68 @@ async function writeEvalArtifacts(
   );
 }
 
+function createEvalSuiteResultsJsonl(summary: EvalSuiteSummary): string {
+  if (summary.results.length === 0) return "";
+  return `${summary.results.map((result) => JSON.stringify(result)).join("\n")}\n`;
+}
+
+function createEvalSuiteMarkdown(summary: EvalSuiteSummary): string {
+  const rows = summary.results.map((result) =>
+    `| ${markdownCell(result.id)} | ${result.status} | ${
+      result.summary ? `${result.summary.passed}/${result.summary.records}` : "n/a"
+    } | ${result.error ? markdownCell(result.error) : ""} |`
+  );
+  return [
+    "# Eval suite report",
+    "",
+    `Run: \`${markdownCell(summary.runId)}\``,
+    `Result: \`${summary.passed}/${summary.total} passed\``,
+    "",
+    "| Eval | Status | Records | Error |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+    "",
+  ].join("\n");
+}
+
+function createEvalSuiteJunitXml(summary: EvalSuiteSummary): string {
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites tests="${summary.total}" failures="${summary.failed}" skipped="0">`,
+    `  <testsuite name="veryfront eval suite" tests="${summary.total}" failures="${summary.failed}" skipped="0">`,
+  ];
+
+  for (const result of summary.results) {
+    const attrs = `classname="eval" name="${xmlEscape(result.id)}"`;
+    if (result.status === "passed") {
+      lines.push(`    <testcase ${attrs} />`);
+      continue;
+    }
+
+    const message = result.error ??
+      (result.summary?.failed
+        ? `${result.summary.failed} record(s) failed`
+        : "A required eval export failed.");
+    lines.push(`    <testcase ${attrs}>`);
+    lines.push(`      <failure message="${xmlEscape(message)}">${xmlEscape(message)}</failure>`);
+    lines.push("    </testcase>");
+  }
+
+  lines.push("  </testsuite>");
+  lines.push("</testsuites>");
+  return `${lines.join("\n")}\n`;
+}
+
+async function writeEvalSuiteArtifacts(
+  summary: EvalSuiteSummary,
+  paths: EvalSuiteArtifactPaths,
+  artifacts: EvalRunReportArtifactAdapters,
+): Promise<void> {
+  await artifacts.writeTextFileEnsuringDir(paths.summary, JSON.stringify(summary, null, 2));
+  await artifacts.writeTextFileEnsuringDir(paths.results, createEvalSuiteResultsJsonl(summary));
+  await artifacts.writeTextFileEnsuringDir(paths.reportMarkdown, createEvalSuiteMarkdown(summary));
+}
+
 function createEvalExitCode(
   report: EvalReport,
   baseline?: EvalReportComparison,
@@ -473,6 +626,19 @@ function createOutputHints(
   };
 }
 
+function createSuiteOutputHints(
+  paths: EvalSuiteArtifactPaths,
+  input: EvalRunReportSuiteInput,
+  children: EvalRunReportChildOutputHint[],
+): EvalRunReportOutputHints {
+  return {
+    reportDirectory: paths.directory,
+    reportMarkdown: paths.reportMarkdown,
+    ...(input.junit ? { junit: input.junit } : {}),
+    children,
+  };
+}
+
 function createRunId(clock: EvalRunReportClock | undefined): string {
   return createEvalRunId(clock?.now?.() ?? new Date(), clock?.createSuffix);
 }
@@ -490,10 +656,12 @@ function displaySourcePath(filePath: string, projectDir: string): string {
   return normalized;
 }
 
-function createMetadata(input: EvalRunReportSingleInput): EvalReport["metadata"] {
+function createMetadata(
+  input: EvalRunReportSingleInput | EvalRunReportSuiteInput,
+): EvalReport["metadata"] {
   return {
     ...(input.provenance ? { provenance: input.provenance } : {}),
-    ...(input.selectedModel ? { model: input.selectedModel } : {}),
+    ...(input.kind === "single" && input.selectedModel ? { model: input.selectedModel } : {}),
   };
 }
 
@@ -508,18 +676,146 @@ async function readBaselineComparison(
 }
 
 function createEvalReportExportConfig(
-  input: EvalRunReportSingleInput,
+  input: Pick<EvalRunReportSingleInput, "projectDir" | "report" | "exportConfig"> & {
+    evalItem: DiscoveredEval;
+  },
   artifactPaths: EvalArtifactPaths,
 ): EvalReportExportConfig | undefined {
   if (!input.exportConfig) return undefined;
+  const tags = input.evalItem.definition.tags ?? [];
+  const metadata = input.evalItem.definition.metadata ?? {};
   return {
     ...input.exportConfig,
     context: {
       evalId: input.evalItem.id,
       sourcePath: displaySourcePath(input.evalItem.filePath, input.projectDir),
       reportPath: input.report ?? artifactPaths.summary,
+      ...(tags.length > 0 ? { tags } : {}),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       ...input.exportConfig.context,
     },
+  };
+}
+
+function createEvalSuiteSummary(
+  runId: string,
+  startedAt: Date,
+  endedAt: Date,
+  results: EvalSuiteResult[],
+): EvalSuiteSummary {
+  const passed = results.filter((result) => result.status === "passed").length;
+  return {
+    kind: "eval-suite-summary",
+    runId,
+    startedAt: startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    total: results.length,
+    passed,
+    failed: results.length - passed,
+    results,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function runEvalReportSuite(
+  input: EvalRunReportSuiteInput,
+  adapters: EvalRunReportAdapters,
+): Promise<EvalRunReportOutcome> {
+  const startedAt = adapters.clock?.now?.() ?? new Date();
+  const runId = createEvalRunId(startedAt, adapters.clock?.createSuffix);
+  const artifacts = createEvalSuiteArtifactPaths(
+    input.reportDir ?? createDefaultEvalReportDir(runId),
+  );
+  const metadata = createMetadata(input);
+  const results: EvalSuiteResult[] = [];
+  const children: EvalRunReportChildOutputHint[] = [];
+
+  for (const [index, evalItem] of sortEvals(input.evalItems).entries()) {
+    const childRunId = `${runId}_${String(index + 1).padStart(3, "0")}`;
+    const childArtifacts = createEvalArtifactPaths(
+      createEvalSuiteChildDirectory(artifacts.directory, index, evalItem.id),
+    );
+
+    try {
+      if (!adapters.targets.resolveTarget) {
+        throw new Error("Suite eval target resolution is not configured.");
+      }
+      const target = await adapters.targets.resolveTarget(evalItem);
+      const finalizedReport = await adapters.billing.runWithGatewayBillingGroup(
+        childRunId,
+        () =>
+          adapters.targets.runEval(evalItem, {
+            baseDir: input.datasetBase ?? input.projectDir,
+            runId: childRunId,
+            frameworkVersion: input.frameworkVersion,
+            targetKind: target.targetKind,
+            target: target.target,
+            targetAdapter: target.targetAdapter,
+            metadata,
+          }),
+      );
+      const exportConfig = createEvalReportExportConfig(
+        {
+          projectDir: input.projectDir,
+          evalItem,
+          exportConfig: input.exportConfig,
+        },
+        childArtifacts,
+      );
+      const report = await adapters.exporters.exportReport(finalizedReport, exportConfig);
+      await writeEvalArtifacts(report, childArtifacts, adapters.artifacts);
+      const summary = summarizeReportForCli(report);
+      const status = createEvalExitCode(report, undefined, exportConfig?.required) === 0
+        ? "passed"
+        : "failed";
+      results.push({
+        id: evalItem.id,
+        name: evalItem.name,
+        target: evalItem.definition.target,
+        status,
+        artifacts: childArtifacts,
+        summary,
+      });
+      children.push({
+        kind: "report",
+        evalId: evalItem.id,
+        reportDirectory: childArtifacts.directory,
+        report,
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      results.push({
+        id: evalItem.id,
+        name: evalItem.name,
+        target: evalItem.definition.target,
+        status: "error",
+        artifacts: childArtifacts,
+        error: message,
+      });
+      children.push({
+        kind: "error",
+        evalId: evalItem.id,
+        error: message,
+      });
+    }
+  }
+
+  const endedAt = adapters.clock?.now?.() ?? new Date();
+  const suite = createEvalSuiteSummary(runId, startedAt, endedAt, results);
+  await writeEvalSuiteArtifacts(suite, artifacts, adapters.artifacts);
+  if (input.junit) {
+    await adapters.artifacts.writeTextFileEnsuringDir(input.junit, createEvalSuiteJunitXml(suite));
+  }
+
+  return {
+    kind: "suite",
+    suite,
+    artifacts,
+    exitCode: suite.failed === 0 ? 0 : 1,
+    outputHints: createSuiteOutputHints(artifacts, input, children),
   };
 }
 
@@ -527,6 +823,10 @@ export async function runEvalReport(
   input: EvalRunReportInput,
   adapters: EvalRunReportAdapters,
 ): Promise<EvalRunReportOutcome> {
+  if (input.kind === "suite") {
+    return await runEvalReportSuite(input, adapters);
+  }
+
   const runId = createRunId(adapters.clock);
   const artifactPaths = createEvalArtifactPaths(
     input.reportDir ?? createDefaultEvalReportDir(runId, input.evalItem.id),
