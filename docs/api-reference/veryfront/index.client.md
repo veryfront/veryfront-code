@@ -1,6 +1,6 @@
 ---
 title: "veryfront/index.client"
-description: "Client and SSR safe mirror of the `veryfront` root barrel. Use this import surface in code that can run in a browser bundle. It exposes the same browser-safe helpers as `veryfront` while omitting server bootstrap functions such as `createHandler`, `startServer`, and `toNodeHandler`."
+description: "Browser- and SSR-safe helpers from the `veryfront` package. This entrypoint exposes the root package's client-safe configuration, platform, routing, data, and security helpers without server bootstrap functions. Most app code can import these helpers from `veryfront`; use this explicit entrypoint when a browser or SSR module needs to declare that boundary directly."
 order: 12
 ---
 

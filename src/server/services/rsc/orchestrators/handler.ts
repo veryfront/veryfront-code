@@ -31,6 +31,7 @@ export class RSCDevServerHandler {
   private renderer: RSCRenderer | null = null;
   private clientManifest: Map<string, ClientComponentMeta> | null = null;
   private rendererPromise: Promise<void> | null = null;
+  private reactVersionPromise: Promise<string> | null = null;
   private invalidationGeneration = 0;
 
   private readonly manifestHandler: ManifestHandler;
@@ -53,10 +54,6 @@ export class RSCDevServerHandler {
       fs: options.adapter?.fs,
       contentSourceId,
     });
-    this.reactVersionPromise = resolveProjectReactVersion({
-      projectDir,
-      config: options.config,
-    });
     this.renderHandler = new RenderHandler(
       projectDir,
       () => this.renderer,
@@ -67,7 +64,7 @@ export class RSCDevServerHandler {
         projectId: options.projectId,
         projectSlug: options.projectSlug,
         contentSourceId,
-        reactVersion: this.reactVersionPromise,
+        reactVersion: () => this.getReactVersion(),
       },
     );
     this.streamHandler = new StreamHandler(this.renderHandler);
@@ -75,13 +72,14 @@ export class RSCDevServerHandler {
     this.isLocalProject = isLocalProject;
     this.mode = mode;
     this.fs = options.adapter?.fs;
+    this.config = options.config;
   }
 
   private readonly appDir: string;
   private readonly isLocalProject: boolean;
   private readonly mode: "development" | "production";
-  private readonly reactVersionPromise: Promise<string>;
   private readonly fs?: RuntimeAdapter["fs"];
+  private readonly config?: VeryfrontConfig;
 
   handleManifest(): Promise<Response> {
     return this.manifestHandler.handle(this.clientManifest);
@@ -109,7 +107,7 @@ export class RSCDevServerHandler {
     if (!this.pageHandler) {
       this.pageHandler = new PageHandler(
         this.mode === "development",
-        await this.reactVersionPromise,
+        await this.getReactVersion(),
         this.isLocalProject ? "fs" : "rsc-module",
       );
     }
@@ -140,7 +138,7 @@ export class RSCDevServerHandler {
 
   private async initializeRenderer(generation: number): Promise<void> {
     const clientManifest = await buildClientManifest(this.projectDir, this.appDir, this.fs);
-    const reactVersion = await this.reactVersionPromise;
+    const reactVersion = await this.getReactVersion();
     if (generation !== this.invalidationGeneration) return;
 
     this.clientManifest = clientManifest;
@@ -152,5 +150,13 @@ export class RSCDevServerHandler {
       clientModuleStrategy: this.isLocalProject ? "fs" : "rsc-module",
       reactVersion,
     });
+  }
+
+  private getReactVersion(): Promise<string> {
+    this.reactVersionPromise ??= resolveProjectReactVersion({
+      projectDir: this.projectDir,
+      config: this.config,
+    });
+    return this.reactVersionPromise;
   }
 }

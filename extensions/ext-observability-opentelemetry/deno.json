@@ -68,6 +68,7 @@
     "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.43.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "protobufjs": "npm:protobufjs@7.6.5",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/observability": "../../src/extensions/observability/index.ts",
     "veryfront/utils": "../../src/utils/index.ts"
