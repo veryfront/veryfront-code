@@ -16,7 +16,7 @@ import { verifiedHttpBundlePaths } from "./http-bundle-helpers.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
@@ -36,11 +36,11 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
-function hashAsLoader(source: string, filePath: string, projectDir: string): string {
+function hashAsLoader(source: string, filePath: string, projectDir: string): Promise<string> {
   const rel = filePath.startsWith(projectDir)
     ? filePath.slice(projectDir.length).replace(/^\/+/, "")
     : filePath;
-  return hashCodeHex(injectNodePositions(source, { filePath: rel }));
+  return computeHash(injectNodePositions(source, { filePath: rel }));
 }
 
 class FakeDistributedCache implements CacheBackend {
@@ -165,7 +165,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function CacheInvalTest() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -228,7 +228,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function VerifiedStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -304,7 +304,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function MissingCachedOutput() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -371,7 +371,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(mdxComponentDir, { recursive: true });
 
       const source = "export default function VerifiedMdxStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -455,7 +455,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(mdxComponentDir, { recursive: true });
 
       const source = "export default function ColdMdxStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -546,7 +546,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(mdxComponentDir, { recursive: true });
 
       const source = "export default function BranchMdxStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -634,7 +634,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function RecoveredViaCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -706,7 +706,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function CacheRetainOnRuntimeError() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -766,6 +766,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-retain-" });
     const componentsDir = join(projectDir, "components");
     const filePath = join(componentsDir, "Good.tsx");
+    const projectId = "project-retain-test";
+    const contentSourceId = "local-main";
 
     try {
       await mkdir(componentsDir, { recursive: true });
@@ -775,8 +777,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const loader = new SSRModuleLoader({
         projectDir,
-        projectId: "project-retain-test",
-        contentSourceId: "local-main",
+        projectId,
+        contentSourceId,
         adapter: denoAdapter,
         dev: true,
       });
@@ -784,11 +786,13 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const component = await loader.loadModule(filePath, source);
       assertEquals(component.name, "Good");
 
-      const matchingKeys = [...globalModuleCache.keys()].filter((k) =>
-        k.includes("project-retain-test")
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:default:${computeConfigHashSync({ dev: true })}:${filePath}`,
       );
       assert(
-        matchingKeys.length > 0,
+        globalModuleCache.has(filePathCacheKey),
         "Expected cache entries to be retained after successful import",
       );
     } finally {
@@ -882,7 +886,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await mkdir(componentsDir, { recursive: true });
 
       const source = "export default function RebuildAfterStaleCache() { return null; }";
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
 
@@ -953,7 +957,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const source = "export default function RetryAfterInProgressError() { return null; }";
       await writeTextFile(filePath, source);
 
-      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const contentHash = await hashAsLoader(source, filePath, projectDir);
       const configHash = computeConfigHashSync({ dev: true });
       const reactVersion = "default";
       const contentCacheKey = buildSSRModuleCacheKey(
