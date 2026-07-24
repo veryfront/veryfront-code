@@ -178,13 +178,15 @@ describe("repository hardening", () => {
       updateHomebrew.includes("--repo veryfront/homebrew-tap"),
       "expected Homebrew tap PR commands to stay scoped to the tap repository",
     );
-    assert(
-      updateHomebrew.includes('--head "${BRANCH}"'),
-      "expected Homebrew tap PR lookup to filter on the pushed tap branch",
+    assertEquals(
+      updateHomebrew.match(/--head "\$\{BRANCH\}"/g)?.length,
+      2,
+      "expected Homebrew tap PR lookup and creation to use the pushed same-repository branch",
     );
+    assertEquals(updateHomebrew.includes("veryfront:${BRANCH}"), false);
     assert(
-      updateHomebrew.includes('--head "veryfront:${BRANCH}"'),
-      "expected Homebrew tap PR creation to use same-repository heads",
+      updateHomebrew.includes('PR_NUMBER="${PR_URL##*/}"'),
+      "expected Homebrew tap PR creation to read the number from the returned URL",
     );
     assert(
       updateHomebrew.includes('GH_TOKEN="${HOMEBREW_TAP_TOKEN}"'),

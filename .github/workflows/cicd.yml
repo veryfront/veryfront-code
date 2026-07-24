@@ -786,7 +786,7 @@ jobs:
                 --repo veryfront/homebrew-tap \
                 --title "Update veryfront to v${VERSION}" \
                 --base main \
-                --head "veryfront:${BRANCH}" \
+                --head "${BRANCH}" \
                 --body "Automated update from CI - veryfront v${VERSION}" 2>&1) || {
                   if echo "${CREATE_PR_OUTPUT}" | grep -Eq "Resource not accessible by (integration|personal access token)"; then
                     echo "::error::Homebrew tap update requires a GitHub App token with Pull requests: write and Contents: write on veryfront/homebrew-tap."
@@ -795,15 +795,10 @@ jobs:
                   exit 1
                 }
 
-              PR_NUMBER=$(gh pr list \
-                --repo veryfront/homebrew-tap \
-                --state open \
-                --head "${BRANCH}" \
-                --base main \
-                --json number \
-                --jq '.[0].number // empty')
-              if [ -z "${PR_NUMBER}" ]; then
-                echo "::error::Created Homebrew tap PR but could not find it for branch ${BRANCH}."
+              PR_URL=$(printf '%s\n' "${CREATE_PR_OUTPUT}" | tail -n 1)
+              PR_NUMBER="${PR_URL##*/}"
+              if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+                echo "::error::Created Homebrew tap PR but could not read its number."
                 echo "${CREATE_PR_OUTPUT}"
                 exit 1
               fi
