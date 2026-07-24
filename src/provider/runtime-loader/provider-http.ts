@@ -238,8 +238,12 @@ export async function buildProviderError(
     errorType === "invalid_request_error" &&
     parsedBody !== undefined &&
     !truncated;
+  const problemSlug = typeof parsedBody?.slug === "string" ? parsedBody.slug : undefined;
+  const isStructuredVeryfrontCreditProblem = status === 402 &&
+    (problemSlug === "insufficient-credits" || problemSlug === "resource-limit-exceeded") &&
+    !truncated;
 
-  return isStructuredInvalidRequest
+  return isStructuredInvalidRequest || isStructuredVeryfrontCreditProblem
     ? preserveStructuredResponseBody(requestError, rawBody)
     : requestError;
 }
