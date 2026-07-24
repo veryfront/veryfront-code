@@ -33,6 +33,15 @@ export interface ProgressTimeoutOptions {
   signal?: AbortSignal;
 }
 
+export interface TimeoutOptions {
+  /** Optional caller-owned abort signal that should reject the waiter immediately. */
+  signal?: AbortSignal;
+  /** Called when the caller-owned signal aborts, before the waiter rejects. */
+  onAbort?: (reason: unknown) => void;
+  /** Called exactly when this helper's local timeout fires. */
+  onTimeout?: (error: TimeoutError) => void;
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -61,20 +70,45 @@ export async function withTimeoutThrow<T>(
   promise: Promise<T>,
   timeoutMs: number,
   label: string,
+  options?: TimeoutOptions,
 ): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let removeAbortListener: (() => void) | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       logger.error("TIMEOUT_HARD operation timed out (throwing)", { label, timeoutMs });
-      reject(new TimeoutError(label, timeoutMs));
+      const error = new TimeoutError(label, timeoutMs);
+      options?.onTimeout?.(error);
+      reject(error);
     }, timeoutMs);
   });
 
+  const abortSignal = options?.signal;
+  const abortPromise = abortSignal
+    ? new Promise<never>((_, reject) => {
+      const abort = (): void => {
+        const reason = abortSignal.reason ??
+          new DOMException("The operation was aborted", "AbortError");
+        options?.onAbort?.(reason);
+        reject(reason);
+      };
+      if (abortSignal.aborted) {
+        abort();
+        return;
+      }
+      abortSignal.addEventListener("abort", abort, { once: true });
+      removeAbortListener = () => abortSignal.removeEventListener("abort", abort);
+    })
+    : undefined;
+
   try {
-    return await Promise.race([promise, timeoutPromise]);
+    return await Promise.race(
+      abortPromise ? [promise, timeoutPromise, abortPromise] : [promise, timeoutPromise],
+    );
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    removeAbortListener?.();
   }
 }
 

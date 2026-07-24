@@ -61,6 +61,45 @@ describe("Timeout Enforcement", () => {
         "operation failed",
       );
     });
+
+    it("rejects when the caller-owned signal aborts before the timeout", async () => {
+      const controller = new AbortController();
+      let observedReason: unknown;
+      const result = withTimeoutThrow(hang(), 1000, "caller abort", {
+        signal: controller.signal,
+        onAbort: (reason) => {
+          observedReason = reason;
+        },
+      });
+      const reason = new Error("client disconnected");
+
+      controller.abort(reason);
+
+      const error = await assertRejects(
+        () => result,
+        Error,
+        "client disconnected",
+      );
+      assertEquals(error, reason);
+      assertEquals(observedReason, reason);
+    });
+
+    it("invokes onTimeout exactly when the local timeout fires", async () => {
+      let observedError: TimeoutError | undefined;
+
+      const error = await assertRejects(
+        () =>
+          withTimeoutThrow(hang(), 50, "owned timeout", {
+            onTimeout: (timeoutError) => {
+              observedError = timeoutError;
+            },
+          }),
+        TimeoutError,
+        "owned timeout timed out after 50ms",
+      );
+
+      assertEquals(observedError, error);
+    });
   });
 
   describe("withProgressTimeoutThrow (bounded idle timeout)", () => {

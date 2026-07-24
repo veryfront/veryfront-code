@@ -94,6 +94,7 @@ import {
   DATA_FETCH_TIMEOUT_MS,
   hasDataFetchingFunction,
   type LoadedModule,
+  MODULE_LOAD_HARD_TIMEOUT_MS,
   MODULE_LOAD_TIMEOUT_MS,
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
@@ -426,6 +427,7 @@ export class RenderPipeline {
               (control) => this.loadModulesInParallel(modulesToLoad, options, control),
               {
                 idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
+                hardTimeoutMs: options.abortSignal ? undefined : MODULE_LOAD_HARD_TIMEOUT_MS,
                 label: `Module loading for ${slug}`,
                 signal: options.abortSignal,
               },

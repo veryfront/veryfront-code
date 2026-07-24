@@ -187,6 +187,7 @@ describe("RenderPipeline behavior", () => {
   it("keeps a cold module graph alive while distinct transforms keep completing", async () => {
     using time = new FakeTime();
     const pipeline = createPipeline("/project/pages/large-cold-graph.tsx");
+    const owner = new AbortController();
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => markStarted = resolve);
     (pipeline as any).loadModule = (
@@ -211,6 +212,7 @@ describe("RenderPipeline behavior", () => {
     };
 
     const pageData = pipeline.resolvePageData("/large-cold-graph", {
+      abortSignal: owner.signal,
       request: new Request("http://localhost/large-cold-graph"),
       url: new URL("http://localhost/large-cold-graph"),
     });
@@ -218,6 +220,55 @@ describe("RenderPipeline behavior", () => {
     await time.tickAsync(50_000);
 
     assertEquals((await pageData).props, {});
+  });
+
+  it("preserves a hard cap for unowned cold module graphs", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/unowned-cold-graph.tsx");
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: {
+        onProgress?: (event: { phase: string; filePath: string }) => void;
+        signal?: AbortSignal;
+      },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>((_, reject) => {
+        let completed = 0;
+        const intervalId = setInterval(() => {
+          completed += 1;
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: `/framework/unowned-module-${completed}.js`,
+          });
+        }, 5_000);
+        config.signal?.addEventListener(
+          "abort",
+          () => {
+            clearInterval(intervalId);
+            reject(config.signal?.reason);
+          },
+          { once: true },
+        );
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/unowned-cold-graph", {
+      request: new Request("http://localhost/unowned-cold-graph"),
+      url: new URL("http://localhost/unowned-cold-graph"),
+    });
+    const rejected = assertRejects(
+      () => pageData,
+      Error,
+      "Module loading for /unowned-cold-graph timed out after 45000ms",
+    );
+
+    await started;
+    await time.tickAsync(45_000);
+
+    assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "hard");
   });
 
   it("does not treat a repeated transform milestone as continuing progress", async () => {

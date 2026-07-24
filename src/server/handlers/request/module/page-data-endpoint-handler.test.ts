@@ -397,7 +397,13 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       createInitializer((_slug, _ctx, options) => {
         observedSignal = options?.abortSignal;
         started.resolve();
-        return new Promise<PageDataResponse>(() => {});
+        return new Promise<PageDataResponse>((_, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        });
       }),
     );
 
@@ -412,6 +418,44 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     const response = await responsePromise;
     assertEquals(response.status, 504);
     assertEquals(observedSignal?.aborted, true);
+  });
+
+  it("propagates caller cancellation into page-data work", async () => {
+    using time = new FakeTime();
+    const caller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    setRendererInitializer(
+      createInitializer((_slug, _ctx, options) => {
+        observedSignal = options?.abortSignal;
+        started.resolve();
+        return new Promise<PageDataResponse>((_, reject) => {
+          options?.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            { once: true },
+          );
+        });
+      }),
+    );
+
+    const responsePromise = callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json", {
+        signal: caller.signal,
+      }),
+      makeCtx(),
+    );
+    await started.promise;
+
+    const reason = new Error("client disconnected");
+    caller.abort(reason);
+    await time.tickAsync(0);
+
+    const response = await responsePromise;
+    assertEquals(response.status, 500);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, reason);
   });
 
   it("can disable the page-data cache with max entries set to zero", async () => {

@@ -86,20 +86,20 @@ async function resolvePageDataWithinDeadline(
 ): Promise<PageDataResponse> {
   const controller = new AbortController();
 
-  try {
-    return await withTimeoutThrow(
-      renderer.resolvePageData(slug, {
-        request,
-        url,
-        abortSignal: controller.signal,
-      }),
-      PAGE_DATA_TIMEOUT_MS,
-      `resolvePageData for ${slug}`,
-    );
-  } catch (error) {
-    if (error instanceof TimeoutError) controller.abort(error);
-    throw error;
-  }
+  return await withTimeoutThrow(
+    renderer.resolvePageData(slug, {
+      request,
+      url,
+      abortSignal: controller.signal,
+    }),
+    PAGE_DATA_TIMEOUT_MS,
+    `resolvePageData for ${slug}`,
+    {
+      signal: request.signal,
+      onAbort: (reason) => controller.abort(reason),
+      onTimeout: (error) => controller.abort(error),
+    },
+  );
 }
 
 export function __clearPageDataEndpointCacheForTests(): void {
