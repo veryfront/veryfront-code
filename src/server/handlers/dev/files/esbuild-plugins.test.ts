@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -59,6 +59,30 @@ describe(
       );
 
       assertEquals(output.includes('from "https://esm.sh/react@19"'), true);
+    });
+
+    it("fails closed on a node: builtin import in a browser bundle", async () => {
+      // A server-only `node:*` import must never be silently rewritten to
+      // https://esm.sh/node:crypto (which 404s on esm.sh and throws
+      // `createHash is not a function` in the browser). The browser bundle must
+      // fail closed with a clear, actionable error instead.
+      const error = await assertRejects(() =>
+        bundleWithPlugin(
+          'import { createHash } from "node:crypto"; console.log(createHash);',
+          {},
+        )
+      );
+      const message = error instanceof Error ? error.message : String(error);
+      assertEquals(message.includes("node:crypto"), true);
+    });
+
+    it("still rewrites ordinary npm bare imports (the node: guard does not over-reject)", async () => {
+      const output = await bundleWithPlugin(
+        'import x from "lodash"; console.log(x);',
+        {},
+      );
+
+      assertEquals(output.includes("esm.sh/lodash"), true);
     });
   },
 );
