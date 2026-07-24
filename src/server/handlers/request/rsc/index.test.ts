@@ -155,6 +155,7 @@ describe("server/handlers/request/rsc", () => {
       releaseId: "rel-123",
       branch: "main",
       environmentName: "Preview",
+      tokenProvenance: "untrusted",
     });
   });
 });
