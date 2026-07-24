@@ -9,7 +9,7 @@
  * of the runtime/hosted boundary with nothing keeping them in sync.
  */
 
-import { parseProviderError } from "../../chat/provider-errors.ts";
+import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 
 /** Extract a human-readable message from any value a provider stream can throw. */
 export function getStreamErrorMessage(error: unknown): string {
