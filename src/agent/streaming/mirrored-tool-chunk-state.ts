@@ -137,6 +137,7 @@ export interface CreateHostedMirroredUiStreamInput {
     chunk: ChatUiMessageChunk<ChatMessageMetadata>,
   ) => Promise<void> | void;
   setMirroredOutput?: (value: boolean) => void;
+  registerPendingDerivedSourceFlush?: (flush: () => Promise<void>) => void;
   logger?: HostedMirroredUiStreamLogger;
 }
 
@@ -252,6 +253,7 @@ export async function* createHostedMirroredUiStream(
 ): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {
   let streamError: unknown = null;
   const emittedKnowledgeSourceIds = new Set<string>();
+  const mirroredKnowledgeSourceIds = new Set<string>();
   let pendingDerivedSource: ReturnType<typeof deriveKnowledgeSourceDocumentChunk> = null;
 
   const mirrorChunk = async (chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void> => {
@@ -282,6 +284,23 @@ export async function* createHostedMirroredUiStream(
     return source;
   };
 
+  const mirrorSourceOnce = async (
+    source: NonNullable<ReturnType<typeof deriveKnowledgeSourceDocumentChunk>>,
+  ): Promise<void> => {
+    if (mirroredKnowledgeSourceIds.has(source.sourceId)) {
+      return;
+    }
+    mirroredKnowledgeSourceIds.add(source.sourceId);
+    await mirrorChunk(source);
+  };
+
+  input.registerPendingDerivedSourceFlush?.(async () => {
+    if (!pendingDerivedSource || emittedKnowledgeSourceIds.has(pendingDerivedSource.sourceId)) {
+      return;
+    }
+    await mirrorSourceOnce(pendingDerivedSource);
+  });
+
   try {
     for await (const sourceChunk of input.sourceStream) {
       if (
@@ -292,7 +311,7 @@ export async function* createHostedMirroredUiStream(
         pendingDerivedSource = null;
         if (!emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
           emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
-          await mirrorChunk(sourceChunk);
+          await mirrorSourceOnce(sourceChunk);
           yield sourceChunk;
         }
         continue;
@@ -300,7 +319,7 @@ export async function* createHostedMirroredUiStream(
 
       const pendingSource = takePendingDerivedSource();
       if (pendingSource) {
-        await mirrorChunk(pendingSource);
+        await mirrorSourceOnce(pendingSource);
         yield pendingSource;
       }
 
@@ -309,6 +328,9 @@ export async function* createHostedMirroredUiStream(
           continue;
         }
         emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
+        await mirrorSourceOnce(sourceChunk);
+        yield sourceChunk;
+        continue;
       }
 
       const derivedSource = sourceChunk.type === "tool-output-available"
@@ -327,14 +349,14 @@ export async function* createHostedMirroredUiStream(
 
     const pendingSource = takePendingDerivedSource();
     if (pendingSource) {
-      await mirrorChunk(pendingSource);
+      await mirrorSourceOnce(pendingSource);
       yield pendingSource;
     }
   } catch (error) {
     streamError = error;
     const pendingSource = takePendingDerivedSource();
     if (pendingSource) {
-      await mirrorChunk(pendingSource);
+      await mirrorSourceOnce(pendingSource);
       yield pendingSource;
     }
     throw error;
