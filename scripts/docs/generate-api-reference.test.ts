@@ -50,6 +50,9 @@ describe("generate-api-reference", () => {
       const uiReference = await Deno.readTextFile(
         `${outputDir}/veryfront/ui.md`,
       );
+      const providerReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/provider.md`,
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
@@ -69,6 +72,16 @@ describe("generate-api-reference", () => {
       assertStringIncludes(
         routerReference,
         "| Name | Description | Source |",
+      );
+      assertStringIncludes(
+        providerReference,
+        "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
+        "first-line declarations must keep a source anchor",
+      );
+      assertStringIncludes(
+        providerReference,
+        "| `ModelRuntimeGenerateResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L8) |",
+        "Deno's zero-based locations must render as one-based GitHub anchors",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning

@@ -1,12 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { deriveKnowledgeSourceDocumentChunk } from "../../chat/knowledge-source-document.ts";
+import { deriveKnowledgeSourceDocumentChunk } from "./knowledge-source-document.ts";
 
 const KNOWLEDGE_PATH =
   "knowledge/knowledge-ingest-20260723131451088-6d16440c-veryfront-equity-story-13july26.md";
 
-describe("agent/streaming/knowledge-source-document", () => {
+describe("chat/knowledge-source-document", () => {
   it("preserves a canonical get_file knowledge path character-for-character", () => {
     assertEquals(
       deriveKnowledgeSourceDocumentChunk({
