@@ -13,6 +13,7 @@ import { OpenAIProvider } from "./openai-provider.ts";
 const extOpenAI: ExtensionFactory = () => {
   const provider = new OpenAIProvider();
   let registry: LLMProviderRegistry | undefined;
+  let registeredProvider = false;
   return {
     name: "ext-llm-openai",
     version: "0.1.0",
@@ -23,11 +24,14 @@ const extOpenAI: ExtensionFactory = () => {
     capabilities: [],
     setup(ctx) {
       registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
+      registeredProvider = !registry.has(provider.id);
       registry.register(provider);
+      ctx.provide("LLMProvider:openai", registry.get(provider.id) ?? provider);
       ctx.logger.info("[ext-llm-openai] OpenAI provider registered");
     },
     teardown() {
-      registry?.unregister(provider.id);
+      if (registeredProvider) registry?.unregister(provider.id);
+      registeredProvider = false;
       registry = undefined;
     },
   };
