@@ -245,20 +245,31 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       ]
     ) {
       const projectDir = await Deno.makeTempDir();
-      const markerPath = `${projectDir}/continued-after-${label}`;
+      const markerChannelName = `continued-after-${label}-${crypto.randomUUID()}`;
+      const markerChannel = new BroadcastChannel(markerChannelName);
+      const markers: string[] = [];
+      markerChannel.onmessage = (event) => {
+        markers.push(String(event.data));
+      };
       const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
       await Deno.writeTextFile(
         modulePath,
         `
+          function mark(value) {
+            const channel = new BroadcastChannel(${JSON.stringify(markerChannelName)});
+            channel.postMessage(value);
+            channel.close();
+          }
+
           export function GET() {
             self.postMessage = () => {};
             ${overrideAttempt}
             try {
               ${exitStatement};
             } catch {
-              Deno.writeTextFileSync(${JSON.stringify(markerPath)}, "caught");
+              mark("caught");
             } finally {
-              Deno.writeTextFileSync(${JSON.stringify(markerPath)}, "continued");
+              mark("continued");
             }
             return Response.json({ exited: false });
           }
@@ -266,10 +277,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       );
       const worker = new ProjectWorker({
         projectId: `test-worker-${label}`,
-        permissions: {
-          ...buildWorkerPermissions([projectDir]),
-          write: true,
-        },
+        permissions: buildWorkerPermissions([projectDir]),
         requestTimeoutMs: 10_000,
       });
       let timeout: number | undefined;
@@ -304,15 +312,13 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         assertEquals(worker.status, "terminated", label);
         assertEquals(worker.hasPendingRequests, false, label);
         assertEquals(
-          await Deno.stat(markerPath).then(
-            () => true,
-            () => false,
-          ),
-          false,
+          markers,
+          [],
           `${label} must not continue through catch or finally after exiting`,
         );
       } finally {
         if (timeout !== undefined) clearTimeout(timeout);
+        markerChannel.close();
         worker.terminate();
         await Deno.remove(projectDir, { recursive: true });
       }
