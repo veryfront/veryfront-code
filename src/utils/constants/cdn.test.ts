@@ -45,8 +45,9 @@ describe("constants/cdn — React default version drift guard", () => {
 });
 
 describe("constants/cdn", () => {
-  it("exposes immutable default allowed hosts", () => {
-    assertEquals(Object.isFrozen(DEFAULT_ALLOWED_CDN_HOSTS), true);
+  it("preserves the mutable public default-host array contract", () => {
+    const mutableHosts: string[] = DEFAULT_ALLOWED_CDN_HOSTS;
+    assertEquals(Object.isFrozen(mutableHosts), false);
   });
 
   describe("getDenoStdNodeBase", () => {

@@ -824,6 +824,31 @@ describe("logger", () => {
       }
     });
 
+    it("scrubs delimiter-bearing secrets without consuming the next structured field", () => {
+      Deno.env.set("LOG_FORMAT", "json");
+      __resetLoggerConfigForTests();
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info(
+          "Login failed password=alpha beta status=401 " +
+            "api_key=alpha,beta, retry=true client_secret=alpha;beta; attempt=2",
+        );
+
+        const entry = JSON.parse(getOutput()) as LogEntry;
+        assertEquals(
+          entry.message,
+          "Login failed password=[REDACTED] status=401 " +
+            "api_key=[REDACTED], retry=true client_secret=[REDACTED]; attempt=2",
+        );
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        __resetLoggerConfigForTests();
+      }
+    });
+
     it("scrubs every cookie value from text messages, context, and errors", () => {
       Deno.env.set("LOG_FORMAT", "text");
       Deno.env.set("NO_COLOR", "1");

@@ -373,6 +373,29 @@ describe("logger/redact", () => {
       );
     });
 
+    it("masks malformed URL userinfo containing horizontal whitespace", () => {
+      for (const whitespace of [" ", "\t"]) {
+        const input = `https://user:secret${whitespace}value@example.test/path\r\n` +
+          "next_line=kept";
+        assertEquals(
+          sanitizeUrlCredentials(input),
+          `https://user:${REDACTED}@example.test/path\r\nnext_line=kept`,
+          JSON.stringify(whitespace),
+        );
+      }
+    });
+
+    it("does not mistake a later email address for URL userinfo", () => {
+      for (
+        const input of [
+          "visit https://example.test then email user@example.test",
+          "visit https://example.test:443 then email user@example.test",
+        ]
+      ) {
+        assertEquals(sanitizeUrlCredentials(input), input);
+      }
+    });
+
     it("masks protocol-relative URL userinfo", () => {
       assertEquals(
         sanitizeUrlCredentials("//user:secret@example.test/path"),
@@ -441,6 +464,146 @@ describe("logger/redact", () => {
       for (const secret of ["bearer-secret", "basic-secret", "hunter2", "key-secret"]) {
         assertEquals(sanitized.includes(secret), false);
       }
+    });
+
+    it("masks delimiter-bearing assignment values through the next field boundary", () => {
+      const sanitized = sanitizeUrlCredentials(
+        [
+          "password=alpha beta status=401",
+          "api_key=alpha,beta, retry=true",
+          "client_secret=alpha;beta; attempt=2",
+          "access_token=alpha&beta&result=denied",
+          "refresh_token=alpha?beta?reason=expired",
+          "credential=alpha#beta}",
+        ].join("\n"),
+      );
+
+      assertEquals(
+        sanitized,
+        [
+          `password=${REDACTED} status=401`,
+          `api_key=${REDACTED}, retry=true`,
+          `client_secret=${REDACTED}; attempt=2`,
+          `access_token=${REDACTED}&result=denied`,
+          `refresh_token=${REDACTED}?reason=expired`,
+          `credential=${REDACTED}}`,
+        ].join("\n"),
+      );
+    });
+
+    it("is idempotent without trusting a redaction-marker secret prefix", () => {
+      const sanitized = sanitizeUrlCredentials(
+        "password=alpha beta status=401 api_key=[REDACTED]still-secret retry=true",
+      );
+
+      assertEquals(
+        sanitized,
+        `password=${REDACTED} status=401 api_key=${REDACTED} retry=true`,
+      );
+      assertEquals(sanitizeUrlCredentials(sanitized), sanitized);
+    });
+
+    it("does not trust a closed token or stray closer before a secret suffix", () => {
+      for (
+        const [input, expected] of [
+          [
+            "password={}still-secret status=401",
+            `password=${REDACTED} status=401`,
+          ],
+          [
+            `password="alpha"still-secret status=401`,
+            `password="${REDACTED}" status=401`,
+          ],
+          [
+            "password=[]still-secret status=401",
+            `password=${REDACTED} status=401`,
+          ],
+          [
+            "password=abc}still-secret status=401",
+            `password=${REDACTED} status=401`,
+          ],
+        ] as const
+      ) {
+        const sanitized = sanitizeUrlCredentials(input);
+        assertEquals(sanitized, expected, input);
+        assertEquals(sanitizeUrlCredentials(sanitized), sanitized, input);
+      }
+    });
+
+    it("masks sensitive assignment keys with identifier-prefix characters", () => {
+      const sanitized = sanitizeUrlCredentials(
+        [
+          "_password=underscore-secret status=401",
+          "$password=dollar-secret retry=true",
+          `"_password":"quoted-underscore-secret","status":401`,
+          `"$password":"quoted-dollar-secret","retry":true`,
+        ].join("\n"),
+      );
+
+      assertEquals(
+        sanitized,
+        [
+          `_password=${REDACTED} status=401`,
+          `$password=${REDACTED} retry=true`,
+          `"_password":"${REDACTED}","status":401`,
+          `"$password":"${REDACTED}","retry":true`,
+        ].join("\n"),
+      );
+    });
+
+    it("fails closed for marker and container suffixes while retaining CRLF fields", () => {
+      const sanitized = sanitizeUrlCredentials(
+        [
+          "password=[REDACTED]{}still-secret\r\nstatus=401",
+          "secret=[REDACTED][]still-secret\r\nretry=true",
+          `private_key="alpha"still-secret\r\n"attempt":2`,
+          `credential=${REDACTED}"alpha status=inside-secret"\r\nattempt=3`,
+          `private_key=${REDACTED}\`alpha retry=inside-secret\`\r\nresult=denied`,
+        ].join("\r\n"),
+      );
+
+      assertEquals(
+        sanitized,
+        [
+          `password=${REDACTED}\r\nstatus=401`,
+          `secret=${REDACTED}\r\nretry=true`,
+          `private_key="${REDACTED}"\r\n"attempt":2`,
+          `credential=${REDACTED}\r\nattempt=3`,
+          `private_key=${REDACTED}\r\nresult=denied`,
+        ].join("\r\n"),
+      );
+      assertEquals(sanitizeUrlCredentials(sanitized), sanitized);
+    });
+
+    it("masks balanced structured assignment values through their outer boundary", () => {
+      const sanitized = sanitizeUrlCredentials(
+        [
+          `password={"part1":"alpha","part2":{"nested":"beta"}} status=401`,
+          `secret=["alpha",{"nested":["beta"]}] retry=true`,
+        ].join("\n"),
+      );
+
+      assertEquals(
+        sanitized,
+        [
+          `password=${REDACTED} status=401`,
+          `secret=${REDACTED} retry=true`,
+        ].join("\n"),
+      );
+    });
+
+    it("fails closed across multiline private-key-style assignment values", () => {
+      const sanitized = sanitizeUrlCredentials(
+        [
+          "private_key=-----BEGIN PRIVATE KEY-----",
+          "alpha",
+          "beta",
+          "-----END PRIVATE KEY-----",
+          "status=401",
+        ].join("\n"),
+      );
+
+      assertEquals(sanitized, `private_key=${REDACTED}\nstatus=401`);
     });
 
     it("masks complete non-Basic authorization header values", () => {
