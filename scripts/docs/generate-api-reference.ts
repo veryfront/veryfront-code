@@ -1802,10 +1802,6 @@ const METHOD_DESCRIPTIONS: Record<
         adapter: "Platform adapter",
       },
     },
-    teardown: {
-      desc:
-        "Run every registered teardown callback once and discard them, for one-shot cleanup on shutdown (unlike the per-request run of `onTeardown`).",
-    },
     getMiddleware: {
       desc: "List registered middleware with metadata.",
     },
