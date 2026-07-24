@@ -9,6 +9,16 @@
  * @module server/project-env/snapshot
  */
 
+import {
+  PROJECT_ENV_SNAPSHOT_LIMITS,
+  type ProjectEnvSnapshot,
+} from "#veryfront/platform/compat/process/project-env-contract.ts";
+
+export {
+  PROJECT_ENV_SNAPSHOT_LIMITS,
+  type ProjectEnvSnapshot,
+} from "#veryfront/platform/compat/process/project-env-contract.ts";
+
 const IntrinsicArray = Array;
 const ArrayIsArray = Array.isArray;
 const ArrayPrototypeSort = Array.prototype.sort;
@@ -35,16 +45,6 @@ if (!maybeTypedArrayByteLengthGetter) {
 }
 const typedArrayByteLengthGetter = maybeTypedArrayByteLengthGetter as () => number;
 
-/** Limits shared by API response validation, caching, and config admission. */
-export const PROJECT_ENV_SNAPSHOT_LIMITS = ObjectFreeze({
-  // The API returns at most 100 tenant entries. Runtime-owned scoped values
-  // (for example, the verified project slug/token) may be added afterward.
-  maxEntries: 128,
-  maxKeyChars: 1_024,
-  maxValueChars: 1024 * 1024,
-  maxUtf8Bytes: 1024 * 1024,
-});
-
 /** Stable rejection reasons for project-environment boundary failures. */
 export type ProjectEnvSnapshotErrorCode =
   | "accessor-property"
@@ -70,9 +70,6 @@ export class ProjectEnvSnapshotError extends TypeError {
     this.code = code;
   }
 }
-
-/** Immutable project environment admitted to runtime/config boundaries. */
-export type ProjectEnvSnapshot = Readonly<Record<string, string>>;
 
 function reject(code: ProjectEnvSnapshotErrorCode, reason: string): never {
   throw new ProjectEnvSnapshotError(code, reason);

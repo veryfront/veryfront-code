@@ -56,6 +56,10 @@ import {
 } from "./response-normalization.ts";
 import { types as nodeUtilTypes } from "node:util";
 import { getTrustedProjectEnvSnapshot } from "#veryfront/platform/compat/process/env.ts";
+import {
+  PROJECT_ENV_SNAPSHOT_LIMITS,
+  type ProjectEnvSnapshot,
+} from "#veryfront/platform/compat/process/project-env-contract.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -63,11 +67,12 @@ const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const getPrototypeOf = Object.getPrototypeOf;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
 const objectKeys = Object.keys;
+const objectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ownKeys = Reflect.ownKeys;
 const objectPrototype = Object.prototype;
 const numberIsSafeInteger = Number.isSafeInteger;
-const NativeArray = Array;
 const NativeRequest = Request;
 const NativeUint8Array = Uint8Array;
 const NativeTextEncoder = TextEncoder;
@@ -112,10 +117,6 @@ const CONTENT_LENGTH_PATTERN = /^\d+$/;
 const PROJECT_ENV_KEY_PATTERN = /^[^=\0]+$/;
 const PROJECT_ENV_VALUE_PATTERN = /^[^\0]*$/;
 const MAX_WORKER_BODY_BYTES_DECIMAL = `${MAX_WORKER_BODY_BYTES}`;
-const MAX_WORKER_PROJECT_ENV_ENTRIES = 4_096;
-const MAX_WORKER_PROJECT_ENV_KEY_CHARS = 1_024;
-const MAX_WORKER_PROJECT_ENV_VALUE_CHARS = 1024 * 1024;
-const MAX_WORKER_PROJECT_ENV_UTF8_BYTES = 1024 * 1024;
 
 function getRequestUrl(request: Request): string {
   return apply(requestUrlGetter, request, []) as string;
@@ -167,11 +168,11 @@ function findSerializedHeader(
 }
 
 /**
- * Read the current project env snapshot via the globalThis bridge registered by
+ * Read the current project env snapshot via the closure bridge registered by
  * server/project-env/storage.ts.  This avoids a direct import from the server/
  * layer (which would violate the layer architecture).
  */
-function getProjectEnvSnapshot(): Record<string, string> | undefined {
+function getProjectEnvSnapshot(): ProjectEnvSnapshot | undefined {
   return getTrustedProjectEnvSnapshot();
 }
 
@@ -179,14 +180,31 @@ function encodeSemanticMaterial(value: string): Uint8Array {
   return apply(textEncoderEncode, semanticTextEncoder, [value]) as Uint8Array;
 }
 
-function appendFramed(parts: string[], value: string): void {
-  const length = apply(numberToString, value.length, [10]) as string;
-  apply(arrayPush, parts, [`${length}:${value}`]);
+function semanticByteLength(value: string): number {
+  return apply(typedArrayByteLengthGetter, encodeSemanticMaterial(value), []) as number;
 }
 
-function snapshotProjectEnvForWorker(): Record<string, string> | undefined {
-  const raw = getProjectEnvSnapshot();
+function appendSemanticPart(parts: string[], value: string): void {
+  objectDefineProperty(parts, parts.length, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function appendFramed(parts: string[], value: string): void {
+  const length = apply(numberToString, value.length, [10]) as string;
+  appendSemanticPart(parts, `${length}:${value}`);
+}
+
+function snapshotProjectEnvRecordForWorker(
+  raw: unknown,
+): ProjectEnvSnapshot | undefined {
   if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null) {
+    throw createRequestBodyReadError("Project environment snapshot must be a plain data record");
+  }
 
   const descriptors = getDataDescriptors(raw);
   if (!descriptors) {
@@ -197,7 +215,7 @@ function snapshotProjectEnvForWorker(): Record<string, string> | undefined {
   const keys = objectKeys(descriptors);
   if (
     reflectedKeys.length !== keys.length ||
-    keys.length > MAX_WORKER_PROJECT_ENV_ENTRIES
+    keys.length > PROJECT_ENV_SNAPSHOT_LIMITS.maxEntries
   ) {
     throw createRequestBodyReadError("Project environment snapshot is invalid or too large");
   }
@@ -208,21 +226,23 @@ function snapshotProjectEnvForWorker(): Record<string, string> | undefined {
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
     const descriptor = descriptors[key];
-    const value = descriptor && "value" in descriptor ? descriptor.value : undefined;
+    const hasValue = descriptor !== undefined &&
+      apply(objectPrototypeHasOwnProperty, descriptor, ["value"]) === true;
+    const value = hasValue ? descriptor.value : undefined;
     if (
-      !descriptor?.enumerable ||
+      descriptor?.enumerable !== true ||
       typeof value !== "string" ||
-      key.length > MAX_WORKER_PROJECT_ENV_KEY_CHARS ||
-      value.length > MAX_WORKER_PROJECT_ENV_VALUE_CHARS ||
+      key.length > PROJECT_ENV_SNAPSHOT_LIMITS.maxKeyChars ||
+      value.length > PROJECT_ENV_SNAPSHOT_LIMITS.maxValueChars ||
       !apply(regexpTest, PROJECT_ENV_KEY_PATTERN, [key]) ||
       !apply(regexpTest, PROJECT_ENV_VALUE_PATTERN, [value])
     ) {
       throw createRequestBodyReadError("Project environment snapshot contains an invalid entry");
     }
 
-    totalBytes += encodeSemanticMaterial(key).byteLength;
-    totalBytes += encodeSemanticMaterial(value).byteLength;
-    if (totalBytes > MAX_WORKER_PROJECT_ENV_UTF8_BYTES) {
+    totalBytes += semanticByteLength(key);
+    totalBytes += semanticByteLength(value);
+    if (totalBytes > PROJECT_ENV_SNAPSHOT_LIMITS.maxUtf8Bytes) {
       throw createRequestBodyReadError("Project environment snapshot exceeds the worker limit");
     }
 
@@ -233,8 +253,15 @@ function snapshotProjectEnvForWorker(): Record<string, string> | undefined {
       writable: false,
     });
   }
-  return output;
+  return objectFreeze(output);
 }
+
+function snapshotProjectEnvForWorker(): ProjectEnvSnapshot | undefined {
+  return snapshotProjectEnvRecordForWorker(getProjectEnvSnapshot());
+}
+
+/** @internal Captured-primordial project env snapshot regression hook. */
+export const __snapshotProjectEnvRecordForTests = snapshotProjectEnvRecordForWorker;
 
 function appendSourcePolicyMaterial(
   parts: string[],
@@ -271,16 +298,17 @@ async function digestSemanticMaterial(material: string): Promise<string> {
     bytes,
   ]) as ArrayBuffer;
   const digestBytes = new NativeUint8Array(digest);
-  const hex = new NativeArray<string>(digestBytes.byteLength);
-  for (let index = 0; index < digestBytes.byteLength; index++) {
+  const digestByteLength = apply(typedArrayByteLengthGetter, digestBytes, []) as number;
+  const hex: string[] = [];
+  for (let index = 0; index < digestByteLength; index++) {
     const encoded = apply(numberToString, digestBytes[index]!, [16]) as string;
-    hex[index] = apply(stringPadStart, encoded, [2, "0"]) as string;
+    appendSemanticPart(hex, apply(stringPadStart, encoded, [2, "0"]) as string);
   }
   return apply(arrayJoin, hex, [""]) as string;
 }
 
 interface WorkerSemanticContext {
-  readonly projectEnv?: Record<string, string>;
+  readonly projectEnv?: ProjectEnvSnapshot;
   readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   readonly generation: string;
 }

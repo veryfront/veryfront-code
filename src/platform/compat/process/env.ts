@@ -1,5 +1,6 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { runtimeProcess } from "./runtime-process.ts";
+import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
@@ -84,7 +85,7 @@ export function getHostEnv(key: string): string | undefined {
 // re-check globalThis on every call to avoid permanently caching the fallback.
 let _getProjectEnv: ((key: string) => string | undefined) | null = null;
 let _isProjectEnvActive: (() => boolean) | null = null;
-let _trustedProjectEnvSnapshot: (() => Record<string, string> | undefined) | null = null;
+let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = null;
 
 /**
  * Register the server-owned project environment snapshot bridge.
@@ -94,7 +95,7 @@ let _trustedProjectEnvSnapshot: (() => Record<string, string> | undefined) | nul
  * function is rejected rather than silently widening an isolation boundary.
  */
 export function registerTrustedProjectEnvSnapshot(
-  getter: () => Record<string, string> | undefined,
+  getter: () => ProjectEnvSnapshot | undefined,
 ): void {
   if (_trustedProjectEnvSnapshot && _trustedProjectEnvSnapshot !== getter) {
     throw new Error("Project environment snapshot bridge is already registered");
@@ -103,7 +104,7 @@ export function registerTrustedProjectEnvSnapshot(
 }
 
 /** Return the active server-owned project env snapshot, if registered. */
-export function getTrustedProjectEnvSnapshot(): Record<string, string> | undefined {
+export function getTrustedProjectEnvSnapshot(): ProjectEnvSnapshot | undefined {
   return _trustedProjectEnvSnapshot?.();
 }
 

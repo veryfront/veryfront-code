@@ -3,6 +3,7 @@ import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetInProcessIsolationWarningForTests,
+  __snapshotProjectEnvRecordForTests,
   executeAppRoute,
   executePagesRoute,
   executePreparedAppRoute,
@@ -20,6 +21,7 @@ import { prepareHandlerModule } from "./module-loader/loader.ts";
 import { computeHash } from "#veryfront/utils";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { nodeAdapter } from "#veryfront/platform/adapters/runtime/node/adapter.ts";
+import { PROJECT_ENV_SNAPSHOT_LIMITS } from "#veryfront/platform/compat/process/project-env-contract.ts";
 
 const TEST_ISOLATED_MODULE_SOURCE = `
   export default function handler() {
@@ -1704,6 +1706,159 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("project env propagation (isolated execution)", () => {
+    it("creates a detached, sorted, frozen null-prototype worker snapshot", () => {
+      const input = Object.create(null) as Record<string, string>;
+      input.Z_LAST = "z";
+      input.A_FIRST = "a";
+
+      const snapshot = __snapshotProjectEnvRecordForTests(input)!;
+
+      assertEquals(snapshot, { A_FIRST: "a", Z_LAST: "z" });
+      assertEquals(Reflect.ownKeys(snapshot), ["A_FIRST", "Z_LAST"]);
+      assertEquals(Object.getPrototypeOf(snapshot), null);
+      assertEquals(Object.isFrozen(snapshot), true);
+
+      input.A_FIRST = "mutated";
+      assertEquals(snapshot.A_FIRST, "a");
+      assertThrows(
+        () => Object.defineProperty(snapshot, "NEW", { value: "value" }),
+        TypeError,
+      );
+    });
+
+    it("rejects accessors without consulting polluted descriptor prototypes", () => {
+      const input = Object.create(null);
+      let inputGetterCalls = 0;
+      let prototypeGetterCalls = 0;
+      Object.defineProperty(input, "SECRET", {
+        enumerable: true,
+        get() {
+          inputGetterCalls += 1;
+          return "tenant-secret";
+        },
+      });
+
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get() {
+          prototypeGetterCalls += 1;
+          return "polluted";
+        },
+      });
+      try {
+        assertThrows(
+          () => __snapshotProjectEnvRecordForTests(input),
+          Error,
+          "invalid entry",
+        );
+      } finally {
+        if (previous) Object.defineProperty(Object.prototype, "value", previous);
+        else delete (Object.prototype as Record<string, unknown>).value;
+      }
+
+      assertEquals(inputGetterCalls, 0);
+      assertEquals(prototypeGetterCalls, 0);
+    });
+
+    it("rejects symbols, NUL data, and entry counts above the shared contract", () => {
+      const symbolInput = { SAFE: "value" };
+      Object.defineProperty(symbolInput, Symbol("hidden"), {
+        enumerable: true,
+        value: "value",
+      });
+      assertThrows(
+        () => __snapshotProjectEnvRecordForTests(symbolInput),
+        Error,
+        "invalid or too large",
+      );
+
+      for (
+        const input of [
+          { "BAD\0KEY": "value" },
+          { "BAD=KEY": "value" },
+          { SAFE: "bad\0value" },
+        ]
+      ) {
+        assertThrows(
+          () => __snapshotProjectEnvRecordForTests(input),
+          Error,
+          "invalid entry",
+        );
+      }
+
+      const atLimit = Object.create(null) as Record<string, string>;
+      for (let index = 0; index < PROJECT_ENV_SNAPSHOT_LIMITS.maxEntries; index++) {
+        atLimit[`KEY_${index}`] = "value";
+      }
+      assertEquals(
+        Reflect.ownKeys(__snapshotProjectEnvRecordForTests(atLimit)!),
+        Reflect.ownKeys(atLimit).sort(),
+      );
+
+      atLimit.TOO_MANY = "value";
+      assertThrows(
+        () => __snapshotProjectEnvRecordForTests(atLimit),
+        Error,
+        "invalid or too large",
+      );
+    });
+
+    it("enforces shared key, value, and aggregate UTF-8 limits", () => {
+      const longKey = Object.create(null) as Record<string, string>;
+      longKey["K".repeat(PROJECT_ENV_SNAPSHOT_LIMITS.maxKeyChars + 1)] = "value";
+      assertThrows(
+        () => __snapshotProjectEnvRecordForTests(longKey),
+        Error,
+        "invalid entry",
+      );
+
+      assertThrows(
+        () =>
+          __snapshotProjectEnvRecordForTests({
+            VALUE: "v".repeat(PROJECT_ENV_SNAPSHOT_LIMITS.maxValueChars + 1),
+          }),
+        Error,
+        "invalid entry",
+      );
+
+      assertThrows(
+        () =>
+          __snapshotProjectEnvRecordForTests({
+            FIRST: "é".repeat(PROJECT_ENV_SNAPSHOT_LIMITS.maxUtf8Bytes / 2),
+            SECOND: "value",
+          }),
+        Error,
+        "worker limit",
+      );
+    });
+
+    it("uses the captured typed-array byte length for worker snapshot budgets", () => {
+      const previous = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "byteLength");
+      let failure: unknown;
+      Object.defineProperty(Uint8Array.prototype, "byteLength", {
+        configurable: true,
+        get: () => 0,
+      });
+      try {
+        __snapshotProjectEnvRecordForTests({
+          FIRST: "a".repeat(700_000),
+          SECOND: "b".repeat(700_000),
+        });
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (previous) Object.defineProperty(Uint8Array.prototype, "byteLength", previous);
+        else delete (Uint8Array.prototype as unknown as Record<string, unknown>).byteLength;
+      }
+
+      assertEquals(failure instanceof Error, true);
+      assertEquals(
+        (failure as Error).message.includes("worker limit"),
+        true,
+      );
+    });
+
     it("forwards the exact tenant env without exposing an ambient host secret", async () => {
       const tenantKey = `VERYFRONT_TEST_TENANT_${crypto.randomUUID().replaceAll("-", "_")}`;
       const hostKey = `VERYFRONT_TEST_HOST_${crypto.randomUUID().replaceAll("-", "_")}`;
@@ -1755,7 +1910,7 @@ describe("routing/api/route-executor", () => {
       }
     });
 
-    it("uses a distinct worker generation when tenant env changes for the same scope", async () => {
+    it("keeps worker generations distinct under typed-array prototype pollution", async () => {
       const tenantKey = `VERYFRONT_TEST_GENERATION_${crypto.randomUUID().replaceAll("-", "_")}`;
 
       await withRealWorkerRoute(
@@ -1780,18 +1935,31 @@ describe("routing/api/route-executor", () => {
                 ),
             );
 
-          const first = await executeWithValue("tenant-a");
-          const second = await executeWithValue("tenant-b");
+          const previous = Object.getOwnPropertyDescriptor(
+            Uint8Array.prototype,
+            "byteLength",
+          );
+          Object.defineProperty(Uint8Array.prototype, "byteLength", {
+            configurable: true,
+            get: () => 0,
+          });
+          try {
+            const first = await executeWithValue("tenant-a");
+            const second = await executeWithValue("tenant-b");
 
-          assertEquals(first.status, 200);
-          assertEquals(await first.json(), { capturedTenantValue: "tenant-a" });
-          assertEquals(second.status, 200);
-          assertEquals(await second.json(), { capturedTenantValue: "tenant-b" });
+            assertEquals(first.status, 200);
+            assertEquals(await first.json(), { capturedTenantValue: "tenant-a" });
+            assertEquals(second.status, 200);
+            assertEquals(await second.json(), { capturedTenantValue: "tenant-b" });
 
-          const generationPrefix = `${options.executionScopeId}:generation:`;
-          const generationKeys = Object.keys(getWorkerPool().getStats().workers)
-            .filter((key) => key.startsWith(generationPrefix));
-          assertEquals(generationKeys.length, 2);
+            const generationPrefix = `${options.executionScopeId}:generation:`;
+            const generationKeys = Object.keys(getWorkerPool().getStats().workers)
+              .filter((key) => key.startsWith(generationPrefix));
+            assertEquals(generationKeys.length, 2);
+          } finally {
+            if (previous) Object.defineProperty(Uint8Array.prototype, "byteLength", previous);
+            else delete (Uint8Array.prototype as unknown as Record<string, unknown>).byteLength;
+          }
         },
       );
     });
