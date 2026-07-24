@@ -187,6 +187,28 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
   }]);
 });
 
+Deno.test("project agent runtime serializes code agent thinking config", async () => {
+  const thinkingAgent = agent({
+    id: "thinking-agent",
+    system: "Reason before answering.",
+    thinking: { enabled: true, budgetTokens: 4096 },
+  });
+  const noThinkingAgent = agent({
+    id: "no-thinking-agent",
+    system: "Answer directly.",
+    thinking: { enabled: false },
+  });
+
+  assertEquals(
+    (await createRuntimeAgentDefinitionFromAgent(thinkingAgent)).thinking,
+    { enabled: true, budgetTokens: 4096 },
+  );
+  assertEquals(
+    (await createRuntimeAgentDefinitionFromAgent(noThinkingAgent)).thinking,
+    { enabled: false },
+  );
+});
+
 Deno.test("project agent runtime rejects non-serializable HTTP MCP credentials", async () => {
   const privateAgent = agent({
     id: "private-agent",

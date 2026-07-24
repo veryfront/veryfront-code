@@ -126,6 +126,37 @@ Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max s
   });
 });
 
+Deno.test("resolveHostedRuntimeRequestConfig honors configured thinking before model defaults", () => {
+  const resolveModelThinking = (model: string | undefined) =>
+    model === "veryfront-cloud/anthropic/claude-sonnet-4-6"
+      ? { enabled: true, budgetTokens: 2048 }
+      : undefined;
+
+  const disabledResult = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: { enabled: false },
+    }),
+    resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
+    resolveModelThinking,
+  });
+
+  assertEquals(disabledResult.requestedThinking, { enabled: false });
+
+  const omittedResult = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: createAgentConfig({
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: undefined,
+    }),
+    resolveModelId: (model) => model ? `veryfront-cloud/${model}` : undefined,
+    resolveModelThinking,
+  });
+
+  assertEquals(omittedResult.requestedThinking, { enabled: true, budgetTokens: 2048 });
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig uses forwarded overrides when request overrides are absent", () => {
   const result = resolveHostedRuntimeRequestConfig({
     request: {

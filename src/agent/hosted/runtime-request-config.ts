@@ -163,8 +163,8 @@ export function resolveHostedRuntimeRequestConfig(
     requestedModel,
     clientProfile: resolveRuntimeClientProfile(input.request.forwardedProps),
     requestedThinking: resolveHostedRuntimeThinkingOverride({
-      configuredThinking: input.resolveModelThinking?.(requestedModel) ??
-        input.agentConfig.thinking,
+      configuredThinking: input.agentConfig.thinking ??
+        input.resolveModelThinking?.(requestedModel),
       requestedThinking: effectiveRuntimeOverrides?.thinking,
     }),
     requestedTemperature: input.agentConfig.temperature,
