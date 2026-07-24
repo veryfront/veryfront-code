@@ -1,5 +1,5 @@
 /**
- * createStrictContext — factory for React context + strict-use hook pairs.
+ * createStrictContext: factory for React context + strict-use hook pairs.
  *
  * Eliminates the repeated "read context, throw if missing" pattern across
  * `chat/` and `ui/` components. Every compound component that wraps a
@@ -19,16 +19,16 @@ import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
  *                   `"Foo parts"`. Combined as: `"${hookName} must be used within ${parentHint}"`.
  * @param parentHint Completion of "…must be used within …", e.g. `"a <FooProvider>"`.
  * @returns Readonly tuple `[Context, useStrictHook]`.
- *   - `Context` — the raw `React.Context`. Expose its `.Provider` via a named
+ *   - `Context`: the raw `React.Context`. Expose its `.Provider` via a named
  *     alias (e.g. `export const FooProvider = FooContext.Provider`). Pass the
  *     context value through a memoised variable to satisfy the inline-context
  *     lint ratchet.
- *   - `useStrictHook` — throws `COMPONENT_ERROR` when called outside a provider.
+ *   - `useStrictHook`: throws `COMPONENT_ERROR` when called outside a provider.
  *     Export it under the canonical hook name (e.g. `export { useStrictHook as useFoo }`
  *     or rename directly in the destructuring).
  *
  * Optional read path: where a `null`-returning variant is needed, write a
- * three-line wrapper — `return React.useContext(FooContext)` — using the
+ * three-line wrapper, `return React.useContext(FooContext)`, using the
  * returned `Context` directly. This keeps the factory focused on the one
  * repeated pattern without bloating its API.
  *
@@ -49,7 +49,7 @@ export function createStrictContext<T>(
   const Context = React.createContext<T | null>(null);
   function useStrictContext(): T {
     const value = React.useContext(Context);
-    if (!value) {
+    if (value === null) {
       throw COMPONENT_ERROR.create({
         detail: `${hookName} must be used within ${parentHint}`,
       });
