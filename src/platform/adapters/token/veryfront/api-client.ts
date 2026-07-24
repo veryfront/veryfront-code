@@ -48,8 +48,10 @@ export class TokenStorageApiClient {
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           return response;
         }
-        // 5xx / 429: throw to trigger retry logic.
+        // 5xx / 429: throw to trigger retry logic. Cancel the body first so
+        // retries do not hold connections/buffers open.
         if (!response.ok && (response.status >= 500 || response.status === 429)) {
+          await cancelResponseBody(response, "retry");
           throw TOKEN_STORAGE_ERROR.create({
             detail: `Server error: ${response.status}`,
             status: response.status,

@@ -80,6 +80,10 @@ export function createVeryfrontApiTransport<T>(
       const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${baseUrl}${pathOrUrl}`;
       const method = init.method ?? "GET";
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
+      // Capture the token once per request: retries of this request must not
+      // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
+      // matching the pre-transport requestWithRetry semantics.
+      const token = getToken();
       return retryWithBackoff(
         (signal, attempt) => {
           const doFetch = async (): Promise<T> => {
@@ -87,7 +91,7 @@ export function createVeryfrontApiTransport<T>(
             for (const [k, v] of Object.entries(defaultHeaders)) {
               if (!headers.has(k)) headers.set(k, v);
             }
-            headers.set("Authorization", `Bearer ${getToken()}`);
+            headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
             const start = performance.now();
             const res = await fetch(url, { method, headers, body: init.body, signal });
@@ -181,8 +185,9 @@ async function defaultOnResponse(
     const text = await response.text();
     const isExpected404 = init.expected404 === true && response.status === 404;
     const level = isExpected404 ? "debug" : response.status >= 500 ? "error" : "warn";
+    const redactedUrl = url.replace(/token=[^&]+/g, "token=***");
     apiClientLog[level]("Request failed", {
-      url: url.replace(/token=[^&]+/, "token=***"),
+      url: redactedUrl,
       status: response.status,
       statusText: response.statusText,
       responseText: text.slice(0, 500),
@@ -190,7 +195,8 @@ async function defaultOnResponse(
     throw API_CLIENT_ERROR.create({
       detail: `API request failed: ${response.status} ${response.statusText}`,
       status: response.status,
-      context: { details: { url, responseText: text } },
+      // Redacted so error telemetry cannot leak token query params.
+      context: { details: { url: redactedUrl, responseText: text } },
     });
   }
   return init.returnText ? response.text() : response.json();
