@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
+  # Required for merge-queue entries: queued runs report checks via merge_group.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
