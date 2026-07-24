@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Public API contract for source. */
 export interface Source {
@@ -25,18 +25,11 @@ export interface SourcesContextValue {
   onSourceClick?: (source: Source, index: number) => void;
 }
 
-const SourcesContext = React.createContext<SourcesContextValue | null>(null);
-
-/** Read the enclosing `Sources` state. Throws when used outside a `Sources`. */
-export function useSources(): SourcesContextValue {
-  const ctx = React.useContext(SourcesContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useSources must be used within a Sources",
-    });
-  }
-  return ctx;
-}
+const [SourcesContext, useSources] = createStrictContext<SourcesContextValue>(
+  "useSources",
+  "a Sources",
+);
+export { useSources };
 
 /**
  * Read the enclosing `Sources` state if present, or `null` outside one. Lets a

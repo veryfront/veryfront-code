@@ -12,6 +12,7 @@
  * @module react/components/ui/command
  */
 import * as React from "react";
+import { createStrictContext } from "../create-strict-context.ts";
 import { cx as cn } from "./cva.ts";
 import { SearchIcon, XIcon } from "./icons/index.ts";
 import { Dialog, DialogContent, DialogTitle } from "./dialog.tsx";
@@ -25,13 +26,10 @@ interface CommandContextValue {
   anyVisible: boolean;
 }
 
-const CommandContext = React.createContext<CommandContextValue | null>(null);
-
-function useCommand(): CommandContextValue {
-  const ctx = React.useContext(CommandContext);
-  if (!ctx) throw new Error("Command parts must be used within <Command>");
-  return ctx;
-}
+const [CommandContext, useCommand] = createStrictContext<CommandContextValue>(
+  "Command parts",
+  "<Command>",
+);
 
 /** Command root — owns the filter query and the item registry. */
 export function Command({

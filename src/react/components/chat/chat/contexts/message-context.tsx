@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 import type { BranchInfo, ChatMessage } from "#veryfront/agent/react";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
@@ -36,23 +36,17 @@ export interface MessageContextValue {
   feedback?: FeedbackValue | null;
 }
 
-const MessageContext = React.createContext<MessageContextValue | null>(null);
-
-/** Context for use message. */
-export function useMessageContext(): MessageContextValue {
-  const context = React.useContext(MessageContext);
-  if (!context) {
-    throw COMPONENT_ERROR.create({
-      detail: "useMessageContext must be used within a Message component",
-    });
-  }
-  return context;
-}
+const [MessageContext, useMessageContext] = createStrictContext<MessageContextValue>(
+  "useMessageContext",
+  "a Message component",
+);
 
 /** React hook for message context optional. */
 export function useMessageContextOptional(): MessageContextValue | null {
   return React.useContext(MessageContext);
 }
+
+export { useMessageContext };
 
 /** The message's grouped parts exposed as headless data. */
 export interface MessagePartsData {

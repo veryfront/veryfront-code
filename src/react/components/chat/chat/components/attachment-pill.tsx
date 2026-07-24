@@ -3,7 +3,7 @@ import { cn } from "../../theme.ts";
 import { CheckIcon, ClockIcon, FileTextIcon, RefreshCwIcon } from "../../../ui/icons/index.ts";
 import { Button } from "../../../ui/button.tsx";
 import { Shimmer } from "./animations.tsx";
-import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
+import { createStrictContext } from "../../../create-strict-context.ts";
 
 /** Upload lifecycle state (shadcn-style). Drives the icon, label, and treatment. */
 export type AttachmentState =
@@ -168,23 +168,11 @@ export interface AttachmentPillContextValue {
   boxClass: string;
 }
 
-const AttachmentPillContext = React.createContext<
-  AttachmentPillContextValue | null
->(null);
-
-/**
- * Read the enclosing `AttachmentPill` state. Throws when used outside an
- * `AttachmentPill`.
- */
-export function useAttachmentPill(): AttachmentPillContextValue {
-  const ctx = React.useContext(AttachmentPillContext);
-  if (!ctx) {
-    throw COMPONENT_ERROR.create({
-      detail: "useAttachmentPill must be used within a AttachmentPill",
-    });
-  }
-  return ctx;
-}
+const [AttachmentPillContext, useAttachmentPill] = createStrictContext<AttachmentPillContextValue>(
+  "useAttachmentPill",
+  "a AttachmentPill",
+);
+export { useAttachmentPill };
 
 /**
  * `AttachmentPill.Root` — context provider + the chip wrapper. No children
