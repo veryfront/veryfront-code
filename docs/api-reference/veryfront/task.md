@@ -1,7 +1,7 @@
 ---
 title: "veryfront/task"
 description: "Source-defined tasks for Veryfront projects."
-order: 31
+order: 32
 ---
 
 ## Import
@@ -38,7 +38,7 @@ export default {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `deriveTaskId` | Derive task ID from file path (e.g., "tasks/sync-data.ts" -> "sync-data"). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L177) |
+| `deriveTaskId` | Derive task ID from file path (e.g., "tasks/sync-data.ts" -&gt; "sync-data"). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L177) |
 | `discoverProjectTaskRuntime` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L32) |
 | `discoverTasks` | Discover all tasks in a project with the legacy file-based path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/discovery.ts#L193) |
 | `findProjectRuntimeTask` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/task/project-runtime.ts#L57) |

@@ -85,6 +85,13 @@ export const getMessagePartSchema = defineSchema((v) =>
       title: v.string().optional(),
       quote: v.string().optional(),
     }),
+    v.object({
+      type: v.literal("source_document"),
+      source_id: v.string(),
+      media_type: v.string(),
+      title: v.string().optional(),
+      filename: v.string().optional(),
+    }),
     v.object({ type: v.literal("step_start") }),
     v.object({
       type: v.literal("error"),
@@ -427,10 +434,21 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
     }
 
     if (part.type === "source-document") {
+      if (!part.mediaType) {
+        parts.push({
+          type: "citation",
+          source_id: part.sourceId,
+          title: part.title,
+        });
+        continue;
+      }
+
       parts.push({
-        type: "citation",
+        type: "source_document",
         source_id: part.sourceId,
+        media_type: part.mediaType,
         title: part.title,
+        ...(part.filename ? { filename: part.filename } : {}),
       });
       continue;
     }

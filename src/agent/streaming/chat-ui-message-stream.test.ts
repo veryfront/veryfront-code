@@ -131,6 +131,206 @@ describe("createChatUiMessageStreamFromDataStream", () => {
     });
   });
 
+  it("persists one exact source document for repeated successful knowledge reads", async () => {
+    const path = "knowledge/knowledge-ingest-exact.md";
+    const output = { path, type: "file", content: "# Exact source" };
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const stream = createSseStream([
+      { type: "message-start", messageId: "framework-message" },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      { type: "tool-output-available", toolCallId: "tool-1", output },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-2",
+        toolName: "get_file",
+        input: { path },
+      },
+      { type: "tool-output-available", toolCallId: "tool-2", output },
+      { type: "message-finish" },
+    ]);
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        { stream },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+    const expectedSource = {
+      type: "source-document" as const,
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-document"),
+      [expectedSource],
+    );
+    assertEquals(
+      finish?.responseMessage.parts.filter((part) => part.type === "source-document"),
+      [expectedSource],
+    );
+  });
+
+  it("replaces a derived source with richer upstream metadata", async () => {
+    const path = "knowledge/product/limits.md";
+    const fallbackSource = {
+      type: "source-document" as const,
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+    const upstreamSource = {
+      type: "source-document" as const,
+      sourceId: path,
+      mediaType: "text/x-markdown",
+      title: "Curated product limits",
+      filename: "limits.md",
+    };
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const stream = createSseStream([
+      { type: "message-start", messageId: "framework-message" },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: { path, type: "file", content: "# Limits" },
+      },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "The annual limit is 300 KEUR." },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "data",
+        data: {
+          name: "source-document",
+          value: upstreamSource,
+        },
+      },
+      { type: "message-finish" },
+    ]);
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        { stream },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-document"),
+      [fallbackSource, upstreamSource],
+    );
+    assertEquals(
+      finish?.responseMessage.parts.filter((part) => part.type === "source-document"),
+      [upstreamSource],
+    );
+  });
+
+  it("persists ordered source urls once by source id in the final response message", async () => {
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const stream = createSseStream([
+      { type: "message-start", messageId: "framework-message" },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Before source" },
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/first",
+            title: "First reference",
+          },
+        },
+      },
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/duplicate",
+            title: "Duplicate reference",
+          },
+        },
+      },
+      { type: "text-start", id: "text-2" },
+      { type: "text-delta", id: "text-2", delta: "After source" },
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-2",
+            url: "https://example.com/second",
+            title: "Second reference",
+          },
+        },
+      },
+      { type: "message-finish" },
+    ]);
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        { stream },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+    const firstSource = {
+      type: "source-url" as const,
+      sourceId: "web-1",
+      url: "https://example.com/first",
+      title: "First reference",
+    };
+    const secondSource = {
+      type: "source-url" as const,
+      sourceId: "web-2",
+      url: "https://example.com/second",
+      title: "Second reference",
+    };
+
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-url"),
+      [firstSource, secondSource],
+    );
+    assertEquals(finish?.responseMessage.parts, [
+      { type: "text", text: "Before source" },
+      firstSource,
+      { type: "text", text: "After source" },
+      secondSource,
+    ]);
+  });
+
   it("preserves providerExecuted from data stream tool events into final dynamic tool parts", async () => {
     let finish: ChatUiMessageStreamFinish | undefined;
     const chunks = await collectChunks(

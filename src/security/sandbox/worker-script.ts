@@ -39,6 +39,7 @@ import {
   createJsonHelper,
   createTextHelper,
 } from "#veryfront/routing/api/context-builder.ts";
+import { createWorkerExitControls } from "./worker-exit-controls.ts";
 
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
@@ -55,23 +56,33 @@ function installWorkerExitNotifier(): void {
   const postMessage = self.postMessage.bind(self);
   const notifyExit = () => postMessage({ type: "worker-exit" });
   const closeWorker = globalThis.close.bind(globalThis);
-  globalThis.close = () => {
-    try {
-      notifyExit();
-    } finally {
-      closeWorker();
-    }
-  };
-  if (typeof Deno.exit === "function") {
-    const exitWorker = Deno.exit.bind(Deno);
-    Deno.exit = ((code?: number): never => {
-      try {
-        notifyExit();
-      } catch {
-        // Exit even if the notification channel is already closed.
-      }
-      return exitWorker(code);
-    }) as typeof Deno.exit;
+  const exitWorker = typeof Deno.exit === "function" ? Deno.exit.bind(Deno) : undefined;
+  const controls = createWorkerExitControls({ notifyExit, closeWorker, exitWorker });
+  Object.defineProperty(self, "postMessage", {
+    configurable: false,
+    get: () => postMessage,
+    set: () => {
+      // Project code must not be able to silence worker lifecycle messages.
+    },
+  });
+  Object.defineProperty(globalThis, "close", {
+    configurable: false,
+    writable: false,
+    value: controls.close,
+  });
+  if (self !== globalThis) {
+    Object.defineProperty(self, "close", {
+      configurable: false,
+      writable: false,
+      value: controls.close,
+    });
+  }
+  if (controls.exit !== undefined) {
+    Object.defineProperty(Deno, "exit", {
+      configurable: false,
+      writable: false,
+      value: controls.exit,
+    });
   }
   exitNotifierInstalled = true;
 }
