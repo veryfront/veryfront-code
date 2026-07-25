@@ -24,18 +24,16 @@ export async function findMissingFrameworkBundlePaths(
   options: FindMissingFrameworkBundlePathsOptions = {},
 ): Promise<string[]> {
   const bundlePaths = extractFrameworkBundlePaths(code);
-  const missing: string[] = [];
-
-  for (const path of bundlePaths) {
-    try {
-      if (!(await exists(path))) {
-        missing.push(path);
+  const checkedPaths = await Promise.all(
+    bundlePaths.map(async (path): Promise<string | undefined> => {
+      try {
+        return await exists(path) ? undefined : path;
+      } catch (error) {
+        options.onError?.(path, error);
+        return path;
       }
-    } catch (error) {
-      options.onError?.(path, error);
-      missing.push(path);
-    }
-  }
+    }),
+  );
 
-  return missing;
+  return checkedPaths.filter((path): path is string => path !== undefined);
 }

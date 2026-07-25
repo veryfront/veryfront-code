@@ -93,6 +93,38 @@ describe("transforms/shared/framework-bundle-paths", () => {
       assertEquals(errors, [{ path, message: "stat failed" }]);
     });
 
+    it("checks independent framework bundle paths concurrently", async () => {
+      const firstPath = "/cache/framework/vfmod-first.mjs";
+      const secondPath = "/cache/framework/vfmod-second.mjs";
+      const started: string[] = [];
+      let resolveFirst!: (exists: boolean) => void;
+
+      const resultPromise = findMissingFrameworkBundlePaths(
+        `
+          import "file://${firstPath}";
+          import "file://${secondPath}";
+        `,
+        (path) => {
+          started.push(path);
+          if (path === firstPath) {
+            return new Promise<boolean>((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return Promise.resolve(false);
+        },
+      );
+
+      await Promise.resolve();
+      try {
+        assertEquals(started, [firstPath, secondPath]);
+      } finally {
+        resolveFirst(true);
+      }
+
+      assertEquals(await resultPromise, [secondPath]);
+    });
+
     it("does not call the existence check when code has no framework bundles", async () => {
       let calls = 0;
 
