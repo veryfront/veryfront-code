@@ -18,89 +18,198 @@ import {
   type Counter,
   getGlobalMetricsAPI,
   type Histogram,
-  type ObservableGauge,
 } from "#veryfront/observability";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { encodeBase64 } from "#veryfront/utils";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
+import { getMetricsApiRevision } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  type DirectMetricInstrumentOptions,
+  type DirectMetricKind,
+  type DirectMetricsTarget,
+  type DirectMetricTemporality,
+} from "./direct-exporter.ts";
+import { logDirectExportFailure, logMetricFailure } from "./diagnostics.ts";
+import {
+  type LocalGaugeSample,
+  type LocalGaugeState,
+  metricsRuntimeState,
+} from "./runtime-state.ts";
 
+/**
+ * Primitive value accepted for a metric attribute.
+ *
+ * Nullish values and invalid strings or numbers are omitted from the
+ * measurement.
+ */
 export type MetricAttributeValue = string | number | boolean | null | undefined;
+
+/**
+ * Low-cardinality attributes attached to one metric measurement.
+ *
+ * A measurement accepts at most 16 user attributes. Attribute keys are at
+ * most 128 characters, string values are at most 256 characters, and numeric
+ * values must be finite. Platform-owned project and environment attributes
+ * are added separately and override user-provided values with the same keys.
+ */
 export type MetricAttributes = Record<string, MetricAttributeValue>;
 
+/**
+ * Stable OpenTelemetry metadata for a metric instrument.
+ *
+ * Description and unit values must be non-empty, control-character-free
+ * strings no longer than 256 characters. Reuse the same metadata for a metric
+ * kind and name.
+ */
 export interface MetricInstrumentOptions {
+  /** Human-readable description of the measurement. */
   description?: string;
+  /** OpenTelemetry unit annotation, such as `ms`, `s`, `By`, or `1`. */
   unit?: string;
 }
 
-interface GaugeSample {
-  value: number;
-  attributes: Record<string, AttributeValue>;
-}
+const {
+  counters,
+  directExporter,
+  gauges,
+  histograms,
+} = metricsRuntimeState;
 
-type DirectMetricKind = "counter" | "histogram" | "gauge";
-
-interface DirectMetricSample {
-  kind: DirectMetricKind;
-  name: string;
-  value: number;
-  attributes: Record<string, AttributeValue>;
-  timestampUnixNano: string;
-}
-
-interface DirectMetricsTarget {
-  url: string;
-  headers: Record<string, string>;
-}
-
-const counters = new Map<string, Counter>();
-const histograms = new Map<string, Histogram>();
-const gauges = new Map<
-  string,
-  { instrument: ObservableGauge; samples: Map<string, GaugeSample> }
->();
-const directQueue: DirectMetricSample[] = [];
-const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
-const directHistogramTotals = new Map<
-  string,
-  {
-    count: number;
-    sum: number;
-    bucketCounts: number[];
-    startTimeUnixNano: string;
-  }
->();
-let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-const DIRECT_FLUSH_DELAY_MS = 1_000;
-const DIRECT_MAX_BATCH_SIZE = 100;
-const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
+const METRIC_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.\/-]{0,254}$/;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const MAX_ATTRIBUTE_KEY_LENGTH = 128;
+const MAX_ATTRIBUTE_STRING_LENGTH = 256;
+const MAX_ATTRIBUTE_ENTRIES_INSPECTED = 64;
+const MAX_USER_ATTRIBUTES = 16;
+const MAX_INSTRUMENT_OPTION_LENGTH = 256;
+const MAX_INSTRUMENTS_PER_KIND = 1_000;
+const MAX_GAUGE_SERIES_PER_INSTRUMENT = 1_000;
+const MAX_GAUGE_SERIES_TOTAL = 10_000;
+const MAX_HEADER_INPUT_LENGTH = 8_192;
+const MAX_HEADER_COUNT = 32;
+const MAX_HEADER_VALUE_LENGTH = 1_024;
+const MAX_ENDPOINT_LENGTH = 2_048;
 
 function getMeter() {
   return getGlobalMetricsAPI()?.getMeter("veryfront.project.metrics");
 }
 
-function normalizeAttributes(attributes?: MetricAttributes): Record<string, AttributeValue> {
-  const normalized: Record<string, AttributeValue> = {};
-  for (const [key, value] of Object.entries(attributes ?? {})) {
-    if (value === null || value === undefined) continue;
+function refreshLocalProviderState(): void {
+  metricsRuntimeState.refreshLocalProvider(getMetricsApiRevision());
+}
+
+function isValidMetricName(name: unknown): name is string {
+  return typeof name === "string" && METRIC_NAME_PATTERN.test(name);
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function containsUnsafeHeaderCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 0 || code === 10 || code === 13) return true;
+  }
+  return false;
+}
+
+function normalizeInstrumentOptions(
+  options?: MetricInstrumentOptions,
+): DirectMetricInstrumentOptions | null {
+  if (
+    options !== undefined &&
+    (options === null || typeof options !== "object")
+  ) {
+    return null;
+  }
+  const normalized: DirectMetricInstrumentOptions = {};
+  for (const key of ["description", "unit"] as const) {
+    const value = options?.[key];
+    if (value === undefined) continue;
+    if (
+      typeof value !== "string" ||
+      value.length === 0 ||
+      value.length > MAX_INSTRUMENT_OPTION_LENGTH ||
+      containsControlCharacter(value)
+    ) {
+      return null;
+    }
     normalized[key] = value;
   }
-
-  const context = getCurrentRequestContext();
-  if (context?.projectId) normalized.project_id = context.projectId;
-  if (context?.projectSlug) normalized.project_slug = context.projectSlug;
-  if (context) {
-    const environmentName = context.environmentName ??
-      (!context.productionMode ? "preview" : undefined);
-    if (environmentName) normalized.environment = environmentName;
-    if (!context.productionMode) normalized.branch = context.branch ?? "main";
-  }
-
   return normalized;
 }
 
-function attributesKey(attributes: Record<string, AttributeValue>): string {
+function normalizeAttributeValue(value: unknown): AttributeValue | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "boolean") return value;
+  if (
+    typeof value === "string" &&
+    value.length <= MAX_ATTRIBUTE_STRING_LENGTH &&
+    !containsControlCharacter(value)
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function setNormalizedAttribute(
+  target: Record<string, AttributeValue>,
+  key: unknown,
+  value: unknown,
+): boolean {
+  if (
+    typeof key !== "string" ||
+    key.length === 0 ||
+    key.length > MAX_ATTRIBUTE_KEY_LENGTH ||
+    containsControlCharacter(key)
+  ) {
+    return false;
+  }
+  const normalizedValue = normalizeAttributeValue(value);
+  if (normalizedValue === undefined) return false;
+  target[key] = normalizedValue;
+  return true;
+}
+
+function normalizeAttributes(
+  attributes?: MetricAttributes,
+): Readonly<Record<string, AttributeValue>> {
+  const normalized = Object.create(null) as Record<string, AttributeValue>;
+  if (attributes && typeof attributes === "object") {
+    let accepted = 0;
+    let inspected = 0;
+    for (const key in attributes) {
+      if (!Object.prototype.hasOwnProperty.call(attributes, key)) continue;
+      inspected++;
+      if (inspected > MAX_ATTRIBUTE_ENTRIES_INSPECTED || accepted >= MAX_USER_ATTRIBUTES) break;
+      if (setNormalizedAttribute(normalized, key, attributes[key])) accepted++;
+    }
+  }
+
+  const context = getCurrentRequestContext();
+  if (context?.projectId) setNormalizedAttribute(normalized, "project_id", context.projectId);
+  if (context?.projectSlug) setNormalizedAttribute(normalized, "project_slug", context.projectSlug);
+  if (context) {
+    const environmentName = context.environmentName ??
+      (!context.productionMode ? "preview" : undefined);
+    if (environmentName) setNormalizedAttribute(normalized, "environment", environmentName);
+    if (!context.productionMode) {
+      setNormalizedAttribute(normalized, "branch", context.branch ?? "main");
+    }
+  }
+
+  return Object.freeze(normalized);
+}
+
+function attributesKey(attributes: Readonly<Record<string, AttributeValue>>): string {
   return JSON.stringify(
     Object.entries(attributes)
       .sort(([left], [right]) => left.localeCompare(right))
@@ -108,47 +217,86 @@ function attributesKey(attributes: Record<string, AttributeValue>): string {
   );
 }
 
-function getCounter(name: string, options?: MetricInstrumentOptions): Counter | null {
-  const cached = counters.get(name);
+function instrumentKey(
+  name: string,
+  options: DirectMetricInstrumentOptions,
+): string {
+  return JSON.stringify([name, options.description ?? "", options.unit ?? ""]);
+}
+
+function getCounter(
+  name: string,
+  options: DirectMetricInstrumentOptions,
+): Counter | null {
+  refreshLocalProviderState();
+  const key = instrumentKey(name, options);
+  const cached = counters.get(key);
   if (cached) return cached;
+  if (counters.size >= MAX_INSTRUMENTS_PER_KIND) {
+    logMetricFailure("counter instrument cardinality limit reached");
+    return null;
+  }
 
   const meter = getMeter();
   if (!meter) return null;
 
   const counter = meter.createCounter(name, options);
-  counters.set(name, counter);
+  counters.set(key, counter);
   return counter;
 }
 
-function getHistogram(name: string, options?: MetricInstrumentOptions): Histogram | null {
-  const cached = histograms.get(name);
+function getHistogram(
+  name: string,
+  options: DirectMetricInstrumentOptions,
+): Histogram | null {
+  refreshLocalProviderState();
+  const key = instrumentKey(name, options);
+  const cached = histograms.get(key);
   if (cached) return cached;
+  if (histograms.size >= MAX_INSTRUMENTS_PER_KIND) {
+    logMetricFailure("histogram instrument cardinality limit reached");
+    return null;
+  }
 
   const meter = getMeter();
   if (!meter) return null;
 
   const histogram = meter.createHistogram(name, options);
-  histograms.set(name, histogram);
+  histograms.set(key, histogram);
   return histogram;
 }
 
-function getGauge(name: string, options?: MetricInstrumentOptions) {
-  const cached = gauges.get(name);
+function getGauge(
+  name: string,
+  options: DirectMetricInstrumentOptions,
+) {
+  refreshLocalProviderState();
+  const key = instrumentKey(name, options);
+  const cached = gauges.get(key);
   if (cached) return cached;
+  if (gauges.size >= MAX_INSTRUMENTS_PER_KIND) {
+    logMetricFailure("gauge instrument cardinality limit reached");
+    return null;
+  }
 
   const meter = getMeter();
   if (!meter) return null;
 
-  const samples = new Map<string, GaugeSample>();
+  const samples = new Map<string, LocalGaugeSample>();
   const instrument = meter.createObservableGauge(name, options);
-  instrument.addCallback((result) => {
+  const callback: LocalGaugeState["callback"] = (result) => {
     for (const sample of samples.values()) {
-      result.observe(sample.value, sample.attributes);
+      try {
+        result.observe(sample.value, sample.attributes);
+      } catch (error) {
+        logMetricFailure("observable gauge callback failed", error);
+      }
     }
-  });
+  };
+  instrument.addCallback(callback);
 
-  const gauge = { instrument, samples };
-  gauges.set(name, gauge);
+  const gauge = { callback, instrument, samples };
+  gauges.set(key, gauge);
   return gauge;
 }
 
@@ -168,31 +316,51 @@ function isDedicatedRuntime(): boolean {
   return Boolean(readHostEnv("SERVER_ID") && readHostEnv("ENVIRONMENT_IDS"));
 }
 
+function normalizeEndpoint(
+  endpoint: string | undefined,
+  suffix: string,
+): string | null {
+  if (!endpoint) return null;
+  const trimmed = endpoint.trim().replace(/\/+$/, "");
+  if (trimmed.length === 0 || trimmed.length > MAX_ENDPOINT_LENGTH) return null;
+  const candidate = trimmed.endsWith(suffix) ? trimmed : `${trimmed}${suffix}`;
+  if (candidate.length > MAX_ENDPOINT_LENGTH) return null;
+
+  try {
+    const parsed = new URL(candidate);
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function resolveProjectOtlpMetricsUrl(): string | null {
-  if (readProjectEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  if (!isTruthyEnvValue(readProjectEnv("OTEL_METRICS_ENABLED"))) return null;
   const endpoint = readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ??
     readProjectEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
-  if (!endpoint) return null;
-  const trimmed = endpoint.replace(/\/$/, "");
-  return trimmed.endsWith("/v1/metrics") ? trimmed : `${trimmed}/v1/metrics`;
+  return normalizeEndpoint(endpoint, "/v1/metrics");
 }
 
 function resolveOtlpMetricsUrl(): string | null {
-  if (readEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  if (!isTruthyEnvValue(readEnv("OTEL_METRICS_ENABLED"))) return null;
   const endpoint = readEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ??
     readEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
-  if (!endpoint) return null;
-  const trimmed = endpoint.replace(/\/$/, "");
-  return trimmed.endsWith("/v1/metrics") ? trimmed : `${trimmed}/v1/metrics`;
+  return normalizeEndpoint(endpoint, "/v1/metrics");
 }
 
 function resolveInternalMetricsUrl(): string | null {
-  if (readHostEnv("OTEL_METRICS_ENABLED") !== "true") return null;
+  if (!isTruthyEnvValue(readHostEnv("OTEL_METRICS_ENABLED"))) return null;
   const apiBaseUrl = readHostEnv("VERYFRONT_API_BASE_URL") ?? readHostEnv("VERYFRONT_API_URL");
-  const username = readHostEnv("VERYFRONT_API_INTERNAL_USER");
-  const password = readHostEnv("VERYFRONT_API_INTERNAL_PASS");
-  if (!apiBaseUrl || !username || !password) return null;
-  return `${apiBaseUrl.replace(/\/$/, "")}/internal/metrics/otlp/v1/metrics`;
+  return normalizeEndpoint(apiBaseUrl, "/internal/metrics/otlp/v1/metrics");
 }
 
 function buildBasicAuth(username: string, password: string): string {
@@ -200,225 +368,136 @@ function buildBasicAuth(username: string, password: string): string {
   return `Basic ${encodeBase64(credentials)}`;
 }
 
-function parseHeaders(headerInput: string | undefined): Record<string, string> {
-  if (!headerInput) return {};
-  if (headerInput.startsWith("Basic ")) return { Authorization: headerInput };
+function isValidHeaderValue(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= MAX_HEADER_VALUE_LENGTH &&
+    !containsUnsafeHeaderCharacter(value);
+}
+
+function parseHeaders(
+  headerInput: string | undefined,
+): Readonly<Record<string, string>> | null {
+  if (!headerInput) return Object.freeze({});
+  if (headerInput.length > MAX_HEADER_INPUT_LENGTH) return null;
+  if (headerInput.startsWith("Basic ")) {
+    return isValidHeaderValue(headerInput) ? Object.freeze({ Authorization: headerInput }) : null;
+  }
   if (headerInput.startsWith("Authorization=")) {
-    return { Authorization: headerInput.slice("Authorization=".length) };
+    const value = headerInput.slice("Authorization=".length);
+    return isValidHeaderValue(value) ? Object.freeze({ Authorization: value }) : null;
   }
 
-  const result: Record<string, string> = {};
+  const result = Object.create(null) as Record<string, string>;
+  const seen = new Set<string>();
+  let count = 0;
   for (const part of headerInput.split(",")) {
     const [key, ...valueParts] = part.split("=");
-    if (key && valueParts.length > 0) {
-      result[key.trim()] = valueParts.join("=").trim();
+    const normalizedKey = key?.trim();
+    const value = valueParts.join("=").trim();
+    const comparisonKey = normalizedKey?.toLowerCase();
+    if (
+      !normalizedKey ||
+      valueParts.length === 0 ||
+      normalizedKey.length > MAX_ATTRIBUTE_KEY_LENGTH ||
+      !HEADER_NAME_PATTERN.test(normalizedKey) ||
+      !isValidHeaderValue(value) ||
+      !comparisonKey ||
+      seen.has(comparisonKey)
+    ) {
+      return null;
     }
+    count++;
+    if (count > MAX_HEADER_COUNT) return null;
+    seen.add(comparisonKey);
+    result[normalizedKey] = value;
   }
-  return result;
+  return Object.freeze(result);
+}
+
+function resolveResourceAttribute(
+  value: string | undefined,
+  fallback: string,
+): string {
+  const normalized = normalizeAttributeValue(value);
+  return typeof normalized === "string" ? normalized : fallback;
+}
+
+function resolveDirectMetricTemporality(): DirectMetricTemporality {
+  const preference = readEnv(
+    "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
+  )?.toLowerCase();
+  return preference === "delta" || preference === "lowmemory" ? "delta" : "cumulative";
+}
+
+function createDirectMetricsTarget(
+  url: string,
+  headers: Readonly<Record<string, string>>,
+): DirectMetricsTarget {
+  return {
+    url,
+    headers,
+    resourceAttributes: Object.freeze({
+      "service.name": resolveResourceAttribute(
+        readEnv("OTEL_SERVICE_NAME"),
+        "veryfront",
+      ),
+      "service.version": resolveResourceAttribute(
+        readEnv("VERYFRONT_VERSION") ?? readEnv("RELEASE_VERSION"),
+        RUNTIME_VERSION,
+      ),
+    }),
+    temporality: resolveDirectMetricTemporality(),
+  };
 }
 
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
   const projectOtlpUrl = resolveProjectOtlpMetricsUrl();
   if (isDedicatedRuntime() && projectOtlpUrl) {
-    return {
-      url: projectOtlpUrl,
-      headers: parseHeaders(
-        readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
-          readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
-      ),
-    };
+    const headers = parseHeaders(
+      readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
+        readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+    );
+    return headers ? createDirectMetricsTarget(projectOtlpUrl, headers) : null;
   }
 
   const internalUrl = resolveInternalMetricsUrl();
   if (internalUrl) {
-    return {
-      url: internalUrl,
-      headers: {
-        Authorization: buildBasicAuth(
-          readHostEnv("VERYFRONT_API_INTERNAL_USER") ?? "",
-          readHostEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
-        ),
-      },
-    };
+    const username = readHostEnv("VERYFRONT_API_INTERNAL_USER");
+    const password = readHostEnv("VERYFRONT_API_INTERNAL_PASS");
+    if (
+      !username ||
+      !password ||
+      username.length > MAX_ATTRIBUTE_STRING_LENGTH ||
+      password.length > MAX_ATTRIBUTE_STRING_LENGTH
+    ) {
+      return null;
+    }
+    const authorization = buildBasicAuth(username, password);
+    if (!isValidHeaderValue(authorization)) return null;
+    return createDirectMetricsTarget(
+      internalUrl,
+      Object.freeze({ Authorization: authorization }),
+    );
   }
 
   const otlpUrl = resolveOtlpMetricsUrl();
   if (!otlpUrl) return null;
-  return {
-    url: otlpUrl,
-    headers: parseHeaders(
-      readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
-        readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
-    ),
-  };
-}
-
-function toOtlpValue(value: AttributeValue) {
-  if (typeof value === "boolean") return { boolValue: value };
-  if (typeof value === "number") return { doubleValue: value };
-  return { stringValue: String(value) };
-}
-
-function toOtlpAttributes(attributes: Record<string, AttributeValue>) {
-  return Object.entries(attributes).map(([key, value]) => ({
-    key,
-    value: toOtlpValue(value),
-  }));
+  const headers = parseHeaders(
+    readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
+      readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+  );
+  return headers ? createDirectMetricsTarget(otlpUrl, headers) : null;
 }
 
 function getUnixNanoTimestamp(): string {
   return String(BigInt(Date.now()) * 1_000_000n);
 }
 
-function buildHistogramBuckets(value: number): number[] {
-  const counts = new Array(HISTOGRAM_BOUNDS.length + 1).fill(0);
-  const bucketIndex = HISTOGRAM_BOUNDS.findIndex((bound) => value <= bound);
-  counts[bucketIndex === -1 ? counts.length - 1 : bucketIndex] = 1;
-  return counts;
-}
-
-function buildDirectMetric(sample: DirectMetricSample) {
-  const attributes = toOtlpAttributes(sample.attributes);
-  if (sample.kind === "counter") {
-    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = directCounterTotals.get(key) ?? {
-      value: 0,
-      startTimeUnixNano: sample.timestampUnixNano,
-    };
-    total.value += sample.value;
-    directCounterTotals.set(key, total);
-
-    return {
-      name: sample.name,
-      sum: {
-        dataPoints: [{
-          attributes,
-          startTimeUnixNano: total.startTimeUnixNano,
-          timeUnixNano: sample.timestampUnixNano,
-          asDouble: total.value,
-        }],
-        aggregationTemporality: 2,
-        isMonotonic: true,
-      },
-    };
-  }
-
-  if (sample.kind === "histogram") {
-    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
-    const total = directHistogramTotals.get(key) ?? {
-      count: 0,
-      sum: 0,
-      bucketCounts: new Array(HISTOGRAM_BOUNDS.length + 1).fill(0),
-      startTimeUnixNano: sample.timestampUnixNano,
-    };
-    const sampleBuckets = buildHistogramBuckets(sample.value);
-    total.count += 1;
-    total.sum += sample.value;
-    total.bucketCounts = total.bucketCounts.map((count, index) => count + sampleBuckets[index]);
-    directHistogramTotals.set(key, total);
-
-    return {
-      name: sample.name,
-      histogram: {
-        dataPoints: [{
-          attributes,
-          startTimeUnixNano: total.startTimeUnixNano,
-          timeUnixNano: sample.timestampUnixNano,
-          count: total.count,
-          sum: total.sum,
-          explicitBounds: HISTOGRAM_BOUNDS,
-          bucketCounts: total.bucketCounts,
-        }],
-        aggregationTemporality: 2,
-      },
-    };
-  }
-
-  return {
-    name: sample.name,
-    gauge: {
-      dataPoints: [{
-        attributes,
-        timeUnixNano: sample.timestampUnixNano,
-        asDouble: sample.value,
-      }],
-    },
-  };
-}
-
-function buildDirectOtlpBody(samples: DirectMetricSample[]) {
-  return {
-    resourceMetrics: [{
-      resource: {
-        attributes: toOtlpAttributes({
-          "service.name": readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
-          "service.version": readEnv("VERYFRONT_VERSION") ??
-            readEnv("RELEASE_VERSION") ??
-            "unknown",
-        }),
-      },
-      scopeMetrics: [{
-        scope: {
-          name: "veryfront.project.metrics",
-        },
-        metrics: samples.map(buildDirectMetric),
-      }],
-    }],
-  };
-}
-
-function logDirectExportFailure(error: unknown): void {
-  if (readEnv("VERYFRONT_DEBUG") !== "1") return;
-  console.warn("[metrics] direct OTLP export failed", error);
-}
-
-async function flushDirectMetrics(): Promise<void> {
-  if (directFlushTimer) {
-    clearTimeout(directFlushTimer);
-    directFlushTimer = null;
-  }
-
-  const target = resolveDirectMetricsTarget();
-  if (!target || directQueue.length === 0) {
-    directQueue.length = 0;
-    return;
-  }
-
-  const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
+function runMetricOperation(operation: () => void): void {
   try {
-    const response = await fetch(target.url, {
-      method: "POST",
-      headers: {
-        ...target.headers,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(buildDirectOtlpBody(batch)),
-    });
-    if (!response.ok) {
-      logDirectExportFailure(`HTTP ${response.status}`);
-    }
+    operation();
   } catch (error) {
-    logDirectExportFailure(error);
-  }
-
-  if (directQueue.length > 0) {
-    scheduleDirectFlush();
-  }
-}
-
-function scheduleDirectFlush(): void {
-  if (directFlushTimer || resolveDirectMetricsTarget() === null) return;
-  directFlushTimer = setTimeout(() => {
-    void flushDirectMetrics();
-  }, DIRECT_FLUSH_DELAY_MS);
-  try {
-    if (typeof directFlushTimer === "number") {
-      Deno.unrefTimer(directFlushTimer);
-    } else {
-      (directFlushTimer as { unref?: () => void }).unref?.();
-    }
-  } catch {
-    // Some runtimes do not expose unref support; exporting still works there.
+    logMetricFailure("provider operation failed", error);
   }
 }
 
@@ -426,88 +505,157 @@ function enqueueDirectMetric(
   kind: DirectMetricKind,
   name: string,
   value: number,
-  attributes: Record<string, AttributeValue>,
+  attributes: Readonly<Record<string, AttributeValue>>,
+  options: DirectMetricInstrumentOptions,
+  target: DirectMetricsTarget,
 ): void {
-  if (resolveDirectMetricsTarget() === null) return;
-  directQueue.push({
+  directExporter.record({
     kind,
     name,
     value,
     attributes,
+    options,
     timestampUnixNano: getUnixNanoTimestamp(),
+    target,
   });
-  if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
-    void flushDirectMetrics();
-    return;
-  }
-  scheduleDirectFlush();
 }
 
+function recordMetric(
+  kind: DirectMetricKind,
+  name: string,
+  value: number,
+  attributes?: MetricAttributes,
+  options?: MetricInstrumentOptions,
+): void {
+  runMetricOperation(() => {
+    if (!isValidMetricName(name)) {
+      logMetricFailure("invalid metric name");
+      return;
+    }
+    if (!Number.isFinite(value) || (kind === "counter" && value < 0)) {
+      logMetricFailure("invalid metric value");
+      return;
+    }
+
+    const normalizedOptions = normalizeInstrumentOptions(options);
+    if (!normalizedOptions) {
+      logMetricFailure("invalid instrument options");
+      return;
+    }
+    const normalizedAttributes = normalizeAttributes(attributes);
+    const directTarget = resolveDirectMetricsTarget();
+    if (directTarget) {
+      enqueueDirectMetric(
+        kind,
+        name,
+        value,
+        normalizedAttributes,
+        normalizedOptions,
+        directTarget,
+      );
+      return;
+    }
+
+    if (kind === "counter") {
+      getCounter(name, normalizedOptions)?.add(value, normalizedAttributes);
+      return;
+    }
+    if (kind === "histogram") {
+      getHistogram(name, normalizedOptions)?.record(value, normalizedAttributes);
+      return;
+    }
+
+    const gauge = getGauge(name, normalizedOptions);
+    if (!gauge) return;
+    const key = attributesKey(normalizedAttributes);
+    if (!gauge.samples.has(key)) {
+      if (
+        gauge.samples.size >= MAX_GAUGE_SERIES_PER_INSTRUMENT ||
+        metricsRuntimeState.gaugeSeriesCount >= MAX_GAUGE_SERIES_TOTAL
+      ) {
+        logMetricFailure("gauge series cardinality limit reached");
+        return;
+      }
+      metricsRuntimeState.gaugeSeriesCount++;
+    }
+    gauge.samples.set(key, {
+      value,
+      attributes: normalizedAttributes,
+    });
+  });
+}
+
+/**
+ * Add a non-negative finite value to a monotonic project counter.
+ *
+ * Names must begin with a letter, contain only letters, digits, `_`, `.`, `/`,
+ * or `-`, and be at most 255 characters. Invalid or over-budget measurements
+ * are dropped without throwing into application code.
+ */
 export function counter(
   name: string,
   value = 1,
   attributes?: MetricAttributes,
   options?: MetricInstrumentOptions,
 ): void {
-  const normalizedAttributes = normalizeAttributes(attributes);
-  if (resolveDirectMetricsTarget() === null) {
-    getCounter(name, options)?.add(value, normalizedAttributes);
-    return;
-  }
-  enqueueDirectMetric("counter", name, value, normalizedAttributes);
+  recordMetric("counter", name, value, attributes, options);
 }
 
+/**
+ * Record one finite value in a project histogram.
+ *
+ * Names must begin with a letter, contain only letters, digits, `_`, `.`, `/`,
+ * or `-`, and be at most 255 characters. Invalid or over-budget measurements
+ * are dropped without throwing into application code.
+ */
 export function histogram(
   name: string,
   value: number,
   attributes?: MetricAttributes,
   options?: MetricInstrumentOptions,
 ): void {
-  const normalizedAttributes = normalizeAttributes(attributes);
-  if (resolveDirectMetricsTarget() === null) {
-    getHistogram(name, options)?.record(value, normalizedAttributes);
-    return;
-  }
-  enqueueDirectMetric("histogram", name, value, normalizedAttributes);
+  recordMetric("histogram", name, value, attributes, options);
 }
 
+/**
+ * Set the latest finite value for a project gauge series.
+ *
+ * Names must begin with a letter, contain only letters, digits, `_`, `.`, `/`,
+ * or `-`, and be at most 255 characters. Invalid or over-budget measurements
+ * are dropped without throwing into application code.
+ */
 export function gauge(
   name: string,
   value: number,
   attributes?: MetricAttributes,
   options?: MetricInstrumentOptions,
 ): void {
-  const normalizedAttributes = normalizeAttributes(attributes);
-  if (resolveDirectMetricsTarget() !== null) {
-    enqueueDirectMetric("gauge", name, value, normalizedAttributes);
-    return;
-  }
-  const target = getGauge(name, options);
-  if (!target) return;
-
-  target.samples.set(attributesKey(normalizedAttributes), {
-    value,
-    attributes: normalizedAttributes,
-  });
+  recordMetric("gauge", name, value, attributes, options);
 }
 
-export const metrics = {
+/**
+ * Attempt to flush pending direct OTLP project metrics.
+ *
+ * The promise always resolves, including when a collector is unavailable.
+ * This does not force-flush an externally installed OpenTelemetry meter
+ * provider.
+ */
+export async function flushMetrics(): Promise<void> {
+  try {
+    await directExporter.flush();
+  } catch (error) {
+    logDirectExportFailure("flush failed", error);
+  }
+}
+
+/**
+ * Immutable project metric hooks and direct-export lifecycle control.
+ *
+ * Measurements and flushes are failure-isolated from application code.
+ */
+export const metrics = Object.freeze({
   counter,
   histogram,
   gauge,
-  async __flushForTests(): Promise<void> {
-    await flushDirectMetrics();
-  },
-  __resetForTests(): void {
-    counters.clear();
-    histograms.clear();
-    gauges.clear();
-    directQueue.length = 0;
-    directCounterTotals.clear();
-    directHistogramTotals.clear();
-    if (directFlushTimer) {
-      clearTimeout(directFlushTimer);
-      directFlushTimer = null;
-    }
-  },
-};
+  flush: flushMetrics,
+});

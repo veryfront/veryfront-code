@@ -17,12 +17,12 @@ import {
   setGlobalMetricsAPI,
   type Span,
 } from "../observability/tracing/api-shim.ts";
-import { metrics as runtimeMetrics } from "#veryfront/metrics";
+import { resetMetricsForTests } from "../metrics/testing.ts";
 
 describe("eval/runner", () => {
   afterEach(() => {
     _resetShimForTests();
-    runtimeMetrics.__resetForTests();
+    resetMetricsForTests();
   });
 
   it("runs an agent eval and summarizes metric results", async () => {

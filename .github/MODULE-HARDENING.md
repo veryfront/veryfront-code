@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     4 |       6.9% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     1 |       1.7% | Review findings exist; remediation is not complete  |
+| Closed                         |     5 |       8.6% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     0 |       0.0% | Review findings exist; remediation is not complete  |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
 | Pending current review         |    15 |      25.9% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -40,12 +40,13 @@ stricter closure count.
 
 - `config`
 - `embedding`
+- `metrics`
 - `schemas`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
 
-- `metrics`
+None.
 
 ### Touched, revalidation required
 
@@ -120,19 +121,67 @@ every affected unit.
 
 ## Active review chain
 
-This checkpoint closes `config` after a complete consumer map, deep
-module-level review, adversarial loader and evaluator review, bounded resource
-and retry normalization, public-contract documentation, and repository-wide
-verification. Cross-module consumers changed by the fixes remain in
-revalidation; focused evidence for a config boundary does not by itself close
-their top-level units.
+The current closed review chain covers `config`, `embedding`, and `metrics`.
+Each closure includes a complete consumer map, deep module-level review,
+adversarial boundary tests, public-contract documentation, and repository-wide
+verification. Cross-module consumers changed by a fix remain in revalidation;
+focused evidence for one boundary does not by itself close the consumer's
+top-level unit. `eval` is the next pending review target because it is the
+closest project-metrics consumer and has not yet received current-branch formal
+closure.
 
-This checkpoint closes `embedding` after deep review and remediation of its
-authorization, input-size, cancellation, persistence-integrity,
-model-identity, batching, and remote-transaction boundaries. `metrics` remains
-the next reviewed remediation target; its open findings cover
-tenant/destination identity, cardinality, queue and payload bounds, OTLP
-serialization, provider lifecycle, and application-failure isolation.
+### Metrics remediation checkpoint
+
+The metrics findings are remediated on the current branch:
+
+- Direct OTLP records snapshot their destination, headers, resource identity,
+  and temporality at emission, so later project-environment changes cannot
+  reroute or relabel queued data.
+- Export state is isolated per destination and serialized with one in-flight
+  request. Cumulative and delta counter/histogram state preserves updates made
+  during export; gauges retain the latest value.
+- Failed network requests, timeouts, and retryable 429, 502, 503, and 504
+  responses retain the batch for bounded exponential retry. Requests time out
+  after ten seconds, automatic retries stop after five attempts, and exhausted
+  destinations are evictable under the 16-destination capacity limit.
+- OTLP JSON uses decimal strings for 64-bit histogram counts and bucket counts,
+  emits stable instrument metadata, canonicalizes and validates endpoints and
+  headers, and applies the configured cumulative, delta, or low-memory
+  temporality preference.
+- Metric names, values, metadata, attributes, instrument caches, gauge series,
+  direct series, destinations, batches, payloads, headers, and endpoints have
+  explicit bounds. Invalid or over-budget measurements are dropped without
+  escaping into application code.
+- Local instruments follow the OpenTelemetry metrics-provider revision.
+  Provider replacement rebuilds instruments and detaches observable-gauge
+  callbacks instead of continuing to publish through a retired provider.
+- The project-facing metrics facade is immutable. Process-wide reset and test
+  flush controls were removed from the public runtime module and moved behind
+  a source-internal, non-exported testing boundary.
+- Direct flush is an explicit public lifecycle operation that always resolves.
+  The guide and generated API reference document validation, cardinality,
+  routing, temporality, retry, timeout, failure-isolation, and flush behavior.
+
+Reproducible checkpoint evidence:
+
+- The focused metrics and affected-consumer surface passed 13 test suites and
+  127 steps with zero failures. The metrics SDK itself passed 28 adversarial
+  steps covering project isolation, provider replacement, OTLP serialization,
+  cumulative and delta concurrency, retry exhaustion, timeout, destination
+  eviction, cardinality, and unsafe configuration.
+- `deno task docs:validate` passed 45 groups and 87 steps plus all 716 link
+  checks.
+- Core dependency, dependency-boundary, and module-boundary audits passed.
+- `deno task verify:quick` passed manifests, formatting, lint and architecture
+  ratchets, documentation validation, and all configured entrypoint
+  typechecks.
+- `deno task typecheck:consumer` rebuilt the npm and extension packages and
+  passed the documented consumer-composition typecheck against the generated
+  declarations.
+
+The removal of the public process-wide metrics test controls was explicitly
+approved on 2026-07-25. No unresolved critical or high-confidence metrics
+production risk remains.
 
 ### Embedding remediation checkpoint
 

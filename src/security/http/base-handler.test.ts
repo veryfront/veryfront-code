@@ -9,6 +9,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { metrics } from "#veryfront/metrics";
+import { resetMetricsForTests } from "../../metrics/testing.ts";
 import { BaseHandler } from "./base-handler.ts";
 import type {
   HandlerContext,
@@ -134,7 +135,7 @@ describe("BaseHandler.withProxyContext", () => {
       // expected
     }
     _resetShimForTests();
-    metrics.__resetForTests();
+    resetMetricsForTests();
   });
 
   it("runs fn() in local dev mode (no projectSlug)", async () => {
