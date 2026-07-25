@@ -140,7 +140,10 @@ export type RuntimeLoadSkillToolOptions = {
 export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
   v.object({
     skillId: v.string()
-      .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
+      .regex(
+        /^[a-zA-Z0-9_-]+(?:\.md)?$/,
+        'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
+      )
       .describe('The skill ID to load (e.g., "react-components", "api-design")'),
     file: v.string().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
@@ -349,6 +352,15 @@ function getReferenceableLoadedRuntimeSkillIds(
   ].sort();
 }
 
+function getRuntimeSkillIdInputValues(skillIds: readonly string[]): [string, ...string[]] {
+  const values = skillIds.flatMap((skillId) => [skillId, `${skillId}.md`]);
+  return values as [string, ...string[]];
+}
+
+function normalizeRuntimeLoadSkillInputSkillId(skillId: string): string {
+  return skillId.endsWith(".md") ? skillId.slice(0, -3) : skillId;
+}
+
 function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) {
   const knownIds = getKnownRuntimeSkillIds(options);
   if (!knownIds || knownIds.length === 0) {
@@ -366,7 +378,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
     loadedIds.length > 0 && unloadedIds.length === 0 && referenceableLoadedIds.length === 0
   ) {
     const [firstLoaded, ...restLoaded] = loadedIds as [string, ...string[]];
-    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    const loadedEnumValues = getRuntimeSkillIdInputValues([firstLoaded, ...restLoaded]);
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
@@ -380,7 +392,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
 
   if (referenceableLoadedIds.length > 0 && unloadedIds.length === 0) {
     const [firstLoaded, ...restLoaded] = referenceableLoadedIds as [string, ...string[]];
-    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    const loadedEnumValues = getRuntimeSkillIdInputValues([firstLoaded, ...restLoaded]);
     return defineSchema((v) =>
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
@@ -397,9 +409,9 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
 
   if (referenceableLoadedIds.length > 0) {
     const [firstUnloaded, ...restUnloaded] = unloadedIds as [string, ...string[]];
-    const unloadedEnumValues = [firstUnloaded, ...restUnloaded] as [string, ...string[]];
+    const unloadedEnumValues = getRuntimeSkillIdInputValues([firstUnloaded, ...restUnloaded]);
     const [firstLoaded, ...restLoaded] = referenceableLoadedIds as [string, ...string[]];
-    const loadedEnumValues = [firstLoaded, ...restLoaded] as [string, ...string[]];
+    const loadedEnumValues = getRuntimeSkillIdInputValues([firstLoaded, ...restLoaded]);
     return defineSchema((v) =>
       v.union([
         v.object({
@@ -425,7 +437,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
   }
 
   const [first, ...rest] = unloadedIds as [string, ...string[]];
-  const enumValues = [first, ...rest] as [string, ...string[]];
+  const enumValues = getRuntimeSkillIdInputValues([first, ...rest]);
   return defineSchema((v) =>
     v.object({
       skillId: v.enum(enumValues).describe(
@@ -529,7 +541,7 @@ export function createRuntimeLoadSkillTool(
         }`,
       });
     }
-    skillId = parsed.skillId;
+    skillId = normalizeRuntimeLoadSkillInputSkillId(parsed.skillId);
     file = parsed.file;
 
     if (file) {

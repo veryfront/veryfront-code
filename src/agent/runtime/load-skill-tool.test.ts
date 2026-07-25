@@ -100,6 +100,41 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
   });
 });
 
+Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the boundary", async () => {
+  const loaderCalls: string[] = [];
+  const context = createProjectContext({
+    availableSkillIds: ["plan"],
+  });
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: (_context, skillId) =>
+        Promise.resolve(
+          skillId === "plan" ? ["references/project.md"] : [],
+        ),
+      loadProjectSkill: (_context, skillId) => {
+        loaderCalls.push(skillId);
+        return Promise.resolve(
+          skillId === "plan"
+            ? { skillId: "plan", instructions: "# Project plan", references: [] }
+            : null,
+        );
+      },
+      loadProjectSkillReference: (_context, skillId, normalizedFile) =>
+        Promise.resolve(`${skillId}/${normalizedFile}`),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
+  const reload = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+
+  assertEquals(result.skillId, "plan");
+  assertEquals(loaderCalls, ["plan"]);
+  assertStringIncludes(reload.instructions, 'Skill "plan" is already loaded');
+});
+
 Deno.test("createRuntimeLoadSkillTool falls back to builtin skills and filters allowed tools", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
@@ -269,7 +304,7 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
         properties: {
           skillId: {
             type: "string",
-            enum: ["plan"],
+            enum: ["plan", "plan.md"],
             description: "Unloaded skill ID to load. Available unloaded skill IDs: plan",
           },
           file: {
@@ -285,7 +320,7 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
         properties: {
           skillId: {
             type: "string",
-            enum: ["veryfront"],
+            enum: ["veryfront", "veryfront.md"],
             description:
               "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
           },
@@ -326,7 +361,7 @@ Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skil
     properties: {
       skillId: {
         type: "string",
-        enum: ["veryfront"],
+        enum: ["veryfront", "veryfront.md"],
         description: "Unloaded skill ID to load. Available unloaded skill IDs: veryfront",
       },
       file: {
@@ -346,7 +381,7 @@ Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skil
     properties: {
       skillId: {
         type: "string",
-        enum: ["veryfront"],
+        enum: ["veryfront", "veryfront.md"],
         description:
           "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
       },
@@ -385,7 +420,7 @@ Deno.test("createRuntimeLoadSkillTool schema only permits reference loads when a
     properties: {
       skillId: {
         type: "string",
-        enum: ["veryfront"],
+        enum: ["veryfront", "veryfront.md"],
         description:
           "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
       },
@@ -430,7 +465,7 @@ Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loadi
     properties: {
       skillId: {
         type: "string",
-        enum: ["veryfront"],
+        enum: ["veryfront", "veryfront.md"],
         description:
           "Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: veryfront",
       },
@@ -477,7 +512,7 @@ Deno.test("createRuntimeLoadSkillTool exposes only referenceable skills when eve
     properties: {
       skillId: {
         type: "string",
-        enum: ["with-reference"],
+        enum: ["with-reference", "with-reference.md"],
         description:
           "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference",
       },
@@ -524,7 +559,7 @@ Deno.test("createRuntimeLoadSkillTool omits loaded skills without references fro
         properties: {
           skillId: {
             type: "string",
-            enum: ["create"],
+            enum: ["create", "create.md"],
             description: "Unloaded skill ID to load. Available unloaded skill IDs: create",
           },
           file: {
@@ -540,7 +575,7 @@ Deno.test("createRuntimeLoadSkillTool omits loaded skills without references fro
         properties: {
           skillId: {
             type: "string",
-            enum: ["with-reference"],
+            enum: ["with-reference", "with-reference.md"],
             description:
               "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference",
           },
@@ -592,7 +627,7 @@ Deno.test("createRuntimeLoadSkillTool schema ignores stale loaded skills outside
     properties: {
       skillId: {
         type: "string",
-        enum: ["veryfront"],
+        enum: ["veryfront", "veryfront.md"],
         description: "Unloaded skill ID to load. Available unloaded skill IDs: veryfront",
       },
       file: {
@@ -890,6 +925,21 @@ Deno.test("createRuntimeLoadSkillTool rejects unsafe and unknown manifest skill 
     Error,
     "input validation failed",
   );
+  for (
+    const invalidSkillId of [
+      "plan.md.md",
+      "bad/path.md",
+      "..",
+      "plan.mdx",
+      "plan.MD",
+    ]
+  ) {
+    await assertRejects(
+      () => tool.execute({ skillId: invalidSkillId }),
+      Error,
+      "input validation failed",
+    );
+  }
 });
 
 Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest instead of inviting invented skill IDs", () => {
