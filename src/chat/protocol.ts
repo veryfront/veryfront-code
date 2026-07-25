@@ -95,6 +95,8 @@ export interface ChatDataPart {
 export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
+  | ChatSourceUrlPart
+  | ChatSourceDocumentPart
   | ChatFilePart
   | ChatToolPart
   | ChatToolResultPart
@@ -449,3 +451,20 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
     type: `data-${string}`;
     data: unknown;
   };
+
+/** Chat message part that carries a URL citation. */
+export interface ChatSourceUrlPart {
+  type: "source-url";
+  sourceId: string;
+  url: string;
+  title?: string;
+}
+
+/** Chat message part that carries a document citation. */
+export interface ChatSourceDocumentPart {
+  type: "source-document";
+  sourceId: string;
+  title: string;
+  mediaType?: string;
+  filename?: string;
+}
