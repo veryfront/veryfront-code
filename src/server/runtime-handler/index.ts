@@ -9,6 +9,7 @@
 
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
@@ -610,7 +611,11 @@ export function createVeryfrontHandler(
 
         const { response, error, settled } = await withRequestTimeout(
           (signal) => {
-            const timeoutRequest = new Request(req, { signal });
+            // Deno.upgradeWebSocket requires the exact Request received by
+            // Deno.serve. Cloning it to attach the timeout signal lets the
+            // handshake return 101, but the upgraded connection immediately
+            // closes with an unexpected EOF.
+            const timeoutRequest = isWebSocketUpgrade(req) ? req : new Request(req, { signal });
             return runWithRequestProfiling(
               {
                 category: profileCategory,
