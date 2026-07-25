@@ -765,9 +765,7 @@ function getToolPartCallId(part: unknown): string | null {
     return null;
   }
 
-  const toolCallId = getStringField(part, "toolCallId", "") ||
-    getStringField(part, "tool_call_id", "") ||
-    getStringField(part, "id", "");
+  const toolCallId = getStringField(part, "toolCallId", "");
   return toolCallId.length > 0 ? toolCallId : null;
 }
 
@@ -818,7 +816,7 @@ export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[
         return true;
       }
 
-      const toolCallId = getToolPartCallId(part);
+      const toolCallId = getMessagePartToolCallId(part);
       return toolCallId && isRecord(part)
         ? replayMatches.preservedTransientToolParts.has(part)
         : false;

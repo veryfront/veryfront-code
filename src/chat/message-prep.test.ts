@@ -4,6 +4,7 @@ import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
   compactForStep,
+  compactHistoricalUiMessageToolInputs,
   compressTurn,
   enforceTokenBudget,
   estimateTokens,
@@ -1715,6 +1716,52 @@ Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools thro
   assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render");
   assert((diagnostics[0] as { originalInputChars?: number }).originalInputChars! > 1_000);
   assert((diagnostics[0] as { retainedInputChars?: number }).retainedInputChars! < 1_000);
+});
+
+Deno.test("compactHistoricalUiMessageToolInputs does not treat raw completed tool calls as results", () => {
+  const inputMarker = "RAW_COMPLETED_CALL_IS_NOT_A_RESULT";
+  const compacted = compactHistoricalUiMessageToolInputs([
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Update the file." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{
+        type: "dynamic-tool",
+        toolName: "update_file",
+        toolCallId: "tool-raw-completed-only",
+        input: {
+          path: "components/GraphViewer.tsx",
+          content: `${inputMarker}:${"pending body ".repeat(3000)}`,
+        },
+        state: "input-available",
+      }],
+    },
+    {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        rawToolCallReplayPart(
+          "tool-raw-completed-only",
+          "update_file",
+          { path: "components/GraphViewer.tsx" },
+          "completed",
+        ),
+      ],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Continue." }],
+    },
+  ] as ChatUiMessage[]);
+
+  const serialized = JSON.stringify(compacted);
+  assertStringIncludes(serialized, inputMarker);
+  assertEquals(serialized.includes("historical_tool_input_summary"), false);
 });
 
 Deno.test("compactForStep compacts old tool inputs while preserving latest-turn tool inputs", () => {
