@@ -765,6 +765,7 @@ export class RenderPipeline {
                             collectedMetadata: pageBundleResult.collectedMetadata,
                             slug,
                             cssImports: collectedCSSImports,
+                            options: renderOptions,
                           },
                           renderOptions,
                         ),
@@ -922,6 +923,22 @@ export class RenderPipeline {
     const appPath = pageIslandPlan
       ? undefined
       : await profilePhase("page_data.resolve_app_path", () => this.resolveAppPath());
+    const errorPath = await profilePhase(
+      "page_data.resolve_error_path",
+      async () => {
+        const resolved = await this.config.ssrOrchestrator.resolveErrorComponentPath({
+          pageInfo,
+          pageBundle: {} as PageBundle,
+          layoutBundle: layoutResult.layoutBundle,
+          nestedLayouts: layoutResult.nestedLayouts,
+          collectedMetadata: {},
+          slug,
+          cssImports: [],
+          options,
+        });
+        return resolved ? extractRelativePathShared(resolved, this.config.projectDir) : undefined;
+      },
+    );
 
     const { css, cssAction, cssError } = await profilePhase(
       "page_data.resolve_css",
@@ -934,6 +951,7 @@ export class RenderPipeline {
       pageType,
       layoutCount: layouts.length,
       appPath,
+      errorPath,
       isolatedClientPage: pageIslandPlan ? true : undefined,
       requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       headingsCount: headings.length,
@@ -954,6 +972,7 @@ export class RenderPipeline {
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
+      errorPath,
       isolatedClientPage: pageIslandPlan ? true : undefined,
       requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       releaseId: options?.releaseId,

@@ -123,7 +123,7 @@ describe(
       });
     });
 
-    it("returns runtime error HTML instead of app/error.tsx when page throws synchronously", async () => {
+    it("renders the nearest app/error.tsx when a page throws synchronously", async () => {
       await withTestContext("production-server-app-error-boundary-ssr", async (context) => {
         await removeAppDir(context.projectDir);
 
@@ -160,9 +160,9 @@ describe(
           assertEquals(res.status, 500);
           assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
           const html = await res.text();
-          assertStringIncludes(html, "Runtime Error");
+          assertStringIncludes(html, "ErrA:");
           assertStringIncludes(html, "boom");
-          assertEquals(html.includes("ErrA:"), false);
+          assertEquals(html.includes("Runtime Error"), false);
         } finally {
           await server.stop();
         }
