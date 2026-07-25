@@ -451,15 +451,10 @@ function loadAndTranspileModule(
       // more constrained resolution path; wiring a user `zod` through it belongs
       // in a dedicated change with its own binary coverage. Leaving the binary
       // branch byte-identical to before keeps that path untouched here.
-      const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
-      if (isDeno && isCompiledBinary()) frameworkPackages.add("zod");
-      const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
-      const userDeps = new Map<string, string>();
-      for (const [name, version] of allDeps) {
-        if (frameworkPackages.has(name)) continue;
-        if (frameworkPrefixes.some((p) => name.startsWith(p))) continue;
-        userDeps.set(name, version);
-      }
+      const userDeps = getUserDependencies(allDeps, {
+        isDeno,
+        isCompiledBinary: isDeno && isCompiledBinary(),
+      });
 
       // Always externalize user npm dependencies. The bundled handler is loaded
       // from a temp file and user deps are resolved at runtime:
@@ -578,6 +573,23 @@ async function readFileWithExtensions(
       message: `File not found: ${basePath}`,
     }),
   );
+}
+
+export function getUserDependencies(
+  allDeps: ReadonlyMap<string, string>,
+  runtime: { isDeno: boolean; isCompiledBinary: boolean },
+): Map<string, string> {
+  const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
+  if (runtime.isDeno && runtime.isCompiledBinary) frameworkPackages.add("zod");
+
+  const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
+  const userDeps = new Map<string, string>();
+  for (const [name, version] of allDeps) {
+    if (frameworkPackages.has(name)) continue;
+    if (frameworkPrefixes.some((prefix) => name.startsWith(prefix))) continue;
+    userDeps.set(name, version);
+  }
+  return userDeps;
 }
 
 async function loadModuleFromCode(
