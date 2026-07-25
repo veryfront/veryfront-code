@@ -173,7 +173,7 @@ describe("rendering/ssr-globals/dom-stubs", () => {
     it("constructs and exposes observe/unobserve/disconnect/takeRecords", () => {
       const RO = createObserverClass("ResizeObserver");
       assertEquals(RO.name, "ResizeObserver");
-      const ro = new RO(() => {});
+      const ro = new RO();
       ro.observe();
       ro.unobserve();
       ro.disconnect();
@@ -312,7 +312,7 @@ describe("rendering/ssr-globals/dom-stubs", () => {
           const name of ["ResizeObserver", "IntersectionObserver", "MutationObserver"] as const
         ) {
           assertEquals(windowStub[name], globalRecord[name]);
-          const observer = new windowStub[name](() => {});
+          const observer = new windowStub[name]();
           observer.observe();
           observer.disconnect();
           assertEquals(observer.takeRecords().length, 0);
