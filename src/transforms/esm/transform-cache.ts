@@ -607,8 +607,14 @@ export async function setCachedTransformAsync(
 ): Promise<void> {
   validateCacheKey(key);
   const ttl = resolveTransformTtl(ttlSeconds);
+  // Bind the write to the cache generation visible at call time. Hashing and
+  // tokenization await, so resolving the destination later could let a retiring
+  // generation publish into a replacement backend after destroy/reconfigure.
+  const fallback = getLocalFallback();
+  const gateway = getEffectiveCacheGateway();
   if (expiresImmediately(ttl)) {
-    await deleteCacheEntry(key);
+    fallback.delete(key);
+    if (gateway) await gateway.del(key);
     return;
   }
   validateTransformPayload(code, hash);
@@ -624,10 +630,8 @@ export async function setCachedTransformAsync(
     localCodeHash,
     bundleManifestId,
   );
-  const gateway = getEffectiveCacheGateway();
-
   if (!gateway) {
-    getLocalFallback().set(key, localEntry);
+    fallback.set(key, localEntry);
     return;
   }
 
@@ -651,7 +655,7 @@ export async function setCachedTransformAsync(
   try {
     await gateway.set(key, serialized, ttl);
   } catch (error) {
-    getLocalFallback().set(key, localEntry);
+    fallback.set(key, localEntry);
     throw new Error("Transform cache backend set failed; stored in local fallback", {
       cause: error,
     });
@@ -725,10 +729,19 @@ function publishComputedTransform(
   hash: string,
   ttlSeconds: number,
 ): void {
+  const generation = cacheLifecycleGeneration;
   const previousPublication = transformCachePublications.get(key) ?? Promise.resolve();
   const publication = previousPublication
     .catch(() => {})
-    .then(() => setCachedTransformAsync(key, code, hash, ttlSeconds))
+    .then(() => {
+      if (cacheLifecycleGeneration !== generation) {
+        logger.debug("Skipped queued cache write from stale transform generation", {
+          keyLength: key.length,
+        });
+        return;
+      }
+      return setCachedTransformAsync(key, code, hash, ttlSeconds);
+    })
     .finally(() => {
       if (transformCachePublications.get(key) === publication) {
         transformCachePublications.delete(key);

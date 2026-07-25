@@ -528,11 +528,13 @@ describe("transforms/esm/transform-cache", () => {
       const staleCode = `import helper from "file://${frameworkPath}";`;
       let storedValue: string | null = null;
       let setCalls = 0;
+      const setKeys: string[] = [];
       const repairPublished = Promise.withResolvers<void>();
       const cacheBackend: CacheBackend = {
         type: "redis",
         get: () => Promise.resolve(storedValue),
-        set: (_key, value) => {
+        set: (setKey, value) => {
+          setKeys.push(setKey);
           storedValue = value;
           setCalls++;
           if (setCalls === 2) repairPublished.resolve();
@@ -592,6 +594,12 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(secondResult.code, "export const repaired = true;");
       assertEquals(validationCalls, 1);
       assertEquals(computeCalls, 1);
+      assertEquals(setCalls, 2);
+      assertEquals(setKeys, [key, key]);
+      assertEquals(
+        (JSON.parse(storedValue!) as { code: string }).code,
+        "export const repaired = true;",
+      );
       assertEquals(
         (await getCachedTransformAsync(key))?.code,
         "export const repaired = true;",

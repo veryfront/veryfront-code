@@ -570,17 +570,17 @@ describe("transformFrameworkCode depth-limit fallback", {
       "19.2.4",
       tmp,
       content,
+      TEST_IMPORT_MAP_FINGERPRINT,
     );
     const missingPath = `${tmp}/framework/vfmod-vf-framework-stale.mjs`;
     const staleFileUrl = `file://${missingPath}`;
     veryfrontTransformCache.set(transformKey, staleFileUrl);
 
     try {
-      const resolved = await resolveAndTransformVeryfrontImport(specifier, {
-        reactVersion: "19.2.4",
-        projectDir: tmp,
-        fs: createFileSystem(),
-      });
+      const resolved = await resolveAndTransformVeryfrontImport(
+        specifier,
+        createTestTransformContext("19.2.4", tmp),
+      );
 
       assert(resolved, "resolver did not return a file URL");
       assertEquals(resolved === staleFileUrl, false);
