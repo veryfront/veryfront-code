@@ -24,6 +24,15 @@ import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
+import {
+  getProjectDependenciesSync,
+  stripSemverRange,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  getCachedNpmVersion,
+  isDependencyPinningEnabled,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 
 const logger = serverLogger.component("bare-ext");
 
@@ -299,6 +308,29 @@ export function createRelativeFsPlugin(
 /** Map of common packages to their esm.sh URLs for browser imports */
 const ESM_PACKAGE_MAP: Record<string, string> = {};
 
+/**
+ * Build an esm.sh URL for a bare specifier, injecting a pinned version when
+ * VERYFRONT_DEPENDENCY_PINNING=1 and a cached version is available.
+ * Falls back to the unversioned URL when the flag is off or caches are cold.
+ */
+function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string {
+  if (isDependencyPinningEnabled() && projectDir) {
+    const parsed = parseBarePackageSpecifier(path);
+    if (parsed && !parsed.version) {
+      const allDeps = getProjectDependenciesSync(projectDir);
+      const rawPin = allDeps?.[parsed.packageName];
+      const version = rawPin
+        ? stripSemverRange(rawPin)
+        : getCachedNpmVersion(parsed.packageName, projectDir);
+      if (version) {
+        const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;
+        return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${versionedPath}`;
+      }
+    }
+  }
+  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
+}
+
 interface BareExternalPluginOptions {
   bundle?: boolean;
   lockfile?: LockfileManager;
@@ -322,10 +354,6 @@ function isBareImport(path: string): boolean {
  */
 function isNodeBuiltinSpecifier(path: string): boolean {
   return path === "node" || path.startsWith("node:");
-}
-
-function toEsmUrl(path: string): string {
-  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
 }
 
 function resolveAsExternalOrHttps(
@@ -417,7 +445,7 @@ export function createBareExternalPlugin(
           return { path: args.path, external: true };
         }
 
-        return resolveAsExternalOrHttps(toEsmUrl(args.path), bundle);
+        return resolveAsExternalOrHttps(buildPinnedEsmUrl(args.path, opts.projectDir), bundle);
       });
 
       if (!bundle) return;

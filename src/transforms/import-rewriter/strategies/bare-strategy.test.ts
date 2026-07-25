@@ -1,6 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../release-assets/constants.ts";
+import {
+  _primeDependenciesCache,
+  clearReactVersionCache,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  _clearNpmVersionCache,
+  scheduleNpmVersionResolution,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { bareStrategy } from "./bare-strategy.ts";
 
@@ -163,6 +173,129 @@ describe("BareStrategy", () => {
     it("leaves a browser-safe npm: specifier external on the SSR target", () => {
       const result = bareStrategy.rewrite(makeInfo("npm:zod@4.0.0"), makeCtx({ target: "ssr" }));
       assertEquals(result.specifier, null);
+    });
+  });
+
+  describe("rewrite: flag-off regression — behavior byte-identical to original when VERYFRONT_DEPENDENCY_PINNING is unset", () => {
+    let originalFlag: string | undefined;
+
+    beforeEach(() => {
+      originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      _clearNpmVersionCache();
+      clearReactVersionCache();
+    });
+
+    afterEach(() => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      _clearNpmVersionCache();
+      clearReactVersionCache();
+    });
+
+    it("produces the same unversioned esm.sh URL as the original code path", () => {
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("still pins tailwindcss regardless of the flag", () => {
+      const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+    });
+
+    it("preserves inline-versioned specifiers unchanged", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("zod@3.22.4"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier?.includes("esm.sh/zod@3.22.4"), true);
+    });
+  });
+
+  describe("rewrite: version-selection ladder when VERYFRONT_DEPENDENCY_PINNING=1", () => {
+    let originalFlag: string | undefined;
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      _clearNpmVersionCache();
+      clearReactVersionCache();
+      // Mock fetch so cold-cache paths never make real network requests in tests.
+      originalFetch = globalThis.fetch;
+      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+    });
+
+    afterEach(() => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      _clearNpmVersionCache();
+      clearReactVersionCache();
+      globalThis.fetch = originalFetch;
+    });
+
+    it("uses the npm registry cache version when the package.json cache is cold", () => {
+      // Pre-warm the npm registry cache (simulates a prior background fetch).
+      scheduleNpmVersionResolution("lodash", "4.17.21", "/project");
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
+    });
+
+    it("falls back to unversioned URL when both caches are cold", async () => {
+      // No package.json cache, no npm registry cache — must behave like flag-off.
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
+      // Yield one tick so the background fetch microtask settles and clears its timer.
+      await new Promise<void>((r) => setTimeout(r, 1));
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
+    });
+
+    it("uses the inline version even when a registry cache entry exists", () => {
+      scheduleNpmVersionResolution("lodash", "3.0.0", "/project");
+      // Inline version (4.17.21) must win over the cached 3.0.0.
+      const result = bareStrategy.rewrite(
+        makeInfo("lodash@4.17.21"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
+      assertEquals(result.specifier?.includes("3.0.0"), false);
+    });
+
+    it("produces a versioned URL for a scoped package from npm cache", () => {
+      scheduleNpmVersionResolution("@tanstack/react-query", "5.28.0", "/project");
+      const result = bareStrategy.rewrite(
+        makeInfo("@tanstack/react-query"),
+        makeCtx({ target: "browser" }),
+      );
+      assertEquals(result.specifier?.includes("@tanstack/react-query@5.28.0"), true);
+    });
+
+    it("still uses tailwindcss pinned version regardless of npm cache", () => {
+      const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
+      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+    });
+
+    it("SSR target is not affected by the pin flag", () => {
+      scheduleNpmVersionResolution("lodash", "4.17.21", "/project");
+      // SSR always returns null for bare specifiers with no inline version.
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "ssr" }));
+      assertEquals(result.specifier, null);
+    });
+
+    it("treats a compound range in package.json as unpinned and falls back to registry cache", () => {
+      // Compound ranges like ">=1.0.0 <2.0.0" strip to "1.0.0 <2.0.0" which is
+      // not a valid semver and would produce a malformed esm.sh URL. The strategy
+      // must skip it and fall through to the npm registry cache instead.
+      _primeDependenciesCache("/project", { lodash: ">=1.0.0 <2.0.0" });
+      // No registry cache entry — should fall through to cold-cache (unversioned).
+      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
     });
   });
 

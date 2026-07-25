@@ -1,10 +1,18 @@
 import {
   DEFAULT_REACT_VERSION,
+  getProjectDependenciesSync,
   getReactImportMap,
+  stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import {
+  getCachedNpmVersion,
+  isDependencyPinningEnabled,
+  isExactSemver,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 
 type CacheBuster = number | string;
 
@@ -59,6 +67,8 @@ export interface SSRRewriteOptions {
   crossProjectRef?: string;
   /** React version to use for import rewrites */
   reactVersion?: string;
+  /** Project root directory for dependency pin lookup (used when VERYFRONT_DEPENDENCY_PINNING=1). */
+  projectDir?: string;
 }
 
 function shouldKeepBareSpecifier(specifier: string): boolean {
@@ -110,7 +120,22 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   return null;
 }
 
-function rewriteBareImports(code: string, version?: string): string {
+function resolveBareImportPin(bareSpecifier: string, projectDir: string): string | undefined {
+  const parsed = parseBarePackageSpecifier(bareSpecifier);
+  if (!parsed || parsed.version) return undefined; // already versioned inline
+
+  const allDeps = getProjectDependenciesSync(projectDir);
+  const rawPin = allDeps?.[parsed.packageName];
+  if (rawPin) {
+    const stripped = stripSemverRange(rawPin);
+    // Compound ranges like ">=1.0.0 <2.0.0" would produce a malformed URL; skip them.
+    if (isExactSemver(stripped)) return stripped;
+  }
+
+  return getCachedNpmVersion(parsed.packageName, projectDir);
+}
+
+function rewriteBareImports(code: string, version?: string, projectDir?: string): string {
   const v = version ?? DEFAULT_REACT_VERSION;
 
   return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
@@ -120,6 +145,18 @@ function rewriteBareImports(code: string, version?: string): string {
     if (reactUrl) return `from "${reactUrl}"`;
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
+
+    if (projectDir && isDependencyPinningEnabled()) {
+      const pinVersion = resolveBareImportPin(bareSpecifier, projectDir);
+      if (pinVersion) {
+        const parsed = parseBarePackageSpecifier(bareSpecifier);
+        // Insert the version between package name and subpath (if any).
+        const versionedBase = parsed
+          ? `${parsed.packageName}@${pinVersion}${parsed.subpath ?? ""}`
+          : `${bareSpecifier}@${pinVersion}`;
+        return `from "https://esm.sh/${versionedBase}?external=react&target=es2022"`;
+      }
+    }
 
     return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
   });
@@ -228,7 +265,7 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
-  let result = rewriteBareImports(code, options.reactVersion);
+  let result = rewriteBareImports(code, options.reactVersion, options.projectDir);
   result = rewritePathAliases(result, options);
   result = rewriteRelativeImports(result, options);
   return result;
@@ -283,7 +320,7 @@ export async function rewriteSSRImportsCompatAsync(
   code: string,
   options: SSRRewriteOptions = {},
 ): Promise<string> {
-  let result = rewriteBareImports(code, options.reactVersion);
+  let result = rewriteBareImports(code, options.reactVersion, options.projectDir);
   result = await rewritePathAliasesAsync(result, options);
   result = await rewriteRelativeImportsAsync(result, options);
   return result;

@@ -24,6 +24,8 @@ interface CachedDependencyVersions {
   mtimeMs: number | null;
   react?: string;
   veryfront?: string;
+  /** Full merged dependency map (dependencies + devDependencies, raw semver strings). */
+  dependencies?: Record<string, string>;
 }
 
 const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
@@ -101,6 +103,31 @@ export function clearReactVersionCache(): void {
   dependencyVersionCache.clear();
 }
 
+/**
+ * For tests only — prime the in-process dependency cache for a given project directory,
+ * simulating a package.json that has already been read by readProjectDependencyVersions.
+ */
+export function _primeDependenciesCache(
+  projectDir: string,
+  dependencies: Record<string, string>,
+): void {
+  dependencyVersionCache.set(getPackageJsonPath(projectDir), { mtimeMs: null, dependencies });
+}
+
+/**
+ * Synchronously return the full dependency map for a project from the in-process
+ * cache, or undefined when the cache has not been warmed yet.
+ *
+ * The cache is populated by readProjectDependencyVersions(). Call sites that
+ * need the map synchronously (e.g. import rewrite strategies) should trigger
+ * an async warm-up early in the request lifecycle and then use this accessor.
+ */
+export function getProjectDependenciesSync(
+  projectDir: string,
+): Record<string, string> | undefined {
+  return dependencyVersionCache.get(getPackageJsonPath(projectDir))?.dependencies;
+}
+
 function getPackageJsonPath(projectDir: string): string {
   return `${projectDir}/package.json`;
 }
@@ -111,7 +138,7 @@ function getMtimeMs(mtime: Date | null | undefined): number | null {
 
 export async function readProjectDependencyVersions(
   projectDir: string,
-): Promise<{ react?: string; veryfront?: string }> {
+): Promise<{ react?: string; veryfront?: string; dependencies?: Record<string, string> }> {
   const packageJsonPath = getPackageJsonPath(projectDir);
 
   try {
@@ -122,7 +149,11 @@ export async function readProjectDependencyVersions(
     const cached = dependencyVersionCache.get(packageJsonPath);
 
     if (cached && cached.mtimeMs === mtimeMs) {
-      return { react: cached.react, veryfront: cached.veryfront };
+      return {
+        react: cached.react,
+        veryfront: cached.veryfront,
+        dependencies: cached.dependencies,
+      };
     }
 
     const content = await fs.readTextFile(packageJsonPath);
@@ -134,9 +165,15 @@ export async function readProjectDependencyVersions(
     const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
-    dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront });
+    // Preserve raw semver strings in the full map so callers can strip ranges as needed.
+    const dependencies: Record<string, string> = {};
+    for (const [name, version] of Object.entries(deps)) {
+      if (typeof version === "string") dependencies[name] = version;
+    }
 
-    return { react, veryfront };
+    dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront, dependencies });
+
+    return { react, veryfront, dependencies };
   } catch (error) {
     // ENOENT means there is no package.json in the project dir — expected for
     // framework-only environments.  Any other error (permission denied, malformed

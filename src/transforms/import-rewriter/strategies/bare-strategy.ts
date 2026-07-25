@@ -16,6 +16,17 @@ import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
 import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
+import {
+  getProjectDependenciesSync,
+  stripSemverRange,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  getCachedNpmVersion,
+  isDependencyPinningEnabled,
+  isExactSemver,
+  postDependencyResolution,
+  scheduleNpmVersionResolution,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -41,6 +52,37 @@ function warnUnversionedImport(specifier: string, projectId: string): void {
     suggestion: `Pin version: import '${packageName}@x.y.z'`,
     help: `Run 'npm info ${packageName} version' to find current version`,
   });
+}
+
+/**
+ * Resolve a pinned version for a bare package when the flag is on.
+ * Priority: package.json pin -> npm registry cache -> undefined (fallback).
+ * Schedules a background registry fetch when both caches are cold.
+ */
+function resolvePinnedVersion(
+  packageName: string,
+  ctx: RewriteContext,
+): string | undefined {
+  // 1. package.json pin from the warm in-process cache.
+  const allDeps = getProjectDependenciesSync(ctx.projectDir);
+  const rawPin = allDeps?.[packageName];
+  if (rawPin) {
+    const stripped = stripSemverRange(rawPin);
+    // Only use if it resolves to an exact version; compound ranges like
+    // ">=1.0.0 <2.0.0" would produce a malformed URL, so fall through.
+    if (isExactSemver(stripped)) return stripped;
+  }
+
+  // 2. npm registry cache (populated by a prior background fetch).
+  const registryVersion = getCachedNpmVersion(packageName, ctx.projectDir);
+  if (registryVersion) return registryVersion;
+
+  // 3. Cache cold: schedule a background resolution for the next render.
+  scheduleNpmVersionResolution(packageName, undefined, ctx.projectDir, (version) => {
+    void postDependencyResolution(ctx.projectId, [`${packageName}@${version}`]);
+  });
+
+  return undefined;
 }
 
 export class BareStrategy implements ImportRewriteStrategy {
@@ -115,7 +157,20 @@ export class BareStrategy implements ImportRewriteStrategy {
     if (packageName === "tailwindcss") {
       version = TAILWIND_VERSION;
     } else if (!hasVersionSpecifier(bareSpecifier)) {
-      warnUnversionedImport(bareSpecifier, ctx.projectId);
+      if (isDependencyPinningEnabled()) {
+        // Version-selection ladder (flag ON):
+        // 1. inline version in specifier (already captured above as version)
+        // 2. package.json pin or npm registry cache -> resolved here
+        // 3. current unversioned fallback (warn as before)
+        const pinned = resolvePinnedVersion(packageName, ctx);
+        if (pinned) {
+          version = pinned;
+        } else {
+          warnUnversionedImport(bareSpecifier, ctx.projectId);
+        }
+      } else {
+        warnUnversionedImport(bareSpecifier, ctx.projectId);
+      }
     }
 
     const url = buildEsmShUrl(packageName, version, subpath, {
