@@ -101,6 +101,24 @@ function getElementName(openingElement: t.JSXOpeningElement): string {
   return parts.length ? parts.join(".") : "MemberExpression";
 }
 
+/**
+ * Only intrinsic host elements (lowercase tag names like `div`, `button`, or
+ * custom elements containing a hyphen) may receive `data-node-*` attributes.
+ *
+ * Component elements (`<Menu>`, `<Foo.Bar>`) receive those attributes as React
+ * *props*, not DOM attributes. Component libraries frequently forward unknown
+ * props onto whatever they render — and if that is a `React.Fragment` (as with
+ * Headless UI's `<Menu>`/`<Listbox>`), passing props throws:
+ *   "Passing props on 'Fragment'!"
+ * Stamping components is also pointless for Studio Navigator, since the mapped
+ * DOM ultimately comes from the host elements the component renders.
+ */
+function isHostElement(openingElement: t.JSXOpeningElement): boolean {
+  const { name } = openingElement;
+  if (!t.isJSXIdentifier(name)) return false; // member / namespaced ⇒ component
+  return /^[a-z]/.test(name.name) || name.name.includes("-");
+}
+
 function isFragment(openingElement: t.JSXOpeningElement): boolean {
   const { name } = openingElement;
 
@@ -147,6 +165,10 @@ export function injectNodePositions(source: string, options: TransformOptions): 
 
           if (SKIPPED_ELEMENTS.has(elementName.toLowerCase())) return;
           if (isFragment(openingElement)) return;
+          // Never stamp component elements — the attributes would become React
+          // props and break libraries that forward props onto a Fragment
+          // (Headless UI, etc.). Only intrinsic DOM elements get positions.
+          if (!isHostElement(openingElement)) return;
           if (hasPositionAttribute(openingElement.attributes)) return;
 
           const loc = openingElement.loc;
