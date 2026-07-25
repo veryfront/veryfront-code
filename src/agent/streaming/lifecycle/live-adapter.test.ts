@@ -361,4 +361,58 @@ describe("stream lifecycle live adapter", () => {
     });
     assertEquals(state.usage === snapshot.usage as unknown, false);
   });
+
+  it("keeps uncommitted tool inputs unannounced in the legacy chat stream state", () => {
+    const state = createStreamState();
+    const snapshot: StreamSnapshot = {
+      phase: "streaming",
+      accumulatedText: "",
+      reasoning: [],
+      tools: [
+        {
+          id: "open-1",
+          name: "create_file",
+          phase: "input_open",
+          inputText: "",
+          inputDeltas: [],
+        },
+        {
+          id: "streaming-1",
+          name: "create_file",
+          phase: "input_streaming",
+          inputText: '{"path"',
+          inputDeltas: ['{"path"'],
+        },
+        {
+          id: "rejected-1",
+          name: "create_file",
+          phase: "input_rejected",
+          inputText: "",
+          inputDeltas: [],
+          rejectionReason: "malformed",
+        },
+        {
+          id: "ready-1",
+          name: "create_file",
+          phase: "input_ready",
+          inputText: '{"path":"a.md"}',
+          inputDeltas: ['{"path":"a.md"}'],
+          input: { path: "a.md" },
+        },
+      ],
+      finishReason: null,
+      usage: {},
+      hasStreamOutput: false,
+      hasSemanticProgress: true,
+    };
+
+    applyLifecycleSnapshotToChatStreamState(state, snapshot);
+
+    for (const id of ["open-1", "streaming-1", "rejected-1"]) {
+      assertEquals(state.toolCalls.get(id)?.inputAnnounced, false);
+      assertEquals(state.toolCalls.get(id)?.inputAvailable, false);
+    }
+    assertEquals(state.toolCalls.get("ready-1")?.inputAnnounced, true);
+    assertEquals(state.toolCalls.get("ready-1")?.inputAvailable, true);
+  });
 });

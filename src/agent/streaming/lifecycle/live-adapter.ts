@@ -218,7 +218,7 @@ export function applyLifecycleSnapshotToChatStreamState(
         name: tool.name,
         arguments: tool.inputText,
         inputDeltas: [...tool.inputDeltas],
-        inputAnnounced: true,
+        inputAnnounced: isInputAvailable(tool),
         inputAvailable: isInputAvailable(tool),
         ...(tool.providerExecuted !== undefined ? { providerExecuted: tool.providerExecuted } : {}),
         ...(tool.dynamic !== undefined ? { dynamic: tool.dynamic } : {}),
