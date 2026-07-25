@@ -486,6 +486,19 @@ function handleRenderableMessagePart(
     state.messageId = generateClientId("msg");
   }
 
+  if (part.type !== "file") {
+    const existingSource = state.dataParts.find(({ part: existingPart }) =>
+      existingPart.type === part.type &&
+      "sourceId" in existingPart &&
+      existingPart.sourceId === part.sourceId
+    );
+    if (existingSource) {
+      existingSource.part = part;
+      emitUpdate(state, onUpdate, getBuildParts);
+      return;
+    }
+  }
+
   state.dataParts.push({
     order: state.partOrderCounter++,
     part,

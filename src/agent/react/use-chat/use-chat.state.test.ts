@@ -241,6 +241,42 @@ describe("use-chat internal state helpers", () => {
     ]);
   });
 
+  it("replaces a fallback citation with richer metadata during durable replay", async () => {
+    const encoder = new TextEncoder();
+    const sourceId = "knowledge/handbook.md";
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: Custom",
+          `data: {"name":"source-document","value":{"type":"source-document","sourceId":"${sourceId}","mediaType":"text/markdown","title":"${sourceId}","filename":"${sourceId}"}}`,
+          "",
+          "event: Custom",
+          `data: {"name":"source-document","value":{"type":"source-document","sourceId":"${sourceId}","mediaType":"text/x-markdown","title":"Curated handbook","filename":"${sourceId}"}}`,
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages[0]?.parts, [{
+      type: "source-document",
+      sourceId,
+      mediaType: "text/x-markdown",
+      title: "Curated handbook",
+      filename: sourceId,
+    }]);
+  });
+
   it("preserves valid legacy source events and ignores malformed source events", async () => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
