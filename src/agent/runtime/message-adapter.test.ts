@@ -438,6 +438,40 @@ describe("agent runtime message adapter", () => {
     ]);
   });
 
+  it("keeps stored citation metadata out of provider prompts while replaying answer text", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      agentRuntimeMessage(
+        "assistant",
+        [
+          {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/docs",
+            title: "Docs",
+          },
+          {
+            type: "source-document",
+            sourceId: "knowledge/handbook.md",
+            title: "Handbook",
+            mediaType: "text/markdown",
+            filename: "handbook.md",
+          },
+          agentRuntimeTextPart("The answer remains available for the next model turn."),
+        ],
+        0,
+      ),
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "assistant",
+        content: [
+          providerTextPart("The answer remains available for the next model turn."),
+        ],
+      },
+    ]);
+  });
+
   it("normalizes stored dashed tool-result parts without output when replaying agent runtime messages", () => {
     const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
       {
