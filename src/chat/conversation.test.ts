@@ -139,6 +139,16 @@ describe("chat/conversation schemas", () => {
       }).success,
       true,
     );
+    assertEquals(
+      messagePartSchema.safeParse({
+        type: "source_document",
+        source_id: "doc-1",
+        media_type: "text/markdown",
+        title: "Design Doc",
+        filename: "design.md",
+      }).success,
+      true,
+    );
     assertEquals(conversationTypeSchema.safeParse("project_agent").success, true);
     assertEquals(messageStatusSchema.safeParse("cancelled").success, true);
     assertEquals(
@@ -355,7 +365,14 @@ describe("chat/conversation helpers", () => {
         { type: "text", text: "Real content" },
         { type: "reasoning", text: "Thinking…" },
         { type: "source-url", sourceId: "src-1", url: "https://example.com", title: "Example" },
-        { type: "source-document", sourceId: "doc-1", title: "Design Doc" },
+        {
+          type: "source-document",
+          sourceId: "doc-1",
+          mediaType: "text/markdown",
+          title: "Design Doc",
+          filename: "design.md",
+        },
+        { type: "source-document", sourceId: "legacy-doc", title: "Legacy Doc" },
         { type: "data-rollout", data: { approved: true } },
         {
           type: "file",
@@ -382,7 +399,14 @@ describe("chat/conversation helpers", () => {
       { type: "text", text: "Real content" },
       { type: "reasoning", text: "Thinking…" },
       { type: "citation", source_id: "src-1", title: "Example", url: "https://example.com" },
-      { type: "citation", source_id: "doc-1", title: "Design Doc" },
+      {
+        type: "source_document",
+        source_id: "doc-1",
+        media_type: "text/markdown",
+        title: "Design Doc",
+        filename: "design.md",
+      },
+      { type: "citation", source_id: "legacy-doc", title: "Legacy Doc" },
       { type: "data", name: "rollout", value: { approved: true } },
       {
         type: "image",
