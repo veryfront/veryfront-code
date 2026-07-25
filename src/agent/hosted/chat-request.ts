@@ -74,6 +74,64 @@ const getHostedChatRequestMessagePartSchema = defineSchema((v) =>
   ])
 );
 
+function isHostedChatUiToolPartCandidate(part: unknown): boolean {
+  if (!isRecord(part) || typeof part.type !== "string") {
+    return false;
+  }
+
+  return (
+    typeof part.toolCallId === "string" && part.toolCallId.length > 0 &&
+    (part.type === "dynamic-tool" || part.type === "tool_call" || part.type.startsWith("tool-"))
+  );
+}
+
+function isHostedChatToolResultPart(part: unknown): boolean {
+  if (!isRecord(part)) {
+    return false;
+  }
+
+  if (part.type === "tool_result") {
+    return true;
+  }
+
+  return (
+    getHostedChatUiToolIdentity(part) !== null && "state" in part &&
+    (part.state === "output-available" || part.state === "output-error" ||
+      part.state === "output-denied" || part.state === "error")
+  );
+}
+
+function isHostedChatProviderVisibleNonToolPart(role: string, part: unknown): boolean {
+  if (!isRecord(part)) {
+    return false;
+  }
+
+  if (role === "system") {
+    return part.type === "text" && typeof part.text === "string";
+  }
+
+  if (role === "user") {
+    return (
+      part.type === "text" && typeof part.text === "string" ||
+      (part.type === "file" || part.type === "image") &&
+        typeof part.mediaType === "string" && typeof part.url === "string"
+    );
+  }
+
+  if (role === "assistant") {
+    return (
+      part.type === "text" && typeof part.text === "string" ||
+      part.type === "reasoning" &&
+        (typeof part.text === "string" || typeof part.signature === "string" ||
+          typeof part.redactedData === "string") ||
+      (part.type === "file" || part.type === "image") &&
+        typeof part.mediaType === "string" && typeof part.url === "string"
+    );
+  }
+
+  return false;
+}
+
 const getHostedChatRequestMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -83,25 +141,129 @@ const getHostedChatRequestMessageSchema = defineSchema((v) =>
   }).strip()
 );
 
+type OpenHostedToolCall = {
+  toolName: string;
+  path: Array<string | number>;
+  originMessageIndex: number;
+  requiresResult: boolean;
+  sawLaterNonResultContent: boolean;
+};
+
 const getHostedChatRequestMessagesSchema = defineSchema((v) =>
   v.array(getHostedChatRequestMessageSchema()).superRefine((messages, ctx) => {
     const knownToolNames = new Map<string, string>();
     const knownToolResultIds = new Set<string>();
+    const openToolCalls = new Map<string, OpenHostedToolCall>();
     const recordToolCall = (
       toolCallId: string,
       toolName: string,
       path: Array<string | number>,
-    ) => {
+      options: { messageIndex: number; requiresResult?: boolean },
+    ): boolean => {
+      rejectOpenToolCallsBeforeNewCall(options.messageIndex);
       if (knownToolNames.has(toolCallId)) {
         ctx.addIssue({
           code: "custom",
           message: "tool_call id must be unique",
           path,
         });
-        return;
+        return false;
       }
 
       knownToolNames.set(toolCallId, toolName);
+      openToolCalls.set(toolCallId, {
+        toolName,
+        path,
+        originMessageIndex: options.messageIndex,
+        requiresResult: options?.requiresResult === true,
+        sawLaterNonResultContent: false,
+      });
+      return true;
+    };
+    const rejectUnresolvedCompletedToolCalls = (message: string): boolean => {
+      let rejected = false;
+      for (const openToolCall of openToolCalls.values()) {
+        if (!openToolCall.requiresResult) {
+          continue;
+        }
+
+        rejected = true;
+        ctx.addIssue({
+          code: "custom",
+          message,
+          path: openToolCall.path,
+        });
+      }
+
+      if (rejected) {
+        openToolCalls.clear();
+      }
+      return rejected;
+    };
+    const closeOpenBatchBeforeContinuation = (): void => {
+      rejectUnresolvedCompletedToolCalls(
+        "completed tool_call requires an adjacent tool_result before conversation continuation",
+      );
+      openToolCalls.clear();
+    };
+    const rejectOpenToolCallsBeforeNewCall = (messageIndex: number): void => {
+      for (const [toolCallId, openToolCall] of openToolCalls) {
+        if (
+          openToolCall.originMessageIndex === messageIndex &&
+          !openToolCall.sawLaterNonResultContent
+        ) {
+          continue;
+        }
+
+        if (openToolCall.requiresResult) {
+          ctx.addIssue({
+            code: "custom",
+            message: openToolCall.originMessageIndex === messageIndex
+              ? "completed tool_call requires a same-message tool_result before assistant continuation"
+              : "completed tool_call requires an adjacent tool_result before conversation continuation",
+            path: openToolCall.path,
+          });
+        }
+        openToolCalls.delete(toolCallId);
+      }
+    };
+    const handleNonResultContent = (messageIndex: number): void => {
+      for (const [toolCallId, openToolCall] of openToolCalls) {
+        if (openToolCall.originMessageIndex !== messageIndex) {
+          if (openToolCall.requiresResult) {
+            ctx.addIssue({
+              code: "custom",
+              message:
+                "completed tool_call requires an adjacent tool_result before conversation continuation",
+              path: openToolCall.path,
+            });
+          }
+          openToolCalls.delete(toolCallId);
+          continue;
+        }
+
+        openToolCalls.set(toolCallId, {
+          ...openToolCall,
+          sawLaterNonResultContent: true,
+        });
+      }
+    };
+    const closeOpenBatchAfterSameMessageContinuation = (): void => {
+      for (const [toolCallId, openToolCall] of openToolCalls) {
+        if (!openToolCall.sawLaterNonResultContent) {
+          continue;
+        }
+
+        if (openToolCall.requiresResult) {
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "completed tool_call requires a same-message tool_result before assistant continuation",
+            path: openToolCall.path,
+          });
+        }
+        openToolCalls.delete(toolCallId);
+      }
     };
     const validateToolResult = (
       toolCallId: string,
@@ -129,7 +291,18 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         return;
       }
 
-      if (toolName && toolName !== knownToolName) {
+      const openToolCall = openToolCalls.get(toolCallId);
+      if (!openToolCall) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tool_result requires an adjacent completed tool_call",
+          path: toolCallIdPath,
+        });
+        return;
+      }
+
+      openToolCalls.delete(toolCallId);
+      if (toolName && toolName !== openToolCall.toolName) {
         ctx.addIssue({
           code: "custom",
           message: "tool_result tool_name must match its preceding tool_call",
@@ -137,8 +310,24 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         });
       }
     };
+    const getFirstProviderVisiblePart = (
+      role: string,
+      parts: readonly unknown[],
+    ): unknown | undefined => {
+      return parts.find((part) =>
+        isHostedChatToolResultPart(part) ||
+        isHostedChatUiToolPartCandidate(part) ||
+        (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) ||
+        isHostedChatProviderVisibleNonToolPart(role, part)
+      );
+    };
 
     for (const [messageIndex, message] of messages.entries()) {
+      const firstPart = getFirstProviderVisiblePart(message.role, message.parts);
+      if (firstPart && openToolCalls.size > 0 && !isHostedChatToolResultPart(firstPart)) {
+        closeOpenBatchBeforeContinuation();
+      }
+
       for (const [partIndex, part] of message.parts.entries()) {
         const uiToolIdentity = getHostedChatUiToolIdentity(part);
         const isRawToolCall = part.type === "tool_call" && "id" in part && "name" in part;
@@ -147,6 +336,15 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
             code: "custom",
             message: "tool_call is only allowed in assistant messages",
             path: [messageIndex, "parts", partIndex, "type"],
+          });
+          continue;
+        }
+
+        if (!uiToolIdentity && !isRawToolCall && isHostedChatUiToolPartCandidate(part)) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool UI parts require a non-empty toolName",
+            path: [messageIndex, "parts", partIndex, "toolName"],
           });
           continue;
         }
@@ -174,7 +372,10 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         }
 
         if (isRawToolCall) {
-          recordToolCall(part.id, part.name, [messageIndex, "parts", partIndex, "id"]);
+          recordToolCall(part.id, part.name, [messageIndex, "parts", partIndex, "id"], {
+            messageIndex,
+            requiresResult: part.state === "completed",
+          });
           continue;
         }
 
@@ -185,7 +386,10 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
               "parts",
               partIndex,
               "toolCallId",
-            ]);
+            ], {
+              messageIndex,
+              requiresResult: "state" in part && part.state === "completed",
+            });
           }
 
           const hasUiToolResult = "state" in part &&
@@ -217,6 +421,9 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         }
 
         if (part.type !== "tool_result") {
+          if (isHostedChatProviderVisibleNonToolPart(message.role, part)) {
+            handleNonResultContent(messageIndex);
+          }
           continue;
         }
 
@@ -227,7 +434,11 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           [messageIndex, "parts", partIndex, "tool_name"],
         );
       }
+
+      closeOpenBatchAfterSameMessageContinuation();
     }
+
+    rejectUnresolvedCompletedToolCalls("completed tool_call requires a matching tool_result");
   })
 );
 

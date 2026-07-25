@@ -734,6 +734,9 @@ function getRawToolCallPart(part: unknown): {
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
+  state?: string;
+  output?: unknown;
+  errorText?: string;
 } | null {
   if (!isRecord(part) || part.type !== "tool_call") {
     return null;
@@ -754,6 +757,9 @@ function getRawToolCallPart(part: unknown): {
     toolCallId,
     toolName,
     input: toRecord(part.input),
+    ...(typeof part.state === "string" ? { state: part.state } : {}),
+    ...(Object.hasOwn(part, "output") ? { output: part.output } : {}),
+    ...(typeof part.errorText === "string" ? { errorText: part.errorText } : {}),
   };
 }
 
@@ -827,8 +833,10 @@ function resolveRawToolResultPart(
   rawResult: NonNullable<ReturnType<typeof getRawToolResultPart>>,
   toolNamesById: ReadonlyMap<string, string>,
   knownToolNamesById: ReadonlyMap<string, string>,
+  matchedToolName?: string,
 ): ProviderToolResultContent | null {
-  const toolName = rawResult.toolName ?? toolNamesById.get(rawResult.toolCallId) ??
+  const toolName = matchedToolName ?? rawResult.toolName ??
+    toolNamesById.get(rawResult.toolCallId) ??
     knownToolNamesById.get(rawResult.toolCallId);
   if (!toolName) {
     return null;
@@ -870,6 +878,250 @@ function buildToolResultOutput(toolPart: { state: string; output?: unknown; erro
   }
 
   return null;
+}
+
+function isTransientToolState(state: string | undefined): boolean {
+  return state === "pending" || state === "input-available" || state === "input-streaming" ||
+    state === "streaming" || state === "approval-requested" || state === "approval-responded";
+}
+
+type ReplayToolCallPart = {
+  part: object;
+  toolCallId: string;
+  toolName: string;
+  transient: boolean;
+  selfContainedResult: boolean;
+};
+
+type PendingReplayToolCall = Omit<ReplayToolCallPart, "selfContainedResult"> & {
+  originMessageIndex: number;
+};
+
+function buildRawToolCallResultOutput(
+  rawToolCall: NonNullable<ReturnType<typeof getRawToolCallPart>>,
+): ReturnType<typeof buildToolResultOutput> {
+  if (!rawToolCall.state) {
+    return null;
+  }
+
+  return buildToolResultOutput({
+    state: rawToolCall.state,
+    ...(rawToolCall.output !== undefined ? { output: rawToolCall.output } : {}),
+    ...(rawToolCall.errorText !== undefined ? { errorText: rawToolCall.errorText } : {}),
+  });
+}
+
+function shouldSkipTransientToolCall(
+  part: unknown,
+  state: string | undefined,
+  replayMatches: ProviderVisibleToolReplayMatches,
+): boolean {
+  return isTransientToolState(state) &&
+    (!isRecord(part) || !replayMatches.preservedTransientToolParts.has(part));
+}
+
+function getReplayToolCallPart(part: unknown, role: ChatUiMessageRole): ReplayToolCallPart | null {
+  if (role !== "assistant") {
+    return null;
+  }
+
+  if (!isRecord(part)) {
+    return null;
+  }
+
+  const toolPart = getToolPart(part);
+  if (toolPart) {
+    return {
+      part,
+      toolCallId: toolPart.toolCallId,
+      toolName: toolPart.toolName,
+      transient: isTransientToolState(toolPart.state),
+      selfContainedResult: buildToolResultOutput(toolPart) !== null,
+    };
+  }
+
+  const rawToolCall = getRawToolCallPart(part);
+  if (!rawToolCall) {
+    return null;
+  }
+
+  return {
+    part,
+    toolCallId: rawToolCall.toolCallId,
+    toolName: rawToolCall.toolName,
+    transient: isTransientToolState(rawToolCall.state),
+    selfContainedResult: buildRawToolCallResultOutput(rawToolCall) !== null,
+  };
+}
+
+function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
+  part: object;
+  toolCallId: string;
+  toolName?: string;
+} | null {
+  if (role !== "assistant" && role !== "tool") {
+    return null;
+  }
+
+  if (!isRecord(part)) {
+    return null;
+  }
+
+  const rawToolResult = getRawToolResultPart(part);
+  if (rawToolResult) {
+    return {
+      part,
+      toolCallId: rawToolResult.toolCallId,
+      ...(rawToolResult.toolName ? { toolName: rawToolResult.toolName } : {}),
+    };
+  }
+
+  const toolPart = getToolPart(part);
+  if (role === "tool" && toolPart && buildToolResultOutput(toolPart)) {
+    return {
+      part,
+      toolCallId: toolPart.toolCallId,
+      toolName: toolPart.toolName,
+    };
+  }
+
+  return null;
+}
+
+function isProviderVisibleNonToolPart(part: unknown): boolean {
+  if (isTextPart(part)) {
+    return part.text.trim().length > 0;
+  }
+
+  return isReasoningPart(part) || getFilePart(part) !== null;
+}
+
+function isCompatibleToolResultName(
+  call: { toolName: string },
+  result: { toolName?: string },
+): boolean {
+  return !result.toolName || result.toolName === call.toolName;
+}
+
+function removePendingCallsThroughMatchedResult(
+  pendingCalls: PendingReplayToolCall[],
+  matchedIndex: number,
+  toolCallId: string,
+): void {
+  const priorUnmatchedCalls = pendingCalls.slice(0, matchedIndex).filter((pendingCall) =>
+    pendingCall.toolCallId !== toolCallId
+  );
+  pendingCalls.splice(0, matchedIndex + 1, ...priorUnmatchedCalls);
+}
+
+function removePendingCallsWithId(
+  pendingCalls: Array<{ toolCallId: string }>,
+  toolCallId: string,
+): void {
+  for (let index = pendingCalls.length - 1; index >= 0; index--) {
+    if (pendingCalls[index]?.toolCallId === toolCallId) {
+      pendingCalls.splice(index, 1);
+    }
+  }
+}
+
+function removePendingCallsFromEarlierMessages(
+  pendingCalls: Array<{ originMessageIndex: number }>,
+  messageIndex: number,
+): void {
+  for (let index = pendingCalls.length - 1; index >= 0; index--) {
+    if ((pendingCalls[index]?.originMessageIndex ?? messageIndex) < messageIndex) {
+      pendingCalls.splice(index, 1);
+    }
+  }
+}
+
+function hasPendingCallsFromEarlierMessages(
+  pendingCalls: Array<{ originMessageIndex: number }>,
+  messageIndex: number,
+): boolean {
+  return pendingCalls.some((pendingCall) => pendingCall.originMessageIndex < messageIndex);
+}
+
+/** Tool replay parts that are valid to expose to provider conversion. */
+export type ProviderVisibleToolReplayMatches = {
+  preservedTransientToolParts: WeakSet<object>;
+  matchedToolResultParts: WeakSet<object>;
+  matchedToolResultNames: WeakMap<object, string>;
+  toolCallPartsStartingNewBatch: WeakSet<object>;
+};
+
+/** Find adjacent replay call/result occurrences using part object identity. */
+export function findProviderVisibleToolReplayMatches(
+  messages: readonly ChatProviderModelInputMessage[],
+): ProviderVisibleToolReplayMatches {
+  const preservedTransientToolParts = new WeakSet<object>();
+  const matchedToolResultParts = new WeakSet<object>();
+  const matchedToolResultNames = new WeakMap<object, string>();
+  const toolCallPartsStartingNewBatch = new WeakSet<object>();
+  const pendingCalls: PendingReplayToolCall[] = [];
+
+  for (const [messageIndex, message] of messages.entries()) {
+    let pendingCountBeforeSameMessageVisibleContent: number | null = null;
+
+    for (const part of message.parts) {
+      const call = getReplayToolCallPart(part, message.role);
+      if (call) {
+        if (hasPendingCallsFromEarlierMessages(pendingCalls, messageIndex)) {
+          toolCallPartsStartingNewBatch.add(call.part);
+        }
+        removePendingCallsFromEarlierMessages(pendingCalls, messageIndex);
+        if (pendingCountBeforeSameMessageVisibleContent !== null) {
+          pendingCalls.splice(0, pendingCountBeforeSameMessageVisibleContent);
+          pendingCountBeforeSameMessageVisibleContent = null;
+        }
+        removePendingCallsWithId(pendingCalls, call.toolCallId);
+        if (call.selfContainedResult) {
+          continue;
+        }
+
+        pendingCalls.push({ ...call, originMessageIndex: messageIndex });
+        continue;
+      }
+
+      const result = getReplayToolResultPart(part, message.role);
+      if (result) {
+        const matchedIndex = pendingCalls.findLastIndex((pendingCall) =>
+          pendingCall.toolCallId === result.toolCallId &&
+          isCompatibleToolResultName(pendingCall, result)
+        );
+        if (matchedIndex >= 0) {
+          const matchedCall = pendingCalls[matchedIndex];
+          if (!matchedCall) {
+            continue;
+          }
+          if (matchedCall.transient) {
+            preservedTransientToolParts.add(matchedCall.part);
+          }
+          matchedToolResultParts.add(result.part);
+          matchedToolResultNames.set(result.part, matchedCall.toolName);
+          removePendingCallsThroughMatchedResult(pendingCalls, matchedIndex, result.toolCallId);
+        }
+        continue;
+      }
+
+      if (isProviderVisibleNonToolPart(part)) {
+        removePendingCallsFromEarlierMessages(pendingCalls, messageIndex);
+        pendingCountBeforeSameMessageVisibleContent ??= pendingCalls.length;
+      }
+    }
+
+    if (pendingCountBeforeSameMessageVisibleContent !== null) {
+      pendingCalls.splice(0, pendingCountBeforeSameMessageVisibleContent);
+    }
+  }
+
+  return {
+    preservedTransientToolParts,
+    matchedToolResultParts,
+    matchedToolResultNames,
+    toolCallPartsStartingNewBatch,
+  };
 }
 
 function convertSystemMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
@@ -926,6 +1178,7 @@ function convertUserMessage(message: ChatProviderModelInputMessage): ProviderMod
 function convertAssistantMessage(
   message: ChatProviderModelInputMessage,
   knownToolNamesById: ReadonlyMap<string, string>,
+  replayMatches: ProviderVisibleToolReplayMatches,
 ): ProviderModelMessage[] {
   const toolNamesById = buildToolNameMap(message.parts);
   const assistantContent: Array<
@@ -1001,6 +1254,43 @@ function convertAssistantMessage(
     pendingToolCallIds.delete(part.toolCallId);
   };
 
+  const pushToolCall = (
+    part: unknown,
+    toolCall: {
+      toolCallId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      state?: string;
+    },
+    resultOutput: ReturnType<typeof buildToolResultOutput>,
+  ) => {
+    if (shouldSkipTransientToolCall(part, toolCall.state, replayMatches)) {
+      return;
+    }
+
+    if (isRecord(part) && replayMatches.toolCallPartsStartingNewBatch.has(part)) {
+      flushAssistantMessage(assistantContent);
+      flushToolMessage();
+      flushAssistantMessage(deferredAssistantContent);
+    }
+
+    pushAssistantPart({
+      type: "tool-call",
+      toolCallId: toolCall.toolCallId,
+      toolName: toolCall.toolName,
+      input: toolCall.input,
+    });
+
+    if (resultOutput) {
+      pushToolResult({
+        type: "tool-result",
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        output: resultOutput,
+      });
+    }
+  };
+
   for (const part of message.parts) {
     if (isTextPart(part)) {
       pushAssistantPart({ type: "text", text: part.text });
@@ -1025,42 +1315,27 @@ function convertAssistantMessage(
 
     const toolPart = getToolPart(part);
     if (toolPart) {
-      pushAssistantPart({
-        type: "tool-call",
-        toolCallId: toolPart.toolCallId,
-        toolName: toolPart.toolName,
-        input: toolPart.input,
-      });
-
-      const resultOutput = buildToolResultOutput(toolPart);
-      if (resultOutput) {
-        pushToolResult({
-          type: "tool-result",
-          toolCallId: toolPart.toolCallId,
-          toolName: toolPart.toolName,
-          output: resultOutput,
-        });
-      }
+      pushToolCall(part, toolPart, buildToolResultOutput(toolPart));
       continue;
     }
 
     const rawToolCall = getRawToolCallPart(part);
     if (rawToolCall) {
-      pushAssistantPart({
-        type: "tool-call",
-        toolCallId: rawToolCall.toolCallId,
-        toolName: rawToolCall.toolName,
-        input: rawToolCall.input,
-      });
+      pushToolCall(part, rawToolCall, buildRawToolCallResultOutput(rawToolCall));
       continue;
     }
 
     const rawToolResult = getRawToolResultPart(part);
     if (rawToolResult) {
+      if (!isRecord(part) || !replayMatches.matchedToolResultParts.has(part)) {
+        continue;
+      }
+
       const toolResult = resolveRawToolResultPart(
         rawToolResult,
         toolNamesById,
         knownToolNamesById,
+        replayMatches.matchedToolResultNames.get(part),
       );
       if (toolResult) {
         pushToolResult(toolResult);
@@ -1078,6 +1353,7 @@ function convertAssistantMessage(
 function convertToolMessage(
   message: ChatProviderModelInputMessage,
   knownToolNamesById: ReadonlyMap<string, string>,
+  replayMatches: ProviderVisibleToolReplayMatches,
 ): ProviderModelMessage[] {
   const toolNamesById = buildToolNameMap(message.parts);
   const toolResults: ChatToolResultPart[] = [];
@@ -1087,6 +1363,10 @@ function convertToolMessage(
     if (toolPart) {
       const output = buildToolResultOutput(toolPart);
       if (output) {
+        if (!isRecord(part) || !replayMatches.matchedToolResultParts.has(part)) {
+          continue;
+        }
+
         toolResults.push({
           type: "tool-result",
           toolCallId: toolPart.toolCallId,
@@ -1101,11 +1381,15 @@ function convertToolMessage(
     if (!rawResult) {
       continue;
     }
+    if (!isRecord(part) || !replayMatches.matchedToolResultParts.has(part)) {
+      continue;
+    }
 
     const toolResult = resolveRawToolResultPart(
       rawResult,
       toolNamesById,
       knownToolNamesById,
+      replayMatches.matchedToolResultNames.get(part),
     );
     if (toolResult) {
       toolResults.push(toolResult);
@@ -1125,6 +1409,7 @@ export function convertUiMessagesToProviderModelMessages(
 ): ProviderModelMessage[] {
   const providerMessages: ProviderModelMessage[] = [];
   const knownToolNamesById = new Map<string, string>();
+  const replayMatches = findProviderVisibleToolReplayMatches(messages);
 
   for (const message of messages) {
     if (message.role === "assistant") {
@@ -1140,9 +1425,9 @@ export function convertUiMessagesToProviderModelMessages(
         case "user":
           return convertUserMessage(message);
         case "assistant":
-          return convertAssistantMessage(message, knownToolNamesById);
+          return convertAssistantMessage(message, knownToolNamesById, replayMatches);
         case "tool":
-          return convertToolMessage(message, knownToolNamesById);
+          return convertToolMessage(message, knownToolNamesById, replayMatches);
         default:
           return [];
       }

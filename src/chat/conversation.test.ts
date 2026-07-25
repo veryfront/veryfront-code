@@ -1,8 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ChatProviderModelInputMessage } from "#veryfront/chat/conversation";
-import type { ChatUiMessage, ProviderModelMessage } from "veryfront/chat/types";
+import type {
+  ChatProviderModelInputMessage,
+  ChatProviderModelInputPart,
+  ChatProviderModelInputToolResultPart,
+} from "#veryfront/chat/conversation";
+import type {
+  ChatToolCallPart,
+  ChatToolPartState,
+  ChatToolResultPart,
+  ChatUiMessage,
+  ProviderModelMessage,
+} from "veryfront/chat/types";
 import {
   apiConversationSchema,
   apiMessageSchema,
@@ -24,6 +34,97 @@ import {
   stringifyUnknown,
   toConversationPartsFromUiMessage,
 } from "#veryfront/chat/conversation";
+
+const GITHUB_PR_DIFF_INPUT = { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 };
+const GITHUB_LIST_PRS_INPUT = { owner: "veryfront", repo: "veryfront-code" };
+type JsonToolResultValue = Extract<ChatToolResultPart["output"], { type: "json" }>["value"];
+
+function assistantInputMessage(
+  parts: ChatProviderModelInputPart[],
+  id = "message-1",
+): ChatProviderModelInputMessage {
+  return { id, role: "assistant", parts };
+}
+
+function toolInputMessage(
+  parts: ChatProviderModelInputPart[],
+  id = "message-1:tool",
+): ChatProviderModelInputMessage {
+  return { id, role: "tool", parts };
+}
+
+function userInputMessage(text: string, id = "user-1"): ChatProviderModelInputMessage {
+  return { id, role: "user", parts: [textInputPart(text)] };
+}
+
+function textInputPart(text: string): ChatProviderModelInputPart {
+  return { type: "text", text };
+}
+
+function rawToolCallInputPart(
+  id: string,
+  name: string,
+  input: Record<string, unknown>,
+  state = "pending",
+): ChatProviderModelInputPart {
+  return { type: "tool_call", id, name, input, state } as ChatProviderModelInputPart;
+}
+
+function rawToolResultInputPart(
+  toolCallId: string,
+  output: unknown,
+  toolName?: string,
+): ChatProviderModelInputToolResultPart {
+  return toolName
+    ? { type: "tool_result", tool_call_id: toolCallId, tool_name: toolName, output }
+    : { type: "tool_result", tool_call_id: toolCallId, output };
+}
+
+function dynamicToolInputPart(
+  toolCallId: string,
+  toolName: string,
+  input: unknown,
+  state: ChatToolPartState = "input-available",
+  output?: unknown,
+): ChatProviderModelInputPart {
+  return output === undefined
+    ? { type: "dynamic-tool", toolName, toolCallId, input, state }
+    : { type: "dynamic-tool", toolName, toolCallId, input, state, output };
+}
+
+function expectedToolCall(
+  toolCallId: string,
+  toolName: string,
+  input: Record<string, unknown>,
+): ChatToolCallPart {
+  return { type: "tool-call", toolCallId, toolName, input };
+}
+
+function expectedJsonResult(
+  toolCallId: string,
+  toolName: string,
+  value: JsonToolResultValue,
+): ChatToolResultPart {
+  return { type: "tool-result", toolCallId, toolName, output: { type: "json", value } };
+}
+
+function expectedErrorResult(
+  toolCallId: string,
+  toolName: string,
+  value: string,
+): ChatToolResultPart {
+  return { type: "tool-result", toolCallId, toolName, output: { type: "error-text", value } };
+}
+
+function expectedToolExchange(
+  calls: ChatToolCallPart[],
+  results: ChatToolResultPart[],
+): ProviderModelMessage[] {
+  return [
+    { role: "assistant", content: calls },
+    { role: "tool", content: results },
+  ];
+}
 
 describe("chat/conversation schemas", () => {
   it("validates API conversation and message payloads", () => {
@@ -656,6 +757,581 @@ describe("convertUiMessagesToProviderModelMessages", () => {
             output: { type: "json", value: { data: [{ number: 3092 }] } },
           },
         ],
+      },
+    ]);
+  });
+
+  it("resolves normalized role:tool results from matching normalized UI tool calls", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_pr_diff",
+            toolCallId: "normalized-completed",
+            input: { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 },
+            state: "input-available",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:normalized-completed",
+        role: "tool",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_pr_diff",
+            toolCallId: "normalized-completed",
+            input: { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 },
+            state: "output-available",
+            output: { files: ["src/chat/conversation.ts"] },
+          },
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "normalized-completed",
+            toolName: "github__get_pr_diff",
+            input: { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "normalized-completed",
+            toolName: "github__get_pr_diff",
+            output: { type: "json", value: { files: ["src/chat/conversation.ts"] } },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("omits orphan or mismatched normalized role:tool results", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_pr_diff",
+            toolCallId: "mismatched",
+            input: { pull_number: 1 },
+            state: "input-available",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:mismatched",
+        role: "tool",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__list_prs",
+            toolCallId: "mismatched",
+            input: { state: "open" },
+            state: "output-available",
+            output: { data: [] },
+          },
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_issue",
+            toolCallId: "orphan",
+            input: { number: 42 },
+            state: "output-available",
+            output: { issue: 42 },
+          },
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), []);
+  });
+
+  it("does not authorize replay pairs from provider-inconvertible roles", () => {
+    const nonAssistantCallMessages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1",
+        role: "user",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_issue",
+            toolCallId: "invalid-call-origin",
+            input: { number: 42 },
+            state: "input-available",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:invalid-call-origin",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "invalid-call-origin",
+            tool_name: "github__get_issue",
+            output: { issue: 42 },
+          },
+        ],
+      },
+    ];
+    const nonConvertibleResultRoles = ["user", "system"] as const;
+
+    assertEquals(convertUiMessagesToProviderModelMessages(nonAssistantCallMessages), []);
+
+    for (const role of nonConvertibleResultRoles) {
+      const messages: ChatProviderModelInputMessage[] = [
+        {
+          id: "message-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolName: "github__get_issue",
+              toolCallId: `invalid-${role}-result`,
+              input: { number: 42 },
+              state: "input-available",
+            },
+          ],
+        },
+        {
+          id: `message-1:${role}:invalid-result`,
+          role,
+          parts: [
+            {
+              type: "tool_result",
+              tool_call_id: `invalid-${role}-result`,
+              tool_name: "github__get_issue",
+              output: { issue: 42 },
+            },
+          ],
+        },
+      ];
+
+      assertEquals(convertUiMessagesToProviderModelMessages(messages), []);
+    }
+
+    const ignoredHyphenatedResultMessages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_issue",
+            toolCallId: "ignored-hyphenated-result",
+            input: { number: 42 },
+            state: "input-available",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:ignored-hyphenated-result",
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: "ignored-hyphenated-result",
+            toolName: "github__get_issue",
+            output: { type: "json", value: { issue: 42 } },
+          } as unknown as ChatProviderModelInputMessage["parts"][number],
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(ignoredHyphenatedResultMessages), []);
+  });
+
+  it("omits unresolved transient tool calls while preserving transient calls with replayed results", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart("normalized-completed", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT),
+        rawToolCallInputPart(
+          "raw-completed",
+          "github__list_prs",
+          GITHUB_LIST_PRS_INPUT,
+          "streaming",
+        ),
+        dynamicToolInputPart(
+          "normalized-unresolved",
+          "github__get_issue",
+          { number: 12 },
+          "pending",
+        ),
+        rawToolCallInputPart("raw-unresolved", "github__get_issue", { number: 13 }),
+        rawToolCallInputPart(
+          "raw-streaming-unresolved",
+          "github__get_issue",
+          { number: 14 },
+          "streaming",
+        ),
+        dynamicToolInputPart(
+          "approval-requested-unresolved",
+          "form_input",
+          { title: "Approve?" },
+          "approval-requested",
+        ),
+        dynamicToolInputPart("approval-responded-unresolved", "form_input", {
+          title: "Approve again?",
+        }, "approval-responded"),
+      ]),
+      toolInputMessage([
+        rawToolResultInputPart("normalized-completed", { files: ["src/chat/conversation.ts"] }),
+      ], "message-1:tool:normalized-completed"),
+      toolInputMessage([
+        rawToolResultInputPart("raw-completed", { data: [{ number: 3092 }] }),
+      ], "message-1:tool:raw-completed"),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [
+          expectedToolCall("normalized-completed", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT),
+          expectedToolCall("raw-completed", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+        ],
+        [
+          expectedJsonResult("normalized-completed", "github__get_pr_diff", {
+            files: ["src/chat/conversation.ts"],
+          }),
+          expectedJsonResult("raw-completed", "github__list_prs", { data: [{ number: 3092 }] }),
+        ],
+      ),
+    );
+  });
+
+  it("does not preserve an earlier duplicate transient call across a user continuation", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+      ], "assistant-1"),
+      userInputMessage("continue with a different PR", "user-2"),
+      assistantInputMessage([
+        dynamicToolInputPart(
+          "duplicate-call",
+          "github__get_pr_diff",
+          { pull_number: 2 },
+          "output-available",
+          {
+            files: ["new.ts"],
+          },
+        ),
+      ], "assistant-2"),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      { role: "user", content: [textInputPart("continue with a different PR")] },
+      ...expectedToolExchange(
+        [expectedToolCall("duplicate-call", "github__get_pr_diff", { pull_number: 2 })],
+        [expectedJsonResult("duplicate-call", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    ]);
+  });
+
+  it("preserves only the nearest duplicate transient call before a result", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+        dynamicToolInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+      ], "assistant-1"),
+      toolInputMessage([
+        rawToolResultInputPart("duplicate-call", { files: ["new.ts"] }),
+      ], "assistant-1:tool"),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("duplicate-call", "github__get_pr_diff", { pull_number: 2 })],
+        [expectedJsonResult("duplicate-call", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
+  });
+
+  it("does not preserve a transient call for a name-mismatched result", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart("tool-1", "github__get_pr_diff", { pull_number: 1 }),
+      ], "assistant-1"),
+      toolInputMessage([
+        rawToolResultInputPart("tool-1", { data: [] }, "github__list_prs"),
+      ], "assistant-1:tool"),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), []);
+  });
+
+  it("skips provider-invisible messages but stops matching at visible content", () => {
+    const skippedMessages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart("tool-1", "github__get_pr_diff", { pull_number: 1 }),
+      ], "assistant-1"),
+      assistantInputMessage([{ type: "step-start" }], "assistant-ui-only"),
+      toolInputMessage([
+        rawToolResultInputPart("tool-1", { files: ["new.ts"] }),
+      ], "assistant-1:tool"),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(skippedMessages),
+      expectedToolExchange(
+        [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
+        [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
+
+    const stoppedMessages: ChatProviderModelInputMessage[] = [
+      skippedMessages[0]!,
+      assistantInputMessage([textInputPart("I will continue without it.")], "assistant-visible"),
+      skippedMessages[2]!,
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(stoppedMessages), [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I will continue without it." }],
+      },
+    ]);
+  });
+
+  it("maps raw errored tool calls to explicit error-text results", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        {
+          type: "tool_call",
+          id: "raw-error",
+          name: "github__get_pr_diff",
+          input: GITHUB_PR_DIFF_INPUT,
+          state: "error",
+          output: "authentication_required",
+        } as unknown as ChatProviderModelInputPart,
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("raw-error", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT)],
+        [expectedErrorResult("raw-error", "github__get_pr_diff", "authentication_required")],
+      ),
+    );
+  });
+
+  it("preserves same-message raw pending calls when a matching raw result follows", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("raw-completed-inline", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+        rawToolResultInputPart("raw-completed-inline", { data: [{ number: 3092 }] }),
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("raw-completed-inline", "github__list_prs", GITHUB_LIST_PRS_INPUT)],
+        [expectedJsonResult("raw-completed-inline", "github__list_prs", {
+          data: [{ number: 3092 }],
+        })],
+      ),
+    );
+  });
+
+  it("allows same-message assistant text between replay calls and matching results", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("raw-completed-inline", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+        textInputPart("I will summarize this after the result."),
+        rawToolResultInputPart("raw-completed-inline", { data: [{ number: 3092 }] }),
+      ]),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      ...expectedToolExchange(
+        [expectedToolCall("raw-completed-inline", "github__list_prs", GITHUB_LIST_PRS_INPUT)],
+        [expectedJsonResult("raw-completed-inline", "github__list_prs", {
+          data: [{ number: 3092 }],
+        })],
+      ),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I will summarize this after the result." }],
+      },
+    ]);
+  });
+
+  it("does not match next-message results after same-message assistant text", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("raw-completed-later", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+        textInputPart("This text flushes before the later result."),
+      ]),
+      toolInputMessage([
+        rawToolResultInputPart("raw-completed-later", { data: [{ number: 3092 }] }),
+      ]),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "This text flushes before the later result." }],
+      },
+    ]);
+  });
+
+  it("does not join a new same-message call after assistant text to the pre-text batch", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("first-call", "github__get_pr_diff", {
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pull_number: 1,
+        }),
+        textInputPart("This text flushes before both results."),
+        rawToolCallInputPart("second-call", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+        rawToolResultInputPart("first-call", { files: ["old.ts"] }),
+        rawToolResultInputPart("second-call", { data: [{ number: 3092 }] }),
+      ]),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "This text flushes before both results." },
+          expectedToolCall("second-call", "github__list_prs", GITHUB_LIST_PRS_INPUT),
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          expectedJsonResult("second-call", "github__list_prs", { data: [{ number: 3092 }] }),
+        ],
+      },
+    ]);
+  });
+
+  it("does not match a later raw result to a self-contained completed call occurrence", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart(
+          "self-contained",
+          "github__list_prs",
+          GITHUB_LIST_PRS_INPUT,
+          "output-available",
+          {
+            data: [{ number: 3092 }],
+          },
+        ),
+      ]),
+      toolInputMessage([
+        rawToolResultInputPart("self-contained", { data: [{ number: 9999 }] }),
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("self-contained", "github__list_prs", GITHUB_LIST_PRS_INPUT)],
+        [expectedJsonResult("self-contained", "github__list_prs", { data: [{ number: 3092 }] })],
+      ),
+    );
+  });
+
+  it("uses the matched call occurrence name for unnamed raw results before duplicate call ids", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+        rawToolResultInputPart("duplicate-call", { files: ["one.ts"] }),
+        rawToolCallInputPart("duplicate-call", "github__list_prs", { state: "open" }),
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("duplicate-call", "github__get_pr_diff", { pull_number: 1 })],
+        [expectedJsonResult("duplicate-call", "github__get_pr_diff", { files: ["one.ts"] })],
+      ),
+    );
+  });
+
+  it("does not match prior-message parallel calls after visible text in the result message", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+        rawToolCallInputPart("second-call", "github__list_prs", { state: "open" }),
+      ], "assistant-1"),
+      assistantInputMessage([
+        rawToolResultInputPart("first-call", { files: ["one.ts"] }),
+        textInputPart("This text starts a continuation before the second result."),
+        rawToolResultInputPart("second-call", { data: [{ number: 3092 }] }),
+      ], "assistant-2"),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          expectedToolCall("first-call", "github__get_pr_diff", { pull_number: 1 }),
+        ],
+      },
+      {
+        role: "tool",
+        content: [expectedJsonResult("first-call", "github__get_pr_diff", { files: ["one.ts"] })],
+      },
+      {
+        role: "assistant",
+        content: [{
+          type: "text",
+          text: "This text starts a continuation before the second result.",
+        }],
+      },
+    ]);
+  });
+
+  it("does not join prior-message unresolved calls into a new same-message call batch", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+        rawToolCallInputPart("second-call", "github__list_prs", { state: "open" }),
+      ], "assistant-1"),
+      assistantInputMessage([
+        rawToolResultInputPart("first-call", { files: ["one.ts"] }),
+        rawToolCallInputPart("third-call", "github__get_issue", { number: 42 }),
+        rawToolResultInputPart("second-call", { data: [{ number: 3092 }] }),
+        rawToolResultInputPart("third-call", { issue: 42 }),
+      ], "assistant-2"),
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [expectedToolCall("first-call", "github__get_pr_diff", { pull_number: 1 })],
+      },
+      {
+        role: "tool",
+        content: [expectedJsonResult("first-call", "github__get_pr_diff", { files: ["one.ts"] })],
+      },
+      {
+        role: "assistant",
+        content: [expectedToolCall("third-call", "github__get_issue", { number: 42 })],
+      },
+      {
+        role: "tool",
+        content: [expectedJsonResult("third-call", "github__get_issue", { issue: 42 })],
       },
     ]);
   });

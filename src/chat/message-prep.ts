@@ -1,6 +1,7 @@
 import {
   convertUiMessagesToProviderModelMessages,
   copyProviderModelMessageSourceId,
+  findProviderVisibleToolReplayMatches,
   getStringField,
   isReasoningPart,
   isToolCallPart,
@@ -750,7 +751,8 @@ function isPendingToolPart(part: unknown): boolean {
 
   const state = typeof part.state === "string" ? part.state : null;
   const isPendingState = state === "pending" || state === "input-available" ||
-    state === "input-streaming";
+    state === "input-streaming" || state === "streaming" ||
+    state === "approval-requested" || state === "approval-responded";
   if (!isPendingState) {
     return false;
   }
@@ -763,8 +765,10 @@ function getToolPartCallId(part: unknown): string | null {
     return null;
   }
 
-  const toolCallId = part.toolCallId;
-  return typeof toolCallId === "string" && toolCallId.length > 0 ? toolCallId : null;
+  const toolCallId = getStringField(part, "toolCallId", "") ||
+    getStringField(part, "tool_call_id", "") ||
+    getStringField(part, "id", "");
+  return toolCallId.length > 0 ? toolCallId : null;
 }
 
 function isToolLikePart(part: unknown): part is Record<string, unknown> & { type: string } {
@@ -790,12 +794,23 @@ function isToolErrorState(part: unknown): boolean {
 
 /** Strip pending tool parts. */
 export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[] {
+  const replayMatches = findProviderVisibleToolReplayMatches(messages);
+
   return messages.flatMap((message) => {
     if (message.role !== "assistant" || message.parts.length === 0) {
       return [message];
     }
 
-    const parts = message.parts.filter((part) => !isPendingToolPart(part));
+    const parts = message.parts.filter((part) => {
+      if (!isPendingToolPart(part)) {
+        return true;
+      }
+
+      const toolCallId = getToolPartCallId(part);
+      return toolCallId && isRecord(part)
+        ? replayMatches.preservedTransientToolParts.has(part)
+        : false;
+    });
     if (parts.length === message.parts.length) {
       return [message];
     }

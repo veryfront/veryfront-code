@@ -44,6 +44,23 @@ const rawReplayParts = [rawReplayToolCallPart, rawReplayToolResultPart] as const
 type ParsedHostedChatRequestMessagePart = ParsedHostedChatRequest["messages"][number]["parts"][
   number
 ];
+type HostedChatRequestSchemaParseResult = ReturnType<typeof hostedChatRequestSchema.parse>;
+type HostedChatRequestTestMessage = {
+  id: string;
+  role: string;
+  parts: readonly unknown[];
+};
+type RawReplayToolCallPart = Omit<typeof rawReplayToolCallPart, "id" | "name"> & {
+  id: string;
+  name: string;
+};
+type RawReplayToolResultPart =
+  & Omit<typeof rawReplayToolResultPart, "tool_call_id" | "tool_name" | "output">
+  & {
+    tool_call_id: string;
+    tool_name: string;
+    output: unknown;
+  };
 
 const parsedHostedChatRequestReplayToolCallPart: ParsedHostedChatRequestMessagePart = {
   type: "tool_call",
@@ -72,6 +89,39 @@ function createHostedChatRequestBody(messages: unknown[]): {
   };
 }
 
+function createHostedChatRequestMessage(
+  role: string,
+  parts: readonly unknown[],
+  id = `${role}-message-1`,
+): HostedChatRequestTestMessage {
+  return { id, role, parts };
+}
+
+function assistantMessage(
+  parts: readonly unknown[],
+  id = "assistant-message-1",
+): HostedChatRequestTestMessage {
+  return createHostedChatRequestMessage("assistant", parts, id);
+}
+
+function toolMessage(
+  parts: readonly unknown[],
+  id = "tool-message-1",
+): HostedChatRequestTestMessage {
+  return createHostedChatRequestMessage("tool", parts, id);
+}
+
+function userMessage(
+  parts: readonly unknown[],
+  id = "user-message-1",
+): HostedChatRequestTestMessage {
+  return createHostedChatRequestMessage("user", parts, id);
+}
+
+function parseHostedChatRequestMessages(messages: unknown[]): HostedChatRequestSchemaParseResult {
+  return hostedChatRequestSchema.parse(createHostedChatRequestBody(messages));
+}
+
 function assertHostedChatRequestError(messages: unknown[], expectedMessage: string): void {
   const parsed = hostedChatRequestSchema.safeParse(createHostedChatRequestBody(messages));
 
@@ -82,6 +132,67 @@ function assertHostedChatRequestError(messages: unknown[], expectedMessage: stri
       expectedMessage,
     );
   }
+}
+
+function assertProviderMessages(
+  messages: HostedChatRequestSchemaParseResult["messages"] | ParsedHostedChatRequest["messages"],
+  expectedMessages: unknown,
+): void {
+  assertEquals(
+    convertUiMessagesToProviderModelMessages(messages as ParsedHostedChatRequest["messages"]),
+    expectedMessages,
+  );
+}
+
+function createRawReplayToolCallPart(id: string, name: string): RawReplayToolCallPart {
+  return {
+    ...rawReplayToolCallPart,
+    id,
+    name,
+  };
+}
+
+function createRawReplayToolResultPart(
+  toolCallPart: RawReplayToolCallPart,
+  output: unknown,
+): RawReplayToolResultPart {
+  return {
+    ...rawReplayToolResultPart,
+    tool_call_id: toolCallPart.id,
+    tool_name: toolCallPart.name,
+    output,
+  };
+}
+
+function expectedRawReplayProviderMessages(extraMessages: unknown[] = []): unknown[] {
+  return [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: rawReplayToolCallPart.id,
+          toolName: replayToolName,
+          input: rawReplayToolCallPart.input,
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: rawReplayToolCallPart.id,
+          toolName: replayToolName,
+          output: {
+            type: "json",
+            value: replayOutput,
+          },
+        },
+      ],
+    },
+    ...extraMessages,
+  ];
 }
 
 function createRuntimeInvocation(): ReturnType<typeof RuntimeAgentRunInvocationSchema.parse> {
@@ -310,35 +421,408 @@ describe("agent/hosted-chat-request", () => {
     }
   });
 
-  it("rejects orphaned or mismatched normalized UI tool results", () => {
+  it("rejects normalized replay tool-call parts without tool names", () => {
+    const missingNameCases = [
+      { role: "assistant", state: "input-available" },
+      { role: "user", state: "input-available" },
+      { role: "tool", state: "output-available" },
+    ] as const;
+
+    for (const { role, state } of missingNameCases) {
+      assertHostedChatRequestError(
+        [
+          createHostedChatRequestMessage(
+            role,
+            [{
+              type: "tool_call",
+              toolCallId: "normalized-tool-call-without-name",
+              input: {},
+              state,
+              ...(state === "output-available" ? { output: replayOutput } : {}),
+            }],
+          ),
+        ],
+        "tool UI parts require a non-empty toolName",
+      );
+    }
+
     assertHostedChatRequestError(
       [
-        {
-          id: "tool-message-1",
-          role: "tool",
-          parts: [parsedHostedChatRequestReplayToolCallPart],
-        },
+        assistantMessage([
+          {
+            type: "tool_call",
+            toolCallId: "normalized-tool-call-with-empty-name",
+            toolName: "",
+            input: {},
+            state: "input-available",
+          },
+        ]),
       ],
+      "tool UI parts require a non-empty toolName",
+    );
+  });
+
+  it("rejects completed raw replay tool calls when non-result messages intervene before results", () => {
+    const interveningMessages = [
+      userMessage([{ type: "text", text: "continue" }]),
+      assistantMessage(
+        [{ type: "text", text: "Continuing without the result." }],
+        "assistant-message-2",
+      ),
+    ];
+
+    for (const interveningMessage of interveningMessages) {
+      assertHostedChatRequestError(
+        [
+          assistantMessage([rawReplayToolCallPart]),
+          interveningMessage,
+          toolMessage([rawReplayToolResultPart]),
+        ],
+        "completed tool_call requires an adjacent tool_result before conversation continuation",
+      );
+    }
+  });
+
+  it("rejects completed raw replay tool calls left unresolved at EOF", () => {
+    assertHostedChatRequestError(
+      [assistantMessage([rawReplayToolCallPart])],
+      "completed tool_call requires a matching tool_result",
+    );
+  });
+
+  it("rejects normalized completed assistant tool calls without results before continuation or EOF", () => {
+    const normalizedCompletedToolCall = {
+      type: "tool_call",
+      toolCallId: "normalized-completed-call",
+      toolName: replayToolName,
+      input: {},
+      state: "completed",
+    } as const;
+
+    assertHostedChatRequestError(
+      [
+        assistantMessage([normalizedCompletedToolCall]),
+        assistantMessage(
+          [{ type: "text", text: "Continuing without the result." }],
+          "assistant-message-2",
+        ),
+      ],
+      "completed tool_call requires an adjacent tool_result before conversation continuation",
+    );
+
+    assertHostedChatRequestError(
+      [assistantMessage([normalizedCompletedToolCall])],
+      "completed tool_call requires a matching tool_result",
+    );
+  });
+
+  it("rejects partially resolved completed parallel replay batches", () => {
+    const secondToolCallPart = createRawReplayToolCallPart("tool-call-2", "github__list_prs");
+
+    assertHostedChatRequestError(
+      [
+        assistantMessage([rawReplayToolCallPart, secondToolCallPart]),
+        toolMessage([rawReplayToolResultPart]),
+        assistantMessage(
+          [{ type: "text", text: "Continuing after only one result." }],
+          "assistant-message-2",
+        ),
+      ],
+      "completed tool_call requires an adjacent tool_result before conversation continuation",
+    );
+  });
+
+  it("rejects new assistant tool calls before prior-message completed calls receive results", () => {
+    const secondToolCallPart = createRawReplayToolCallPart("tool-call-2", "github__list_prs");
+
+    assertHostedChatRequestError(
+      [
+        assistantMessage([rawReplayToolCallPart]),
+        assistantMessage([secondToolCallPart], "assistant-message-2"),
+        toolMessage([rawReplayToolResultPart]),
+      ],
+      "completed tool_call requires an adjacent tool_result before conversation continuation",
+    );
+  });
+
+  it("accepts provider-invisible UI-only messages between completed replay calls and results", () => {
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([rawReplayToolCallPart]),
+      assistantMessage(
+        [
+          { type: "step-start" },
+          { type: "data-progress", data: { status: "reading" } },
+          {
+            type: "source-url",
+            sourceId: "source-1",
+            url: "https://example.com",
+            title: "Example",
+          },
+          {
+            type: "source-document",
+            sourceId: "source-2",
+            title: "Reference",
+          },
+        ],
+        "assistant-ui-only-message",
+      ),
+      toolMessage([rawReplayToolResultPart]),
+    ]);
+
+    assertEquals(parsed.messages[1]?.parts.length, 4);
+    assertProviderMessages(parsed.messages, expectedRawReplayProviderMessages());
+  });
+
+  it("accepts pending and streaming raw replay tool calls without results", () => {
+    for (const state of ["pending", "streaming"] as const) {
+      const toolCallPart = {
+        ...rawReplayToolCallPart,
+        id: `tool-call-${state}`,
+        state,
+      };
+      const parsed = parseHostedChatRequestMessages([
+        assistantMessage([toolCallPart]),
+        assistantMessage(
+          [{ type: "text", text: "Continuing without a result." }],
+          "assistant-message-2",
+        ),
+      ]);
+
+      assertEquals(parsed.messages[0]?.parts[0] as unknown, toolCallPart);
+    }
+  });
+
+  it("rejects delayed results for pending raw replay tool calls after continuation", () => {
+    assertHostedChatRequestError(
+      [
+        assistantMessage([
+          {
+            ...rawReplayToolCallPart,
+            state: "pending",
+          },
+        ]),
+        assistantMessage(
+          [{ type: "text", text: "Continuing before the result." }],
+          "assistant-message-2",
+        ),
+        toolMessage([rawReplayToolResultPart]),
+      ],
+      "tool_result requires an adjacent completed tool_call",
+    );
+  });
+
+  it("accepts completed raw replay calls closed by adjacent results", () => {
+    const parsed = parseHostedChatRequestMessages([assistantMessage(rawReplayParts)]);
+
+    assertEquals(parsed.messages[0]?.parts as unknown, rawReplayParts);
+  });
+
+  it("accepts same-message assistant text between completed replay calls and matching results", () => {
+    const assistantTextPart = { type: "text", text: "I will summarize this after the result." };
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([rawReplayToolCallPart, assistantTextPart, rawReplayToolResultPart]),
+    ]);
+
+    assertEquals(parsed.messages[0]?.parts as unknown, [
+      rawReplayToolCallPart,
+      assistantTextPart,
+      rawReplayToolResultPart,
+    ]);
+    assertProviderMessages(
+      parsed.messages,
+      expectedRawReplayProviderMessages([
+        {
+          role: "assistant",
+          content: [assistantTextPart],
+        },
+      ]),
+    );
+  });
+
+  it("accepts provider-invisible UI-only assistant parts between completed replay calls and results", () => {
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([
+        rawReplayToolCallPart,
+        { type: "step-start" },
+        { type: "data-progress", data: { status: "reading" } },
+        {
+          type: "source-url",
+          sourceId: "source-1",
+          url: "https://example.com",
+        },
+        rawReplayToolResultPart,
+      ]),
+    ]);
+
+    assertEquals(parsed.messages[0]?.parts.length, 5);
+  });
+
+  it("rejects next-message results after same-message assistant text follows completed replay calls", () => {
+    assertHostedChatRequestError(
+      [
+        assistantMessage([
+          rawReplayToolCallPart,
+          { type: "text", text: "This text would flush before the later result." },
+        ]),
+        toolMessage([rawReplayToolResultPart]),
+      ],
+      "completed tool_call requires a same-message tool_result before assistant continuation",
+    );
+  });
+
+  it("rejects same-message new calls after assistant text before prior completed call results", () => {
+    const secondToolCallPart = createRawReplayToolCallPart("tool-call-2", "github__list_prs");
+    const secondToolResultPart = createRawReplayToolResultPart(
+      secondToolCallPart,
+      { pullRequests: [3077] },
+    );
+
+    assertHostedChatRequestError(
+      [
+        assistantMessage([
+          rawReplayToolCallPart,
+          { type: "text", text: "This text would flush before both results." },
+          secondToolCallPart,
+          rawReplayToolResultPart,
+          secondToolResultPart,
+        ]),
+      ],
+      "completed tool_call requires a same-message tool_result before assistant continuation",
+    );
+  });
+
+  it("accepts assistant text before completed replay calls closed by next-message results", () => {
+    const assistantTextPart = { type: "text", text: "I will call a tool now." };
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([assistantTextPart, rawReplayToolCallPart]),
+      toolMessage([rawReplayToolResultPart]),
+    ]);
+
+    assertEquals(parsed.messages[0]?.parts as unknown, [assistantTextPart, rawReplayToolCallPart]);
+    assertEquals(parsed.messages[1]?.parts as unknown, [rawReplayToolResultPart]);
+  });
+
+  it("rejects new assistant calls before prior parallel replay batches fully close", () => {
+    const secondToolCallPart = createRawReplayToolCallPart("tool-call-2", "github__list_prs");
+    const secondToolResultPart = createRawReplayToolResultPart(
+      secondToolCallPart,
+      { pullRequests: [3077] },
+    );
+    const thirdToolCallPart = createRawReplayToolCallPart("tool-call-3", "github__get_issue");
+    const thirdToolResultPart = createRawReplayToolResultPart(thirdToolCallPart, { issue: 42 });
+
+    assertHostedChatRequestError(
+      [
+        assistantMessage([rawReplayToolCallPart, secondToolCallPart]),
+        assistantMessage(
+          [
+            rawReplayToolResultPart,
+            thirdToolCallPart,
+            secondToolResultPart,
+            thirdToolResultPart,
+          ],
+          "assistant-message-2",
+        ),
+      ],
+      "completed tool_call requires an adjacent tool_result before conversation continuation",
+    );
+  });
+
+  it("rejects assistant text before prior parallel replay batches fully close", () => {
+    const secondToolCallPart = createRawReplayToolCallPart("tool-call-2", "github__list_prs");
+    const secondToolResultPart = createRawReplayToolResultPart(
+      secondToolCallPart,
+      { pullRequests: [3077] },
+    );
+
+    assertHostedChatRequestError(
+      [
+        assistantMessage([rawReplayToolCallPart, secondToolCallPart]),
+        assistantMessage(
+          [
+            rawReplayToolResultPart,
+            { type: "text", text: "This text cannot defer across messages." },
+            secondToolResultPart,
+          ],
+          "assistant-message-2",
+        ),
+      ],
+      "completed tool_call requires an adjacent tool_result before conversation continuation",
+    );
+  });
+
+  it("rejects provider-visible file continuations between completed replay calls and results", () => {
+    assertHostedChatRequestError(
+      [
+        assistantMessage([rawReplayToolCallPart]),
+        userMessage([
+          {
+            type: "file",
+            mediaType: "text/plain",
+            url: "https://example.com/file.txt",
+          },
+        ]),
+        toolMessage([rawReplayToolResultPart]),
+      ],
+      "completed tool_call requires an adjacent tool_result before conversation continuation",
+    );
+  });
+
+  it("accepts completed parallel replay calls closed by consecutive tool result messages", () => {
+    const secondToolCallPart = createRawReplayToolCallPart("tool-call-2", "github__list_prs");
+    const secondToolResultPart = createRawReplayToolResultPart(
+      secondToolCallPart,
+      { pullRequests: [3077] },
+    );
+
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([rawReplayToolCallPart, secondToolCallPart]),
+      toolMessage([rawReplayToolResultPart]),
+      toolMessage([secondToolResultPart], "tool-message-2"),
+      assistantMessage(
+        [{ type: "text", text: "All results are available." }],
+        "assistant-message-2",
+      ),
+    ]);
+
+    assertEquals(parsed.messages[1]?.parts as unknown, [rawReplayToolResultPart]);
+    assertEquals(parsed.messages[2]?.parts as unknown, [secondToolResultPart]);
+  });
+
+  it("accepts normalized assistant tool calls that carry result-bearing states", () => {
+    for (const state of ["output-available", "output-error", "output-denied", "error"] as const) {
+      const toolCallPart = {
+        ...parsedHostedChatRequestReplayToolCallPart,
+        toolCallId: `normalized-result-${state}`,
+        state,
+      };
+      const parsed = parseHostedChatRequestMessages([
+        assistantMessage([toolCallPart], `assistant-message-${state}`),
+        assistantMessage(
+          [{ type: "text", text: "Continuing after embedded result." }],
+          `assistant-continuation-${state}`,
+        ),
+      ]);
+
+      assertEquals(parsed.messages[0]?.parts[0] as unknown, toolCallPart);
+    }
+  });
+
+  it("rejects orphaned or mismatched normalized UI tool results", () => {
+    assertHostedChatRequestError(
+      [toolMessage([parsedHostedChatRequestReplayToolCallPart])],
       "tool_result requires a preceding matching tool_call",
     );
 
     assertHostedChatRequestError(
       [
-        {
-          id: "assistant-message-1",
-          role: "assistant",
-          parts: [rawReplayToolCallPart],
-        },
-        {
-          id: "tool-message-1",
-          role: "tool",
-          parts: [
-            {
-              ...parsedHostedChatRequestReplayToolCallPart,
-              toolName: "github__get_pr",
-            },
-          ],
-        },
+        assistantMessage([rawReplayToolCallPart]),
+        toolMessage([
+          {
+            ...parsedHostedChatRequestReplayToolCallPart,
+            toolName: "github__get_pr",
+          },
+        ]),
       ],
       "tool_result tool_name must match its preceding tool_call",
     );
@@ -379,6 +863,49 @@ describe("agent/hosted-chat-request", () => {
         "id",
       ]);
     }
+  });
+
+  it("does not let duplicate replay tool calls close prior unresolved completed calls", () => {
+    const parsed = hostedChatRequestSchema.safeParse(
+      createHostedChatRequestBody([
+        assistantMessage([
+          rawReplayToolCallPart,
+          {
+            ...rawReplayToolCallPart,
+            name: "github__get_pr",
+          },
+        ]),
+      ]),
+    );
+
+    assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      const validationMessage = parsed.error instanceof Error ? parsed.error.message : "";
+      assertStringIncludes(validationMessage, "tool_call id must be unique");
+      assertStringIncludes(
+        validationMessage,
+        "completed tool_call requires a matching tool_result",
+      );
+    }
+  });
+
+  it("rejects duplicate replay tool-call ids across raw and normalized assistant parts", () => {
+    assertHostedChatRequestError(
+      [
+        assistantMessage([
+          {
+            ...rawReplayToolCallPart,
+            state: "pending",
+          },
+          {
+            ...parsedHostedChatRequestReplayToolCallPart,
+            state: "pending",
+            output: undefined,
+          },
+        ]),
+      ],
+      "tool_call id must be unique",
+    );
   });
 
   it("rejects duplicate replay tool results", () => {
