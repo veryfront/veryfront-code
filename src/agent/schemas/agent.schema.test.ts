@@ -317,6 +317,30 @@ describe("agent/schema", () => {
       assertEquals(result.success, true);
     });
 
+    it("should accept replayed messages with native citation parts", () => {
+      const result = getMessageSchema().safeParse({
+        id: "msg-citations",
+        role: "assistant",
+        parts: [
+          {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/docs",
+            title: "Docs",
+          },
+          {
+            type: "source-document",
+            sourceId: "knowledge/handbook.md",
+            title: "knowledge/handbook.md",
+            mediaType: "text/markdown",
+            filename: "knowledge/handbook.md",
+          },
+        ],
+      });
+
+      assertEquals(result.success, true);
+    });
+
     it("should accept message with timestamp", () => {
       const result = getMessageSchema().safeParse({
         id: "msg-789",

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/observability"
 description: "Tracing, metrics, OTLP export, and structured logs."
-order: 20
+order: 21
 ---
 
 ## Import
@@ -48,10 +48,10 @@ const result = await withSpan("load-data", async () => {
 | `endSpan` | End an active tracing span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L57) |
 | `extractContext` | Context for extract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L88) |
 | `getActiveContext` | Context for get active. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L98) |
-| `getErrorCollector` | Return error collector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L347) |
+| `getErrorCollector` | Return error collector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L341) |
 | `getGlobalMetricsAPI` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L451) |
 | `getHostTelemetryEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/telemetry-env.ts#L7) |
-| `getLogBuffer` | Return log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L174) |
+| `getLogBuffer` | Return log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L168) |
 | `getMetricsState` | State for get metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38) |
 | `getTraceContext` | Context for get trace. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L305) |
 | `initAutoInstrumentation` | Initialize automatic instrumentation wrappers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L13) |
@@ -66,18 +66,18 @@ const result = await withSpan("load-data", async () => {
 | `instrumentHttpHandler` | Handler for instrument HTTP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/http-instrumentation.ts#L38) |
 | `instrumentReactRender` | Instrument a React render operation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/react-instrumentation.ts#L6) |
 | `instrumentSync` | Instrument a synchronous operation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/wrappers.ts#L28) |
-| `interceptConsole` | Capture console output in the log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L186) |
+| `interceptConsole` | Capture console output in the log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L180) |
 | `isAutoInstrumentEnabled` | Check whether auto instrumentation is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L42) |
 | `isMetricsEnabled` | Check whether metrics collection is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L28) |
 | `isOTLPEnabled` | Check whether OTLP export is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L122) |
 | `isReservedSharedRuntimeTelemetryEnvKey` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/telemetry-env.ts#L11) |
 | `isTracingDegraded` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L30) |
 | `isTracingEnabled` | Check whether tracing is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L26) |
-| `markRequestProfilePhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L114) |
-| `parseCompileError` | Error shape for parse compile. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L359) |
+| `markRequestProfilePhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L115) |
+| `parseCompileError` | Error shape for parse compile. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L353) |
 | `parseMaxSize` | Parses max size. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L28) |
-| `profilePhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L101) |
-| `profileSyncPhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L121) |
+| `profilePhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L102) |
+| `profileSyncPhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L122) |
 | `recordApiRequest` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L291) |
 | `recordApiRetry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L305) |
 | `recordBuild` | Record build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L124) |
@@ -100,15 +100,15 @@ const result = await withSpan("load-data", async () => {
 | `recordRSCRequest` | Request payload for record rscrequest. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L111) |
 | `recordRSCStream` | Record RSC stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L103) |
 | `recordSecurityHeaders` | Record security headers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L158) |
-| `resetErrorCollector` | Reset captured runtime errors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L353) |
-| `resetLogBuffer` | Reset the in-memory log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L180) |
+| `resetErrorCollector` | Reset captured runtime errors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L347) |
+| `resetLogBuffer` | Reset the in-memory log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L174) |
 | `setActiveSpanAttributes` | Sets active span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L282) |
 | `setCacheSize` | Sets cache size. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L77) |
 | `setSpanAttributes` | Sets span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L62) |
 | `shutdownMetrics` | Shut down metrics collection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L33) |
 | `shutdownOTLP` | Shut down OTLP tracing export. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L116) |
 | `shutdownTracing` | Shut down the tracing runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L35) |
-| `snapshotRequestProfiles` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L206) |
+| `snapshotRequestProfiles` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L218) |
 | `startSpan` | Starts span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L52) |
 | `withActiveSpan` | Applies active span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L103) |
 | `withSpan` | Applies span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L110) |
@@ -118,9 +118,9 @@ const result = await withSpan("load-data", async () => {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ErrorCollector` | Implement error collector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L66) |
+| `ErrorCollector` | Implement error collector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L67) |
 | `FileLogSubscriber` | Implement file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L53) |
-| `LogBuffer` | Implement log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L28) |
+| `LogBuffer` | Implement log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L29) |
 
 ### Types
 
@@ -131,16 +131,16 @@ const result = await withSpan("load-data", async () => {
 | `Context` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L83) |
 | `Counter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L145) |
 | `CreateOpenTelemetryServiceTracerOptions` | Options accepted by create open telemetry service tracer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/service-tracer.ts#L104) |
-| `DevError` | Error shape for dev. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L25) |
-| `ErrorFilter` | Public API contract for error filter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L51) |
-| `ErrorSubscriber` | Public API contract for error subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L63) |
-| `ErrorType` | Public API contract for error type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L11) |
+| `DevError` | Error shape for dev. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L26) |
+| `ErrorFilter` | Public API contract for error filter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L52) |
+| `ErrorSubscriber` | Public API contract for error subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L64) |
+| `ErrorType` | Public API contract for error type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L12) |
 | `FileLogConfig` | Configuration used by file log. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L4) |
 | `Histogram` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L153) |
-| `LogBufferFilter` | Filter options for reading buffered log entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L16) |
-| `LogEntry` | Entry shape for log. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L7) |
-| `LogLevel` | Public API contract for log level. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L4) |
-| `LogSubscriber` | Public API contract for log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L25) |
+| `LogBufferFilter` | Filter options for reading buffered log entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L17) |
+| `LogEntry` | Entry shape for log. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L8) |
+| `LogLevel` | Public API contract for log level. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L5) |
+| `LogSubscriber` | Public API contract for log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L26) |
 | `Meter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L161) |
 | `MetricsConfig` | Configuration used by metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/types.ts#L64) |
 | `ModuleServeStatus` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L132) |

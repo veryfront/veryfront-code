@@ -229,6 +229,41 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
     }]);
   });
 
+  it("encodes source URLs as renderable custom events", () => {
+    const encoder = createAgUiChatUiChunkBrowserEncoder();
+    const sourceUrl: ChatUiMessageChunk = {
+      type: "source-url",
+      sourceId: "web-1",
+      url: "https://example.com/reference",
+      title: "Reference",
+    };
+
+    assertEquals(encoder.encode(sourceUrl), [{
+      event: "Custom",
+      payload: {
+        name: "source-url",
+        value: sourceUrl,
+      },
+    }]);
+  });
+
+  it("encodes files as renderable custom events", () => {
+    const encoder = createAgUiChatUiChunkBrowserEncoder();
+    const file: ChatUiMessageChunk = {
+      type: "file",
+      url: "https://cdn.example.com/report.pdf",
+      mediaType: "application/pdf",
+    };
+
+    assertEquals(encoder.encode(file), [{
+      event: "Custom",
+      payload: {
+        name: "file",
+        value: file,
+      },
+    }]);
+  });
+
   it("creates a tracked browser response for chat UI chunks", async () => {
     const response = createAgUiChatUiTrackedBrowserResponse({
       agUiInput: {
