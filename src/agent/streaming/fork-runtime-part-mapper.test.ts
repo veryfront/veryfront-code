@@ -7,6 +7,110 @@ import {
 } from "./fork-runtime-part-mapper.ts";
 
 describe("agent/fork-runtime-part-mapper", () => {
+  it("maps direct source-document events to fork source parts", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    const parts = mapAgUiRuntimeEventToForkParts(
+      {
+        type: "source-document",
+        sourceId: "knowledge/product/limits.md",
+        mediaType: "text/markdown",
+        title: "Product limits",
+        filename: "limits.md",
+      },
+      state,
+    );
+
+    assertEquals(parts, [{
+      type: "source",
+      id: "knowledge/product/limits.md",
+      sourceType: "document",
+      mediaType: "text/markdown",
+      title: "Product limits",
+      filename: "limits.md",
+    }]);
+  });
+
+  it("maps direct source-url events to fork source parts", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    const parts = mapAgUiRuntimeEventToForkParts(
+      {
+        type: "source-url",
+        sourceId: "docs-1",
+        url: "https://example.com/docs",
+        title: "Docs",
+      },
+      state,
+    );
+
+    assertEquals(parts, [{
+      type: "source",
+      id: "docs-1",
+      sourceType: "url",
+      url: "https://example.com/docs",
+      title: "Docs",
+    }]);
+  });
+
+  it("maps wrapped source-document data events to fork source parts", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    const parts = mapAgUiRuntimeEventToForkParts(
+      {
+        type: "data",
+        data: {
+          name: "source-document",
+          value: {
+            type: "source-document",
+            sourceId: "knowledge/product/limits.md",
+            mediaType: "text/markdown",
+            title: "Product limits",
+            filename: "limits.md",
+          },
+        },
+      },
+      state,
+    );
+
+    assertEquals(parts, [{
+      type: "source",
+      id: "knowledge/product/limits.md",
+      sourceType: "document",
+      mediaType: "text/markdown",
+      title: "Product limits",
+      filename: "limits.md",
+    }]);
+  });
+
+  it("maps wrapped source-url data events to fork source parts", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    const parts = mapAgUiRuntimeEventToForkParts(
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "docs-1",
+            url: "https://example.com/docs",
+            title: "Docs",
+          },
+        },
+      },
+      state,
+    );
+
+    assertEquals(parts, [{
+      type: "source",
+      id: "docs-1",
+      sourceType: "url",
+      url: "https://example.com/docs",
+      title: "Docs",
+    }]);
+  });
+
   it("emits a missing tool-call before a final tool-result", () => {
     const state = createForkRuntimeStreamMappingState();
 
