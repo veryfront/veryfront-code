@@ -8,6 +8,8 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { isDataControlResult } from "#veryfront/data/helpers.ts";
+import type { DataResult } from "#veryfront/data/types.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -102,6 +104,36 @@ interface RedirectResultContext {
   };
 }
 
+/**
+ * Find a thrown `notFound()` / `redirect()` control result anywhere in the
+ * error's `cause` chain or an `AggregateError`'s `errors`.
+ *
+ * `throw notFound()` is documented to work like `return notFound()`. The data
+ * loaders already recognise a thrown branded result (server-data-fetcher.ts),
+ * but a control result thrown from a page COMPONENT render surfaces here in the
+ * SSR error handler instead, where, unrecognised, it became a 500. Matching the
+ * brand lets it behave like the returned/loader form: a 404 (custom
+ * `not-found.tsx`) or a redirect. The check is on the brand, never the shape.
+ *
+ * React can surface concurrent boundary failures wrapped in an `AggregateError`,
+ * so the walk descends both `cause` and `errors`. A `seen` set keeps a
+ * self-referential chain from looping.
+ */
+function findThrownControlResult(error: unknown): DataResult | null {
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [error];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    if (isDataControlResult(current)) return current as DataResult;
+    seen.add(current);
+    stack.push((current as { cause?: unknown }).cause);
+    const aggregated = (current as { errors?: unknown }).errors;
+    if (Array.isArray(aggregated)) stack.push(...aggregated);
+  }
+  return null;
+}
+
 function extractRedirectLocation(
   error: VeryfrontError,
 ): { destination: string; permanent: boolean } | null {
@@ -112,6 +144,47 @@ function extractRedirectLocation(
     destination: redirect.destination,
     permanent: redirect.permanent === true,
   };
+}
+
+/**
+ * Build the redirect result shared by the thrown-control-result and
+ * `render-error` paths, so a change to redirect handling lands in one place.
+ */
+function buildRedirectResult(
+  redirect: { destination: string; permanent?: boolean },
+  errorObj: Error,
+  slug: string,
+): SSRRenderResult {
+  return {
+    status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
+    isStreaming: false,
+    cacheStrategy: "no-cache",
+    error: errorObj,
+    errorType: "redirect",
+    redirectLocation: redirect.destination,
+    slug,
+  };
+}
+
+/**
+ * Build the 404 result shared by the thrown-control-result and file-not-found
+ * paths. `slug` is escaped by `ErrorPages.notFound`.
+ */
+function buildNotFoundResult(slug: string): SSRRenderResult {
+  return {
+    status: HTTP_NOT_FOUND,
+    html: ErrorPages.notFound(slug || "/"),
+    isStreaming: false,
+    cacheStrategy: "no-cache",
+    errorType: "not-found",
+    slug,
+  };
+}
+
+function getAllReady(stream: ReadableStream | null | undefined): Promise<unknown> | null {
+  const allReady = (stream as { allReady?: unknown } | null | undefined)?.allReady;
+  if (!allReady || typeof (allReady as { then?: unknown }).then !== "function") return null;
+  return allReady as Promise<unknown>;
 }
 
 export class SSRService implements SSRServiceLike {
@@ -235,6 +308,20 @@ export class SSRService implements SSRServiceLike {
       const isStreaming = !!result.stream && !result.html;
       const cacheStrategy = useNoCache ? "no-cache" : "short";
       const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
+
+      if (isStreaming) {
+        const allReady = getAllReady(result.stream);
+        if (allReady) {
+          try {
+            await allReady;
+          } catch (error) {
+            if (findThrownControlResult(error)) {
+              return this.handleRenderError(error, ctx, slug, request, nonce);
+            }
+          }
+        }
+      }
+
       return {
         status: HTTP_OK,
         html: result.html,
@@ -275,20 +362,32 @@ export class SSRService implements SSRServiceLike {
 
     const errorObj = error instanceof Error ? error : new Error(String(error));
     // Dev-only overlay (full stack, absolute paths, line numbers) must never
-    // be exposed outside a local project — including remote preview, which is
+    // be exposed outside a local project, including remote preview, which is
     // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
     const isDev = Boolean(ctx.isLocalProject);
 
+    // `throw notFound()` / `throw redirect()` from a page component surfaces here
+    // as a thrown control result. Recognise the brand and behave like the loader
+    // form: notFound to 404 (routed to the segment's custom not-found.tsx by the
+    // handler), redirect to 301/302. Otherwise it falls through to a 500.
+    const control = findThrownControlResult(error);
+    if (control?.redirect) {
+      logger.debug("SSR control-result redirect (thrown from component)", {
+        slug,
+        destination: control.redirect.destination,
+        permanent: control.redirect.permanent,
+        projectSlug: ctx.projectSlug,
+      });
+      return buildRedirectResult(control.redirect, errorObj, slug);
+    }
+    if (control?.notFound) {
+      logger.debug("SSR control-result notFound (thrown from component)", { slug });
+      return buildNotFoundResult(slug);
+    }
+
     if (error instanceof VeryfrontError && error.slug === "file-not-found") {
       logger.debug("Page not found", { slug, error: errorObj.message });
-      return {
-        status: HTTP_NOT_FOUND,
-        html: ErrorPages.notFound(slug || "/"),
-        isStreaming: false,
-        cacheStrategy: "no-cache",
-        errorType: "not-found",
-        slug,
-      };
+      return buildNotFoundResult(slug);
     }
 
     if (
@@ -327,15 +426,7 @@ export class SSRService implements SSRServiceLike {
           permanent: redirect.permanent,
           projectSlug: ctx.projectSlug,
         });
-        return {
-          status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
-          isStreaming: false,
-          cacheStrategy: "no-cache",
-          error: errorObj,
-          errorType: "redirect",
-          redirectLocation: redirect.destination,
-          slug,
-        };
+        return buildRedirectResult(redirect, errorObj, slug);
       }
     }
 

@@ -83,7 +83,10 @@ async function renderToReadableStreamImpl(
       logger.info("SSR renderToReadableStream completed", { durationMs });
     }
 
-    return { stream };
+    return {
+      stream,
+      allReady: (stream as ReadableStream<Uint8Array> & { allReady?: Promise<unknown> }).allReady,
+    };
   } catch (error) {
     clearTimeout(timeoutId);
 
@@ -140,6 +143,13 @@ function renderToPipeableStreamImpl(
   const promise = new Promise<SSRResult>((resolve, reject) => {
     let abortFn: (() => void) | undefined;
     let settled = false;
+    let resolveAllReady: (() => void) | undefined;
+    let rejectAllReady: ((error: unknown) => void) | undefined;
+    const allReady = new Promise<void>((resolve, reject) => {
+      resolveAllReady = resolve;
+      rejectAllReady = reject;
+    });
+    allReady.catch(() => {});
 
     const timeoutId = setTimeout(() => {
       if (settled) return;
@@ -173,10 +183,12 @@ function renderToPipeableStreamImpl(
         onError: (error: unknown) => {
           logger.error("SSR_ERROR pipeable stream error", error);
           options.onError?.(error as Error);
+          rejectAllReady?.(error);
         },
         onAllReady: () => {
           logger.debug("SSR pipeable stream all ready");
           options.onAllReady?.();
+          resolveAllReady?.();
         },
         onShellReady: () => {
           if (settled) return;
@@ -185,7 +197,7 @@ function renderToPipeableStreamImpl(
 
           logger.debug("SSR pipeable stream shell ready");
           options.onShellReady?.();
-          resolve({ pipe, abort });
+          resolve({ pipe, abort, allReady });
         },
         onShellError: (error: unknown) => {
           if (settled) return;
