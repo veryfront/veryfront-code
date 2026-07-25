@@ -124,7 +124,11 @@ describe("generate-api-reference", () => {
       );
       assertStringIncludes(
         middlewareReference,
-        "Register a cleanup callback that runs once per request, after each `execute()`/`handle()` call produces its response.",
+        "Register a cleanup callback that runs once per request after each `execute()`/`handle()` response body closes, is canceled, or errors.",
+      );
+      assertStringIncludes(
+        middlewareReference,
+        "Bodyless, locked, or already-read responses and handler/middleware exceptions clean up before the call resolves.",
       );
       assertStringIncludes(
         middlewareReference,
@@ -139,6 +143,11 @@ describe("generate-api-reference", () => {
         middlewareReference.includes("Run all registered teardown callbacks"),
         false,
         "generated middleware docs must not describe teardown as the per-request cleanup path",
+      );
+      assertEquals(
+        middlewareReference.includes("produces its response"),
+        false,
+        "generated middleware docs must not describe cleanup as response-production timing",
       );
 
       const cliReference = await Deno.readTextFile(

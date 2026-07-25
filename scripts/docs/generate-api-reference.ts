@@ -1806,7 +1806,7 @@ const METHOD_DESCRIPTIONS: Record<
     },
     onTeardown: {
       desc:
-        "Register a cleanup callback that runs once per request, after each `execute()`/`handle()` call produces its response.",
+        "Register a cleanup callback that runs once per request after each `execute()`/`handle()` response body closes, is canceled, or errors. Bodyless, locked, or already-read responses and handler/middleware exceptions clean up before the call resolves.",
       params: { cb: "Cleanup callback" },
     },
     compose: {
