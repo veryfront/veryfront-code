@@ -1,9 +1,10 @@
 # Provider runtime
 
-This page describes provider and model resolution, provider request transport,
-and the embedding pipeline (chunking, embedding model resolution, vector store
-access, and RAG store helpers). It does not cover agent message preparation,
-workflow execution, or browser upload UI.
+This page describes provider and model resolution, the provider-neutral model
+runtime bridge, provider request transport, and the embedding pipeline
+(chunking, embedding model resolution, vector store access, and RAG store
+helpers). It does not cover agent message preparation, workflow execution, or
+browser upload UI.
 
 ## Responsibility
 
@@ -16,6 +17,7 @@ for agent and application code.
 Primary source areas:
 
 - [`src/provider/`](../../src/provider/)
+- [`src/runtime/`](../../src/runtime/)
 - [`src/provider/runtime-loader/`](../../src/provider/runtime-loader/)
 - [`src/provider/local/`](../../src/provider/local/)
 - [`src/provider/veryfront-cloud/`](../../src/provider/veryfront-cloud/)
@@ -34,8 +36,9 @@ Primary source areas:
    records, embedding responses, and tool input status.
 4. Provider adapters send requests to local engines or Veryfront Cloud provider
    endpoints.
-5. The agent runtime consumes the provider stream through provider-neutral
-   runtime events.
+5. `src/runtime` validates direct results and stream events, enforces terminal
+   lifecycle, tool and usage contracts, and propagates cancellation.
+6. The agent runtime consumes the resulting provider-neutral runtime events.
 
 ## Embedding and RAG
 
@@ -50,6 +53,8 @@ Primary source areas:
 
 - The agent runtime owns conversation messages and tool inventory; see
   [agent runtime](./05-agent-runtime.md).
+- The model runtime bridge owns provider-neutral generation, stream validation,
+  tool correlation, usage normalization, and cancellation.
 - The provider runtime owns provider request and response translation.
 - Agent prompt assembly and retrieval orchestration belong in
   [agent runtime](./05-agent-runtime.md), not in embedding helpers.

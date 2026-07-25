@@ -17,6 +17,7 @@ primitives the runtime executes and exposes.
 Primary source areas:
 
 - [`src/agent/runtime/`](../../src/agent/runtime/)
+- [`src/runtime/`](../../src/runtime/) for the provider-neutral model bridge
 - [`src/agent/factory.ts`](../../src/agent/factory.ts)
 - [`src/agent/types.ts`](../../src/agent/types.ts)
 - [`src/agent/hosted/`](../../src/agent/hosted/)
@@ -36,14 +37,17 @@ sequenceDiagram
   participant Handler as Route or service handler
   participant Runtime as Agent runtime
   participant Tools as Tool inventory
+  participant Bridge as Model runtime bridge
   participant Provider as Provider runtime
   participant Stream as Stream encoder
 
   Handler->>Runtime: Agent definition, messages, context, options
   Runtime->>Tools: Resolve tools, skills, prompts, resources
   Tools-->>Runtime: Normalized inventory
-  Runtime->>Provider: Provider-neutral request
-  Provider-->>Runtime: Provider stream events
+  Runtime->>Bridge: Provider-neutral generation request
+  Bridge->>Provider: Validated model-runtime call
+  Provider-->>Bridge: Provider stream events
+  Bridge-->>Runtime: Canonical bounded runtime events
   Runtime->>Stream: Text, tool, data, and final chunks
   Stream-->>Handler: Response stream
 ```
@@ -58,6 +62,21 @@ sequenceDiagram
    response state.
 5. Runtime errors are converted to Veryfront error shapes before reaching public
    handlers.
+
+The provider-neutral bridge applies explicit structural budgets at this
+boundary. A top-level system prompt is limited to 1,048,576 UTF-16 code units
+and, in segmented form, 1,024 entries. One direct provider response may contain
+at most 65,536 content parts and 8 MiB of aggregate UTF-8 text.
+Provider-controlled tool input is limited to 128 distinct calls, 1 MiB per
+call, 8 MiB per turn, and 4,096 streamed deltas per call. Structured input
+becomes one deeply owned, frozen JSON snapshot before validation, repair,
+accounting, or emission; raw JSON strings retain their original formatting.
+Validator diagnostics accept at most 1,024 issues, 64 KiB of parameters per
+issue, 1 MiB across retained parameter and text data, and 4,096 UTF-16 code
+units per textual field. Repaired call identifiers use the same 1,024-code-unit
+bound as provider stream identifiers. Tool failure text is reduced to a
+descriptor-only JSON snapshot or own error message, capped at 4 KiB of UTF-8,
+so failure handling does not execute getters, `toJSON`, or coercion hooks.
 
 ## Message schema compatibility
 

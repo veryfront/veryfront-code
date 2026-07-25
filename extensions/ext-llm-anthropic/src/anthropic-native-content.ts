@@ -1,4 +1,4 @@
-import { readRecord } from "veryfront/provider/shared";
+import { type JsonSnapshotValue, readRecord, snapshotJsonValue } from "veryfront/provider/shared";
 
 export type AnthropicProviderToolNameRegistry = Map<string, string>;
 
@@ -99,6 +99,35 @@ export function isAnthropicProviderExecutedContentBlockType(type: unknown): bool
     typeof type === "string" && isAnthropicProviderToolResultBlockType(type);
 }
 
+export const MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES = 6;
+export const MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS = 4_096;
+export const MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES = 8 * 1024 * 1024;
+export const MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_DEPTH = 64;
+export const MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_NODES = 65_536;
+
+export function snapshotAnthropicRawAssistantMetadata(
+  value: unknown,
+): JsonSnapshotValue {
+  try {
+    return snapshotJsonValue(value, {
+      maxBytes: MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES,
+      maxDepth: MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_DEPTH,
+      maxNodes: MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_NODES,
+    });
+  } catch (error) {
+    if (
+      error instanceof TypeError &&
+      error.message ===
+        `Provider JSON snapshot exceeded ${MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES} UTF-8 bytes`
+    ) {
+      throw new TypeError(
+        `Anthropic raw assistant metadata exceeded ${MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES} UTF-8 bytes`,
+      );
+    }
+    throw new TypeError("Anthropic raw assistant metadata was not valid bounded JSON");
+  }
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
@@ -128,6 +157,111 @@ function hasValidCaller(value: unknown): boolean {
     return isNonEmptyString(caller.tool_id);
   }
   return false;
+}
+
+/**
+ * Validate exact Anthropic assistant content before replaying it from provider
+ * metadata. The records retain their provider wire shape; validation only
+ * proves that every block is supported and provider-tool results correlate.
+ */
+export function validateAnthropicRawAssistantMessages(
+  value: unknown,
+  providerToolNamesById: AnthropicProviderToolNameRegistry = new Map(),
+): Array<Array<Record<string, unknown>>> {
+  const snapshot = snapshotAnthropicRawAssistantMetadata(value);
+  if (
+    !Array.isArray(snapshot) ||
+    snapshot.length === 0 ||
+    snapshot.length > MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES
+  ) {
+    throw new TypeError(
+      `Anthropic raw assistant messages must contain between 1 and ${MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES} messages`,
+    );
+  }
+
+  const messages = snapshot as Array<Array<Record<string, unknown>>>;
+  let blockCount = 0;
+
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const content = messages[messageIndex];
+    if (!Array.isArray(content) || content.length === 0) {
+      throw new TypeError(
+        "Anthropic raw assistant messages must contain non-empty arrays of content blocks",
+      );
+    }
+    if (content.length > MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS - blockCount) {
+      throw new TypeError(
+        `Anthropic raw assistant metadata exceeded ${MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS} content blocks`,
+      );
+    }
+    blockCount += content.length;
+
+    for (let blockIndex = 0; blockIndex < content.length; blockIndex += 1) {
+      const value = content[blockIndex];
+      const block = readRecord(value);
+      if (!block || !isNonEmptyString(block.type)) {
+        throw new TypeError("Anthropic raw assistant content block must be an object with a type");
+      }
+
+      switch (block.type) {
+        case "text":
+          if (typeof block.text !== "string") {
+            throw new TypeError("Anthropic raw assistant text block is malformed");
+          }
+          break;
+        case "thinking":
+          if (
+            (block.thinking !== undefined && typeof block.thinking !== "string") ||
+            (block.signature !== undefined && typeof block.signature !== "string") ||
+            (typeof block.thinking !== "string" && typeof block.signature !== "string")
+          ) {
+            throw new TypeError("Anthropic raw assistant thinking block is malformed");
+          }
+          break;
+        case "redacted_thinking":
+          if (!isNonEmptyString(block.data)) {
+            throw new TypeError("Anthropic raw assistant redacted thinking block is malformed");
+          }
+          break;
+        case "tool_use": {
+          const input = block.input === undefined ? {} : readRecord(block.input);
+          if (!isNonEmptyString(block.id) || !isNonEmptyString(block.name) || !input) {
+            throw new TypeError("Anthropic raw assistant tool-use block is malformed");
+          }
+          break;
+        }
+        case "server_tool_use":
+        case "mcp_tool_use": {
+          const providerToolUse = parseAnthropicProviderToolUse(block);
+          if (
+            !providerToolUse ||
+            providerToolNamesById.has(providerToolUse.toolCallId)
+          ) {
+            throw new TypeError(
+              "Anthropic raw assistant provider tool-use block is malformed or duplicated",
+            );
+          }
+          providerToolNamesById.set(
+            providerToolUse.toolCallId,
+            providerToolUse.toolName,
+          );
+          break;
+        }
+        default:
+          if (!isAnthropicProviderToolResultBlockType(block.type)) {
+            throw new TypeError("Anthropic raw assistant content block type is unsupported");
+          }
+          if (!parseAnthropicServerToolResult(block, providerToolNamesById)) {
+            throw new TypeError(
+              "Anthropic raw assistant provider tool result is malformed or unpaired",
+            );
+          }
+          providerToolNamesById.delete(String(block.tool_use_id));
+      }
+    }
+  }
+
+  return messages;
 }
 
 export function parseAnthropicProviderToolUse(

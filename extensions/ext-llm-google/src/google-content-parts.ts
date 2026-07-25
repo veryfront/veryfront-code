@@ -41,6 +41,86 @@ export type GoogleCodeExecutionResult = {
   isError: boolean;
 };
 
+export type GoogleToolCallCorrelationRegistry = {
+  registerFunctionCall(partIndex: number, providerId: string | undefined): string;
+  registerCodeExecution(providerId: string | undefined): string;
+  resolveCodeExecutionResult(providerId: string | undefined): string;
+  assertSettled(): void;
+};
+
+/**
+ * Owns Gemini's tool-call id allocation and code-execution pairing rules.
+ *
+ * The response normalizer and exact-replay validator must derive identical
+ * ids for anonymous code execution. Keeping the allocator here prevents those
+ * two protocol boundaries from drifting independently.
+ */
+export function createGoogleToolCallCorrelationRegistry(): GoogleToolCallCorrelationRegistry {
+  const usedToolCallIds = new Set<string>();
+  const pendingCodeExecutionsByProviderId = new Map<string, string>();
+  const pendingAnonymousCodeExecutions: string[] = [];
+  let anonymousCodeExecutionIndex = 0;
+
+  const reserve = (id: string): string => {
+    if (usedToolCallIds.has(id)) {
+      throw new TypeError("Google tool call id was duplicated");
+    }
+    usedToolCallIds.add(id);
+    return id;
+  };
+
+  return {
+    registerFunctionCall(partIndex, providerId) {
+      return reserve(providerId ?? `tool-${partIndex}`);
+    },
+    registerCodeExecution(providerId) {
+      if (providerId !== undefined) {
+        const id = reserve(providerId);
+        pendingCodeExecutionsByProviderId.set(providerId, id);
+        return id;
+      }
+
+      let id: string;
+      do {
+        id = `google-code-execution-${anonymousCodeExecutionIndex++}`;
+      } while (usedToolCallIds.has(id));
+      usedToolCallIds.add(id);
+      pendingAnonymousCodeExecutions.push(id);
+      return id;
+    },
+    resolveCodeExecutionResult(providerId) {
+      if (providerId === undefined) {
+        const id = pendingAnonymousCodeExecutions.shift();
+        if (id === undefined) {
+          throw new TypeError(
+            "Google code execution result had no matching executable code",
+          );
+        }
+        return id;
+      }
+
+      const id = pendingCodeExecutionsByProviderId.get(providerId);
+      if (id === undefined) {
+        throw new TypeError(
+          "Google code execution result id did not match executable code",
+        );
+      }
+      pendingCodeExecutionsByProviderId.delete(providerId);
+      return id;
+    },
+    assertSettled() {
+      if (
+        pendingCodeExecutionsByProviderId.size > 0 ||
+        pendingAnonymousCodeExecutions.length > 0
+      ) {
+        throw new TypeError(
+          "Google executable code had no matching execution result",
+        );
+      }
+    },
+  };
+}
+
 /**
  * Validates the documented `Part.data` oneof and returns the supported field.
  *

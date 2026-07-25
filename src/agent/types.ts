@@ -2,7 +2,7 @@
  * Agent type definitions
  **************************/
 
-import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import type { ModelRuntime, RuntimeReasoningOption } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Memory } from "./memory/memory-interface.ts";
@@ -238,11 +238,7 @@ export interface ModelTransportRequest {
 }
 
 /** Provider-neutral reasoning / thinking option for model transport. */
-export type RuntimeReasoningOption = {
-  enabled?: boolean;
-  effort?: "low" | "medium" | "high" | "max";
-  budgetTokens?: number;
-};
+export type { RuntimeReasoningOption } from "#veryfront/provider/types.ts";
 
 /** Public API contract for resolved model transport. */
 export interface ResolvedModelTransport {

@@ -1,7 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAbortError, stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import {
+  createAbortError,
+  MAX_TOOL_ERROR_TEXT_BYTES,
+  stringifyToolError,
+  throwIfAborted,
+} from "./error-utils.ts";
 
 describe("agent/runtime/error-utils", () => {
   describe("createAbortError", () => {
@@ -59,11 +69,53 @@ describe("agent/runtime/error-utils", () => {
       );
     });
 
-    it("falls back to String() when JSON serialization fails", () => {
+    it("uses a stable fallback when safe JSON serialization fails", () => {
       const circular: Record<string, unknown> = {};
       circular.self = circular;
 
-      assertEquals(stringifyToolError(circular), "[object Object]");
+      assertEquals(stringifyToolError(circular), "Unknown error");
+    });
+
+    it("does not invoke getters or custom serialization and coercion hooks", () => {
+      let calls = 0;
+      const hostile = {
+        get message(): string {
+          calls += 1;
+          return "getter executed";
+        },
+        toJSON(): string {
+          calls += 1;
+          return "serializer executed";
+        },
+        [Symbol.toPrimitive](): string {
+          calls += 1;
+          return "coercion executed";
+        },
+      };
+
+      assertEquals(stringifyToolError(hostile), "Unknown error");
+      assertEquals(calls, 0);
+    });
+
+    it("fails closed for revoked proxies", () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+
+      assertEquals(stringifyToolError(proxy), "Unknown error");
+    });
+
+    it("bounds direct and Error diagnostic text by UTF-8 byte length", () => {
+      const oversized = "é".repeat(MAX_TOOL_ERROR_TEXT_BYTES);
+      const direct = stringifyToolError(oversized);
+      const fromError = stringifyToolError(new Error(oversized));
+
+      assertEquals(new TextEncoder().encode(direct).byteLength <= MAX_TOOL_ERROR_TEXT_BYTES, true);
+      assertEquals(
+        new TextEncoder().encode(fromError).byteLength <= MAX_TOOL_ERROR_TEXT_BYTES,
+        true,
+      );
+      assertStringIncludes(direct, "…");
+      assertStringIncludes(fromError, "…");
     });
   });
 });

@@ -1,6 +1,5 @@
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
-import { agentLogger } from "#veryfront/utils";
-import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
+import { __registerTraceContextGetter, agentLogger } from "#veryfront/utils";
 import {
   type BootstrapAgentServiceOptions,
   runAgentServiceMain,

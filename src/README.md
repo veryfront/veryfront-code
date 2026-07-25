@@ -83,16 +83,16 @@
 
 ### Supporting Modules
 
-| Module               | Purpose                                      |
-| -------------------- | -------------------------------------------- |
-| **`observability/`** | Metrics, distributed tracing (OpenTelemetry) |
-| **`oauth/`**         | OAuth authentication flows                   |
-| **`studio/`**        | Studio integration (editor UI)               |
-| **`testing/`**       | Test utilities and fixtures                  |
-| **`repositories/`**  | Data repositories abstraction                |
-| **`runtime/`**       | Cross-runtime bridge and detection           |
-| **`issues/`**        | Issue tracking integration                   |
-| **`client/`**        | Client-side utilities                        |
+| Module               | Purpose                                                                |
+| -------------------- | ---------------------------------------------------------------------- |
+| **`observability/`** | Metrics, distributed tracing (OpenTelemetry)                           |
+| **`oauth/`**         | OAuth authentication flows                                             |
+| **`studio/`**        | Studio integration (editor UI)                                         |
+| **`testing/`**       | Test utilities and fixtures                                            |
+| **`repositories/`**  | Data repositories abstraction                                          |
+| **`runtime/`**       | Model-runtime generation, stream, tool, usage, and cancellation bridge |
+| **`issues/`**        | Issue tracking integration                                             |
+| **`client/`**        | Client-side utilities                                                  |
 
 ---
 
@@ -742,10 +742,12 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - Issue management utilities
 
-#### `runtime/` - Runtime Bridge
+#### `runtime/` - Model Runtime Bridge
 
-- Cross-runtime compatibility layer
-- Runtime detection and capability abstraction
+- Provider-neutral `generateText()` and `streamText()` orchestration
+- Strict direct-response and stream-event normalization
+- Tool-call validation, repair, correlation, and resource limits
+- Usage normalization, cancellation, and terminal stream lifecycle
 
 #### `client/` - Client Utilities
 
@@ -788,7 +790,7 @@ Features (foundation + infrastructure + modules)
 
 AI (foundation + tool + extensions)
 └─ tool/, agent/, workflow/, prompt/, resource/, mcp/, provider/,
-   skill/, chat/, discovery/, embedding/, sandbox/
+   runtime/, skill/, chat/, discovery/, embedding/, sandbox/
 
 Services (AI + infrastructure)
 └─ runs/, task/, channels/, integrations/, internal-agents/

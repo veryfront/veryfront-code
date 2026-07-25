@@ -84,7 +84,10 @@ Responses requests are stateless (`store: false`). The runtime retains the
 complete ordered response output in provider metadata and replays it on the
 next turn. Reasoning requests explicitly include encrypted reasoning content,
 and web-search requests include source URLs, so manual callers must preserve
-assistant-message provider metadata between turns.
+assistant-message provider metadata between turns. Raw replay is limited to
+4,096 output items and 8 MiB. Whenever canonical calls or results survive,
+their IDs, names, semantic values, multiplicity, and order must match the raw
+output before transport.
 
 See [Providers: Enable OpenAI-hosted web search](../../docs/guides/providers.md#enable-openai-hosted-web-search)
 for the agent setup.

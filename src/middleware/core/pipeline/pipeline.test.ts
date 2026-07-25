@@ -1,16 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  _resetShimForTests,
-  setGlobalTracerProvider,
-} from "#veryfront/observability/tracing/api-shim.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { MiddlewarePipeline } from "./pipeline.ts";
 import type { MiddlewareHandler } from "../types.ts";
-
-afterEach(() => {
-  _resetShimForTests();
-});
 
 describe("middleware/core/pipeline/MiddlewarePipeline", () => {
   const encoder = new TextEncoder();
@@ -343,16 +336,25 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.onTeardown(() => {
         cleanupCount++;
       });
-      setGlobalTracerProvider({
-        getTracer() {
-          throw new Error("tracing unavailable");
-        },
+      pipeline.use(() => {
+        throw new Error("middleware execution failed");
       });
 
+      const adapter = createMockAdapter();
+      adapter.env.get = () => {
+        throw new Error("runtime environment unavailable");
+      };
+
       await assertRejects(
-        () => pipeline.execute(new Request("http://localhost/")),
+        () =>
+          pipeline.execute(
+            new Request("http://localhost/"),
+            undefined,
+            undefined,
+            adapter,
+          ),
         Error,
-        "tracing unavailable",
+        "runtime environment unavailable",
       );
       assertEquals(cleanupCount, 1);
     });

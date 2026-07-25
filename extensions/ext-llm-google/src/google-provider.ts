@@ -8,7 +8,11 @@
  */
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
-import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
+import type {
+  EmbeddingRuntime,
+  ModelRuntime,
+  RuntimeAssistantContentPart,
+} from "veryfront/provider/types";
 import {
   buildProviderError,
   createGoogleRequestInit,
@@ -39,6 +43,7 @@ import {
   type OpenAICompatibleLanguageOptions,
 } from "./google-request-builder.ts";
 import {
+  createGoogleToolCallCorrelationRegistry,
   GOOGLE_CODE_EXECUTION_TOOL_NAME,
   googleCodeExecutionInput,
   googleCodeExecutionOutput,
@@ -293,20 +298,7 @@ function buildGoogleGenerateResult(
       providerExecuted: true;
     }
   > = [];
-  const usedToolCallIds = new Set<string>();
-  const seenCodeExecutionProviderIds = new Set<string>();
-  const pendingCodeExecutionsByProviderId = new Map<string, string>();
-  const pendingAnonymousCodeExecutions: string[] = [];
-  let anonymousCodeExecutionIndex = 0;
-
-  const createAnonymousCodeExecutionId = (): string => {
-    let id: string;
-    do {
-      id = `google-code-execution-${anonymousCodeExecutionIndex++}`;
-    } while (usedToolCallIds.has(id));
-    usedToolCallIds.add(id);
-    return id;
-  };
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
 
   for (const [index, part] of parts.entries()) {
     let thoughtSignature: string | undefined;
@@ -368,11 +360,15 @@ function buildGoogleGenerateResult(
           "candidate function call arguments were not an object",
         );
       }
-      const toolCallId = typeof functionCall.id === "string" ? functionCall.id : `tool-${index}`;
-      if (usedToolCallIds.has(toolCallId)) {
+      let toolCallId: string;
+      try {
+        toolCallId = toolCallRegistry.registerFunctionCall(
+          index,
+          typeof functionCall.id === "string" ? functionCall.id : undefined,
+        );
+      } catch {
         throw invalidGoogleResponse(context, "candidate tool call id was duplicated");
       }
-      usedToolCallIds.add(toolCallId);
       content.push({
         type: "tool-call",
         toolCallId,
@@ -391,23 +387,12 @@ function buildGoogleGenerateResult(
       }
 
       let toolCallId: string;
-      if (executableCode.providerId === undefined) {
-        toolCallId = createAnonymousCodeExecutionId();
-        pendingAnonymousCodeExecutions.push(toolCallId);
-      } else {
-        if (
-          seenCodeExecutionProviderIds.has(executableCode.providerId) ||
-          usedToolCallIds.has(executableCode.providerId)
-        ) {
-          throw invalidGoogleResponse(context, "candidate executable code id was duplicated");
-        }
-        seenCodeExecutionProviderIds.add(executableCode.providerId);
-        usedToolCallIds.add(executableCode.providerId);
-        pendingCodeExecutionsByProviderId.set(
-          executableCode.providerId,
+      try {
+        toolCallId = toolCallRegistry.registerCodeExecution(
           executableCode.providerId,
         );
-        toolCallId = executableCode.providerId;
+      } catch {
+        throw invalidGoogleResponse(context, "candidate executable code id was duplicated");
       }
 
       content.push({
@@ -426,17 +411,16 @@ function buildGoogleGenerateResult(
     } catch {
       throw invalidGoogleResponse(context, "candidate code execution result was malformed");
     }
-    const toolCallId = result.providerId === undefined
-      ? pendingAnonymousCodeExecutions.shift()
-      : pendingCodeExecutionsByProviderId.get(result.providerId);
-    if (toolCallId === undefined) {
+    let toolCallId: string;
+    try {
+      toolCallId = toolCallRegistry.resolveCodeExecutionResult(
+        result.providerId,
+      );
+    } catch {
       throw invalidGoogleResponse(
         context,
         "candidate code execution result did not match executable code",
       );
-    }
-    if (result.providerId !== undefined) {
-      pendingCodeExecutionsByProviderId.delete(result.providerId);
     }
     content.push({
       type: "tool-result",
@@ -447,10 +431,9 @@ function buildGoogleGenerateResult(
       providerExecuted: true,
     });
   }
-  if (
-    pendingCodeExecutionsByProviderId.size > 0 ||
-    pendingAnonymousCodeExecutions.length > 0
-  ) {
+  try {
+    toolCallRegistry.assertSettled();
+  } catch {
     throw invalidGoogleResponse(
       context,
       "candidate executable code had no matching execution result",
@@ -564,7 +547,7 @@ function createCancelableGoogleStream(
 export function createGoogleModelRuntime(
   config: GoogleRuntimeConfig,
   modelId: string,
-): ModelRuntime {
+): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   const fetchImpl = config.fetch ?? globalThis.fetch;
   const providerLabel = config.name ?? "google";
   const responseContext = { providerLabel };
@@ -573,8 +556,7 @@ export function createGoogleModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
-    doGenerate(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getGoogleGenerateContentUrl(config.baseURL, modelId);
       const warnings = createWarningCollector();
       const body = buildGoogleGenerateContentRequest(
@@ -601,8 +583,7 @@ export function createGoogleModelRuntime(
         };
       });
     },
-    async doStream(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    async doStream(options: OpenAICompatibleLanguageOptions) {
       const url = getGoogleStreamGenerateContentUrl(config.baseURL, modelId);
       const warnings = createWarningCollector();
       const body = buildGoogleGenerateContentRequest(
@@ -734,7 +715,10 @@ export function createGoogleEmbeddingRuntime(
 export class GoogleProvider implements LLMProvider {
   readonly id = "google";
 
-  createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
+  createModel(
+    modelId: string,
+    config: LLMProviderConfig,
+  ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
     return createGoogleModelRuntime(
       {
         apiKey: config.credential,

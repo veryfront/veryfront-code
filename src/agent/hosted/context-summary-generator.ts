@@ -5,7 +5,7 @@ import {
   resolveVeryfrontCloudModelId,
   runWithVeryfrontCloudContextAsync,
 } from "../../provider/index.ts";
-import { generateText } from "../../runtime/runtime-bridge.ts";
+import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
 import { redactForSerialization, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
 import type { AgentRuntimeMessage, AgentRuntimeMessagePart } from "../runtime/message-adapter.ts";

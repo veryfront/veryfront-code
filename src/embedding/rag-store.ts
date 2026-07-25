@@ -50,7 +50,7 @@ import type {
   RagStoreData,
   RagStoredDocumentMeta,
 } from "./types.ts";
-import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
+import { cosineSimilarity } from "./similarity.ts";
 
 // Legacy data shapes used only for migrating old upload-store JSON files.
 interface LegacyStoredChunk {

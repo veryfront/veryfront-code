@@ -5,7 +5,7 @@ import type {
   VectorStore,
   VectorStoreConfig,
 } from "./types.ts";
-import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
+import { cosineSimilarity } from "./similarity.ts";
 import {
   requirePositiveSafeInteger,
   requireUnitInterval,

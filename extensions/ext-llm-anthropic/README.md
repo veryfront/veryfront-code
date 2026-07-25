@@ -43,7 +43,8 @@ Automatic `max_tokens` defaults based on model family:
 
 | Model                        | Default max_tokens |
 | ---------------------------- | ------------------ |
-| Claude Opus/Sonnet 4.6       | 128,000            |
+| Claude Opus 4.8/4.7/4.6      | 128,000            |
+| Claude Sonnet 4.6            | 64,000             |
 | Claude Opus/Sonnet/Haiku 4.5 | 64,000             |
 | Claude Opus 4.1              | 32,000             |
 | Claude 3 Haiku               | 4,096              |
@@ -69,6 +70,20 @@ runtime.doGenerate({
 Effort-to-budget mapping: `low` = 1024, `medium` = 4096, `high` = 16384, `max` = 32768.
 
 When thinking is enabled, `temperature` and `topP` are automatically dropped (Anthropic rejects the combo).
+
+### Exact Replay
+
+Thinking, redacted thinking, ordinary `tool_use`, server-tool calls, and
+server-tool results are retained in assistant provider metadata for later
+turns. Manual callers must carry that metadata forward with the canonical
+assistant message.
+
+Raw replay is limited to six assistant messages, 4,096 total content blocks,
+and 8 MiB. When canonical calls or provider-executed results survive, their
+IDs, names, semantic inputs or results, multiplicity, and interleaving must
+match the raw blocks before transport. Structurally valid raw-only history is
+accepted only when the corresponding canonical projection is absent, for
+example after compaction.
 
 ### Prompt Caching
 

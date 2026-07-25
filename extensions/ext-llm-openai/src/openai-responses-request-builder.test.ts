@@ -1,6 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import type { ModelRuntimePromptMessage, RuntimePromptMessage } from "veryfront/provider/shared";
 import { buildOpenAIResponsesRequest } from "./openai-responses-request-builder.ts";
 
 function createWarningCollector() {
@@ -513,5 +513,443 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       "presencePenalty",
       "frequencyPenalty",
     ]);
+  });
+
+  it("rejects raw hosted-search replay that disagrees with canonical provider content", () => {
+    const rawWebSearch = {
+      type: "web_search_call",
+      id: "ws_1",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    };
+    const tools = [{
+      type: "provider" as const,
+      name: "research",
+      id: "openai.web_search" as const,
+      args: {},
+    }];
+
+    const build = (
+      canonical: {
+        id?: string;
+        name?: string;
+        resultName?: string;
+        input?: unknown;
+        result?: unknown;
+      },
+      rawOutputItems: Array<Record<string, unknown>> = [rawWebSearch],
+    ) =>
+      buildOpenAIResponsesRequest(
+        "gpt-5.4-nano",
+        "openai",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: canonical.id ?? "ws_1",
+              toolName: canonical.name ?? "research",
+              input: canonical.input ?? {
+                type: "search",
+                query: "Veryfront",
+              },
+              providerExecuted: true,
+            }, {
+              type: "tool-result",
+              toolCallId: canonical.id ?? "ws_1",
+              toolName: canonical.resultName ?? canonical.name ?? "research",
+              result: canonical.result ?? { status: "completed" },
+              providerExecuted: true,
+            }],
+            providerMetadata: {
+              openai: { rawResponseOutputItems: rawOutputItems },
+            },
+          }],
+          tools,
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertEquals(build({}).input, [rawWebSearch]);
+    assertEquals(
+      build({ name: "historical-search", resultName: "historical-search" }).input,
+      [rawWebSearch],
+    );
+    for (
+      const canonical of [
+        { id: "different-id" },
+        { resultName: "different-name" },
+        { input: { type: "search", query: "different query" } },
+        { result: { status: "failed" } },
+      ]
+    ) {
+      assertThrows(
+        () => build(canonical),
+        TypeError,
+        "OpenAI raw response metadata did not match canonical provider tool history",
+      );
+    }
+    assertThrows(
+      () =>
+        build({}, [{
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [{ type: "output_text", text: "No hosted search here" }],
+        }]),
+      TypeError,
+      "OpenAI raw response metadata did not match canonical provider tool history",
+    );
+  });
+
+  it("correlates ordinary raw function calls with surviving canonical content", () => {
+    const rawFunctionCall = {
+      id: "fc_item_1",
+      type: "function_call",
+      status: "completed",
+      call_id: "call_1",
+      name: "lookup",
+      arguments: '{"id":"one","options":{"fresh":true}}',
+    };
+    const build = (
+      canonical: { id?: string; name?: string; input?: unknown },
+    ) =>
+      buildOpenAIResponsesRequest(
+        "gpt-5.4-nano",
+        "openai",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: canonical.id ?? "call_1",
+              toolName: canonical.name ?? "lookup",
+              input: canonical.input ?? {
+                options: { fresh: true },
+                id: "one",
+              },
+            }],
+            providerMetadata: {
+              openai: { rawResponseOutputItems: [rawFunctionCall] },
+            },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertEquals(build({}).input, [rawFunctionCall]);
+    for (
+      const canonical of [
+        { id: "different-id" },
+        { name: "different-name" },
+        { input: { id: "different" } },
+      ]
+    ) {
+      assertThrows(
+        () => build(canonical),
+        TypeError,
+        "OpenAI raw response metadata did not match canonical provider tool history",
+      );
+    }
+  });
+
+  it("keeps validated raw function calls when canonical content was compacted", () => {
+    const rawFunctionCall = {
+      id: "fc_item_1",
+      type: "function_call",
+      status: "completed",
+      call_id: "call_1",
+      name: "lookup",
+      arguments: '{"id":"one"}',
+    };
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.4-nano",
+      "openai",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{ type: "text", text: "Compacted function-call projection" }],
+          providerMetadata: {
+            openai: { rawResponseOutputItems: [rawFunctionCall] },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.input, [rawFunctionCall]);
+  });
+
+  it("rejects reordered hosted-search projections", () => {
+    const rawWebSearches = [
+      {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: { type: "search", query: "one" },
+      },
+      {
+        type: "web_search_call",
+        id: "ws_2",
+        status: "completed",
+        action: { type: "search", query: "two" },
+      },
+    ];
+
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-nano",
+          "openai",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "ws_2",
+                  toolName: "research",
+                  input: { type: "search", query: "two" },
+                  providerExecuted: true,
+                },
+                {
+                  type: "tool-result",
+                  toolCallId: "ws_2",
+                  toolName: "research",
+                  result: { status: "completed" },
+                  providerExecuted: true,
+                },
+                {
+                  type: "tool-call",
+                  toolCallId: "ws_1",
+                  toolName: "research",
+                  input: { type: "search", query: "one" },
+                  providerExecuted: true,
+                },
+                {
+                  type: "tool-result",
+                  toolCallId: "ws_1",
+                  toolName: "research",
+                  result: { status: "completed" },
+                  providerExecuted: true,
+                },
+              ],
+              providerMetadata: {
+                openai: { rawResponseOutputItems: rawWebSearches },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "OpenAI raw response metadata did not match canonical provider tool history",
+    );
+  });
+
+  it("rejects duplicate hosted-search occurrences within either canonical source", () => {
+    const rawWebSearch = {
+      type: "web_search_call",
+      id: "ws_1",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    };
+    const duplicateCall = {
+      toolCallId: "ws_1",
+      toolName: "research",
+      input: { type: "search", query: "Veryfront" },
+    };
+    const build = (
+      providerToolCalls: Array<typeof duplicateCall> | undefined,
+      content: Extract<
+        ModelRuntimePromptMessage,
+        { readonly role: "assistant" }
+      >["content"],
+    ) =>
+      buildOpenAIResponsesRequest(
+        "gpt-5.4-nano",
+        "openai",
+        {
+          prompt: [{
+            role: "assistant",
+            content,
+            ...(providerToolCalls ? { providerToolCalls } : {}),
+            providerMetadata: {
+              openai: { rawResponseOutputItems: [rawWebSearch] },
+            },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    const providerContent = {
+      type: "tool-call" as const,
+      ...duplicateCall,
+      providerExecuted: true as const,
+    };
+    assertEquals(
+      build([duplicateCall], [providerContent]).input,
+      [rawWebSearch],
+    );
+    assertThrows(
+      () => build([duplicateCall, duplicateCall], []),
+      TypeError,
+      "OpenAI raw response metadata did not match canonical provider tool history",
+    );
+    assertThrows(
+      () => build(undefined, [providerContent, providerContent]),
+      TypeError,
+      "OpenAI raw response metadata did not match canonical provider tool history",
+    );
+  });
+
+  it("replays historical hosted-search names without the current descriptor", () => {
+    const rawWebSearch = {
+      type: "web_search_call",
+      id: "ws_1",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    };
+    const prompt: ModelRuntimePromptMessage[] = [{
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "ws_1",
+        toolName: "historical-search",
+        input: { type: "search", query: "Veryfront" },
+        providerExecuted: true,
+      }, {
+        type: "tool-result",
+        toolCallId: "ws_1",
+        toolName: "historical-search",
+        result: { status: "completed" },
+        providerExecuted: true,
+      }],
+      providerMetadata: {
+        openai: { rawResponseOutputItems: [rawWebSearch] },
+      },
+    }];
+
+    const withoutDescriptor = buildOpenAIResponsesRequest(
+      "gpt-5.4-nano",
+      "openai",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+    const withRenamedDescriptor = buildOpenAIResponsesRequest(
+      "gpt-5.4-nano",
+      "openai",
+      {
+        prompt,
+        tools: [{
+          type: "provider",
+          name: "current-search-name",
+          id: "openai.web_search",
+          args: {},
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(withoutDescriptor.input, [rawWebSearch]);
+    assertEquals(withRenamedDescriptor.input, [rawWebSearch]);
+  });
+
+  it("correlates raw hosted-search replay with legacy providerToolCalls metadata", () => {
+    const rawWebSearch = {
+      type: "web_search_call",
+      id: "ws_1",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    };
+
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-nano",
+          "openai",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{ type: "text", text: "Search complete" }],
+              providerToolCalls: [{
+                toolCallId: "different-id",
+                toolName: "research",
+                input: { type: "search", query: "Veryfront" },
+              }],
+              providerMetadata: {
+                openai: { rawResponseOutputItems: [rawWebSearch] },
+              },
+            }],
+            tools: [{
+              type: "provider",
+              name: "research",
+              id: "openai.web_search",
+              args: {},
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "OpenAI raw response metadata did not match canonical provider tool history",
+    );
+  });
+
+  it("requires raw metadata to replay provider-executed assistant results", () => {
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-nano",
+          "openai",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId: "ws_1",
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "OpenAI provider-executed assistant tool calls require exact raw replay metadata",
+    );
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-nano",
+          "openai",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-result",
+                toolCallId: "ws_1",
+                toolName: "web_search",
+                result: { status: "completed" },
+                providerExecuted: true,
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "OpenAI provider-executed assistant tool results require exact raw replay metadata",
+    );
   });
 });

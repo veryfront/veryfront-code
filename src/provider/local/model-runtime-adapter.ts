@@ -14,18 +14,28 @@ import { DEFAULT_LOCAL_MODEL } from "./model-catalog.ts";
 import { serverLogger } from "#veryfront/utils";
 import { fromError } from "#veryfront/errors";
 import { throwIfLocalAIDisabled } from "./env.ts";
-import type { ModelRuntime } from "../types.ts";
+import type {
+  ModelRuntime,
+  ModelRuntimeCallOptions,
+  ModelRuntimePromptMessage,
+  RuntimeAssistantContentPart,
+} from "../types.ts";
 
 const logger = serverLogger.component("local-llm");
 
 /** Default maximum new tokens for local model generation */
 const DEFAULT_MAX_NEW_TOKENS = 512;
 
-/** Shape of a single message in the current model-runtime prompt array. */
-interface PromptMessage {
-  role: string;
-  content: string | ReadonlyArray<{ type: string; text?: string }>;
-}
+/**
+ * Local runtimes also accept the legacy string shorthand for user and
+ * assistant messages. Canonical runtime messages remain the primary contract.
+ */
+export type LocalPromptMessage =
+  | ModelRuntimePromptMessage
+  | {
+    role: string;
+    content: string | ReadonlyArray<{ type: string; text?: string }>;
+  };
 
 /**
  * Convert model-runtime prompt format to simple ChatMessage array.
@@ -33,7 +43,7 @@ interface PromptMessage {
  * The prompt is an array of message objects with role and content arrays.
  * We extract text content for the local model.
  */
-function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
+function convertPrompt(prompt: ReadonlyArray<LocalPromptMessage>): ChatMessage[] {
   const messages: ChatMessage[] = [];
 
   for (const msg of prompt) {
@@ -52,7 +62,11 @@ function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
       text = msg.content;
     } else if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
-        if (part.type !== "text" || typeof part.text !== "string") {
+        if (
+          part.type !== "text" ||
+          !("text" in part) ||
+          typeof part.text !== "string"
+        ) {
           throw new TypeError(
             `Local models do not support prompt content type "${part.type}"`,
           );
@@ -76,15 +90,9 @@ function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
   return messages;
 }
 
-interface LocalModelOptions {
-  prompt: ReadonlyArray<PromptMessage>;
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  abortSignal?: AbortSignal;
-}
+export type LocalModelCallOptions = Omit<ModelRuntimeCallOptions, "prompt"> & {
+  prompt: ReadonlyArray<LocalPromptMessage>;
+};
 
 export interface LocalModelRuntimeEngine {
   generate(
@@ -105,13 +113,13 @@ const defaultLocalModelRuntimeEngine: LocalModelRuntimeEngine = {
 };
 
 /** Map model-runtime generation options to local engine GenerateOptions. */
-function toGenerateOptions(options: LocalModelOptions): GenerateOptions {
+function toGenerateOptions(options: LocalModelCallOptions): GenerateOptions {
   return {
     maxNewTokens: options.maxOutputTokens ?? DEFAULT_MAX_NEW_TOKENS,
     temperature: options.temperature ?? 0.7,
     topP: options.topP,
     topK: options.topK,
-    stopSequences: options.stopSequences,
+    stopSequences: options.stopSequences ? [...options.stopSequences] : undefined,
     abortSignal: options.abortSignal,
   };
 }
@@ -167,7 +175,7 @@ async function waitForAbortableGeneration<T>(
 export function createLocalModelRuntime(
   modelId: string | undefined,
   engine: LocalModelRuntimeEngine,
-): ModelRuntime {
+): ModelRuntime<LocalModelCallOptions, RuntimeAssistantContentPart> {
   const resolvedId = modelId || DEFAULT_LOCAL_MODEL;
 
   return {
@@ -180,7 +188,7 @@ export function createLocalModelRuntime(
 
     supportedUrls: {},
 
-    async doGenerate(options: LocalModelOptions) {
+    async doGenerate(options: LocalModelCallOptions) {
       throwIfAborted(options.abortSignal);
       const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
@@ -200,7 +208,7 @@ export function createLocalModelRuntime(
       };
     },
 
-    async doStream(options: LocalModelOptions) {
+    async doStream(options: LocalModelCallOptions) {
       // Eagerly check if local AI is disabled. This must throw before creating the
       // ReadableStream, otherwise the 200 response headers are already committed.
       // Note: getTransformers() in local-engine.ts also checks this, but we need
@@ -366,6 +374,8 @@ export function createLocalModelRuntime(
   };
 }
 
-export function createLocalModel(modelId?: string): ModelRuntime {
+export function createLocalModel(
+  modelId?: string,
+): ModelRuntime<LocalModelCallOptions, RuntimeAssistantContentPart> {
   return createLocalModelRuntime(modelId, defaultLocalModelRuntimeEngine);
 }

@@ -9,7 +9,13 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
-import type { Extension, ExtensionContext, ExtensionSource, ResolvedExtension } from "./types.ts";
+import type {
+  Extension,
+  ExtensionContext,
+  ExtensionLogger,
+  ExtensionSource,
+  ResolvedExtension,
+} from "./types.ts";
 import { createDeferredResolvedExtension } from "./deferred-extension.ts";
 
 type AbortAwareExtensionContext = ExtensionContext & {
@@ -29,7 +35,7 @@ function makeExt(name: string, overrides: Partial<Extension> = {}): Extension {
 
 function makeDeferred(
   name: string,
-  load: (logger: typeof noopLogger) => Promise<Extension | undefined>,
+  load: (logger: ExtensionLogger) => Promise<Extension | undefined>,
 ): ResolvedExtension {
   return createDeferredResolvedExtension({
     name,
@@ -39,7 +45,7 @@ function makeDeferred(
   });
 }
 
-const noopLogger = {
+const noopLogger: ExtensionLogger = {
   debug: () => {},
   info: () => {},
   warn: () => {},

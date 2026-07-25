@@ -30,14 +30,33 @@ import {
   isInvalidToolInputError,
   isNoSuchToolError,
 } from "#veryfront/agent/runtime/runtime-tool-errors.ts";
-import { createAbortError, throwIfAborted } from "#veryfront/agent/runtime/error-utils.ts";
+import { awaitAbortable, createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
 import type {
-  EmbeddingRuntime,
   ModelRuntime,
+  ModelRuntimeCallOptions,
   ModelRuntimeGenerateResult,
+  ModelRuntimeToolDefinition,
   RuntimePromptMessage,
+  RuntimeReasoningOption,
 } from "#veryfront/provider/types.ts";
-import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
+import {
+  MAX_RUNTIME_STREAM_IDENTIFIER_LENGTH,
+  normalizeRuntimeFinishReason,
+  parseRuntimeStreamPart,
+} from "./runtime-stream-part.ts";
+import {
+  parseRuntimeDirectGenerateResult,
+  type RuntimeDirectContentPart,
+} from "./runtime-direct-content.ts";
+import { normalizeRuntimeUsage, projectRuntimeStreamUsage } from "./runtime-usage.ts";
+import {
+  MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
+  MAX_RUNTIME_TOOL_CALLS,
+  MAX_RUNTIME_TOOL_INPUT_BYTES,
+  MAX_RUNTIME_TOOL_INPUT_DELTAS,
+  runtimeToolInputByteLength,
+  snapshotRuntimeToolInput,
+} from "./runtime-tool-input-budget.ts";
 
 type GenerateTextOptions = {
   model: ModelRuntime;
@@ -83,88 +102,6 @@ type StreamTextOptions = {
   abortSignal?: AbortSignal;
 };
 
-type EmbedOptions = {
-  model: EmbeddingRuntime;
-  value: string;
-  abortSignal?: AbortSignal;
-};
-
-type EmbedManyOptions = {
-  model: EmbeddingRuntime;
-  values: string[];
-  abortSignal?: AbortSignal;
-};
-
-type DirectGenerateUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-  cachedInputTokens?: number;
-  reasoningTokens?: number;
-  billableInputTokens?: number;
-  billableOutputTokens?: number;
-  costUsd?: number;
-  providerInputCostUsd?: number;
-  providerOutputCostUsd?: number;
-  providerCostUsd?: number;
-  veryfrontInputChargeUsd?: number;
-  veryfrontOutputChargeUsd?: number;
-  veryfrontChargeUsd?: number;
-  veryfrontBilledUsd?: number;
-  costCredits?: number;
-  costSource?: "gateway" | "missing" | "partial";
-  billingMode?: "direct" | "deferred";
-  usageCaptureStatus?: "complete" | "partial" | "missing";
-};
-
-type DirectGenerateResult = {
-  content?: Array<
-    | { type: "text"; text: string }
-    | {
-      type: "tool-call";
-      toolCallId: string;
-      toolName: string;
-      input: unknown;
-      providerExecuted?: boolean;
-      dynamic?: boolean;
-      supportsDeferredResults?: boolean;
-    }
-    | {
-      type: "tool-result";
-      toolCallId: string;
-      toolName: string;
-      result: unknown;
-      isError?: boolean;
-      providerExecuted?: boolean;
-      dynamic?: boolean;
-      supportsDeferredResults?: boolean;
-    }
-    | Record<string, unknown>
-  >;
-  finishReason?: string | { unified?: string | null } | null;
-  usage?: unknown;
-  providerMetadata?: Record<string, unknown>;
-};
-
-type DirectStreamResult = {
-  stream: ReadableStream<unknown>;
-};
-type DirectToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
 type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
 
 type RuntimeJsonSchema = {
@@ -181,7 +118,7 @@ type ResolvedRuntimeTool = {
 };
 
 type ResolvedRuntimeTools = {
-  directTools: DirectToolDefinition[] | undefined;
+  directTools: ModelRuntimeToolDefinition[] | undefined;
   byName: Map<string, ResolvedRuntimeTool>;
 };
 
@@ -199,8 +136,64 @@ type ToolCallProcessingContext = {
 type ProcessedToolCall = {
   call: RuntimeRepairToolCall;
   rawInput: unknown;
+  inputByteLength: number;
   error?: unknown;
 };
+
+class RuntimeToolInputLimitExceededError extends Error {
+  readonly toolCall: RuntimeRepairToolCall;
+
+  constructor(toolCall: RuntimeRepairToolCall) {
+    super("Runtime tool input exceeded the configured resource limit");
+    this.name = "RuntimeToolInputLimitExceededError";
+    this.toolCall = toolCall;
+  }
+}
+
+const MISSING_RUNTIME_DATA_PROPERTY = Symbol("missing runtime data property");
+const MAX_RUNTIME_VALIDATION_ISSUES = 1_024;
+const MAX_RUNTIME_VALIDATION_PARAMS_BYTES = 65_536;
+const MAX_RUNTIME_VALIDATION_ERROR_BYTES = 1_048_576;
+const MAX_RUNTIME_VALIDATION_TEXT_LENGTH = 4_096;
+const MAX_RUNTIME_SYSTEM_PROMPT_PARTS = 1_024;
+const MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS = 1_048_576;
+
+class RuntimeSystemPromptTypeError extends TypeError {
+  constructor(reason: string) {
+    super(`Runtime system prompt ${reason}`);
+    this.name = "TypeError";
+  }
+}
+
+function invalidSystemPrompt(reason: string): never {
+  throw new RuntimeSystemPromptTypeError(reason);
+}
+
+function isRuntimeRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    return !Array.isArray(value);
+  } catch {
+    throw new TypeError("Runtime boundary value could not be safely inspected");
+  }
+}
+
+function readRuntimeDataProperty(
+  record: object,
+  key: PropertyKey,
+): unknown | typeof MISSING_RUNTIME_DATA_PROPERTY {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(record, key);
+  } catch {
+    throw new TypeError("Runtime boundary value could not be safely inspected");
+  }
+  if (descriptor === undefined) return MISSING_RUNTIME_DATA_PROPERTY;
+  if (!Object.hasOwn(descriptor, "value")) {
+    throw new TypeError("Runtime boundary values must use data properties");
+  }
+  return descriptor.value;
+}
 
 const MAX_QUARANTINED_TOOL_RESULTS = 128;
 const MAX_QUARANTINED_TOOL_IDENTIFIER_LENGTH = 1_024;
@@ -228,29 +221,94 @@ function quarantineUnpairedToolResult(
 }
 
 function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | undefined {
+  if (system === undefined || system === null) {
+    return undefined;
+  }
   if (typeof system === "string") {
+    if (system.length > MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS) {
+      return invalidSystemPrompt(
+        `must not exceed ${MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS} characters`,
+      );
+    }
     return system;
   }
 
-  if (!system || typeof system !== "object") {
-    return undefined;
+  try {
+    if (Array.isArray(system)) {
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(system, "length");
+      const length = lengthDescriptor && Object.hasOwn(lengthDescriptor, "value")
+        ? lengthDescriptor.value
+        : undefined;
+      if (
+        typeof length !== "number" ||
+        !Number.isSafeInteger(length) ||
+        length < 0 ||
+        length > MAX_RUNTIME_SYSTEM_PROMPT_PARTS
+      ) {
+        return invalidSystemPrompt(
+          `arrays must contain at most ${MAX_RUNTIME_SYSTEM_PROMPT_PARTS} entries`,
+        );
+      }
+      const parts: string[] = [];
+      let characterCount = 0;
+      for (let index = 0; index < length; index++) {
+        const entryDescriptor = Object.getOwnPropertyDescriptor(system, String(index));
+        const entry = entryDescriptor && Object.hasOwn(entryDescriptor, "value")
+          ? entryDescriptor.value
+          : undefined;
+        if (
+          !entry || typeof entry !== "object" || Array.isArray(entry)
+        ) {
+          return invalidSystemPrompt("array entries must contain string content");
+        }
+        const contentDescriptor = Object.getOwnPropertyDescriptor(entry, "content");
+        if (
+          !contentDescriptor || !Object.hasOwn(contentDescriptor, "value") ||
+          typeof contentDescriptor.value !== "string"
+        ) {
+          return invalidSystemPrompt("array entries must contain string content");
+        }
+        const nextCharacterCount = characterCount +
+          contentDescriptor.value.length +
+          (parts.length > 0 ? 1 : 0);
+        if (nextCharacterCount > MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS) {
+          return invalidSystemPrompt(
+            `must not exceed ${MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS} characters`,
+          );
+        }
+        characterCount = nextCharacterCount;
+        parts.push(contentDescriptor.value);
+      }
+      return parts.length > 0 ? parts.join("\n") : undefined;
+    }
+
+    if (typeof system === "object") {
+      const contentDescriptor = Object.getOwnPropertyDescriptor(system, "content");
+      if (
+        contentDescriptor && Object.hasOwn(contentDescriptor, "value") &&
+        typeof contentDescriptor.value === "string"
+      ) {
+        if (contentDescriptor.value.length > MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS) {
+          return invalidSystemPrompt(
+            `must not exceed ${MAX_RUNTIME_SYSTEM_PROMPT_CHARACTERS} characters`,
+          );
+        }
+        return contentDescriptor.value;
+      }
+      if (contentDescriptor && !Object.hasOwn(contentDescriptor, "value")) {
+        return invalidSystemPrompt("content must be a data property");
+      }
+    }
+  } catch (error) {
+    if (error instanceof RuntimeSystemPromptTypeError) {
+      throw error;
+    }
+    return invalidSystemPrompt("could not be safely inspected");
   }
 
-  if ("content" in system && typeof system.content === "string") {
-    return system.content;
-  }
-
-  if (Array.isArray(system)) {
-    const parts = system.flatMap((entry) =>
-      entry && typeof entry === "object" && "content" in entry && typeof entry.content === "string"
-        ? [entry.content]
-        : []
-    );
-
-    return parts.length > 0 ? parts.join("\n") : undefined;
-  }
-
-  return undefined;
+  return invalidSystemPrompt(
+    "must be a string, a content object, or an array of content objects",
+  );
 }
 
 function getProviderRequestMessages(
@@ -331,144 +389,6 @@ function toRuntimePrompt(
   return prompt;
 }
 
-function normalizeUsage(usage: unknown): DirectGenerateUsage | undefined {
-  if (!usage || typeof usage !== "object") {
-    return undefined;
-  }
-
-  if ("inputTokens" in usage && typeof usage.inputTokens === "object" && usage.inputTokens) {
-    const inputTokens = "total" in usage.inputTokens && typeof usage.inputTokens.total === "number"
-      ? usage.inputTokens.total
-      : undefined;
-    const cacheReadInputTokens =
-      "cached" in usage.inputTokens && typeof usage.inputTokens.cached === "number"
-        ? usage.inputTokens.cached
-        : "cacheRead" in usage.inputTokens && typeof usage.inputTokens.cacheRead === "number"
-        ? usage.inputTokens.cacheRead
-        : undefined;
-    const cacheCreationInputTokens =
-      "cacheCreation" in usage.inputTokens && typeof usage.inputTokens.cacheCreation === "number"
-        ? usage.inputTokens.cacheCreation
-        : undefined;
-    const outputTokens =
-      "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
-        "total" in usage.outputTokens && typeof usage.outputTokens.total === "number"
-        ? usage.outputTokens.total
-        : undefined;
-    const reasoningTokens =
-      "outputTokens" in usage && typeof usage.outputTokens === "object" && usage.outputTokens &&
-        "reasoning" in usage.outputTokens && typeof usage.outputTokens.reasoning === "number"
-        ? usage.outputTokens.reasoning
-        : undefined;
-    return {
-      inputTokens,
-      outputTokens,
-      totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
-      ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-      ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
-      ...(cacheReadInputTokens !== undefined ? { cachedInputTokens: cacheReadInputTokens } : {}),
-      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
-    };
-  }
-
-  const flatUsage = usage as {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-    cacheCreationInputTokens?: number;
-    cacheReadInputTokens?: number;
-    cachedInputTokens?: number;
-    reasoningTokens?: number;
-    billableInputTokens?: number;
-    billableOutputTokens?: number;
-    costUsd?: number;
-    providerInputCostUsd?: number;
-    providerOutputCostUsd?: number;
-    providerCostUsd?: number;
-    veryfrontInputChargeUsd?: number;
-    veryfrontOutputChargeUsd?: number;
-    veryfrontChargeUsd?: number;
-    veryfrontBilledUsd?: number;
-    costCredits?: number;
-    costSource?: unknown;
-    billingMode?: unknown;
-    usageCaptureStatus?: unknown;
-  };
-  const costSource = flatUsage.costSource;
-  const billingMode = flatUsage.billingMode;
-  const usageCaptureStatus = flatUsage.usageCaptureStatus;
-
-  return {
-    inputTokens: flatUsage.inputTokens,
-    outputTokens: flatUsage.outputTokens,
-    totalTokens: flatUsage.totalTokens,
-    ...(typeof flatUsage.cacheCreationInputTokens === "number"
-      ? { cacheCreationInputTokens: flatUsage.cacheCreationInputTokens }
-      : {}),
-    ...(typeof flatUsage.cacheReadInputTokens === "number"
-      ? { cacheReadInputTokens: flatUsage.cacheReadInputTokens }
-      : {}),
-    ...(typeof flatUsage.cachedInputTokens === "number"
-      ? { cachedInputTokens: flatUsage.cachedInputTokens }
-      : typeof flatUsage.cacheReadInputTokens === "number"
-      ? { cachedInputTokens: flatUsage.cacheReadInputTokens }
-      : {}),
-    ...(typeof flatUsage.reasoningTokens === "number"
-      ? { reasoningTokens: flatUsage.reasoningTokens }
-      : {}),
-    ...(typeof flatUsage.billableInputTokens === "number"
-      ? { billableInputTokens: flatUsage.billableInputTokens }
-      : {}),
-    ...(typeof flatUsage.billableOutputTokens === "number"
-      ? { billableOutputTokens: flatUsage.billableOutputTokens }
-      : {}),
-    ...(typeof flatUsage.costUsd === "number" ? { costUsd: flatUsage.costUsd } : {}),
-    ...(typeof flatUsage.providerInputCostUsd === "number"
-      ? { providerInputCostUsd: flatUsage.providerInputCostUsd }
-      : {}),
-    ...(typeof flatUsage.providerOutputCostUsd === "number"
-      ? { providerOutputCostUsd: flatUsage.providerOutputCostUsd }
-      : {}),
-    ...(typeof flatUsage.providerCostUsd === "number"
-      ? { providerCostUsd: flatUsage.providerCostUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontInputChargeUsd === "number"
-      ? { veryfrontInputChargeUsd: flatUsage.veryfrontInputChargeUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontOutputChargeUsd === "number"
-      ? { veryfrontOutputChargeUsd: flatUsage.veryfrontOutputChargeUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontChargeUsd === "number"
-      ? { veryfrontChargeUsd: flatUsage.veryfrontChargeUsd }
-      : {}),
-    ...(typeof flatUsage.veryfrontBilledUsd === "number"
-      ? { veryfrontBilledUsd: flatUsage.veryfrontBilledUsd }
-      : {}),
-    ...(typeof flatUsage.costCredits === "number" ? { costCredits: flatUsage.costCredits } : {}),
-    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
-      ? { costSource }
-      : {}),
-    ...(billingMode === "direct" || billingMode === "deferred" ? { billingMode } : {}),
-    ...(usageCaptureStatus === "complete" ||
-        usageCaptureStatus === "missing" ||
-        usageCaptureStatus === "partial"
-      ? { usageCaptureStatus }
-      : {}),
-  };
-}
-
-function normalizeFinishReason(finishReason: unknown): string | null {
-  if (typeof finishReason === "string") {
-    return finishReason;
-  }
-
-  if (finishReason && typeof finishReason === "object" && "unified" in finishReason) {
-    return typeof finishReason.unified === "string" ? finishReason.unified : null;
-  }
-
-  return null;
-}
-
 function isProviderResultContinuationBoundary(finishReason: string | null | undefined): boolean {
   return finishReason === "tool-calls" || finishReason === "pause_turn";
 }
@@ -482,11 +402,17 @@ function parseToolCallInput(input: unknown): unknown {
     return input;
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(input);
+    parsed = JSON.parse(input);
   } catch {
     return input;
   }
+  const snapshot = snapshotRuntimeToolInput(parsed);
+  if (snapshot.exceedsLimit) {
+    throw new TypeError("Runtime tool input exceeded its structured snapshot limit");
+  }
+  return snapshot.input;
 }
 
 function parseToolCallInputStrict(input: unknown): unknown {
@@ -575,7 +501,7 @@ async function resolveRuntimeTools(
     return { directTools: undefined, byName: new Map() };
   }
 
-  const directTools: DirectToolDefinition[] = [];
+  const directTools: ModelRuntimeToolDefinition[] = [];
   const byName = new Map<string, ResolvedRuntimeTool>();
 
   for (const [name, definition] of Object.entries(tools)) {
@@ -642,12 +568,142 @@ function validationFailureCause(errors: readonly JsonSchemaValidationIssue[]): E
   );
 }
 
-function isJsonSchemaValidationResult(
+function readValidationIssueString(
+  issue: Record<string, unknown>,
+  key: "instancePath" | "schemaPath" | "keyword" | "message",
+  budget: { bytes: number },
+): string;
+function readValidationIssueString(
+  issue: Record<string, unknown>,
+  key: "instancePath" | "schemaPath" | "keyword" | "message",
+  budget: { bytes: number },
+  optional: true,
+): string | undefined;
+function readValidationIssueString(
+  issue: Record<string, unknown>,
+  key: "instancePath" | "schemaPath" | "keyword" | "message",
+  budget: { bytes: number },
+  optional = false,
+): string | undefined {
+  const value = readRuntimeDataProperty(issue, key);
+  if (
+    optional &&
+    (value === MISSING_RUNTIME_DATA_PROPERTY || value === undefined)
+  ) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new TypeError(`Runtime JSON Schema validation issue ${key} must be a string`);
+  }
+  if (value.length > MAX_RUNTIME_VALIDATION_TEXT_LENGTH) {
+    throw new TypeError(
+      `Runtime JSON Schema validation issue ${key} exceeded its text limit`,
+    );
+  }
+  const remaining = MAX_RUNTIME_VALIDATION_ERROR_BYTES - budget.bytes;
+  const measured = snapshotRuntimeToolInput(value, remaining);
+  if (measured.exceedsLimit) {
+    throw new TypeError("Runtime JSON Schema validation errors exceeded their aggregate limit");
+  }
+  budget.bytes += measured.byteLength;
+  return value;
+}
+
+function inspectValidationIssues(value: unknown): readonly JsonSchemaValidationIssue[] {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
+    throw new TypeError("Runtime JSON Schema validation errors could not be safely inspected");
+  }
+  if (!isArray) {
+    throw new TypeError("Runtime JSON Schema validation errors must be an array");
+  }
+  const errors = value as unknown[];
+  const length = readRuntimeDataProperty(errors, "length");
+  if (
+    typeof length !== "number" ||
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > MAX_RUNTIME_VALIDATION_ISSUES
+  ) {
+    throw new TypeError(
+      `Runtime JSON Schema validation errors must contain at most ${MAX_RUNTIME_VALIDATION_ISSUES} issues`,
+    );
+  }
+
+  const issues: JsonSchemaValidationIssue[] = [];
+  const budget = { bytes: 0 };
+  for (let index = 0; index < length; index++) {
+    const rawIssue = readRuntimeDataProperty(errors, String(index));
+    if (!isRuntimeRecord(rawIssue)) {
+      throw new TypeError("Runtime JSON Schema validation issues must be objects");
+    }
+    const rawParams = readRuntimeDataProperty(rawIssue, "params");
+    if (!isRuntimeRecord(rawParams)) {
+      throw new TypeError("Runtime JSON Schema validation issue params must be an object");
+    }
+    const remainingBudget = MAX_RUNTIME_VALIDATION_ERROR_BYTES - budget.bytes;
+    const paramsSnapshot = snapshotRuntimeToolInput(
+      rawParams,
+      Math.min(MAX_RUNTIME_VALIDATION_PARAMS_BYTES, remainingBudget),
+    );
+    if (paramsSnapshot.exceedsLimit || !isRuntimeRecord(paramsSnapshot.input)) {
+      throw new TypeError(
+        "Runtime JSON Schema validation issue params exceeded their aggregate or per-issue limit",
+      );
+    }
+    budget.bytes += paramsSnapshot.byteLength;
+    const instancePath = readValidationIssueString(
+      rawIssue,
+      "instancePath",
+      budget,
+    );
+    const schemaPath = readValidationIssueString(
+      rawIssue,
+      "schemaPath",
+      budget,
+    );
+    const keyword = readValidationIssueString(rawIssue, "keyword", budget);
+    const message = readValidationIssueString(
+      rawIssue,
+      "message",
+      budget,
+      true,
+    );
+    issues.push(Object.freeze({
+      instancePath,
+      schemaPath,
+      keyword,
+      params: paramsSnapshot.input,
+      ...(message !== undefined ? { message } : {}),
+    }));
+  }
+  return Object.freeze(issues);
+}
+
+function inspectJsonSchemaValidationResult(
   value: unknown,
-): value is JsonSchemaValidationResult {
-  if (!value || typeof value !== "object" || !("success" in value)) return false;
-  if (value.success === true) return "value" in value;
-  return value.success === false && "errors" in value && Array.isArray(value.errors);
+): JsonSchemaValidationResult {
+  if (!isRuntimeRecord(value)) {
+    throw new TypeError("Runtime JSON Schema validator returned a non-object result");
+  }
+  const success = readRuntimeDataProperty(value, "success");
+  if (success === true) {
+    const accepted = readRuntimeDataProperty(value, "value");
+    if (accepted === MISSING_RUNTIME_DATA_PROPERTY) {
+      throw new TypeError("Runtime JSON Schema validator omitted its accepted value");
+    }
+    return { success: true, value: accepted };
+  }
+  if (success === false) {
+    const errors = readRuntimeDataProperty(value, "errors");
+    if (errors === MISSING_RUNTIME_DATA_PROPERTY) {
+      throw new TypeError("Runtime JSON Schema validator omitted its errors");
+    }
+    return { success: false, errors: inspectValidationIssues(errors) };
+  }
+  throw new TypeError("Runtime JSON Schema validator returned an invalid success flag");
 }
 
 async function validateProviderToolResult(
@@ -659,13 +715,17 @@ async function validateProviderToolResult(
   if (!outputSchema) return { result };
 
   try {
-    const validation = await awaitAbortable(
-      outputSchema.validate(result),
-      context.abortSignal,
-    );
-    if (!isJsonSchemaValidationResult(validation)) {
+    let validation: JsonSchemaValidationResult;
+    try {
+      const rawValidation = await awaitAbortable(
+        outputSchema.validate(result),
+        context.abortSignal,
+      );
+      validation = inspectJsonSchemaValidationResult(rawValidation);
+    } catch {
+      throwIfAborted(context.abortSignal);
       throw new TypeError(
-        `Runtime tool "${toolCall.toolName}" output validator returned an invalid result`,
+        "Runtime JSON Schema validator failed or returned an unsafe result",
       );
     }
     if (!validation.success) {
@@ -731,20 +791,94 @@ function withResolvedToolMetadata(
   };
 }
 
-function isRuntimeRepairToolCall(value: unknown): value is RuntimeRepairToolCall {
-  return !!value &&
-    typeof value === "object" &&
-    "type" in value &&
-    value.type === "tool-call" &&
-    "toolCallId" in value &&
-    typeof value.toolCallId === "string" &&
-    "toolName" in value &&
-    typeof value.toolName === "string" &&
-    "input" in value;
+function readRepairTrueFlag(
+  record: Record<string, unknown>,
+  key: "providerExecuted" | "dynamic" | "supportsDeferredResults",
+): true | undefined {
+  const value = readRuntimeDataProperty(record, key);
+  if (
+    value === MISSING_RUNTIME_DATA_PROPERTY ||
+    value === undefined ||
+    value === false
+  ) {
+    return undefined;
+  }
+  if (value !== true) {
+    throw new TypeError(`A repaired tool call ${key} must be a boolean`);
+  }
+  return true;
+}
+
+function inspectRuntimeRepairToolCall(value: unknown): RuntimeRepairToolCall {
+  if (!isRuntimeRecord(value)) {
+    throw new TypeError('A repair callback must return a complete "tool-call"');
+  }
+  const type = readRuntimeDataProperty(value, "type");
+  const toolCallId = readRuntimeDataProperty(value, "toolCallId");
+  const toolName = readRuntimeDataProperty(value, "toolName");
+  const input = readRuntimeDataProperty(value, "input");
+  if (
+    type !== "tool-call" ||
+    typeof toolCallId !== "string" ||
+    toolCallId.length === 0 ||
+    toolCallId.length > MAX_RUNTIME_STREAM_IDENTIFIER_LENGTH ||
+    typeof toolName !== "string" ||
+    toolName.length === 0 ||
+    toolName.length > MAX_RUNTIME_STREAM_IDENTIFIER_LENGTH ||
+    input === MISSING_RUNTIME_DATA_PROPERTY
+  ) {
+    throw new TypeError(
+      `A repair callback must return a complete "tool-call" with identifiers no longer than ${MAX_RUNTIME_STREAM_IDENTIFIER_LENGTH} characters`,
+    );
+  }
+
+  const providerExecuted = readRepairTrueFlag(value, "providerExecuted");
+  const dynamic = readRepairTrueFlag(value, "dynamic");
+  const supportsDeferredResults = readRepairTrueFlag(
+    value,
+    "supportsDeferredResults",
+  );
+  return {
+    type: "tool-call",
+    toolCallId,
+    toolName,
+    input,
+    ...(providerExecuted ? { providerExecuted } : {}),
+    ...(dynamic ? { dynamic } : {}),
+    ...(supportsDeferredResults ? { supportsDeferredResults } : {}),
+  };
+}
+
+function requireToolInputSnapshot(
+  toolCall: RuntimeRepairToolCall,
+): {
+  input: unknown;
+  byteLength: number;
+} {
+  const snapshot = snapshotRuntimeToolInput(toolCall.input);
+  if (snapshot.exceedsLimit) {
+    throw new RuntimeToolInputLimitExceededError(toolCall);
+  }
+  return snapshot;
+}
+
+function canonicalParsedToolInput(
+  toolCall: RuntimeRepairToolCall,
+): unknown {
+  if (typeof toolCall.input !== "string") {
+    return toolCall.input;
+  }
+  const parsed = parseToolCallInputStrict(toolCall.input);
+  const snapshot = snapshotRuntimeToolInput(parsed);
+  if (snapshot.exceedsLimit) {
+    throw new RuntimeToolInputLimitExceededError(toolCall);
+  }
+  return snapshot.input;
 }
 
 async function validateToolCallOnce(
   toolCall: RuntimeRepairToolCall,
+  inputByteLength: number,
   context: ToolCallProcessingContext,
 ): Promise<ProcessedToolCall> {
   throwIfAborted(context.abortSignal);
@@ -754,11 +888,14 @@ async function validateToolCallOnce(
   if (!tool) {
     if (normalizedCall.providerExecuted === true && normalizedCall.dynamic === true) {
       try {
+        const parsedInput = canonicalParsedToolInput(normalizedCall);
         return {
-          call: { ...normalizedCall, input: parseToolCallInputStrict(normalizedCall.input) },
+          call: { ...normalizedCall, input: parsedInput },
           rawInput: normalizedCall.input,
+          inputByteLength,
         };
       } catch (cause) {
+        if (cause instanceof RuntimeToolInputLimitExceededError) throw cause;
         throw createInvalidToolInputError({
           cause,
           toolInput: normalizedCall.input,
@@ -775,8 +912,9 @@ async function validateToolCallOnce(
 
   let parsedInput: unknown;
   try {
-    parsedInput = parseToolCallInputStrict(normalizedCall.input);
+    parsedInput = canonicalParsedToolInput(normalizedCall);
   } catch (cause) {
+    if (cause instanceof RuntimeToolInputLimitExceededError) throw cause;
     throw createInvalidToolInputError({
       cause,
       toolInput: normalizedCall.input,
@@ -784,14 +922,22 @@ async function validateToolCallOnce(
     });
   }
 
-  const validation = await awaitAbortable(
-    tool.inputSchema.validate(parsedInput),
-    context.abortSignal,
-  );
-  if (!isJsonSchemaValidationResult(validation)) {
-    throw new TypeError(
-      `Runtime tool "${normalizedCall.toolName}" validator returned an invalid result`,
+  let validation: JsonSchemaValidationResult;
+  try {
+    const rawValidation = await awaitAbortable(
+      tool.inputSchema.validate(parsedInput),
+      context.abortSignal,
     );
+    validation = inspectJsonSchemaValidationResult(rawValidation);
+  } catch {
+    throwIfAborted(context.abortSignal);
+    throw createInvalidToolInputError({
+      cause: new TypeError(
+        "Runtime JSON Schema validator failed or returned an unsafe result",
+      ),
+      toolInput: normalizedCall.input,
+      toolName: normalizedCall.toolName,
+    });
   }
   if (!validation.success) {
     throw createInvalidToolInputError({
@@ -801,9 +947,32 @@ async function validateToolCallOnce(
     });
   }
 
+  if (validation.value === parsedInput) {
+    return {
+      call: { ...normalizedCall, input: parsedInput },
+      rawInput: normalizedCall.input,
+      inputByteLength,
+    };
+  }
+
+  let transformed: { input: unknown; byteLength: number };
+  try {
+    transformed = requireToolInputSnapshot({
+      ...normalizedCall,
+      input: validation.value,
+    });
+  } catch (cause) {
+    if (cause instanceof RuntimeToolInputLimitExceededError) throw cause;
+    throw createInvalidToolInputError({
+      cause,
+      toolInput: normalizedCall.input,
+      toolName: normalizedCall.toolName,
+    });
+  }
   return {
-    call: { ...normalizedCall, input: validation.value },
-    rawInput: normalizedCall.input,
+    call: { ...normalizedCall, input: transformed.input },
+    rawInput: transformed.input,
+    inputByteLength: transformed.byteLength,
   };
 }
 
@@ -819,73 +988,120 @@ function toolNameFromSchemaRequest(args: unknown[]): string {
   throw new TypeError("inputSchema() requires a toolName");
 }
 
-function awaitWithAbort<T>(value: T | PromiseLike<T>, abortSignal?: AbortSignal): Promise<T> {
-  if (!abortSignal) return Promise.resolve(value);
-  throwIfAborted(abortSignal);
+type RuntimeAbortScope = {
+  abort(reason?: unknown): void;
+  dispose(): void;
+  signal: AbortSignal;
+};
 
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(createAbortError(abortSignal.reason));
-    abortSignal.addEventListener("abort", onAbort, { once: true });
+function createRuntimeAbortScope(parentSignal?: AbortSignal): RuntimeAbortScope {
+  const controller = new AbortController();
+  let disposed = false;
+  const forwardParentAbort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(parentSignal?.reason);
+    }
+  };
 
-    Promise.resolve(value).then(
-      (result) => {
-        abortSignal.removeEventListener("abort", onAbort);
-        resolve(result);
-      },
-      (error: unknown) => {
-        abortSignal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
+  if (parentSignal?.aborted) {
+    forwardParentAbort();
+  } else {
+    parentSignal?.addEventListener("abort", forwardParentAbort, { once: true });
+  }
+
+  return {
+    abort(reason?: unknown) {
+      if (!controller.signal.aborted) {
+        controller.abort(reason ?? createAbortError());
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      parentSignal?.removeEventListener("abort", forwardParentAbort);
+    },
+    signal: controller.signal,
+  };
 }
 
-async function awaitAbortable<T>(
+function observePromise(value: void | PromiseLike<unknown>): void {
+  if (value === undefined) return;
+  void Promise.resolve(value).catch(() => {});
+}
+
+/**
+ * Await provider startup without orphaning a stream that resolves after the
+ * caller has already stopped waiting.
+ */
+async function awaitRuntimeStreamStart<
+  T extends { stream: ReadableStream<unknown> },
+>(
   value: T | PromiseLike<T>,
   abortSignal?: AbortSignal,
 ): Promise<T> {
-  throwIfAborted(abortSignal);
-  const result = await awaitWithAbort(value, abortSignal);
-  throwIfAborted(abortSignal);
-  return result;
+  const startup = Promise.resolve(value);
+  try {
+    return await awaitAbortable(startup, abortSignal);
+  } catch (error) {
+    if (abortSignal?.aborted) {
+      const reason = createAbortError(abortSignal.reason);
+      observePromise(
+        startup.then(
+          ({ stream }) => stream.cancel(reason),
+          () => undefined,
+        ),
+      );
+    }
+    throw error;
+  }
 }
 
 function invalidToolCallOutcome(
   toolCall: RuntimeRepairToolCall,
+  inputByteLength: number,
   error: unknown,
   context: ToolCallProcessingContext,
 ): ProcessedToolCall {
   const tool = context.resolvedTools.byName.get(toolCall.toolName);
+  let parsedInput = toolCall.input;
+  try {
+    parsedInput = canonicalParsedToolInput(toolCall);
+  } catch {
+    // Preserve malformed raw strings in the correlated error result. All
+    // structured candidates have already crossed the snapshot boundary.
+  }
   return {
     call: {
       ...withResolvedToolMetadata(toolCall, tool),
-      input: parseToolCallInput(toolCall.input),
+      input: parsedInput,
     },
     rawInput: toolCall.input,
+    inputByteLength,
     error,
   };
 }
 
 async function processToolCall(
   toolCall: RuntimeRepairToolCall,
+  inputByteLength: number,
   context: ToolCallProcessingContext,
 ): Promise<ProcessedToolCall> {
   let originalError: Parameters<typeof createToolCallRepairError>[0]["originalError"];
   try {
-    return await validateToolCallOnce(toolCall, context);
+    return await validateToolCallOnce(toolCall, inputByteLength, context);
   } catch (error) {
     if (!isInvalidToolInputError(error) && !isNoSuchToolError(error)) throw error;
     originalError = error;
   }
 
   if (!context.repairToolCall) {
-    return invalidToolCallOutcome(toolCall, originalError, context);
+    return invalidToolCallOutcome(toolCall, inputByteLength, originalError, context);
   }
 
   throwIfAborted(context.abortSignal);
   let repaired: unknown;
   try {
-    repaired = await awaitWithAbort(
+    repaired = await awaitAbortable(
       context.repairToolCall({
         error: originalError,
         inputSchema: async (...args: unknown[]) => {
@@ -915,6 +1131,7 @@ async function processToolCall(
     throwIfAborted(context.abortSignal);
     return invalidToolCallOutcome(
       toolCall,
+      inputByteLength,
       createToolCallRepairError({ cause, originalError }),
       context,
     );
@@ -922,48 +1139,81 @@ async function processToolCall(
   throwIfAborted(context.abortSignal);
 
   if (repaired === null) {
-    return invalidToolCallOutcome(toolCall, originalError, context);
+    return invalidToolCallOutcome(toolCall, inputByteLength, originalError, context);
   }
 
-  if (!isRuntimeRepairToolCall(repaired)) {
+  let inspectedRepair: RuntimeRepairToolCall;
+  try {
+    inspectedRepair = inspectRuntimeRepairToolCall(repaired);
+  } catch (cause) {
     return invalidToolCallOutcome(
       toolCall,
+      inputByteLength,
       createToolCallRepairError({
-        cause: new TypeError('A repair callback must return a complete "tool-call" or null'),
+        cause,
         originalError,
       }),
       context,
     );
   }
 
-  const invalidRepair = repaired.toolCallId !== toolCall.toolCallId
+  const invalidRepair = inspectedRepair.toolCallId !== toolCall.toolCallId
     ? "A repaired tool call must preserve toolCallId"
-    : isInvalidToolInputError(originalError) && repaired.toolName !== toolCall.toolName
+    : isInvalidToolInputError(originalError) && inspectedRepair.toolName !== toolCall.toolName
     ? "A repaired invalid-input tool call must preserve toolName"
     : null;
   if (invalidRepair) {
     return invalidToolCallOutcome(
       toolCall,
+      inputByteLength,
       createToolCallRepairError({ cause: new TypeError(invalidRepair), originalError }),
       context,
     );
   }
 
+  let repairedCall = inspectedRepair;
+  let repairedInputByteLength = inputByteLength;
+  if (inspectedRepair.input !== toolCall.input) {
+    try {
+      const snapshot = requireToolInputSnapshot(inspectedRepair);
+      repairedCall = { ...inspectedRepair, input: snapshot.input };
+      repairedInputByteLength = snapshot.byteLength;
+    } catch (cause) {
+      if (cause instanceof RuntimeToolInputLimitExceededError) throw cause;
+      return invalidToolCallOutcome(
+        toolCall,
+        inputByteLength,
+        createToolCallRepairError({ cause, originalError }),
+        context,
+      );
+    }
+  }
+
   try {
-    return await validateToolCallOnce(repaired, context);
+    return await validateToolCallOnce(
+      repairedCall,
+      repairedInputByteLength,
+      context,
+    );
   } catch (error) {
     if (!isInvalidToolInputError(error) && !isNoSuchToolError(error)) throw error;
-    return invalidToolCallOutcome(repaired, error, context);
+    return invalidToolCallOutcome(
+      repairedCall,
+      repairedInputByteLength,
+      error,
+      context,
+    );
   }
 }
 
 function buildDirectModelOptions(
   options: DirectTextOptions,
-  tools: DirectToolDefinition[] | undefined,
-): Record<string, unknown> {
+  tools: ModelRuntimeToolDefinition[] | undefined,
+  system: string | undefined,
+): ModelRuntimeCallOptions {
   return {
     prompt: toRuntimePrompt(
-      normalizeSystemPrompt(options.system),
+      system,
       getProviderRequestMessages(options.messages),
     ),
     maxOutputTokens: options.maxOutputTokens,
@@ -972,7 +1222,7 @@ function buildDirectModelOptions(
     topK: options.topK,
     stopSequences: options.stopSequences,
     ...(tools ? { tools } : {}),
-    ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
+    ...(options.toolChoice === undefined ? {} : { toolChoice: options.toolChoice }),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
     ...(options.frequencyPenalty !== undefined
@@ -988,65 +1238,15 @@ function buildDirectModelOptions(
   };
 }
 
-function isDirectToolCallPart(
-  part: unknown,
-): part is {
-  type: "tool-call";
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-  providerExecuted?: boolean;
-  dynamic?: boolean;
-  supportsDeferredResults?: boolean;
-} {
-  return !!part &&
-    typeof part === "object" &&
-    "type" in part &&
-    part.type === "tool-call" &&
-    "toolCallId" in part &&
-    typeof part.toolCallId === "string" &&
-    "toolName" in part &&
-    typeof part.toolName === "string";
-}
-
-function isDirectTextPart(part: unknown): part is { type: "text"; text: string } {
-  return !!part &&
-    typeof part === "object" &&
-    "type" in part &&
-    part.type === "text" &&
-    "text" in part &&
-    typeof part.text === "string";
-}
-
-function isDirectToolResultPart(
-  part: unknown,
-): part is {
-  type: "tool-result";
-  toolCallId: string;
-  toolName: string;
-  result: unknown;
-  isError?: boolean;
-  providerExecuted?: boolean;
-  dynamic?: boolean;
-  supportsDeferredResults?: boolean;
-} {
-  return !!part &&
-    typeof part === "object" &&
-    "type" in part &&
-    part.type === "tool-result" &&
-    "toolCallId" in part &&
-    typeof part.toolCallId === "string" &&
-    "toolName" in part &&
-    typeof part.toolName === "string" &&
-    "result" in part;
-}
-
 async function buildDirectGenerateResult(
-  result: ModelRuntimeGenerateResult | DirectGenerateResult,
+  result: ModelRuntimeGenerateResult,
   context: ToolCallProcessingContext,
 ): Promise<RuntimeGenerateTextResult> {
-  const finishReason = normalizeFinishReason(result.finishReason);
-  let text = "";
+  throwIfAborted(context.abortSignal);
+  const directResult = parseRuntimeDirectGenerateResult(result);
+  const content = directResult.content;
+  const finishReason = normalizeRuntimeFinishReason(directResult.finishReason);
+  const textParts: string[] = [];
   const toolCalls = new Map<
     string,
     NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]
@@ -1054,25 +1254,162 @@ async function buildDirectGenerateResult(
   const toolResults: RuntimeGenerateTextResult["toolResults"] = [];
   const terminalToolCallIds = new Set<string>();
   const providerResultToolCallIds = new Set<string>();
-  const directToolResults: unknown[] = [];
+  const seenToolCallIds = new Set<string>();
+  const directToolResults: Array<
+    Extract<RuntimeDirectContentPart, { type: "tool-result" }>
+  > = [];
+  let aggregateToolInputBytes = 0;
+  let aggregateToolInputLimitExceeded = false;
+  let toolCallLimitExceeded = false;
 
-  for (const part of result.content ?? []) {
-    if (isDirectTextPart(part)) {
-      text += part.text;
+  const appendLimitError = (
+    part: RuntimeRepairToolCall,
+    limitKind: "bytes" | "toolCalls",
+    limit: number,
+  ): void => {
+    terminalToolCallIds.add(part.toolCallId);
+    toolResults.push({
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      result: createToolInputLimitError({
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        limitKind,
+        limit,
+      }),
+      isError: true,
+      ...canonicalToolMetadata(
+        context.resolvedTools.byName.get(part.toolName),
+        part,
+      ),
+    });
+  };
+
+  // Snapshot every accepted direct-call input before the first validator can
+  // suspend. Providers retain their result objects, so staging closes the
+  // mutation window between validating an early call and inspecting a later
+  // call from the same response.
+  const stagedToolInputs = new Map<
+    Extract<RuntimeDirectContentPart, { type: "tool-call" }>,
+    ReturnType<typeof snapshotRuntimeToolInput>
+  >();
+  const stagedToolCallIds = new Set<string>();
+  let stagedAggregateInputBytes = 0;
+  let stagedAggregateLimitPart:
+    | Extract<RuntimeDirectContentPart, { type: "tool-call" }>
+    | undefined;
+  for (const part of content) {
+    if (
+      part.type !== "tool-call" ||
+      stagedToolCallIds.has(part.toolCallId) ||
+      stagedToolCallIds.size >= MAX_RUNTIME_TOOL_CALLS
+    ) {
+      continue;
+    }
+    stagedToolCallIds.add(part.toolCallId);
+    const snapshot = snapshotRuntimeToolInput(part.input);
+    if (
+      !snapshot.exceedsLimit &&
+      stagedAggregateInputBytes + snapshot.byteLength >
+        MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES
+    ) {
+      stagedAggregateLimitPart = part;
+      break;
+    }
+    stagedToolInputs.set(part, snapshot);
+    if (!snapshot.exceedsLimit) {
+      stagedAggregateInputBytes += snapshot.byteLength;
+    }
+  }
+
+  for (const part of content) {
+    if (part.type === "text") {
+      textParts.push(part.text);
       continue;
     }
 
-    if (isDirectToolCallPart(part)) {
+    if (part.type === "tool-call") {
       if (terminalToolCallIds.has(part.toolCallId) || toolCalls.has(part.toolCallId)) continue;
-      const processed = await processToolCall({
-        type: "tool-call",
-        toolCallId: part.toolCallId,
-        toolName: part.toolName,
-        input: part.input,
-        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
-        ...(part.dynamic === true ? { dynamic: true } : {}),
-        ...(part.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
-      }, context);
+      if (seenToolCallIds.has(part.toolCallId)) continue;
+      if (seenToolCallIds.size >= MAX_RUNTIME_TOOL_CALLS) {
+        if (!toolCallLimitExceeded) {
+          toolCallLimitExceeded = true;
+          appendLimitError(part, "toolCalls", MAX_RUNTIME_TOOL_CALLS);
+        }
+        continue;
+      }
+      seenToolCallIds.add(part.toolCallId);
+
+      const stagedInput = stagedToolInputs.get(part);
+      if (!stagedInput) {
+        if (part === stagedAggregateLimitPart) {
+          if (!aggregateToolInputLimitExceeded) {
+            aggregateToolInputLimitExceeded = true;
+            appendLimitError(
+              part,
+              "bytes",
+              MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
+            );
+          }
+          continue;
+        }
+        if (stagedAggregateLimitPart) continue;
+        throw new TypeError("Runtime tool input was not staged before validation");
+      }
+      if (stagedInput.exceedsLimit) {
+        appendLimitError(part, "bytes", MAX_RUNTIME_TOOL_INPUT_BYTES);
+        continue;
+      }
+      if (
+        aggregateToolInputBytes + stagedInput.byteLength >
+          MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES
+      ) {
+        if (!aggregateToolInputLimitExceeded) {
+          aggregateToolInputLimitExceeded = true;
+          appendLimitError(
+            part,
+            "bytes",
+            MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
+          );
+        }
+        continue;
+      }
+
+      let processed: ProcessedToolCall;
+      try {
+        processed = await processToolCall(
+          {
+            type: "tool-call",
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: stagedInput.input,
+            ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
+            ...(part.dynamic === true ? { dynamic: true } : {}),
+            ...(part.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+          },
+          stagedInput.byteLength,
+          context,
+        );
+      } catch (error) {
+        if (!(error instanceof RuntimeToolInputLimitExceededError)) throw error;
+        appendLimitError(error.toolCall, "bytes", MAX_RUNTIME_TOOL_INPUT_BYTES);
+        continue;
+      }
+      if (
+        aggregateToolInputBytes + processed.inputByteLength >
+          MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES
+      ) {
+        if (!aggregateToolInputLimitExceeded) {
+          aggregateToolInputLimitExceeded = true;
+          appendLimitError(
+            processed.call,
+            "bytes",
+            MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
+          );
+        }
+        continue;
+      }
+      aggregateToolInputBytes += processed.inputByteLength;
       toolCalls.set(processed.call.toolCallId, {
         toolCallId: processed.call.toolCallId,
         toolName: processed.call.toolName,
@@ -1100,13 +1437,20 @@ async function buildDirectGenerateResult(
       continue;
     }
 
-    if (isDirectToolResultPart(part)) {
+    if (part.type === "tool-result") {
       directToolResults.push(part);
     }
   }
 
   for (const part of directToolResults) {
-    if (!isDirectToolResultPart(part) || terminalToolCallIds.has(part.toolCallId)) continue;
+    if (terminalToolCallIds.has(part.toolCallId)) continue;
+    if (
+      part.toolCallId.length > MAX_QUARANTINED_TOOL_IDENTIFIER_LENGTH ||
+      part.toolName.length > MAX_QUARANTINED_TOOL_IDENTIFIER_LENGTH
+    ) {
+      quarantineUnpairedToolResult(context, part.toolCallId, part.toolName);
+      continue;
+    }
     const correlatedCall = toolCalls.get(part.toolCallId) ??
       context.priorProviderToolCalls.get(part.toolCallId);
     if (!correlatedCall) {
@@ -1170,85 +1514,25 @@ async function buildDirectGenerateResult(
   }
 
   const finalToolCalls = [...toolCalls.values()];
+  throwIfAborted(context.abortSignal);
 
   return {
-    text,
+    text: textParts.join(""),
     ...(finalToolCalls.length > 0 ? { toolCalls: finalToolCalls } : {}),
     ...(toolResults.length > 0 ? { toolResults } : {}),
     ...(context.quarantinedToolResults?.length
       ? { quarantinedToolResults: context.quarantinedToolResults }
       : {}),
-    usage: normalizeUsage(result.usage),
+    usage: normalizeRuntimeUsage(directResult.usage),
     finishReason,
-    ...(result.providerMetadata ? { providerMetadata: result.providerMetadata } : {}),
+    ...(directResult.providerMetadata ? { providerMetadata: directResult.providerMetadata } : {}),
   };
 }
 
 function streamUsageToGenerateUsage(
   totalUsage: Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"],
 ): RuntimeGenerateTextResult["usage"] {
-  if (!totalUsage) {
-    return undefined;
-  }
-
-  const inputTokens = totalUsage.inputTokens;
-  const outputTokens = totalUsage.outputTokens;
-  const totalTokens = totalUsage.totalTokens ??
-    (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens ?? 0) + (outputTokens ?? 0)
-      : undefined);
-
-  return {
-    inputTokens,
-    outputTokens,
-    ...(totalTokens !== undefined ? { totalTokens } : {}),
-    ...(totalUsage.cacheCreationInputTokens !== undefined
-      ? { cacheCreationInputTokens: totalUsage.cacheCreationInputTokens }
-      : {}),
-    ...(totalUsage.cacheReadInputTokens !== undefined
-      ? { cacheReadInputTokens: totalUsage.cacheReadInputTokens }
-      : {}),
-    ...(totalUsage.cachedInputTokens !== undefined
-      ? { cachedInputTokens: totalUsage.cachedInputTokens }
-      : {}),
-    ...(totalUsage.reasoningTokens !== undefined
-      ? { reasoningTokens: totalUsage.reasoningTokens }
-      : {}),
-    ...(totalUsage.billableInputTokens !== undefined
-      ? { billableInputTokens: totalUsage.billableInputTokens }
-      : {}),
-    ...(totalUsage.billableOutputTokens !== undefined
-      ? { billableOutputTokens: totalUsage.billableOutputTokens }
-      : {}),
-    ...(totalUsage.costUsd !== undefined ? { costUsd: totalUsage.costUsd } : {}),
-    ...(totalUsage.providerInputCostUsd !== undefined
-      ? { providerInputCostUsd: totalUsage.providerInputCostUsd }
-      : {}),
-    ...(totalUsage.providerOutputCostUsd !== undefined
-      ? { providerOutputCostUsd: totalUsage.providerOutputCostUsd }
-      : {}),
-    ...(totalUsage.providerCostUsd !== undefined
-      ? { providerCostUsd: totalUsage.providerCostUsd }
-      : {}),
-    ...(totalUsage.veryfrontInputChargeUsd !== undefined
-      ? { veryfrontInputChargeUsd: totalUsage.veryfrontInputChargeUsd }
-      : {}),
-    ...(totalUsage.veryfrontOutputChargeUsd !== undefined
-      ? { veryfrontOutputChargeUsd: totalUsage.veryfrontOutputChargeUsd }
-      : {}),
-    ...(totalUsage.veryfrontChargeUsd !== undefined
-      ? { veryfrontChargeUsd: totalUsage.veryfrontChargeUsd }
-      : {}),
-    ...(totalUsage.veryfrontBilledUsd !== undefined
-      ? { veryfrontBilledUsd: totalUsage.veryfrontBilledUsd }
-      : {}),
-    ...(totalUsage.costCredits !== undefined ? { costCredits: totalUsage.costCredits } : {}),
-    ...(totalUsage.costSource !== undefined ? { costSource: totalUsage.costSource } : {}),
-    ...(totalUsage.billingMode !== undefined ? { billingMode: totalUsage.billingMode } : {}),
-    ...(totalUsage.usageCaptureStatus !== undefined
-      ? { usageCaptureStatus: totalUsage.usageCaptureStatus }
-      : {}),
-  };
+  return normalizeRuntimeUsage(totalUsage);
 }
 
 async function buildGenerateResultFromStream(
@@ -1417,101 +1701,13 @@ async function buildGenerateResultFromStream(
   };
 }
 
-function normalizeStreamPart(part: unknown): unknown {
-  if (!part || typeof part !== "object" || !("type" in part)) {
-    return part;
-  }
-
-  if (part.type === "text-delta") {
-    if ("delta" in part && typeof part.delta === "string") {
-      return {
-        type: "text-delta",
-        text: part.delta,
-      };
-    }
-
-    return part;
-  }
-
-  if (part.type !== "finish") {
-    return part;
-  }
-
-  const finishPart = part as {
-    type: "finish";
-    usage?: unknown;
-    totalUsage?: unknown;
-    finishReason?: unknown;
-    providerMetadata?: unknown;
-  };
-  const usage = normalizeUsage(finishPart.usage) ?? normalizeUsage(finishPart.totalUsage);
-  const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
-
-  return {
-    type: "finish",
-    finishReason: normalizeFinishReason(finishPart.finishReason),
-    ...(finishPart.providerMetadata && typeof finishPart.providerMetadata === "object" &&
-        !Array.isArray(finishPart.providerMetadata)
-      ? { providerMetadata: finishPart.providerMetadata as Record<string, unknown> }
-      : {}),
-    ...(usage
-      ? {
-        totalUsage: {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          ...(usage.totalTokens !== undefined && usage.totalTokens !== recomputedTotal
-            ? { totalTokens: usage.totalTokens }
-            : {}),
-          ...(usage.cacheCreationInputTokens !== undefined
-            ? { cacheCreationInputTokens: usage.cacheCreationInputTokens }
-            : {}),
-          ...(usage.cacheReadInputTokens !== undefined
-            ? { cacheReadInputTokens: usage.cacheReadInputTokens }
-            : {}),
-          ...(usage.cachedInputTokens !== undefined
-            ? { cachedInputTokens: usage.cachedInputTokens }
-            : {}),
-          ...(usage.reasoningTokens !== undefined
-            ? { reasoningTokens: usage.reasoningTokens }
-            : {}),
-          ...(usage.billableInputTokens !== undefined
-            ? { billableInputTokens: usage.billableInputTokens }
-            : {}),
-          ...(usage.billableOutputTokens !== undefined
-            ? { billableOutputTokens: usage.billableOutputTokens }
-            : {}),
-          ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-          ...(usage.providerInputCostUsd !== undefined
-            ? { providerInputCostUsd: usage.providerInputCostUsd }
-            : {}),
-          ...(usage.providerOutputCostUsd !== undefined
-            ? { providerOutputCostUsd: usage.providerOutputCostUsd }
-            : {}),
-          ...(usage.providerCostUsd !== undefined
-            ? { providerCostUsd: usage.providerCostUsd }
-            : {}),
-          ...(usage.veryfrontInputChargeUsd !== undefined
-            ? { veryfrontInputChargeUsd: usage.veryfrontInputChargeUsd }
-            : {}),
-          ...(usage.veryfrontOutputChargeUsd !== undefined
-            ? { veryfrontOutputChargeUsd: usage.veryfrontOutputChargeUsd }
-            : {}),
-          ...(usage.veryfrontChargeUsd !== undefined
-            ? { veryfrontChargeUsd: usage.veryfrontChargeUsd }
-            : {}),
-          ...(usage.veryfrontBilledUsd !== undefined
-            ? { veryfrontBilledUsd: usage.veryfrontBilledUsd }
-            : {}),
-          ...(usage.costCredits !== undefined ? { costCredits: usage.costCredits } : {}),
-          ...(usage.costSource !== undefined ? { costSource: usage.costSource } : {}),
-          ...(usage.billingMode !== undefined ? { billingMode: usage.billingMode } : {}),
-          ...(usage.usageCaptureStatus !== undefined
-            ? { usageCaptureStatus: usage.usageCaptureStatus }
-            : {}),
-        },
-      }
-      : {}),
-  };
+function normalizeStreamPart(part: unknown): RuntimeStreamPart {
+  return parseRuntimeStreamPart(part, {
+    normalizeUsage(value) {
+      const usage = normalizeRuntimeUsage(value);
+      return usage ? projectRuntimeStreamUsage(usage) : undefined;
+    },
+  });
 }
 
 type PendingStreamToolCall = {
@@ -1528,26 +1724,82 @@ type PendingStreamToolCall = {
 
 // These limits bound provider-controlled allocations while remaining well
 // above practical function-call payloads and provider tool inventories.
-const MAX_STREAM_TOOL_CALLS = 128;
-const MAX_STREAM_TOOL_INPUT_BYTES = 1_048_576;
-const MAX_STREAM_TOOL_INPUT_DELTAS = 4_096;
-const STREAM_TOOL_INPUT_ENCODER = new TextEncoder();
-
 function pendingStreamToolInput(toolCall: PendingStreamToolCall): string {
   return toolCall.inputChunks.join("");
 }
 
-function streamToolInputByteLength(input: unknown): number {
-  return STREAM_TOOL_INPUT_ENCODER.encode(streamToolInputText(input)).byteLength;
+function runtimeToolInputText(input: unknown): string {
+  if (typeof input === "string") return input;
+  try {
+    const serialized = JSON.stringify(input);
+    if (typeof serialized !== "string") {
+      throw new TypeError("Structured runtime tool input is not JSON data");
+    }
+    return serialized;
+  } catch {
+    throw new TypeError(
+      "Owned runtime tool input could not be serialized",
+    );
+  }
 }
 
-function streamToolInputText(input: unknown): string {
-  if (typeof input === "string") return input;
-  if (input === undefined) return "";
+async function* readRuntimeStreamParts(
+  stream: ReadableStream<unknown>,
+  abortSignal?: AbortSignal,
+): AsyncIterable<unknown> {
+  const reader = stream.getReader();
+  let cancellation: void | PromiseLike<unknown> = undefined;
+  let cancellationRequested = false;
+  let reachedEnd = false;
+
+  const cancelReader = (reason: unknown): void => {
+    if (cancellationRequested) return;
+    cancellationRequested = true;
+    try {
+      cancellation = reader.cancel(reason);
+      observePromise(cancellation);
+    } catch {
+      cancellation = undefined;
+    }
+  };
+  const onAbort = () => cancelReader(abortSignal?.reason);
+  abortSignal?.addEventListener("abort", onAbort, { once: true });
+  if (abortSignal?.aborted) onAbort();
+
   try {
-    return JSON.stringify(input) ?? "";
-  } catch {
-    return String(input);
+    while (true) {
+      const read = await awaitAbortable(reader.read(), abortSignal);
+      if (read.done) {
+        reachedEnd = true;
+        return;
+      }
+      yield read.value;
+    }
+  } finally {
+    abortSignal?.removeEventListener("abort", onAbort);
+    if (!reachedEnd) {
+      cancelReader(
+        abortSignal?.aborted
+          ? abortSignal.reason
+          : createAbortError("Runtime stream consumer returned before completion"),
+      );
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      if (cancellation !== undefined) {
+        observePromise(
+          Promise.resolve(cancellation).finally(() => {
+            try {
+              reader.releaseLock();
+            } catch {
+              // Cancellation has already been observed. Preserve the primary
+              // stream or validation failure if this source cannot release.
+            }
+          }),
+        );
+      }
+    }
   }
 }
 
@@ -1562,8 +1814,20 @@ async function* processRuntimeStream(
   const terminalToolCallIds = new Set<string>();
   const providerResultToolCallIds = new Set<string>();
   const seenToolCallIds = new Set<string>();
+  let aggregateToolInputBytes = 0;
+  let aggregateToolInputLimitExceeded = false;
   let toolCallLimitExceeded = false;
   let bufferedFinish: Extract<RuntimeStreamPart, { type: "finish" }> | undefined;
+
+  const releasePendingInputReservation = (
+    toolCall: PendingStreamToolCall | undefined,
+  ): void => {
+    if (!toolCall) return;
+    if (toolCall.inputBytes > aggregateToolInputBytes) {
+      throw new TypeError("Runtime stream tool input reservation accounting became invalid");
+    }
+    aggregateToolInputBytes -= toolCall.inputBytes;
+  };
 
   const bufferedLifecycle = (
     toolCall: PendingStreamToolCall,
@@ -1606,7 +1870,7 @@ async function* processRuntimeStream(
     untrusted: { providerExecuted?: boolean; dynamic?: boolean },
   ): { accepted: boolean; error?: RuntimeStreamPart } => {
     if (seenToolCallIds.has(toolCallId)) return { accepted: false };
-    if (seenToolCallIds.size >= MAX_STREAM_TOOL_CALLS) {
+    if (seenToolCallIds.size >= MAX_RUNTIME_TOOL_CALLS) {
       if (toolCallLimitExceeded) return { accepted: false };
       toolCallLimitExceeded = true;
       return {
@@ -1615,7 +1879,7 @@ async function* processRuntimeStream(
           toolCallId,
           toolName,
           "toolCalls",
-          MAX_STREAM_TOOL_CALLS,
+          MAX_RUNTIME_TOOL_CALLS,
           untrusted,
         ),
       };
@@ -1626,13 +1890,59 @@ async function* processRuntimeStream(
 
   const finalize = async (
     candidate: RuntimeRepairToolCall,
+    candidateInputByteLength: number,
     pendingToolCall?: PendingStreamToolCall,
   ): Promise<RuntimeStreamPart[]> => {
-    const processed = await processToolCall(candidate, context);
+    let processed: ProcessedToolCall;
+    try {
+      processed = await processToolCall(
+        candidate,
+        candidateInputByteLength,
+        context,
+      );
+    } catch (error) {
+      if (!(error instanceof RuntimeToolInputLimitExceededError)) throw error;
+      pending.delete(candidate.toolCallId);
+      releasePendingInputReservation(pendingToolCall);
+      terminalToolCallIds.add(candidate.toolCallId);
+      return [
+        ...(pendingToolCall ? bufferedLifecycle(pendingToolCall, false) : []),
+        limitErrorPart(
+          error.toolCall.toolCallId,
+          error.toolCall.toolName,
+          "bytes",
+          MAX_RUNTIME_TOOL_INPUT_BYTES,
+          error.toolCall,
+        ),
+      ];
+    }
     pending.delete(candidate.toolCallId);
+    const reservedInputBytes = pendingToolCall?.inputBytes ?? 0;
+    const nextAggregateToolInputBytes = aggregateToolInputBytes -
+      reservedInputBytes +
+      processed.inputByteLength;
+    if (
+      aggregateToolInputLimitExceeded ||
+      nextAggregateToolInputBytes > MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES
+    ) {
+      releasePendingInputReservation(pendingToolCall);
+      terminalToolCallIds.add(processed.call.toolCallId);
+      aggregateToolInputLimitExceeded = true;
+      return [
+        ...(pendingToolCall ? bufferedLifecycle(pendingToolCall, false) : []),
+        limitErrorPart(
+          processed.call.toolCallId,
+          processed.call.toolName,
+          "bytes",
+          MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
+          processed.call,
+        ),
+      ];
+    }
+    aggregateToolInputBytes = nextAggregateToolInputBytes;
     const lifecycle: RuntimeStreamPart[] = [];
     if (pendingToolCall) {
-      const canonicalInput = streamToolInputText(processed.rawInput);
+      const canonicalInput = runtimeToolInputText(processed.rawInput);
       const bufferedInput = pendingStreamToolInput(pendingToolCall);
       const deltas = canonicalInput === bufferedInput
         ? pendingToolCall.inputChunks
@@ -1691,15 +2001,19 @@ async function* processRuntimeStream(
     for (const toolCall of [...pending.values()]) {
       if (!toolCall.ended || toolCall.id === exceptId) continue;
       parts.push(
-        ...await finalize({
-          type: "tool-call",
-          toolCallId: toolCall.id,
-          toolName: toolCall.toolName,
-          input: pendingStreamToolInput(toolCall),
-          ...(toolCall.providerExecuted === true ? { providerExecuted: true } : {}),
-          ...(toolCall.dynamic === true ? { dynamic: true } : {}),
-          ...(toolCall.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
-        }, toolCall),
+        ...await finalize(
+          {
+            type: "tool-call",
+            toolCallId: toolCall.id,
+            toolName: toolCall.toolName,
+            input: pendingStreamToolInput(toolCall),
+            ...(toolCall.providerExecuted === true ? { providerExecuted: true } : {}),
+            ...(toolCall.dynamic === true ? { dynamic: true } : {}),
+            ...(toolCall.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+          },
+          toolCall.inputBytes,
+          toolCall,
+        ),
       );
     }
     return parts;
@@ -1710,6 +2024,7 @@ async function* processRuntimeStream(
     for (const toolCall of [...pending.values()]) {
       if (toolCall.ended) continue;
       pending.delete(toolCall.id);
+      releasePendingInputReservation(toolCall);
       parts.push(...bufferedLifecycle(toolCall, false));
     }
     return parts;
@@ -1745,9 +2060,37 @@ async function* processRuntimeStream(
     return parts;
   };
 
-  for await (const rawPart of stream) {
+  const isAllowedAfterContinuationBoundary = (value: unknown): boolean => {
+    if (
+      !bufferedFinish ||
+      !isProviderResultContinuationBoundary(bufferedFinish.finishReason) ||
+      !value ||
+      typeof value !== "object" ||
+      !("type" in value) ||
+      value.type !== "tool-result" && value.type !== "tool-error" ||
+      !("toolCallId" in value) ||
+      typeof value.toolCallId !== "string" ||
+      terminalToolCallIds.has(value.toolCallId)
+    ) {
+      return false;
+    }
+
+    const correlated = completedToolCalls.get(value.toolCallId);
+    return correlated?.providerExecuted === true &&
+      correlated.supportsDeferredResults === true;
+  };
+
+  streamLoop:
+  for await (const rawPart of readRuntimeStreamParts(stream, context.abortSignal)) {
     throwIfAborted(context.abortSignal);
     const normalized = normalizeStreamPart(rawPart);
+    if (bufferedFinish && !isAllowedAfterContinuationBoundary(normalized)) {
+      throw new TypeError(
+        `Runtime stream emitted content after finish reason "${
+          bufferedFinish.finishReason ?? "unknown"
+        }"`,
+      );
+    }
     if (!normalized || typeof normalized !== "object" || !("type" in normalized)) {
       for (const flushed of await flushEnded()) yield flushed;
       yield normalized;
@@ -1787,20 +2130,37 @@ async function* processRuntimeStream(
         if (terminalToolCallIds.has(part.id) || completedToolCalls.has(part.id)) break;
         const toolCall = pending.get(part.id);
         if (toolCall) {
-          const nextDeltaCount = toolCall.inputDeltaCount + 1;
-          const nextInputBytes = toolCall.inputBytes +
-            STREAM_TOOL_INPUT_ENCODER.encode(part.delta).byteLength;
-          const exceededDeltaLimit = nextDeltaCount > MAX_STREAM_TOOL_INPUT_DELTAS;
-          const exceededByteLimit = nextInputBytes > MAX_STREAM_TOOL_INPUT_BYTES;
-          if (exceededDeltaLimit || exceededByteLimit) {
+          if (aggregateToolInputLimitExceeded) {
             pending.delete(part.id);
+            releasePendingInputReservation(toolCall);
             terminalToolCallIds.add(part.id);
             for (const lifecyclePart of bufferedLifecycle(toolCall, false)) yield lifecyclePart;
+            break;
+          }
+          const deltaBytes = runtimeToolInputByteLength(part.delta);
+          const nextDeltaCount = toolCall.inputDeltaCount + 1;
+          const nextInputBytes = toolCall.inputBytes + deltaBytes;
+          const exceededDeltaLimit = nextDeltaCount > MAX_RUNTIME_TOOL_INPUT_DELTAS;
+          const exceededByteLimit = nextInputBytes > MAX_RUNTIME_TOOL_INPUT_BYTES;
+          const exceededAggregateLimit = aggregateToolInputBytes + deltaBytes >
+            MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES;
+          if (exceededDeltaLimit || exceededByteLimit || exceededAggregateLimit) {
+            pending.delete(part.id);
+            releasePendingInputReservation(toolCall);
+            terminalToolCallIds.add(part.id);
+            for (const lifecyclePart of bufferedLifecycle(toolCall, false)) yield lifecyclePart;
+            if (exceededAggregateLimit) {
+              aggregateToolInputLimitExceeded = true;
+            }
             yield limitErrorPart(
               toolCall.id,
               toolCall.toolName,
               exceededDeltaLimit ? "deltas" : "bytes",
-              exceededDeltaLimit ? MAX_STREAM_TOOL_INPUT_DELTAS : MAX_STREAM_TOOL_INPUT_BYTES,
+              exceededDeltaLimit
+                ? MAX_RUNTIME_TOOL_INPUT_DELTAS
+                : exceededAggregateLimit
+                ? MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES
+                : MAX_RUNTIME_TOOL_INPUT_BYTES,
               toolCall,
             );
             break;
@@ -1808,6 +2168,7 @@ async function* processRuntimeStream(
           toolCall.inputChunks.push(part.delta);
           toolCall.inputBytes = nextInputBytes;
           toolCall.inputDeltaCount = nextDeltaCount;
+          aggregateToolInputBytes += deltaBytes;
         }
         break;
       }
@@ -1823,6 +2184,10 @@ async function* processRuntimeStream(
       case "tool-call": {
         const toolCallId = part.type === "tool-call" ? part.toolCallId : part.toolCallId ?? part.id;
         if (!toolCallId) break;
+        const partInput = part.input;
+        const stagedPartInput = partInput === undefined
+          ? undefined
+          : snapshotRuntimeToolInput(partInput);
         for (const flushed of await flushEnded(toolCallId)) yield flushed;
         if (terminalToolCallIds.has(toolCallId) || completedToolCalls.has(toolCallId)) break;
         const accumulated = pending.get(toolCallId);
@@ -1833,15 +2198,17 @@ async function* processRuntimeStream(
             break;
           }
         }
-        const partInput = part.input;
         const accumulatedInput = accumulated ? pendingStreamToolInput(accumulated) : "";
-        const input = accumulatedInput &&
-            (partInput === undefined ||
-              (typeof partInput === "string" && partInput.trim() === "{}"))
-          ? accumulatedInput
-          : partInput;
-        if (streamToolInputByteLength(input) > MAX_STREAM_TOOL_INPUT_BYTES) {
+        const useAccumulatedInput = accumulatedInput.length > 0 &&
+          (partInput === undefined ||
+            (typeof partInput === "string" && partInput.trim() === "{}"));
+        const inputSnapshot = useAccumulatedInput
+          ? snapshotRuntimeToolInput(accumulatedInput)
+          : stagedPartInput ?? snapshotRuntimeToolInput(partInput);
+        const reservedInputBytes = accumulated?.inputBytes ?? 0;
+        if (inputSnapshot.exceedsLimit) {
           pending.delete(toolCallId);
+          releasePendingInputReservation(accumulated);
           terminalToolCallIds.add(toolCallId);
           if (accumulated) {
             for (const lifecyclePart of bufferedLifecycle(accumulated, false)) yield lifecyclePart;
@@ -1850,9 +2217,34 @@ async function* processRuntimeStream(
             toolCallId,
             part.toolName,
             "bytes",
-            MAX_STREAM_TOOL_INPUT_BYTES,
+            MAX_RUNTIME_TOOL_INPUT_BYTES,
             part,
           );
+          break;
+        }
+        const projectedAggregateInputBytes = aggregateToolInputBytes -
+          reservedInputBytes +
+          inputSnapshot.byteLength;
+        const exceededAggregateLimit = aggregateToolInputLimitExceeded ||
+          projectedAggregateInputBytes >
+            MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES;
+        if (exceededAggregateLimit) {
+          pending.delete(toolCallId);
+          releasePendingInputReservation(accumulated);
+          terminalToolCallIds.add(toolCallId);
+          if (accumulated) {
+            for (const lifecyclePart of bufferedLifecycle(accumulated, false)) yield lifecyclePart;
+          }
+          if (!aggregateToolInputLimitExceeded) {
+            yield limitErrorPart(
+              toolCallId,
+              part.toolName,
+              "bytes",
+              MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
+              part,
+            );
+          }
+          aggregateToolInputLimitExceeded = true;
           break;
         }
         const untrustedMetadata = {
@@ -1861,13 +2253,17 @@ async function* processRuntimeStream(
           dynamic: part.dynamic === true || accumulated?.dynamic === true,
         };
         for (
-          const finalized of await finalize({
-            type: "tool-call",
-            toolCallId,
-            toolName: part.toolName,
-            input,
-            ...untrustedMetadata,
-          }, accumulated)
+          const finalized of await finalize(
+            {
+              type: "tool-call",
+              toolCallId,
+              toolName: part.toolName,
+              input: inputSnapshot.input,
+              ...untrustedMetadata,
+            },
+            inputSnapshot.byteLength,
+            accumulated,
+          )
         ) yield finalized;
         break;
       }
@@ -1952,8 +2348,15 @@ async function* processRuntimeStream(
           for (const incomplete of flushIncomplete()) yield incomplete;
         }
         if (part.type === "finish") {
-          bufferedFinish = { ...bufferedFinish, ...part, type: "finish" };
+          bufferedFinish = part;
+          if (!isProviderResultContinuationBoundary(part.finishReason)) {
+            break streamLoop;
+          }
           break;
+        }
+        if (part.type === "error") {
+          yield part;
+          return;
         }
         yield part;
         break;
@@ -1967,9 +2370,208 @@ async function* processRuntimeStream(
     yield missingResult;
   }
   throwIfAborted(context.abortSignal);
-  if (bufferedFinish) {
-    yield bufferedFinish;
+  if (!bufferedFinish) {
+    throw new TypeError("Runtime stream ended without a terminal event");
   }
+  yield bufferedFinish;
+}
+
+function createProcessedRuntimeStream(
+  source: ReadableStream<unknown>,
+  context: ToolCallProcessingContext,
+  abortScope: RuntimeAbortScope,
+): ReadableStream<unknown> {
+  const iterator = processRuntimeStream(source, context)[Symbol.asyncIterator]();
+  let cancelRequested = false;
+  let settled = false;
+
+  return new ReadableStream<unknown>(
+    {
+      async pull(controller) {
+        if (settled) return;
+        try {
+          const next = await iterator.next();
+          if (cancelRequested) return;
+          if (next.done) {
+            settled = true;
+            abortScope.dispose();
+            controller.close();
+            return;
+          }
+          controller.enqueue(next.value);
+        } catch (error) {
+          if (cancelRequested) return;
+          settled = true;
+          abortScope.abort(error);
+          abortScope.dispose();
+          controller.error(error);
+        }
+      },
+      cancel(reason) {
+        if (settled || cancelRequested) return;
+        cancelRequested = true;
+        settled = true;
+        abortScope.abort(reason);
+        abortScope.dispose();
+        observePromise(iterator.return?.());
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+type RuntimeStreamProjection<T> =
+  | { emit: true; value: T }
+  | { emit: false };
+
+function cancelViewReader(
+  reader: ReadableStreamDefaultReader<unknown>,
+  reason: unknown,
+): void {
+  let cancellation: void | PromiseLike<unknown>;
+  try {
+    cancellation = reader.cancel(reason);
+    observePromise(cancellation);
+  } catch {
+    cancellation = undefined;
+  }
+
+  try {
+    reader.releaseLock();
+  } catch {
+    if (cancellation !== undefined) {
+      observePromise(
+        Promise.resolve(cancellation).finally(() => {
+          try {
+            reader.releaseLock();
+          } catch {
+            // The source owns a broken reader implementation. Its cancellation
+            // has already been observed, so no additional recovery is possible.
+          }
+        }),
+      );
+    }
+  }
+}
+
+function createRuntimeStreamView<T>(
+  acquire: () => Promise<ReadableStream<unknown>>,
+  project: (part: unknown) => RuntimeStreamProjection<T>,
+  onCancel: (reason: unknown) => void,
+  abortSignal?: AbortSignal,
+): AsyncIterable<T> {
+  let claimed = false;
+
+  return {
+    [Symbol.asyncIterator](): AsyncIterableIterator<T> {
+      if (claimed) {
+        throw new TypeError("Runtime stream views can only be consumed once");
+      }
+      claimed = true;
+
+      let acquisition: Promise<ReadableStreamDefaultReader<unknown>> | undefined;
+      let cancelRequested = false;
+      let reader: ReadableStreamDefaultReader<unknown> | undefined;
+      let settled = false;
+      let queue: Promise<void> = Promise.resolve();
+
+      const acquireReader = (): Promise<ReadableStreamDefaultReader<unknown>> => {
+        if (!acquisition) {
+          acquisition = acquire().then((stream) => {
+            const acquired = stream.getReader();
+            reader = acquired;
+            return acquired;
+          });
+        }
+        return acquisition;
+      };
+
+      const cancelAcquiredReader = (reason: unknown): void => {
+        if (reader) {
+          cancelViewReader(reader, reason);
+          return;
+        }
+        if (acquisition) {
+          observePromise(
+            acquisition.then(
+              (acquired) => cancelViewReader(acquired, reason),
+              () => {},
+            ),
+          );
+        }
+      };
+
+      const cancel = (reason: unknown): void => {
+        if (settled || cancelRequested) return;
+        cancelRequested = true;
+        settled = true;
+        onCancel(reason);
+        cancelAcquiredReader(reason);
+      };
+
+      const readNext = async (): Promise<IteratorResult<T>> => {
+        if (settled || cancelRequested) {
+          return { done: true, value: undefined };
+        }
+        try {
+          throwIfAborted(abortSignal);
+          const acquired = await acquireReader();
+          while (!settled && !cancelRequested) {
+            const next = await awaitAbortable(acquired.read(), abortSignal);
+            if (settled || cancelRequested) {
+              return { done: true, value: undefined };
+            }
+            if (next.done) {
+              settled = true;
+              try {
+                acquired.releaseLock();
+              } catch {
+                // A completed reader has no remaining resource to recover.
+              }
+              return { done: true, value: undefined };
+            }
+
+            const projected = project(next.value);
+            if (projected.emit) {
+              return { done: false, value: projected.value };
+            }
+          }
+          return { done: true, value: undefined };
+        } catch (error) {
+          if (cancelRequested) {
+            return { done: true, value: undefined };
+          }
+          settled = true;
+          onCancel(error);
+          cancelAcquiredReader(error);
+          throw error;
+        }
+      };
+
+      const iterator: AsyncIterableIterator<T> = {
+        next() {
+          const result = queue.then(readNext, readNext);
+          queue = result.then(
+            () => {},
+            () => {},
+          );
+          return result;
+        },
+        return(value?: T) {
+          cancel(createAbortError("Runtime stream consumer returned before completion"));
+          return Promise.resolve({ done: true, value: value as T });
+        },
+        throw(error?: unknown) {
+          cancel(error);
+          return Promise.reject(error);
+        },
+        [Symbol.asyncIterator]() {
+          return iterator;
+        },
+      };
+      return iterator;
+    },
+  };
 }
 
 async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
@@ -1978,26 +2580,26 @@ async function* mapReadableStream(stream: ReadableStream<unknown>): AsyncIterabl
   }
 }
 
-async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIterable<string> {
-  for await (const part of stream) {
-    if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text-delta") {
-      continue;
-    }
-
-    if ("text" in part && typeof part.text === "string") {
-      yield part.text;
-      continue;
-    }
-
-    if ("delta" in part && typeof part.delta === "string") {
-      yield part.delta;
-    }
+function projectTextStreamPart(part: unknown): RuntimeStreamProjection<string> {
+  if (!part || typeof part !== "object" || !("type" in part)) {
+    return { emit: false };
   }
+
+  if (part.type === "error") {
+    const error = "error" in part ? part.error : undefined;
+    if (error instanceof Error) throw error;
+    throw new Error("Model stream failed", { cause: error });
+  }
+
+  if (part.type !== "text-delta") return { emit: false };
+  const normalized = normalizeStreamPart(part) as { type: "text-delta"; text: string };
+  return { emit: true, value: normalized.text };
 }
 
 function createToolCallProcessingContext(
   options: DirectTextOptions,
   resolvedTools: ResolvedRuntimeTools,
+  system: string | undefined,
 ): ToolCallProcessingContext {
   const priorProviderToolCalls = new Map<string, RuntimeRepairToolCall>();
   for (const message of options.messages) {
@@ -2021,7 +2623,7 @@ function createToolCallProcessingContext(
     messages: getProviderRequestMessages(options.messages),
     repairToolCall: options.experimental_repairToolCall,
     resolvedTools,
-    system: normalizeSystemPrompt(options.system),
+    system,
     tools: options.tools ?? {},
     priorProviderToolCalls,
     ...("quarantineUnpairedToolResults" in options &&
@@ -2032,52 +2634,115 @@ function createToolCallProcessingContext(
 }
 
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
-  return resolveRuntimeTools(options.tools, options.abortSignal).then((resolvedTools) => {
-    const directOptions = buildDirectModelOptions(options, resolvedTools.directTools);
-    const processingContext = createToolCallProcessingContext(options, resolvedTools);
+  return (async () => {
+    const system = normalizeSystemPrompt(options.system);
+    const resolvedTools = await resolveRuntimeTools(options.tools, options.abortSignal);
     if (shouldGenerateViaStream(options.model)) {
-      return options.model.doStream(directOptions).then(({ stream }) => {
-        const processedStream = ReadableStream.from(
-          processRuntimeStream(stream, processingContext),
+      const abortScope = createRuntimeAbortScope(options.abortSignal);
+      const scopedOptions: GenerateTextOptions = {
+        ...options,
+        abortSignal: abortScope.signal,
+      };
+      const processingContext = createToolCallProcessingContext(
+        scopedOptions,
+        resolvedTools,
+        system,
+      );
+      try {
+        throwIfAborted(abortScope.signal);
+        const { stream } = await awaitRuntimeStreamStart(
+          options.model.doStream(
+            buildDirectModelOptions(scopedOptions, resolvedTools.directTools, system),
+          ),
+          abortScope.signal,
         );
-        return buildGenerateResultFromStream(processedStream, processingContext);
-      });
+        const processedStream = createProcessedRuntimeStream(
+          stream,
+          processingContext,
+          abortScope,
+        );
+        return await buildGenerateResultFromStream(processedStream, processingContext);
+      } finally {
+        abortScope.dispose();
+      }
     }
 
-    return options.model.doGenerate(directOptions).then((result) =>
-      buildDirectGenerateResult(result, processingContext)
+    const processingContext = createToolCallProcessingContext(
+      options,
+      resolvedTools,
+      system,
     );
-  });
+    throwIfAborted(options.abortSignal);
+    const result = await awaitAbortable(
+      options.model.doGenerate(
+        buildDirectModelOptions(options, resolvedTools.directTools, system),
+      ),
+      options.abortSignal,
+    );
+    return await buildDirectGenerateResult(result, processingContext);
+  })();
 }
 
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
-  const directResultPromise = resolveRuntimeTools(options.tools, options.abortSignal).then(
-    async (resolvedTools) => {
-      const result = await options.model.doStream(
-        buildDirectModelOptions(options, resolvedTools.directTools),
-      );
-      return {
-        ...result,
-        stream: ReadableStream.from(
-          processRuntimeStream(
-            result.stream,
-            createToolCallProcessingContext(options, resolvedTools),
-          ),
-        ),
+  let abortScope: RuntimeAbortScope | undefined;
+  let directResultPromise:
+    | Promise<{ stream: ReadableStream<unknown>; warnings?: unknown[] }>
+    | undefined;
+
+  const getAbortScope = (): RuntimeAbortScope => {
+    abortScope ??= createRuntimeAbortScope(options.abortSignal);
+    return abortScope;
+  };
+  const getDirectResult = (): Promise<{
+    stream: ReadableStream<unknown>;
+    warnings?: unknown[];
+  }> => {
+    if (!directResultPromise) {
+      const scope = getAbortScope();
+      const scopedOptions: StreamTextOptions = {
+        ...options,
+        abortSignal: scope.signal,
       };
-    },
-  );
-  // Guard against an unhandled rejection when a branch is consumed lazily (or a
-  // branch is never consumed at all) and doStream rejects.
-  directResultPromise.catch(() => {});
+      directResultPromise = (async () => {
+        try {
+          const system = normalizeSystemPrompt(options.system);
+          const resolvedTools = await resolveRuntimeTools(options.tools, scope.signal);
+          throwIfAborted(scope.signal);
+          const result = await awaitRuntimeStreamStart(
+            options.model.doStream(
+              buildDirectModelOptions(scopedOptions, resolvedTools.directTools, system),
+            ),
+            scope.signal,
+          );
+          return {
+            ...result,
+            stream: createProcessedRuntimeStream(
+              result.stream,
+              createToolCallProcessingContext(scopedOptions, resolvedTools, system),
+              scope,
+            ),
+          };
+        } catch (error) {
+          scope.abort(error);
+          scope.dispose();
+          throw error;
+        }
+      })();
+      // A consumer can return while startup is pending. Observe the startup
+      // rejection even when no pending next call remains interested in it.
+      directResultPromise.catch(() => {});
+    }
+    return directResultPromise;
+  };
 
   const hasStarted: Record<"full" | "text", boolean> = { full: false, text: false };
+  const hasCancelled: Record<"full" | "text", boolean> = { full: false, text: false };
   let mode: "full" | "text" | "dual" | null = null;
   let branches: [ReadableStream<unknown>, ReadableStream<unknown>] | null = null;
 
   const acquire = async (branch: "full" | "text"): Promise<ReadableStream<unknown>> => {
     hasStarted[branch] = true;
-    const { stream } = await directResultPromise;
+    const { stream } = await getDirectResult();
 
     if (mode === null) {
       if (hasStarted.full && hasStarted.text) {
@@ -2098,78 +2763,34 @@ export function streamText(options: StreamTextOptions): RuntimeStreamResult {
     throw new Error("fullStream and textStream must start consumption concurrently");
   };
 
-  return {
-    fullStream: (async function* () {
-      yield* mapReadableStream(await acquire("full"));
-    })(),
-    textStream: (async function* () {
-      yield* textDeltasFromStream(await acquire("text"));
-    })(),
+  const cancelBranch = (branch: "full" | "text", reason: unknown): void => {
+    hasCancelled[branch] = true;
+    const other = branch === "full" ? "text" : "full";
+    const dualConsumption = mode === "dual" ||
+      mode === null && hasStarted.full && hasStarted.text;
+
+    if (dualConsumption) {
+      if (hasCancelled[other]) abortScope?.abort(reason);
+      return;
+    }
+
+    if (mode === branch || mode === null && !hasStarted[other]) {
+      abortScope?.abort(reason);
+    }
   };
-}
 
-function assertEmbeddingCount(expected: number, embeddings: number[][]): void {
-  if (embeddings.length === expected) {
-    return;
-  }
-
-  const label = expected === 1 ? "embedding" : "embeddings";
-  throw new Error(
-    `Embedding runtime expected ${expected} ${label} but received ${embeddings.length}`,
-  );
-}
-
-export function embed(options: EmbedOptions) {
-  return options.model.doEmbed({
-    values: [options.value],
-    abortSignal: options.abortSignal,
-  }).then((result) => {
-    assertEmbeddingCount(1, result.embeddings);
-    return {
-      embedding: result.embeddings[0]!,
-      embeddings: result.embeddings,
-      usage: result.usage,
-      rawResponse: result.rawResponse,
-      warnings: result.warnings ?? [],
-    };
-  });
-}
-
-export function embedMany(options: EmbedManyOptions) {
-  return options.model.doEmbed({
-    values: options.values,
-    abortSignal: options.abortSignal,
-  }).then((result) => {
-    assertEmbeddingCount(options.values.length, result.embeddings);
-    return {
-      embeddings: result.embeddings,
-      usage: result.usage,
-      rawResponse: result.rawResponse,
-      warnings: result.warnings ?? [],
-    };
-  });
-}
-/** Compute cosine similarity between two numeric vectors. */
-export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length === 0 || b.length === 0 || a.length !== b.length) {
-    return 0;
-  }
-
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    dot += av * bv;
-    normA += av * av;
-    normB += bv * bv;
-  }
-
-  if (normA === 0 || normB === 0) {
-    return 0;
-  }
-
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return {
+    fullStream: createRuntimeStreamView(
+      () => acquire("full"),
+      (part) => ({ emit: true, value: part }),
+      (reason) => cancelBranch("full", reason),
+      options.abortSignal,
+    ),
+    textStream: createRuntimeStreamView(
+      () => acquire("text"),
+      projectTextStreamPart,
+      (reason) => cancelBranch("text", reason),
+      options.abortSignal,
+    ),
+  };
 }

@@ -1,8 +1,8 @@
 # Module hardening ledger
 
 This ledger tracks the production-hardening review of the 58 `src` audit
-units: 56 top-level module directories plus `src/index.ts` and
-`src/version.ts`.
+units: 56 top-level module directories, one root-entrypoint unit covering
+`src/index.ts` and `src/index.client.ts`, and `src/version.ts`.
 
 The ledger is updated in the same checkpoint as the hardening changes it
 describes. Branch `codex/module-reconcile-20260723` HEAD is authoritative;
@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     8 |      13.8% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     0 |       0.0% | Review findings exist; remediation is not complete  |
-| Touched, revalidation required |    36 |      62.1% | Substantive recovered or current work exists        |
+| Closed                         |     7 |      12.1% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     2 |       3.4% | Review findings exist; remediation is not complete  |
+| Touched, revalidation required |    35 |      60.3% | Substantive recovered or current work exists        |
 | Pending current review         |    14 |      24.1% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -43,13 +43,13 @@ stricter closure count.
 - `eval`
 - `extensions`
 - `metrics`
-- `provider`
 - `schemas`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
 
-None.
+- `provider`
+- `runtime`
 
 ### Touched, revalidation required
 
@@ -76,7 +76,6 @@ None.
 - `release-assets`
 - `rendering`
 - `routing`
-- `runtime`
 - `schedule`
 - `security`
 - `server`
@@ -122,13 +121,15 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `metrics`, `eval`,
-`extensions`, and `provider`. Each closure includes a complete consumer map,
-deep module-level review, adversarial boundary tests, public-contract
-documentation, and repository-wide static verification. Cross-module
-consumers changed by a fix remain in revalidation; focused evidence for one
-boundary does not by itself close the consumer's top-level unit. `runtime` is
-the next dependency-adjacent revalidation target because it orchestrates the
-provider and extension contracts hardened in these checkpoints.
+and `extensions`. `provider` and `runtime` are deeply reviewed but reopened
+while the latest independent adversarial findings are remediated and
+revalidated. Each closure requires a complete consumer map, deep module-level
+review, adversarial boundary tests, public-contract documentation, and
+repository-wide static verification. Cross-module consumers changed by a fix
+remain in revalidation; focused evidence for one boundary does not by itself
+close the consumer's top-level unit. The next target will be selected from the
+remaining dependency-adjacent units after this checkpoint is committed,
+pushed, and rebased.
 
 ### Rebase integration checkpoint
 
@@ -201,7 +202,7 @@ production risk remains.
 
 ### Embedding remediation checkpoint
 
-The non-breaking embedding findings are remediated on the current branch:
+The embedding findings are remediated on the current branch:
 
 - Upload source, multipart-body, extracted-text, CSV record/column/field, list,
   and local-store reads are bounded and validated before persistence.
@@ -399,9 +400,9 @@ The provider findings are remediated on the current branch:
 
 Reproducible checkpoint evidence:
 
-- The complete `src/provider` surface passed 21 test suites and 201 steps with
-  zero failures; five model-download cases remain intentionally ignored.
-- The Anthropic, Google, and OpenAI extension surfaces passed 19 suites and 356
+- The complete `src/provider` surface passed 27 tests and 218 steps with zero
+  failures; five model-download steps remain intentionally ignored.
+- The Anthropic, Google, and OpenAI extension surfaces passed 19 tests and 406
   steps with zero failures.
 - The affected agent, hosted-runtime, fork, and internal-agent consumer surface
   passed 73 suites and 95 steps with zero failures.
@@ -423,6 +424,103 @@ is still validated, and this surface is not advertised as a supported
 high-level contract. It requires an explicit deprecation or breaking-change
 decision before removal. No unresolved critical or high-confidence provider
 production risk remains.
+
+### Runtime remediation checkpoint
+
+The runtime findings are remediated on the current branch:
+
+- `src/runtime` is the framework-owned model-runtime trust bridge, not a host
+  runtime detection layer. Provider call options, immutable prompt views,
+  assistant provider-tool content, reasoning controls, structured-output
+  options, and tool definitions now have one canonical provider contract.
+- Direct and streamed provider output is parsed through descriptor-based
+  boundary validators. Known fields are copied into canonical shapes,
+  malformed known events and unsafe accessors fail closed, unknown direct
+  provider-specific records retain their compatibility behavior, and stream
+  events cannot smuggle unknown top-level fields. Requested raw chunks cross
+  the boundary only as bounded, deeply owned JSON snapshots.
+- Streams require one terminal finish or error, reject output after terminal
+  state, preserve correlated deferred provider results across continuation
+  boundaries, and surface provider error events consistently through
+  buffered, full-stream, and text-stream paths.
+- Generation, stream startup and reads, schema materialization, repair, and
+  embedding calls honor cancellation even when a runtime does not cooperate.
+  Lazy stream requests are not started for abandoned consumers, source streams
+  are cancelled once, and one branch of a concurrent dual view can finish or
+  cancel without prematurely terminating its peer.
+- Tool identity comes from the resolved registry rather than caller-controlled
+  markers. Repairs are revalidated once, missing results fail with correlated
+  errors, repeated terminal provider results are idempotently ignored, and
+  provider-controlled input is limited to 128 calls, 1 MiB per call, 8 MiB per
+  turn, and 4,096 deltas per streamed input.
+- Direct and streamed usage share one sanitizer. Invalid, negative,
+  fractional, unsafe, or non-finite counters and costs are omitted; valid
+  component totals repair underreported totals without inventing missing
+  evidence. Exact AI SDK provider-v3 and v6 cache/reasoning shapes are mapped,
+  only own data properties participate, and canonical data-only records cannot
+  resolve absent fields through a polluted global prototype.
+- Tool, validator, and repair failures are formatted from own error messages or
+  descriptor-only JSON snapshots. Failure handling does not invoke getters,
+  `toJSON`, or coercion hooks, revoked proxies fail closed, and diagnostic text
+  is capped at 4 KiB of UTF-8 before it reaches logs, clients, or models.
+- Embedding invocation and cosine similarity now belong to `src/embedding`
+  instead of leaking through the generation bridge. Extreme finite vector
+  magnitudes remain numerically stable.
+- OpenAI, Anthropic, and Google replay metadata is deeply owned, bounded JSON.
+  Surviving canonical calls and results must match raw provider history
+  occurrence-for-occurrence and in order; duplicated, reordered, mutated, or
+  semantically mismatched history fails before transport. Google streaming and
+  replay use the same deterministic tool-call correlation registry.
+- Public reference, architecture explanation, provider how-to guidance, and
+  vendor extension references document the runtime boundary, raw-event
+  ownership, replay correlation, compaction, cancellation, and resource
+  limits.
+
+Reproducible checkpoint evidence:
+
+- The complete `src/runtime` surface passed 45 tests and 185 steps with zero
+  failures.
+- The revalidated `src/provider` surface passed 27 tests and 218 steps with
+  zero failures; five model-download steps remain intentionally ignored.
+- The revalidated Anthropic, Google, and OpenAI extension surfaces passed 19
+  tests and 406 steps with zero failures.
+- The revalidated `src/embedding` surface passed eight tests and 157 steps with
+  zero failures.
+- The `src/extensions` orchestration surface passed 24 tests and 275 steps with
+  zero failures.
+- The complete `src/agent/runtime` consumer surface passed 242 tests and 553
+  steps with zero failures.
+- The combined hardened runtime, provider, embedding, extension-orchestration,
+  Anthropic, Google, and OpenAI surface passed 123 tests and 1,241 steps with
+  zero failures; five model-download steps remained intentionally ignored.
+- The repository unit suite passed 3,066 tests and 24,169 steps with zero
+  failures; one intentional test remained ignored with five steps.
+- `deno task docs:validate` passed every public-doc contract and all 723 link
+  checks.
+- `deno task verify:quick` passed generated-manifest checks, formatting, lint
+  and architecture ratchets, dependency and module boundaries, documentation
+  validation, and every configured entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilt the root npm package and all
+  first-party extension packages, verified root import lifecycle behavior, and
+  passed the documented consumer-composition typecheck against generated
+  declarations.
+- The built package passed all 68 documented export-path checks and 86 Node
+  runtime checks across 19 public modules.
+- The Node 18.18.0/npm 9.8.1 install smoke passed all six CLI,
+  evaluator-worker, optional-peer, extension, and transitive-failure stages.
+- Ajv was raised from 8.17.1 to the first patched 8.18.0 release. Its schema
+  extension passed two suites and 39 steps, the rebuilt package reported zero
+  vulnerabilities, and `deno task audit` found no vulnerabilities across all
+  58 workspace npm dependencies.
+
+No unresolved critical or high-confidence runtime production risk remains.
+The following bounded residuals are explicit rather than hidden:
+
+| Severity | Surface                                | Evidence and consequence                                                                                                                                                                                                                                                                                                                                   | Required resolution                                                                                                                                                    |
+| -------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Low      | Same-realm Proxy reflection            | JSON snapshots avoid ordinary property reads, getters, and `toJSON`, and sanitize reflection failures. JavaScript must nevertheless invoke a Proxy's `getPrototypeOf`, `ownKeys`, and `getOwnPropertyDescriptor` traps while inspecting it. A Proxy already represents executable code in the same realm; portable JavaScript has no trap-free Proxy test. | Use a worker, process, or serialized boundary when the producer itself is not trusted to execute.                                                                      |
+| Low      | Wide-object key materialization        | Object snapshots must obtain a complete own-key list before enforcing the node limit, so a pre-existing extremely wide object can cause a transient O(keys) key-array allocation. Provider body, item, node, and byte limits bound ordinary paths.                                                                                                         | Use a streaming serialization or isolated process boundary if this stronger protection is required.                                                                    |
+| Moderate | Public non-finite cosine compatibility | `similarity()` is stable for extreme finite vectors and provider-produced embeddings reject non-finite coordinates before storage, but direct callers passing `NaN` or infinity retain the historical non-finite result. Throwing or normalizing would be behavior-breaking.                                                                               | Resolve through an explicit compatibility or deprecation decision, accompanied by public documentation and regression tests, before changing the direct-call behavior. |
 
 ### Config closure checkpoint verification
 
@@ -447,7 +545,7 @@ The current config closure checkpoint has the following reproducible evidence:
   checks.
 
 These gates certify this integration checkpoint, not the 14 pending module
-reviews or the 36 touched units that still require current-branch
+reviews or the 35 touched units that still require current-branch
 revalidation. The broader unit and integration portfolio remains part of the
 final repository production gate.
 

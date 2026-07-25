@@ -4,59 +4,24 @@ import {
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
-import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
+import type {
+  ModelRuntimeCallOptions,
+  ModelRuntimeToolDefinition,
+  OpenAICompatibleChatRequest,
+} from "veryfront/provider/shared";
 import {
-  type OpenAIProviderReasoningOption,
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
 import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
 
-export type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
-export type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
-  reasoning?: OpenAIProviderReasoningOption;
-  userId?: string;
+export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   serviceTier?: "auto" | "default" | "flex" | "scale";
   parallelToolCalls?: boolean;
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
-};
+}
+
+/** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider` instead. */
+export type RuntimeToolDefinition = ModelRuntimeToolDefinition;
 
 type WarningCollector = {
   push(warning: {
@@ -144,7 +109,7 @@ export function buildOpenAIChatRequest(
       : {}),
     ...(!dropSamplingParams && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
-      ? { stop: options.stopSequences }
+      ? { stop: [...options.stopSequences] }
       : {}),
     ...(toOpenAICompatibleTools(options.tools)
       ? { tools: toOpenAICompatibleTools(options.tools) }

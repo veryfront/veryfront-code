@@ -1,13 +1,84 @@
-import { assertEquals, assertInstanceOf } from "@std/assert";
+import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
 import {
   AnthropicServerToolResultError,
+  MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES,
   parseAnthropicProviderToolUse,
   parseAnthropicServerToolResult,
+  validateAnthropicRawAssistantMessages,
 } from "./anthropic-native-content.ts";
 
 describe("Anthropic provider-native content normalization", () => {
+  it("owns exact replay metadata and rejects executable object behavior", () => {
+    const rawMessages = [[{
+      type: "tool_use",
+      id: "tool_lookup",
+      name: "lookup",
+      input: { query: "Veryfront" },
+    }]];
+    const snapshot = validateAnthropicRawAssistantMessages(rawMessages);
+    rawMessages[0]![0]!.input.query = "mutated";
+    assertEquals(snapshot, [[{
+      type: "tool_use",
+      id: "tool_lookup",
+      name: "lookup",
+      input: { query: "Veryfront" },
+    }]]);
+
+    let accessorReads = 0;
+    const hostileInput = Object.defineProperty({}, "query", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("private metadata diagnostic");
+      },
+    });
+    const accessorError = assertThrows(
+      () =>
+        validateAnthropicRawAssistantMessages([[{
+          type: "tool_use",
+          id: "tool_accessor",
+          name: "lookup",
+          input: hostileInput,
+        }]]),
+      TypeError,
+      "Anthropic raw assistant metadata was not valid bounded JSON",
+    );
+    assertEquals(accessorReads, 0);
+    assertEquals(accessorError.message.includes("private metadata diagnostic"), false);
+
+    let serializationHookCalls = 0;
+    assertThrows(
+      () =>
+        validateAnthropicRawAssistantMessages([[{
+          type: "tool_use",
+          id: "tool_to_json",
+          name: "lookup",
+          input: {
+            query: "Veryfront",
+            toJSON() {
+              serializationHookCalls += 1;
+              return { query: "changed" };
+            },
+          },
+        }]]),
+      TypeError,
+      "Anthropic raw assistant metadata was not valid bounded JSON",
+    );
+    assertEquals(serializationHookCalls, 0);
+
+    assertThrows(
+      () =>
+        validateAnthropicRawAssistantMessages([[{
+          type: "text",
+          text: "x".repeat(MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES),
+        }]]),
+      TypeError,
+      `Anthropic raw assistant metadata exceeded ${MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES} UTF-8 bytes`,
+    );
+  });
+
   it("keeps ordinary client tool_use blocks out of the provider-executed path", () => {
     assertEquals(
       parseAnthropicProviderToolUse({

@@ -16,7 +16,7 @@
 
 export { embedding } from "./embedding.ts";
 export { chunk } from "./chunk.ts";
-export { cosineSimilarity as similarity } from "#veryfront/runtime/runtime-bridge.ts";
+export { cosineSimilarity as similarity } from "./similarity.ts";
 export { vectorStore } from "./vector-store.ts";
 export { ragStore } from "./rag-store.ts";
 export { createUploadHandler } from "./upload-handler.ts";

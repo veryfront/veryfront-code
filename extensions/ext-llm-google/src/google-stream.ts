@@ -8,6 +8,7 @@ import {
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import {
+  createGoogleToolCallCorrelationRegistry,
   GOOGLE_CODE_EXECUTION_TOOL_NAME,
   googleCodeExecutionInput,
   googleCodeExecutionOutput,
@@ -173,20 +174,16 @@ export async function* streamGoogleCompatibleParts(
       thoughtSignature?: string;
     }
   >();
-  const pendingCodeExecutionsByProviderId = new Map<string, string>();
   const pendingAnonymousCodeExecutions: Array<{
-    toolCallId: string;
     callShape: string;
     rawPartIndex: number;
     thoughtSignature?: string;
   }> = [];
-  const usedToolCallIds = new Set<string>();
+  const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
   const rawAssistantParts: Array<Record<string, unknown>> = [];
   let reasoningId: string | null = null;
   let reasoningSignature: string | undefined;
   let reasoningIndex = 0;
-  let anonymousToolIndex = 0;
-  let anonymousCodeExecutionIndex = 0;
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: RuntimeUsage | undefined;
   let groundingMetadata: Record<string, unknown> | undefined;
@@ -215,15 +212,6 @@ export async function* streamGoogleCompatibleParts(
       previousRawPart.thoughtSignature = thoughtSignature;
       prior.thoughtSignature = thoughtSignature;
     }
-  };
-
-  const createAnonymousCodeExecutionId = (): string => {
-    let id: string;
-    do {
-      id = `google-code-execution-${anonymousCodeExecutionIndex++}`;
-    } while (usedToolCallIds.has(id));
-    usedToolCallIds.add(id);
-    return id;
   };
 
   function* processEvent(event: unknown | "[DONE]"): Generator<unknown> {
@@ -445,8 +433,8 @@ export async function* streamGoogleCompatibleParts(
           throw invalidGoogleStream(context, "candidate function call arguments were malformed");
         }
         const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
-        const currentAnonymousIndex = providerId === undefined ? anonymousToolIndex++ : undefined;
-        const deduplicationKey = providerId ?? `anonymous-${currentAnonymousIndex}`;
+        const rawPartIndex = rawAssistantParts.length;
+        const deduplicationKey = providerId ?? `anonymous-${rawPartIndex}`;
         const callShape = `${functionCall.name}\u0000${serializedInput}`;
         const previousToolCall = seenToolCalls.get(deduplicationKey);
         if (previousToolCall !== undefined) {
@@ -461,12 +449,13 @@ export async function* streamGoogleCompatibleParts(
           continue;
         }
 
-        const toolCallId = providerId ?? `tool-${currentAnonymousIndex}`;
-        if (usedToolCallIds.has(toolCallId)) {
+        let toolCallId: string;
+        try {
+          toolCallId = toolCallRegistry.registerFunctionCall(rawPartIndex, providerId);
+        } catch {
           throw invalidGoogleStream(context, "candidate tool call id was duplicated");
         }
-        usedToolCallIds.add(toolCallId);
-        const rawPartIndex = rawAssistantParts.push(part) - 1;
+        rawAssistantParts.push(part);
         seenToolCalls.set(deduplicationKey, {
           callShape,
           rawPartIndex,
@@ -520,11 +509,13 @@ export async function* streamGoogleCompatibleParts(
             );
             continue;
           }
-          if (usedToolCallIds.has(executableCode.providerId)) {
+          try {
+            toolCallId = toolCallRegistry.registerCodeExecution(
+              executableCode.providerId,
+            );
+          } catch {
             throw invalidGoogleStream(context, "candidate executable code id was duplicated");
           }
-          usedToolCallIds.add(executableCode.providerId);
-          toolCallId = executableCode.providerId;
         } else {
           const prior = pendingAnonymousCodeExecutions.at(-1);
           if (prior?.callShape === callShape) {
@@ -535,12 +526,15 @@ export async function* streamGoogleCompatibleParts(
             );
             continue;
           }
-          toolCallId = createAnonymousCodeExecutionId();
+          try {
+            toolCallId = toolCallRegistry.registerCodeExecution(undefined);
+          } catch {
+            throw invalidGoogleStream(context, "candidate executable code id was duplicated");
+          }
         }
 
         const rawPartIndex = rawAssistantParts.push(part) - 1;
         const pending = {
-          toolCallId,
           callShape,
           rawPartIndex,
           ...(thoughtSignature !== undefined ? { thoughtSignature } : {}),
@@ -548,7 +542,6 @@ export async function* streamGoogleCompatibleParts(
         if (executableCode.providerId === undefined) {
           pendingAnonymousCodeExecutions.push(pending);
         } else {
-          pendingCodeExecutionsByProviderId.set(executableCode.providerId, toolCallId);
           seenCodeExecutions.set(executableCode.providerId, pending);
         }
 
@@ -582,7 +575,7 @@ export async function* streamGoogleCompatibleParts(
       }
       const resultValue = googleCodeExecutionOutput(result);
       const resultShape = stringifyJsonValue(resultValue);
-      let toolCallId: string | undefined;
+      let toolCallId: string;
 
       if (result.providerId !== undefined) {
         const priorResult = seenCodeExecutionResults.get(result.providerId);
@@ -600,18 +593,24 @@ export async function* streamGoogleCompatibleParts(
           );
           continue;
         }
-        toolCallId = pendingCodeExecutionsByProviderId.get(result.providerId);
-        if (toolCallId !== undefined) {
-          pendingCodeExecutionsByProviderId.delete(result.providerId);
+        try {
+          toolCallId = toolCallRegistry.resolveCodeExecutionResult(result.providerId);
+        } catch {
+          throw invalidGoogleStream(
+            context,
+            "candidate code execution result did not match executable code",
+          );
         }
       } else {
-        toolCallId = pendingAnonymousCodeExecutions.shift()?.toolCallId;
-      }
-      if (toolCallId === undefined) {
-        throw invalidGoogleStream(
-          context,
-          "candidate code execution result did not match executable code",
-        );
+        try {
+          toolCallId = toolCallRegistry.resolveCodeExecutionResult(undefined);
+        } catch {
+          throw invalidGoogleStream(
+            context,
+            "candidate code execution result did not match executable code",
+          );
+        }
+        pendingAnonymousCodeExecutions.shift();
       }
 
       const rawPartIndex = rawAssistantParts.push(part) - 1;
@@ -716,10 +715,9 @@ export async function* streamGoogleCompatibleParts(
   if (!sawFinishReason && !sawDone) {
     throw invalidGoogleStream(context, "stream ended before a terminal marker");
   }
-  if (
-    pendingCodeExecutionsByProviderId.size > 0 ||
-    pendingAnonymousCodeExecutions.length > 0
-  ) {
+  try {
+    toolCallRegistry.assertSettled();
+  } catch {
     throw invalidGoogleStream(
       context,
       "candidate executable code had no matching execution result",

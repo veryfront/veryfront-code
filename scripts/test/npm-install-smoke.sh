@@ -5,8 +5,8 @@
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
 #      and activates the parser extension under Node
-#   2. the parser-only/evaluator worker transport runs under Node 18 without
-#      full Babel tooling and preserves typed, redacted failure contracts
+#   2. the parser-only/evaluator worker transport and model-runtime streaming
+#      run under Node 18 without unsupported Web Streams APIs
 #   3. the @huggingface/transformers optional peer is declared
 #   4. loading a missing extension fails naming the installable package
 #   5. installing @veryfront/ext-auth-jwt makes the extension load
@@ -54,6 +54,9 @@ if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(
 " || fail "root package does not pin @veryfront/ext-parser-babel to its version"
 node --input-type=module -e "
 const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-extensions.js');
+const deferredModule = await import(
+  './node_modules/veryfront/esm/src/extensions/deferred-extension.js'
+);
 const resolved = m.createOptionalBuiltinExtension({
   name: 'ext-parser-babel',
   origin: 'veryfront/ext-parser-babel',
@@ -63,7 +66,11 @@ const resolved = m.createOptionalBuiltinExtension({
 });
 let codeParser;
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
-await resolved.extension.setup({
+const deferred = deferredModule.getDeferredExtensionState(resolved);
+if (!deferred) throw new Error('parser extension was not deferred');
+const extension = await deferred.load(logger);
+if (!extension) throw new Error('parser extension did not load');
+await extension.setup({
   get() {},
   require() { throw new Error('unexpected contract requirement'); },
   provide(name, impl) { if (name === 'CodeParser') codeParser = impl; },
@@ -76,7 +83,7 @@ const ast = await codeParser.parse({
   filePath: 'app/page.tsx',
 });
 if (ast?.type !== 'File') throw new Error('TSX parse failed');
-await resolved.extension.teardown?.();
+await extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
 
 echo "== 2. parser-only evaluator worker transport runs under Node 18"
@@ -116,6 +123,61 @@ const ast = await parser.parse({
   filePath: 'veryfront.config.ts',
 });
 if (ast?.type !== 'File') throw new Error('parser-only subpath parse failed');
+
+const runtimeBridge = await import(
+  './node_modules/veryfront/esm/src/runtime/runtime-bridge.js'
+);
+const createRuntimeStream = (includeRawChunks = false) =>
+  new ReadableStream({
+    start(controller) {
+      if (includeRawChunks) {
+        controller.enqueue({
+          type: 'raw',
+          rawValue: { provider: 'smoke', chunk: 1 },
+        });
+      }
+      controller.enqueue({ type: 'text-delta', delta: 'Node 18' });
+      controller.enqueue({ type: 'finish', finishReason: 'stop' });
+      controller.close();
+    },
+  });
+const streamModel = {
+  provider: 'smoke',
+  modelId: 'smoke/node-18-stream',
+  specificationVersion: 'v3',
+  doGenerate() {
+    throw new Error('unexpected doGenerate');
+  },
+  async doStream(options) {
+    return {
+      stream: createRuntimeStream(options?.includeRawChunks === true),
+    };
+  },
+};
+const live = runtimeBridge.streamText({
+  model: streamModel,
+  messages: [{ role: 'user', content: 'stream' }],
+  includeRawChunks: true,
+});
+const liveParts = [];
+for await (const part of live.fullStream) liveParts.push(part);
+if (
+  liveParts.length !== 3 ||
+  liveParts[0]?.type !== 'raw' ||
+  liveParts[0]?.rawValue?.provider !== 'smoke' ||
+  liveParts[1]?.type !== 'text-delta' ||
+  liveParts[1]?.text !== 'Node 18' ||
+  liveParts[2]?.type !== 'finish'
+) {
+  throw new Error('runtime stream bridge returned the wrong Node 18 events');
+}
+const generated = await runtimeBridge.generateText({
+  model: { ...streamModel, _generateViaStream: true },
+  messages: [{ role: 'user', content: 'generate' }],
+});
+if (generated.text !== 'Node 18' || generated.finishReason !== 'stop') {
+  throw new Error('stream-backed generation failed under Node 18');
+}
 
 const evaluator = await import(
   './node_modules/veryfront/esm/src/config/declarative-evaluator.js'

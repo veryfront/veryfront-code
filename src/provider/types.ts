@@ -5,7 +5,60 @@ export interface RuntimeMetadata {
   readonly [key: string]: unknown;
 }
 
-/** Canonical provider-facing prompt message contract. */
+type RuntimePromptAssistantContentPart =
+  | { type: "text"; text: string }
+  | {
+    type: "tool-call";
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+    providerExecuted?: boolean;
+  }
+  | {
+    type: "reasoning";
+    text?: string;
+    signature?: string;
+    redactedData?: string;
+  };
+
+/**
+ * Canonical assistant content accepted when invoking a model runtime.
+ *
+ * `RuntimePromptMessage` retains its historical assistant union for source
+ * compatibility. Model-runtime inputs additionally represent tool results
+ * when the provider executed the tool itself. Provider request builders must
+ * replay those parts from validated provider metadata because hosted-tool wire
+ * formats are not interchangeable with ordinary client-side function calls.
+ */
+export type RuntimeAssistantContentPart =
+  | Exclude<RuntimePromptAssistantContentPart, { type: "tool-call" }>
+  | {
+    type: "tool-call";
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+    supportsDeferredResults?: boolean;
+  }
+  | {
+    type: "tool-result";
+    toolCallId: string;
+    toolName: string;
+    result: unknown;
+    providerExecuted: true;
+    isError?: boolean;
+    dynamic?: boolean;
+    supportsDeferredResults?: boolean;
+  };
+
+/**
+ * Historical mutable provider-facing prompt contract retained for source
+ * compatibility.
+ *
+ * Model-runtime hooks receive the immutable {@link ModelRuntimePromptMessage}
+ * view, which also includes provider-executed assistant tool results.
+ */
 export type RuntimePromptMessage =
   | { role: "system"; content: string }
   | {
@@ -17,22 +70,7 @@ export type RuntimePromptMessage =
   }
   | {
     role: "assistant";
-    content: Array<
-      | { type: "text"; text: string }
-      | {
-        type: "tool-call";
-        toolCallId: string;
-        toolName: string;
-        input: unknown;
-        providerExecuted?: boolean;
-      }
-      | {
-        type: "reasoning";
-        text?: string;
-        signature?: string;
-        redactedData?: string;
-      }
-    >;
+    content: Array<RuntimePromptAssistantContentPart>;
     providerToolCalls?: Array<{
       toolCallId: string;
       toolName: string;
@@ -51,8 +89,33 @@ export type RuntimePromptMessage =
     }>;
   };
 
-export interface ModelRuntimeGenerateResult {
-  content?: unknown[];
+type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T
+  : T extends Array<infer Item> ? ReadonlyArray<DeepReadonly<Item>>
+  : T extends object ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+  : T;
+
+type ModelRuntimeAssistantPromptMessage =
+  & Omit<
+    DeepReadonly<Extract<RuntimePromptMessage, { role: "assistant" }>>,
+    "content"
+  >
+  & {
+    readonly content: ReadonlyArray<DeepReadonly<RuntimeAssistantContentPart>>;
+  };
+
+/**
+ * Immutable prompt view accepted by model-runtime calls.
+ *
+ * {@link RuntimePromptMessage} retains its historical mutable collection
+ * contract, while this input view also accepts deeply readonly `as const`
+ * prompts and provider-executed assistant tool results.
+ */
+export type ModelRuntimePromptMessage =
+  | DeepReadonly<Exclude<RuntimePromptMessage, { role: "assistant" }>>
+  | ModelRuntimeAssistantPromptMessage;
+
+export interface ModelRuntimeGenerateResult<ContentPart = unknown> {
+  content?: ContentPart[];
   finishReason?: unknown;
   usage?: unknown;
   warnings?: unknown[];
@@ -64,12 +127,80 @@ export interface ModelRuntimeStreamResult {
   warnings?: unknown[];
 }
 
+/** Provider-neutral reasoning controls accepted by model runtimes. */
+export interface RuntimeReasoningOption {
+  enabled?: boolean;
+  effort?: "low" | "medium" | "high" | "max";
+  budgetTokens?: number;
+}
+
+/** Canonical tool definition sent to a model runtime. */
+export type ModelRuntimeToolDefinition =
+  | {
+    type: "function";
+    name: string;
+    description?: string;
+    inputSchema: unknown;
+  }
+  | {
+    type: "provider";
+    name: string;
+    id: `${string}.${string}`;
+    args: Record<string, unknown>;
+  };
+
+/** Provider-neutral structured-output request. */
+export type RuntimeResponseFormat =
+  | { type: "text" }
+  | { type: "json" }
+  | {
+    type: "json_schema";
+    name: string;
+    schema: unknown;
+    description?: string;
+    strict?: boolean;
+  };
+
+/**
+ * Canonical request contract passed to `ModelRuntime` generation hooks.
+ *
+ * Provider implementations may refine provider-specific option values, but
+ * should not redefine or silently omit these framework-owned fields.
+ */
+export interface ModelRuntimeCallOptions {
+  prompt: readonly ModelRuntimePromptMessage[];
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  stopSequences?: readonly string[];
+  tools?: readonly ModelRuntimeToolDefinition[];
+  toolChoice?: unknown;
+  seed?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  headers?: HeadersInit;
+  providerOptions?: Record<string, unknown>;
+  reasoning?: RuntimeReasoningOption;
+  /**
+   * Request provider-native stream chunks. Raw values are exposed only through
+   * the full stream as deeply owned, bounded JSON events.
+   */
+  includeRawChunks?: boolean;
+  abortSignal?: AbortSignal;
+  userId?: string;
+  responseFormat?: RuntimeResponseFormat;
+}
+
 /** Public API contract for model runtime. */
-export interface ModelRuntime extends RuntimeMetadata {
+export interface ModelRuntime<
+  CallOptions = unknown,
+  ContentPart = unknown,
+> extends RuntimeMetadata {
   readonly _isVfLocalModel?: boolean;
   readonly _generateViaStream?: boolean;
-  doGenerate(options: unknown): PromiseLike<ModelRuntimeGenerateResult>;
-  doStream(options: unknown): PromiseLike<ModelRuntimeStreamResult>;
+  doGenerate(options: CallOptions): PromiseLike<ModelRuntimeGenerateResult<ContentPart>>;
+  doStream(options: CallOptions): PromiseLike<ModelRuntimeStreamResult>;
 }
 
 export interface EmbeddingRuntime extends RuntimeMetadata {

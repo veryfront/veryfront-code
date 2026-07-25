@@ -15,32 +15,84 @@ import type { VeryfrontConfig } from "#veryfront/config";
 
 const testSuite = isDeno ? describe : describe.skip;
 const SOURCE_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
-const repositoryRoot = dirname(
-  dirname(dirname(dirname(dirname(fromFileUrl(import.meta.url))))),
-);
+const repositoryLockUrl = new URL("../../../../deno.lock", import.meta.url);
+const EXACT_NPM_VERSION =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 interface PreparedFixture {
   projectDir: string;
   modulePath: string;
   prepared: PreparedWorkerModule;
   cleanupDir: string;
+  installedVersions: Readonly<Record<string, string>>;
+}
+
+async function resolveNpmPackage(
+  name: string,
+): Promise<{ packageDir: string; version: string }> {
+  const lock = JSON.parse(await Deno.readTextFile(repositoryLockUrl)) as {
+    specifiers?: Record<string, string>;
+  };
+  const prefix = `npm:${name}@`;
+  const candidates = Object.keys(lock.specifiers ?? {}).filter((specifier) =>
+    specifier.startsWith(prefix) &&
+    EXACT_NPM_VERSION.test(specifier.slice(prefix.length))
+  );
+  if (candidates.length !== 1) {
+    throw new TypeError(
+      `Expected one exact repository npm specifier for ${name}, found ${candidates.length}`,
+    );
+  }
+
+  const specifier = candidates[0]!;
+  const entryUrl = import.meta.resolve(specifier);
+  let directory: string;
+  try {
+    directory = dirname(fromFileUrl(entryUrl));
+  } catch {
+    throw new TypeError(
+      `Test dependency ${specifier} resolved to a non-file URL`,
+    );
+  }
+
+  while (true) {
+    const packageJsonPath = join(directory, "package.json");
+    try {
+      const pkg = JSON.parse(await Deno.readTextFile(packageJsonPath)) as {
+        name?: unknown;
+        version?: unknown;
+      };
+      if (pkg.name === name) {
+        if (typeof pkg.version !== "string") {
+          throw new TypeError(
+            `Test dependency ${name} has no installed version`,
+          );
+        }
+        return { packageDir: directory, version: pkg.version };
+      }
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+
+    const parent = dirname(directory);
+    if (parent === directory) {
+      throw new TypeError(
+        `Resolved entry for test dependency ${name} is not inside its package`,
+      );
+    }
+    directory = parent;
+  }
 }
 
 async function installRepositoryDependency(
   projectDir: string,
   name: string,
 ): Promise<string> {
-  const dependencyPath = join(repositoryRoot, "node_modules", name);
+  const resolved = await resolveNpmPackage(name);
   const installedPath = join(projectDir, "node_modules", name);
   await Deno.mkdir(dirname(installedPath), { recursive: true });
-  await Deno.symlink(dependencyPath, installedPath, { type: "dir" });
-  const pkg = JSON.parse(
-    await Deno.readTextFile(join(dependencyPath, "package.json")),
-  ) as { version?: string };
-  if (typeof pkg.version !== "string") {
-    throw new TypeError(`Test dependency ${name} has no installed version`);
-  }
-  return pkg.version;
+  await Deno.symlink(resolved.packageDir, installedPath, { type: "dir" });
+  return resolved.version;
 }
 
 async function prepareFixture(options: {
@@ -52,16 +104,27 @@ async function prepareFixture(options: {
 }): Promise<PreparedFixture> {
   const projectDir = await Deno.makeTempDir({ prefix: "vf-prepared-runtime-" });
   const modulePath = join(projectDir, "route.ts");
+  const dependencies = options.dependencies ?? {};
+  const installedVersions: Record<string, string> = {};
   await Deno.writeTextFile(
     join(projectDir, "package.json"),
     JSON.stringify({
       name: "prepared-worker-fixture",
       private: true,
-      dependencies: options.dependencies ?? {},
+      dependencies,
     }),
   );
   for (const dependency of options.install ?? []) {
-    await installRepositoryDependency(projectDir, dependency);
+    const versionRange = dependencies[dependency];
+    if (!versionRange) {
+      throw new TypeError(
+        `Installed test dependency ${dependency} must be declared`,
+      );
+    }
+    installedVersions[dependency] = await installRepositoryDependency(
+      projectDir,
+      dependency,
+    );
   }
   for (const [relativePath, contents] of Object.entries(options.files ?? {})) {
     const filePath = join(projectDir, relativePath);
@@ -81,6 +144,7 @@ async function prepareFixture(options: {
         config: options.config,
       }),
       cleanupDir: projectDir,
+      installedVersions: Object.freeze(installedVersions),
     };
   } catch (error) {
     await Deno.remove(projectDir, { recursive: true });
@@ -156,9 +220,6 @@ testSuite(
     });
 
     it("pins and executes the zod framework external under production worker permissions", async () => {
-      const version = JSON.parse(
-        await Deno.readTextFile(join(repositoryRoot, "node_modules", "zod", "package.json")),
-      ).version as string;
       const fixture = await prepareFixture({
         source: [
           `import { z } from "zod";`,
@@ -166,11 +227,13 @@ testSuite(
           `  return new Response(z.literal("zod-ok").parse("zod-ok"));`,
           `}`,
         ].join("\n"),
-        dependencies: { zod: `^${version}` },
+        dependencies: { zod: "^4.0.0" },
         install: ["zod"],
       });
 
       try {
+        const version = fixture.installedVersions.zod;
+        assert(version);
         assert(fixture.prepared.source.includes(`npm:zod@${version}`));
         assertEquals(await executePreparedFixture(fixture), "zod-ok");
       } finally {
@@ -179,23 +242,24 @@ testSuite(
     });
 
     it("pins and executes an installed user npm dependency", async () => {
-      const version = JSON.parse(
-        await Deno.readTextFile(join(repositoryRoot, "node_modules", "semver", "package.json")),
-      ).version as string;
       const fixture = await prepareFixture({
         source: [
-          `import semver from "semver";`,
+          `import JSZip from "jszip";`,
           `export function GET() {`,
-          `  return new Response(String(semver.major("7.7.2")));`,
+          `  const archive = new JSZip();`,
+          `  archive.file("marker.txt", "user-ok");`,
+          `  return new Response(String(archive.file("marker.txt") !== null));`,
           `}`,
         ].join("\n"),
-        dependencies: { semver: "^7.0.0" },
-        install: ["semver"],
+        dependencies: { jszip: "^3.0.0" },
+        install: ["jszip"],
       });
 
       try {
-        assert(fixture.prepared.source.includes(`npm:semver@${version}`));
-        assertEquals(await executePreparedFixture(fixture), "7");
+        const version = fixture.installedVersions.jszip;
+        assert(version);
+        assert(fixture.prepared.source.includes(`npm:jszip@${version}`));
+        assertEquals(await executePreparedFixture(fixture), "true");
       } finally {
         await removeFixture(fixture);
       }

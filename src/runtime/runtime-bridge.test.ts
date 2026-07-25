@@ -3,7 +3,8 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { repairToolCall } from "#veryfront/agent/runtime/repair-tool-call.ts";
 import { createRuntimeJsonSchema } from "#veryfront/agent/runtime/runtime-tool-builder.ts";
-import { embed, embedMany, generateText, streamText } from "./runtime-bridge.ts";
+import { embed, embedMany } from "#veryfront/embedding/runtime-adapter.ts";
+import { generateText, streamText } from "./runtime-bridge.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -298,6 +299,7 @@ describe("runtime-bridge", () => {
             result: null,
             providerExecuted: true,
           },
+          { type: "finish", finishReason: "stop" },
         ]),
       })),
       _generateViaStream: true,
@@ -497,7 +499,7 @@ describe("runtime-bridge", () => {
     assertEquals(JSON.stringify(result).includes("privateResult"), false);
   });
 
-  it("ignores malformed unpaired result metadata while buffering generate-via-stream", async () => {
+  it("rejects malformed known result events while buffering generate-via-stream", async () => {
     const model = {
       ...createStreamModel("test", "test/malformed-tool-result-quarantine", async () => ({
         stream: ReadableStream.from([
@@ -514,16 +516,16 @@ describe("runtime-bridge", () => {
       _generateViaStream: true,
     };
 
-    const result = await generateText({
-      model,
-      messages: [{ role: "user", content: "Search" }],
-      quarantineUnpairedToolResults: true,
-    });
-
-    assertEquals(result.toolResults, undefined);
-    assertEquals(result.quarantinedToolResults, undefined);
-    assertEquals(JSON.stringify(result).includes("privateResult"), false);
-    assertEquals(JSON.stringify(result).includes("private-error"), false);
+    await assertRejects(
+      () =>
+        Promise.resolve(generateText({
+          model,
+          messages: [{ role: "user", content: "Search" }],
+          quarantineUnpairedToolResults: true,
+        })),
+      TypeError,
+      "Invalid runtime stream part",
+    );
   });
 
   it("uses registered function metadata instead of spoofed direct markers", async () => {
@@ -796,7 +798,7 @@ describe("runtime-bridge", () => {
     assertEquals(cancelled, true);
   });
 
-  it("handles an abandoned stream request rejection", async () => {
+  it("does not start an abandoned stream request", async () => {
     let called = false;
     const model = createStreamModel("test", "test/abandoned-stream", async () => {
       called = true;
@@ -809,7 +811,7 @@ describe("runtime-bridge", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    assertEquals(called, true);
+    assertEquals(called, false);
   });
 
   it("forwards reasoning options to direct stream models", async () => {
@@ -2802,6 +2804,69 @@ describe("runtime-bridge", () => {
       result: { accepted: true },
       providerExecuted: true,
     }]);
+  });
+
+  it("emits only the first terminal provider result in a stream", async () => {
+    const schema = createRuntimeJsonSchema({ type: "object" });
+    const model = createStreamModel(
+      "test",
+      "test/provider-stream-result-deduplication",
+      async () => ({
+        stream: ReadableStream.from([
+          {
+            type: "tool-call",
+            toolCallId: "one-stream-result",
+            toolName: "web_search",
+            input: {},
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "one-stream-result",
+            toolName: "web_search",
+            result: { accepted: true },
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "one-stream-result",
+            toolName: "web_search",
+            result: { accepted: false },
+            providerExecuted: true,
+          },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      }),
+    );
+
+    const result = streamText({
+      model,
+      messages: [{ role: "user", content: "Search" }],
+      tools: {
+        web_search: {
+          type: "provider",
+          id: "anthropic.web_search_20250305",
+          args: {},
+          inputSchema: () => schema,
+          outputSchema: () => schema,
+        },
+      },
+    });
+    const parts = await collectAsync(result.fullStream);
+
+    assertEquals(
+      parts.filter((part) =>
+        part && typeof part === "object" && "type" in part &&
+        part.type === "tool-result"
+      ),
+      [{
+        type: "tool-result",
+        toolCallId: "one-stream-result",
+        toolName: "web_search",
+        result: { accepted: true },
+        providerExecuted: true,
+      }],
+    );
   });
 
   it("bounds streamed tool input bytes with one correlated terminal error", async () => {

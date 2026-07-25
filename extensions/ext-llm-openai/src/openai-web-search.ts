@@ -1,4 +1,4 @@
-import { readRecord, stringifyJsonValue } from "veryfront/provider/shared";
+import { readRecord, snapshotJsonValue, stringifyJsonValue } from "veryfront/provider/shared";
 import {
   isBoundedOpenAIStreamString,
   MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
@@ -42,12 +42,22 @@ export type OpenAIWebSearchResult = {
   isError: boolean;
 };
 
+function hasAsciiControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isHttpUrl(value: unknown): value is string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
     value.trim() !== value ||
-    /[\u0000-\u001F\u007F]/u.test(value) ||
+    hasAsciiControlCharacter(value) ||
     textEncoder.encode(value).byteLength > MAX_OPENAI_WEB_SEARCH_URL_BYTES
   ) {
     return false;
@@ -75,7 +85,7 @@ function isBoundedText(value: unknown, allowEmpty = false): value is string {
 
 export function resolveOpenAIWebSearchDescriptor(
   tools:
-    | Array<
+    | ReadonlyArray<
       | ProviderTool
       | { type: "function"; name: string; description?: string; inputSchema: unknown }
     >
@@ -248,44 +258,99 @@ export function validateOpenAIUrlCitation(
 export function createOpenAIRawResponseMetadata(
   outputItems: Array<Record<string, unknown>>,
 ): Record<string, unknown> {
-  return { openai: { rawResponseOutputItems: outputItems } };
+  return {
+    openai: {
+      rawResponseOutputItems: snapshotOpenAIRawResponseOutputItems(outputItems),
+    },
+  };
+}
+
+function readOwnOpenAIMetadataValue(
+  providerMetadata: Record<string, unknown>,
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(providerMetadata, "openai");
+  } catch {
+    throw new TypeError("OpenAI provider metadata could not be inspected");
+  }
+  if (descriptor === undefined) return undefined;
+  if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError("OpenAI provider metadata was malformed");
+  }
+  return descriptor.value;
+}
+
+function readOwnRawOutputItemsValue(openaiMetadata: unknown): unknown {
+  if (
+    openaiMetadata === null ||
+    typeof openaiMetadata !== "object" ||
+    Array.isArray(openaiMetadata)
+  ) {
+    throw new TypeError("OpenAI raw response metadata was malformed");
+  }
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(
+      openaiMetadata,
+      "rawResponseOutputItems",
+    );
+  } catch {
+    throw new TypeError("OpenAI raw response metadata could not be inspected");
+  }
+  if (descriptor === undefined) return undefined;
+  if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError("OpenAI raw response metadata was malformed");
+  }
+  return descriptor.value;
+}
+
+function snapshotOpenAIRawResponseOutputItems(
+  value: unknown,
+): Array<Record<string, unknown>> {
+  let snapshot: unknown;
+  try {
+    snapshot = snapshotJsonValue(value, {
+      maxBytes: MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
+    });
+  } catch (error) {
+    if (
+      error instanceof TypeError &&
+      error.message ===
+        `Provider JSON snapshot exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`
+    ) {
+      throw new TypeError(
+        `OpenAI raw response metadata exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+      );
+    }
+    throw new TypeError("OpenAI raw response metadata was not valid bounded JSON");
+  }
+  if (!Array.isArray(snapshot)) {
+    throw new TypeError("OpenAI raw response metadata was malformed");
+  }
+  return snapshot as Array<Record<string, unknown>>;
 }
 
 export function readOpenAIRawResponseOutputItems(
   providerMetadata: Record<string, unknown> | undefined,
 ): Array<Record<string, unknown>> | undefined {
-  if (!providerMetadata || providerMetadata.openai === undefined) return undefined;
-  const openai = readRecord(providerMetadata.openai);
-  if (!openai || !Object.hasOwn(openai, "rawResponseOutputItems")) {
-    return undefined;
-  }
-  if (!Array.isArray(openai.rawResponseOutputItems)) {
-    throw new TypeError("OpenAI raw response metadata was malformed");
-  }
-  if (openai.rawResponseOutputItems.length === 0) {
+  if (!providerMetadata) return undefined;
+  const openaiMetadata = readOwnOpenAIMetadataValue(providerMetadata);
+  if (openaiMetadata === undefined) return undefined;
+  const rawOutputItems = readOwnRawOutputItemsValue(openaiMetadata);
+  if (rawOutputItems === undefined) return undefined;
+  const snapshot = snapshotOpenAIRawResponseOutputItems(rawOutputItems);
+  if (snapshot.length === 0) {
     throw new TypeError("OpenAI raw response metadata contained no output items");
   }
   if (
-    openai.rawResponseOutputItems.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+    snapshot.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
   ) {
     throw new TypeError("OpenAI raw response metadata contained too many output items");
   }
-  let serialized: string;
-  try {
-    serialized = stringifyJsonValue(openai.rawResponseOutputItems);
-  } catch {
-    throw new TypeError("OpenAI raw response metadata was not serializable");
-  }
-  if (
-    textEncoder.encode(serialized).byteLength >
-      MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES
-  ) {
-    throw new TypeError(
-      `OpenAI raw response metadata exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
-    );
-  }
   const seenIds = new Set<string>();
-  return openai.rawResponseOutputItems.map((value) => {
+  for (let index = 0; index < snapshot.length; index += 1) {
+    const value = snapshot[index];
     const item = readRecord(value);
     if (
       !item ||
@@ -311,8 +376,8 @@ export function readOpenAIRawResponseOutputItems(
       throw new TypeError("OpenAI raw response metadata item was malformed");
     }
     seenIds.add(item.id);
-    return item;
-  });
+  }
+  return snapshot;
 }
 
 function validateRawOutputItem(item: Record<string, unknown>): void {

@@ -1,7 +1,7 @@
 import type { Embedding, EmbeddingCallOptions, EmbeddingConfig } from "./types.ts";
 import { resolveEmbeddingModel } from "./resolve.ts";
 import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
-import { embed, embedMany } from "#veryfront/runtime/runtime-bridge.ts";
+import { embed, embedMany } from "./runtime-adapter.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   requirePositiveSafeInteger,

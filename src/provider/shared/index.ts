@@ -1,10 +1,9 @@
 /**
  * Shared plumbing consumed by the `@veryfront/ext-*` provider extensions.
  *
- * This barrel is the stable public surface: implementations currently live
- * in `runtime-loader.ts` and `runtime-loader/` subdirectory. Future PRs
- * (post ext-llm-anthropic / ext-llm-google extraction) may move the implementations
- * into this directory; extensions keep importing from here unchanged.
+ * This barrel is the stable extension-facing surface. Implementations remain
+ * internal to `runtime-loader.ts` and `runtime-loader/`; their physical
+ * location may change without changing extension imports.
  *
  * @module provider/shared
  */
@@ -40,11 +39,12 @@ export {
   parseSseChunk,
 } from "../runtime-loader/provider-sse.ts";
 
-// Retry / error / HTTP plumbing (currently in runtime-loader.ts).
+// Retry, error, HTTP, usage, and JSON boundary plumbing.
 export {
   buildProviderError,
   createWarningCollector,
   isNumberArray,
+  jsonValuesEqual,
   mergeUsage,
   parseRetryAfterMs,
   ProviderError,
@@ -58,6 +58,7 @@ export {
   readTextParts,
   requestJson,
   requestStream,
+  snapshotJsonValue,
   stringifyJsonValue,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
@@ -65,9 +66,19 @@ export {
 } from "../runtime-loader.ts";
 
 export type {
+  JsonSnapshotOptions,
+  JsonSnapshotValue,
   OpenAICompatibleChatMessage,
   OpenAICompatibleChatRequest,
   ProviderWarning,
   RuntimeUsage,
 } from "../runtime-loader.ts";
-export type { RuntimePromptMessage } from "../types.ts";
+export type {
+  ModelRuntimeCallOptions,
+  ModelRuntimePromptMessage,
+  ModelRuntimeToolDefinition,
+  RuntimeAssistantContentPart,
+  RuntimePromptMessage,
+  RuntimeReasoningOption,
+  RuntimeResponseFormat,
+} from "../types.ts";

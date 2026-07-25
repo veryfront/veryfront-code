@@ -105,6 +105,9 @@ sentinel is reserved for `effort: "max"` and is rejected when supplied through
 When thinking is enabled, Gemini returns `thought` parts that the runtime emits as `reasoning-start` / `reasoning-delta` / `reasoning-end` stream events.
 
 Gemini `thoughtSignature` fields are retained with the exact assistant parts that produced them and replayed automatically on later turns, including parallel function-call responses.
+Streaming and replay share one deterministic raw-position tool-ID registry.
+Exact replay retains at most 4,096 raw assistant parts and 8 MiB; surviving
+canonical calls and results must match the raw history in occurrence order.
 
 ## Prompt Caching
 
@@ -177,9 +180,10 @@ grounding chunks, and citation indices. The direct adapter result retains the
 legacy top-level `groundingMetadata` property, and direct and streaming results
 also expose the same opaque object at
 `providerMetadata.google.groundingMetadata`, which survives runtime
-normalization. Only the object envelope is validated; its nested fields remain
-Google-owned so new metadata fields can pass through without an extension
-release.
+normalization. The object envelope and stable citation list fields
+(`groundingChunks`, `groundingSupports`, `webSearchQueries`, and
+`imageSearchQueries`) are validated for shape. Other nested fields remain
+Google-owned so new metadata can pass through without an extension release.
 
 ## Safety Settings
 

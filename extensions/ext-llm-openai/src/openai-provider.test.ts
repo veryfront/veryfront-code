@@ -8,6 +8,7 @@ import {
   ProviderRateLimitError,
   ProviderRequestError,
 } from "veryfront/provider/shared";
+import type { RuntimeAssistantContentPart } from "veryfront/provider/shared";
 import {
   createOpenAIEmbeddingRuntime,
   createOpenAIModelRuntime,
@@ -989,7 +990,11 @@ describe("openai-provider", () => {
       "https://example.openai.test/v1/responses",
       "https://example.openai.test/v1/chat/completions",
     ]);
-    assertEquals(requestedBodies[0].tools, [{ type: "web_search" }]);
+    const responsesBody = requestedBodies[0];
+    if (!responsesBody) {
+      throw new Error("expected a Responses request body");
+    }
+    assertEquals(responsesBody.tools, [{ type: "web_search" }]);
     assertEquals(searchResult.content?.map((part) => (part as { type?: unknown }).type), [
       "tool-call",
       "tool-result",
@@ -2577,7 +2582,7 @@ describe("openai-provider", () => {
       }] as const;
 
       const first = await runtime.doGenerate({ prompt: [userPrompt], tools });
-      assertEquals(first.content, [
+      const expectedFirstContent: RuntimeAssistantContentPart[] = [
         {
           type: "tool-call",
           toolCallId: "ws_1",
@@ -2596,7 +2601,11 @@ describe("openai-provider", () => {
           providerExecuted: true,
         },
         { type: "text", text: "Result" },
-      ]);
+      ];
+      assertEquals(first.content, expectedFirstContent);
+      if (!first.content) {
+        throw new Error("expected validated hosted-search content");
+      }
       assertEquals(first.providerMetadata, {
         openai: {
           rawResponseOutputItems: [webSearchItem, messageItem],
@@ -2618,7 +2627,11 @@ describe("openai-provider", () => {
         ],
         tools,
       });
-      assertEquals(requests[1].input, [
+      const continuationRequest = requests[1];
+      if (!continuationRequest) {
+        throw new Error("expected a continuation request");
+      }
+      assertEquals(continuationRequest.input, [
         {
           role: "user",
           content: [{ type: "input_text", text: "Hi" }],

@@ -5,7 +5,7 @@ import {
   type RuntimeUsage,
 } from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
-import type { RuntimePromptMessage } from "./types.ts";
+import type { ModelRuntimePromptMessage, ModelRuntimeToolDefinition } from "./types.ts";
 import {
   buildProviderError,
   parseRetryAfterMs,
@@ -18,6 +18,8 @@ import {
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 
+export { jsonValuesEqual, snapshotJsonValue } from "./runtime-loader/json-snapshot.ts";
+export type { JsonSnapshotOptions, JsonSnapshotValue } from "./runtime-loader/json-snapshot.ts";
 export {
   ProviderError,
   ProviderOverloadedError,
@@ -38,197 +40,6 @@ export {
 };
 export type { RuntimePromptMessage } from "./types.ts";
 export type { RuntimeUsage };
-type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-/**
- * TTL for a single prompt-cache breakpoint.
- *
- * `true` and `"5m"` both map to Anthropic's default ephemeral (5-minute) cache.
- * `"1h"` maps to the extended 1-hour cache at a 2x write cost. Callers can
- * pick per breakpoint target.
- */
-type ProviderCacheTtl = boolean | "5m" | "1h";
-
-/**
- * Per-provider prompt / context caching controls.
- *
- * For Anthropic, flipping these on emits `cache_control: { type: "ephemeral" }`
- * breakpoints on the assembled system prompt and/or the last tool definition
- * sent to the Messages API, enabling Anthropic's explicit prompt cache.
- *
- * OpenAI's prompt cache is automatic on gpt-4o+ and has no request-side
- * directive to emit, so this option is a no-op for the OpenAI runtime. Google
- * uses a separate `cachedContent` resource model that is intentionally not
- * covered by this option (it belongs on a dedicated Gemini-specific surface).
- */
-type ProviderCacheControlOption = {
-  /**
-   * Attach a cache breakpoint to the final system-prompt text block.
-   * Use when the system prompt is large and reused across requests.
-   */
-  system?: ProviderCacheTtl;
-  /**
-   * Attach a cache breakpoint to the last tool definition in `tools`.
-   * Use when the tool schemas are large and identical across requests.
-   */
-  tools?: ProviderCacheTtl;
-};
-
-/**
- * Unified effort level for extended reasoning / thinking. Maps to
- * per-provider knobs: Anthropic `thinking.budget_tokens`, OpenAI
- * `reasoning_effort`, Gemini `thinkingConfig.thinkingBudget`.
- */
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-/**
- * Unified reasoning / thinking request option.
- *
- * Setting `enabled: true` turns on extended thinking on providers that
- * support it (Anthropic Claude 4.x, OpenAI o-series, Gemini 2.5+). The
- * `effort` field picks a coarse budget; when `budgetTokens` is set it
- * wins for providers that take a numeric budget (Anthropic, Gemini).
- *
- * Providers that do not support reasoning treat this as a no-op. On
- * Anthropic + OpenAI, enabling reasoning also disables sampling params
- * that the providers reject in combination (`temperature`, `topP`,
- * `topK`, `presencePenalty`, `frequencyPenalty`) — silently dropping
- * them rather than failing the request.
- */
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
-
-type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
-  /**
-   * Per-provider prompt / context caching controls. See
-   * {@link ProviderCacheControlOption}. When unset, caching behaviour is
-   * unchanged on every provider.
-   */
-  cacheControl?: ProviderCacheControlOption;
-  /**
-   * Enable extended reasoning / thinking on providers that support it.
-   * See {@link ProviderReasoningOption}. When unset, reasoning behaviour
-   * is unchanged on every provider.
-   */
-  reasoning?: ProviderReasoningOption;
-  /**
-   * Stable per-user identifier for rate-limiting, abuse detection, and
-   * billing attribution. Maps to:
-   *  - Anthropic: `metadata.user_id`
-   *  - OpenAI: `user`
-   *  - Google: `labels.user_id` (when {@link requestLabels} is unset)
-   */
-  userId?: string;
-  /**
-   * Provider-specific label map for Google Gemini's `labels` field.
-   * Anthropic and OpenAI don't have an arbitrary-label equivalent, so
-   * this is intentionally Google-only. When unset, no labels are sent.
-   */
-  requestLabels?: Record<string, string>;
-  /**
-   * OpenAI-specific. Maps to the `service_tier` field on Chat Completions
-   * which trades latency for cost. Documented values:
-   *
-   *  - `default` — standard processing (default if unset)
-   *  - `flex` — lower-priority queue, lower per-token cost, longer
-   *    expected latency. Useful for batchy or non-interactive workloads.
-   *  - `scale` — reserved-capacity tier with strict latency SLOs.
-   *  - `auto` — let OpenAI pick.
-   *
-   * Forwarded verbatim. Anthropic and Google have no equivalent and
-   * the field is silently omitted on those providers.
-   */
-  serviceTier?: "auto" | "default" | "flex" | "scale";
-  /**
-   * OpenAI-specific. When `false`, OpenAI runs tool calls sequentially
-   * instead of in parallel. Useful for ordered side effects where
-   * concurrent calls would race. Default behaviour (unset) is parallel.
-   */
-  parallelToolCalls?: boolean;
-  /**
-   * Structured-output response format. Maps to OpenAI's `response_format`
-   * field on Chat Completions (and Responses). Three variants:
-   *
-   *  - `{ type: "text" }` — the default (no constraint).
-   *  - `{ type: "json" }` — emits OpenAI's `response_format:
-   *    { type: "json_object" }` to force the model to return valid JSON.
-   *  - `{ type: "json_schema", name, schema, strict? }` — emits
-   *    OpenAI's `response_format: { type: "json_schema", json_schema: {
-   *    name, schema, strict } }` for fully constrained structured
-   *    outputs (gpt-4o-2024-08-06+).
-   *
-   * On Anthropic and Google this option emits an "unsupported-setting"
-   * warning when set to anything other than `text` (those providers
-   * have their own structured-output surfaces and need a dedicated
-   * follow-up to wire them in).
-   */
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
-  /**
-   * Anthropic-specific. `container` field for programmatic tool calling
-   * and agent skills. Anthropic uses this to scope a session to a
-   * sandboxed container (e.g. for Computer Use, code execution
-   * sandboxes, or skills loaded from a container). Forwarded verbatim.
-   *
-   * The shape varies — string container id or a structured object
-   * depending on the feature. Caller passes whatever Anthropic's docs
-   * specify for the target feature.
-   */
-  anthropicContainer?: unknown;
-  /**
-   * Anthropic-specific. Native MCP server definitions to pass directly
-   * on the Messages API request body. Lets callers register MCP servers
-   * server-side instead of reloading them into local function tools.
-   *
-   * The Anthropic extension validates these definitions, emits exactly one
-   * matching MCPToolset for each server, and automatically adds the current
-   * `mcp-client-2025-11-20` beta while preserving unrelated caller betas.
-   *
-   * The existing camelCase convenience fields remain accepted:
-   * `authorizationToken` becomes `authorization_token`, while
-   * `toolConfiguration.allowedTools` is translated into the current
-   * MCPToolset allowlist shape rather than the deprecated server-local
-   * `tool_configuration` field.
-   */
-  mcpServers?: Array<Record<string, unknown>>;
-};
 /** Message shape for OpenAI-compatible chat requests. */
 export type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
@@ -258,7 +69,10 @@ export type OpenAICompatibleChatMessage =
     tool_call_id: string;
     content: string;
   };
-type RuntimePromptUserContent = Extract<RuntimePromptMessage, { role: "user" }>["content"];
+type RuntimePromptUserContent = Extract<
+  ModelRuntimePromptMessage,
+  { readonly role: "user" }
+>["content"];
 type OpenAICompatibleUserContent = Extract<
   OpenAICompatibleChatMessage,
   { role: "user" }
@@ -344,7 +158,9 @@ export function stringifyJsonValue(value: unknown): string {
 }
 
 /** Read text content parts from provider messages. */
-export function readTextParts(parts: Array<{ type: string; text?: string }>): string {
+export function readTextParts(
+  parts: readonly { type: string; text?: string }[],
+): string {
   let text = "";
   for (const part of parts) {
     if (part.type === "text" && typeof part.text === "string") {
@@ -380,7 +196,7 @@ function toOpenAICompatibleUserContent(
 
 /** Convert runtime prompt messages into OpenAI-compatible chat messages. */
 export function toOpenAICompatibleMessages(
-  prompt: RuntimePromptMessage[],
+  prompt: readonly ModelRuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
   const messages: OpenAICompatibleChatMessage[] = [];
 
@@ -407,6 +223,16 @@ export function toOpenAICompatibleMessages(
           // thinking blocks — they get dropped on replay. Anthropic-only.
           if (part.type === "reasoning") {
             continue;
+          }
+          if (part.type === "tool-result") {
+            throw new TypeError(
+              "OpenAI-compatible provider-executed assistant tool results cannot be replayed through Chat Completions",
+            );
+          }
+          if (part.providerExecuted === true) {
+            throw new TypeError(
+              "OpenAI-compatible provider-executed assistant tool calls cannot be replayed through Chat Completions",
+            );
           }
 
           toolCalls.push({
@@ -443,7 +269,7 @@ export function toOpenAICompatibleMessages(
 
 /** Convert runtime tool definitions into OpenAI-compatible function tools. */
 export function toOpenAICompatibleTools(
-  tools: RuntimeToolDefinition[] | undefined,
+  tools: readonly ModelRuntimeToolDefinition[] | undefined,
 ): OpenAICompatibleChatRequest["tools"] | undefined {
   if (!tools) {
     return undefined;

@@ -1,12 +1,10 @@
+import type { RuntimeReasoningOption } from "veryfront/provider/types";
+
 export type OpenAIReasoningEffort = "low" | "medium" | "high";
 
-export type OpenAIProviderReasoningEffort = OpenAIReasoningEffort | "max";
+export type OpenAIProviderReasoningEffort = NonNullable<RuntimeReasoningOption["effort"]>;
 
-export type OpenAIProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: OpenAIProviderReasoningEffort;
-  budgetTokens?: number;
-};
+export type OpenAIProviderReasoningOption = RuntimeReasoningOption;
 
 export type ResolvedOpenAIReasoning = {
   effort: OpenAIReasoningEffort;

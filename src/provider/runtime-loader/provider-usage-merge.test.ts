@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mergeUsage } from "./provider-usage.ts";
+import { mergeUsage, type RuntimeUsage, sanitizeRuntimeUsage } from "./provider-usage.ts";
 
 describe("provider/runtime-loader/provider-usage mergeUsage", () => {
   it("preserves a provider-reported totalTokens that exceeds input + output (reasoning tokens)", () => {
@@ -181,5 +181,279 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
         outputTokens: 1,
       },
     );
+  });
+
+  it("ignores own accessors without invoking them while preserving valid fallback usage", () => {
+    let getterCalls = 0;
+    const accessor = (value: unknown): PropertyDescriptor => ({
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return value;
+      },
+    });
+    const current = Object.defineProperty(
+      {
+        inputTokens: 1,
+        providerCostUsd: 0.25,
+        costSource: "partial",
+        billingMode: "direct",
+        usageCaptureStatus: "partial",
+      },
+      "costCredits",
+      accessor(1),
+    ) as RuntimeUsage;
+    const incoming = Object.defineProperties(
+      { outputTokens: 2 },
+      {
+        inputTokens: accessor(100),
+        providerCostUsd: accessor(9.99),
+        costSource: accessor("gateway"),
+        billingMode: accessor("deferred"),
+        usageCaptureStatus: accessor("complete"),
+      },
+    ) as RuntimeUsage;
+
+    assertEquals(
+      mergeUsage(current, incoming),
+      {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        providerCostUsd: 0.25,
+        costSource: "partial",
+        billingMode: "direct",
+        usageCaptureStatus: "partial",
+      },
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("sanitizes only own data fields without invoking own or inherited accessors", () => {
+    let getterCalls = 0;
+    const accessor = (value: unknown): PropertyDescriptor => ({
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return value;
+      },
+    });
+    const prototype = Object.defineProperties(
+      {},
+      {
+        inputTokens: accessor(100),
+        costUsd: {
+          value: 4.5,
+        },
+        billingMode: accessor("deferred"),
+      },
+    );
+    const usage = Object.defineProperties(
+      Object.create(prototype),
+      {
+        outputTokens: {
+          enumerable: true,
+          value: 2,
+        },
+        providerCostUsd: accessor(9.99),
+        costSource: accessor("gateway"),
+        usageCaptureStatus: accessor("complete"),
+      },
+    );
+
+    assertEquals(sanitizeRuntimeUsage(usage), {
+      outputTokens: 2,
+      totalTokens: 2,
+    });
+    assertEquals(getterCalls, 0);
+  });
+
+  it("returns undefined for accessor-only or inherited-only external usage", () => {
+    let getterCalls = 0;
+    const accessor = (value: unknown): PropertyDescriptor => ({
+      get() {
+        getterCalls += 1;
+        return value;
+      },
+    });
+    const inheritedOnly = Object.create({
+      inputTokens: 10,
+      billingMode: "deferred",
+    });
+    const accessorOnly = Object.defineProperties(
+      {},
+      {
+        costCredits: accessor(1),
+        usageCaptureStatus: accessor("complete"),
+      },
+    );
+
+    assertEquals(mergeUsage(undefined, inheritedOnly as RuntimeUsage), {});
+    assertEquals(sanitizeRuntimeUsage(inheritedOnly), undefined);
+    assertEquals(sanitizeRuntimeUsage(accessorOnly), undefined);
+    assertEquals(getterCalls, 0);
+  });
+
+  it("treats malformed merge operands as empty usage records", () => {
+    assertEquals(
+      mergeUsage(
+        42 as unknown as RuntimeUsage,
+        { outputTokens: 2 },
+      ),
+      {
+        outputTokens: 2,
+        totalTokens: 2,
+      },
+    );
+    assertEquals(
+      mergeUsage(undefined, [] as unknown as RuntimeUsage),
+      {},
+    );
+  });
+
+  it("treats revoked proxy operands as empty without leaking reflection errors", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+
+    assertEquals(
+      mergeUsage(
+        revoked.proxy as RuntimeUsage,
+        { outputTokens: 2 },
+      ),
+      {
+        outputTokens: 2,
+        totalTokens: 2,
+      },
+    );
+    assertEquals(
+      mergeUsage(undefined, revoked.proxy as RuntimeUsage),
+      {},
+    );
+    assertEquals(sanitizeRuntimeUsage(revoked.proxy), undefined);
+  });
+
+  it("discards a malformed proxy operand without consulting its get trap", () => {
+    let getCalls = 0;
+    const malformed = new Proxy(
+      { inputTokens: 100 } as RuntimeUsage,
+      {
+        get() {
+          getCalls++;
+          return 100;
+        },
+        getOwnPropertyDescriptor() {
+          throw new TypeError("malformed usage descriptor");
+        },
+      },
+    );
+
+    assertEquals(
+      mergeUsage(malformed, { outputTokens: 2 }),
+      {
+        outputTokens: 2,
+        totalTokens: 2,
+      },
+    );
+    assertEquals(sanitizeRuntimeUsage(malformed), undefined);
+    assertEquals(getCalls, 0);
+  });
+
+  it("does not turn accessors into data through a polluted descriptor prototype", () => {
+    let inputGetterCalls = 0;
+    let prototypeGetterCalls = 0;
+    const usage = Object.defineProperty({}, "inputTokens", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        inputGetterCalls++;
+        return 4;
+      },
+    }) as RuntimeUsage;
+    const originalValueDescriptor = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "value",
+    );
+
+    Object.defineProperty(Object.prototype, "value", {
+      configurable: true,
+      get() {
+        prototypeGetterCalls++;
+        return 4;
+      },
+    });
+    try {
+      assertEquals(mergeUsage(undefined, usage), {});
+      assertEquals(sanitizeRuntimeUsage(usage), undefined);
+    } finally {
+      if (originalValueDescriptor) {
+        Object.defineProperty(
+          Object.prototype,
+          "value",
+          originalValueDescriptor,
+        );
+      } else {
+        delete (Object.prototype as { value?: unknown }).value;
+      }
+    }
+
+    assertEquals(inputGetterCalls, 0);
+    assertEquals(prototypeGetterCalls, 0);
+  });
+
+  it("returns canonical records that cannot surface polluted usage fields", () => {
+    for (
+      const field of [
+        "cacheReadInputTokens",
+        "outputTokens",
+        "veryfrontBilledUsd",
+      ] as const
+    ) {
+      let getterCalls = 0;
+      const originalDescriptor = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        field,
+      );
+      Object.defineProperty(Object.prototype, field, {
+        configurable: true,
+        get() {
+          getterCalls++;
+          return 99;
+        },
+      });
+
+      try {
+        const merged = mergeUsage(undefined, { inputTokens: 1 });
+        const sanitized = sanitizeRuntimeUsage({ inputTokens: 1 });
+
+        assertEquals(merged, {
+          inputTokens: 1,
+          totalTokens: 1,
+        });
+        assertEquals(sanitized, {
+          inputTokens: 1,
+          totalTokens: 1,
+        });
+        assertEquals(Object.getPrototypeOf(merged!), null);
+        assertEquals(Object.getPrototypeOf(sanitized!), null);
+        assertEquals((merged as unknown as Record<string, unknown>)[field], undefined);
+        assertEquals((sanitized as unknown as Record<string, unknown>)[field], undefined);
+        assertEquals(
+          JSON.stringify(merged),
+          '{"inputTokens":1,"totalTokens":1}',
+        );
+      } finally {
+        if (originalDescriptor) {
+          Object.defineProperty(
+            Object.prototype,
+            field,
+            originalDescriptor,
+          );
+        } else {
+          delete (Object.prototype as Record<string, unknown>)[field];
+        }
+      }
+
+      assertEquals(getterCalls, 0);
+    }
   });
 });

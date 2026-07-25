@@ -16,6 +16,7 @@
  */
 
 export { createLocalModel } from "./model-runtime-adapter.ts";
+export type { LocalModelCallOptions, LocalPromptMessage } from "./model-runtime-adapter.ts";
 export { isLocalAIDisabled } from "./env.ts";
 export { createLocalEmbeddingModel } from "./embedding-runtime-adapter.ts";
 export { embedTexts } from "./local-embedding-engine.ts";

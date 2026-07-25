@@ -8,13 +8,16 @@ messages, tools, run state, and provider replay metadata that Veryfront sends.
 
 ## Responsibility
 
-Message stream dataflow spans four boundaries:
+Message stream dataflow spans five boundaries:
 
 - [`src/chat/`](../../src/chat/) owns canonical message parts, conversation
   conversion, AG-UI-compatible chunks, and browser stream assembly.
 - [`src/agent/runtime/`](../../src/agent/runtime/) owns provider-neutral agent
   execution, stream state, local tool execution, and final assistant message
   materialization.
+- [`src/runtime/`](../../src/runtime/) owns the provider-neutral generation
+  bridge: option normalization, output validation, usage and tool lifecycle,
+  cancellation, and terminal stream state.
 - [`src/agent/hosted/`](../../src/agent/hosted/) owns hosted conversation runs,
   child-run fork inputs, durable run state, and cloud runtime adaptation.
 - [`extensions/ext-llm-*`](../../extensions/) owns provider-specific request
@@ -48,18 +51,21 @@ The normal hosted chat path is:
    cloud gateway transport, and provider options.
 3. Agent runtime converts the conversation into provider-model messages and
    converts visible tools into runtime tool definitions.
-4. `generateText` or `streamText` calls the provider runtime with model,
+4. `generateText` or `streamText` calls the model runtime bridge with model,
    system, messages, tools, max output tokens, temperature, headers, and
    provider options.
-5. The provider extension builds the native request body for Anthropic,
+5. The bridge resolves schemas, normalizes provider-neutral options, and calls
+   the selected model runtime.
+6. The provider extension builds the native request body for Anthropic,
    OpenAI-compatible, Google, or Kimi-compatible APIs.
-6. Provider stream frames are parsed into provider-neutral runtime parts.
-7. The runtime stream handler turns those parts into chat stream chunks and
+7. The bridge validates provider output, enforces tool and terminal lifecycle,
+   normalizes usage, and propagates cancellation.
+8. The runtime stream handler turns those parts into chat stream chunks and
    updates in-memory text, reasoning, tool, usage, and finish accumulators.
-8. The browser stream assembler turns chunks into ordered UI message parts.
-9. At step end, the runtime materializes one assistant message and durable
-   replay metadata from the accumulators.
-10. If a local tool call was committed, the tool result is appended and the
+9. The browser stream assembler turns chunks into ordered UI message parts.
+10. At step end, the runtime materializes one assistant message and durable
+    replay metadata from the accumulators.
+11. If a local tool call was committed, the tool result is appended and the
     next provider request is built from the updated explicit transcript.
 
 There is no hidden provider session in this flow. Continuity comes from the
@@ -92,10 +98,20 @@ provider-neutral runtime parts:
 
 - `reasoning-start`, `reasoning-delta`, `reasoning-end`
 - `text-start`, `text-delta`, `text-end`
+- `stream-start` and `response-metadata`
+- `raw` provider JSON when explicitly requested
+- `data-*` application events
 - `tool-input-start`, `tool-input-delta`, `tool-input-available`
 - `tool-call`
 - `tool-result` or provider-executed tool result parts
 - `finish` with finish reason and usage
+- `error`
+
+Known event fields are copied into canonical shapes; unsafe accessors,
+unsupported types, malformed known events, events after a terminal state, and
+streams without a terminal event fail closed. Raw provider chunks are deeply
+owned bounded JSON, appear only on the full stream, and are omitted from the
+text stream.
 
 The runtime stream handler keeps separate in-memory accumulators for text,
 reasoning, local tool input, provider-executed tool calls, usage, and finish
@@ -210,8 +226,22 @@ state unless they intentionally expose a diagnostic view.
 Replay prepares historical conversation state for the next request. It can
 remove stale or overly large historical tool outputs, but it must keep the
 latest unresolved tool round coherent: assistant tool calls must be followed by
-matching tool results. Provider-specific replay rules also apply, such as
-Anthropic thinking signatures for thinking blocks.
+matching tool results.
+
+Provider-native replay state is stored as an owned, bounded JSON snapshot.
+When a canonical tool-call or result projection survives, its ID, name, semantic
+input or result, multiplicity, and occurrence order must match the raw provider
+history before that history is sent. Duplicate, reordered, mutated, or
+semantically mismatched history fails before network transport. Structurally
+valid raw-only history remains available only when the corresponding canonical
+projection is absent, for example after compaction.
+
+OpenAI replay retains ordered Responses output, encrypted reasoning, hosted
+search activity, sources, and citations. Anthropic replay retains thinking,
+redacted thinking, client and server tool blocks, and provider results. Google
+replay retains signed thought parts, function calls, code execution, and
+results, with one deterministic tool-ID registry shared by streaming and
+replay.
 
 Compaction should summarize old context into an explicit message or event and
 then replay that summary as ordinary prompt state. It should not rely on hidden
@@ -250,18 +280,22 @@ The audit found and fixed two local integration drift issues:
 OpenAI and Moonshot use OpenAI-compatible request and stream shapes. Local
 function tools become OpenAI-style tools, streamed tool calls become runtime
 tool input chunks, and tool outputs are replayed as explicit tool messages.
-OpenAI Responses support can preserve reasoning-specific provider metadata when
-that runtime is selected.
+OpenAI Responses preserves ordered raw output, encrypted reasoning, hosted
+search sources, and citations for stateless replay.
 
 Anthropic uses Messages API request and stream shapes. Text, thinking,
 redacted thinking, `tool_use`, and `tool_result` blocks are converted into
 Veryfront model and UI parts. Thinking signatures and redacted payloads are
-replay metadata and must not be dropped during compaction.
+replay metadata and must not be dropped during compaction. Surviving ordinary
+and provider-executed tool projections are correlated one-for-one with the raw
+blocks before replay.
 
 Google uses `generateContent` and `streamGenerateContent` shapes. Local tools
 are mapped to `functionDeclarations`, model function calls are returned to the
 runtime as tool input parts, and tool outputs are replayed as
-`functionResponse` parts on the following request.
+`functionResponse` parts on the following request. Signed thought and code
+execution parts retain stable raw-position-derived tool IDs across streaming
+and continuation replay.
 
 Provider-native tools are only native when their IDs use a provider prefix such
 as `openai.*`, `anthropic.*`, or `google.*`. Unprefixed project tools remain

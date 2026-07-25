@@ -32,7 +32,7 @@ import {
   withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
 import {
-  buildAnthropicMessagesRequest,
+  buildAnthropicMessagesRequestWithCorrelationState,
   type OpenAICompatibleLanguageOptions,
 } from "./anthropic-request-builder.ts";
 import {
@@ -41,6 +41,7 @@ import {
   isAnthropicProviderToolResultBlockType,
   parseAnthropicProviderToolUse,
   parseAnthropicServerToolResult,
+  validateAnthropicRawAssistantMessages,
 } from "./anthropic-native-content.ts";
 import {
   addAnthropicUsage,
@@ -106,7 +107,7 @@ type AnthropicToolResultContent = {
   toolName: string;
   result: unknown;
   isError?: boolean;
-  providerExecuted?: boolean;
+  providerExecuted: true;
 };
 
 type AnthropicGenerateContent =
@@ -343,14 +344,16 @@ function shouldPreserveAnthropicRawAssistantHistory(
   rawAssistantMessages: unknown[][],
 ): boolean {
   const hasPriorProviderCall = prompt.some((message) =>
-    message.role === "assistant" && (message.providerToolCalls?.length ?? 0) > 0
+    message.role === "assistant" &&
+    (
+      (message.providerToolCalls?.length ?? 0) > 0 ||
+      message.content.some((part) => part.type === "tool-call" && part.providerExecuted === true)
+    )
   );
   let hasServerToolContent = false;
-  let hasClientToolUse = false;
   for (const content of rawAssistantMessages) {
     for (const value of content) {
       const block = readRecord(value);
-      if (block?.type === "tool_use") hasClientToolUse = true;
       if (
         isAnthropicProviderExecutedContentBlockType(block?.type)
       ) {
@@ -358,17 +361,22 @@ function shouldPreserveAnthropicRawAssistantHistory(
       }
     }
   }
-  return hasPriorProviderCall || hasServerToolContent && hasClientToolUse;
+  return hasPriorProviderCall || hasServerToolContent;
 }
 
 function createAnthropicRawAssistantMetadata(
   prompt: OpenAICompatibleLanguageOptions["prompt"],
   rawAssistantMessages: unknown[][],
+  initialProviderToolNamesById: ReadonlyMap<string, string>,
 ): Record<string, unknown> | undefined {
-  if (!shouldPreserveAnthropicRawAssistantHistory(prompt, rawAssistantMessages)) {
+  const snapshot = validateAnthropicRawAssistantMessages(
+    rawAssistantMessages,
+    new Map(initialProviderToolNamesById),
+  );
+  if (!shouldPreserveAnthropicRawAssistantHistory(prompt, snapshot)) {
     return undefined;
   }
-  return { anthropic: { rawAssistantMessages } };
+  return { anthropic: { rawAssistantMessages: snapshot } };
 }
 
 function createProviderAbortScope(callerSignal: AbortSignal | undefined): {
@@ -451,7 +459,7 @@ function createCancelableProviderStream(
 export function createAnthropicModelRuntime(
   config: AnthropicRuntimeConfig,
   modelId: string,
-): ModelRuntime {
+): ModelRuntime<OpenAICompatibleLanguageOptions, AnthropicGenerateContent> {
   const fetchImpl = config.fetch ?? globalThis.fetch;
   const providerName = config.name ?? "anthropic";
   const streamOptions = providerName === "veryfront-cloud"
@@ -466,24 +474,28 @@ export function createAnthropicModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
-    async doGenerate(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    async doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();
-      const body = buildAnthropicMessagesRequest(
+      const {
+        body,
+        providerToolNamesById: initialProviderToolNamesById,
+      } = buildAnthropicMessagesRequestWithCorrelationState(
         modelId,
         config.name ?? "anthropic",
         options,
         false,
         warnings,
-      ) as AnthropicRequestBody;
+      );
       const enableMcpConnector = usesAnthropicMcpConnector(body);
-      let requestBody = body;
+      let requestBody: AnthropicRequestBody = body;
       let continuationCount = 0;
       let aggregateUsage: RuntimeUsage | undefined;
       const aggregateContent: AnthropicGenerateContent[] = [];
       const rawAssistantMessages: unknown[][] = [];
-      const providerToolNamesById: AnthropicProviderToolNameRegistry = new Map();
+      const providerToolNamesById: AnthropicProviderToolNameRegistry = new Map(
+        initialProviderToolNamesById,
+      );
       let finalResult: ReturnType<typeof buildAnthropicGenerateResult> | undefined;
 
       while (true) {
@@ -529,6 +541,7 @@ export function createAnthropicModelRuntime(
       const providerMetadata = createAnthropicRawAssistantMetadata(
         options.prompt,
         rawAssistantMessages,
+        initialProviderToolNamesById,
       );
       return {
         content: aggregateContent,
@@ -538,17 +551,19 @@ export function createAnthropicModelRuntime(
         ...(drained.length > 0 ? { warnings: drained } : {}),
       };
     },
-    async doStream(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    async doStream(options: OpenAICompatibleLanguageOptions) {
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();
-      const body = buildAnthropicMessagesRequest(
+      const {
+        body,
+        providerToolNamesById: initialProviderToolNamesById,
+      } = buildAnthropicMessagesRequestWithCorrelationState(
         modelId,
         config.name ?? "anthropic",
         options,
         true,
         warnings,
-      ) as AnthropicRequestBody;
+      );
       const enableMcpConnector = usesAnthropicMcpConnector(body);
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
@@ -579,9 +594,11 @@ export function createAnthropicModelRuntime(
         let responseStream = firstResponseStream;
         let continuationCount = 0;
         let aggregateUsage: RuntimeUsage | undefined;
-        let requestBody = body;
+        let requestBody: AnthropicRequestBody = body;
         const rawAssistantMessages: unknown[][] = [];
-        const providerToolNamesById: AnthropicProviderToolNameRegistry = new Map();
+        const providerToolNamesById: AnthropicProviderToolNameRegistry = new Map(
+          initialProviderToolNamesById,
+        );
 
         while (true) {
           let completion: AnthropicStreamCompletion | undefined;
@@ -616,6 +633,7 @@ export function createAnthropicModelRuntime(
             const providerMetadata = createAnthropicRawAssistantMetadata(
               options.prompt,
               rawAssistantMessages,
+              initialProviderToolNamesById,
             );
             yield {
               ...(finishPart ?? { type: "finish", finishReason: completion?.finishReason ?? null }),
@@ -661,7 +679,10 @@ export function createAnthropicModelRuntime(
 export class AnthropicProvider implements LLMProvider {
   readonly id = "anthropic";
 
-  createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
+  createModel(
+    modelId: string,
+    config: LLMProviderConfig,
+  ): ModelRuntime<OpenAICompatibleLanguageOptions, AnthropicGenerateContent> {
     return createAnthropicModelRuntime(
       {
         apiKey: config.credential,

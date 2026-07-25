@@ -194,6 +194,26 @@ reasoning state, search source URLs, and citations across stateless
 (`store: false`) turns. If a lower-level caller builds the next prompt itself,
 it must carry the assistant message's `providerMetadata` forward unchanged.
 
+## Preserve provider replay metadata
+
+When a lower-level caller constructs a follow-up prompt, copy the assistant
+message and its `providerMetadata` together. Treat the metadata as opaque:
+do not rebuild, mutate, reorder, or merge its native parts.
+
+The runtime stores provider-native replay as an owned, bounded JSON snapshot.
+OpenAI retains at most 4,096 raw output items, Google retains at most 4,096 raw
+assistant parts, and Anthropic retains at most six raw assistant messages and
+4,096 total blocks. Each provider caps one replay snapshot at 8 MiB.
+
+If the canonical assistant message still contains a tool call or
+provider-executed result, the raw history must match its ID, name, semantic
+input or result, multiplicity, and occurrence order. A duplicate, reorder, or
+mismatch fails before the network request. If compaction intentionally removes
+the complete canonical projection, structurally valid raw-only history can
+still be replayed where the provider requires it. More generally, the runtime
+can verify only that the corresponding canonical projection is absent; it
+cannot authenticate why it is absent.
+
 ## Custom provider registration
 
 For providers not covered by env vars, use `registerModelProvider()`:
@@ -217,6 +237,37 @@ agent({ model: "ollama/llama3.2" });
 The factory receives the model ID and must return a framework-compatible model
 runtime with the generation surface the framework expects, including
 `doGenerate()` and `doStream()`.
+
+Custom runtimes sit on a validation boundary. Generation hooks receive
+`ModelRuntimeCallOptions`, including an immutable prompt view and the caller's
+`abortSignal`; implementations should stop transport and model work promptly
+when that signal aborts. Direct responses and stream events must expose known
+fields as own data properties. A stream must emit exactly one terminal
+`finish` or `error` event and no events after it.
+
+Structured tool input must be ordinary JSON-compatible data: finite numbers,
+strings, booleans, null, arrays, and plain or null-prototype objects. Array
+holes normalize to JSON `null`; populated elements must be own enumerable data
+properties.
+Accessors, symbol or non-enumerable properties, functions, `bigint`, class
+instances, custom `toJSON`, cycles, and non-finite numbers fail closed. Raw
+JSON strings retain their exact formatting. The bridge limits one request to
+128 tool calls, 1 MiB per call, 8 MiB in aggregate, and 4,096 streamed deltas
+per call. It also limits a direct response to 65,536 content parts and 8 MiB of
+aggregate text, and limits the system prompt to 1,024 segments and 1,048,576
+UTF-16 code units.
+
+Return usage in the flat `RuntimeUsage` shape whenever possible. Compatibility
+normalization also accepts AI SDK provider-v3 nested
+`inputTokens.{total,cacheRead,cacheWrite}` and
+`outputTokens.{total,reasoning}` fields, plus AI SDK v6
+`inputTokenDetails.{cacheReadTokens,cacheWriteTokens}` and
+`outputTokenDetails.reasoningTokens`. Only non-negative safe-integer token
+counters from own data properties participate. Invalid counters and inherited
+fields are omitted; a known accessor or failed reflection causes the untrusted
+usage record to be discarded. Normalized usage is a data-only record and may
+have a null prototype, so use `Object.hasOwn(usage, field)` instead of calling
+Object instance methods on it.
 
 Register application-wide defaults during bootstrap, outside a project request
 or source context. The default is then visible in every project, while a

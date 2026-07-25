@@ -9,7 +9,11 @@
  */
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
-import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
+import type {
+  EmbeddingRuntime,
+  ModelRuntime,
+  RuntimeAssistantContentPart,
+} from "veryfront/provider/types";
 import {
   buildProviderError,
   createOpenAIRequestInit,
@@ -1021,7 +1025,7 @@ function createCancelableOpenAIProviderStream(
 export function createOpenAIModelRuntime(
   config: OpenAIRuntimeConfig,
   modelId: string,
-): ModelRuntime {
+): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   const fetchImpl = config.fetch ?? globalThis.fetch;
   const providerLabel = getOpenAIProviderLabel(config);
   const providerName = getRuntimeOpenAIProviderName(config);
@@ -1032,8 +1036,7 @@ export function createOpenAIModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
-    doGenerate(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIChatCompletionsUrl(config.baseURL);
       const warnings = createWarningCollector();
       const body = buildOpenAIChatRequest(
@@ -1062,8 +1065,7 @@ export function createOpenAIModelRuntime(
         };
       });
     },
-    async doStream(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    async doStream(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIChatCompletionsUrl(config.baseURL);
       const warnings = createWarningCollector();
       const body = buildOpenAIChatRequest(
@@ -1109,7 +1111,7 @@ export function createOpenAIModelRuntime(
 export function createOpenAIResponsesRuntime(
   config: OpenAIRuntimeConfig,
   modelId: string,
-): ModelRuntime {
+): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   const fetchImpl = config.fetch ?? globalThis.fetch;
   const providerLabel = getOpenAIProviderLabel(config);
   const providerName = getRuntimeOpenAIProviderName(config);
@@ -1120,8 +1122,7 @@ export function createOpenAIResponsesRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
-    doGenerate(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIResponsesUrl(config.baseURL);
       const warnings = createWarningCollector();
       const body = buildOpenAIResponsesRequest(
@@ -1155,8 +1156,7 @@ export function createOpenAIResponsesRuntime(
         };
       });
     },
-    async doStream(optionsForRuntime: unknown) {
-      const options = optionsForRuntime as OpenAICompatibleLanguageOptions;
+    async doStream(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIResponsesUrl(config.baseURL);
       const warnings = createWarningCollector();
       const body = buildOpenAIResponsesRequest(
@@ -1204,7 +1204,7 @@ export function createOpenAIResponsesRuntime(
   };
 }
 
-function requestUsesOpenAIHostedTool(optionsForRuntime: unknown): boolean {
+function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguageOptions): boolean {
   const options = readRecord(optionsForRuntime);
   if (!options || options.tools === undefined) return false;
   if (!Array.isArray(options.tools)) {
@@ -1216,17 +1216,17 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: unknown): boolean {
 }
 
 function createOpenAIAdaptiveModelRuntime(
-  chatRuntime: ModelRuntime,
-  responsesRuntime: ModelRuntime,
-): ModelRuntime {
+  chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+  responsesRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   return {
     ...chatRuntime,
-    doGenerate(optionsForRuntime: unknown) {
+    doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
       return requestUsesOpenAIHostedTool(optionsForRuntime)
         ? responsesRuntime.doGenerate(optionsForRuntime)
         : chatRuntime.doGenerate(optionsForRuntime);
     },
-    doStream(optionsForRuntime: unknown) {
+    doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
       return requestUsesOpenAIHostedTool(optionsForRuntime)
         ? responsesRuntime.doStream(optionsForRuntime)
         : chatRuntime.doStream(optionsForRuntime);
@@ -1285,7 +1285,10 @@ export function createOpenAIEmbeddingRuntime(
 export class OpenAIProvider implements LLMProvider {
   readonly id = "openai";
 
-  createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
+  createModel(
+    modelId: string,
+    config: LLMProviderConfig,
+  ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
     const providerLabel = getOpenAIProviderLabel(config);
     const providerName = getLLMOpenAIProviderName(config);
     const runtimeConfig: OpenAIRuntimeConfig = {
@@ -1322,7 +1325,10 @@ export class OpenAIProvider implements LLMProvider {
     );
   }
 
-  createResponses(modelId: string, config: LLMProviderConfig): ModelRuntime {
+  createResponses(
+    modelId: string,
+    config: LLMProviderConfig,
+  ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
     return createOpenAIResponsesRuntime(
       {
         apiKey: config.credential,

@@ -212,6 +212,8 @@ describe("ext-llm-openai/openai-web-search", () => {
           ),
         },
         { type: "open_page", url: "https://user:secret@example.test/" },
+        { type: "open_page", url: "https://example.test/\u0000path" },
+        { type: "open_page", url: "https://example.test/\u007Fpath" },
         {
           type: "find_in_page",
           url: "https://example.test/",
@@ -287,6 +289,35 @@ describe("ext-llm-openai/openai-web-search", () => {
     ];
     const metadata = createOpenAIRawResponseMetadata(rawItems);
     assertEquals(readOpenAIRawResponseOutputItems(metadata), rawItems);
+    rawItems[0]!.action = { type: "search", query: "mutated" };
+    rawItems.push({
+      id: "ws_2",
+      type: "web_search_call",
+      status: "completed",
+      action: { type: "search", query: "later mutation" },
+    });
+    assertEquals(readOpenAIRawResponseOutputItems(metadata), [{
+      id: "ws_1",
+      type: "web_search_call",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    }, {
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{
+        type: "output_text",
+        text: "Result",
+        annotations: [{
+          type: "url_citation",
+          start_index: 0,
+          end_index: 6,
+          url: "https://example.test/",
+          title: "Example",
+        }],
+      }],
+    }]);
     assertEquals(
       readOpenAIRawResponseOutputItems({
         openai: { responseId: "resp_legacy" },
@@ -396,5 +427,96 @@ describe("ext-llm-openai/openai-web-search", () => {
       TypeError,
       "item was malformed",
     );
+  });
+
+  it("rejects replay metadata accessors and serialization hooks without invoking them", () => {
+    let accessorReads = 0;
+    const hostileAction = Object.defineProperty(
+      { type: "search" },
+      "query",
+      {
+        enumerable: true,
+        get() {
+          accessorReads += 1;
+          throw new Error("private metadata diagnostic");
+        },
+      },
+    );
+    const accessorError = assertThrows(
+      () =>
+        createOpenAIRawResponseMetadata([{
+          id: "ws_accessor",
+          type: "web_search_call",
+          status: "completed",
+          action: hostileAction,
+        }]),
+      TypeError,
+      "OpenAI raw response metadata was not valid bounded JSON",
+    );
+    assertEquals(accessorReads, 0);
+    assertEquals(accessorError.message.includes("private metadata diagnostic"), false);
+
+    let serializationHookCalls = 0;
+    const hookError = assertThrows(
+      () =>
+        createOpenAIRawResponseMetadata([{
+          id: "ws_to_json",
+          type: "web_search_call",
+          status: "completed",
+          action: {
+            type: "search",
+            query: "Veryfront",
+            toJSON() {
+              serializationHookCalls += 1;
+              return { type: "search", query: "changed" };
+            },
+          },
+        }]),
+      TypeError,
+      "OpenAI raw response metadata was not valid bounded JSON",
+    );
+    assertEquals(serializationHookCalls, 0);
+    assertEquals(hookError.cause, undefined);
+
+    let namespaceReads = 0;
+    const providerMetadata = Object.defineProperty({}, "openai", {
+      enumerable: true,
+      get() {
+        namespaceReads += 1;
+        throw new Error("private namespace diagnostic");
+      },
+    }) as Record<string, unknown>;
+    const namespaceError = assertThrows(
+      () => readOpenAIRawResponseOutputItems(providerMetadata),
+      TypeError,
+      "OpenAI provider metadata was malformed",
+    );
+    assertEquals(namespaceReads, 0);
+    assertEquals(namespaceError.message.includes("private namespace diagnostic"), false);
+
+    let proxyPropertyReads = 0;
+    const proxiedItems = new Proxy([{
+      id: "ws_proxy",
+      type: "web_search_call",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    }], {
+      get() {
+        proxyPropertyReads += 1;
+        throw new Error("proxy property read");
+      },
+    });
+    assertEquals(
+      readOpenAIRawResponseOutputItems({
+        openai: { rawResponseOutputItems: proxiedItems },
+      }),
+      [{
+        id: "ws_proxy",
+        type: "web_search_call",
+        status: "completed",
+        action: { type: "search", query: "Veryfront" },
+      }],
+    );
+    assertEquals(proxyPropertyReads, 0);
   });
 });

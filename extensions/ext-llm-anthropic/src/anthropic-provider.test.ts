@@ -44,6 +44,45 @@ function readRequestHeader(init: RequestInit | undefined, name: string): string 
   return new Headers(init.headers).get(name);
 }
 
+function createSettledLegacyMcpPrompt(toolCallId: string) {
+  return [{
+    role: "user",
+    content: [{ type: "text", text: "Echo" }],
+  }, {
+    role: "assistant",
+    content: [],
+    providerToolCalls: [{
+      toolCallId,
+      toolName: "echo",
+      input: { value: "hello" },
+    }],
+    providerMetadata: {
+      anthropic: {
+        rawAssistantMessages: [[{
+          type: "mcp_tool_use",
+          id: toolCallId,
+          name: "echo",
+          server_name: "example-mcp",
+          input: { value: "hello" },
+        }]],
+      },
+    },
+  }, {
+    role: "assistant",
+    content: [{ type: "text", text: "Completed." }],
+    providerMetadata: {
+      anthropic: {
+        rawAssistantMessages: [[{
+          type: "mcp_tool_result",
+          tool_use_id: toolCallId,
+          is_error: false,
+          content: "hello",
+        }]],
+      },
+    },
+  }] as const;
+}
+
 describe("anthropic-provider", () => {
   it("creates an Anthropic-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
@@ -333,6 +372,22 @@ describe("anthropic-provider", () => {
   });
 
   it("normalizes direct code-execution calls and results as provider-executed", async () => {
+    const rawContent = [{
+      type: "server_tool_use",
+      id: "srvtool_code_direct",
+      name: "code_execution",
+      input: { code: "print(2)" },
+    }, {
+      type: "code_execution_tool_result",
+      tool_use_id: "srvtool_code_direct",
+      content: {
+        type: "code_execution_result",
+        stdout: "2\n",
+        stderr: "",
+        return_code: 0,
+        content: [{ type: "code_execution_output", file_id: "file_result" }],
+      },
+    }];
     const runtime = createAnthropicModelRuntime({
       apiKey: "k",
       baseURL: "https://example.anthropic.test/v1",
@@ -340,22 +395,7 @@ describe("anthropic-provider", () => {
         Promise.resolve(
           new Response(
             JSON.stringify({
-              content: [{
-                type: "server_tool_use",
-                id: "srvtool_code_direct",
-                name: "code_execution",
-                input: { code: "print(2)" },
-              }, {
-                type: "code_execution_tool_result",
-                tool_use_id: "srvtool_code_direct",
-                content: {
-                  type: "code_execution_result",
-                  stdout: "2\n",
-                  stderr: "",
-                  return_code: 0,
-                  content: [{ type: "code_execution_output", file_id: "file_result" }],
-                },
-              }],
+              content: rawContent,
               stop_reason: "end_turn",
             }),
             { status: 200, headers: { "content-type": "application/json" } },
@@ -385,6 +425,9 @@ describe("anthropic-provider", () => {
       },
       providerExecuted: true,
     }]);
+    assertEquals(result.providerMetadata, {
+      anthropic: { rawAssistantMessages: [rawContent] },
+    });
   });
 
   it("omits malformed Anthropic usage counters", async () => {
@@ -633,6 +676,26 @@ describe("anthropic-provider", () => {
         providerExecuted: true,
       }, { type: "text", text: "Search completed." }],
       finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_pause_direct",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }], [{
+            type: "web_search_tool_result",
+            tool_use_id: "srvtool_pause_direct",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              page_age: null,
+              encrypted_content: "opaque",
+            }],
+          }, { type: "text", text: "Search completed." }]],
+        },
+      },
       usage: { inputTokens: 17, outputTokens: 6, totalTokens: 23 },
     });
   });
@@ -692,6 +755,344 @@ describe("anthropic-provider", () => {
       result: [{ type: "text", text: "hello", citations: null }],
       providerExecuted: true,
     }, { type: "text", text: "MCP completed." }]);
+  });
+
+  it("correlates a direct provider result with a canonical call from a prior invocation", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_cross_invocation_direct",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "hello" },
+    }];
+    const rawProviderResult = [{
+      type: "mcp_tool_result",
+      tool_use_id: "mcptool_cross_invocation_direct",
+      is_error: false,
+      content: [{ type: "text", text: "hello", citations: null }],
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: rawProviderResult,
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Echo" }],
+      }, {
+        role: "assistant",
+        content: [],
+        providerToolCalls: [{
+          toolCallId: "mcptool_cross_invocation_direct",
+          toolName: "echo",
+          input: { value: "hello" },
+          supportsDeferredResults: true,
+        }],
+        providerMetadata: {
+          anthropic: { rawAssistantMessages: [rawProviderCall] },
+        },
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestCount, 1);
+    assertEquals(result, {
+      content: [{
+        type: "tool-result",
+        toolCallId: "mcptool_cross_invocation_direct",
+        toolName: "echo",
+        result: [{ type: "text", text: "hello", citations: null }],
+        providerExecuted: true,
+      }],
+      finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: { rawAssistantMessages: [rawProviderResult] },
+      },
+    });
+  });
+
+  it("does not seed response correlation from raw-only provider history", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_raw_only",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "hello" },
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "mcp_tool_result",
+                tool_use_id: "mcptool_raw_only",
+                is_error: false,
+                content: "hello",
+              }],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Echo" }],
+          }, {
+            role: "assistant",
+            content: [],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [rawProviderCall] },
+            },
+          }],
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("does not seed direct correlation after a validated raw-only result settled the call", async () => {
+    const toolCallId = "mcptool_settled_direct";
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "mcp_tool_result",
+                tool_use_id: toolCallId,
+                is_error: false,
+                content: "duplicate",
+              }],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: createSettledLegacyMcpPrompt(toolCallId),
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("does not seed streamed correlation after a validated raw-only result settled the call", async () => {
+    const toolCallId = "mcptool_settled_stream";
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: {
+                    type: "mcp_tool_result",
+                    tool_use_id: toolCallId,
+                    is_error: false,
+                    content: "duplicate",
+                  },
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: createSettledLegacyMcpPrompt(toolCallId),
+      maxOutputTokens: 64,
+    });
+    await assertRejects(
+      () => collectAsync(result.stream),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("does not reuse a provider call across a later user boundary", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_stale_reused",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "old" },
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "mcp_tool_result",
+                tool_use_id: "mcptool_stale_reused",
+                is_error: false,
+                content: "stale",
+              }],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "First turn" }],
+          }, {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "mcptool_stale_reused",
+              toolName: "echo",
+              input: { value: "old" },
+              providerExecuted: true,
+            }],
+            providerToolCalls: [{
+              toolCallId: "mcptool_stale_reused",
+              toolName: "echo",
+              input: { value: "old" },
+            }],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [rawProviderCall] },
+            },
+          }, {
+            role: "user",
+            content: [{ type: "text", text: "Start a new turn" }],
+          }, {
+            role: "assistant",
+            content: [],
+            providerToolCalls: [{
+              toolCallId: "mcptool_stale_reused",
+              toolName: "echo",
+              input: { value: "new" },
+            }],
+          }],
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("bounds canonical provider-call correlation state before transport", async () => {
+    const createRawProviderCalls = (offset: number, length: number) =>
+      Array.from({ length }, (_, index) => ({
+        type: "mcp_tool_use",
+        id: `mcptool_${offset + index}`,
+        name: "echo",
+        server_name: "example-mcp",
+        input: { value: offset + index },
+      }));
+    const firstRawProviderCalls = createRawProviderCalls(0, 2_049);
+    const secondRawProviderCalls = createRawProviderCalls(2_049, 2_048);
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        throw new Error("fetch must not be called");
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Echo" }],
+          }, {
+            role: "assistant",
+            content: [],
+            providerToolCalls: firstRawProviderCalls.map((call) => ({
+              toolCallId: call.id,
+              toolName: call.name,
+              input: call.input,
+            })),
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [firstRawProviderCalls] },
+            },
+          }, {
+            role: "assistant",
+            content: [],
+            providerToolCalls: secondRawProviderCalls.map((call) => ({
+              toolCallId: call.id,
+              toolName: call.name,
+              input: call.input,
+            })),
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [secondRawProviderCalls] },
+            },
+          }],
+          maxOutputTokens: 64,
+        }),
+      TypeError,
+      "exceeded 4096 outstanding calls",
+    );
+    assertEquals(requestCount, 0);
   });
 
   it("continues streamed pause_turn responses and emits one cumulative finish", async () => {
@@ -781,6 +1182,26 @@ describe("anthropic-provider", () => {
     assertEquals(finishes, [{
       type: "finish",
       finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_pause_stream",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }], [{
+            type: "web_search_tool_result",
+            tool_use_id: "srvtool_pause_stream",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              page_age: null,
+              encrypted_content: "opaque",
+            }],
+          }, { type: "text", text: "Search completed." }]],
+        },
+      },
       usage: { inputTokens: 17, outputTokens: 6, totalTokens: 23 },
     }]);
   });
@@ -837,6 +1258,83 @@ describe("anthropic-provider", () => {
       result: "hello",
       providerExecuted: true,
     });
+  });
+
+  it("correlates a streamed provider result with a canonical call from a prior invocation", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_cross_invocation_stream",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "hello" },
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+              'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptool_cross_invocation_stream","is_error":false,"content":"hello"}}\n\n',
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Echo" }],
+      }, {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "mcptool_cross_invocation_stream",
+          toolName: "echo",
+          input: { value: "hello" },
+          providerExecuted: true,
+          supportsDeferredResults: true,
+        }],
+        providerMetadata: {
+          anthropic: { rawAssistantMessages: [rawProviderCall] },
+        },
+      }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+
+    assertEquals(requestCount, 1);
+    assertEquals(parts, [{
+      type: "tool-result",
+      toolCallId: "mcptool_cross_invocation_stream",
+      toolName: "echo",
+      result: "hello",
+      providerExecuted: true,
+    }, {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "mcp_tool_result",
+            tool_use_id: "mcptool_cross_invocation_stream",
+            is_error: false,
+            content: "hello",
+          }]],
+        },
+      },
+    }]);
   });
 
   it("aborts an in-flight pause_turn continuation without blocking on delayed cleanup", async () => {
@@ -1737,6 +2235,26 @@ describe("anthropic-provider", () => {
       {
         type: "finish",
         finishReason: { unified: "stop", raw: "end_turn" },
+        providerMetadata: {
+          anthropic: {
+            rawAssistantMessages: [[{
+              type: "server_tool_use",
+              id: "srvtool_web_1",
+              name: "web_search",
+              input: { query: "Veryfront" },
+            }, {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtool_web_1",
+              content: [{
+                type: "web_search_result",
+                url: "https://veryfront.com",
+                title: "Veryfront",
+                page_age: null,
+                encrypted_content: "opaque",
+              }],
+            }]],
+          },
+        },
         usage: {
           inputTokens: 8,
           outputTokens: 5,
@@ -1852,6 +2370,33 @@ describe("anthropic-provider", () => {
         providerExecuted: true,
       }],
       finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_fetch_1",
+            name: "web_fetch",
+            input: { url: "https://veryfront.com/docs" },
+          }, {
+            type: "web_fetch_tool_result",
+            tool_use_id: "srvtool_fetch_1",
+            content: {
+              type: "web_fetch_result",
+              url: "https://veryfront.com/docs",
+              content: {
+                type: "document",
+                source: {
+                  type: "text",
+                  media_type: "text/plain",
+                  data: "Veryfront docs",
+                },
+                title: "Docs",
+              },
+              retrieved_at: null,
+            },
+          }]],
+        },
+      },
       usage: {
         inputTokens: 12,
         outputTokens: 7,
@@ -1982,6 +2527,32 @@ describe("anthropic-provider", () => {
     assertEquals(parts[5], {
       type: "finish",
       finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_fetch_2",
+            name: "web_fetch",
+            input: { url: "https://veryfront.com/docs" },
+          }, {
+            type: "web_fetch_tool_result",
+            tool_use_id: "srvtool_fetch_2",
+            content: {
+              type: "web_fetch_result",
+              url: "https://veryfront.com/docs",
+              content: {
+                type: "document",
+                source: {
+                  type: "text",
+                  media_type: "text/plain",
+                  data: "Veryfront docs",
+                },
+              },
+              retrieved_at: null,
+            },
+          }]],
+        },
+      },
       usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 },
     });
   });
@@ -2306,9 +2877,21 @@ describe("anthropic-provider", () => {
       return getBody();
     }
 
-    it("defaults Opus 4.6 to 128k when caller omits maxOutputTokens", async () => {
-      const body = await generateWith("claude-opus-4-6");
-      assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
+    it("defaults Opus 4.8, 4.7, and 4.6 to 128k when caller omits maxOutputTokens", async () => {
+      for (
+        const modelId of [
+          "claude-opus-4-8",
+          "claude-opus-4-7",
+          "claude-opus-4-6",
+        ]
+      ) {
+        const body = await generateWith(modelId);
+        assertEquals(
+          (body as { max_tokens: number }).max_tokens,
+          128_000,
+          `expected 128k for ${modelId}`,
+        );
+      }
     });
 
     it("defaults Sonnet 4.6 to 64k when caller omits maxOutputTokens", async () => {
@@ -2328,8 +2911,19 @@ describe("anthropic-provider", () => {
     });
 
     it("clamps caller-provided maxOutputTokens at the model ceiling for known models", async () => {
-      const body = await generateWith("claude-sonnet-4-6", 999_999);
-      assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
+      for (
+        const [modelId, expected] of [
+          ["claude-opus-4-8", 128_000],
+          ["claude-sonnet-4-6", 64_000],
+        ] as const
+      ) {
+        const body = await generateWith(modelId, 999_999);
+        assertEquals(
+          (body as { max_tokens: number }).max_tokens,
+          expected,
+          `expected ${expected} for ${modelId}`,
+        );
+      }
     });
 
     it("passes through maxOutputTokens unchanged for unknown models", async () => {

@@ -7,6 +7,7 @@ import {
   MAX_GOOGLE_SSE_CHUNK_BYTES,
   streamGoogleCompatibleParts,
 } from "./google-stream.ts";
+import { buildGoogleGenerateContentRequest } from "./google-request-builder.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -39,6 +40,24 @@ async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown
 
 function data(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\r\n\r\n`;
+}
+
+function createWarningCollector() {
+  const warnings: Array<{
+    type: "unsupported-setting" | "other";
+    setting?: string;
+    details?: string;
+    provider: string;
+  }> = [];
+
+  return {
+    push(warning: (typeof warnings)[number]) {
+      warnings.push(warning);
+    },
+    drain() {
+      return warnings.slice();
+    },
+  };
 }
 
 describe("ext-llm-google/google-stream", () => {
@@ -299,6 +318,148 @@ describe("ext-llm-google/google-stream", () => {
         },
       },
     ]);
+  });
+
+  it("keeps anonymous function ids stable from stream output through exact continuation replay", async () => {
+    const signedThought = {
+      text: "Think",
+      thought: true,
+      thoughtSignature: "thought-signature",
+    };
+    const anonymousFunctionCall = {
+      functionCall: {
+        name: "lookup",
+        args: { city: "Paris" },
+      },
+    };
+    const executableCode = {
+      executableCode: {
+        id: "tool-2",
+        language: "PYTHON",
+        code: "print('ok')",
+      },
+    };
+    const executionResult = {
+      codeExecutionResult: {
+        id: "tool-2",
+        outcome: "OUTCOME_OK",
+        output: "ok\n",
+      },
+    };
+    const rawAssistantParts = [
+      signedThought,
+      anonymousFunctionCall,
+      executableCode,
+      executionResult,
+    ];
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{
+          content: { role: "model", parts: rawAssistantParts },
+          finishReason: "STOP",
+        }],
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(
+      parts.filter((part) =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "tool-call"
+      ),
+      [{
+        type: "tool-call",
+        toolCallId: "tool-1",
+        toolName: "lookup",
+        input: '{"city":"Paris"}',
+      }, {
+        type: "tool-call",
+        toolCallId: "tool-2",
+        toolName: "code_execution",
+        input: '{"language":"PYTHON","code":"print(\'ok\')"}',
+        providerExecuted: true,
+      }],
+    );
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "STOP" },
+      providerMetadata: {
+        google: { rawAssistantParts },
+      },
+    });
+
+    const continuation = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "reasoning",
+            text: "Think",
+          }, {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "lookup",
+            input: { city: "Paris" },
+          }, {
+            type: "tool-call",
+            toolCallId: "tool-2",
+            toolName: "code_execution",
+            input: { language: "PYTHON", code: "print('ok')" },
+            providerExecuted: true,
+          }, {
+            type: "tool-result",
+            toolCallId: "tool-2",
+            toolName: "code_execution",
+            result: { outcome: "OUTCOME_OK", output: "ok\n" },
+            providerExecuted: true,
+          }],
+          providerMetadata: {
+            google: { rawAssistantParts },
+          },
+        }],
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(continuation.contents, [{
+      role: "model",
+      parts: rawAssistantParts,
+    }]);
+  });
+
+  it("rejects a provider id that collides with an anonymous raw-position id", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          candidates: [{
+            content: {
+              role: "model",
+              parts: [{
+                text: "Think",
+                thought: true,
+                thoughtSignature: "thought-signature",
+              }, {
+                functionCall: {
+                  name: "lookup",
+                  args: { city: "Paris" },
+                },
+              }, {
+                executableCode: {
+                  id: "tool-1",
+                  language: "PYTHON",
+                  code: "print('collision')",
+                },
+              }],
+            },
+            finishReason: "STOP",
+          }],
+        }))),
+      ProviderRequestError,
+      "candidate executable code id was duplicated",
+    );
   });
 
   it("retains an empty final text part carrying a thought signature", async () => {

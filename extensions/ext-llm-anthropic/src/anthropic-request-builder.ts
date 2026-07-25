@@ -1,15 +1,35 @@
 import {
+  jsonValuesEqual,
   readProviderOptions,
+  readRecord,
   stringifyJsonValue,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import type {
+  ModelRuntimeCallOptions,
+  ModelRuntimePromptMessage,
+  ModelRuntimeToolDefinition,
+  RuntimeReasoningOption,
+} from "veryfront/provider/shared";
 import {
   type AnthropicMcpRequestConfiguration,
   assertAnthropicMcpRequestContract,
   normalizeAnthropicMcpServers,
   normalizeAnthropicMcpToolsetArgs,
 } from "./anthropic-mcp-request.ts";
+import {
+  type AnthropicProviderToolNameRegistry,
+  type AnthropicProviderToolUse,
+  type AnthropicServerToolResult,
+  AnthropicServerToolResultError,
+  isAnthropicProviderToolResultBlockType,
+  MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS,
+  MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
+  parseAnthropicProviderToolUse,
+  parseAnthropicServerToolResult,
+  snapshotAnthropicRawAssistantMetadata,
+  validateAnthropicRawAssistantMessages,
+} from "./anthropic-native-content.ts";
 
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
@@ -18,68 +38,14 @@ type ProviderCacheControlOption = {
   tools?: ProviderCacheTtl;
 };
 
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
-
-export type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
-export type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
+export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   cacheControl?: ProviderCacheControlOption;
-  reasoning?: ProviderReasoningOption;
-  userId?: string;
-  requestLabels?: Record<string, string>;
-  serviceTier?: "auto" | "default" | "flex" | "scale";
-  parallelToolCalls?: boolean;
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
   anthropicContainer?: unknown;
-  googleCachedContent?: string;
-  googleSafetySettings?: Array<{
-    category: string;
-    threshold: string;
-  }>;
-  mcpServers?: Array<Record<string, unknown>>;
-};
+  mcpServers?: readonly Record<string, unknown>[];
+}
+
+/** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider` instead. */
+export type RuntimeToolDefinition = ModelRuntimeToolDefinition;
 
 type WarningCollector = {
   push(warning: {
@@ -152,28 +118,578 @@ function pushAnthropicUserContent(
   });
 }
 
-function readAnthropicRawAssistantMessages(
-  message: Extract<RuntimePromptMessage, { role: "assistant" }>,
-): Array<Array<Record<string, unknown>>> | undefined {
+function readOwnAnthropicMetadataProperty(
+  value: object,
+  key: "anthropic" | "rawAssistantMessages",
+  malformedMessage: string,
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    throw new TypeError(malformedMessage);
+  }
+  if (descriptor === undefined) return undefined;
+  if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError(malformedMessage);
+  }
+  return descriptor.value;
+}
+
+function readAnthropicRawAssistantMessagesValue(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+): unknown[] | undefined {
   const metadata = message.providerMetadata;
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
-  const anthropic = metadata.anthropic;
-  if (!anthropic || typeof anthropic !== "object" || Array.isArray(anthropic)) return undefined;
-  const rawAssistantMessages = (anthropic as Record<string, unknown>).rawAssistantMessages;
-  if (!Array.isArray(rawAssistantMessages) || rawAssistantMessages.length === 0) return undefined;
+  if (metadata === undefined) return undefined;
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new TypeError("Anthropic provider metadata must be an object");
+  }
+  const anthropic = readOwnAnthropicMetadataProperty(
+    metadata,
+    "anthropic",
+    "Anthropic provider metadata namespace must be an enumerable data property",
+  );
+  if (anthropic === undefined) return undefined;
+  if (anthropic === null || typeof anthropic !== "object" || Array.isArray(anthropic)) {
+    throw new TypeError("Anthropic provider metadata namespace must be an object");
+  }
+  const rawAssistantMessages = readOwnAnthropicMetadataProperty(
+    anthropic,
+    "rawAssistantMessages",
+    "Anthropic raw assistant messages must be an enumerable data property",
+  );
+  if (rawAssistantMessages === undefined) return undefined;
+  const snapshot = snapshotAnthropicRawAssistantMetadata(rawAssistantMessages);
+  if (!Array.isArray(snapshot) || snapshot.length === 0) {
+    throw new TypeError("Anthropic raw assistant messages must be a non-empty array");
+  }
+  return snapshot;
+}
+
+type CanonicalProviderCall = {
+  id: string;
+  name: string;
+  input: unknown;
+};
+
+type CanonicalProviderResult = {
+  id: string;
+  name: string;
+  result: unknown;
+  isError: boolean;
+};
+
+type AnthropicToolEventKind =
+  | "client-call"
+  | "provider-call"
+  | "provider-result";
+
+type AnthropicToolEvent = {
+  kind: AnthropicToolEventKind;
+  id: string;
+};
+
+type ValidatedAnthropicReplay = {
+  messages: Array<Array<Record<string, unknown>>>;
+  nextProviderToolNamesById: AnthropicProviderToolNameRegistry;
+  nextCanonicalProviderToolNamesById: AnthropicProviderToolNameRegistry;
+};
+
+const MAX_ANTHROPIC_OUTSTANDING_PROVIDER_TOOL_CALLS = MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS;
+
+function assertBoundedAnthropicProviderToolState(
+  providerToolNamesById: ReadonlyMap<string, string>,
+): void {
   if (
-    !rawAssistantMessages.every((content) =>
-      Array.isArray(content) &&
-      content.every((block) => block !== null && typeof block === "object" && !Array.isArray(block))
+    providerToolNamesById.size >
+      MAX_ANTHROPIC_OUTSTANDING_PROVIDER_TOOL_CALLS
+  ) {
+    throw new TypeError(
+      `Anthropic provider tool correlation exceeded ${MAX_ANTHROPIC_OUTSTANDING_PROVIDER_TOOL_CALLS} outstanding calls`,
+    );
+  }
+}
+
+function invalidAnthropicClientCallHistory(): TypeError {
+  return new TypeError(
+    "Anthropic raw client tool call does not match canonical client-executed content",
+  );
+}
+
+function invalidAnthropicProviderCallHistory(): TypeError {
+  return new TypeError(
+    "Anthropic raw provider tool call does not match canonical provider-executed content",
+  );
+}
+
+function invalidAnthropicProviderResultHistory(): TypeError {
+  return new TypeError(
+    "Anthropic raw provider tool result does not match canonical provider-executed content",
+  );
+}
+
+function invalidAnthropicToolEventOrder(): TypeError {
+  return new TypeError(
+    "Anthropic raw tool event order does not match canonical assistant content",
+  );
+}
+
+function anthropicCallsEqual(
+  left: CanonicalProviderCall,
+  right: CanonicalProviderCall,
+): boolean {
+  return left.id === right.id &&
+    left.name === right.name &&
+    jsonValuesEqual(left.input, right.input, true);
+}
+
+function orderedAnthropicCallsEqual(
+  left: readonly CanonicalProviderCall[],
+  right: readonly CanonicalProviderCall[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftCall = left[index];
+    const rightCall = right[index];
+    if (!leftCall || !rightCall || !anthropicCallsEqual(leftCall, rightCall)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function rejectDuplicateAnthropicCallIds(
+  calls: readonly CanonicalProviderCall[],
+  invalid: () => TypeError,
+): void {
+  const ids = new Set<string>();
+  for (const call of calls) {
+    if (ids.has(call.id)) throw invalid();
+    ids.add(call.id);
+  }
+}
+
+function survivingAnthropicToolEvents(
+  events: readonly AnthropicToolEvent[],
+  activeKinds: ReadonlySet<AnthropicToolEventKind>,
+): AnthropicToolEvent[] {
+  const surviving: AnthropicToolEvent[] = [];
+  for (const event of events) {
+    if (activeKinds.has(event.kind)) surviving.push(event);
+  }
+  return surviving;
+}
+
+function orderedAnthropicToolEventsEqual(
+  left: readonly AnthropicToolEvent[],
+  right: readonly AnthropicToolEvent[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftEvent = left[index];
+    const rightEvent = right[index];
+    if (
+      !leftEvent ||
+      !rightEvent ||
+      leftEvent.kind !== rightEvent.kind ||
+      leftEvent.id !== rightEvent.id
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function anthropicProviderResultsEqual(left: unknown, right: unknown): boolean {
+  if (
+    left instanceof AnthropicServerToolResultError ||
+    right instanceof AnthropicServerToolResultError
+  ) {
+    return left instanceof AnthropicServerToolResultError &&
+      right instanceof AnthropicServerToolResultError &&
+      left.code === right.code &&
+      left.toolCallId === right.toolCallId &&
+      left.toolName === right.toolName &&
+      left.detail === right.detail;
+  }
+  return jsonValuesEqual(left, right);
+}
+
+function validateAnthropicProviderReplay(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+  rawAssistantMessages: unknown,
+  currentProviderToolNamesById: AnthropicProviderToolNameRegistry,
+  currentCanonicalProviderToolNamesById: AnthropicProviderToolNameRegistry,
+): ValidatedAnthropicReplay {
+  const nextProviderToolNamesById = new Map(currentProviderToolNamesById);
+  const messages = validateAnthropicRawAssistantMessages(
+    rawAssistantMessages,
+    nextProviderToolNamesById,
+  );
+  assertBoundedAnthropicProviderToolState(nextProviderToolNamesById);
+  const replayProviderToolNamesById = new Map(currentProviderToolNamesById);
+  const rawClientCalls: CanonicalProviderCall[] = [];
+  const rawProviderCalls: AnthropicProviderToolUse[] = [];
+  const rawProviderResults: AnthropicServerToolResult[] = [];
+  const rawToolEvents: AnthropicToolEvent[] = [];
+  const rawToolCallIds = new Set(currentProviderToolNamesById.keys());
+
+  for (const content of messages) {
+    for (const block of content) {
+      if (block.type === "tool_use") {
+        const input = block.input === undefined ? {} : readRecord(block.input);
+        if (
+          typeof block.id !== "string" ||
+          block.id.length === 0 ||
+          typeof block.name !== "string" ||
+          block.name.length === 0 ||
+          !input ||
+          rawToolCallIds.has(block.id)
+        ) {
+          throw invalidAnthropicClientCallHistory();
+        }
+        rawToolCallIds.add(block.id);
+        rawClientCalls.push({
+          id: block.id,
+          name: block.name,
+          input,
+        });
+        rawToolEvents.push({ kind: "client-call", id: block.id });
+        continue;
+      }
+      const call = parseAnthropicProviderToolUse(block);
+      if (call) {
+        if (rawToolCallIds.has(call.toolCallId)) {
+          throw invalidAnthropicProviderCallHistory();
+        }
+        rawToolCallIds.add(call.toolCallId);
+        rawProviderCalls.push(call);
+        rawToolEvents.push({ kind: "provider-call", id: call.toolCallId });
+        replayProviderToolNamesById.set(call.toolCallId, call.toolName);
+        continue;
+      }
+      if (
+        typeof block.type !== "string" ||
+        !isAnthropicProviderToolResultBlockType(block.type)
+      ) {
+        continue;
+      }
+      const result = parseAnthropicServerToolResult(
+        block,
+        replayProviderToolNamesById,
+      );
+      if (!result) {
+        throw invalidAnthropicProviderResultHistory();
+      }
+      rawProviderResults.push(result);
+      rawToolEvents.push({ kind: "provider-result", id: result.toolCallId });
+      replayProviderToolNamesById.delete(result.toolCallId);
+    }
+  }
+
+  const providerToolCallProjection = (message.providerToolCalls ?? []).map((call) => ({
+    id: call.toolCallId,
+    name: call.toolName,
+    input: call.input,
+  }));
+  const contentToolCallProjection: CanonicalProviderCall[] = [];
+  const canonicalClientCalls: CanonicalProviderCall[] = [];
+  const canonicalResults: CanonicalProviderResult[] = [];
+  const contentToolEvents: AnthropicToolEvent[] = [];
+  const contentCallIds = new Set<string>();
+  const canonicalResultIds = new Set<string>();
+
+  rejectDuplicateAnthropicCallIds(
+    providerToolCallProjection,
+    invalidAnthropicProviderCallHistory,
+  );
+  const providerToolCallIds = new Set(
+    providerToolCallProjection.map((call) => call.id),
+  );
+  for (const part of message.content) {
+    if (part.type === "tool-call") {
+      const call = {
+        id: part.toolCallId,
+        name: part.toolName,
+        input: part.input,
+      };
+      if (contentCallIds.has(call.id)) {
+        throw part.providerExecuted === true
+          ? invalidAnthropicProviderCallHistory()
+          : invalidAnthropicClientCallHistory();
+      }
+      contentCallIds.add(call.id);
+      if (part.providerExecuted === true) {
+        contentToolCallProjection.push(call);
+        contentToolEvents.push({ kind: "provider-call", id: call.id });
+      } else {
+        canonicalClientCalls.push(call);
+        contentToolEvents.push({ kind: "client-call", id: call.id });
+      }
+      continue;
+    }
+    if (part.type !== "tool-result") {
+      continue;
+    }
+    const result: CanonicalProviderResult = {
+      id: part.toolCallId,
+      name: part.toolName,
+      result: part.result,
+      isError: part.isError === true,
+    };
+    if (canonicalResultIds.has(result.id)) {
+      throw invalidAnthropicProviderResultHistory();
+    }
+    canonicalResultIds.add(result.id);
+    canonicalResults.push(result);
+    contentToolEvents.push({ kind: "provider-result", id: result.id });
+  }
+
+  for (const clientCall of canonicalClientCalls) {
+    if (providerToolCallIds.has(clientCall.id)) {
+      throw invalidAnthropicClientCallHistory();
+    }
+  }
+
+  if (
+    providerToolCallProjection.length > 0 &&
+    contentToolCallProjection.length > 0 &&
+    !orderedAnthropicCallsEqual(
+      providerToolCallProjection,
+      contentToolCallProjection,
     )
   ) {
-    return undefined;
+    throw invalidAnthropicProviderCallHistory();
   }
-  return rawAssistantMessages as Array<Array<Record<string, unknown>>>;
+  const canonicalProviderCalls = providerToolCallProjection.length > 0
+    ? providerToolCallProjection
+    : contentToolCallProjection;
+
+  // Provider-native tool_use blocks have an exact canonical representation.
+  // Correlate every surviving client projection by occurrence. When that
+  // projection is absent (for example, after compaction), retain structurally
+  // validated raw-only history for compatibility.
+  if (
+    canonicalClientCalls.length > 0 &&
+    !orderedAnthropicCallsEqual(rawClientCalls, canonicalClientCalls)
+  ) {
+    throw invalidAnthropicClientCallHistory();
+  }
+
+  // Old persisted history can retain provider-native raw content after its
+  // canonical provider-tool projection has been compacted. It remains safe to
+  // replay after structural validation only when no provider semantics survive.
+  if (
+    canonicalProviderCalls.length > 0 ||
+    canonicalResults.length > 0
+  ) {
+    if (
+      rawProviderCalls.length !== canonicalProviderCalls.length ||
+      rawProviderResults.length !== canonicalResults.length
+    ) {
+      if (rawProviderCalls.length !== canonicalProviderCalls.length) {
+        throw invalidAnthropicProviderCallHistory();
+      }
+      throw invalidAnthropicProviderResultHistory();
+    }
+
+    for (let index = 0; index < canonicalProviderCalls.length; index += 1) {
+      const raw = rawProviderCalls[index];
+      const canonical = canonicalProviderCalls[index];
+      if (
+        !raw ||
+        !canonical ||
+        raw.toolCallId !== canonical.id ||
+        raw.toolName !== canonical.name ||
+        !jsonValuesEqual(raw.input, canonical.input, true)
+      ) {
+        throw invalidAnthropicProviderCallHistory();
+      }
+    }
+
+    for (let index = 0; index < canonicalResults.length; index += 1) {
+      const raw = rawProviderResults[index];
+      const canonical = canonicalResults[index];
+      if (
+        !raw ||
+        !canonical ||
+        raw.toolCallId !== canonical.id ||
+        raw.toolName !== canonical.name ||
+        (raw.isError === true) !== canonical.isError ||
+        !anthropicProviderResultsEqual(raw.result, canonical.result)
+      ) {
+        throw invalidAnthropicProviderResultHistory();
+      }
+    }
+  }
+
+  // providerToolCalls is a message-level projection without positions relative
+  // to assistant content. For each event kind that survives in content, filter
+  // compacted kinds from the raw sequence and prove the complete observable
+  // interleaving, including provider results.
+  const activeContentEventKinds = new Set<AnthropicToolEventKind>();
+  if (canonicalClientCalls.length > 0) {
+    activeContentEventKinds.add("client-call");
+  }
+  if (contentToolCallProjection.length > 0) {
+    activeContentEventKinds.add("provider-call");
+  }
+  if (canonicalResults.length > 0) {
+    activeContentEventKinds.add("provider-result");
+  }
+  if (
+    !orderedAnthropicToolEventsEqual(
+      survivingAnthropicToolEvents(rawToolEvents, activeContentEventKinds),
+      survivingAnthropicToolEvents(contentToolEvents, activeContentEventKinds),
+    )
+  ) {
+    throw invalidAnthropicToolEventOrder();
+  }
+
+  const nextCanonicalProviderToolNamesById = new Map(
+    currentCanonicalProviderToolNamesById,
+  );
+  for (const call of canonicalProviderCalls) {
+    if (nextCanonicalProviderToolNamesById.has(call.id)) {
+      throw invalidAnthropicProviderCallHistory();
+    }
+    nextCanonicalProviderToolNamesById.set(call.id, call.name);
+  }
+  for (const result of canonicalResults) {
+    if (nextCanonicalProviderToolNamesById.get(result.id) !== result.name) {
+      throw invalidAnthropicProviderResultHistory();
+    }
+    nextCanonicalProviderToolNamesById.delete(result.id);
+  }
+  assertBoundedAnthropicProviderToolState(
+    nextCanonicalProviderToolNamesById,
+  );
+
+  return {
+    messages,
+    nextProviderToolNamesById,
+    nextCanonicalProviderToolNamesById,
+  };
+}
+
+function requiresExactAnthropicProviderReplay(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+): boolean {
+  return message.content.some((part) =>
+    part.type === "tool-result" ||
+    part.type === "tool-call" && part.providerExecuted === true
+  );
+}
+
+function shouldCompactAnthropicToolRound(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+  index: number,
+  lastHistoricalAssistantTextIndex: number,
+): boolean {
+  return index < lastHistoricalAssistantTextIndex &&
+    message.content.some((part) => part.type === "tool-call");
+}
+
+function connectAnthropicReplayIndices(
+  dependencies: Map<number, Set<number>>,
+  left: number,
+  right: number,
+): void {
+  if (left === right) return;
+  const leftDependencies = dependencies.get(left) ?? new Set<number>();
+  leftDependencies.add(right);
+  dependencies.set(left, leftDependencies);
+  const rightDependencies = dependencies.get(right) ?? new Set<number>();
+  rightDependencies.add(left);
+  dependencies.set(right, rightDependencies);
+}
+
+function planAnthropicRawAssistantReplay(
+  prompt: readonly ModelRuntimePromptMessage[],
+  rawAssistantMessagesByIndex: ReadonlyMap<number, unknown[]>,
+  lastUserIndex: number,
+  lastHistoricalAssistantTextIndex: number,
+): Set<number> {
+  const replayIndices = new Set<number>();
+  const dependencies = new Map<number, Set<number>>();
+  const pendingProviderCallIndexById = new Map<string, number>();
+
+  for (const [index, message] of prompt.entries()) {
+    if (message.role === "system" || message.role === "user") {
+      pendingProviderCallIndexById.clear();
+      continue;
+    }
+    if (message.role !== "assistant") continue;
+
+    const rawAssistantMessages = rawAssistantMessagesByIndex.get(index);
+    if (!rawAssistantMessages) continue;
+    const shouldCompactCompletedToolRound = shouldCompactAnthropicToolRound(
+      message,
+      index,
+      lastHistoricalAssistantTextIndex,
+    );
+    if (
+      requiresExactAnthropicProviderReplay(message) ||
+      !shouldCompactCompletedToolRound && index >= lastUserIndex
+    ) {
+      replayIndices.add(index);
+    }
+
+    let remainingBlockCount = MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS;
+    const rawMessageCount = Math.min(
+      rawAssistantMessages.length,
+      MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
+    );
+    for (let rawMessageIndex = 0; rawMessageIndex < rawMessageCount; rawMessageIndex++) {
+      const rawContent = rawAssistantMessages[rawMessageIndex];
+      if (!Array.isArray(rawContent)) continue;
+      const rawBlockCount = Math.min(rawContent.length, remainingBlockCount);
+      remainingBlockCount -= rawBlockCount;
+      for (let rawBlockIndex = 0; rawBlockIndex < rawBlockCount; rawBlockIndex++) {
+        const value = rawContent[rawBlockIndex];
+        const block = readRecord(value);
+        if (!block || typeof block.type !== "string") continue;
+        if (
+          (block.type === "server_tool_use" || block.type === "mcp_tool_use") &&
+          typeof block.id === "string" &&
+          block.id.length > 0
+        ) {
+          pendingProviderCallIndexById.set(block.id, index);
+          continue;
+        }
+        if (
+          !isAnthropicProviderToolResultBlockType(block.type) ||
+          typeof block.tool_use_id !== "string" ||
+          block.tool_use_id.length === 0
+        ) {
+          continue;
+        }
+        const providerCallIndex = pendingProviderCallIndexById.get(block.tool_use_id);
+        if (providerCallIndex !== undefined) {
+          connectAnthropicReplayIndices(dependencies, providerCallIndex, index);
+          pendingProviderCallIndexById.delete(block.tool_use_id);
+        }
+      }
+      if (remainingBlockCount === 0) break;
+    }
+  }
+
+  const pendingReplayIndices = [...replayIndices];
+  for (let cursor = 0; cursor < pendingReplayIndices.length; cursor++) {
+    const index = pendingReplayIndices[cursor];
+    if (index === undefined) continue;
+    for (const dependency of dependencies.get(index) ?? []) {
+      if (replayIndices.has(dependency)) continue;
+      replayIndices.add(dependency);
+      pendingReplayIndices.push(dependency);
+    }
+  }
+
+  return replayIndices;
 }
 
 function toAnthropicUserContent(
-  parts: Extract<RuntimePromptMessage, { role: "user" }>["content"],
+  parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [];
 
@@ -211,12 +727,28 @@ function resolveAnthropicCacheControlBlock(
   return { type: "ephemeral" };
 }
 
+function createValidatedAnthropicProviderToolCorrelationState(
+  canonicalProviderToolNamesById: ReadonlyMap<string, string>,
+  rawProviderToolNamesById: ReadonlyMap<string, string>,
+): AnthropicProviderToolNameRegistry {
+  assertBoundedAnthropicProviderToolState(canonicalProviderToolNamesById);
+  assertBoundedAnthropicProviderToolState(rawProviderToolNamesById);
+  const correlated = new Map<string, string>();
+  for (const [toolCallId, toolName] of canonicalProviderToolNamesById) {
+    if (rawProviderToolNamesById.get(toolCallId) === toolName) {
+      correlated.set(toolCallId, toolName);
+    }
+  }
+  return correlated;
+}
+
 function toAnthropicMessages(
-  prompt: RuntimePromptMessage[],
+  prompt: readonly ModelRuntimePromptMessage[],
   systemCacheControl?: { type: "ephemeral"; ttl?: "1h" },
 ): {
   system?: string | Array<Record<string, unknown>>;
   messages: AnthropicCompatibleMessage[];
+  providerToolNamesById: AnthropicProviderToolNameRegistry;
 } {
   const systemParts: string[] = [];
   const messages: AnthropicCompatibleMessage[] = [];
@@ -226,14 +758,32 @@ function toAnthropicMessages(
     message.role === "assistant" &&
     message.content.some((part) => part.type === "text" && part.text.length > 0)
   );
+  const rawAssistantMessagesByIndex = new Map<number, unknown[]>();
+  for (const [index, message] of prompt.entries()) {
+    if (message.role !== "assistant") continue;
+    const rawAssistantMessages = readAnthropicRawAssistantMessagesValue(message);
+    if (rawAssistantMessages) {
+      rawAssistantMessagesByIndex.set(index, rawAssistantMessages);
+    }
+  }
+  const rawReplayIndices = planAnthropicRawAssistantReplay(
+    prompt,
+    rawAssistantMessagesByIndex,
+    lastUserIndex,
+    lastHistoricalAssistantTextIndex,
+  );
   let skippingHistoricalToolResults = false;
   let pendingToolUseIds = new Set<string>();
+  let rawProviderToolNamesById: AnthropicProviderToolNameRegistry = new Map();
+  let canonicalProviderToolNamesById: AnthropicProviderToolNameRegistry = new Map();
 
   for (const [index, message] of prompt.entries()) {
     switch (message.role) {
       case "system":
         skippingHistoricalToolResults = false;
         pendingToolUseIds = new Set();
+        rawProviderToolNamesById = new Map();
+        canonicalProviderToolNamesById = new Map();
         if (message.content.length > 0) {
           systemParts.push(message.content);
         }
@@ -241,18 +791,29 @@ function toAnthropicMessages(
       case "user":
         skippingHistoricalToolResults = false;
         pendingToolUseIds = new Set();
+        rawProviderToolNamesById = new Map();
+        canonicalProviderToolNamesById = new Map();
         pushAnthropicUserContent(messages, toAnthropicUserContent(message.content));
         break;
       case "assistant": {
         skippingHistoricalToolResults = false;
-        const shouldCompactCompletedToolRound = index < lastHistoricalAssistantTextIndex &&
-          message.content.some((part) => part.type === "tool-call");
-        const rawAssistantMessages = index < lastUserIndex || shouldCompactCompletedToolRound
-          ? undefined
-          : readAnthropicRawAssistantMessages(message);
-        if (rawAssistantMessages) {
+        const shouldCompactCompletedToolRound = shouldCompactAnthropicToolRound(
+          message,
+          index,
+          lastHistoricalAssistantTextIndex,
+        );
+        const rawAssistantMessages = rawAssistantMessagesByIndex.get(index);
+        if (rawAssistantMessages && rawReplayIndices.has(index)) {
+          const replay = validateAnthropicProviderReplay(
+            message,
+            rawAssistantMessages,
+            rawProviderToolNamesById,
+            canonicalProviderToolNamesById,
+          );
+          rawProviderToolNamesById = replay.nextProviderToolNamesById;
+          canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
           pendingToolUseIds = new Set();
-          for (const rawContent of rawAssistantMessages) {
+          for (const rawContent of replay.messages) {
             messages.push({ role: "assistant", content: rawContent });
             for (const block of rawContent) {
               if (block.type === "tool_use" && typeof block.id === "string") {
@@ -294,6 +855,16 @@ function toAnthropicMessages(
                 ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
               };
             }
+            if (part.type === "tool-result") {
+              throw new TypeError(
+                "Anthropic provider-executed assistant tool results require exact raw replay metadata",
+              );
+            }
+            if (part.providerExecuted === true) {
+              throw new TypeError(
+                "Anthropic provider-executed assistant tool calls require exact raw replay metadata",
+              );
+            }
             return {
               type: "tool_use",
               id: part.toolCallId,
@@ -332,7 +903,13 @@ function toAnthropicMessages(
   }
 
   if (systemParts.length === 0) {
-    return { messages };
+    return {
+      messages,
+      providerToolNamesById: createValidatedAnthropicProviderToolCorrelationState(
+        canonicalProviderToolNamesById,
+        rawProviderToolNamesById,
+      ),
+    };
   }
 
   const joined = systemParts.join("\n\n");
@@ -344,10 +921,21 @@ function toAnthropicMessages(
         cache_control: systemCacheControl,
       }],
       messages,
+      providerToolNamesById: createValidatedAnthropicProviderToolCorrelationState(
+        canonicalProviderToolNamesById,
+        rawProviderToolNamesById,
+      ),
     };
   }
 
-  return { system: joined, messages };
+  return {
+    system: joined,
+    messages,
+    providerToolNamesById: createValidatedAnthropicProviderToolCorrelationState(
+      canonicalProviderToolNamesById,
+      rawProviderToolNamesById,
+    ),
+  };
 }
 
 const ANTHROPIC_TOOL_VERSION_ALIASES: Record<string, string> = {
@@ -369,7 +957,7 @@ function resolveAnthropicProviderType(rawType: string): string {
 }
 
 function toAnthropicTools(
-  tools: RuntimeToolDefinition[] | undefined,
+  tools: readonly ModelRuntimeToolDefinition[] | undefined,
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) {
     return undefined;
@@ -469,7 +1057,11 @@ function containsAnthropicMcpToolset(
 function getAnthropicModelCapabilities(
   modelId: string,
 ): { maxOutputTokens: number; isKnownModel: boolean } {
-  if (modelId.includes("claude-opus-4-6")) {
+  if (
+    modelId.includes("claude-opus-4-8") ||
+    modelId.includes("claude-opus-4-7") ||
+    modelId.includes("claude-opus-4-6")
+  ) {
     return { maxOutputTokens: 128_000, isKnownModel: true };
   }
   if (modelId.includes("claude-sonnet-4-6")) {
@@ -510,7 +1102,7 @@ function resolveAnthropicMaxTokens(
 }
 
 function resolveAnthropicThinkingBudget(
-  option: ProviderReasoningOption | undefined,
+  option: RuntimeReasoningOption | undefined,
 ): number | undefined {
   if (!option || option.enabled !== true) {
     return undefined;
@@ -570,13 +1162,16 @@ function resolveAnthropicProviderThinkingBudget(
   return budgetTokens as number;
 }
 
-export function buildAnthropicMessagesRequest(
+export function buildAnthropicMessagesRequestWithCorrelationState(
   modelId: string,
   providerName: string,
   options: OpenAICompatibleLanguageOptions,
   stream: boolean,
   warnings: WarningCollector,
-): AnthropicCompatibleRequest {
+): {
+  body: AnthropicCompatibleRequest;
+  providerToolNamesById: AnthropicProviderToolNameRegistry;
+} {
   const systemCacheControl = resolveAnthropicCacheControlBlock(
     options.cacheControl?.system,
   );
@@ -584,7 +1179,10 @@ export function buildAnthropicMessagesRequest(
     options.cacheControl?.tools,
   );
 
-  const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
+  const { system, messages, providerToolNamesById } = toAnthropicMessages(
+    options.prompt,
+    systemCacheControl,
+  );
   const mcpConfiguration = normalizeAnthropicMcpServers(options.mcpServers);
   const callerTools = toAnthropicTools(options.tools);
   const anthropicTools = applyAnthropicToolsCacheControl(
@@ -727,5 +1325,24 @@ export function buildAnthropicMessagesRequest(
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }
   assertAnthropicMcpRequestContract(body);
-  return body;
+  return {
+    body,
+    providerToolNamesById: new Map(providerToolNamesById),
+  };
+}
+
+export function buildAnthropicMessagesRequest(
+  modelId: string,
+  providerName: string,
+  options: OpenAICompatibleLanguageOptions,
+  stream: boolean,
+  warnings: WarningCollector,
+): AnthropicCompatibleRequest {
+  return buildAnthropicMessagesRequestWithCorrelationState(
+    modelId,
+    providerName,
+    options,
+    stream,
+    warnings,
+  ).body;
 }
