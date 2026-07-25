@@ -1,10 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  _resetShimForTests,
+  setGlobalTracerProvider,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { MiddlewarePipeline } from "./pipeline.ts";
 import type { MiddlewareHandler } from "../types.ts";
 
+afterEach(() => {
+  _resetShimForTests();
+});
+
 describe("middleware/core/pipeline/MiddlewarePipeline", () => {
+  const encoder = new TextEncoder();
+
   describe("use", () => {
     it("should add middleware and return this for chaining", () => {
       const pipeline = new MiddlewarePipeline();
@@ -153,7 +163,7 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       assert(result === pipeline);
     });
 
-    it("should run teardown callbacks after handle() produces a response", async () => {
+    it("should run teardown callbacks after handle() response bodies finish", async () => {
       const pipeline = new MiddlewarePipeline();
       const called: number[] = [];
 
@@ -167,10 +177,12 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       );
 
       assertEquals(response.status, 200);
+      assertEquals(called, []);
+      assertEquals(await response.json(), { ok: true });
       assertEquals(called, [1]);
     });
 
-    it("should run teardown callbacks after execute() produces a response", async () => {
+    it("should run teardown callbacks after execute() response bodies finish", async () => {
       const pipeline = new MiddlewarePipeline();
       let cleaned = false;
 
@@ -178,8 +190,10 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
         cleaned = true;
       });
 
-      await pipeline.execute(new Request("http://localhost/"));
+      const response = await pipeline.execute(new Request("http://localhost/"));
 
+      assertEquals(cleaned, false);
+      assertEquals(await response.text(), "Not Found");
       assertEquals(cleaned, true);
     });
 
@@ -192,9 +206,9 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       });
 
       const handler = () => Response.json({ ok: true });
-      await pipeline.handle(new Request("http://localhost/"), handler);
-      await pipeline.handle(new Request("http://localhost/"), handler);
-      await pipeline.handle(new Request("http://localhost/"), handler);
+      await (await pipeline.handle(new Request("http://localhost/"), handler)).text();
+      await (await pipeline.handle(new Request("http://localhost/"), handler)).text();
+      await (await pipeline.handle(new Request("http://localhost/"), handler)).text();
 
       assertEquals(count, 3);
     });
@@ -216,6 +230,356 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
 
       assertEquals(response.status, 500);
       assertEquals(cleaned, true);
+    });
+
+    it("should run teardown callbacks when execution rejects before a response exists", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+      setGlobalTracerProvider({
+        getTracer() {
+          throw new Error("tracing unavailable");
+        },
+      });
+
+      await assertRejects(
+        () => pipeline.execute(new Request("http://localhost/")),
+        Error,
+        "tracing unavailable",
+      );
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should defer handle() teardown until a streaming body reaches EOF", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(c) {
+                controller = c;
+                c.enqueue(encoder.encode("first"));
+              },
+            }),
+            {
+              status: 201,
+              statusText: "Created",
+              headers: { "x-stream": "yes" },
+            },
+          ),
+      );
+
+      assertEquals(response.status, 201);
+      assertEquals(response.statusText, "Created");
+      assertEquals(response.headers.get("x-stream"), "yes");
+      assertEquals(cleanupCount, 0);
+
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      assertEquals((await reader.read()).done, false);
+      assertEquals(cleanupCount, 0);
+
+      controller.close();
+      assertEquals((await reader.read()).done, true);
+      assertEquals(cleanupCount, 1);
+      assertEquals((await reader.read()).done, true);
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should defer execute() teardown until a streaming body reaches EOF", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+
+      pipeline.use(() =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+              c.enqueue(encoder.encode("chunk"));
+            },
+          }),
+        )
+      );
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.execute(new Request("http://localhost/stream"));
+
+      assertEquals(cleanupCount, 0);
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      assertEquals((await reader.read()).done, false);
+      assertEquals(cleanupCount, 0);
+
+      controller.close();
+      assertEquals((await reader.read()).done, true);
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should run streaming teardown once when the body is canceled", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+      let cancelReason: unknown;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("partial"));
+              },
+              cancel(reason) {
+                cancelReason = reason;
+              },
+            }),
+          ),
+      );
+
+      assertEquals(cleanupCount, 0);
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      assertEquals((await reader.read()).done, false);
+
+      await reader.cancel("client disconnected");
+
+      assertEquals(cancelReason, "client disconnected");
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should run teardown immediately when the response body is already locked", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+      let heldReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/locked"),
+        () => {
+          const response = new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("held"));
+              },
+            }),
+          );
+          heldReader = response.body?.getReader();
+          return response;
+        },
+      );
+
+      assertEquals(response.body?.locked, true);
+      assertEquals(cleanupCount, 1);
+      heldReader?.releaseLock();
+    });
+
+    it("should not throw when the response body is disturbed but unlocked", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/disturbed"),
+        async () => {
+          const response = new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("already read"));
+                controller.close();
+              },
+            }),
+          );
+          const reader = response.body?.getReader();
+          assertExists(reader);
+          await reader.read();
+          reader.releaseLock();
+          return response;
+        },
+      );
+
+      assertEquals(response.bodyUsed, true);
+      assertEquals(response.body?.locked, false);
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should run streaming teardown once when a pending read is canceled", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull() {
+                return new Promise(() => {});
+              },
+            }),
+          ),
+      );
+
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      const pendingRead = reader.read();
+
+      await reader.cancel("client disconnected");
+      assertEquals(cleanupCount, 1);
+      assertEquals(await pendingRead, { done: true, value: undefined });
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should make concurrent stream terminal paths await the same teardown", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+      let cleanupResolved = false;
+      let resolveCleanup!: () => void;
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+
+      pipeline.onTeardown(async () => {
+        cleanupCount++;
+        await new Promise<void>((resolve) => {
+          resolveCleanup = resolve;
+        });
+        cleanupResolved = true;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(c) {
+                controller = c;
+                c.enqueue(encoder.encode("chunk"));
+              },
+            }),
+          ),
+      );
+
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      assertEquals((await reader.read()).done, false);
+
+      const eofRead = reader.read();
+      controller.close();
+      for (let i = 0; i < 10 && cleanupCount === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(cleanupCount, 1);
+
+      let cancelResolved = false;
+      const cancelPromise = reader.cancel("client disconnected").then(() => {
+        cancelResolved = true;
+      });
+      await Promise.resolve();
+
+      assertEquals(cancelResolved, false);
+      assertEquals(cleanupResolved, false);
+      resolveCleanup();
+      await cancelPromise;
+      assertEquals(await eofRead, { done: true, value: undefined });
+      assertEquals(cleanupCount, 1);
+      assertEquals(cleanupResolved, true);
+    });
+
+    it("should run streaming teardown once when the body errors", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+      const streamError = new Error("stream source failed");
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("partial"));
+              },
+              pull(controller) {
+                controller.error(streamError);
+              },
+            }),
+          ),
+      );
+
+      assertEquals(cleanupCount, 0);
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      assertEquals((await reader.read()).done, false);
+
+      await assertRejects(
+        () => reader.read(),
+        Error,
+        "stream source failed",
+      );
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should swallow cleanup failures after streaming EOF", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+        throw new Error("cleanup failed");
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () => new Response(new ReadableStream<Uint8Array>({ start: (c) => c.close() })),
+      );
+
+      assertEquals(await response.text(), "");
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should run teardown immediately for responses without a body", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/no-content"),
+        () => new Response(null, { status: 204 }),
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(response.body, null);
+      assertEquals(cleanupCount, 1);
     });
   });
 

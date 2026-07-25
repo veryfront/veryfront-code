@@ -38,17 +38,32 @@ export class MiddlewarePipeline {
     executionCtx?: ExecutionContext,
     adapter?: RuntimeAdapter,
   ): Promise<Response> {
+    let middlewareThrew = false;
+    const composedMiddleware = this.compose();
+    const monitoredMiddleware: MiddlewareHandler = async (context, next) => {
+      try {
+        return await composedMiddleware(context, next);
+      } catch (error) {
+        middlewareThrew = true;
+        throw error;
+      }
+    };
+
+    let response: Response;
     try {
-      return await executeMiddlewarePipeline(
+      response = await executeMiddlewarePipeline(
         req,
-        this.compose(),
+        monitoredMiddleware,
         env,
         executionCtx,
         adapter,
       );
-    } finally {
+    } catch (error) {
       await this.runTeardownCallbacks();
+      throw error;
     }
+
+    return await this.withResponseTeardown(response, { immediate: middlewareThrew });
   }
 
   /**
@@ -70,26 +85,57 @@ export class MiddlewarePipeline {
     req: Request,
     handler: (req: Request) => Response | Promise<Response>,
   ): Promise<Response> {
+    let middlewareThrew = false;
+    let handlerThrew = false;
+    const composedMiddleware = this.compose();
+    const monitoredMiddleware: MiddlewareHandler = async (context, next) => {
+      try {
+        return await composedMiddleware(context, next);
+      } catch (error) {
+        middlewareThrew = true;
+        throw error;
+      }
+    };
+    const monitoredHandler = (request: Request): Promise<Response> => {
+      try {
+        return Promise.resolve(handler(request)).catch((error: unknown) => {
+          handlerThrew = true;
+          throw error;
+        });
+      } catch (error) {
+        handlerThrew = true;
+        throw error;
+      }
+    };
+
+    let response: Response;
     try {
-      return await executeMiddlewarePipeline(
+      response = await executeMiddlewarePipeline(
         req,
-        this.compose(),
+        monitoredMiddleware,
         undefined,
         undefined,
         undefined,
-        handler,
+        monitoredHandler,
       );
-    } finally {
+    } catch (error) {
       await this.runTeardownCallbacks();
+      throw error;
     }
+
+    return await this.withResponseTeardown(response, {
+      immediate: middlewareThrew || handlerThrew,
+    });
   }
 
   /**
    * Run every registered teardown callback once, in registration order,
    * without discarding them, so a module-scoped route pipeline fires them
-   * again on the next request. Called by {@link execute} and {@link handle}
-   * after the response is produced. Callback errors are logged and swallowed
-   * so cleanup failures never surface to the client.
+   * again on the next request. Called by {@link execute} and {@link handle}:
+   * after response bodies close, are canceled, or error; immediately for
+   * bodyless, locked, or already-read responses and handler/middleware
+   * exceptions. Callback errors are logged and swallowed so cleanup failures
+   * never surface to the client.
    */
   private async runTeardownCallbacks(): Promise<void> {
     for (const cb of this.teardownCallbacks) {
@@ -99,6 +145,73 @@ export class MiddlewarePipeline {
         serverLogger.warn("middleware teardown failed", e);
       }
     }
+  }
+
+  private async withResponseTeardown(
+    response: Response,
+    options: { immediate: boolean },
+  ): Promise<Response> {
+    const body = response.body;
+
+    if (options.immediate || body === null || body.locked || response.bodyUsed) {
+      await this.runTeardownCallbacks();
+      return response;
+    }
+
+    const wrappedBody = this.wrapBodyWithTeardown(body);
+    return new Response(wrappedBody, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  private wrapBodyWithTeardown(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+    const reader = body.getReader();
+    let teardownPromise: Promise<void> | undefined;
+    let streamCanceled = false;
+
+    const runOnce = async (): Promise<void> => {
+      teardownPromise ??= this.runTeardownCallbacks();
+      await teardownPromise;
+    };
+
+    return new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        try {
+          const chunk = await reader.read();
+          if (streamCanceled) return;
+
+          if (chunk.done) {
+            await runOnce();
+            if (streamCanceled) return;
+            controller.close();
+            return;
+          }
+
+          if (streamCanceled) return;
+          controller.enqueue(chunk.value);
+        } catch (error) {
+          await runOnce();
+          if (streamCanceled) return;
+          controller.error(error);
+        }
+      },
+      cancel: async (reason) => {
+        streamCanceled = true;
+        let cancelError: unknown;
+
+        try {
+          await reader.cancel(reason);
+        } catch (error) {
+          cancelError = error;
+        }
+
+        await runOnce();
+
+        if (cancelError) throw cancelError;
+      },
+    });
   }
 
   /**
