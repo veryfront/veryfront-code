@@ -23,5 +23,13 @@ describe("compiled discovery runtime modules", () => {
         .createUploadHandler,
       "function",
     );
+    // veryfront-issue-inbox#217: API routes import the middleware pipeline from
+    // "veryfront/middleware"; a compiled binary must register it so the generated
+    // subpath shim re-exports MiddlewarePipeline instead of 500ing.
+    assertEquals(
+      typeof (modules["veryfront/middleware"] as { MiddlewarePipeline?: unknown })
+        .MiddlewarePipeline,
+      "function",
+    );
   });
 });

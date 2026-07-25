@@ -28,6 +28,12 @@ export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/metrics",
   "veryfront/schemas",
   "veryfront/integrations",
+  // API-route middleware helpers (`import { MiddlewarePipeline, cors, … } from
+  // "veryfront/middleware"`). Without this, a compiled binary cannot register the
+  // module, so its per-subpath shim (`_vf_middleware.mjs`) is empty and any API
+  // route using the pipeline 500s with "does not provide an export named
+  // 'MiddlewarePipeline'". See veryfront-issue-inbox#217.
+  "veryfront/middleware",
   // Server-side chat upload route handler (app/api/uploads/route.ts).
   "veryfront/chat/uploads",
 ] as const;
