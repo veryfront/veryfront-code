@@ -409,6 +409,11 @@ interface TransformCacheResult {
   cacheHit: boolean;
 }
 
+/** Decide whether a cached transform is safe to reuse in the current runtime. */
+export type TransformCachedEntryValidator = (
+  entry: TransformCacheResult,
+) => boolean | Promise<boolean>;
+
 function publishComputedTransform(
   key: string,
   code: string,
@@ -439,6 +444,7 @@ export async function getOrComputeTransform(
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
   onProgress?: TransformProgressListener,
   signal?: AbortSignal,
+  validateCachedEntry?: TransformCachedEntryValidator,
 ): Promise<TransformCacheResult> {
   signal?.throwIfAborted();
   const flightRegistry = transformFlight;
@@ -468,13 +474,34 @@ export async function getOrComputeTransform(
               });
               // Fall through to recompute
             } else {
-              logger.debug("Cache hit", { key });
-              reportProgress({ phase: "transform-cache:hit" });
-              return {
+              const cacheEntry = {
                 code: cached.code,
                 bundleManifestId: cached.bundleManifestId,
                 cacheHit: true,
               };
+              if (validateCachedEntry) {
+                reportProgress({ phase: "transform-cache:validating" });
+              }
+              let cacheEntryValid = true;
+              let cacheValidationError: string | undefined;
+              if (validateCachedEntry) {
+                try {
+                  cacheEntryValid = await validateCachedEntry(cacheEntry);
+                } catch (error) {
+                  cacheEntryValid = false;
+                  cacheValidationError = error instanceof Error ? error.message : String(error);
+                }
+              }
+              if (cacheEntryValid) {
+                logger.debug("Cache hit", { key });
+                reportProgress({ phase: "transform-cache:hit" });
+                return cacheEntry;
+              }
+              logger.warn("Cached transform failed validation, recomputing", {
+                key: key.slice(-60),
+                ...(cacheValidationError ? { error: cacheValidationError } : {}),
+              });
+              reportProgress({ phase: "transform-cache:invalidated" });
             }
           }
 

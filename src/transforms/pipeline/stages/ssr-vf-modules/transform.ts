@@ -11,7 +11,7 @@ import {
 } from "#veryfront/transforms/esm/import-attributes.ts";
 import { ESBUILD_SUPPORTED_FEATURES } from "#veryfront/transforms/esm/transform-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import denoConfig from "#deno-config" with { type: "json" };
 import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
@@ -69,6 +69,17 @@ const CYCLE_PLACEHOLDER_PREFIX = "/* Cycle detected:";
  */
 export function isCyclePlaceholder(code: string): boolean {
   return code.startsWith(CYCLE_PLACEHOLDER_PREFIX);
+}
+
+async function cachedFileUrlExists(
+  fileUrl: string,
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<boolean> {
+  try {
+    return (await fs.stat(fromFileUrl(fileUrl))).isFile;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -668,8 +679,15 @@ export async function resolveAndTransformVeryfrontImport(
     );
     const cached = veryfrontTransformCache.get(transformKey);
     if (cached) {
-      ctx.onProgress?.({ phase: "framework:specifier-cache-hit", filePath: sourcePath });
-      return cached;
+      if (await cachedFileUrlExists(cached, ctx.fs)) {
+        ctx.onProgress?.({ phase: "framework:specifier-cache-hit", filePath: sourcePath });
+        return cached;
+      }
+      logger.debug(`${LOG_PREFIX} Cached #veryfront file URL is missing, invalidating`, {
+        specifier,
+        sourcePath: sourcePath.slice(-60),
+      });
+      veryfrontTransformCache.delete(transformKey);
     }
 
     // Transform the dependency (recursively handles its own #veryfront/ imports)
