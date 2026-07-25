@@ -10,3 +10,30 @@ export function extractFrameworkBundlePaths(code: string): string[] {
   if (!matches) return [];
   return [...new Set(matches.map((match) => match.replace(/^file:\/\//, "")))];
 }
+
+type FrameworkBundleExists = (path: string) => boolean | Promise<boolean>;
+
+interface FindMissingFrameworkBundlePathsOptions {
+  onError?: (path: string, error: unknown) => void;
+}
+
+/** Return framework bundle paths referenced by code that are missing locally. */
+export async function findMissingFrameworkBundlePaths(
+  code: string,
+  exists: FrameworkBundleExists,
+  options: FindMissingFrameworkBundlePathsOptions = {},
+): Promise<string[]> {
+  const bundlePaths = extractFrameworkBundlePaths(code);
+  const checkedPaths = await Promise.all(
+    bundlePaths.map(async (path): Promise<string | undefined> => {
+      try {
+        return await exists(path) ? undefined : path;
+      } catch (error) {
+        options.onError?.(path, error);
+        return path;
+      }
+    }),
+  );
+
+  return checkedPaths.filter((path): path is string => path !== undefined);
+}
