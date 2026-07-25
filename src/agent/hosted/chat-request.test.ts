@@ -45,7 +45,7 @@ type ParsedHostedChatRequestMessagePart = ParsedHostedChatRequest["messages"][nu
   number
 ];
 
-const parsedHostedChatRequestToolResultPart: ParsedHostedChatRequestMessagePart = {
+const parsedHostedChatRequestReplayToolCallPart: ParsedHostedChatRequestMessagePart = {
   type: "tool_call",
   toolCallId: rawReplayToolCallPart.id,
   toolName: replayToolName,
@@ -338,7 +338,7 @@ describe("agent/hosted-chat-request", () => {
 
     assertEquals(
       parsed.messages[1]?.parts[0] as unknown,
-      parsedHostedChatRequestToolResultPart,
+      parsedHostedChatRequestReplayToolCallPart,
     );
     assertEquals(convertUiMessagesToProviderModelMessages(parsed.messages), [
       {
