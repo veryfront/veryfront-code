@@ -125,6 +125,18 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       }
     });
 
+    // Regression: CSS-in-JS libraries insert <style> tags through document.head
+    // during SSR, so the head stub must keep the element insertion API.
+    it("head exposes the full element-stub insertion API", () => {
+      const doc = createDocumentStub();
+      const style = doc.createElement();
+      const anchor = doc.createElement();
+      assertEquals(typeof doc.head.insertBefore, "function");
+      assertEquals(typeof doc.head.appendChild, "function");
+      assertEquals(Reflect.apply(doc.head.insertBefore, doc.head, [style, anchor]), undefined);
+      assertEquals(Reflect.apply(doc.head.appendChild, doc.head, [style]), undefined);
+    });
+
     it("should have complete readyState", () => {
       const doc = createDocumentStub();
       assertEquals(doc.readyState, "complete");
