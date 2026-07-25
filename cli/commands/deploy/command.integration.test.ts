@@ -14,7 +14,9 @@ const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 
-it("uses canonical production read-back in human and JSON modes", async () => {
+it("uses canonical production read-back in human and JSON modes", {
+  timeout: 30_000,
+}, async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
@@ -227,11 +229,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       using time = new FakeTime();
       resumeReleaseSourceRead();
       await time.tickAsync(0);
-      for (
-        let tick = 0;
-        releaseSourceReads < 20 && tick < 40;
-        tick++
-      ) {
+      while (releaseSourceReads < 20) {
         await time.tickAsync(500);
       }
       assertEquals(

@@ -135,14 +135,22 @@ committed, pushed, and synchronized with `origin/main`.
 
 ### Main integration checkpoint
 
-The reviewed history was previously rebased onto `origin/main`. The latest
-upstream synchronization was merged from a clean, pushed checkpoint because
-replaying the recovered merge topology would have forced already-reviewed
-conflicts across the complete recovery chain. The merge incorporated only the
-new upstream commits; its sole conflict retained two independent layout
-applicator imports. The regenerated root lockfile passes frozen resolution,
-generated manifests are current, and the repository and consumer-package
-typecheck gates pass.
+The reviewed history was previously rebased onto `origin/main`. Subsequent
+upstream synchronizations are merged from clean, pushed checkpoints because
+replaying the recovered merge topology would force already-reviewed conflicts
+across the complete recovery chain. An earlier synchronization retained two
+independent layout-applicator imports in its sole conflict. The 2026-07-26
+synchronization to v0.1.1152 merged cleanly and incorporated the upstream
+fail-closed release-source convergence fix. Its focused deploy command,
+integration, and MCP surface passed 16 tests and 75 steps, and
+`deno task verify:quick` passed afterward. The first parallel repository run
+then exposed an arbitrary 40-fake-tick ceiling in two new convergence tests:
+one could observe 19 of the required 20 reads under scheduler load. Both tests
+now drive fake time until the public read budget is observed, with a real
+30-second test timeout guarding loss of progress. Four concurrent focused
+stress runs and the complete parallel suite pass. The regenerated root lockfile
+passes frozen resolution, generated manifests are current, and the repository
+and consumer-package typecheck gates pass.
 
 - `src/version.ts` remains intentionally absent. Its only content was a stale
   single-image build test comment, so removing the non-production marker closed
@@ -214,7 +222,7 @@ Reproducible evidence for this open checkpoint:
   the actual ephemeral port instead of mutating production objects.
 
 The repository-wide test gate now passes after the cross-module remediation
-checkpoint below: 3,540 tests and 28,025 steps passed with zero failures; one
+checkpoint below: 3,540 tests and 28,031 steps passed with zero failures; one
 intentional test with 36 steps remains ignored. This broad result resolves the
 previous cache, config, and production-server regressions, but it does not
 close the prompt/resource design findings listed below.
@@ -314,7 +322,7 @@ Reproducible checkpoint evidence:
 - `deno task typecheck:consumer` rebuilt the root npm package and every
   first-party extension package, verified root import lifecycle behavior, and
   passed the documented consumer-composition typecheck.
-- `deno task test` passed 3,540 tests and 28,025 steps with zero failures; one
+- `deno task test` passed 3,540 tests and 28,031 steps with zero failures; one
   intentional test with 36 steps remained ignored.
 
 ### Metrics remediation checkpoint
@@ -719,7 +727,7 @@ The current config closure checkpoint has the following reproducible evidence:
   zero failures, including loader, evaluator, worker, schema, discovery,
   environment, paths, hosted policy, retry, token, runs, GitHub, documentation,
   and release-asset regressions.
-- The current repository suite passed 3,540 tests and 28,025 steps with zero
+- The current repository suite passed 3,540 tests and 28,031 steps with zero
   failures; one intentional test with 36 steps remains ignored.
 - `deno task verify:quick` passed, including formatting, linting, static policy
   ratchets, sanitizer and skipped-test baselines, dependency and module

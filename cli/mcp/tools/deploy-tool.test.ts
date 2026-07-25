@@ -159,7 +159,9 @@ describe("mcp/tools/deploy-tool", () => {
   // ---------------------------------------------------------------------------
 
   describe("triggerDeploy happy path", () => {
-    it("creates release and deployment, returns structured result", async () => {
+    it("creates release and deployment, returns structured result", {
+      timeout: 30_000,
+    }, async () => {
       const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
       const originalGithubSha = Deno.env.get("GITHUB_SHA");
@@ -382,11 +384,7 @@ describe("mcp/tools/deploy-tool", () => {
           using time = new FakeTime();
           resumeReleaseSourceRead();
           await time.tickAsync(0);
-          for (
-            let tick = 0;
-            releaseSourceReads < 20 && tick < 40;
-            tick++
-          ) {
+          while (releaseSourceReads < 20) {
             await time.tickAsync(500);
           }
           assertEquals(
