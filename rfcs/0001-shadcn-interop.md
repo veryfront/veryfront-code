@@ -110,6 +110,48 @@ Latest shadcn ships animations via `@import "tw-animate-css"` in `globals.css` (
 
 ---
 
+## 3B. Complex & niche components — coverage matrix
+
+The button is the easy case. This section covers shadcn's hard components — the ones with portals, DOM measurement, extra third-party deps, or SSR hazards. **Import resolution is verified universal**: every dep below rewrites browser → esm.sh (`external=react,react-dom`, React deduped) and SSR → native (sweep over `bareStrategy`). What resolution does *not* prove is runtime SSR/hydration correctness — so each row is graded on that.
+
+**Load-bearing runtime fact (verified):** the framework's own SSR'd `veryfront/chat` primitives use **real `react-dom` `createPortal`** (`src/react/components/ui/{floating,tooltip}.tsx`) and hydrate in production. So the portal → SSR → hydrate mechanism — the backbone of Dialog/Popover/Select/Tooltip/DropdownMenu/Toast — is proven at the framework level. Modern Radix guards all DOM access in effects, so real Radix packages are *expected* to inherit this; not yet rendered end-to-end with the npm packages specifically.
+
+### Tier A — resolves + portal/headless pattern proven → expected to work
+| Component | Extra deps | Why low-risk |
+|---|---|---|
+| Dialog, Alert Dialog, Sheet | `@radix-ui/react-dialog` | portal pattern proven in-framework |
+| Popover, Dropdown/Context Menu, Menubar, Hover Card, Tooltip, Select, Navigation Menu | `@radix-ui/react-*` | portal + floating; SSR-safe (effect-guarded) |
+| Accordion, Collapsible, Tabs, Toggle(Group), Radio Group, Checkbox, Switch, Slider, Progress, Avatar, Aspect Ratio, Separator, Scroll Area, Label | `@radix-ui/react-*` | no portal; pure controlled primitives |
+| Command / Combobox | `cmdk` | client, self-contained context (+Dialog portal) |
+| Form | `react-hook-form`, `@hookform/resolvers`, `zod` | headless client logic, own context |
+| Data Table | `@tanstack/react-table` | fully headless |
+| Input OTP | `input-otp` | controlled client input |
+| Toast | `@radix-ui/react-toast` **or** `sonner` | portal; sonner self-injects styles at runtime |
+
+### Tier B — resolves, but DOM-measuring / client-dimension → SSR renders empty, hydration + layout risk. **Needs render-testbed verification; recommend a client-only guard.**
+| Component | Dep | Hazard |
+|---|---|---|
+| Chart | `recharts` | d3 + `ResizeObserver` + SVG; needs `ResponsiveContainer`, notoriously SSR-awkward |
+| Carousel | `embla-carousel-react` | measures track width in an effect |
+| Drawer | `vaul` | measures viewport, transforms, snap points |
+| Resizable | `react-resizable-panels` | measures panel sizes |
+
+### Tier C — resolves, but framework-integration friction (not a resolution bug)
+| Component | Dep | Friction |
+|---|---|---|
+| Theme toggle | `next-themes` | overlaps Veryfront's own `data-theme` + dark-flash handling. shadcn's `dark:` maps to `@custom-variant dark (&:is([data-theme="dark"] *))`, which Veryfront's `globals.css` already defines — so prefer Veryfront-native theming over `next-themes` and skip its `<html>` script. |
+| Date Picker / Calendar | `react-day-picker`, `date-fns` | pure client. Caveat: older versions `import "react-day-picker/dist/style.css"` — a **package CSS import** (see cross-cutting #2). shadcn v4's calendar restyles via Tailwind and drops that import → fine. |
+
+### Cross-cutting caveats (apply across tiers)
+1. **Portals** — mechanism verified in-framework; real npm-Radix under SSR not yet rendered end-to-end. First thing to smoke-test.
+2. **Package CSS imports** (`import "pkg/x.css"`) — the SSR CSS-import collector (`src/modules/react-loader/css-import-collector.ts`) tracks **local** project CSS; resolving/injecting a *package's* CSS from esm.sh is unverified. Libs that ship required CSS (some carousels, sonner variants, old react-day-picker) may render unstyled. Related to P2b (only `@import "tailwindcss"` is resolved). Most shadcn components sidestep this by restyling with Tailwind.
+3. **Version floating** (P2) — unpinned esm.sh imports can pull **two** copies of the same lib → duplicate React context (e.g. two `react-hook-form`/`cmdk` instances), which silently breaks. Pinning (P2 fix) also *dedupes*. Higher stakes for context-heavy Tier-A libs than for the button.
+4. **SSR module-eval** — SSR imports the package natively in Deno; a lib touching `window`/`document` at **module top-level** (not in an effect) throws during server render. Modern versions of every lib above are guarded, but this is the per-lib failure mode to confirm in the testbed.
+
+**Recommended verification (next step):** render one representative per hazard through `veryfront-examples/veryfront-router-testing` (Method 1, local source): a real `@radix-ui/react-dialog` (portal), `recharts` chart (Tier B), and a `react-hook-form` + `zod` form (context + validation) — SSR + client hydration, asserting no console errors and correct portal/paint. That promotes Tier A/B from "expected" to "proven."
+
+---
+
 ## 4. Proposed "seamless" design
 
 1. **`components.json` preset** (`aliases → @/`, `css → globals.css`, `rsc: true`, `tsx: true`) committed to the shadcn starter so `npx shadcn add <x>` writes correctly into a Veryfront app.
@@ -128,7 +170,8 @@ Latest shadcn ships animations via `@import "tw-animate-css"` in `globals.css` (
 - **Does Veryfront interop with shadcn?** Yes. Same React 19 + Tailwind v4; all shadcn deps auto-resolve with React dedupe; a real project already ships shadcn-style Radix components.
 - **Is the Tailwind setup as expected, simple, logical?** Yes — a thin adapter over Tailwind v4's official `compile()`, pure CSS-first (`@theme`/`@custom-variant`/`@plugin`), no PostCSS/config cruft.
 - **Do we support the latest Tailwind, i.e. the latest shadcn?** Yes — Tailwind **4.2.2** + React **19.2.4**, the exact target of current shadcn.
-- **So what's missing for *seamless*?** Tooling, not runtime: a `shadcn` CLI target/preset, version pinning, a documented `cn`, and a registry/docs. See §3.
+- **Do the complex/niche components work (Dialog, Select, Command, Form, Chart, Carousel, Drawer, Data Table, OTP, Toast…)?** Every dep **resolves** (verified sweep), and the portal→SSR→hydrate mechanism they depend on is **proven in-framework** (real `createPortal` in `veryfront/chat`). Tier A (Radix portals/headless, cmdk, react-hook-form, @tanstack/react-table, input-otp) is expected to work; Tier B (recharts/embla/vaul/resizable — DOM-measuring) and the package-CSS / version-floating / SSR-module-eval caveats need a render-testbed pass to promote from "expected" to "proven." Full matrix in §3B.
+- **So what's missing for *seamless*?** Tooling, not runtime: a `shadcn` CLI target/preset, version pinning, a documented `cn`, and a registry/docs — plus the P2b `@import` fix. See §3.
 
 ---
 
