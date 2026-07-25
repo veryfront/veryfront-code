@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_VERYFRONT_FILESYSTEM_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { createFSAdapter } from "./factory.ts";
 
 describe("createFSAdapter", () => {
@@ -46,6 +47,23 @@ describe("createFSAdapter", () => {
       () => createFSAdapter({ type: "memory" as any }),
       Error,
       'FSAdapter type "memory" is not implemented',
+    );
+  });
+
+  it("rejects invalid retry policies before constructing a lazy proxy adapter", async () => {
+    await assertRejects(
+      () =>
+        createFSAdapter({
+          type: "veryfront-api",
+          veryfront: {
+            proxyMode: true,
+            retry: {
+              maxRetries: MAX_VERYFRONT_FILESYSTEM_RETRIES + 1,
+            },
+          },
+        }),
+      RangeError,
+      "maxRetries",
     );
   });
 });

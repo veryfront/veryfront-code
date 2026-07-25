@@ -1,6 +1,7 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { buildRetryConfig } from "./veryfront/adapter-helpers.ts";
 import { createDefaultInvalidationCallbacks } from "./veryfront/default-invalidation-callbacks.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
@@ -24,6 +25,14 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
       if (type === "veryfront-api") {
         const configWithCallbacks: FSAdapterConfig = {
           ...config,
+          veryfront: config.veryfront
+            ? {
+              ...config.veryfront,
+              // Validate lazy proxy adapters at the public construction
+              // boundary and detach their policy from caller-owned objects.
+              retry: buildRetryConfig(config.veryfront.retry),
+            }
+            : undefined,
           invalidationCallbacks: createDefaultInvalidationCallbacks(config.invalidationCallbacks),
         };
 
