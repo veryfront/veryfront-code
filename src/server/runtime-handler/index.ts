@@ -98,9 +98,9 @@ import { buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
 import {
   HTTP_GATEWAY_TIMEOUT,
-  isHMRWebSocketUpgrade,
   isLightweightPath,
   isMonitoringPath,
+  isNativeWebSocketUpgrade,
 } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
@@ -619,7 +619,7 @@ export function createVeryfrontHandler(
             // Deno.serve. Cloning it to attach the timeout signal lets the
             // handshake return 101, but the upgraded connection immediately
             // closes with an unexpected EOF.
-            const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
+            const timeoutRequest = isNativeWebSocketUpgrade(req)
               ? req
               : new Request(req, { signal });
             return runWithRequestProfiling(

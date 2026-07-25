@@ -81,9 +81,9 @@ export function isWebSocketPath(pathname: string): boolean {
   return pathname === "/_ws";
 }
 
-/** Check whether a request is the exact HMR WebSocket upgrade that must retain native identity. */
-export function isHMRWebSocketUpgrade(request: Request, pathname: string): boolean {
-  return isWebSocketPath(pathname) && isWebSocketUpgrade(request);
+/** Check whether a request is a native WebSocket upgrade that must retain Request identity. */
+export function isNativeWebSocketUpgrade(request: Request): boolean {
+  return isWebSocketUpgrade(request);
 }
 
 /**
