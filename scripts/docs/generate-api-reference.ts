@@ -1476,11 +1476,10 @@ function getSourceHref(location: DenoDocLocation | undefined): string {
   if (!relativePath) return "";
 
   const lineNumber = location?.line;
-  // `deno doc --json` reports zero-based source lines; GitHub anchors are
-  // one-based. Preserve an anchor for declarations on the first source line.
-  const line = typeof lineNumber === "number" && lineNumber >= 0
-    ? `#L${lineNumber + 1}`
-    : "";
+  // The Deno version pinned by CI reports one-based source lines, matching
+  // GitHub anchors. Preserve the first-line anchor without shifting later
+  // declarations away from their source.
+  const line = typeof lineNumber === "number" && lineNumber > 0 ? `#L${lineNumber}` : "";
   return `${SOURCE_BASE_URL}/${relativePath}${line}`;
 }
 

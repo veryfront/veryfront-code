@@ -1,4 +1,4 @@
-import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertMatch, assertRejects, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
@@ -44,8 +44,9 @@ describe("generate-api-reference", () => {
       const rootReference = await Deno.readTextFile(
         `${outputDir}/veryfront/index.md`,
       );
-      const clientReference = await Deno.readTextFile(
-        `${outputDir}/veryfront/index.client.md`,
+      await assertRejects(
+        () => Deno.readTextFile(`${outputDir}/veryfront/index.client.md`),
+        Deno.errors.NotFound,
       );
       const uiReference = await Deno.readTextFile(
         `${outputDir}/veryfront/ui.md`,
@@ -53,17 +54,23 @@ describe("generate-api-reference", () => {
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
+      const providerTypesSource = await Deno.readTextFile(
+        new URL("../../src/provider/types.ts", import.meta.url),
+      );
+      const runtimeMetadataLine = findSourceLine(
+        providerTypesSource,
+        "export interface RuntimeMetadata",
+      );
+      const modelRuntimeGenerateResultLine = findSourceLine(
+        providerTypesSource,
+        "export interface ModelRuntimeGenerateResult",
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
         ),
         false,
         "generated reference pages must not duplicate the frontmatter description as body copy",
-      );
-      assertEquals(
-        clientReference.includes("#veryfront/"),
-        false,
-        "generated client reference must not expose internal import specifiers",
       );
       assertStringIncludes(
         uiReference,
@@ -75,13 +82,13 @@ describe("generate-api-reference", () => {
       );
       assertStringIncludes(
         providerReference,
-        "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
+        `| \`RuntimeMetadata\` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L${runtimeMetadataLine}) |`,
         "first-line declarations must keep a source anchor",
       );
       assertStringIncludes(
         providerReference,
-        "| `ModelRuntimeGenerateResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L8) |",
-        "Deno's zero-based locations must render as one-based GitHub anchors",
+        `| \`ModelRuntimeGenerateResult\` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L${modelRuntimeGenerateResultLine}) |`,
+        "generated source anchors must match the declaration's current source line",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning
@@ -305,3 +312,11 @@ describe("generate-api-reference", () => {
     }
   });
 });
+
+function findSourceLine(source: string, declaration: string): number {
+  const index = source.split("\n").findIndex((line) => line.startsWith(declaration));
+  if (index < 0) {
+    throw new Error(`Missing source declaration: ${declaration}`);
+  }
+  return index + 1;
+}

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/sandbox"
 description: "Ephemeral compute environments for isolated execution."
-order: 27
+order: 26
 ---
 
 ## Import
@@ -30,13 +30,13 @@ await sandbox.close();
 
 ## API
 
-### `Sandbox.create()`
+### `Sandbox.create(options)`
 
 Create a new sandbox session. Claims a warm pod or creates a new one.
 
 **Returns:** <code>Promise&lt;Sandbox&gt;</code>
 
-### `Sandbox.get(id, )`
+### `Sandbox.get(id, options)`
 
 Reconnect to an existing sandbox session.
 
@@ -48,13 +48,13 @@ Attach to an already-known sandbox session and endpoint without a reconnect look
 
 **Returns:** `Sandbox`
 
-### `Sandbox.list()`
+### `Sandbox.list(options)`
 
 List sandbox sessions with optional pagination.
 
 **Returns:** <code>Promise&lt;SandboxListResult&gt;</code>
 
-### `Sandbox.createLazy()`
+### `Sandbox.createLazy(options)`
 
 Create a lazily-provisioned sandbox session with automatic heartbeats.
 
