@@ -808,6 +808,7 @@ export const getRouterScript = () => `
         params: normalizedParams,
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
+        data: pageData.props || {},
         headings: headingsArray,
         mdxHeadings: headingsArray
       };
