@@ -21,7 +21,6 @@ import {
   type AnthropicProviderToolNameRegistry,
   type AnthropicProviderToolUse,
   type AnthropicServerToolResult,
-  AnthropicServerToolResultError,
   isAnthropicProviderToolResultBlockType,
   MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS,
   MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
@@ -300,17 +299,78 @@ function orderedAnthropicToolEventsEqual(
   return true;
 }
 
-function anthropicProviderResultsEqual(left: unknown, right: unknown): boolean {
+type AnthropicServerToolResultErrorFields = {
+  code: string;
+  toolCallId: string;
+  toolName: string;
+  detail?: string;
+};
+
+function readOwnEnumerableDataProperty(
+  value: object,
+  key: string,
+): { present: boolean; value?: unknown } | undefined {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined) return { present: false };
+    if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+      return undefined;
+    }
+    return { present: true, value: descriptor.value };
+  } catch {
+    return undefined;
+  }
+}
+
+function readAnthropicServerToolResultErrorFields(
+  value: unknown,
+): AnthropicServerToolResultErrorFields | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const name = readOwnEnumerableDataProperty(value, "name");
+  const provider = readOwnEnumerableDataProperty(value, "provider");
+  const code = readOwnEnumerableDataProperty(value, "code");
+  const toolCallId = readOwnEnumerableDataProperty(value, "toolCallId");
+  const toolName = readOwnEnumerableDataProperty(value, "toolName");
+  const detail = readOwnEnumerableDataProperty(value, "detail");
   if (
-    left instanceof AnthropicServerToolResultError ||
-    right instanceof AnthropicServerToolResultError
+    name?.present !== true ||
+    name.value !== "AnthropicServerToolResultError" ||
+    provider?.present !== true ||
+    provider.value !== "anthropic" ||
+    code?.present !== true ||
+    typeof code.value !== "string" ||
+    code.value.length === 0 ||
+    toolCallId?.present !== true ||
+    typeof toolCallId.value !== "string" ||
+    toolCallId.value.length === 0 ||
+    toolName?.present !== true ||
+    typeof toolName.value !== "string" ||
+    toolName.value.length === 0 ||
+    detail === undefined ||
+    (detail.present && detail.value !== undefined && typeof detail.value !== "string")
   ) {
-    return left instanceof AnthropicServerToolResultError &&
-      right instanceof AnthropicServerToolResultError &&
-      left.code === right.code &&
-      left.toolCallId === right.toolCallId &&
-      left.toolName === right.toolName &&
-      left.detail === right.detail;
+    return undefined;
+  }
+  return {
+    code: code.value,
+    toolCallId: toolCallId.value,
+    toolName: toolName.value,
+    ...(typeof detail.value === "string" ? { detail: detail.value } : {}),
+  };
+}
+
+function anthropicProviderResultsEqual(left: unknown, right: unknown): boolean {
+  const leftError = readAnthropicServerToolResultErrorFields(left);
+  const rightError = readAnthropicServerToolResultErrorFields(right);
+  if (leftError || rightError) {
+    return leftError !== undefined &&
+      rightError !== undefined &&
+      leftError.code === rightError.code &&
+      leftError.toolCallId === rightError.toolCallId &&
+      leftError.toolName === rightError.toolName &&
+      leftError.detail === rightError.detail;
   }
   return jsonValuesEqual(left, right);
 }

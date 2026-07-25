@@ -369,6 +369,9 @@ function createAnthropicRawAssistantMetadata(
   rawAssistantMessages: unknown[][],
   initialProviderToolNamesById: ReadonlyMap<string, string>,
 ): Record<string, unknown> | undefined {
+  if (rawAssistantMessages.length === 0) {
+    return undefined;
+  }
   const snapshot = validateAnthropicRawAssistantMessages(
     rawAssistantMessages,
     new Map(initialProviderToolNamesById),

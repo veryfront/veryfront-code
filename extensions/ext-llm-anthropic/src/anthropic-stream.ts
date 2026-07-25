@@ -853,7 +853,7 @@ export async function* streamAnthropicCompatibleParts(
     ) {
       throw invalidAnthropicStream(providerLabel, "stream ended with unfinished content blocks");
     }
-    if (completedSupportedContentBlocks === 0) {
+    if (completedSupportedContentBlocks === 0 && seenContentBlocks.size > 0) {
       throw invalidAnthropicStream(providerLabel, "stream contained no supported content blocks");
     }
     if (!sawStopReason && !completedClientToolUseStep) {
