@@ -815,7 +815,8 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/server": "Server runtime helpers.",
   "veryfront/testing": "Test utilities.",
   "veryfront/tool": "Tool definitions and execution.",
-  "veryfront/ui": "UI primitives - the base layer for veryfront/chat components.",
+  "veryfront/ui":
+    "UI primitives - the base layer for veryfront/chat components.",
   "veryfront/utils": "Runtime utilities.",
   "veryfront/workflow": "Workflows.",
 };
@@ -1802,6 +1803,10 @@ const METHOD_DESCRIPTIONS: Record<
         adapter: "Platform adapter",
       },
     },
+    teardown: {
+      desc:
+        "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
+    },
     getMiddleware: {
       desc: "List registered middleware with metadata.",
     },
@@ -2177,10 +2182,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           );
           lines.push("");
 
-          // Method description: upstream JSDoc first, then curated fallback
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          // Method description: curated public copy first, then upstream JSDoc.
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -2252,9 +2256,8 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push(`### \`${signature}\``);
           lines.push("");
 
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");

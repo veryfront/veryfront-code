@@ -90,7 +90,7 @@ const pipeline = new MiddlewarePipeline()
 
 ### Run the pipeline
 
-Use `handle()` to run the middleware chain and then your route handler. If a middleware short-circuits (returns a `Response` — e.g. a rate-limit rejection), `handle()` returns that response and your handler never runs; otherwise your handler runs as the terminal step:
+Use `handle()` to run the middleware chain and then your route handler. If a middleware short-circuits (returns a `Response`, e.g. a rate-limit rejection), `handle()` returns that response and your handler never runs; otherwise your handler runs as the terminal step:
 
 ```ts
 // app/api/users/route.ts
@@ -122,16 +122,16 @@ curl -i http://localhost:3000/api/users
 
 The response includes any headers added by the middleware that matched the request.
 
-> **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(req))` is always truthy — use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
+> **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(req))` is always truthy. Use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
 
 ### In-memory state across requests
 
-Middleware and route handlers created at module scope — for example a `rateLimit()` store, or a module-level counter — behave differently by environment:
+Middleware and route handlers created at module scope, for example a `rateLimit()` store or a module-level counter, behave differently by environment:
 
 - **In development**, the dev server re-evaluates each route module on every request so edits hot-reload. A fresh module scope means module-level variables and default in-memory stores are re-created per request: a counter always reads back its initial value, and the default in-memory rate-limit store never accumulates across requests. To exercise threshold behavior in dev, drive the pipeline multiple times within a single request, or use an external store.
 - **In production**, the compiled route module is cached per release, so module-scoped state persists across requests **within one server process and one release**. It is still **not** shared across multiple instances, and it resets on every redeploy (and under memory-pressure eviction).
 
-For anything that must be correct across requests, instances, and deploys — rate limiting, counters, sessions — use an external store (see the `RateLimitStore` interface and the Redis example in the rate-limit reference) rather than module-scoped memory.
+For anything that must be correct across requests, instances, and deploys, such as rate limiting, counters, and sessions, use an external store (see the `RateLimitStore` interface and the Redis example in the rate-limit reference) rather than module-scoped memory.
 
 ### Cleanup callbacks
 
@@ -143,7 +143,7 @@ pipeline.onTeardown(async () => {
 });
 ```
 
-`onTeardown` callbacks run at the end of every `handle()` and `execute()` call — including when the terminal handler throws — so a module-scoped route pipeline fires them on each request. Callback errors are logged and swallowed, never surfaced to the client. Keep the work cheap: it is awaited before the `handle()`/`execute()` promise resolves, so a slow callback delays the response.
+`onTeardown` callbacks run at the end of every `handle()` and `execute()` call, including when the terminal handler throws, so a module-scoped route pipeline fires them on each request. Callback errors are logged and swallowed, never surfaced to the client. Keep the work cheap: it is awaited before the `handle()`/`execute()` promise resolves, so a slow callback delays the response.
 
 For long-lived pipelines that need one-shot cleanup on shutdown (rather than per request), call `pipeline.teardown()` explicitly. Unlike the per-request run, `teardown()` drains and discards the callbacks so they never fire again.
 

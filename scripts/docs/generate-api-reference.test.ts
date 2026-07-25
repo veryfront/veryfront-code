@@ -90,6 +90,28 @@ describe("generate-api-reference", () => {
         "barrel examples must be rendered once",
       );
 
+      const middlewareReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/middleware.md`,
+      );
+      assertStringIncludes(
+        middlewareReference,
+        "Register a cleanup callback that runs once per request, after each `execute()`/`handle()` call produces its response.",
+      );
+      assertStringIncludes(
+        middlewareReference,
+        "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
+      );
+      assertEquals(
+        middlewareReference.includes("after the response is sent"),
+        false,
+        "generated middleware docs must not use the old one-shot teardown timing",
+      );
+      assertEquals(
+        middlewareReference.includes("Run all registered teardown callbacks"),
+        false,
+        "generated middleware docs must not describe teardown as the per-request cleanup path",
+      );
+
       const cliReference = await Deno.readTextFile(
         `${outputDir}/veryfront/cli.md`,
       );

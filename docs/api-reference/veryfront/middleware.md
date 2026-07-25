@@ -79,7 +79,7 @@ Run the middleware pipeline with a final request handler. Unlike {@link execute}
 
 ### `middlewarePipeline.teardown()`
 
-Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by {@link execute} / {@link handle}, this clears the callbacks so they never run again - use it for one-shot lifecycle cleanup, e.g. draining a long-lived pipeline on server shutdown.
+Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 

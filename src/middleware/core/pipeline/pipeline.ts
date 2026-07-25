@@ -86,7 +86,7 @@ export class MiddlewarePipeline {
 
   /**
    * Run every registered teardown callback once, in registration order,
-   * without discarding them — so a module-scoped route pipeline fires them
+   * without discarding them, so a module-scoped route pipeline fires them
    * again on the next request. Called by {@link execute} and {@link handle}
    * after the response is produced. Callback errors are logged and swallowed
    * so cleanup failures never surface to the client.
@@ -104,7 +104,7 @@ export class MiddlewarePipeline {
   /**
    * Drain and discard all registered teardown callbacks. Unlike the
    * per-request cleanup run by {@link execute} / {@link handle}, this clears
-   * the callbacks so they never run again — use it for one-shot lifecycle
+   * the callbacks so they never run again. Use it for one-shot lifecycle
    * cleanup, e.g. draining a long-lived pipeline on server shutdown.
    */
   async teardown(): Promise<void> {
