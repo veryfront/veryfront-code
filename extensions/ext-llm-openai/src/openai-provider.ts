@@ -1204,6 +1204,36 @@ export function createOpenAIResponsesRuntime(
   };
 }
 
+function requestUsesOpenAIHostedTool(optionsForRuntime: unknown): boolean {
+  const options = readRecord(optionsForRuntime);
+  if (!options || options.tools === undefined) return false;
+  if (!Array.isArray(options.tools)) {
+    throw new TypeError("OpenAI runtime tools must be an array");
+  }
+  return resolveOpenAIWebSearchDescriptor(
+    options.tools as OpenAICompatibleLanguageOptions["tools"],
+  ) !== undefined;
+}
+
+function createOpenAIAdaptiveModelRuntime(
+  chatRuntime: ModelRuntime,
+  responsesRuntime: ModelRuntime,
+): ModelRuntime {
+  return {
+    ...chatRuntime,
+    doGenerate(optionsForRuntime: unknown) {
+      return requestUsesOpenAIHostedTool(optionsForRuntime)
+        ? responsesRuntime.doGenerate(optionsForRuntime)
+        : chatRuntime.doGenerate(optionsForRuntime);
+    },
+    doStream(optionsForRuntime: unknown) {
+      return requestUsesOpenAIHostedTool(optionsForRuntime)
+        ? responsesRuntime.doStream(optionsForRuntime)
+        : chatRuntime.doStream(optionsForRuntime);
+    },
+  };
+}
+
 export function createOpenAIEmbeddingRuntime(
   config: OpenAIRuntimeConfig,
   modelId: string,
@@ -1258,28 +1288,24 @@ export class OpenAIProvider implements LLMProvider {
   createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
     const providerLabel = getOpenAIProviderLabel(config);
     const providerName = getLLMOpenAIProviderName(config);
+    const runtimeConfig: OpenAIRuntimeConfig = {
+      apiKey: config.credential,
+      baseURL: config.baseURL,
+      name: providerLabel,
+      providerName,
+      fetch: config.fetch,
+    };
+    const responsesRuntime = createOpenAIResponsesRuntime(
+      runtimeConfig,
+      modelId,
+    );
     if (isOpenAIReasoningModel(modelId, providerName)) {
-      return createOpenAIResponsesRuntime(
-        {
-          apiKey: config.credential,
-          baseURL: config.baseURL,
-          name: providerLabel,
-          providerName,
-          fetch: config.fetch,
-        },
-        modelId,
-      );
+      return responsesRuntime;
     }
 
-    return createOpenAIModelRuntime(
-      {
-        apiKey: config.credential,
-        baseURL: config.baseURL,
-        name: providerLabel,
-        providerName,
-        fetch: config.fetch,
-      },
-      modelId,
+    return createOpenAIAdaptiveModelRuntime(
+      createOpenAIModelRuntime(runtimeConfig, modelId),
+      responsesRuntime,
     );
   }
 

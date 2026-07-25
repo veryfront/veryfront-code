@@ -163,6 +163,37 @@ OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 Both `apiKey` and `baseURL` are resolved per-request, so each project in a multi-tenant setup can have its own configuration.
 
+## Enable OpenAI-hosted web search
+
+Set an OpenAI model and explicitly allow the `web_search` provider tool:
+
+```ts
+// agents/researcher.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "researcher",
+  model: "openai/gpt-4.1",
+  system: "Search the web when current sources would improve the answer.",
+  providerTools: ["web_search"],
+});
+```
+
+Veryfront sends requests that use this tool to OpenAI's Responses endpoint.
+Requests for the same non-reasoning model without `web_search` continue to use
+Chat Completions. `veryfront-cloud/openai/*` models use the same agent
+configuration.
+
+Only OpenAI-hosted `web_search` is enabled through this agent surface. The
+runtime rejects unsupported or duplicate OpenAI provider tools before sending
+a request. An `OPENAI_BASE_URL` override must implement both the Responses API
+and OpenAI's hosted web-search contract.
+
+The agent runtime preserves the ordered OpenAI response output, encrypted
+reasoning state, search source URLs, and citations across stateless
+(`store: false`) turns. If a lower-level caller builds the next prompt itself,
+it must carry the assistant message's `providerMetadata` forward unchanged.
+
 ## Custom provider registration
 
 For providers not covered by env vars, use `registerModelProvider()`:

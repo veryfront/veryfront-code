@@ -106,6 +106,96 @@ const WEB_FETCH_OUTPUT_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
+const OPENAI_WEB_SEARCH_INPUT_SCHEMA: JsonSchema = {
+  anyOf: [
+    {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          const: "search",
+        },
+        query: {
+          type: "string",
+        },
+        queries: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          maxItems: 256,
+        },
+      },
+      required: ["type"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          const: "open_page",
+        },
+        url: {
+          anyOf: [
+            { type: "string" },
+            { type: "null" },
+          ],
+        },
+      },
+      required: ["type"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          const: "find_in_page",
+        },
+        url: {
+          type: "string",
+        },
+        pattern: {
+          type: "string",
+        },
+      },
+      required: ["type", "url", "pattern"],
+      additionalProperties: false,
+    },
+  ],
+};
+
+const OPENAI_WEB_SEARCH_OUTPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    status: {
+      type: "string",
+      const: "completed",
+    },
+    sources: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            const: "url",
+          },
+          url: {
+            type: "string",
+          },
+        },
+        required: ["type", "url"],
+        additionalProperties: false,
+      },
+      maxItems: 256,
+    },
+  },
+  required: ["status"],
+  additionalProperties: false,
+};
+
 export function createAnthropicWebSearchToolSet(): RuntimeToolSet {
   return {
     web_search: createRuntimeProviderTool({
@@ -128,6 +218,21 @@ export function createAnthropicWebFetchToolSet(): RuntimeToolSet {
       inputSchema: createLazyRuntimeJsonSchema(WEB_FETCH_INPUT_SCHEMA),
       outputSchema: createLazyRuntimeJsonSchema(WEB_FETCH_OUTPUT_SCHEMA),
       supportsDeferredResults: true,
+    }),
+  };
+}
+
+export function createOpenAIWebSearchToolSet(): RuntimeToolSet {
+  return {
+    web_search: createRuntimeProviderTool({
+      id: "openai.web_search",
+      args: {},
+      inputSchema: createLazyRuntimeJsonSchema(
+        OPENAI_WEB_SEARCH_INPUT_SCHEMA,
+      ),
+      outputSchema: createLazyRuntimeJsonSchema(
+        OPENAI_WEB_SEARCH_OUTPUT_SCHEMA,
+      ),
     }),
   };
 }

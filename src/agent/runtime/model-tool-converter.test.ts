@@ -273,13 +273,42 @@ describe("model-tool-converter", () => {
     assertEquals("web_fetch" in result!, true);
   });
 
-  it("does not add provider-native web_search for non-anthropic models", () => {
+  it("adds provider-native web_search for direct and cloud OpenAI models", async () => {
     const result = convertToolsToRuntimeTools([], {
-      model: "openai/gpt-4o-mini",
+      model: "openai/gpt-5.4-nano",
       providerTools: ["web_search"],
     });
 
-    assertEquals(result, undefined);
+    assertEquals((result?.web_search as { type?: unknown }).type, "provider");
+    assertEquals(
+      (result?.web_search as { id?: unknown }).id,
+      "openai.web_search",
+    );
+
+    const cloudResult = convertToolsToRuntimeTools([], {
+      model: "veryfront-cloud/openai/gpt-5.5",
+      providerTools: ["web_search"],
+    });
+    assertEquals(
+      (cloudResult?.web_search as { id?: unknown }).id,
+      "openai.web_search",
+    );
+    const cloudTool = cloudResult?.web_search as {
+      inputSchema?: () => { validate?: (input: unknown) => unknown };
+      outputSchema?: () => { validate?: (input: unknown) => unknown };
+    };
+    assertEquals(typeof cloudTool.inputSchema, "function");
+    assertEquals(typeof cloudTool.outputSchema, "function");
+    const inputValidation = await cloudTool.inputSchema!().validate?.({
+      type: "search",
+      queries: ["Veryfront"],
+    }) as { success?: unknown };
+    const outputValidation = await cloudTool.outputSchema!().validate?.({
+      status: "completed",
+      sources: [{ type: "url", url: "https://veryfront.com/" }],
+    }) as { success?: unknown };
+    assertEquals(inputValidation.success, true);
+    assertEquals(outputValidation.success, true);
   });
 
   it("does not add provider-native web_fetch for non-anthropic models", () => {
@@ -291,7 +320,7 @@ describe("model-tool-converter", () => {
     assertEquals(result, undefined);
   });
 
-  it("preserves an explicit local tool named web_search for non-Anthropic models", () => {
+  it("preserves an explicit local web_search tool when OpenAI native search was not requested", () => {
     const tools: ToolDefinition[] = [
       {
         name: "web_search",
@@ -302,7 +331,6 @@ describe("model-tool-converter", () => {
 
     const result = convertToolsToRuntimeTools(tools, {
       model: "openai/gpt-5.2",
-      providerTools: ["web_search"],
     });
 
     assertEquals(result !== undefined, true);

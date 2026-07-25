@@ -1129,48 +1129,53 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedProviderTools, []);
   });
 
-  it("omits provider tools unsupported by the configured model from the inventory", async () => {
-    const sessionManager = new AgentRunSessionManager();
-    let runtimeSystem: unknown;
-
-    const agent = {
-      id: "ops-agent",
-      config: {
+  it("advertises only provider tools supported by the configured model", async () => {
+    for (
+      const testCase of [
+        { model: "openai/gpt-5.4-nano", expected: true },
+        { model: "google/gemini-3.5-flash", expected: false },
+      ]
+    ) {
+      const sessionManager = new AgentRunSessionManager();
+      let runtimeSystem: unknown;
+      const agent = {
         id: "ops-agent",
-        model: "openai/gpt-5.4-nano",
-        system: "test",
-        providerTools: ["web_search"],
-      },
-    } as unknown as Agent;
+        config: {
+          id: "ops-agent",
+          model: testCase.model,
+          system: "test",
+          providerTools: ["web_search"],
+        },
+      } as unknown as Agent;
+      const input = {
+        agentId: "ops-agent",
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messages: [],
+        tools: [],
+        context: [],
+        forwardedProps: {},
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
 
-    const input = {
-      agentId: "ops-agent",
-      threadId: crypto.randomUUID(),
-      runId: "run_1",
-      messages: [],
-      tools: [],
-      context: [],
-      forwardedProps: {},
-    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+      await createRuntimeAgentStreamResponse(input, agent, {
+        sessionManager,
+        createRuntime: (runtimeAgent) => {
+          runtimeSystem = runtimeAgent.config.system;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      });
 
-    await createRuntimeAgentStreamResponse(input, agent, {
-      sessionManager,
-      createRuntime: (runtimeAgent) => {
-        runtimeSystem = runtimeAgent.config.system;
-        return {
-          stream: async () =>
-            new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            }),
-        };
-      },
-    });
-
-    assertEquals(typeof runtimeSystem, "function");
-    const prompt = await (runtimeSystem as () => Promise<string>)();
-    assertEquals(prompt.includes("- web_search"), false);
+      assertEquals(typeof runtimeSystem, "function");
+      const prompt = await (runtimeSystem as () => Promise<string>)();
+      assertEquals(prompt.includes("- web_search"), testCase.expected);
+    }
   });
 
   it("keeps local tools required without protecting remote placeholders from provider caps", async () => {

@@ -918,6 +918,85 @@ describe("openai-provider", () => {
     ]);
   });
 
+  it("routes non-reasoning models through Responses only when OpenAI hosted search is requested", async () => {
+    const requestedUrls: string[] = [];
+    const requestedBodies: Array<Record<string, unknown>> = [];
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-4.1", {
+      credential: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      fetch: (input, init) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        requestedBodies.push(
+          JSON.parse(readRequestBody(init) ?? "{}") as Record<string, unknown>,
+        );
+        if (url.endsWith("/responses")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_web",
+                object: "response",
+                status: "completed",
+                output: [{
+                  id: "ws_1",
+                  type: "web_search_call",
+                  status: "completed",
+                  action: {
+                    type: "search",
+                    queries: ["Veryfront"],
+                    sources: [{
+                      type: "url",
+                      url: "https://veryfront.com/",
+                    }],
+                  },
+                }],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: { role: "assistant", content: "Chat response" },
+              }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    });
+    const prompt = [{
+      role: "user",
+      content: [{ type: "text", text: "Research Veryfront." }],
+    }] as const;
+
+    const searchResult = await runtime.doGenerate({
+      prompt,
+      tools: [{
+        type: "provider",
+        name: "web_search",
+        id: "openai.web_search",
+        args: {},
+      }],
+    });
+    const chatResult = await runtime.doGenerate({ prompt });
+
+    assertEquals(requestedUrls, [
+      "https://example.openai.test/v1/responses",
+      "https://example.openai.test/v1/chat/completions",
+    ]);
+    assertEquals(requestedBodies[0].tools, [{ type: "web_search" }]);
+    assertEquals(searchResult.content?.map((part) => (part as { type?: unknown }).type), [
+      "tool-call",
+      "tool-result",
+    ]);
+    assertEquals(chatResult.content, [{ type: "text", text: "Chat response" }]);
+  });
+
   it("keeps OpenAI-compatible provider identity separate from display labels", async () => {
     const encoder = new TextEncoder();
     let requestedUrl = "";

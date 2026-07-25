@@ -2,7 +2,7 @@
 
 > **Category:** LLM | **Contract:** `LLMProvider` | **Built-in**
 
-Provides OpenAI models for Veryfront agents and chat, enabling `openai/*` models for chat, embeddings, and the Responses API via the `LLMProviderRegistry`.
+Provides OpenAI models for Veryfront agents and chat, enabling `openai/*` models for chat, embeddings, the Responses API, and OpenAI-hosted web search via the `LLMProviderRegistry`.
 
 ## Registration
 
@@ -43,13 +43,51 @@ const result = await ai.embed("openai/text-embedding-3-small", {
 
 ### Responses API
 
-For models that support OpenAI's Responses API (structured output, native tools):
+For models that support OpenAI's Responses API (structured output, function
+tools, and supported hosted tools):
 
 ```ts
 const response = await ai.responses("openai/gpt-4.1", {
   prompt: [{ role: "user", content: "What is 2+2?" }],
 });
 ```
+
+### Hosted Web Search
+
+The agent-facing tool name is `web_search`. It resolves to the current
+`openai.web_search` provider tool and routes that request through the Responses
+API, including for models that otherwise use Chat Completions:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  model: "openai/gpt-4.1",
+  providerTools: ["web_search"],
+});
+```
+
+| Contract                    | Supported value                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------------- |
+| Agent tool name             | `web_search`                                                                                        |
+| Current provider id         | `openai.web_search`                                                                                 |
+| Low-level compatibility ids | `openai.web_search_2025_08_26`, `openai.web_search_preview`, `openai.web_search_preview_2025_03_11` |
+| Optional argument           | `searchContextSize`: `"low"` \| `"medium"` \| `"high"`                                              |
+| Per-request limit           | One OpenAI web-search provider tool                                                                 |
+
+Other OpenAI-hosted tool types are not normalized by this extension and fail
+before the provider request. OpenAI-compatible base URLs can use this path only
+when the endpoint implements OpenAI's Responses and hosted web-search
+contracts.
+
+Responses requests are stateless (`store: false`). The runtime retains the
+complete ordered response output in provider metadata and replays it on the
+next turn. Reasoning requests explicitly include encrypted reasoning content,
+and web-search requests include source URLs, so manual callers must preserve
+assistant-message provider metadata between turns.
+
+See [Providers: Enable OpenAI-hosted web search](../../docs/guides/providers.md#enable-openai-hosted-web-search)
+for the agent setup.
 
 ## Supported Models
 
