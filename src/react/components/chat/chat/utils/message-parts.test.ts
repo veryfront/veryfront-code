@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  extractSourcesFromParts,
   getAnswerPartsForRendering,
   getTextContent,
   groupPartsInOrder,
@@ -105,6 +106,31 @@ describe("message-parts", () => {
     it("returns false for text parts", () => {
       const part: ChatMessagePart = { type: "text", text: "hi" };
       assertEquals(isReasoningPart(part), false);
+    });
+  });
+
+  describe("extractSourcesFromParts", () => {
+    it("extracts native URL and document sources in message order", () => {
+      const parts: ChatMessagePart[] = [
+        {
+          type: "source-url",
+          sourceId: "web-1",
+          url: "https://example.com/reference",
+          title: "Reference",
+        },
+        {
+          type: "source-document",
+          sourceId: "knowledge/handbook.md",
+          mediaType: "text/markdown",
+          title: "knowledge/handbook.md",
+          filename: "knowledge/handbook.md",
+        },
+      ];
+
+      assertEquals(extractSourcesFromParts(parts), [
+        { title: "Reference", url: "https://example.com/reference" },
+        { title: "knowledge/handbook.md" },
+      ]);
     });
   });
 

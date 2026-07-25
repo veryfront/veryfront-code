@@ -621,9 +621,11 @@ async function finalizeResponseFinish(input: {
   mirroredToolChunkState: MirroredToolChunkState;
   capturedMessageId: string | null;
   incompleteToolCallsPartErrorText: string;
+  flushPendingDerivedSource: () => Promise<void>;
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
+  await input.flushPendingDerivedSource();
   await finalizeHostedChatRun({
     kind: "response",
     responseMessage: input.responseMessage,
@@ -691,6 +693,7 @@ export function createHostedChatExecutionRuntime(
   let lastStreamError: unknown = null;
   let finishHandlerStarted = false;
   let mirroredDurableOutput = false;
+  let flushPendingDerivedSource = async (): Promise<void> => {};
   const incompleteToolCallsPartErrorText = input.incompleteToolCallsPartErrorText ??
     INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT;
   const streamingMessageId = resolveStreamingMessageId({
@@ -755,6 +758,7 @@ export function createHostedChatExecutionRuntime(
           mirroredToolChunkState: input.bootstrap.mirroredToolChunkState,
           capturedMessageId: input.bootstrap.capturedMessageId,
           incompleteToolCallsPartErrorText,
+          flushPendingDerivedSource,
           cleanup: input.bootstrap.cleanup,
           logger: input.logger,
         }).catch((error) =>
@@ -793,6 +797,9 @@ export function createHostedChatExecutionRuntime(
       appendChunk: (chunk) => input.bootstrap.lifecycleAdapter.durableRunMirror?.handleChunk(chunk),
       setMirroredOutput: (value) => {
         mirroredDurableOutput = value;
+      },
+      registerPendingDerivedSourceFlush: (flush) => {
+        flushPendingDerivedSource = flush;
       },
       logger: input.logger,
     }),
