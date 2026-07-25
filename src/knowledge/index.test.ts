@@ -234,7 +234,6 @@ describe("projectKnowledge", () => {
           "Login content.",
         ].join("\n"),
       );
-
       const knowledge = projectKnowledge({ projectDir });
       const firstPage = await knowledge.lookup({ query: "zxqv yjkp", limit: 1 });
 
@@ -256,9 +255,56 @@ describe("projectKnowledge", () => {
     });
   });
 
+  it("normalizes blank and padded local lookup cursors", async () => {
+    await withTempDir(async (projectDir) => {
+      await mkdir(join(projectDir, "knowledge"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "knowledge", "billing.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Billing",
+          "---",
+          "",
+          "Billing content.",
+        ].join("\n"),
+      );
+      await writeTextFile(
+        join(projectDir, "knowledge", "login.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Login",
+          "---",
+          "",
+          "Login content.",
+        ].join("\n"),
+      );
+
+      const knowledge = projectKnowledge({ projectDir });
+      const firstPage = await knowledge.lookup({ query: "zxqv yjkp", limit: 1 });
+      const nextCursor = firstPage.page_info.next ?? "";
+
+      const blankCursorPage = await knowledge.lookup({
+        query: "zxqv yjkp",
+        cursor: " \n\t ",
+        limit: 1,
+      });
+      const paddedCursorPage = await knowledge.lookup({
+        query: "zxqv yjkp",
+        cursor: ` \n${nextCursor}\t `,
+      });
+
+      assertEquals(blankCursorPage.page_info.self, null);
+      assertEquals(blankCursorPage.data.map((item) => item.path), ["knowledge/billing.md"]);
+      assertEquals(paddedCursorPage.page_info.self, nextCursor);
+      assertEquals(paddedCursorPage.data.map((item) => item.path), ["knowledge/login.md"]);
+    });
+  });
+
   it("does not expose malformed cursor contents", async () => {
     const knowledge = projectKnowledge({ projectDir: "." });
-    const cursor = btoa("private cursor <TOKEN>");
+    const cursor = ` \n${btoa("private cursor <TOKEN>")}\t `;
 
     const error = await assertRejects(() => knowledge.lookup({ query: "billing", cursor }));
 
@@ -281,13 +327,34 @@ describe("projectKnowledge", () => {
           "Billing content.",
         ].join("\n"),
       );
+      await writeTextFile(
+        join(projectDir, "knowledge", "login.md"),
+        [
+          "---",
+          "type: runbook",
+          "title: Login",
+          "---",
+          "",
+          "Login content.",
+        ].join("\n"),
+      );
 
       const searchKnowledge = createSearchKnowledgeTool({ projectDir });
-      const result = await searchKnowledge.execute({ query: "billing" });
+      const firstPage = await searchKnowledge.execute({
+        query: "zxqv yjkp",
+        cursor: " \n\t ",
+        limit: 1,
+      });
+      const result = await searchKnowledge.execute({
+        query: "zxqv yjkp",
+        cursor: ` \n${firstPage.page_info.next ?? ""}\t `,
+      });
 
       assertEquals(searchKnowledge.id, "search_knowledge");
       assertEquals(searchKnowledge.inputSchemaJson?.properties?.query?.type, "string");
-      assertEquals(result.data.map((item) => item.path), ["knowledge/billing.md"]);
+      assertEquals(firstPage.data.map((item) => item.path), ["knowledge/billing.md"]);
+      assertEquals(result.page_info.self, firstPage.page_info.next);
+      assertEquals(result.data.map((item) => item.path), ["knowledge/login.md"]);
     });
   });
 
