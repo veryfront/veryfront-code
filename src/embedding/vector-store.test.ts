@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Embedding } from "./types.ts";
 import { vectorStore } from "./vector-store.ts";
@@ -114,6 +114,30 @@ describe("vectorStore", () => {
     ]);
   });
 
+  it("rewards negative similarity as diversity in MMR", async () => {
+    const vectors = new Map<string, number[]>([
+      ["query", [1, 0]],
+      ["first", [1, 0]],
+      ["orthogonal", [0, 1]],
+      ["opposite", [-1, 0]],
+    ]);
+    const embedder: Embedding = {
+      model: "test/mmr-negative-similarity",
+      embed: (text) => Promise.resolve(vectors.get(text)!),
+      embedMany: (texts) => Promise.resolve(texts.map((text) => vectors.get(text)!)),
+    };
+    const store = vectorStore({ embedder });
+
+    await store.add(["first", "orthogonal", "opposite"]);
+    const results = await store.search("query", {
+      strategy: "mmr",
+      topK: 2,
+      lambda: 0,
+    });
+
+    assertEquals(results.map((result) => result.text), ["first", "opposite"]);
+  });
+
   it("combines lexical and dense matches in hybrid search", async () => {
     const { embedder } = createTestEmbedder();
     const store = vectorStore({ embedder });
@@ -128,6 +152,46 @@ describe("vectorStore", () => {
 
     assertEquals(texts.includes("banana exact"), true);
     assertEquals(texts.includes("semantic match"), true);
+
+    const thresholded = await store.search("banana", {
+      strategy: "hybrid",
+      topK: 2,
+      threshold: 0.034,
+    });
+    assertEquals(thresholded, []);
+    assertEquals(results.every((result) => result.score > 0), true);
+  });
+
+  it("does not create lexical rank signals from zero BM25 scores", async () => {
+    const vectors = new Map<string, number[]>([
+      ["missing-term", [1, 0]],
+      ["dense-third", [0.6, 0.8]],
+      ["dense-first", [1, 0]],
+      ["dense-second", [0.8, 0.6]],
+    ]);
+    const embedder: Embedding = {
+      model: "test/hybrid-zero-bm25",
+      embed: (text) => Promise.resolve(vectors.get(text)!),
+      embedMany: (texts) => Promise.resolve(texts.map((text) => vectors.get(text)!)),
+    };
+    const store = vectorStore({ embedder });
+
+    await store.add(["dense-third", "dense-first", "dense-second"]);
+    const results = await store.search("missing-term", {
+      strategy: "hybrid",
+      topK: 3,
+    });
+
+    assertEquals(results.map((result) => result.text), [
+      "dense-first",
+      "dense-second",
+      "dense-third",
+    ]);
+    assertEquals(results.map((result) => result.score), [
+      1 / 60,
+      1 / 61,
+      1 / 62,
+    ]);
   });
 
   it("clears stored entries and size", async () => {
@@ -141,5 +205,88 @@ describe("vectorStore", () => {
 
     assertEquals(store.size, 0);
     assertEquals(await store.search("alpha"), []);
+  });
+
+  it("rejects invalid search controls before invoking the embedder", async () => {
+    const { embedder, embedCalls } = createTestEmbedder();
+    const store = vectorStore({ embedder });
+
+    for (
+      const options of [
+        { topK: 0 },
+        { topK: -1 },
+        { topK: 1.5 },
+        { threshold: Number.NaN },
+        { threshold: -0.1 },
+        { threshold: 1.1 },
+        { lambda: -0.1 },
+        { lambda: 1.1 },
+      ]
+    ) {
+      await assertRejects(() => store.search("alpha", options), RangeError);
+    }
+    await assertRejects(
+      () => store.search("alpha", { strategy: "unknown" as never }),
+      TypeError,
+      "strategy",
+    );
+    assertEquals(embedCalls, []);
+  });
+
+  it("keeps add atomic when metadata or embedding contracts are malformed", async () => {
+    const malformed: Embedding = {
+      model: "test/malformed",
+      embed: () => Promise.resolve([1, 0]),
+      embedMany: () => Promise.resolve([[1, 0]]),
+    };
+    const store = vectorStore({ embedder: malformed });
+
+    await assertRejects(
+      () => store.add(["one", "two"], [{ source: "only-one" }]),
+      RangeError,
+      "metadata length",
+    );
+    await assertRejects(
+      () => store.add(["one", "two"]),
+      RangeError,
+      "returned 1 vectors",
+    );
+    assertEquals(store.size, 0);
+  });
+
+  it("rejects vector dimension drift without partially appending entries", async () => {
+    let dimension = 2;
+    const embedder: Embedding = {
+      model: "test/drift",
+      embed: () => Promise.resolve(Array.from({ length: dimension }, () => 1)),
+      embedMany: (texts) =>
+        Promise.resolve(
+          texts.map(() => Array.from({ length: dimension }, () => 1)),
+        ),
+    };
+    const store = vectorStore({ embedder });
+
+    await store.add(["first"]);
+    dimension = 3;
+    await assertRejects(
+      () => store.add(["second"]),
+      RangeError,
+      "expected dimension 2",
+    );
+    assertEquals(store.size, 1);
+  });
+
+  it("snapshots metadata on write and read", async () => {
+    const { embedder } = createTestEmbedder();
+    const store = vectorStore({ embedder });
+    const metadata = { source: "docs" };
+
+    await store.add(["alpha document"], [metadata]);
+    metadata.source = "mutated";
+    const first = await store.search("alpha");
+    first[0]!.metadata!.source = "result-mutated";
+    const second = await store.search("alpha");
+
+    assertEquals(second[0]?.metadata, { source: "docs" });
   });
 });

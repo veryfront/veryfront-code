@@ -279,6 +279,44 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doEmbed, "function");
   });
 
+  it("routes Google embeddings with immutable project identity", async () => {
+    setCloudBootstrap();
+    let capturedRequest: Request | undefined;
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      capturedRequest = new Request(input, init);
+      return new Response(
+        JSON.stringify({
+          embeddings: [{ values: [1, 2, 3] }],
+          usageMetadata: { promptTokenCount: 1 },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }) as typeof fetch;
+
+    const model = resolveEmbeddingModel(
+      "veryfront-cloud/google/gemini-embedding-2",
+    );
+    const result = await model.doEmbed({ values: ["hello"] });
+
+    assertEquals(
+      capturedRequest?.url,
+      "https://api.veryfront.com/ai/gateway/google/v1beta/models/gemini-embedding-2:embedContent",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("Authorization"),
+      "Bearer vf_test_provider",
+    );
+    assertEquals(
+      capturedRequest?.headers.get("x-veryfront-project-slug"),
+      "provider-test-project",
+    );
+    assertEquals(capturedRequest?.headers.get("x-goog-api-key"), null);
+    assertEquals(result.embeddings, [[1, 2, 3]]);
+  });
+
   it("fails fast on malformed veryfront-cloud model IDs", () => {
     setCloudBootstrap();
 

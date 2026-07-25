@@ -13,13 +13,18 @@ export interface EmbeddingConfig {
   batchSize?: number; // max texts per embedMany API call (default 100)
 }
 
+/** Cancellation options accepted by embedding operations. */
+export interface EmbeddingCallOptions {
+  abortSignal?: AbortSignal;
+}
+
 /** Public API contract for embedding. */
 export interface Embedding {
   model: string;
   /** Embed a single text. Applies queryPrefix if configured. */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, options?: EmbeddingCallOptions): Promise<number[]>;
   /** Embed multiple texts. Applies documentPrefix if configured. Batches automatically. */
-  embedMany(texts: string[]): Promise<number[][]>;
+  embedMany(texts: string[], options?: EmbeddingCallOptions): Promise<number[][]>;
 }
 
 /** Options accepted by chunk. */
@@ -37,22 +42,29 @@ export interface VectorStoreConfig {
 /** Options accepted by search. */
 export interface SearchOptions {
   topK?: number; // default 5
-  threshold?: number; // minimum similarity score (0-1), discard below
+  /** Minimum returned strategy score: cosine relevance for dense/MMR, RRF for hybrid. */
+  threshold?: number;
   filter?: Record<string, unknown>; // metadata exact-match filter
   strategy?: "dense" | "hybrid" | "mmr"; // default "dense"
   lambda?: number; // MMR diversity param (0 = max diversity, 1 = max relevance, default 0.5)
+  abortSignal?: AbortSignal;
 }
 
 /** Result returned from search. */
 export interface SearchResult {
   text: string;
+  /** Strategy score: cosine relevance for dense/MMR, RRF for hybrid. */
   score: number;
   metadata?: Record<string, unknown>;
 }
 
 /** Public API contract for vector store. */
 export interface VectorStore {
-  add(texts: string[], metadata?: Record<string, unknown>[]): Promise<void>;
+  add(
+    texts: string[],
+    metadata?: Record<string, unknown>[],
+    options?: EmbeddingCallOptions,
+  ): Promise<void>;
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
   clear(): void;
   size: number;

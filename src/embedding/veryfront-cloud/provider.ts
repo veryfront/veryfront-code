@@ -1,8 +1,6 @@
 import { createError, toError } from "#veryfront/errors";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
-import { LLMProviderRegistryName } from "#veryfront/extensions/llm/index.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -13,9 +11,9 @@ import { createVeryfrontCloudOpenAIEmbeddingModel } from "#veryfront/provider/ve
 
 export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
-  const { apiBaseUrl, apiToken } = requireVeryfrontCloudBootstrap();
+  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken);
+  const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
 
   switch (provider) {
     case "openai":
@@ -26,8 +24,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
       });
 
     case "google": {
-      const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
-      const google = registry?.get("google");
+      const google = ensureBuiltinLLMProviders().get("google");
       if (google?.createEmbedding) {
         return google.createEmbedding(upstreamModelId, {
           credential: apiToken,

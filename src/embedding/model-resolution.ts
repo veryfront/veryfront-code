@@ -17,10 +17,10 @@ export function normalizeEmbeddingModelConfig(model?: string): string {
  * Resolve the best available cloud embedding model from environment API keys.
  * Returns `undefined` if no cloud provider is configured.
  */
-function resolveCloudEmbeddingFallback(): string | undefined {
+export function resolveCloudEmbeddingFallback(): string | undefined {
   if (getEnv("OPENAI_API_KEY")) return "openai/text-embedding-3-small";
   if (getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY")) {
-    return "google/text-embedding-004";
+    return "google/gemini-embedding-2";
   }
   return undefined;
 }

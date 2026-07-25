@@ -5,6 +5,7 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
   AUTO_EMBEDDING_MODEL,
   normalizeEmbeddingModelConfig,
+  resolveCloudEmbeddingFallback,
   resolveConfiguredEmbeddingModel,
 } from "./model-resolution.ts";
 
@@ -84,11 +85,11 @@ describe("embedding/model-resolution", () => {
     it("uses VERYFRONT_DEFAULT_EMBEDDING_MODEL as an override", () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_embedding_test");
       setEnv("VERYFRONT_PROJECT_SLUG", "embedding-test-project");
-      setEnv("VERYFRONT_DEFAULT_EMBEDDING_MODEL", "google/text-embedding-004");
+      setEnv("VERYFRONT_DEFAULT_EMBEDDING_MODEL", "google/gemini-embedding-2");
 
       assertEquals(
         resolveConfiguredEmbeddingModel(),
-        "veryfront-cloud/google/text-embedding-004",
+        "veryfront-cloud/google/gemini-embedding-2",
       );
     });
 
@@ -125,6 +126,27 @@ describe("embedding/model-resolution", () => {
         resolveConfiguredEmbeddingModel(),
         "local/all-MiniLM-L6-v2",
         "should use local model as final fallback",
+      );
+    });
+  });
+
+  describe("resolveCloudEmbeddingFallback", () => {
+    it("uses the current Google embedding model when only Google credentials exist", () => {
+      setEnv("GOOGLE_API_KEY", "google-test-key");
+
+      assertEquals(
+        resolveCloudEmbeddingFallback(),
+        "google/gemini-embedding-2",
+      );
+    });
+
+    it("prefers OpenAI when both supported provider credentials exist", () => {
+      setEnv("OPENAI_API_KEY", "openai-test-key");
+      setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "google-test-key");
+
+      assertEquals(
+        resolveCloudEmbeddingFallback(),
+        "openai/text-embedding-3-small",
       );
     });
   });

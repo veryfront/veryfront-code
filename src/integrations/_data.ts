@@ -20156,8 +20156,7 @@ export const connectors: IntegrationConfig[] = [
           "model": {
             "type": "string",
             "in": "path",
-            "description":
-              "Embedding model ID without the models/ prefix, e.g. gemini-embedding-001",
+            "description": "Embedding model ID without the models/ prefix, e.g. gemini-embedding-2",
             "required": true,
           },
         },

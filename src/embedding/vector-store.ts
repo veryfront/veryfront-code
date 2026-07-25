@@ -6,12 +6,21 @@ import type {
   VectorStoreConfig,
 } from "./types.ts";
 import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
+import {
+  requirePositiveSafeInteger,
+  requireUnitInterval,
+  validateEmbeddingBatch,
+  validateEmbeddingVector,
+} from "./validation.ts";
 
 interface VectorEntry {
   text: string;
   vector: number[];
   metadata?: Record<string, unknown>;
 }
+
+const DEFAULT_TOP_K = 5;
+const MAX_TOP_K = 10_000;
 
 /**
  * Creates an in-memory vector store with integrated embedding and similarity search.
@@ -46,64 +55,139 @@ interface VectorEntry {
 export function vectorStore(config: VectorStoreConfig): VectorStore {
   const embedder: Embedding = config.embedder;
   const entries: VectorEntry[] = [];
+  let vectorDimension: number | undefined;
 
   return {
-    async add(texts: string[], metadata?: Record<string, unknown>[]): Promise<void> {
-      const embeddings = await embedder.embedMany(texts);
-      for (let i = 0; i < texts.length; i++) {
-        entries.push({
-          text: texts[i]!,
-          vector: embeddings[i]!,
-          metadata: metadata?.[i],
-        });
+    async add(texts, metadata, options): Promise<void> {
+      if (!Array.isArray(texts)) {
+        throw new TypeError("vectorStore.add texts must be an array");
       }
+      if (metadata !== undefined && metadata.length !== texts.length) {
+        throw new RangeError(
+          "vectorStore.add metadata length must match texts length",
+        );
+      }
+      if (texts.length === 0) return;
+
+      const textSnapshot = [...texts];
+      const metadataSnapshot = metadata?.map((value) => value === undefined ? value : { ...value });
+      const embeddings = await embedder.embedMany(textSnapshot, options);
+      const validated = validateEmbeddingBatch(
+        embeddings,
+        textSnapshot.length,
+        "vectorStore.add embedding result",
+        vectorDimension,
+      );
+
+      const additions: VectorEntry[] = textSnapshot.map((text, index) => ({
+        text,
+        vector: [...validated.vectors[index]!],
+        metadata: metadataSnapshot?.[index],
+      }));
+      entries.push(...additions);
+      vectorDimension = validated.dimension;
     },
 
     async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
-      if (!query.trim()) return [];
+      const normalized = normalizeSearchOptions(options);
+      if (typeof query !== "string" || !query.trim()) return [];
       if (entries.length === 0) return [];
 
-      const topK = options?.topK ?? 5;
-      const threshold = options?.threshold;
-      const filter = options?.filter;
-      const strategy = options?.strategy ?? "dense";
-
       // Filter entries by metadata
-      const candidates = filter
-        ? entries.filter((e) => matchesFilter(e.metadata, filter))
+      const candidates = normalized.filter
+        ? entries.filter((entry) => matchesFilter(entry.metadata, normalized.filter!))
         : entries;
       if (candidates.length === 0) return [];
 
-      const queryEmbedding = await embedder.embed(query);
+      const queryEmbedding = validateEmbeddingVector(
+        await embedder.embed(query, { abortSignal: normalized.abortSignal }),
+        "vectorStore.search embedding result",
+        vectorDimension,
+      );
 
       let results: SearchResult[];
 
-      switch (strategy) {
+      switch (normalized.strategy) {
         case "mmr":
-          results = searchMMR(queryEmbedding, candidates, topK, options?.lambda ?? 0.5);
+          results = searchMMR(
+            queryEmbedding,
+            candidates,
+            normalized.topK,
+            normalized.lambda,
+          );
           break;
         case "hybrid":
-          results = searchHybrid(query, queryEmbedding, candidates, topK);
+          results = searchHybrid(query, queryEmbedding, candidates, normalized.topK);
           break;
-        default:
-          results = searchDense(queryEmbedding, candidates, topK);
+        case "dense":
+          results = searchDense(queryEmbedding, candidates, normalized.topK);
+          break;
       }
 
       // Apply score threshold
-      if (threshold !== undefined) {
-        results = results.filter((r) => r.score >= threshold);
+      if (normalized.threshold !== undefined) {
+        results = results.filter((result) => result.score >= normalized.threshold!);
       }
 
-      return results;
+      return results.map((result) => ({
+        ...result,
+        metadata: result.metadata ? { ...result.metadata } : undefined,
+      }));
     },
 
     clear(): void {
       entries.length = 0;
+      vectorDimension = undefined;
     },
 
     get size(): number {
       return entries.length;
     },
+  };
+}
+
+interface NormalizedSearchOptions {
+  abortSignal?: AbortSignal;
+  filter?: Record<string, unknown>;
+  lambda: number;
+  strategy: "dense" | "hybrid" | "mmr";
+  threshold?: number;
+  topK: number;
+}
+
+function normalizeSearchOptions(options?: SearchOptions): NormalizedSearchOptions {
+  const topK = requirePositiveSafeInteger(
+    options?.topK ?? DEFAULT_TOP_K,
+    "vectorStore search topK",
+    MAX_TOP_K,
+  );
+  const threshold = options?.threshold === undefined
+    ? undefined
+    : requireUnitInterval(options.threshold, "vectorStore search threshold");
+  const lambda = requireUnitInterval(
+    options?.lambda ?? 0.5,
+    "vectorStore search lambda",
+  );
+  const strategy = options?.strategy ?? "dense";
+  if (strategy !== "dense" && strategy !== "hybrid" && strategy !== "mmr") {
+    throw new TypeError(
+      'vectorStore search strategy must be "dense", "hybrid", or "mmr"',
+    );
+  }
+  const filter = options?.filter;
+  if (
+    filter !== undefined &&
+    (typeof filter !== "object" || filter === null || Array.isArray(filter))
+  ) {
+    throw new TypeError("vectorStore search filter must be an object");
+  }
+  return {
+    abortSignal: options?.abortSignal,
+    filter: filter ? { ...filter } : undefined,
+    lambda,
+    strategy,
+    threshold,
+    topK,
   };
 }
 
@@ -153,7 +237,7 @@ function searchMMR(
       const relevance = candidate.relevance;
 
       // Max similarity to any already-selected document
-      let maxSim = 0;
+      let maxSim = selectedVectors.length === 0 ? 0 : -Infinity;
       for (const sv of selectedVectors) {
         const sim = cosineSimilarity(candidate.vector, sv);
         if (sim > maxSim) maxSim = sim;
@@ -211,15 +295,24 @@ function searchHybrid(
   }
 
   const bm25Rank = new Map<number, number>();
+  let lastPositiveScore: number | undefined;
+  let lastPositiveRank = 0;
   for (let r = 0; r < bm25Scores.length; r++) {
-    bm25Rank.set(bm25Scores[r]!.index, r);
+    const item = bm25Scores[r]!;
+    if (item.score <= 0) break;
+    if (lastPositiveScore === undefined || item.score !== lastPositiveScore) {
+      lastPositiveScore = item.score;
+      lastPositiveRank = r;
+    }
+    bm25Rank.set(item.index, lastPositiveRank);
   }
 
   // Reciprocal Rank Fusion
   const fused = candidates.map((e, i) => {
     const dr = denseRank.get(i) ?? candidates.length;
-    const br = bm25Rank.get(i) ?? candidates.length;
-    const rrfScore = 1 / (RRF_K + dr) + 1 / (RRF_K + br);
+    const br = bm25Rank.get(i);
+    const lexicalScore = br === undefined ? 0 : 1 / (RRF_K + br);
+    const rrfScore = 1 / (RRF_K + dr) + lexicalScore;
     return { text: e.text, score: rrfScore, metadata: e.metadata };
   });
 
@@ -269,7 +362,7 @@ function computeBM25(
 }
 
 function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/\W+/).filter(Boolean);
+  return text.toLowerCase().split(/[^\p{L}\p{N}_]+/u).filter(Boolean);
 }
 
 // --- Metadata filtering ---
