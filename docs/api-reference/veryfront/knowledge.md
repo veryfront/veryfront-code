@@ -1,7 +1,7 @@
 ---
 title: "veryfront/knowledge"
 description: "Project knowledge retrieval helpers."
-order: 13
+order: 14
 ---
 
 ## Import
@@ -32,11 +32,11 @@ const result = await knowledge.retrieve("SSO login failure");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createSearchKnowledgeTool` | Create a local tool with the same id and response shape as hosted `search_knowledge`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L881) |
-| `formatKnowledgeContext` | Format search results into a deterministic prompt context block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L861) |
-| `normalizeKnowledgeQuery` | Normalize a knowledge query before retrieval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L853) |
-| `projectKnowledge` | Create a project knowledge helper backed by the configured RAG store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L897) |
-| `searchProjectKnowledge` | Search the local OKF knowledge manifest with the same input/output shape as Veryfront Cloud's `search_knowledge` MCP tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L871) |
+| `createSearchKnowledgeTool` | Create a local tool with the same id and response shape as hosted `search_knowledge`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L878) |
+| `formatKnowledgeContext` | Format search results into a deterministic prompt context block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L858) |
+| `normalizeKnowledgeQuery` | Normalize a knowledge query before retrieval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L850) |
+| `projectKnowledge` | Create a project knowledge helper backed by the configured RAG store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L894) |
+| `searchProjectKnowledge` | Search the local OKF knowledge manifest with the same input/output shape as Veryfront Cloud's `search_knowledge` MCP tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/knowledge/index.ts#L868) |
 
 ### Types
 
