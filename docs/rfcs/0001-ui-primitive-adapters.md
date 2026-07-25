@@ -30,8 +30,11 @@ Veryfront can then choose the engine behind our components:
   delegate Mechanics to a best-in-class accessible engine, selected via a
   per-component map (§6.5) and *vendored* into the app, not published as packages
   we version (§6.6). The engine is the developer's own dependency.
-- **shadcn-compatible** — not a separate engine (see §9); a documented mode where
-  our tokens and class conventions line up with a shadcn/Radix project.
+
+shadcn is deliberately **not** on that list: it is not an engine but a
+styled-surface + distribution layer that *wraps* an engine — a sibling of
+`veryfront/ui` itself, one axis up from the adapters. It is a different concern
+and out of scope here (§9).
 
 The strategic point is adoption. Developers are fickle and the first question a
 serious team asks is "does it use *X*?" Today we have one answer. With adapters
@@ -740,24 +743,14 @@ Building the two archetype extremes first (Base UI = parts, React Aria = hooks)
 is deliberate: it validates that the §6.3 contract genuinely spans the API-shape
 fault line, before we invest in the easy third and fourth adapters.
 
-### 7.3 shadcn posture: compatible via Base UI + CSS-variable tokens
+### 7.3 shadcn: no separate recommendation — it is a different axis (§9)
 
-The single most important 2026 fact: **shadcn now defaults to Base UI**
-(`npx shadcn init`), with Radix as an opt-in (`-b radix`); it ships the same
-styled component over either. shadcn is, in effect, the proof that "swap the
-engine, keep one styled surface" works at scale — and its seam is a **stable
-import path**, exactly our §6.3 rule 7.
-
-Therefore we make Veryfront **shadcn-compatible, not shadcn-powered**:
-
-- Adopt shadcn's **CSS-custom-property token conventions** (`--background`,
-  `--primary`, `--radius`, `.dark` variable block) so a shadcn project themes our
-  components with its existing variables.
-- Ship the **Base UI adapter** so "is it Base UI underneath?" — increasingly the
-  shadcn default — is a *yes*.
-- Optionally publish our skins as a **shadcn registry** (installable via
-  `npx shadcn add <url>`), so shadcn users can vendor Veryfront components the way
-  they already vendor everything else. (Follow-up, not this RFC.)
+shadcn is not an engine, so there is no shadcn adapter to recommend. Shipping the
+Base UI + Radix adapters (§7.1–7.2) already puts us on the same primitives shadcn
+sits on — the only interop this RFC owes. Token-name aliasing and shadcn-registry
+distribution are on the separate distribution axis and are deferred (§9). One
+useful fact that *does* land here: shadcn defaulting to Base UI in 2026 is
+independent evidence that Base UI is the right flagship (§7.1).
 
 ### 7.4 Consider Zag.js/Ark as a *future* built-in engine (not now)
 
@@ -780,30 +773,43 @@ builtin twice.
 - `veryfront/chat` continues to depend only on `veryfront/ui`; it inherits
   whatever adapter the app selected, for free.
 
-## 9. The shadcn question
+## 9. Why shadcn is out of scope — it is a different layer, not a different engine
 
-shadcn/ui is **not an engine** — it is a copy-paste distribution model
-(components pasted into your repo via a CLI/registry) built on Radix + Tailwind +
-CSS variables, with the `cn()` = `clsx`+`tailwind-merge` helper. So "does it use
-shadcn?" is really two questions:
+The instinct to add a "shadcn adapter" is a category error, and worth naming
+explicitly because reviewers will ask. There are **two orthogonal axes**:
 
-- *"Is it Radix underneath?"* → yes, via the Radix adapter.
-- *"Will it drop into my shadcn theme / Tailwind tokens?"* → this is a
-  **compatibility** posture, not an adapter: align our token names and class
-  conventions so a shadcn project can theme our components with its existing CSS
-  variables.
+| Axis | Members | What the axis decides |
+| ---- | ------- | --------------------- |
+| **Engine / Mechanics** | Base UI, Radix, Ariakit, React Aria | focus/dismiss/positioning/ARIA — *this is what adapters swap* |
+| **Styled surface + distribution** | **shadcn/ui**, **`veryfront/ui` itself** | the look, the tokens, and how the component source is delivered |
 
-Two 2026 facts sharpen this (both in §13):
+shadcn lives on the **second** axis. It is a copy-paste distribution model
+(components vendored into your repo via a CLI/registry) that **wraps an engine** —
+Base UI by default since mid-2026, Radix on `-b radix`, and third-party registries
+wrap Ariakit and others. That makes shadcn a **sibling of `veryfront/ui`** — a
+peer styled surface — not something that sits *below* us as an engine we adapt to.
 
-- **shadcn now defaults to Base UI** (`npx shadcn init`; Radix via `-b radix`),
-  and ships the same styled component over either backend. So being *Base UI-
-  backed* (§7.1) makes us shadcn-default-aligned, and having a Radix adapter
-  covers `-b radix` projects.
-- shadcn's whole model is the stable-import seam we adopt in §6.3 rule 7 — it is
-  existence proof that this works at ecosystem scale.
+Consequences:
 
-We should say "shadcn-compatible," not "shadcn-powered," and mean it precisely
-(§7.3).
+- **There is no shadcn adapter, and we build none.** You cannot "use shadcn" as a
+  dependency the way you use Base UI; you vendor its components. A team already on
+  shadcn has its own styled `Dialog`; they would not route it through
+  `veryfront/ui`.
+- **The only interop the adapters give us is free and already covered:** shipping
+  the Base UI and Radix adapters makes `veryfront/ui` sit on the *same primitives*
+  shadcn sits on. That is the entire substantive answer to "is it the same stuff
+  shadcn uses?" — and it falls out of §7.1–7.2 at no extra cost.
+- **Everything else labelled "shadcn" is on the distribution axis and is deferred**
+  (not rejected), out of this RFC:
+  - *token-name aliasing* (`--background`/`--primary`/`.dark`) so a shadcn theme
+    can style our components — optional, and in tension with our own token
+    vocabulary; do it only on real demand;
+  - *publishing our skins as a shadcn registry* (`npx shadcn add <url>`) so shadcn
+    users can vendor Veryfront components — a distribution decision, orthogonal to
+    adapters.
+
+Bottom line: **shadcn is a different concern.** The adapter RFC's job is the
+engine axis; being Base-UI/Radix-backed is all the shadcn story this RFC owes.
 
 ## 10. Risks and trade-offs
 
