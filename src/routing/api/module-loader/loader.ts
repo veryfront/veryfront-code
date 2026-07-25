@@ -435,7 +435,24 @@ function loadAndTranspileModule(
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
       // treated as user npm packages.
-      const frameworkPackages = new Set(["zod", "veryfront", "react", "react-dom", "path"]);
+      //
+      // `zod` is kept as a user dep on Node and the Deno source-run so a
+      // handler's own `import { z } from "zod"` is rewritten to a resolvable
+      // specifier. Excluding it left a bare `import "zod"` in the temp handler
+      // that Deno cannot resolve → "not a dependency and not in import map" → 500.
+      // (The Node path already always-resolves zod via
+      // getNodeExternalPackagesToResolve, so only the Deno source-run was broken
+      // by the exclusion.) zod is still force-externalized below, never bundled.
+      //
+      // The compiled binary keeps zod excluded — this change is scoped to the
+      // runtimes where it is verified. The binary loads framework helpers
+      // (createValidatedHandler, MiddlewarePipeline, …) through per-subpath
+      // veryfront runtime shims written next to the temp handler, a separate and
+      // more constrained resolution path; wiring a user `zod` through it belongs
+      // in a dedicated change with its own binary coverage. Leaving the binary
+      // branch byte-identical to before keeps that path untouched here.
+      const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
+      if (isDeno && isCompiledBinary()) frameworkPackages.add("zod");
       const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
       const userDeps = new Map<string, string>();
       for (const [name, version] of allDeps) {
