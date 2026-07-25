@@ -1087,6 +1087,17 @@ export function findProviderVisibleToolReplayMatches(
         }
         removePendingCallsWithId(pendingCalls, call.toolCallId);
         if (call.selfContainedResult) {
+          for (const priorCall of callsWithId) {
+            if (priorCall.part === call.part) {
+              continue;
+            }
+
+            supersededToolCallParts.add(priorCall.part);
+            const priorResultPart = matchedResultPartByCallPart.get(priorCall.part);
+            if (priorResultPart) {
+              supersededToolResultParts.add(priorResultPart);
+            }
+          }
           continue;
         }
 

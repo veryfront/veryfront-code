@@ -657,6 +657,35 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[0]?.parts.length, 5);
   });
 
+  it("accepts empty text placeholders between completed replay calls and results", () => {
+    for (const role of ["system", "user", "assistant"] as const) {
+      const parsed = parseHostedChatRequestMessages([
+        assistantMessage([rawReplayToolCallPart]),
+        createHostedChatRequestMessage(role, [{ type: "text", text: "" }], `${role}-empty-text`),
+        toolMessage([rawReplayToolResultPart]),
+      ]);
+
+      assertEquals(parsed.messages[1]?.parts as unknown, [{ type: "text", text: "" }]);
+    }
+  });
+
+  it("rejects whitespace text continuations between completed replay calls and results", () => {
+    for (const role of ["system", "user", "assistant"] as const) {
+      assertHostedChatRequestError(
+        [
+          assistantMessage([rawReplayToolCallPart]),
+          createHostedChatRequestMessage(
+            role,
+            [{ type: "text", text: " \n" }],
+            `${role}-whitespace`,
+          ),
+          toolMessage([rawReplayToolResultPart]),
+        ],
+        "completed tool_call requires an adjacent tool_result before conversation continuation",
+      );
+    }
+  });
+
   it("rejects next-message results after same-message assistant text follows completed replay calls", () => {
     assertHostedChatRequestError(
       [

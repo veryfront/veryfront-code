@@ -1335,6 +1335,37 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     );
   });
 
+  it("omits earlier duplicate self-contained tool occurrences", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart(
+          "self-contained",
+          "github__list_prs",
+          { page: 1 },
+          "output-available",
+          { data: [{ number: 3092 }] },
+        ),
+        dynamicToolInputPart(
+          "self-contained",
+          "github__list_prs",
+          { page: 2 },
+          "output-available",
+          { data: [{ number: 3093 }] },
+        ),
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("self-contained", "github__list_prs", { page: 2 })],
+        [expectedJsonResult("self-contained", "github__list_prs", {
+          data: [{ number: 3093 }],
+        })],
+      ),
+    );
+  });
+
   it("uses the matched call occurrence name for unnamed raw results before duplicate call ids", () => {
     const messages: ChatProviderModelInputMessage[] = [
       assistantInputMessage([

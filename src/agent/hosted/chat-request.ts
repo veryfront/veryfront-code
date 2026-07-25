@@ -107,12 +107,12 @@ function isHostedChatProviderVisibleNonToolPart(role: string, part: unknown): bo
   }
 
   if (role === "system") {
-    return part.type === "text" && typeof part.text === "string";
+    return part.type === "text" && typeof part.text === "string" && part.text.length > 0;
   }
 
   if (role === "user") {
     return (
-      part.type === "text" && typeof part.text === "string" ||
+      part.type === "text" && typeof part.text === "string" && part.text.length > 0 ||
       (part.type === "file" || part.type === "image") &&
         typeof part.mediaType === "string" && typeof part.url === "string"
     );
@@ -120,7 +120,7 @@ function isHostedChatProviderVisibleNonToolPart(role: string, part: unknown): bo
 
   if (role === "assistant") {
     return (
-      part.type === "text" && typeof part.text === "string" ||
+      part.type === "text" && typeof part.text === "string" && part.text.length > 0 ||
       part.type === "reasoning" &&
         (typeof part.text === "string" || typeof part.signature === "string" ||
           typeof part.redactedData === "string") ||

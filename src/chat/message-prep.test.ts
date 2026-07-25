@@ -1058,6 +1058,44 @@ Deno.test("stripPendingToolParts removes completed duplicate calls superseded by
   ]);
 });
 
+Deno.test("stripPendingToolParts removes earlier duplicate self-contained results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "output-available",
+        { files: ["old.ts"] },
+      ),
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 2 },
+        "output-available",
+        { files: ["new.ts"] },
+      ),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "output-available",
+          input: { pull_number: 2 },
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
 Deno.test("stripPendingToolParts removes split duplicate call/results superseded by later results", () => {
   const messages = [
     assistantReplayMessage([

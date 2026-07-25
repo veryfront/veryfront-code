@@ -168,7 +168,7 @@ function normalizeHostedChatRequestMessages(
         partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
       }
 
-      if (isRecord(part) && part.type === "tool_call" && ("id" in part || "name" in part)) {
+      if (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) {
         const rawPart: Record<string, unknown> = part;
         const rawId = rawPart["id"];
         const rawName = rawPart["name"];
