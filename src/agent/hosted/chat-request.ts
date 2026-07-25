@@ -110,7 +110,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           ctx.addIssue({
             code: "custom",
             message: "tool_result requires a preceding matching tool_call",
-            path: [messageIndex, "parts", partIndex, "tool_name"],
+            path: [messageIndex, "parts", partIndex, "tool_call_id"],
           });
           continue;
         }

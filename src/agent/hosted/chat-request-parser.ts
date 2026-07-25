@@ -7,6 +7,7 @@ import type {
   ChatUiMessageRole,
   DurableRootRunDescriptor,
 } from "#veryfront/chat/types.ts";
+import { stringifyUnknown } from "#veryfront/chat/conversation.ts";
 import {
   buildHostedChatRequestInputFromRuntimeAgentInvocation,
   type HostedChatRequest,
@@ -195,7 +196,9 @@ function normalizeHostedChatRequestMessages(
           input: {},
           state: part.is_error === true ? "output-error" : "output-available",
           output: part.output,
-          ...(part.is_error === true ? { errorText: String(part.output ?? "Tool error") } : {}),
+          ...(part.is_error === true
+            ? { errorText: stringifyUnknown(part.output ?? "Tool error") }
+            : {}),
         };
 
         const existingIndex = partIndexByToolCallId.get(toolCallId);

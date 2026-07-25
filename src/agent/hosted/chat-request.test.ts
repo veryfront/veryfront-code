@@ -214,8 +214,8 @@ describe("agent/hosted-chat-request", () => {
   });
 
   it("rejects orphan raw replay tool results without a tool name", () => {
-    assertHostedChatRequestError(
-      [
+    const parsed = hostedChatRequestSchema.safeParse(
+      createHostedChatRequestBody([
         {
           id: "tool-message-1",
           role: "tool",
@@ -227,9 +227,27 @@ describe("agent/hosted-chat-request", () => {
             },
           ],
         },
-      ],
-      "tool_result requires a preceding matching tool_call",
+      ]),
     );
+
+    assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      const validationError = parsed.error as {
+        message?: unknown;
+        issues?: Array<{ path: Array<string | number> }>;
+      };
+      assertStringIncludes(
+        typeof validationError.message === "string" ? validationError.message : "",
+        "tool_result requires a preceding matching tool_call",
+      );
+      assertEquals(validationError.issues?.[0]?.path, [
+        "messages",
+        0,
+        "parts",
+        0,
+        "tool_call_id",
+      ]);
+    }
   });
 
   it("rejects explicit raw tool-result names without a matching call or with a mismatch", () => {
@@ -349,6 +367,51 @@ describe("agent/hosted-chat-request", () => {
         ],
       },
     ]);
+  });
+
+  it("preserves structured raw replay error details", async () => {
+    const replayErrorOutput = { code: "denied", retryable: false };
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(
+          createHostedChatRequestBody([
+            {
+              id: "assistant-message-1",
+              role: "assistant",
+              parts: [rawReplayToolCallPart],
+            },
+            {
+              id: "tool-message-1",
+              role: "tool",
+              parts: [{
+                ...rawReplayToolResultPart,
+                output: replayErrorOutput,
+                is_error: true,
+              }],
+            },
+          ]),
+        ),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.messages[1]?.parts[0], {
+      type: "tool_call",
+      toolCallId: rawReplayToolCallPart.id,
+      toolName: replayToolName,
+      input: {},
+      state: "output-error",
+      output: replayErrorOutput,
+      errorText: '{"code":"denied","retryable":false}',
+    });
   });
 
   it("builds a hosted chat request from a runtime agent invocation", () => {
