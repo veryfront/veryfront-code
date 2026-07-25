@@ -611,6 +611,20 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
+  it("rejects raw errored replay calls without adjacent results", () => {
+    assertHostedChatRequestError(
+      [
+        assistantMessage([
+          {
+            ...rawReplayToolCallPart,
+            state: "error",
+          },
+        ]),
+      ],
+      "completed tool_call requires a matching tool_result",
+    );
+  });
+
   it("accepts completed raw replay calls closed by adjacent results", () => {
     const parsed = parseHostedChatRequestMessages([assistantMessage(rawReplayParts)]);
 
@@ -1285,6 +1299,7 @@ describe("agent/hosted-chat-request", () => {
 
   it("preserves structured raw replay error details", async () => {
     const replayErrorOutput = { code: "denied", retryable: false };
+    const erroredToolCallPart = { ...rawReplayToolCallPart, state: "error" };
     const parsed = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
         method: "POST",
@@ -1293,7 +1308,7 @@ describe("agent/hosted-chat-request", () => {
             {
               id: "assistant-message-1",
               role: "assistant",
-              parts: [rawReplayToolCallPart],
+              parts: [erroredToolCallPart],
             },
             {
               id: "tool-message-1",
@@ -1317,6 +1332,13 @@ describe("agent/hosted-chat-request", () => {
       throw new Error("Expected parsed request");
     }
 
+    assertEquals(parsed.messages[0]?.parts[0], {
+      type: "tool_call",
+      toolCallId: rawReplayToolCallPart.id,
+      toolName: replayToolName,
+      input: rawReplayToolCallPart.input,
+      state: "completed",
+    });
     assertEquals(parsed.messages[1]?.parts[0], {
       type: "tool_call",
       toolCallId: rawReplayToolCallPart.id,
@@ -1326,6 +1348,33 @@ describe("agent/hosted-chat-request", () => {
       output: replayErrorOutput,
       errorText: '{"code":"denied","retryable":false}',
     });
+    assertEquals(convertUiMessagesToProviderModelMessages(parsed.messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: rawReplayToolCallPart.id,
+            toolName: replayToolName,
+            input: rawReplayToolCallPart.input,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: rawReplayToolCallPart.id,
+            toolName: replayToolName,
+            output: {
+              type: "error-text",
+              value: '{"code":"denied","retryable":false}',
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it("builds a hosted chat request from a runtime agent invocation", () => {

@@ -1324,6 +1324,20 @@ Deno.test("stripPendingToolParts treats empty text as provider-invisible", () =>
   assertEquals(stripReplayMessages(messages), messages);
 });
 
+Deno.test("stripPendingToolParts treats tool-role text as provider-invisible", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    toolReplayMessage([textReplayPart("diagnostic text")], "tool-note"),
+    toolReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), messages);
+});
+
 Deno.test("stripPendingToolParts does not keep prior-message calls after a new call batch starts", () => {
   const messages = [
     assistantReplayMessage([

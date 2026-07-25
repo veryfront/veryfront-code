@@ -374,7 +374,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         if (isRawToolCall) {
           recordToolCall(part.id, part.name, [messageIndex, "parts", partIndex, "id"], {
             messageIndex,
-            requiresResult: part.state === "completed",
+            requiresResult: part.state === "completed" || part.state === "error",
           });
           continue;
         }

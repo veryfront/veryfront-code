@@ -139,7 +139,7 @@ function mapRawToolCallState(state: string): ChatToolPartState {
     case "pending":
       return "pending";
     case "error":
-      return "error";
+      return "completed";
     default:
       return "completed";
   }

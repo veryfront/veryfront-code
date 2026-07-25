@@ -1197,6 +1197,20 @@ describe("convertUiMessagesToProviderModelMessages", () => {
         [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
       ),
     );
+
+    const toolTextMessages: ChatProviderModelInputMessage[] = [
+      skippedMessages[0]!,
+      toolInputMessage([textInputPart("diagnostic text")], "tool-text"),
+      skippedMessages[2]!,
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(toolTextMessages),
+      expectedToolExchange(
+        [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
+        [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
   });
 
   it("maps raw errored tool calls to explicit error-text results", () => {
@@ -1218,6 +1232,39 @@ describe("convertUiMessagesToProviderModelMessages", () => {
       expectedToolExchange(
         [expectedToolCall("raw-error", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT)],
         [expectedErrorResult("raw-error", "github__get_pr_diff", "authentication_required")],
+      ),
+    );
+  });
+
+  it("uses adjacent raw results as authoritative for raw errored tool calls", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart(
+          "raw-error-with-result",
+          "github__get_pr_diff",
+          GITHUB_PR_DIFF_INPUT,
+          "error",
+        ),
+      ]),
+      toolInputMessage([
+        {
+          ...rawToolResultInputPart("raw-error-with-result", { code: "denied", retryable: false }),
+          is_error: true,
+        },
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("raw-error-with-result", "github__get_pr_diff", GITHUB_PR_DIFF_INPUT)],
+        [
+          expectedErrorResult(
+            "raw-error-with-result",
+            "github__get_pr_diff",
+            '{"code":"denied","retryable":false}',
+          ),
+        ],
       ),
     );
   });

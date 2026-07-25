@@ -904,6 +904,13 @@ function buildRawToolCallResultOutput(
     return null;
   }
 
+  if (
+    rawToolCall.state === "error" && rawToolCall.output === undefined &&
+    rawToolCall.errorText === undefined
+  ) {
+    return null;
+  }
+
   return buildToolResultOutput({
     state: rawToolCall.state,
     ...(rawToolCall.output !== undefined ? { output: rawToolCall.output } : {}),
@@ -988,12 +995,21 @@ function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
   return null;
 }
 
-function isProviderVisibleNonToolPart(part: unknown): boolean {
-  if (isTextPart(part)) {
-    return part.text.length > 0;
+function isProviderVisibleNonToolPart(role: ChatUiMessageRole, part: unknown): boolean {
+  if (role === "system") {
+    return isTextPart(part) && part.text.length > 0;
   }
 
-  return isReasoningPart(part) || getFilePart(part) !== null;
+  if (role === "user") {
+    return isTextPart(part) && part.text.length > 0 || getFilePart(part) !== null;
+  }
+
+  if (role === "assistant") {
+    return isTextPart(part) && part.text.length > 0 || isReasoningPart(part) ||
+      getFilePart(part) !== null;
+  }
+
+  return false;
 }
 
 function isCompatibleToolResultName(
@@ -1138,7 +1154,7 @@ export function findProviderVisibleToolReplayMatches(
         continue;
       }
 
-      if (isProviderVisibleNonToolPart(part)) {
+      if (isProviderVisibleNonToolPart(message.role, part)) {
         removePendingCallsFromEarlierMessages(pendingCalls, messageIndex);
         pendingCountBeforeSameMessageVisibleContent ??= pendingCalls.length;
       }
