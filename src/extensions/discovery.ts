@@ -154,7 +154,9 @@ async function readDir(path: string): Promise<Deno.DirEntry[]> {
     for await (const entry of Deno.readDir(path)) {
       entries.push(entry);
     }
-    return entries;
+    return entries.sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    );
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return [];
     throw err;

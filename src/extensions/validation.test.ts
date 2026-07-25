@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { detectConflicts, validateExtension } from "./validation.ts";
+import { detectConflicts, SOURCE_PRIORITY, validateExtension } from "./validation.ts";
 import type { Extension, ResolvedExtension } from "./types.ts";
 
 describe("validateExtension", () => {
@@ -42,6 +42,56 @@ describe("validateExtension", () => {
       assertEquals(issues.some((issue) => issue.includes(field)), true);
     }
     assertEquals(issues.some((issue) => issue.includes("provides key")), true);
+  });
+
+  it("rejects identifiers with surrounding whitespace", () => {
+    const issues = validateExtension({
+      name: " extension ",
+      version: " 1.0.0",
+      capabilities: [{ type: " fs:read " }],
+      contracts: {
+        provides: [" CacheStore "],
+        requires: [" SchemaValidator "],
+      },
+      provides: { " StaticContract ": {} },
+    });
+
+    for (
+      const field of [
+        "name",
+        "version",
+        "capabilities[0].type",
+        "contracts.provides[0]",
+        "contracts.requires[0]",
+        "provides key",
+      ]
+    ) {
+      assertEquals(
+        issues.some((issue) => issue.includes(field) && issue.includes("whitespace")),
+        true,
+      );
+    }
+  });
+
+  it("reports accessor failures as validation issues instead of throwing", () => {
+    const extension = {
+      version: "1.0.0",
+      capabilities: [],
+    };
+    Object.defineProperty(extension, "name", {
+      enumerable: true,
+      get() {
+        throw new Error("name unavailable");
+      },
+    });
+
+    const issues = validateExtension(extension);
+    assertEquals(
+      issues.some((issue) =>
+        issue.includes("name could not be read") && issue.includes("name unavailable")
+      ),
+      true,
+    );
   });
 
   it("rejects missing version", () => {
@@ -164,6 +214,12 @@ describe("validateExtension", () => {
   it("rejects number input", () => {
     const issues = validateExtension(42);
     assertEquals(issues.length, 1);
+  });
+});
+
+describe("SOURCE_PRIORITY", () => {
+  it("is immutable process-wide policy", () => {
+    assertEquals(Object.isFrozen(SOURCE_PRIORITY), true);
   });
 });
 

@@ -326,6 +326,22 @@ describe("ExtensionLoader", () => {
       assertEquals(order, ["loser", "seed", "winner", "consumer:winner"]);
     });
 
+    it("rejects dynamic contracts that the extension did not declare", async () => {
+      const undeclared = makeExt("undeclared-provider", {
+        setup: (ctx) => {
+          ctx.provide("SurpriseContract", { active: true });
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await assertRejects(
+        () => loader.setupAll([makeResolved(undeclared)], {}),
+        Error,
+        'Extension "undeclared-provider" cannot provide undeclared contract "SurpriseContract"',
+      );
+      assertEquals(tryResolve("SurpriseContract"), undefined);
+    });
+
     it("rejects missing required contracts before replacing the active generation", async () => {
       let activeTeardownCalls = 0;
       const loader = new ExtensionLoader(noopLogger);
@@ -1127,6 +1143,7 @@ describe("ExtensionLoader", () => {
       let teardownCount = 0;
       const failing = makeExt("first-failing", {
         provides: { StaticLeak: { leaked: true } },
+        contracts: { provides: ["DynamicLeak"] },
         setup(ctx) {
           ctx.provide("DynamicLeak", { leaked: true });
           throw new Error("first-failure");
@@ -1235,10 +1252,48 @@ describe("ExtensionLoader", () => {
         { active: true },
       );
     });
+
+    it("keeps teardown aggregation total for hostile thrown values", async () => {
+      const hostile = {
+        toString(): string {
+          throw new Error("string conversion failed");
+        },
+      };
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("hostile-teardown", {
+          teardown() {
+            throw hostile;
+          },
+        })),
+      ], {});
+
+      const error = await assertRejects(
+        () => loader.teardownAll(),
+        AggregateError,
+        "[unprintable thrown value]",
+      );
+      assertEquals((error as AggregateError).errors, [hostile]);
+    });
   });
 });
 
 describe("ExtensionLoader primeContracts", () => {
+  it("rejects blank names and undefined implementations before activation", () => {
+    const loader = new ExtensionLoader(noopLogger);
+
+    assertThrows(
+      () => loader.primeContracts({ " ": { active: true } }),
+      TypeError,
+      "contract name must be a non-empty string without surrounding whitespace",
+    );
+    assertThrows(
+      () => loader.primeContracts({ Missing: undefined }),
+      TypeError,
+      'Primed contract "Missing" must not be undefined',
+    );
+  });
+
   it("applies primed contracts after teardownAll so extensions can resolve them", async () => {
     const loader = new ExtensionLoader(noopLogger);
     const marker = { hello: "world" };

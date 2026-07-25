@@ -11,6 +11,7 @@ import { isAbsolute, toFileUrl } from "@std/path";
 import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
 import { validateExtension } from "./validation.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
+import { describeThrownValue } from "./safe-value.ts";
 
 /**
  * Dynamically import an extension factory from `path` and resolve it.
@@ -41,9 +42,7 @@ export async function loadExtensionFactory(
     mod = await import(specifier);
   } catch (err) {
     throw EXTENSION_VALIDATION_ERROR.create({
-      detail: `Failed to import extension at "${path}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      detail: `Failed to import extension at "${path}": ${describeThrownValue(err)}`,
       cause: err,
     });
   }
@@ -66,9 +65,7 @@ export async function loadExtensionFactory(
     factoryResult = (factory as (config?: unknown) => unknown)(config);
   } catch (err) {
     throw EXTENSION_VALIDATION_ERROR.create({
-      detail: `Extension factory at "${path}" threw during invocation: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      detail: `Extension factory at "${path}" threw during invocation: ${describeThrownValue(err)}`,
       cause: err,
     });
   }

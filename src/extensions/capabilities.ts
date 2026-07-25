@@ -5,18 +5,36 @@
  */
 
 import type { Capability, ExtensionLogger } from "./types.ts";
+import { describeThrownValue, stringifyAuditValue } from "./safe-value.ts";
 
 /**
  * Format capabilities as human-readable strings for logging.
  */
 export function formatCapabilities(capabilities: Capability[]): string[] {
   return capabilities.map((cap) => {
-    const { type, ...rest } = cap;
-    const extras = Object.keys(rest);
-    if (extras.length === 0) return type;
+    let type: unknown;
+    try {
+      type = cap.type;
+    } catch (error) {
+      return `[invalid capability: ${describeThrownValue(error)}]`;
+    }
+
+    let extras: string[];
+    try {
+      extras = Object.keys(cap).filter((key) => key !== "type");
+    } catch (error) {
+      return `${String(type)} ([unavailable: ${describeThrownValue(error)}])`;
+    }
+    if (extras.length === 0) return String(type);
 
     const details = extras
-      .map((key) => `${key}: ${JSON.stringify(rest[key])}`)
+      .map((key) => {
+        try {
+          return `${key}: ${stringifyAuditValue(cap[key])}`;
+        } catch (error) {
+          return `${key}: [unavailable: ${describeThrownValue(error)}]`;
+        }
+      })
       .join(", ");
     return `${type} (${details})`;
   });
@@ -25,45 +43,135 @@ export function formatCapabilities(capabilities: Capability[]): string[] {
 interface PermissionMapping {
   flag: string;
   scopeKey?: string;
-  /** Resolve scopes from the full capability (overrides scopeKey when present). */
-  resolveScopes?: (cap: Capability) => string[];
 }
 
 const DENO_PERMISSION_MAP: Record<string, PermissionMapping> = {
   "fs:read": { flag: "--allow-read", scopeKey: "paths" },
   "fs:write": { flag: "--allow-write", scopeKey: "paths" },
   "net:outbound": { flag: "--allow-net", scopeKey: "hosts" },
-  "net:listen": {
-    flag: "--allow-net",
-    resolveScopes: (cap) => {
-      const ports = cap.ports as (string | number)[] | undefined;
-      if (!ports || ports.length === 0) return [];
-      const host = (cap.host as string) || "localhost";
-      return ports.map((p) => `${host}:${p}`);
-    },
-  },
+  "net:listen": { flag: "--allow-net" },
   "env:read": { flag: "--allow-env", scopeKey: "keys" },
   "process:spawn": { flag: "--allow-run", scopeKey: "commands" },
   "native:ffi": { flag: "--allow-ffi" },
 };
 
+function readStringScopes(
+  capability: Capability,
+  index: number,
+  key: string,
+): string[] {
+  let value: unknown;
+  try {
+    value = capability[key];
+  } catch (cause) {
+    throw new TypeError(`capabilities[${index}].${key} could not be read`, {
+      cause,
+    });
+  }
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string" || entry.length === 0)
+  ) {
+    throw new TypeError(
+      `capabilities[${index}].${key} must be an array of non-empty strings`,
+    );
+  }
+  return value;
+}
+
+function normalizeListenPort(value: unknown, label: string): string {
+  if (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= 65_535
+  ) {
+    return String(value);
+  }
+  if (
+    typeof value === "string" &&
+    /^(?:[1-9]\d{0,4})$/.test(value) &&
+    Number(value) <= 65_535
+  ) {
+    return value;
+  }
+  throw new TypeError(`${label} must be an integer from 1 through 65535`);
+}
+
+function resolveListenScopes(
+  capability: Capability,
+  index: number,
+): string[] {
+  let ports: unknown;
+  try {
+    ports = capability.ports;
+  } catch (cause) {
+    throw new TypeError(`capabilities[${index}].ports could not be read`, {
+      cause,
+    });
+  }
+  if (ports === undefined) return [];
+  if (!Array.isArray(ports)) {
+    throw new TypeError(`capabilities[${index}].ports must be an array of port numbers`);
+  }
+
+  let host: unknown;
+  try {
+    host = capability.host;
+  } catch (cause) {
+    throw new TypeError(`capabilities[${index}].host could not be read`, {
+      cause,
+    });
+  }
+  if (host === undefined) host = "localhost";
+  if (
+    typeof host !== "string" ||
+    host.length === 0 ||
+    host.trim() !== host
+  ) {
+    throw new TypeError(
+      `capabilities[${index}].host must be a non-empty string without surrounding whitespace`,
+    );
+  }
+
+  return ports.map((port, portIndex) =>
+    `${host}:${normalizeListenPort(port, `capabilities[${index}].ports[${portIndex}]`)}`
+  );
+}
+
 /**
  * Map capabilities to Deno CLI permission flags.
- * Skips capabilities without a Deno permission mapping.
+ *
+ * Skips capabilities without a Deno permission mapping. Recognized capability
+ * types are validated at runtime and throw `TypeError` rather than emitting an
+ * invalid or unexpectedly broad permission flag.
  */
 export function mapToDenoPermissions(capabilities: Capability[]): string[] {
   const seen = new Set<string>();
   const flags: string[] = [];
 
-  for (const cap of capabilities) {
-    const mapping = DENO_PERMISSION_MAP[cap.type];
+  for (const [index, cap] of capabilities.entries()) {
+    let type: unknown;
+    try {
+      type = cap.type;
+    } catch (cause) {
+      throw new TypeError(`capabilities[${index}].type could not be read`, {
+        cause,
+      });
+    }
+    if (typeof type !== "string" || type.length === 0) {
+      throw new TypeError(`capabilities[${index}].type must be a non-empty string`);
+    }
+
+    const mapping = DENO_PERMISSION_MAP[type];
     if (!mapping) continue;
 
     let flag = mapping.flag;
-    const scopes = mapping.resolveScopes
-      ? mapping.resolveScopes(cap)
+    const scopes = type === "net:listen"
+      ? resolveListenScopes(cap, index)
       : mapping.scopeKey
-      ? (cap[mapping.scopeKey] as string[] | undefined) ?? []
+      ? readStringScopes(cap, index, mapping.scopeKey)
       : [];
     if (scopes.length > 0) {
       flag = `${flag}=${scopes.join(",")}`;

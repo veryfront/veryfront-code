@@ -94,7 +94,27 @@ export default authExtension;
 ```
 
 Use `setup(ctx)` when the implementation opens resources or registers contracts
-after async initialization.
+after async initialization. Declare every dynamically registered contract in
+`contracts.provides`; setup fails closed if it publishes an undeclared contract.
+
+```ts
+const asyncAuthExtension: ExtensionFactory = () => ({
+  name: "async-auth-extension",
+  version: "1.0.0",
+  capabilities: [],
+  contracts: {
+    provides: ["CurrentUserProvider"],
+  },
+  async setup(ctx) {
+    const provider = await Promise.resolve({
+      async getUser() {
+        return null;
+      },
+    });
+    ctx.provide("CurrentUserProvider", provider);
+  },
+});
+```
 
 ## Declare capabilities
 

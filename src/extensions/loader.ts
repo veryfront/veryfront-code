@@ -19,6 +19,7 @@ import {
   validateExtension,
 } from "./validation.ts";
 import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
+import { describeThrownValue } from "./safe-value.ts";
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30_000;
 // JavaScript runtimes clamp larger delays to an implementation-specific short
@@ -95,7 +96,35 @@ export class ExtensionLoader {
    * (e.g. `LLMProviderRegistry`) before per-extension `setup()` runs.
    */
   primeContracts(contracts: Record<string, unknown>): void {
-    this.primed = { ...this.primed, ...contracts };
+    let descriptors: Record<string, PropertyDescriptor>;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(contracts);
+    } catch (cause) {
+      throw new TypeError("Primed contracts could not be inspected", { cause });
+    }
+
+    const additions: Record<string, unknown> = Object.create(null);
+    for (const [name, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) continue;
+      if (name.trim().length === 0 || name.trim() !== name) {
+        throw new TypeError(
+          "Primed contract name must be a non-empty string without surrounding whitespace",
+        );
+      }
+      if (!Object.hasOwn(descriptor, "value")) {
+        throw new TypeError(`Primed contract "${name}" must be a data property`);
+      }
+      if (descriptor.value === undefined) {
+        throw new TypeError(`Primed contract "${name}" must not be undefined`);
+      }
+      additions[name] = descriptor.value;
+    }
+
+    this.primed = Object.assign(
+      Object.create(null) as Record<string, unknown>,
+      this.primed,
+      additions,
+    );
   }
 
   /**
@@ -468,7 +497,13 @@ export class ExtensionLoader {
           return;
         }
         const winner = contractWinner.get(contract);
-        if (!winner || winner === resolved) {
+        if (!winner) {
+          throw EXTENSION_VALIDATION_ERROR.create({
+            message:
+              `Extension "${authority.extensionName}" cannot provide undeclared contract "${contract}". Declare it in contracts.provides or provides.`,
+          });
+        }
+        if (winner === resolved) {
           this.registerOwned(contract, impl);
         }
       },
@@ -638,7 +673,7 @@ export class ExtensionLoader {
     // and cannot overlap a replacement generation.
     this.setupOrder = setupOrder.filter((record) => failedRecords.has(record));
     const details = failures
-      .map((error) => error instanceof Error ? error.message : String(error))
+      .map(describeThrownValue)
       .join("; ");
     const failure = new AggregateError(
       failures,
@@ -665,13 +700,17 @@ export class ExtensionLoader {
     const issues = validateExtension(candidate);
     if (issues.length === 0) return;
 
-    const name = candidate !== null &&
-        typeof candidate === "object" &&
-        "name" in candidate &&
-        typeof candidate.name === "string" &&
-        candidate.name.length > 0
-      ? candidate.name
-      : "<unknown>";
+    let name = "<unknown>";
+    if (candidate !== null && typeof candidate === "object") {
+      try {
+        const candidateName = (candidate as Record<string, unknown>).name;
+        if (typeof candidateName === "string" && candidateName.length > 0) {
+          name = candidateName;
+        }
+      } catch {
+        // Validation already records the accessor failure.
+      }
+    }
     throw EXTENSION_VALIDATION_ERROR.create({
       message: `Extension "${name}" is invalid:\n  ${issues.join("\n  ")}`,
     });
@@ -688,8 +727,6 @@ function combineLifecycleFailures(setupError: unknown, teardownError: unknown): 
     : [teardownError];
   return new AggregateError(
     [setupError, ...teardownFailures],
-    `Extension setup failed and rollback teardown failed: ${
-      setupError instanceof Error ? setupError.message : String(setupError)
-    }`,
+    `Extension setup failed and rollback teardown failed: ${describeThrownValue(setupError)}`,
   );
 }

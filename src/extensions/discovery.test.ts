@@ -317,6 +317,33 @@ describe("discoverPackageExtensions()", () => {
     const found = await discoverPackageExtensions(tmp);
     assertEquals(found.length, 1);
   });
+
+  it("returns packages in deterministic lexical order", async () => {
+    await writePkg(join(tmp, "node_modules", "z-last"), "z-last", {
+      extension: true,
+    });
+    await writePkg(join(tmp, "node_modules", "a-first"), "a-first", {
+      extension: true,
+    });
+    await writePkg(
+      join(tmp, "node_modules", "@scope", "z-last"),
+      "@scope/z-last",
+      { extension: true },
+    );
+    await writePkg(
+      join(tmp, "node_modules", "@scope", "a-first"),
+      "@scope/a-first",
+      { extension: true },
+    );
+
+    const found = await discoverPackageExtensions(tmp);
+    assertEquals(found.map(({ packageName }) => packageName), [
+      "@scope/a-first",
+      "@scope/z-last",
+      "a-first",
+      "z-last",
+    ]);
+  });
 });
 
 describe("discoverProjectExtensions()", () => {
@@ -375,6 +402,19 @@ describe("discoverProjectExtensions()", () => {
     const found = await discoverProjectExtensions(tmp);
     assertEquals(found, []);
   });
+
+  it("returns project extensions in deterministic lexical order", async () => {
+    for (const name of ["z-last", "a-first"]) {
+      const dir = join(tmp, "extensions", name);
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(join(dir, "index.ts"), "export default {};");
+    }
+
+    assertEquals(await discoverProjectExtensions(tmp), [
+      join(tmp, "extensions", "a-first", "index.ts"),
+      join(tmp, "extensions", "z-last", "index.ts"),
+    ]);
+  });
 });
 
 describe("discoverLocalExtensions()", () => {
@@ -417,5 +457,15 @@ describe("discoverLocalExtensions()", () => {
     const found = await discoverLocalExtensions(tmp);
     assertEquals(found.length, 1);
     assertEquals(found[0], join(tmp, "real.extension.ts"));
+  });
+
+  it("returns local extension files in deterministic lexical order", async () => {
+    await Deno.writeTextFile(join(tmp, "z-last.extension.ts"), "x");
+    await Deno.writeTextFile(join(tmp, "a-first.extension.ts"), "x");
+
+    assertEquals(await discoverLocalExtensions(tmp), [
+      join(tmp, "a-first.extension.ts"),
+      join(tmp, "z-last.extension.ts"),
+    ]);
   });
 });

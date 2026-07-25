@@ -103,6 +103,22 @@ describe("loadExtensionFactory()", () => {
     );
   });
 
+  it("wraps hostile thrown values without invoking an unsafe toString twice", async () => {
+    const path = join(tmp, "hostile-throw.extension.ts");
+    await Deno.writeTextFile(
+      path,
+      `export default () => {
+        throw { toString() { throw new Error("string conversion failed"); } };
+      };`,
+    );
+
+    await assertRejects(
+      () => loadExtensionFactory(path, "local-file"),
+      Error,
+      "[unprintable thrown value]",
+    );
+  });
+
   it("rejects an invalid factory result before source merging", async () => {
     const path = join(tmp, "invalid-result.extension.ts");
     await Deno.writeTextFile(
