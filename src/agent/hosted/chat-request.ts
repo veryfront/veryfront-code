@@ -107,10 +107,21 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       for (const [partIndex, part] of message.parts.entries()) {
         const uiToolIdentity = getHostedChatUiToolIdentity(part);
         const isRawToolCall = part.type === "tool_call" && "id" in part && "name" in part;
-        if ((isRawToolCall || uiToolIdentity) && message.role !== "assistant") {
+        if (isRawToolCall && message.role !== "assistant") {
           ctx.addIssue({
             code: "custom",
             message: "tool_call is only allowed in assistant messages",
+            path: [messageIndex, "parts", partIndex, "type"],
+          });
+          continue;
+        }
+
+        if (
+          uiToolIdentity && message.role !== "assistant" && message.role !== "tool"
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool UI parts are only allowed in assistant or tool messages",
             path: [messageIndex, "parts", partIndex, "type"],
           });
           continue;
@@ -133,12 +144,14 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         }
 
         if (uiToolIdentity) {
-          recordToolCall(uiToolIdentity.toolCallId, uiToolIdentity.toolName, [
-            messageIndex,
-            "parts",
-            partIndex,
-            "toolCallId",
-          ]);
+          if (message.role === "assistant") {
+            recordToolCall(uiToolIdentity.toolCallId, uiToolIdentity.toolName, [
+              messageIndex,
+              "parts",
+              partIndex,
+              "toolCallId",
+            ]);
+          }
           continue;
         }
 

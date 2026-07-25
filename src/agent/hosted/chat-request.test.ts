@@ -247,6 +247,38 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
+  it("accepts normalized UI tool results in tool messages", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(
+          createHostedChatRequestBody([
+            {
+              id: "assistant-message-1",
+              role: "assistant",
+              parts: [rawReplayToolCallPart],
+            },
+            {
+              id: "tool-message-1",
+              role: "tool",
+              parts: [parsedHostedChatRequestReplayToolCallPart],
+            },
+          ]),
+        ),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.messages[1]?.parts, [parsedHostedChatRequestReplayToolCallPart]);
+  });
+
   it("rejects duplicate replay tool-call ids", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([
