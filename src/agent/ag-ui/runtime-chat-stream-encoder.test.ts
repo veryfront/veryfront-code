@@ -143,6 +143,17 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
         { type: "data-state-snapshot", data: { step: 1 } },
       ],
     );
+    const sourceUrl = {
+      type: "source-url" as const,
+      sourceId: "docs-1",
+      url: "https://example.com/docs",
+      title: "Docs",
+    };
+    assertEquals(
+      encoder.encode({ type: "data", data: { name: "source-url", value: sourceUrl } }),
+      [sourceUrl],
+    );
+    assertEquals(encoder.encode(sourceUrl), [sourceUrl]);
 
     assertEquals(encoder.encode({ type: "error", error: "boom" }), [
       { type: "error", errorText: "wrapped:boom" },

@@ -42,13 +42,6 @@ function installDom(): { restore: () => void; window: JSDOM["window"] } {
   };
 }
 
-async function settle(): Promise<void> {
-  for (let index = 0; index < 2; index++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  flushSync(() => {});
-}
-
 describe("MessageActionBar", () => {
   it("renders every available default action", () => {
     const html = renderToString(
@@ -127,7 +120,9 @@ describe("MessageActionBar", () => {
       );
       assert(copy, "copy action renders");
       flushSync(() => copy.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      await settle();
+      // Let the clipboard promise settle without outwaiting the transient copied state.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
 
       assertEquals(writes, ["Answer"]);
       assert(rootElement.querySelector('[data-testid="custom-copied"]'));

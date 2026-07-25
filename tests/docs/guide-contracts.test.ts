@@ -98,6 +98,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "chunkOptions",
       "AI Gateway",
       "VERYFRONT_DEFAULT_EMBEDDING_MODEL",
+      "Studio Knowledge Q&A agents use native source citations",
     ],
   },
   "guides/api-routes.md": {
