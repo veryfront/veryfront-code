@@ -1805,7 +1805,8 @@ const METHOD_DESCRIPTIONS: Record<
       params: { pattern: "URL pattern to match", "": "Middleware handler" },
     },
     onTeardown: {
-      desc: "Register a cleanup callback that runs after the response is sent.",
+      desc:
+        "Register a cleanup callback that runs once per request after each `execute()`/`handle()` response body closes, is canceled, or errors. Bodyless, locked, or already-read responses and handler/middleware exceptions clean up before the call resolves.",
       params: { cb: "Cleanup callback" },
     },
     compose: {
@@ -1821,7 +1822,8 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     teardown: {
-      desc: "Run all registered teardown callbacks.",
+      desc:
+        "Drain and discard all registered teardown callbacks. Unlike the per-request cleanup run by `execute()` / `handle()`, this clears callbacks so they never run again.",
     },
     getMiddleware: {
       desc: "List registered middleware with metadata.",
@@ -2195,10 +2197,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           );
           lines.push("");
 
-          // Method description: upstream JSDoc first, then curated fallback
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          // Method description: curated public copy first, then upstream JSDoc.
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -2270,9 +2271,8 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push(`### \`${signature}\``);
           lines.push("");
 
-          const methodDesc = method.jsDoc?.doc
-            ? oneLineDoc(method.jsDoc.doc)
-            : methodMeta[method.name]?.desc ?? "";
+          const methodDesc = methodMeta[method.name]?.desc ??
+            (method.jsDoc?.doc ? oneLineDoc(method.jsDoc.doc) : "");
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");

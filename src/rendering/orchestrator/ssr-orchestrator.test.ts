@@ -167,6 +167,45 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(typeof result.ssrHash, "string");
     });
 
+    it("preserves stream readiness metadata through HTML shell generation", async () => {
+      const allReady = Promise.resolve();
+      const mockStream = Object.assign(new ReadableStream(), { allReady });
+      const finalStream = new ReadableStream();
+
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: async () => ({
+            html: "",
+            stream: mockStream,
+          }),
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          generateFullHTML: async () => "",
+          generateHTMLStream: async () => finalStream,
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+      });
+
+      const orchestrator = new SSROrchestrator(config);
+      const element = React.createElement("div") as React.ReactElement;
+
+      const result = await orchestrator.performSSRRendering(
+        element,
+        {
+          meta: { title: "Stream", slug: "/stream" },
+          pageBundle: {
+            compiledCode: "",
+            frontmatter: {},
+            globals: {},
+            headings: [],
+            nodeMap: new Map(),
+          },
+        } as any,
+        { delivery: "stream" },
+      );
+
+      assertEquals((result.finalStream as { allReady?: Promise<unknown> }).allReady, allReady);
+    });
+
     it("finalizes the render session before HTML shell generation", async () => {
       clearAllManifests();
       startRenderSession("render-session-1", "project-slug", "test-page");
