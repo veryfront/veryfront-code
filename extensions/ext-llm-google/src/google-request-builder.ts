@@ -91,9 +91,11 @@ type GoogleToolEvent = {
 
 type GoogleRawToolHistory = {
   ordinaryCalls: CanonicalProviderCall[];
+  legacyOrdinaryCalls: CanonicalProviderCall[];
   providerCalls: CanonicalProviderCall[];
   providerResults: CanonicalProviderResult[];
   toolEvents: GoogleToolEvent[];
+  legacyToolEvents: GoogleToolEvent[];
 };
 
 function invalidGoogleProviderHistory(): TypeError {
@@ -107,9 +109,12 @@ function readGoogleRawToolHistory(
 ): GoogleRawToolHistory {
   const registry = createGoogleToolCallCorrelationRegistry();
   const ordinaryCalls: CanonicalProviderCall[] = [];
+  const legacyOrdinaryCalls: CanonicalProviderCall[] = [];
   const providerCalls: CanonicalProviderCall[] = [];
   const providerResults: CanonicalProviderResult[] = [];
   const toolEvents: GoogleToolEvent[] = [];
+  const legacyToolEvents: GoogleToolEvent[] = [];
+  let anonymousFunctionCallIndex = 0;
 
   for (let partIndex = 0; partIndex < rawAssistantParts.length; partIndex += 1) {
     const part = rawAssistantParts[partIndex];
@@ -126,16 +131,20 @@ function readGoogleRawToolHistory(
       ) {
         throw invalidGoogleProviderHistory();
       }
-      const id = registry.registerFunctionCall(
-        partIndex,
-        typeof functionCall?.id === "string" ? functionCall.id : undefined,
-      );
-      ordinaryCalls.push({
-        id,
+      const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
+      const id = registry.registerFunctionCall(partIndex, providerId);
+      // Histories persisted before raw-position ids used the anonymous-call
+      // occurrence instead. Build both complete projections so validation
+      // cannot accept a mixture that no implementation ever emitted.
+      const legacyId = providerId === undefined ? `tool-${anonymousFunctionCallIndex++}` : id;
+      const call = {
         name: functionCall.name,
         input: functionCall.args,
-      });
+      };
+      ordinaryCalls.push({ id, ...call });
+      legacyOrdinaryCalls.push({ id: legacyId, ...call });
       toolEvents.push({ kind: "ordinary-call", id });
+      legacyToolEvents.push({ kind: "ordinary-call", id: legacyId });
       continue;
     }
     if (dataField === "executableCode") {
@@ -147,6 +156,7 @@ function readGoogleRawToolHistory(
         input: googleCodeExecutionInput(executableCode),
       });
       toolEvents.push({ kind: "provider-call", id });
+      legacyToolEvents.push({ kind: "provider-call", id });
       continue;
     }
     if (dataField !== "codeExecutionResult") {
@@ -162,9 +172,17 @@ function readGoogleRawToolHistory(
       isError: result.isError,
     });
     toolEvents.push({ kind: "provider-result", id });
+    legacyToolEvents.push({ kind: "provider-result", id });
   }
   registry.assertSettled();
-  return { ordinaryCalls, providerCalls, providerResults, toolEvents };
+  return {
+    ordinaryCalls,
+    legacyOrdinaryCalls,
+    providerCalls,
+    providerResults,
+    toolEvents,
+    legacyToolEvents,
+  };
 }
 
 function callsMatch(
@@ -304,6 +322,7 @@ function validateGoogleToolReplay(
       ? providerToolCalls
       : contentProviderCalls;
   }
+  rejectDuplicateIds([...ordinaryCalls, ...canonicalProviderCalls]);
 
   let rawHistory: GoogleRawToolHistory;
   try {
@@ -316,16 +335,6 @@ function validateGoogleToolReplay(
   // after compaction. Once any projection survives, however, it must correlate
   // one-for-one and in occurrence order; maps or sets would silently accept
   // reordered or duplicated calls/results.
-  if (
-    ordinaryCalls.length > 0 &&
-    !orderedProjectionMatches(
-      rawHistory.ordinaryCalls,
-      ordinaryCalls,
-      callsMatch,
-    )
-  ) {
-    throw invalidGoogleProviderHistory();
-  }
   if (
     canonicalProviderCalls.length > 0 &&
     !orderedProjectionMatches(
@@ -356,21 +365,41 @@ function validateGoogleToolReplay(
   if (providerResults.length > 0) {
     activeContentEventKinds.add("provider-result");
   }
-  const rawSurvivingEvents = survivingToolEvents(
+  const currentRawSurvivingEvents = survivingToolEvents(
     rawHistory.toolEvents,
+    activeContentEventKinds,
+  );
+  const legacyRawSurvivingEvents = survivingToolEvents(
+    rawHistory.legacyToolEvents,
     activeContentEventKinds,
   );
   const canonicalSurvivingEvents = survivingToolEvents(
     contentToolEvents,
     activeContentEventKinds,
   );
-  if (
-    !orderedProjectionMatches(
-      rawSurvivingEvents,
+  const currentIdsMatch = (
+    ordinaryCalls.length === 0 ||
+    orderedProjectionMatches(rawHistory.ordinaryCalls, ordinaryCalls, callsMatch)
+  ) &&
+    orderedProjectionMatches(
+      currentRawSurvivingEvents,
       canonicalSurvivingEvents,
       (left, right) => left.kind === right.kind && left.id === right.id,
+    );
+  const legacyIdsMatch = (
+    ordinaryCalls.length === 0 ||
+    orderedProjectionMatches(
+      rawHistory.legacyOrdinaryCalls,
+      ordinaryCalls,
+      callsMatch,
     )
-  ) {
+  ) &&
+    orderedProjectionMatches(
+      legacyRawSurvivingEvents,
+      canonicalSurvivingEvents,
+      (left, right) => left.kind === right.kind && left.id === right.id,
+    );
+  if (!currentIdsMatch && !legacyIdsMatch) {
     throw invalidGoogleProviderHistory();
   }
 }

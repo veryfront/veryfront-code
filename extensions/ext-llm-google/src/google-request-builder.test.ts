@@ -484,8 +484,9 @@ describe("ext-llm-google/google-request-builder", () => {
     }]);
   });
 
-  it("correlates raw client function calls by synthesized id, name, input, and order", () => {
+  it("accepts raw-position and legacy occurrence ids while preserving exact correlation", () => {
     const rawAssistantParts: [
+      Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -499,8 +500,9 @@ describe("ext-llm-google/google-request-builder", () => {
         args: { city: "Paris" },
       },
     }, {
+      text: "Checking another city.",
+    }, {
       functionCall: {
-        id: "tool_london",
         name: "weather",
         args: { city: "London" },
       },
@@ -515,7 +517,7 @@ describe("ext-llm-google/google-request-builder", () => {
       input: '{"city":"Paris"}',
     }, {
       type: "tool-call",
-      toolCallId: "tool_london",
+      toolCallId: "tool-3",
       toolName: "weather",
       input: { city: "London" },
     }];
@@ -524,9 +526,24 @@ describe("ext-llm-google/google-request-builder", () => {
       buildGoogleAssistantReplay(rawAssistantParts, canonicalCalls).contents,
       [{ role: "model", parts: rawAssistantParts }],
     );
+    assertJsonEquals(
+      buildGoogleAssistantReplay(
+        rawAssistantParts,
+        [
+          { ...canonicalCalls[0], toolCallId: "tool-0" },
+          { ...canonicalCalls[1], toolCallId: "tool-1" },
+        ],
+      ).contents,
+      [{ role: "model", parts: rawAssistantParts }],
+    );
 
     const mismatches = [
       [{ ...canonicalCalls[0], toolCallId: "tool-0" }, canonicalCalls[1]],
+      [canonicalCalls[0], { ...canonicalCalls[1], toolCallId: "tool-1" }],
+      [{ ...canonicalCalls[0], toolCallId: "tool-0" }, {
+        ...canonicalCalls[1],
+        toolCallId: "tool-0",
+      }],
       [{ ...canonicalCalls[0], toolName: "forecast" }, canonicalCalls[1]],
       [{ ...canonicalCalls[0], input: { city: "Berlin" } }, canonicalCalls[1]],
       [canonicalCalls[1], canonicalCalls[0]],
