@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Semaphore } from "./semaphore.ts";
 
@@ -29,6 +29,72 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
 
       const result = await sem.tryAcquire(10);
       assertEquals(result, false);
+    });
+
+    it("should fail immediately without queueing when waiting is disabled", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+      assertEquals(await sem.tryAcquire(0), false);
+      assertEquals(sem.waiting, 0);
+    });
+
+    it("should remove an aborted waiter without granting it later", async () => {
+      const sem = new Semaphore(1);
+      const controller = new AbortController();
+
+      await sem.tryAcquire();
+      const waiting = sem.tryAcquire(500, { signal: controller.signal });
+      assertEquals(sem.waiting, 1);
+
+      controller.abort(new DOMException("request cancelled", "AbortError"));
+      await assertRejects(
+        () => waiting,
+        DOMException,
+        "request cancelled",
+      );
+      assertEquals(sem.waiting, 0);
+
+      sem.release();
+      assertEquals(sem.available, 1);
+    });
+
+    it("should grant a released permit past an aborted head waiter", async () => {
+      const sem = new Semaphore(1);
+      const controller = new AbortController();
+
+      await sem.tryAcquire();
+      const abortedWaiter = sem.tryAcquire(500, { signal: controller.signal });
+      const nextWaiter = sem.tryAcquire(500);
+      assertEquals(sem.waiting, 2);
+
+      controller.abort(new DOMException("head waiter cancelled", "AbortError"));
+      await assertRejects(
+        () => abortedWaiter,
+        DOMException,
+        "head waiter cancelled",
+      );
+
+      sem.release();
+      assertEquals(await nextWaiter, true);
+      assertEquals(sem.waiting, 0);
+      assertEquals(sem.available, 0);
+
+      sem.release();
+      assertEquals(sem.available, 1);
+    });
+
+    it("should not consume a permit for an already-aborted acquire", async () => {
+      const sem = new Semaphore(1);
+      const controller = new AbortController();
+      controller.abort(new DOMException("request cancelled", "AbortError"));
+
+      await assertRejects(
+        () => sem.tryAcquire(500, { signal: controller.signal }),
+        DOMException,
+        "request cancelled",
+      );
+      assertEquals(sem.available, 1);
     });
 
     it("should release permits", async () => {

@@ -22,7 +22,7 @@ import { RENDER_ERROR } from "#veryfront/errors";
  * Configurable via RENDER_MAX_CONCURRENT env var.
  * Prevents one pod from being overwhelmed when multiple projects have issues.
  */
-export const RENDER_MAX_CONCURRENT = getEnvNumber("RENDER_MAX_CONCURRENT") ?? 30;
+export const RENDER_MAX_CONCURRENT = getEnvNumber("RENDER_MAX_CONCURRENT", 30);
 
 /**
  * Maximum concurrent renders per project (noisy-neighbor protection).
@@ -30,12 +30,28 @@ export const RENDER_MAX_CONCURRENT = getEnvNumber("RENDER_MAX_CONCURRENT") ?? 30
  * more than ~1/3 of pod capacity. Set to 0 to disable per-project limits.
  * Configurable via RENDER_PER_PROJECT_LIMIT env var.
  */
-export const RENDER_PER_PROJECT_LIMIT = getEnvNumber("RENDER_PER_PROJECT_LIMIT") ??
-  Math.ceil(RENDER_MAX_CONCURRENT / 3);
+export const RENDER_PER_PROJECT_LIMIT = getEnvNumber(
+  "RENDER_PER_PROJECT_LIMIT",
+  Math.ceil(RENDER_MAX_CONCURRENT / 3),
+);
+
+/**
+ * Maximum queued foreground renders per project.
+ * Defaults to one additional per-project concurrency window. Background work
+ * never enters this queue.
+ */
+export const RENDER_PER_PROJECT_QUEUE_SIZE = Math.max(
+  0,
+  getEnvNumber(
+    "RENDER_PER_PROJECT_QUEUE_SIZE",
+    Math.max(0, RENDER_PER_PROJECT_LIMIT),
+  ),
+);
 
 /**
  * Timeout for acquiring render permit (ms).
- * If semaphore cannot be acquired within this time, request fails fast with 503.
+ * This is the total foreground admission budget across project and global
+ * capacity gates. Background work does not wait.
  */
 export const RENDER_ACQUIRE_TIMEOUT_MS = 5_000;
 
@@ -127,6 +143,17 @@ export const projectRenderCounts = new Map<string, number>();
  */
 const projectMutexes = new Map<string, Mutex>();
 
+interface ProjectSlotWaiter {
+  resolve: (acquired: boolean) => void;
+  reject: (reason?: unknown) => void;
+  settled: boolean;
+  timeoutId?: ReturnType<typeof setTimeout>;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
+const projectSlotWaitQueues = new Map<string, ProjectSlotWaiter[]>();
+
 function getProjectMutex(projectId: string): Mutex {
   let mutex = projectMutexes.get(projectId);
   if (!mutex) {
@@ -134,6 +161,22 @@ function getProjectMutex(projectId: string): Mutex {
     projectMutexes.set(projectId, mutex);
   }
   return mutex;
+}
+
+function getProjectSlotWaitQueue(projectId: string): ProjectSlotWaiter[] {
+  let queue = projectSlotWaitQueues.get(projectId);
+  if (!queue) {
+    queue = [];
+    projectSlotWaitQueues.set(projectId, queue);
+  }
+  return queue;
+}
+
+function cleanupProjectSlotWaiter(waiter: ProjectSlotWaiter): void {
+  if (waiter.timeoutId !== undefined) clearTimeout(waiter.timeoutId);
+  if (waiter.signal && waiter.onAbort) {
+    waiter.signal.removeEventListener("abort", waiter.onAbort);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,21 +193,84 @@ function acquireProjectLock(
 }
 
 /**
- * Attempt to acquire a project render slot with proper locking.
- * Returns true if acquired, false if limit reached.
+ * Attempt to acquire a project render slot with proper locking. Foreground
+ * callers may opt into a bounded FIFO wait; background callers use the
+ * fail-fast default.
  */
 export async function acquireProjectSlot(
   projectId: string,
+  options: {
+    wait?: boolean;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<boolean> {
+  const { signal } = options;
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+  }
+
   if (RENDER_PER_PROJECT_LIMIT <= 0) return true;
 
   const release = await acquireProjectLock(projectId);
   try {
-    const current = projectRenderCounts.get(projectId) ?? 0;
-    if (current >= RENDER_PER_PROJECT_LIMIT) return false;
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+    }
 
-    projectRenderCounts.set(projectId, current + 1);
-    return true;
+    const current = projectRenderCounts.get(projectId) ?? 0;
+    if (current < RENDER_PER_PROJECT_LIMIT) {
+      projectRenderCounts.set(projectId, current + 1);
+      return true;
+    }
+
+    if (!options.wait || RENDER_PER_PROJECT_QUEUE_SIZE <= 0) return false;
+
+    const timeoutMs = options.timeoutMs ?? RENDER_ACQUIRE_TIMEOUT_MS;
+    if (timeoutMs <= 0) return false;
+
+    const queue = getProjectSlotWaitQueue(projectId);
+    if (queue.length >= RENDER_PER_PROJECT_QUEUE_SIZE) return false;
+
+    return new Promise<boolean>((resolve, reject) => {
+      const waiter: ProjectSlotWaiter = {
+        resolve,
+        reject,
+        settled: false,
+        signal,
+      };
+
+      const removeWaiter = (): void => {
+        const index = queue.indexOf(waiter);
+        if (index !== -1) queue.splice(index, 1);
+        if (queue.length === 0 && projectSlotWaitQueues.get(projectId) === queue) {
+          projectSlotWaitQueues.delete(projectId);
+        }
+      };
+      const settleWithoutSlot = (reason?: unknown): void => {
+        if (waiter.settled) return;
+        waiter.settled = true;
+        removeWaiter();
+        cleanupProjectSlotWaiter(waiter);
+        if (reason !== undefined) {
+          reject(reason);
+        } else {
+          resolve(false);
+        }
+      };
+
+      waiter.onAbort = () =>
+        settleWithoutSlot(
+          signal?.reason ?? new DOMException("The operation was aborted", "AbortError"),
+        );
+      signal?.addEventListener("abort", waiter.onAbort, { once: true });
+
+      if (Number.isFinite(timeoutMs)) {
+        waiter.timeoutId = setTimeout(() => settleWithoutSlot(), timeoutMs);
+      }
+
+      queue.push(waiter);
+    });
   } finally {
     release();
   }
@@ -183,9 +289,22 @@ export async function releaseProjectSlot(
   let deleteIdleMutex = false;
   try {
     const current = projectRenderCounts.get(projectId) ?? 0;
+    const queue = projectSlotWaitQueues.get(projectId);
+    let next: ProjectSlotWaiter | undefined;
+    while ((next = queue?.shift())) {
+      if (next.settled) continue;
+      next.settled = true;
+      cleanupProjectSlotWaiter(next);
+      if (queue?.length === 0) projectSlotWaitQueues.delete(projectId);
+      projectRenderCounts.set(projectId, Math.max(1, current));
+      next.resolve(true);
+      return;
+    }
+    if (queue?.length === 0) projectSlotWaitQueues.delete(projectId);
+
     if (current <= 1) {
       projectRenderCounts.delete(projectId);
-      deleteIdleMutex = mutex.waiting === 0;
+      deleteIdleMutex = mutex.waiting === 0 && !projectSlotWaitQueues.has(projectId);
       return;
     }
     projectRenderCounts.set(projectId, current - 1);

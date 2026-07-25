@@ -430,6 +430,20 @@ export class SSRService implements SSRServiceLike {
       }
     }
 
+    if (
+      error instanceof VeryfrontError && error.slug === "service-overloaded"
+    ) {
+      return {
+        status: error.status ?? HTTP_UNAVAILABLE,
+        html: ErrorPages.serverError(),
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        error: errorObj,
+        errorType: "server-error",
+        slug,
+      };
+    }
+
     logger.error("Render failed", {
       slug,
       error: errorObj.message,
