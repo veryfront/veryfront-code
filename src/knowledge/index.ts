@@ -515,8 +515,13 @@ function decodeCursor(cursor: string): ProjectKnowledgeLookupCursorState {
   }
 }
 
-function normalizeKnowledgeLookupCursor(cursor: string | undefined): string | undefined {
-  const normalizedCursor = cursor?.trim() ?? "";
+function normalizeKnowledgeLookupCursor(cursor: unknown): string | undefined {
+  if (cursor === undefined || cursor === null) return undefined;
+  if (typeof cursor !== "string") {
+    throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid knowledge lookup cursor" });
+  }
+
+  const normalizedCursor = cursor.trim();
   return normalizedCursor.length > 0 ? normalizedCursor : undefined;
 }
 

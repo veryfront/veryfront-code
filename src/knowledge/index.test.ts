@@ -10,7 +10,12 @@ import { exists, mkdir, withTempDir, writeTextFile } from "#veryfront/testing/de
 import { join } from "#veryfront/compat/path";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "#veryfront/embedding/index.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { createSearchKnowledgeTool, formatKnowledgeContext, projectKnowledge } from "./index.ts";
+import {
+  createSearchKnowledgeTool,
+  formatKnowledgeContext,
+  projectKnowledge,
+  searchProjectKnowledge,
+} from "./index.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -311,6 +316,25 @@ describe("projectKnowledge", () => {
     assertInstanceOf(error, Error);
     assertEquals(error.message, "Invalid knowledge lookup cursor");
     assertEquals(error.cause, undefined);
+  });
+
+  it("does not expose type errors for non-string cursors", async () => {
+    const input = {
+      query: "billing",
+      cursor: 1 as unknown as string,
+    };
+    const lookupError = await assertRejects(() =>
+      projectKnowledge({ projectDir: "." }).lookup(input)
+    );
+    const searchError = await assertRejects(() =>
+      searchProjectKnowledge(input, { projectDir: "." })
+    );
+
+    for (const error of [lookupError, searchError]) {
+      assertInstanceOf(error, Error);
+      assertEquals(error.message, "Invalid knowledge lookup cursor");
+      assertEquals(error.cause, undefined);
+    }
   });
 
   it("creates a local search_knowledge tool for parity with hosted MCP", async () => {
