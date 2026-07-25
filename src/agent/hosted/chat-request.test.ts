@@ -403,6 +403,69 @@ describe("agent/hosted-chat-request", () => {
     ]);
   });
 
+  it("merges raw replay results into normalized UI tool parts", async () => {
+    const cases = [
+      {
+        part: {
+          type: "tool-web_fetch",
+          toolCallId: "named-tool-call",
+          input: { url: "https://example.com" },
+          state: "input-available",
+        },
+      },
+      {
+        part: {
+          type: "dynamic-tool",
+          toolCallId: "dynamic-tool-call",
+          toolName: "lookup",
+          input: { query: "Veryfront" },
+          state: "input-available",
+        },
+      },
+    ] as const;
+
+    for (const { part } of cases) {
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          body: JSON.stringify(
+            createHostedChatRequestBody([
+              {
+                id: "assistant-message-1",
+                role: "assistant",
+                parts: [
+                  part,
+                  {
+                    type: "tool_result",
+                    tool_call_id: part.toolCallId,
+                    output: replayOutput,
+                    is_error: false,
+                  },
+                ],
+              },
+            ]),
+          ),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+        },
+      );
+
+      if (parsed instanceof Response) {
+        throw new Error("Expected parsed request");
+      }
+
+      assertEquals(parsed.messages[0]?.parts, [
+        {
+          ...part,
+          state: "output-available",
+          output: replayOutput,
+        },
+      ]);
+    }
+  });
+
   it("preserves structured raw replay error details", async () => {
     const replayErrorOutput = { code: "denied", retryable: false };
     const parsed = await parseHostedChatRequestFromRequest(

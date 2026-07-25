@@ -24,6 +24,7 @@ import {
   type HostedRuntimeSourceIdentity,
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
+import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -154,12 +155,10 @@ function normalizeHostedChatRequestMessages(
     const partIndexByToolCallId = new Map<string, number>();
 
     for (const part of message.parts) {
-      if (
-        part.type === "tool_call" && "toolCallId" in part && "toolName" in part &&
-        typeof part.toolCallId === "string" && typeof part.toolName === "string"
-      ) {
-        knownToolNames.set(part.toolCallId, part.toolName);
-        partIndexByToolCallId.set(part.toolCallId, parts.length);
+      const uiToolIdentity = getHostedChatUiToolIdentity(part);
+      if (uiToolIdentity) {
+        knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
+        partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
       }
 
       if (isRecord(part) && part.type === "tool_call" && ("id" in part || "name" in part)) {

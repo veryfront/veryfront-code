@@ -7,6 +7,7 @@ import {
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeAgentRunInvocation } from "../runtime/agent-invocation-contract.ts";
+import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 
 const getDurableRootRunIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
@@ -88,7 +89,9 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
     for (const [messageIndex, message] of messages.entries()) {
       for (const [partIndex, part] of message.parts.entries()) {
-        if (part.type === "tool_call" && message.role !== "assistant") {
+        const uiToolIdentity = getHostedChatUiToolIdentity(part);
+        const isRawToolCall = part.type === "tool_call" && "id" in part && "name" in part;
+        if ((isRawToolCall || uiToolIdentity) && message.role !== "assistant") {
           ctx.addIssue({
             code: "custom",
             message: "tool_call is only allowed in assistant messages",
@@ -108,16 +111,13 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           continue;
         }
 
-        if (part.type === "tool_call" && "id" in part && "name" in part) {
+        if (isRawToolCall) {
           knownToolNames.set(part.id, part.name);
           continue;
         }
 
-        if (
-          part.type === "tool_call" && "toolCallId" in part && "toolName" in part &&
-          typeof part.toolName === "string"
-        ) {
-          knownToolNames.set(part.toolCallId, part.toolName);
+        if (uiToolIdentity) {
+          knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
           continue;
         }
 
