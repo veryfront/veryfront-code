@@ -90,7 +90,7 @@ const pipeline = new MiddlewarePipeline()
 
 ### Run the pipeline
 
-Use `handle()` to run the middleware chain and then your route handler. If a middleware short-circuits (returns a `Response`, e.g. a rate-limit rejection), `handle()` returns that response and your handler never runs; otherwise your handler runs as the terminal step:
+Use `handle()` to run the middleware chain and then your route handler. If a middleware short-circuits (returns a `Response`, for example a rate-limit rejection), `handle()` returns that response and your handler never runs; otherwise your handler runs as the terminal step:
 
 ```ts
 // app/api/users/route.ts
@@ -122,7 +122,7 @@ curl -i http://localhost:3000/api/users
 
 The response includes any headers added by the middleware that matched the request.
 
-> **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(req))` is always truthy. Use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
+> **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(request))` is always truthy; use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
 
 ### In-memory state across requests
 
@@ -135,7 +135,8 @@ For anything that must be correct across requests, instances, and deploys, such 
 
 ### Cleanup callbacks
 
-Register teardown logic that runs once per request, after the response body has finished, been canceled, or errored:
+Register teardown logic that runs once per request, after the response body has
+finished, been canceled, or errored:
 
 ```ts
 pipeline.onTeardown(async () => {
@@ -143,9 +144,16 @@ pipeline.onTeardown(async () => {
 });
 ```
 
-`onTeardown` callbacks run for every `handle()` and `execute()` call, so a module-scoped route pipeline fires them on each request. For streamed responses, cleanup waits until the body reaches EOF, is canceled by the consumer, or errors. Bodyless, locked, or already-read responses and handler or middleware exceptions clean up before the `handle()`/`execute()` promise resolves. Callback errors are logged and swallowed, never surfaced to the client.
+`onTeardown` callbacks run for every `handle()` and `execute()` call, so a
+module-scoped route pipeline fires them on each request. For streamed responses,
+cleanup waits until the body reaches EOF, is canceled by the consumer, or
+errors. Bodyless, locked, or already-read responses and handler or middleware
+exceptions clean up before the `handle()`/`execute()` promise resolves. Callback
+errors are logged and swallowed, never surfaced to the client.
 
-For long-lived pipelines that need one-shot cleanup on shutdown (rather than per request), call `pipeline.teardown()` explicitly. Unlike the per-request run, `teardown()` drains and discards the callbacks so they never fire again.
+For long-lived pipelines that need one-shot cleanup on shutdown rather than per
+request, call `pipeline.teardown()` explicitly. Unlike the per-request run,
+`teardown()` drains and discards the callbacks so they never fire again.
 
 ## Custom middleware
 

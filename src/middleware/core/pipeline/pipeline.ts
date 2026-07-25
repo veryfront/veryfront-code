@@ -189,7 +189,6 @@ export class MiddlewarePipeline {
             return;
           }
 
-          if (streamCanceled) return;
           controller.enqueue(chunk.value);
         } catch (error) {
           await runOnce();

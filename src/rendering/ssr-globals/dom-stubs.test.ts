@@ -82,6 +82,23 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       assertEquals(doc.getElementById(), null);
     });
 
+    // Regression: libraries (sonner, next-themes, focus/scroll-lock helpers)
+    // read attributes off documentElement/body during render. These must carry
+    // the full element-stub surface, not just { style, classList }, or SSR
+    // throws "document.documentElement.getAttribute is not a function".
+    it("documentElement and body expose the full element-stub attribute API", () => {
+      const doc = createDocumentStub();
+      for (const el of [doc.documentElement, doc.body]) {
+        assertEquals(typeof el.getAttribute, "function");
+        assertEquals(typeof el.setAttribute, "function");
+        assertEquals(typeof el.hasAttribute, "function");
+        assertEquals(typeof el.removeAttribute, "function");
+        assertEquals(el.getAttribute(), null);
+        assertEquals(el.hasAttribute(), false);
+        assertEquals(typeof el.classList.toggle, "function");
+      }
+    });
+
     it("should have complete readyState", () => {
       const doc = createDocumentStub();
       assertEquals(doc.readyState, "complete");

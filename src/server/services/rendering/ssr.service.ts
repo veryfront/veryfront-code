@@ -63,7 +63,13 @@ export interface SSRRenderResult {
   etag?: string;
   cacheStrategy: "no-cache" | "short";
   error?: Error;
-  errorType?: "not-found" | "undeployed" | "redirect" | "server-error" | "runtime";
+  errorType?:
+    | "not-found"
+    | "undeployed"
+    | "redirect"
+    | "server-error"
+    | "runtime"
+    | "app-router-error-boundary";
   showDevOverlay?: boolean;
   redirectLocation?: string;
   slug: string;
@@ -229,7 +235,6 @@ export class SSRService implements SSRServiceLike {
       const isStreaming = !!result.stream && !result.html;
       const cacheStrategy = useNoCache ? "no-cache" : "short";
       const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
-
       return {
         status: HTTP_OK,
         html: result.html,
@@ -254,6 +259,20 @@ export class SSRService implements SSRServiceLike {
     request: Request,
     nonce?: string,
   ): SSRRenderResult {
+    // The page threw and its app-router error.tsx already rendered a full,
+    // hydrating document (the boundary UI). Serve it as a 500 without caching.
+    const errorBoundaryHtml = (error as { errorBoundaryHtml?: string })?.errorBoundaryHtml;
+    if (typeof errorBoundaryHtml === "string") {
+      return {
+        status: HTTP_INTERNAL_SERVER_ERROR,
+        html: errorBoundaryHtml,
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        errorType: "app-router-error-boundary",
+        slug,
+      };
+    }
+
     const errorObj = error instanceof Error ? error : new Error(String(error));
     // Dev-only overlay (full stack, absolute paths, line numbers) must never
     // be exposed outside a local project — including remote preview, which is
