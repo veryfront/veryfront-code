@@ -11,12 +11,20 @@ function normSep(p: string): string {
 
 /** Join path segments. */
 export function join(...paths: string[]): string {
-  const joined = paths
+  const normalizedPaths = paths
     .map(normSep)
-    .filter((p) => p.length > 0)
+    .filter((p) => p.length > 0);
+  const hasUncPrefix = normalizedPaths[0]?.startsWith("//") === true;
+  let joined = normalizedPaths
     .join("/")
-    .replace(/\/+/g, "/")
-    .replace(/\/$/, "");
+    .replace(/\/+/g, "/");
+
+  if (hasUncPrefix) {
+    joined = `//${joined.replace(/^\/+/, "")}`;
+  }
+  if (joined.length > (hasUncPrefix ? 2 : 1)) {
+    joined = joined.replace(/\/$/, "");
+  }
 
   return joined || "/";
 }

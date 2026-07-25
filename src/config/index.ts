@@ -11,6 +11,13 @@ export {
   getConfig,
   type GetConfigOptions,
 } from "./loader.ts";
+export {
+  type ConfigFileExists,
+  findVeryfrontConfigFile,
+  VERYFRONT_CONFIG_FILES,
+  type VeryfrontConfigFile,
+  type VeryfrontConfigFileName,
+} from "./config-files.ts";
 export { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
 export { getApiTokenEnv, isCiEnv, isDenoTestingEnv, isRscExperimentalEnabled } from "./env.ts";
 
@@ -33,7 +40,6 @@ export {
 } from "./runtime-config.ts";
 
 export {
-  findUnknownTopLevelKeys,
   validateVeryfrontConfig,
   type VeryfrontConfig,
   type VeryfrontConfigInput,

@@ -41,18 +41,14 @@ veryfront build
 This compiles pages, bundles assets, pre-renders static routes, and writes the
 output to `dist/` by default.
 
-Customize the output directory in `veryfront.config.ts`:
+Choose a different output directory explicitly:
 
-```ts
-import { defineConfig } from "veryfront";
-
-export default defineConfig({
-  build: {
-    outDir: "dist",
-    trailingSlash: false,
-  },
-});
+```bash
+veryfront build --output build-output
 ```
+
+`build.outDir` and `build.trailingSlash` remain accepted configuration fields
+for compatibility, but the production builder does not consume them.
 
 ## Run the build locally
 
@@ -121,7 +117,7 @@ output.
 
 After `veryfront build`:
 
-- `dist/` or your configured `outDir` contains compiled assets.
+- `dist/`, or the directory passed to `--output`, contains compiled assets.
 - `veryfront serve` serves the build locally.
 - The route you chose responds the same way it did in development.
 
@@ -141,7 +137,7 @@ After `veryfront deploy`:
 - [Configuration](./configuration.md): Configure build and environment behavior
 - [Deploy from CI](./deploy-from-ci.md): Push and deploy reviewed Git commits from CI
 - [Move Studio changes into Git](./move-studio-changes-to-git.md): Review a Studio release through a Git pull request
-- [Providers](./providers.md): Configure model provider defaults
+- [Providers](./providers.md): Configure model providers
 
 ## Related
 

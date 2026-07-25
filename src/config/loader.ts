@@ -12,7 +12,7 @@ import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
-import { DEFAULT_PORT } from "./defaults.ts";
+import { DEFAULT_PORT, DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "./defaults.ts";
 import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   CACHE_INVARIANT_VIOLATION,
@@ -53,14 +53,21 @@ import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-
 // singleflight state, and immutable result must not depend on ambient methods.
 const IntrinsicMap = Map;
 const IntrinsicPromise = Promise;
+const IntrinsicTextDecoder = TextDecoder;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicWeakSet = WeakSet;
-const JSONStringify = JSON.stringify;
+const IntrinsicAbortController = AbortController;
+const AbortControllerPrototypeAbort = AbortController.prototype.abort;
+const EventTargetPrototypeAddEventListener = EventTarget.prototype.addEventListener;
+const EventTargetPrototypeRemoveEventListener = EventTarget.prototype.removeEventListener;
 const MapPrototypeClear = Map.prototype.clear;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
+const NumberPrototypeToString = Number.prototype.toString;
+const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -70,17 +77,37 @@ const PromiseReject = Promise.reject;
 const PromiseResolve = Promise.resolve;
 const PromiseWithResolvers = Promise.withResolvers;
 const ReflectApply = Reflect.apply;
+const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
+const SymbolSpecies = Symbol.species;
+const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
+const abortControllerSignalGetter = ObjectGetOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)?.get;
+const abortSignalAbortedGetter = ObjectGetOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  "aborted",
+)?.get;
 const mapSizeGetter = ObjectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
 
-if (typeof mapSizeGetter !== "function") {
-  throw new TypeError("Map size intrinsic is unavailable");
+if (
+  typeof abortControllerSignalGetter !== "function" ||
+  typeof abortSignalAbortedGetter !== "function" ||
+  typeof mapSizeGetter !== "function"
+) {
+  throw new TypeError("Loader lifecycle intrinsics are unavailable");
 }
+const intrinsicAbortControllerSignalGetter = abortControllerSignalGetter as () => AbortSignal;
+const intrinsicAbortSignalAbortedGetter = abortSignalAbortedGetter as () => boolean;
 const intrinsicMapSizeGetter = mapSizeGetter as () => number;
+const HOSTED_CONFIG_TEXT_DECODER_OPTIONS = createHostedConfigTextDecoderOptions();
+const ABORT_LISTENER_OPTIONS = createAbortListenerOptions();
+const SAFE_PROMISE_SPECIES_HOLDER = createSafePromiseSpeciesHolder();
 
 function freezeObject<T>(value: T): T {
   return ReflectApply(ObjectFreeze, Object, [value]) as T;
@@ -157,9 +184,181 @@ function weakSetAdd<T extends object>(set: WeakSet<T>, value: T): void {
   ReflectApply(WeakSetPrototypeAdd, set, [value]);
 }
 
+function createNullPrototypeDescriptor(): PropertyDescriptor {
+  return ReflectApply(ObjectCreate, Object, [null]) as PropertyDescriptor;
+}
+
+function createNullPrototypeRecord<T extends object>(): T {
+  return ReflectApply(ObjectCreate, Object, [null]) as T;
+}
+
+function defineOwnDataProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): void {
+  const descriptor = createNullPrototypeDescriptor();
+  descriptor.value = value;
+  descriptor.writable = false;
+  descriptor.enumerable = false;
+  descriptor.configurable = false;
+  ReflectApply(ObjectDefineProperty, Object, [target, key, descriptor]);
+}
+
+function defineOwnTemporaryDataProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): void {
+  const descriptor = createNullPrototypeDescriptor();
+  descriptor.value = value;
+  descriptor.writable = false;
+  descriptor.enumerable = false;
+  descriptor.configurable = true;
+  ReflectApply(ObjectDefineProperty, Object, [target, key, descriptor]);
+}
+
+function defineOwnGetterProperty(
+  target: object,
+  key: PropertyKey,
+  getter: () => unknown,
+): void {
+  const descriptor = createNullPrototypeDescriptor();
+  descriptor.get = getter;
+  descriptor.enumerable = false;
+  descriptor.configurable = false;
+  ReflectApply(ObjectDefineProperty, Object, [target, key, descriptor]);
+}
+
+function createHostedConfigTextDecoderOptions(): TextDecoderOptions {
+  const options = createNullPrototypeRecord<TextDecoderOptions>();
+  defineOwnDataProperty(options, "fatal", true);
+  defineOwnDataProperty(options, "ignoreBOM", false);
+  return freezeObject(options);
+}
+
+function createAbortListenerOptions(): AddEventListenerOptions {
+  const options = createNullPrototypeRecord<AddEventListenerOptions>();
+  defineOwnDataProperty(options, "capture", false);
+  defineOwnDataProperty(options, "once", true);
+  defineOwnDataProperty(options, "passive", false);
+  return freezeObject(options);
+}
+
+function createSafePromiseSpeciesHolder(): object {
+  const holder = createNullPrototypeRecord<object>();
+  defineOwnDataProperty(holder, SymbolSpecies, IntrinsicPromise);
+  return freezeObject(holder);
+}
+
+function restoreOwnPropertyDescriptor(
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): void {
+  const safeDescriptor = createNullPrototypeDescriptor();
+  const value = getOwnPropertyDescriptor(descriptor, "value");
+  const writable = getOwnPropertyDescriptor(descriptor, "writable");
+  const getter = getOwnPropertyDescriptor(descriptor, "get");
+  const setter = getOwnPropertyDescriptor(descriptor, "set");
+  const enumerable = getOwnPropertyDescriptor(descriptor, "enumerable");
+  const configurable = getOwnPropertyDescriptor(descriptor, "configurable");
+  if (value) safeDescriptor.value = value.value;
+  if (writable) safeDescriptor.writable = writable.value as boolean;
+  if (getter) safeDescriptor.get = getter.value as (() => unknown) | undefined;
+  if (setter) safeDescriptor.set = setter.value as ((value: unknown) => void) | undefined;
+  if (enumerable) safeDescriptor.enumerable = enumerable.value as boolean;
+  if (configurable) safeDescriptor.configurable = configurable.value as boolean;
+  ReflectApply(ObjectDefineProperty, Object, [target, key, safeDescriptor]);
+}
+
+function callPromiseThen<T, TResult1 = T, TResult2 = never>(
+  promise: Promise<T>,
+  onFulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+  onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+): Promise<TResult1 | TResult2> {
+  const originalConstructor = getOwnPropertyDescriptor(promise, "constructor");
+  if (originalConstructor?.configurable === false) {
+    throw new TypeError("Cannot safely observe a promise with a fixed constructor");
+  }
+
+  defineOwnTemporaryDataProperty(
+    promise,
+    "constructor",
+    SAFE_PROMISE_SPECIES_HOLDER,
+  );
+  try {
+    return ReflectApply(PromisePrototypeThen, promise, [
+      onFulfilled,
+      onRejected,
+    ]) as Promise<TResult1 | TResult2>;
+  } finally {
+    if (originalConstructor) {
+      restoreOwnPropertyDescriptor(
+        promise,
+        "constructor",
+        originalConstructor,
+      );
+    } else {
+      ReflectApply(ReflectDeleteProperty, Reflect, [promise, "constructor"]);
+    }
+  }
+}
+
+function getAbortControllerSignal(controller: AbortController): AbortSignal {
+  return ReflectApply(
+    intrinsicAbortControllerSignalGetter,
+    controller,
+    [],
+  ) as AbortSignal;
+}
+
+function abortController(controller: AbortController): void {
+  ReflectApply(AbortControllerPrototypeAbort, controller, []);
+}
+
+function isSignalAborted(signal: AbortSignal): boolean {
+  return ReflectApply(intrinsicAbortSignalAbortedGetter, signal, []) as boolean;
+}
+
+function intrinsicSignalAbortedOwnGetter(this: AbortSignal): boolean {
+  return isSignalAborted(this);
+}
+
+function createHostedAbortController(): AbortController {
+  const controller = new IntrinsicAbortController();
+  const signal = getAbortControllerSignal(controller);
+  // Deno's AbortController implementation dynamically reads both public
+  // properties while aborting. Own properties keep that native path bound to
+  // captured getters even if trusted executable config later poisons either
+  // prototype. Null-prototype descriptors prevent inherited descriptor hooks.
+  defineOwnDataProperty(controller, "signal", signal);
+  defineOwnGetterProperty(
+    signal,
+    "aborted",
+    intrinsicSignalAbortedOwnGetter,
+  );
+  return controller;
+}
+
+function addAbortListener(signal: AbortSignal, listener: () => void): void {
+  ReflectApply(EventTargetPrototypeAddEventListener, signal, [
+    "abort",
+    listener,
+    ABORT_LISTENER_OPTIONS,
+  ]);
+}
+
+function removeAbortListener(signal: AbortSignal, listener: () => void): void {
+  ReflectApply(EventTargetPrototypeRemoveEventListener, signal, [
+    "abort",
+    listener,
+  ]);
+}
+
 function deferPromise<T>(operation: () => T | PromiseLike<T>): Promise<Awaited<T>> {
   const ready = ReflectApply(PromiseResolve, IntrinsicPromise, []) as Promise<void>;
-  return ReflectApply(PromisePrototypeThen, ready, [operation]) as Promise<Awaited<T>>;
+  return callPromiseThen(ready, operation) as Promise<Awaited<T>>;
 }
 
 function rejectPromise<T = never>(error: unknown): Promise<T> {
@@ -175,10 +374,23 @@ function thenPromise<T, TResult1 = T, TResult2 = never>(
   onFulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
   onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
 ): Promise<TResult1 | TResult2> {
-  return ReflectApply(PromisePrototypeThen, promise, [
-    onFulfilled,
-    onRejected,
-  ]) as Promise<TResult1 | TResult2>;
+  return callPromiseThen(promise, onFulfilled, onRejected);
+}
+
+function decimalIdentityNumber(value: number): string {
+  return ReflectApply(NumberPrototypeToString, value, [10]) as string;
+}
+
+function frameConfigIdentityString(value: string): string {
+  return `${decimalIdentityNumber(value.length)}:${value}`;
+}
+
+function frameOptionalConfigIdentityString(
+  value: string | null | undefined,
+): string {
+  return value === null || value === undefined
+    ? "absent;"
+    : `value:${frameConfigIdentityString(value)}`;
 }
 
 const logger = serverLogger.component("config");
@@ -191,8 +403,6 @@ const DEFAULT_FS_MAX_RETRIES = 3;
 const DEFAULT_FS_INITIAL_DELAY_MS = 500;
 /** Maximum backoff delay between retries */
 const DEFAULT_FS_MAX_DELAY_MS = 5_000;
-/** Maximum entries in the render cache */
-const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
 /** Maximum entries in the per-project config cache */
 const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 100;
 
@@ -358,6 +568,48 @@ const configCacheByProject = new LRUCache<string, ConfigCacheEntry>({
 
 type HostedConfigEvaluator = typeof evaluatePreparedDeclarativeConfigInWorker;
 
+interface HostedConfigSourceSelection {
+  readonly configPath: string;
+  readonly configFile: DeclarativeConfigFileName;
+  readonly source: string;
+}
+
+type HostedConfigSourceReadKey = string | object;
+type HostedConfigSourceReadState = "queued" | "active" | "ready" | "failed";
+
+interface HostedConfigSourceReadFlight {
+  readonly key: HostedConfigSourceReadKey;
+  readonly start: PromiseWithResolvers<void>;
+  readonly promise: Promise<HostedConfigSourceSelection | null>;
+  queueNode: HostedConfigSourceReadQueueNode | null;
+  waiterCount: number;
+  state: HostedConfigSourceReadState;
+}
+
+interface HostedConfigSourceReadQueueNode {
+  flight: HostedConfigSourceReadFlight;
+  previous: HostedConfigSourceReadQueueNode | null;
+  next: HostedConfigSourceReadQueueNode | null;
+}
+
+interface HostedConfigSourceReadLease {
+  readonly selection: HostedConfigSourceSelection | null;
+  readonly release: () => void;
+}
+
+const MAX_ACTIVE_HOSTED_CONFIG_SOURCE_READS = DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS.maxActive;
+const MAX_QUEUED_HOSTED_CONFIG_SOURCE_READS = DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS.maxQueued;
+const hostedConfigSourceReadFlights = new IntrinsicMap<
+  HostedConfigSourceReadKey,
+  HostedConfigSourceReadFlight
+>();
+let hostedConfigSourceReadQueueHead: HostedConfigSourceReadQueueNode | null = null;
+let hostedConfigSourceReadQueueTail: HostedConfigSourceReadQueueNode | null = null;
+let queuedHostedConfigSourceReads = 0;
+const hostedConfigSourceReadFilesystemIds = new IntrinsicWeakMap<object, number>();
+let nextHostedConfigSourceReadFilesystemId = 1;
+let activeHostedConfigSourceReads = 0;
+
 interface HostedConfigFlight {
   readonly controller: AbortController;
   readonly promise: Promise<VeryfrontConfig>;
@@ -442,14 +694,335 @@ function isHostedMultiProjectFilesystem(adapter: RuntimeAdapter): boolean {
 }
 
 function throwIfHostedConfigAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) {
+  if (signal && isSignalAborted(signal)) {
     throw createDeclarativeConfigWorkerInfrastructureError("worker-aborted");
   }
 }
 
 function decodeConfigSource(content: string | Uint8Array): string {
   if (typeof content === "string") return content;
-  return new TextDecoder("utf-8", { fatal: true }).decode(content);
+  const decoder = new IntrinsicTextDecoder(
+    "utf-8",
+    HOSTED_CONFIG_TEXT_DECODER_OPTIONS,
+  );
+  return ReflectApply(TextDecoderPrototypeDecode, decoder, [content]) as string;
+}
+
+function decodeTrustedConfigSource(content: string | Uint8Array): string {
+  if (typeof content === "string") return content;
+  const decoder = new IntrinsicTextDecoder();
+  return ReflectApply(TextDecoderPrototypeDecode, decoder, [content]) as string;
+}
+
+function hostedConfigSourceReadFilesystemId(adapter: RuntimeAdapter): number {
+  const filesystem = adapter.fs as object;
+  let filesystemId = weakMapGet(hostedConfigSourceReadFilesystemIds, filesystem);
+  if (filesystemId === undefined) {
+    filesystemId = nextHostedConfigSourceReadFilesystemId;
+    nextHostedConfigSourceReadFilesystemId += 1;
+    weakMapSet(hostedConfigSourceReadFilesystemIds, filesystem, filesystemId);
+  }
+  return filesystemId;
+}
+
+function buildHostedConfigSourceReadKey(
+  effectiveCacheKey: string,
+  configBaseDir: string,
+  adapter: RuntimeAdapter,
+  sourceContext: VirtualConfigSourceContext,
+  revisionAtStart: number,
+): HostedConfigSourceReadKey {
+  // Branch names identify mutable pointers, not immutable source snapshots.
+  // Giving every preview request a fresh identity keeps reads independently
+  // observable while still routing them through the shared admission budget.
+  if (!sourceContext.productionMode) return freezeObject({});
+
+  const filesystemId = hostedConfigSourceReadFilesystemId(adapter);
+  return `hosted-config-source-read-v1:${
+    frameConfigIdentityString(decimalIdentityNumber(filesystemId))
+  }${frameConfigIdentityString(effectiveCacheKey)}${frameConfigIdentityString(configBaseDir)}${
+    frameConfigIdentityString(decimalIdentityNumber(revisionAtStart))
+  }`;
+}
+
+async function readHostedConfigSource(
+  adapter: RuntimeAdapter,
+  configBaseDir: string,
+): Promise<HostedConfigSourceSelection | null> {
+  for (const configFile of VERYFRONT_CONFIG_FILES) {
+    const configPath = join(configBaseDir, configFile);
+    try {
+      const content = await adapter.fs.readFile(configPath);
+      return freezeObject({
+        configPath,
+        configFile,
+        source: decodeConfigSource(content),
+      });
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        logger.debug("Hosted config candidate not found", { configPath });
+        continue;
+      }
+      if (error instanceof DeclarativeConfigEvaluationError) {
+        throw translateHostedConfigEvaluationError(error, configFile);
+      }
+      if (isPreservedConfigLoadError(error)) throw error;
+      logger.warn("Failed to load config file", { configFile });
+      throw CONFIG_PARSE_ERROR.create({
+        detail: `Failed to load ${configFile}`,
+        cause: error,
+        context: { configFile },
+      });
+    }
+  }
+  return null;
+}
+
+function removeQueuedHostedConfigSourceRead(
+  flight: HostedConfigSourceReadFlight,
+): void {
+  const node = flight.queueNode;
+  if (!node) return;
+  if (node.previous) node.previous.next = node.next;
+  else hostedConfigSourceReadQueueHead = node.next;
+  if (node.next) node.next.previous = node.previous;
+  else hostedConfigSourceReadQueueTail = node.previous;
+  node.previous = null;
+  node.next = null;
+  flight.queueNode = null;
+  queuedHostedConfigSourceReads -= 1;
+}
+
+function enqueueHostedConfigSourceRead(
+  flight: HostedConfigSourceReadFlight,
+): void {
+  const node = createNullPrototypeRecord<HostedConfigSourceReadQueueNode>();
+  node.flight = flight;
+  node.previous = hostedConfigSourceReadQueueTail;
+  node.next = null;
+  if (hostedConfigSourceReadQueueTail) {
+    hostedConfigSourceReadQueueTail.next = node;
+  } else {
+    hostedConfigSourceReadQueueHead = node;
+  }
+  hostedConfigSourceReadQueueTail = node;
+  flight.queueNode = node;
+  queuedHostedConfigSourceReads += 1;
+}
+
+function dequeueHostedConfigSourceRead(): HostedConfigSourceReadFlight | undefined {
+  const node = hostedConfigSourceReadQueueHead;
+  if (!node) return undefined;
+  const flight = node.flight;
+  removeQueuedHostedConfigSourceRead(flight);
+  return flight;
+}
+
+function dispatchHostedConfigSourceReads(): void {
+  while (
+    activeHostedConfigSourceReads < MAX_ACTIVE_HOSTED_CONFIG_SOURCE_READS &&
+    queuedHostedConfigSourceReads > 0
+  ) {
+    const flight = dequeueHostedConfigSourceRead();
+    if (!flight) {
+      throw new TypeError("Hosted config source-read queue state is inconsistent");
+    }
+    if (flight.state !== "queued") continue;
+    flight.state = "active";
+    activeHostedConfigSourceReads += 1;
+    flight.start.resolve();
+  }
+}
+
+function finishHostedConfigSourceRead(
+  flight: HostedConfigSourceReadFlight,
+  succeeded: boolean,
+): void {
+  if (flight.state !== "active") return;
+  flight.state = succeeded ? "ready" : "failed";
+  if (
+    (!succeeded || flight.waiterCount === 0) &&
+    mapGet(hostedConfigSourceReadFlights, flight.key) === flight
+  ) {
+    mapDelete(hostedConfigSourceReadFlights, flight.key);
+  }
+  activeHostedConfigSourceReads -= 1;
+  dispatchHostedConfigSourceReads();
+}
+
+function cancelQueuedHostedConfigSourceRead(
+  flight: HostedConfigSourceReadFlight,
+  error: unknown,
+): void {
+  if (flight.state !== "queued") return;
+  flight.state = "failed";
+  removeQueuedHostedConfigSourceRead(flight);
+  if (mapGet(hostedConfigSourceReadFlights, flight.key) === flight) {
+    mapDelete(hostedConfigSourceReadFlights, flight.key);
+  }
+  // Rejecting the start gate settles the already-observed operation promise
+  // without ever invoking the filesystem adapter.
+  flight.start.reject(error);
+}
+
+function createHostedConfigSourceReadFlight(
+  key: HostedConfigSourceReadKey,
+  operation: () => Promise<HostedConfigSourceSelection | null>,
+): HostedConfigSourceReadFlight {
+  const start = promiseWithResolvers<void>();
+  // Register the deferred operation in the caller's async context now. A
+  // queued multi-project read must not inherit the request context of whichever
+  // earlier flight later releases capacity.
+  const promise = thenPromise(start.promise, operation) as unknown as Promise<
+    HostedConfigSourceSelection | null
+  >;
+  const flight: HostedConfigSourceReadFlight = {
+    key,
+    start,
+    promise,
+    queueNode: null,
+    waiterCount: 0,
+    state: "queued",
+  };
+  mapSet(hostedConfigSourceReadFlights, key, flight);
+  void thenPromise(
+    promise,
+    () => finishHostedConfigSourceRead(flight, true),
+    () => finishHostedConfigSourceRead(flight, false),
+  );
+
+  if (activeHostedConfigSourceReads < MAX_ACTIVE_HOSTED_CONFIG_SOURCE_READS) {
+    flight.state = "active";
+    activeHostedConfigSourceReads += 1;
+    start.resolve();
+  } else {
+    enqueueHostedConfigSourceRead(flight);
+  }
+  return flight;
+}
+
+function getOrCreateHostedConfigSourceReadFlight(
+  key: HostedConfigSourceReadKey,
+  operation: () => Promise<HostedConfigSourceSelection | null>,
+): HostedConfigSourceReadFlight {
+  const existing = mapGet(hostedConfigSourceReadFlights, key);
+  if (existing && existing.state !== "failed") return existing;
+  if (existing) mapDelete(hostedConfigSourceReadFlights, key);
+
+  if (
+    activeHostedConfigSourceReads >= MAX_ACTIVE_HOSTED_CONFIG_SOURCE_READS &&
+    queuedHostedConfigSourceReads >= MAX_QUEUED_HOSTED_CONFIG_SOURCE_READS
+  ) {
+    throw createDeclarativeConfigWorkerInfrastructureError("worker-overloaded");
+  }
+  return createHostedConfigSourceReadFlight(key, operation);
+}
+
+function releaseHostedConfigSourceReadLease(
+  flight: HostedConfigSourceReadFlight,
+): void {
+  flight.waiterCount -= 1;
+  if (flight.waiterCount !== 0) return;
+  if (flight.state === "queued") {
+    cancelQueuedHostedConfigSourceRead(
+      flight,
+      createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+    );
+  } else if (
+    flight.state === "ready" &&
+    mapGet(hostedConfigSourceReadFlights, flight.key) === flight
+  ) {
+    mapDelete(hostedConfigSourceReadFlights, flight.key);
+  }
+}
+
+function waitForHostedConfigSourceReadFlight(
+  flight: HostedConfigSourceReadFlight,
+  signal: AbortSignal | undefined,
+): Promise<HostedConfigSourceReadLease> {
+  if (signal && isSignalAborted(signal)) {
+    if (flight.waiterCount === 0) {
+      cancelQueuedHostedConfigSourceRead(
+        flight,
+        createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+      );
+    }
+    return rejectPromise(
+      createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+    );
+  }
+
+  flight.waiterCount += 1;
+  return new IntrinsicPromise<HostedConfigSourceReadLease>((resolve, reject) => {
+    let settled = false;
+    let released = false;
+    let listenerAttached = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      releaseHostedConfigSourceReadLease(flight);
+    };
+    const detachAbortListener = (): void => {
+      if (!signal || !listenerAttached) return;
+      listenerAttached = false;
+      removeAbortListener(signal, onAbort);
+    };
+    const finish = (settleWaiter: () => void): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        detachAbortListener();
+      } catch (error) {
+        release();
+        reject(error);
+        return;
+      }
+      settleWaiter();
+    };
+    const onAbort = (): void => {
+      finish(() => {
+        release();
+        reject(
+          createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+        );
+      });
+    };
+
+    try {
+      if (signal) {
+        // Mark the listener as attached first so a partially completed native
+        // registration can still be rolled back if WebIDL conversion throws.
+        listenerAttached = true;
+        addAbortListener(signal, onAbort);
+      }
+      void thenPromise(
+        flight.promise,
+        (selection) =>
+          finish(() =>
+            resolve(freezeObject({
+              selection,
+              release,
+            }))
+          ),
+        (error: unknown) =>
+          finish(() => {
+            release();
+            reject(error);
+          }),
+      );
+      if (signal && isSignalAborted(signal)) onAbort();
+    } catch (error) {
+      if (settled) return;
+      settled = true;
+      try {
+        detachAbortListener();
+      } catch {
+        // Preserve the primary listener/reaction setup failure.
+      }
+      release();
+      reject(error);
+    }
+  });
 }
 
 function deepFreezeHostedConfig(config: VeryfrontConfig): VeryfrontConfig {
@@ -475,13 +1048,12 @@ async function buildHostedConfigCacheKey(
   payload: PreparedDeclarativeConfigWorkerPayload,
 ): Promise<string> {
   const sourceDigest = await computeHash(source);
-  const identityDigest = await computeHash(JSONStringify([
-    "veryfront-hosted-config-cache-v1",
-    configPath,
-    sourceDigest,
-    payload.policyVersion,
-    payload.cacheFingerprint,
-  ]));
+  const identityMaterial = `veryfront-hosted-config-cache-v2:${
+    frameConfigIdentityString(configPath)
+  }${frameConfigIdentityString(sourceDigest)}${frameConfigIdentityString(payload.policyVersion)}${
+    frameConfigIdentityString(payload.cacheFingerprint)
+  }`;
+  const identityDigest = await computeHash(identityMaterial);
   return `${baseCacheKey}:hosted:${identityDigest}`;
 }
 
@@ -496,7 +1068,8 @@ function createHostedConfigFlight(
   usePersistentCache: boolean,
   revisionAtStart: number,
 ): HostedConfigFlight {
-  const controller = new AbortController();
+  const controller = createHostedAbortController();
+  const controllerSignal = getAbortControllerSignal(controller);
   const result = promiseWithResolvers<VeryfrontConfig>();
   const flight: HostedConfigFlight = {
     controller,
@@ -505,13 +1078,13 @@ function createHostedConfigFlight(
     settled: false,
   };
   const operation = deferPromise(async () => {
-    throwIfHostedConfigAborted(controller.signal);
+    throwIfHostedConfigAborted(controllerSignal);
     const snapshot = await hostedConfigEvaluator(payload, {
-      signal: controller.signal,
+      signal: controllerSignal,
     });
-    throwIfHostedConfigAborted(controller.signal);
+    throwIfHostedConfigAborted(controllerSignal);
     const merged = deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
-    throwIfHostedConfigAborted(controller.signal);
+    throwIfHostedConfigAborted(controllerSignal);
     if (usePersistentCache && cacheRevision === revisionAtStart) {
       configCacheByProject.set(hostedCacheKey, {
         revision: revisionAtStart,
@@ -551,7 +1124,12 @@ function getOrCreateHostedConfigFlight(
 ): HostedConfigFlight {
   const flightKey = buildHostedConfigFlightKey(hostedCacheKey, revisionAtStart);
   const existing = mapGet(hostedConfigFlights, flightKey);
-  if (existing && !existing.controller.signal.aborted) return existing;
+  if (
+    existing &&
+    !isSignalAborted(getAbortControllerSignal(existing.controller))
+  ) {
+    return existing;
+  }
   if (existing) mapDelete(hostedConfigFlights, flightKey);
 
   if (mapSize(hostedConfigFlights) >= MAX_HOSTED_CONFIG_FLIGHTS) {
@@ -571,7 +1149,7 @@ function waitForHostedConfigFlight(
   flight: HostedConfigFlight,
   signal: AbortSignal | undefined,
 ): Promise<VeryfrontConfig> {
-  if (signal?.aborted) {
+  if (signal && isSignalAborted(signal)) {
     return rejectPromise(
       createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
     );
@@ -580,15 +1158,43 @@ function waitForHostedConfigFlight(
   flight.waiterCount += 1;
   return new IntrinsicPromise<VeryfrontConfig>((resolve, reject) => {
     let settled = false;
+    let released = false;
+    let listenerAttached = false;
+    const releaseWaiter = (): void => {
+      if (released) return;
+      released = true;
+      flight.waiterCount -= 1;
+      if (flight.waiterCount === 0 && !flight.settled) {
+        abortController(flight.controller);
+      }
+    };
+    const detachAbortListener = (): void => {
+      if (!signal || !listenerAttached) return;
+      listenerAttached = false;
+      removeAbortListener(signal, onAbort);
+    };
     const finish = (settleWaiter: () => void): void => {
       if (settled) return;
       settled = true;
-      signal?.removeEventListener("abort", onAbort);
-      flight.waiterCount -= 1;
-      settleWaiter();
-      if (flight.waiterCount === 0 && !flight.settled) {
-        flight.controller.abort();
+      let detachFailed = false;
+      let detachError: unknown;
+      try {
+        detachAbortListener();
+      } catch (error) {
+        detachFailed = true;
+        detachError = error;
       }
+      try {
+        releaseWaiter();
+      } catch (error) {
+        reject(detachFailed ? detachError : error);
+        return;
+      }
+      if (detachFailed) {
+        reject(detachError);
+        return;
+      }
+      settleWaiter();
     };
     const onAbort = (): void => {
       finish(() =>
@@ -598,13 +1204,32 @@ function waitForHostedConfigFlight(
       );
     };
 
-    signal?.addEventListener("abort", onAbort, { once: true });
-    thenPromise(
-      flight.promise,
-      (config) => finish(() => resolve(config)),
-      (error: unknown) => finish(() => reject(error)),
-    );
-    if (signal?.aborted) onAbort();
+    try {
+      if (signal) {
+        listenerAttached = true;
+        addAbortListener(signal, onAbort);
+      }
+      void thenPromise(
+        flight.promise,
+        (config) => finish(() => resolve(config)),
+        (error: unknown) => finish(() => reject(error)),
+      );
+      if (signal && isSignalAborted(signal)) onAbort();
+    } catch (error) {
+      if (settled) return;
+      settled = true;
+      try {
+        detachAbortListener();
+      } catch {
+        // Preserve the primary listener/reaction setup failure.
+      }
+      try {
+        releaseWaiter();
+      } catch {
+        // Preserve the primary listener/reaction setup failure.
+      }
+      reject(error);
+    }
   });
 }
 
@@ -810,12 +1435,12 @@ function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
 
 function translateHostedConfigEvaluationError(
   error: DeclarativeConfigEvaluationError,
-  configFile: string,
+  configFile?: string,
 ): Error {
   if (error.reason === "worker-aborted") return error;
 
   const context = {
-    configFile,
+    ...(configFile === undefined ? {} : { configFile }),
     code: error.code,
     phase: error.phase,
     reason: error.reason,
@@ -968,7 +1593,7 @@ function loadTrustedConfigFromVirtualFS(
     async () => {
       logger.debug("Loading config from virtual filesystem (API)", { configPath });
       const content = selectedContent ?? await adapter.fs.readFile(configPath);
-      const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+      const source = decodeTrustedConfigSource(content);
       logger.debug("Got config source from API", {
         configPath,
         sourceLength: source.length,
@@ -1186,6 +1811,18 @@ function normalizeVirtualConfigSource(
   };
 }
 
+function encodeVirtualConfigSourceIdentity(
+  context: VirtualConfigSourceContext,
+): string {
+  if (!context.productionMode) {
+    return `branch:${frameConfigIdentityString(context.branch ?? "main")}`;
+  }
+
+  return `production:${frameOptionalConfigIdentityString(context.releaseId)}${
+    frameOptionalConfigIdentityString(context.environmentName)
+  }`;
+}
+
 function virtualConfigSourcesMatch(
   expected: NormalizedVirtualConfigSource,
   actual: NormalizedVirtualConfigSource,
@@ -1285,9 +1922,11 @@ function buildTrustedConfigIdentity(
     weakMapSet(trustedVirtualFilesystemIds, filesystem, filesystemId);
   }
   const sourceIdentity = ambientSourceContext
-    ? JSONStringify(normalizeVirtualConfigSource(ambientSourceContext))
+    ? encodeVirtualConfigSourceIdentity(ambientSourceContext)
     : "contextless";
-  return `unqualified-vfs:${filesystemId}:${sourceIdentity}:${effectiveCacheKey}`;
+  return `unqualified-vfs-v2:${frameConfigIdentityString(decimalIdentityNumber(filesystemId))}${
+    frameConfigIdentityString(sourceIdentity)
+  }${frameConfigIdentityString(effectiveCacheKey)}`;
 }
 
 function getConfigInternal(
@@ -1395,64 +2034,119 @@ function getConfigInternal(
         // For virtual filesystem, config is at project root ("/"), not the local projectDir
         const configBaseDir = isVirtualFS ? "/" : projectDir;
 
-        for (const configFile of VERYFRONT_CONFIG_FILES) {
-          if (hosted) throwIfHostedConfigAborted(hosted.signal);
-          const configPath = join(configBaseDir, configFile);
-          let hostedContent: string | Uint8Array | undefined;
-          let trustedVirtualContent: string | Uint8Array | undefined;
-          if (!hosted) {
-            if (isVirtualFS) {
-              try {
-                trustedVirtualContent = await adapter.fs.readFile(configPath);
-              } catch (error) {
-                if (isNotFoundError(error)) {
-                  logger.debug("Trusted virtual config candidate not found", {
-                    configPath,
-                  });
-                  continue;
-                }
-                throw error;
-              }
-            } else {
-              const exists = await adapter.fs.exists(configPath);
-              logger.debug("Checking config file", { configPath, exists, isVirtualFS });
-              if (!exists) continue;
+        if (hosted) {
+          let sourceReadLease: HostedConfigSourceReadLease;
+          try {
+            const sourceReadKey = buildHostedConfigSourceReadKey(
+              effectiveCacheKey,
+              configBaseDir,
+              adapter,
+              sourceContext!,
+              revisionAtStart,
+            );
+            const sourceReadFlight = getOrCreateHostedConfigSourceReadFlight(
+              sourceReadKey,
+              () => readHostedConfigSource(adapter, configBaseDir),
+            );
+            sourceReadLease = await waitForHostedConfigSourceReadFlight(
+              sourceReadFlight,
+              hosted.signal,
+            );
+          } catch (error) {
+            if (error instanceof DeclarativeConfigEvaluationError) {
+              throw translateHostedConfigEvaluationError(error);
             }
+            if (isPreservedConfigLoadError(error)) throw error;
+            throw CONFIG_PARSE_ERROR.create({
+              detail: "Failed to select hosted configuration source",
+              cause: error,
+            });
           }
 
           try {
-            if (hosted) {
+            throwIfHostedConfigAborted(hosted.signal);
+            const selectedSource = sourceReadLease.selection;
+            if (selectedSource) {
+              const { configPath, configFile, source } = selectedSource;
               try {
-                hostedContent = await adapter.fs.readFile(configPath);
+                const merged = await loadHostedConfigFromSource(
+                  configPath,
+                  configFile,
+                  effectiveCacheKey,
+                  source,
+                  hosted.preparedContext,
+                  hosted.signal,
+                  usePersistentCache,
+                  revisionAtStart,
+                );
+                const provenance = configFileProvenance(configFile);
+                logger.debug("Successfully loaded config", {
+                  configFile,
+                  hasApp: !!merged.app,
+                  hasLayout: !!(merged as Record<string, unknown>).layout,
+                  configKeys: Object.keys(merged),
+                });
+                return createConfigLoadResult(merged, provenance);
               } catch (error) {
-                if (isNotFoundError(error)) {
-                  logger.debug("Hosted config candidate not found", { configPath });
-                  continue;
+                if (error instanceof DeclarativeConfigEvaluationError) {
+                  throw translateHostedConfigEvaluationError(error, configFile);
                 }
-                throw error;
+                if (isPreservedConfigLoadError(error)) throw error;
+                logger.warn("Failed to load config file", { configFile });
+                throw CONFIG_PARSE_ERROR.create({
+                  detail: `Failed to load ${configFile}`,
+                  cause: error,
+                  context: { configFile },
+                });
               }
-              throwIfHostedConfigAborted(hosted.signal);
             }
 
-            const merged = hosted
-              ? await loadHostedConfigFromSource(
-                configPath,
-                configFile,
-                effectiveCacheKey,
-                hostedContent!,
-                hosted.preparedContext,
-                hosted.signal,
-                usePersistentCache,
-                revisionAtStart,
-              )
-              : await loadAndMergeConfig(
-                configPath,
-                effectiveCacheKey,
-                adapter,
-                trustedVirtualContent,
-              );
+            logger.debug("No config file found, using defaults", {
+              effectiveCacheKey,
+              projectDir,
+              isVirtualFS,
+              duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
+            });
+            throwIfHostedConfigAborted(hosted.signal);
+            const config = deepFreezeHostedConfig(
+              createFreshDefaults() as VeryfrontConfig,
+            );
+            return createConfigLoadResult(config, defaultConfigProvenance());
+          } finally {
+            sourceReadLease.release();
+          }
+        }
+
+        for (const configFile of VERYFRONT_CONFIG_FILES) {
+          const configPath = join(configBaseDir, configFile);
+          let trustedVirtualContent: string | Uint8Array | undefined;
+          if (isVirtualFS) {
+            try {
+              trustedVirtualContent = await adapter.fs.readFile(configPath);
+            } catch (error) {
+              if (isNotFoundError(error)) {
+                logger.debug("Trusted virtual config candidate not found", {
+                  configPath,
+                });
+                continue;
+              }
+              throw error;
+            }
+          } else {
+            const exists = await adapter.fs.exists(configPath);
+            logger.debug("Checking config file", { configPath, exists, isVirtualFS });
+            if (!exists) continue;
+          }
+
+          try {
+            const merged = await loadAndMergeConfig(
+              configPath,
+              effectiveCacheKey,
+              adapter,
+              trustedVirtualContent,
+            );
             const provenance = configFileProvenance(configFile);
-            if (!hosted && usePersistentCache && cacheRevision === revisionAtStart) {
+            if (usePersistentCache && cacheRevision === revisionAtStart) {
               configCacheByProject.set(effectiveCacheKey, {
                 revision: revisionAtStart,
                 config: merged,
@@ -1467,9 +2161,6 @@ function getConfigInternal(
             });
             return createConfigLoadResult(merged, provenance);
           } catch (error) {
-            if (error instanceof DeclarativeConfigEvaluationError) {
-              throw translateHostedConfigEvaluationError(error, configFile);
-            }
             if (isPreservedConfigLoadError(error)) throw error;
             logger.warn("Failed to load config file", { configFile });
             throw CONFIG_PARSE_ERROR.create({
@@ -1487,11 +2178,9 @@ function getConfigInternal(
           duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
         });
 
-        if (hosted) throwIfHostedConfigAborted(hosted.signal);
-        const defaultConfig = createFreshDefaults() as VeryfrontConfig;
-        const config = hosted ? deepFreezeHostedConfig(defaultConfig) : defaultConfig;
+        const config = createFreshDefaults() as VeryfrontConfig;
         const provenance = defaultConfigProvenance();
-        if (!hosted && usePersistentCache && cacheRevision === revisionAtStart) {
+        if (usePersistentCache && cacheRevision === revisionAtStart) {
           configCacheByProject.set(effectiveCacheKey, {
             revision: revisionAtStart,
             config,
@@ -1570,10 +2259,45 @@ export function __setHostedConfigEvaluatorForTests(
   evaluator?: HostedConfigEvaluator,
 ): void {
   mapForEach(hostedConfigFlights, (flight) => {
-    flight.controller.abort();
+    abortController(flight.controller);
   });
   mapClear(hostedConfigFlights);
   hostedConfigEvaluator = evaluator ?? evaluatePreparedDeclarativeConfigInWorker;
+}
+
+/**
+ * @internal Test-only seam for the captured Promise observer. This keeps
+ * adversarial constructor/species coverage independent of unrelated awaits in
+ * tracing and filesystem dependencies.
+ */
+export function __observePromiseForTests<T>(promise: Promise<T>): Promise<T> {
+  return thenPromise(promise, (value) => value);
+}
+
+/**
+ * @internal Test-only aggregate source-read admission state. Active reads
+ * remain counted after their final waiter aborts until the adapter settles.
+ */
+export function __getHostedConfigSourceReadStateForTests(): Readonly<{
+  active: number;
+  queued: number;
+  flights: number;
+  waiters: number;
+  maxActive: number;
+  maxQueued: number;
+}> {
+  let waiters = 0;
+  mapForEach(hostedConfigSourceReadFlights, (flight) => {
+    waiters += flight.waiterCount;
+  });
+  return freezeObject({
+    active: activeHostedConfigSourceReads,
+    queued: queuedHostedConfigSourceReads,
+    flights: mapSize(hostedConfigSourceReadFlights),
+    waiters,
+    maxActive: MAX_ACTIVE_HOSTED_CONFIG_SOURCE_READS,
+    maxQueued: MAX_QUEUED_HOSTED_CONFIG_SOURCE_READS,
+  });
 }
 
 /** @internal Test-only aggregate state; does not expose project or source identities. */

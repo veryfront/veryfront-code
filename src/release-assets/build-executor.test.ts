@@ -1481,10 +1481,16 @@ export default defineConfig({ tailwind: { stylesheet: "globals.css" }, typoKey: 
 
     assertEquals(result.success, false);
     assertEquals(result.state, "failed");
-    assertStringIncludes(result.error ?? "", "Unknown config keys: typoKey");
+    assertStringIncludes(
+      result.error ?? "",
+      'Invalid veryfront.config at <root>: Unrecognized key: "typoKey".',
+    );
     assertEquals(rec.states.length, 1);
     assertEquals(rec.states[0]?.state, "failed");
-    assertStringIncludes(rec.states[0]?.error ?? "", "Unknown config keys: typoKey");
+    assertStringIncludes(
+      rec.states[0]?.error ?? "",
+      'Invalid veryfront.config at <root>: Unrecognized key: "typoKey".',
+    );
   });
 
   it("loads release config that uses framework config helpers", async () => {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { VeryfrontTokenAdapter } from "./adapter.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
@@ -21,6 +22,32 @@ describe("platform/adapters/token/veryfront/adapter", () => {
   describe("constructor", () => {
     it("should create adapter with valid config", () => {
       const adapter = new VeryfrontTokenAdapter(createConfig());
+      assertEquals(typeof adapter, "object");
+    });
+
+    it("enforces retry policy at adapter construction", () => {
+      for (
+        const retry of [
+          { maxRetries: 10, initialDelay: 0, maxDelay: 0 },
+          { maxRetries: 0, initialDelay: Number.NaN, maxDelay: 0 },
+          { maxRetries: 0, initialDelay: 2, maxDelay: 1 },
+        ]
+      ) {
+        assertThrows(
+          () => new VeryfrontTokenAdapter(createConfig({ retry })),
+          RangeError,
+        );
+      }
+
+      const adapter = new VeryfrontTokenAdapter(
+        createConfig({
+          retry: {
+            maxRetries: MAX_VERYFRONT_API_RETRIES,
+            initialDelay: 0,
+            maxDelay: 0,
+          },
+        }),
+      );
       assertEquals(typeof adapter, "object");
     });
   });

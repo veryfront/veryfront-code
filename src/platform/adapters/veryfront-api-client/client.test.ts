@@ -4,6 +4,8 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import type { VeryfrontAPIConfig } from "./types.ts";
 
 const baseConfig: VeryfrontAPIConfig = {
@@ -155,6 +157,41 @@ describe("VeryfrontApiClient", () => {
         retry: { maxRetries: 5, initialDelay: 100, maxDelay: 1000 },
       });
       assertEquals(client.isProxyMode(), false);
+    });
+
+    it("accepts the ten-total-attempt and portable timer boundary", () => {
+      const client = createClient({
+        apiBaseUrl: "http://test.api",
+        retry: {
+          maxRetries: MAX_VERYFRONT_API_RETRIES,
+          initialDelay: MAX_TIMER_DELAY_MS,
+          maxDelay: MAX_TIMER_DELAY_MS,
+        },
+      });
+      assertEquals(client.isProxyMode(), false);
+    });
+
+    it("rejects invalid retry counts, delays, and delay ranges at construction", () => {
+      for (
+        const retry of [
+          { maxRetries: -1 },
+          { maxRetries: 0.5 },
+          { maxRetries: Number.NaN },
+          { maxRetries: Number.POSITIVE_INFINITY },
+          { maxRetries: Number.MAX_SAFE_INTEGER },
+          { initialDelay: -1 },
+          { initialDelay: 0.5 },
+          { maxDelay: Number.NaN },
+          { maxDelay: Number.POSITIVE_INFINITY },
+          { maxDelay: MAX_TIMER_DELAY_MS + 1 },
+          { initialDelay: 2, maxDelay: 1 },
+        ]
+      ) {
+        assertThrows(
+          () => createClient({ apiBaseUrl: "http://test.api", retry }),
+          RangeError,
+        );
+      }
     });
   });
 

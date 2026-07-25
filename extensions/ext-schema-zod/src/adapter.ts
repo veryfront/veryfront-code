@@ -11,8 +11,8 @@
  */
 
 import { Ajv as AjvDraft7, type AnySchema, type ErrorObject, type ValidateFunction } from "ajv";
-import { Ajv2019 } from "ajv/2019";
-import { Ajv2020 } from "ajv/2020";
+import { Ajv2019 } from "ajv/dist/2019.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";
 import { z } from "zod";
 import type {

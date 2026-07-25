@@ -22,13 +22,14 @@ framework reads config and environment variables automatically.
 
 Use `veryfront.config.ts` for stable project choices:
 
-- Change directory conventions.
+- Change app, pages, or component directory conventions.
 - Select app-router or pages-router mode.
-- Change build output or trailing-slash behavior.
+- Enable or disable static generation.
 - Add a custom layout or app wrapper.
 - Tune discovery paths for agents, tools, skills, prompts, resources,
   workflows, or tasks.
-- Set project-level provider or MCP defaults.
+- Configure render caching, request security, imports, extensions, and
+  integrations.
 
 Do not add config just to mirror defaults. Keep the file small and add options
 when the project has a concrete reason to deviate.
@@ -40,25 +41,34 @@ when the project has a concrete reason to deviate.
 import { defineConfig } from "veryfront";
 
 export default defineConfig({
-  title: "My App",
-  description: "A Veryfront application",
+  router: "app",
+  build: { ssg: true },
 });
 ```
 
 `defineConfig` provides TypeScript autocompletion but doesn't transform the
 config. It is a pass-through for type safety.
 
+Veryfront recognizes `veryfront.config.js`, `veryfront.config.ts`, and
+`veryfront.config.mjs`. If more than one exists, Veryfront selects the first in
+that order: JavaScript, TypeScript, then MJS. Keep one config file in each
+project to avoid ambiguity.
+
 ## Options
 
-### Project metadata
+### Project identity
 
 ```ts
 defineConfig({
-  projectSlug: "my-app", // Project identifier
-  title: "My App", // Default page title
-  description: "A great app", // Default meta description
+  projectSlug: "my-app",
 });
 ```
+
+`projectSlug` identifies the project to Cloud and CLI workflows. The schema
+still accepts `title` and `description` for compatibility and extension
+metadata, but core rendering does not use them as document metadata. Define
+page metadata through route/frontmatter APIs described in
+[Head and SEO](./head-and-seo.md).
 
 ### Directories
 
@@ -70,7 +80,6 @@ defineConfig({
     app: "src/app", // Override page/route directory
     pages: "src/pages", // Override pages-router directory
     components: ["src/components"],
-    ai: "src/ai",
   },
 });
 ```
@@ -88,11 +97,16 @@ defineConfig({
 ```ts
 defineConfig({
   build: {
-    outDir: "dist", // Output directory
-    trailingSlash: false, // Add trailing slashes to URLs
+    ssg: true,
   },
 });
 ```
+
+`build.ssg` controls static generation when the CLI does not receive an
+explicit `--ssg` or `--no-ssg` flag. Choose the build output directory with
+`veryfront build --output <dir>`. Compatibility fields such as
+`build.outDir`, `build.trailingSlash`, and `build.esbuild` currently have no
+built-in effect.
 
 ### Layout
 
@@ -153,6 +167,40 @@ can contain at most 128 URLs, and each URL can contain at most 2,048 characters.
 Invalid configuration is rejected rather than replaced with a more permissive
 default.
 
+### CSRF customization
+
+Production security defaults enable double-submit CSRF protection. Use
+`security.csrf: true` for the default `__Host-vf_csrf` cookie and
+`x-csrf-token` header, or provide bounded custom settings:
+
+```ts
+defineConfig({
+  security: {
+    csrf: {
+      cookieName: "__Host-vf_csrf",
+      headerName: "x-csrf-token",
+      excludePaths: ["/webhooks/provider"],
+      ttlSec: 3600,
+    },
+  },
+});
+```
+
+Custom cookie and header names must be non-empty HTTP tokens of at most 256
+characters. Exclusions are pathname-prefix grants, so each entry must be a
+canonical absolute path: no scheme or host, query, fragment, protocol-relative
+`//` prefix, or trailing slash. A path is at most 4,096 characters; the list is
+limited to 64 paths and 16,384 characters in total. `ttlSec` must be a positive
+integer.
+
+Older configs that used spaces or separators in custom names must choose a
+valid HTTP-token name. Do not mechanically remove a trailing slash from an
+exclusion: `"/hooks"` also exempts descendants such as `"/hooks/child"`.
+Replace a legacy value only after confirming that prefix grant is intended.
+Query-specific exclusions are not supported because enforcement compares the
+canonical request pathname; keep CSRF enabled and authenticate those requests
+through an explicit route-specific mechanism instead.
+
 ### Render cache
 
 `cache.render` selects the render-result cache and defines its logical freshness window.
@@ -203,6 +251,20 @@ Related cache TTL fields have separate contracts:
 | `cache.bundleManifest.ttl` | Non-negative safe-integer milliseconds. Zero means immediate expiry. |
 | `fs.veryfront.cache.ttl`   | Positive safe-integer milliseconds.                                  |
 | `fs.github.cache.ttl`      | Positive safe-integer milliseconds.                                  |
+
+For `fs.veryfront.retry`, `maxRetries` counts retries after the initial
+outbound API request and accepts 0 through 9. For compatibility,
+`fs.github.retry.maxRetries` retains its historical total-attempt meaning and
+accepts 0 through 10; values 0 and 1 both perform one request. Each individual
+outbound API request therefore receives at most 10 attempts, but one filesystem
+operation can issue more than one API request. `initialDelay` and `maxDelay`
+accept integer milliseconds from 0 through the portable JavaScript timer
+limit, and `initialDelay` cannot exceed `maxDelay`.
+
+File logging uses `observability.logging.file`. `maxFiles` counts the active
+file and rotated files together and accepts 1 through 100. `maxSize` is the
+positive byte threshold that triggers rotation; it does not allocate that
+amount of memory eagerly.
 
 ### AI discovery
 
@@ -259,26 +321,32 @@ Notes:
 - Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
 - Set `enabled: false` to disable discovery for that primitive.
 
-### AI providers and MCP
+Provider credentials and model selection belong to the provider setup
+described in [Providers](./providers.md). `ai.enabled` and provider settings are
+read by CLI/development diagnostics and exposed to extensions; they do not
+select a runtime provider or model. `ai.mcp` is retained for compatibility but
+does not start or configure the built-in MCP server.
 
-Configure provider defaults or the app-facing MCP surface:
+### Compatibility-only fields
 
-```ts
-defineConfig({
-  ai: {
-    providers: {
-      openai: {
-        defaultModel: "gpt-5.4-nano",
-      },
-    },
-    mcp: {
-      enabled: true,
-      port: 3002,
-      expose: ["tools", "prompts", "resources"],
-    },
-  },
-});
-```
+Veryfront still validates several historical or reserved fields so existing
+extensions can inspect them. Core does not currently implement built-in
+behavior for:
+
+- `title`, `description`, `directories.ai`, and `theme.colors`
+- `build.outDir`, `build.trailingSlash`, and `build.esbuild`
+- `dev.host`, `dev.open`, and `dev.hmrPort`
+- `theming`, `assetPipeline`, and `search`
+- `observability.tracing` and `observability.metrics`
+- `fs.local.baseDir` and `fs.memory`
+- `ai.work` and `ai.mcp`
+- `tailwind.plugins`, `tailwind.theme.extend`, and `tailwind.customCSS`
+- `openapi.mcp`
+
+The complete validated config is available to project extensions and
+participates in render-cache identity, so removing these fields would be a
+breaking change even though core does not consume them. Do not rely on a
+built-in effect unless it is documented in this guide.
 
 ## Environment variables
 
@@ -332,10 +400,10 @@ import { defineConfig, getEnv } from "veryfront";
 const isProd = getEnv("NODE_ENV") === "production";
 
 export default defineConfig({
-  title: isProd ? "My App" : "My App (Dev)",
   build: {
-    outDir: isProd ? "dist" : ".dev",
+    ssg: isProd,
   },
+  dev: { port: isProd ? 3000 : 3001 },
 });
 ```
 
@@ -352,6 +420,16 @@ Hosted config cannot import other modules, perform network or filesystem I/O,
 use host globals, evaluate dynamic code, or install executable extensions,
 custom middleware, or function-valued CORS policies. Move that behavior into
 project routes or other runtime modules.
+
+Shared hosted runtimes allow only the in-memory render cache. Hosted config can
+set `cache.render.type` to `memory` and use `ttl`, `public`, and a
+`maxEntries` value from 1 through 500, along with `cache.queryParams` and the
+current memory-only bundle-manifest controls. It cannot set `cache.dir`, select
+`filesystem`, `kv`, or `redis`, provide backend targets such as `kvPath`,
+`redisUrl`, or `redisKeyPrefix`, or select an unreviewed future cache family.
+The cache-family, bundle-manifest, and render-option allowlists fail closed
+before project config is merged. Trusted local and standalone deployments can
+use every render-cache backend documented above.
 
 In a shared runtime, `getEnv` sees only the authenticated project's filtered
 environment snapshot. It cannot read variables from the host process or
@@ -370,13 +448,19 @@ inspection is available inside the isolated project runtime.
 
 ## Reading config at runtime
 
-The framework reads `veryfront.config.ts` automatically. Your config values are available to the build system and dev server. Pages and API routes access config indirectly through the features it enables (port, build output, router mode, etc.).
+The framework reads the selected config file automatically and applies the
+documented core settings at their owning runtime boundaries. It does not
+publish project config automatically through the process-wide
+`RuntimeConfig` singleton, and pages or API routes should not use that
+singleton as request-scoped project state. Extensions receive the complete
+validated config through their setup context.
 
 ## Verify it worked
 
-After editing `veryfront.config.ts`, restart `veryfront dev`. The dev banner
-prints the resolved `title`, output directory, and router mode. Set a
-distinctive `title` and check that the document title in the browser matches.
+After editing `veryfront.config.ts`, restart `veryfront dev`. To verify the
+loader and runtime path, set a non-default `dev.port`, confirm the server binds
+to that port, and open a route. To verify `build.ssg`, run `veryfront build`
+without an explicit SSG flag and inspect the reported static-generation result.
 
 For environment variables, set a temporary non-secret value such as
 `VERYFRONT_CONFIG_CHECK=enabled` and read that value from a temporary API route.

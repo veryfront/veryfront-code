@@ -99,7 +99,6 @@ const DEFAULTS = {
 } as const;
 
 let _environmentConfig: EnvironmentConfig | null = null;
-let envConfigInitializedBeforeEnvLoad = false;
 let warnedEarlyEnvConfig = false;
 
 function parseBoundedIntegerValue(
@@ -252,18 +251,15 @@ export function initEnvironmentConfig(): EnvironmentConfig {
   if (_environmentConfig) return _environmentConfig;
 
   if (!hasEnvLoaded()) {
-    envConfigInitializedBeforeEnvLoad = true;
-    return readEnvSnapshot();
+    return Object.freeze(readEnvSnapshot());
   }
 
   _environmentConfig = Object.freeze(readEnvSnapshot());
-  envConfigInitializedBeforeEnvLoad = false;
   return _environmentConfig;
 }
 
 export function refreshEnvironmentConfig(): EnvironmentConfig {
   _environmentConfig = Object.freeze(readEnvSnapshot());
-  envConfigInitializedBeforeEnvLoad = false;
   return _environmentConfig;
 }
 
@@ -282,10 +278,6 @@ function warnEarlyAccess(): void {
 }
 
 export function getEnvironmentConfig(): EnvironmentConfig {
-  // If cached and env has loaded since init, refresh to pick up .env values
-  if (_environmentConfig && envConfigInitializedBeforeEnvLoad && hasEnvLoaded()) {
-    return refreshEnvironmentConfig();
-  }
   if (_environmentConfig) {
     return _environmentConfig;
   }
@@ -293,7 +285,7 @@ export function getEnvironmentConfig(): EnvironmentConfig {
   // Env not loaded yet - return uncached snapshot with warning
   if (!hasEnvLoaded()) {
     warnEarlyAccess();
-    return readEnvSnapshot();
+    return Object.freeze(readEnvSnapshot());
   }
 
   return initEnvironmentConfig();
@@ -332,6 +324,5 @@ export function _setEnvironmentConfigForTesting(env: Partial<EnvironmentConfig>)
 
 export function _resetEnvironmentConfig(): void {
   _environmentConfig = null;
-  envConfigInitializedBeforeEnvLoad = false;
   warnedEarlyEnvConfig = false;
 }

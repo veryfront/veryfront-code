@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_GITHUB_FILESYSTEM_ATTEMPTS } from "#veryfront/utils/config-resource-limits.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { GitHubFSAdapter } from "./adapter.ts";
 import { createGitHubConfig } from "./types.ts";
 
@@ -90,6 +92,47 @@ describe("GitHubFSAdapter", () => {
       assertEquals(config.cache.enabled, true);
       assertEquals(config.cache.ttl, 60_000);
       assertEquals(config.retry.maxRetries, 3);
+    });
+
+    it("rejects retry counts that exceed the filesystem request budget", () => {
+      assertThrowsMessageIncludes(() => {
+        createGitHubConfig({
+          token: "token",
+          owner: "owner",
+          repo: "repo",
+          retry: { maxRetries: MAX_GITHUB_FILESYSTEM_ATTEMPTS + 1 },
+        });
+      }, "maxRetries");
+    });
+
+    it("rejects invalid retry delays at direct adapter construction", () => {
+      for (
+        const retry of [
+          { initialDelay: -1 },
+          { initialDelay: 0.5 },
+          { maxDelay: MAX_TIMER_DELAY_MS + 1 },
+          { initialDelay: 2, maxDelay: 1 },
+        ]
+      ) {
+        assertThrowsMessageIncludes(() => {
+          createGitHubConfig({
+            token: "token",
+            owner: "owner",
+            repo: "repo",
+            retry,
+          });
+        }, "Filesystem");
+      }
+
+      assertEquals(
+        createGitHubConfig({
+          token: "token",
+          owner: "owner",
+          repo: "repo",
+          retry: { initialDelay: 0, maxDelay: 0 },
+        }).retry,
+        { maxRetries: 3, initialDelay: 0, maxDelay: 0 },
+      );
     });
   });
 

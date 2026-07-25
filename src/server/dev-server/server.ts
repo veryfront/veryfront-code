@@ -1,6 +1,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
+import { findVeryfrontConfigFile } from "#veryfront/config/config-files.ts";
 import { basename } from "#veryfront/compat/path";
 import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
@@ -444,16 +445,14 @@ export class DevServer {
     const fs = this.adapter.fs;
 
     // First check: no direct project files (app/, pages/, or config)
-    const [hasApp, hasPages, hasConfigTs, hasConfigJs, hasConfigMjs] = await Promise.all([
+    const [hasApp, hasPages, configFile] = await Promise.all([
       fs.exists(`${projectDir}/app`),
       fs.exists(`${projectDir}/pages`),
-      fs.exists(`${projectDir}/veryfront.config.ts`),
-      fs.exists(`${projectDir}/veryfront.config.js`),
-      fs.exists(`${projectDir}/veryfront.config.mjs`),
+      findVeryfrontConfigFile(projectDir, (path) => fs.exists(path)),
     ]);
 
     // If we have direct project files, this is a single project
-    if (hasApp || hasPages || hasConfigTs || hasConfigJs || hasConfigMjs) return false;
+    if (hasApp || hasPages || configFile) return false;
 
     // Second check: has at least one standard project directory with subdirectories
     const standardDirs = ["data/projects", "projects", "examples"];

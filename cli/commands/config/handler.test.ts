@@ -77,6 +77,28 @@ describe("Config Command", () => {
       const source = await detectConfigSource("/tmp");
       assertEquals(source, null);
     });
+
+    it("detects an MJS-only config", async () => {
+      await withTempConfigProject(
+        { "veryfront.config.mjs": "export default {};\n" },
+        async (projectDir) => {
+          assertEquals(await detectConfigSource(projectDir), "veryfront.config.mjs");
+        },
+      );
+    });
+
+    it("reports JavaScript before TypeScript and MJS when multiple configs exist", async () => {
+      await withTempConfigProject(
+        {
+          "veryfront.config.js": "export default {};\n",
+          "veryfront.config.ts": "export default {};\n",
+          "veryfront.config.mjs": "export default {};\n",
+        },
+        async (projectDir) => {
+          assertEquals(await detectConfigSource(projectDir), "veryfront.config.js");
+        },
+      );
+    });
   });
 
   describe("getConfigCommandData", () => {

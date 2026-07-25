@@ -204,11 +204,53 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "receives an empty `release` snapshot");
     assertStringIncludes(guide, "does not execute it in the host process");
     assertStringIncludes(guide, "temporarily unavailable config evaluator");
+    assertStringIncludes(guide, "`maxEntries` value from 1 through 500");
+    assertStringIncludes(guide, "future cache family");
+    assertStringIncludes(guide, "allowlists fail closed");
     assertStringIncludes(
       guide,
       "Automatic OpenAPI specification and documentation generation",
     );
     assertStringIncludes(guide, "non-cacheable `503 Service Unavailable`");
+  });
+
+  it("distinguishes schema compatibility from built-in config behavior", async () => {
+    const [configuration, deploying] = await Promise.all([
+      Deno.readTextFile("docs/guides/configuration.md"),
+      Deno.readTextFile("docs/guides/deploying.md"),
+    ]);
+
+    assertStringIncludes(configuration, "Compatibility-only fields");
+    assertStringIncludes(configuration, "`build.outDir`");
+    assertStringIncludes(configuration, "built-in effect.");
+    assertStringIncludes(configuration, "`ai.mcp`");
+    assertStringIncludes(configuration, "start or configure the built-in MCP server.");
+    assertStringIncludes(configuration, "CLI/development diagnostics");
+    assertEquals(
+      configuration.includes(
+        "- `ai.enabled`, most `ai.providers` values, `ai.work`, and `ai.mcp`",
+      ),
+      false,
+    );
+    assertStringIncludes(configuration, "Extensions receive the complete");
+    assertStringIncludes(deploying, "veryfront build --output build-output");
+    assertStringIncludes(
+      deploying,
+      "the production builder does not consume them",
+    );
+  });
+
+  it("documents the bounded CSRF customization and migration contract", async () => {
+    const configuration = await Deno.readTextFile(
+      "docs/guides/configuration.md",
+    );
+
+    assertStringIncludes(configuration, "CSRF customization");
+    assertStringIncludes(configuration, "non-empty HTTP tokens");
+    assertStringIncludes(configuration, "limited to 64 paths");
+    assertStringIncludes(configuration, "16,384 characters in total");
+    assertStringIncludes(configuration, "Do not mechanically remove a trailing slash");
+    assertStringIncludes(configuration, "Query-specific exclusions are not supported");
   });
 
   it("does not promise executable extensions in declarative hosted config", async () => {

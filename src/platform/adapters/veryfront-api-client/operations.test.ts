@@ -13,6 +13,7 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/index.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
 
 function createOps(
@@ -65,6 +66,40 @@ describe("VeryfrontAPIOperations", () => {
 
     it("should be instantiable with token provider function", () => {
       assertExists(createOps(() => "dynamic-token"));
+    });
+
+    it("enforces retry bounds for direct construction", () => {
+      assertThrows(
+        () =>
+          new VeryfrontAPIOperations(
+            "https://api.example.com",
+            "token",
+            { maxRetries: 10, initialDelay: 0, maxDelay: 0 },
+          ),
+        RangeError,
+        "maxRetries",
+      );
+      assertThrows(
+        () =>
+          new VeryfrontAPIOperations(
+            "https://api.example.com",
+            "token",
+            { maxRetries: 0, initialDelay: 2, maxDelay: 1 },
+          ),
+        RangeError,
+        "initialDelay",
+      );
+      assertExists(
+        new VeryfrontAPIOperations(
+          "https://api.example.com",
+          "token",
+          {
+            maxRetries: MAX_VERYFRONT_API_RETRIES,
+            initialDelay: 0,
+            maxDelay: 0,
+          },
+        ),
+      );
     });
   });
 

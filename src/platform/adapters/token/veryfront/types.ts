@@ -6,6 +6,7 @@
  */
 
 import { createError, toError } from "#veryfront/errors";
+import { normalizeVeryfrontApiRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
 
 /**
  * Token storage adapter interface
@@ -51,8 +52,11 @@ export interface TokenStorageAdapterConfig {
     apiBaseUrl?: string;
     /** Retry configuration */
     retry?: {
+      /** Retries after the initial request, from 0 through 9. */
       maxRetries?: number;
+      /** Initial retry delay in whole milliseconds. */
       initialDelay?: number;
+      /** Maximum retry delay in whole milliseconds. */
       maxDelay?: number;
     };
   };
@@ -91,10 +95,6 @@ function requireVeryfrontConfig(
 /**
  * Create verified config from adapter config
  */
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
-
 export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
   const veryfront = requireVeryfrontConfig(config);
 
@@ -118,17 +118,11 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     );
   }
 
-  const retry = veryfront.retry;
-
   return {
     apiBaseUrl: veryfront.apiBaseUrl ?? "https://api.veryfront.com",
     apiToken,
     projectSlug,
-    retry: {
-      maxRetries: retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
-      initialDelay: retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
-      maxDelay: retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
-    },
+    retry: normalizeVeryfrontApiRetryConfig(veryfront.retry),
   };
 }
 

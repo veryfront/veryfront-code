@@ -229,14 +229,14 @@ restores the original console methods.
 
 `FileLogConfig` contains:
 
-| Field      | Type                                             |
-| ---------- | ------------------------------------------------ |
-| `enabled`  | `boolean`                                        |
-| `path`     | non-empty `string`                               |
-| `maxSize`  | positive byte count or a string such as `"10mb"` |
-| `maxFiles` | positive safe integer                            |
-| `level`    | `"debug" \| "info" \| "warn" \| "error"`         |
-| `format`   | `"json" \| "text"`                               |
+| Field      | Type                                                  |
+| ---------- | ----------------------------------------------------- |
+| `enabled`  | `boolean`                                             |
+| `path`     | non-empty `string`                                    |
+| `maxSize`  | positive byte count or a string such as `"10mb"`      |
+| `maxFiles` | integer from 1 through 100, including the active file |
+| `level`    | `"debug" \| "info" \| "warn" \| "error"`              |
+| `format`   | `"json" \| "text"`                                    |
 
 `FileLogSubscriber` serializes writes, rotates files by size, and exposes
 `flush()` and `close()`. Passive subscriber callbacks report and contain write

@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { normalizeVeryfrontApiRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
 import {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
@@ -14,9 +15,6 @@ import { API_CLIENT_ERROR, type VeryfrontAPIConfig, VeryfrontError } from "./typ
 
 const logger = baseLogger.component("veryfront-api-client");
 
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_SEARCH_LIMIT = 100;
 
 /**
@@ -46,11 +44,7 @@ export class VeryfrontApiClient {
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
 
   constructor(config: VeryfrontAPIConfig, requestCredentialProvider?: TokenProvider) {
-    const retryConfig = {
-      maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
-      initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
-      maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
-    };
+    const retryConfig = normalizeVeryfrontApiRetryConfig(config.retry);
 
     this.config = { ...config, retry: retryConfig };
     this.requestCredentialProvider = requestCredentialProvider;

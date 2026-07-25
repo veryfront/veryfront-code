@@ -23,8 +23,11 @@ export interface VeryfrontAPIConfig {
   /** Enable proxy mode for multi-project per-request handling */
   proxyMode?: boolean;
   retry?: {
+    /** Retries after the initial request. Veryfront API clients accept 0 through 9. */
     maxRetries?: number;
+    /** Initial retry delay in whole milliseconds. */
     initialDelay?: number;
+    /** Maximum retry delay in whole milliseconds. */
     maxDelay?: number;
   };
 }

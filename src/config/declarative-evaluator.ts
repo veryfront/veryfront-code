@@ -23,6 +23,7 @@ import {
   MAX_CORS_ORIGIN_LIST_LENGTH,
 } from "#veryfront/utils/cors-policy-limits.ts";
 import { PROJECT_ENV_SNAPSHOT_LIMITS } from "#veryfront/platform/compat/process/project-env-contract.ts";
+import { MAX_HOSTED_RENDER_CACHE_ENTRIES } from "./defaults.ts";
 
 const IntrinsicArray = Array;
 const IntrinsicUint8Array = Uint8Array;
@@ -82,7 +83,7 @@ const FINGERPRINT_NAMESPACE = "veryfront-declarative-context-v1";
 const FINGERPRINT_PREFIX = "ctx1:";
 const HEX_DIGITS = "0123456789abcdef";
 const MAX_HOSTED_EXTENSION_NAME_LENGTH = 256;
-const POLICY_VERSION = "hosted-declarative-config-v1";
+const POLICY_VERSION = "hosted-declarative-config-v2";
 
 type TrustedCodeParser = Pick<CodeParser, "parse">;
 
@@ -212,9 +213,14 @@ export type DeclarativeConfigErrorReason =
   | "helper-arguments"
   | "helper-as-value"
   | "host-global"
+  | "hosted-bundle-manifest-backend"
+  | "hosted-cache-directory"
+  | "hosted-cache-option"
   | "hosted-cors-origin"
   | "hosted-custom-middleware"
   | "hosted-extensions"
+  | "hosted-render-cache-backend"
+  | "hosted-render-cache-capacity"
   | "import-form"
   | "intermediate-string"
   | "missing-default-export"
@@ -2454,11 +2460,147 @@ function isHostedExtensionName(name: string): boolean {
   return true;
 }
 
+function isHostedMemoryRenderCacheKey(key: PropertyKey): key is string {
+  return key === "type" ||
+    key === "ttl" ||
+    key === "maxEntries" ||
+    key === "public";
+}
+
+function isHostedCacheKey(key: PropertyKey): key is string {
+  return key === "bundleManifest" ||
+    key === "render" ||
+    key === "queryParams";
+}
+
+function isHostedBundleManifestKey(key: PropertyKey): key is string {
+  return key === "enabled" ||
+    key === "type" ||
+    key === "ttl";
+}
+
+function enforceHostedCachePolicy(
+  result: RuntimeRecord,
+  context: EvaluationContext,
+  program: ASTNode,
+): void {
+  if (!hasOwn(result, "cache")) return;
+  const cache = runtimeRecordValue(result, "cache");
+  if (!isRuntimeRecord(cache)) return;
+
+  // Keep the cache family itself fail closed. A future cache subsystem cannot
+  // become tenant-selectable merely because the trusted schema learns it.
+  const cacheKeys = ReflectOwnKeys(cache);
+  for (let index = 0; index < cacheKeys.length; index += 1) {
+    const key = cacheKeys[index]!;
+    if (key === "dir") {
+      // cache.dir is shared by the filesystem render backend and other on-disk
+      // cache consumers.
+      return throwEvaluationError(
+        "unsupported-hosted-feature",
+        "result",
+        "hosted-cache-directory",
+        context,
+        program,
+      );
+    }
+    if (!isHostedCacheKey(key)) {
+      return throwEvaluationError(
+        "unsupported-hosted-feature",
+        "result",
+        "hosted-cache-option",
+        context,
+        program,
+      );
+    }
+  }
+
+  if (hasOwn(cache, "bundleManifest")) {
+    const bundleManifest = runtimeRecordValue(cache, "bundleManifest");
+    if (isRuntimeRecord(bundleManifest)) {
+      const keys = ReflectOwnKeys(bundleManifest);
+      for (let index = 0; index < keys.length; index += 1) {
+        if (!isHostedBundleManifestKey(keys[index]!)) {
+          return throwEvaluationError(
+            "unsupported-hosted-feature",
+            "result",
+            "hosted-bundle-manifest-backend",
+            context,
+            program,
+          );
+        }
+      }
+      if (
+        hasOwn(bundleManifest, "type") &&
+        runtimeRecordValue(bundleManifest, "type") !== "memory"
+      ) {
+        return throwEvaluationError(
+          "unsupported-hosted-feature",
+          "result",
+          "hosted-bundle-manifest-backend",
+          context,
+          program,
+        );
+      }
+    }
+  }
+
+  if (!hasOwn(cache, "render")) return;
+  const render = runtimeRecordValue(cache, "render");
+  if (!isRuntimeRecord(render)) return;
+
+  // Keep this allowlist fail closed. A newly added backend-specific option
+  // cannot become tenant-selectable until this hosted boundary reviews it.
+  const keys = ReflectOwnKeys(render);
+  for (let index = 0; index < keys.length; index += 1) {
+    if (!isHostedMemoryRenderCacheKey(keys[index]!)) {
+      return throwEvaluationError(
+        "unsupported-hosted-feature",
+        "result",
+        "hosted-render-cache-backend",
+        context,
+        program,
+      );
+    }
+  }
+
+  if (
+    hasOwn(render, "type") &&
+    runtimeRecordValue(render, "type") !== "memory"
+  ) {
+    return throwEvaluationError(
+      "unsupported-hosted-feature",
+      "result",
+      "hosted-render-cache-backend",
+      context,
+      program,
+    );
+  }
+
+  if (hasOwn(render, "maxEntries")) {
+    const maxEntries = runtimeRecordValue(render, "maxEntries");
+    if (
+      typeof maxEntries === "number" &&
+      maxEntries > MAX_HOSTED_RENDER_CACHE_ENTRIES
+    ) {
+      return throwEvaluationError(
+        "unsupported-hosted-feature",
+        "result",
+        "hosted-render-cache-capacity",
+        context,
+        program,
+      );
+    }
+  }
+}
+
 function enforceHostedResultPolicy(
   result: RuntimeRecord,
   context: EvaluationContext,
   program: ASTNode,
 ): void {
+  enforceHostedCachePolicy(result, context, program);
+
   if (hasOwn(result, "extensions")) {
     const extensions = runtimeRecordValue(result, "extensions");
     if (!ArrayIsArray(extensions)) {

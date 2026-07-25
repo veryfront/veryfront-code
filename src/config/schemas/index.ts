@@ -4,15 +4,12 @@
  * @module config/schemas
  */
 
-export {
-  findUnknownTopLevelKeys,
-  type VeryfrontConfigInput,
-  veryfrontConfigSchema,
-} from "./config.schema.ts";
+export { veryfrontConfigSchema } from "./config.schema.ts";
 
 import {
   validateVeryfrontConfig as validateBaseVeryfrontConfig,
   type VeryfrontConfig as BaseVeryfrontConfig,
+  type VeryfrontConfigInput as BaseVeryfrontConfigInput,
 } from "./config.schema.ts";
 // Type-only reference — keeps the config layer free of a runtime dependency
 // on the extensions module. The schema stores `extensions` as `unknown[]`
@@ -26,6 +23,11 @@ import type { ExtensionConfigEntry } from "#veryfront/extensions/types.ts";
  */
 export type VeryfrontConfig =
   & Omit<BaseVeryfrontConfig, "extensions">
+  & { extensions?: ExtensionConfigEntry[] };
+
+/** User-authored project configuration with typed extension entries. */
+export type VeryfrontConfigInput =
+  & Omit<BaseVeryfrontConfigInput, "extensions">
   & { extensions?: ExtensionConfigEntry[] };
 
 /** Validate project config and expose the framework's public extension entry type. */

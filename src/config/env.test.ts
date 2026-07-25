@@ -13,6 +13,7 @@ import {
   getForceColorEnv,
   getGithubEnvConfig,
   getGoogleGenAIEnvConfig,
+  getMistralEnvConfig,
   getNoColorEnv,
   getOpenAIEnvConfig,
   getOtelMetricsConfig,
@@ -273,6 +274,31 @@ describe("config/env", () => {
       setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-fallback");
       const config = getGoogleGenAIEnvConfig();
       assertEquals(config.apiKey, "AIza-fallback");
+    });
+  });
+
+  describe("getMistralEnvConfig", () => {
+    const keys = ["MISTRAL_API_KEY", "MISTRAL_BASE_URL"];
+    afterEach(() => {
+      for (const k of keys) {
+        try {
+          deleteEnv(k);
+        } catch { /* ignore */ }
+      }
+    });
+
+    it("uses the public Mistral endpoint by default", () => {
+      const config = getMistralEnvConfig();
+      assertEquals(config.apiKey, undefined);
+      assertEquals(config.baseURL, "https://api.mistral.ai/v1");
+    });
+
+    it("returns configured credentials and endpoint", () => {
+      setEnv("MISTRAL_API_KEY", "mistral-test");
+      setEnv("MISTRAL_BASE_URL", "https://mistral.example/v1");
+      const config = getMistralEnvConfig();
+      assertEquals(config.apiKey, "mistral-test");
+      assertEquals(config.baseURL, "https://mistral.example/v1");
     });
   });
 

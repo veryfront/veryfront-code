@@ -7,6 +7,8 @@ import {
   prepareDeclarativeConfigContext,
 } from "./declarative-evaluator.ts";
 import {
+  createDeclarativeConfigWorkerErrorResponse,
+  createDeclarativeConfigWorkerSuccessResponse,
   DECLARATIVE_CONFIG_WORKER_PROTOCOL_VERSION,
   decodeDeclarativeConfigWorkerRequest,
   decodeDeclarativeConfigWorkerResponse,
@@ -15,9 +17,43 @@ import {
   declarativeConfigWorkerRunnerInternals,
   evaluatePreparedDeclarativeConfigInWorker,
 } from "./declarative-evaluator-worker-runner.ts";
+import { MAX_HOSTED_RENDER_CACHE_ENTRIES } from "./defaults.ts";
 
+const TestObjectCreate = Object.create;
 const TestObjectDefineProperty = Object.defineProperty;
 const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const TestReflectApply = Reflect.apply;
+const TestReflectDeleteProperty = Reflect.deleteProperty;
+const TestPromise = Promise;
+const TestSetTimeout = globalThis.setTimeout.bind(globalThis);
+const TestClearTimeout = globalThis.clearTimeout.bind(globalThis);
+const TEST_STATE_WAIT_TIMEOUT_MS = 1_000;
+
+function testHasOwn(value: object, key: PropertyKey): boolean {
+  return TestReflectApply(TestObjectPrototypeHasOwnProperty, value, [
+    key,
+  ]) as boolean;
+}
+
+function copyPropertyDescriptorForTest(
+  descriptor: PropertyDescriptor,
+): PropertyDescriptor {
+  const copied = TestObjectCreate(null) as PropertyDescriptor;
+  if (testHasOwn(descriptor, "configurable")) {
+    copied.configurable = descriptor.configurable;
+  }
+  if (testHasOwn(descriptor, "enumerable")) {
+    copied.enumerable = descriptor.enumerable;
+  }
+  if (testHasOwn(descriptor, "value")) copied.value = descriptor.value;
+  if (testHasOwn(descriptor, "writable")) {
+    copied.writable = descriptor.writable;
+  }
+  if (testHasOwn(descriptor, "get")) copied.get = descriptor.get;
+  if (testHasOwn(descriptor, "set")) copied.set = descriptor.set;
+  return copied;
+}
 
 function replacePropertyForTest(
   target: object,
@@ -25,13 +61,19 @@ function replacePropertyForTest(
   descriptor: PropertyDescriptor,
 ): () => void {
   const previous = TestObjectGetOwnPropertyDescriptor(target, key);
-  TestObjectDefineProperty(target, key, {
-    configurable: true,
-    ...descriptor,
-  });
+  const replacement = copyPropertyDescriptorForTest(descriptor);
+  replacement.configurable = true;
+  TestObjectDefineProperty(target, key, replacement);
   return () => {
-    if (previous) TestObjectDefineProperty(target, key, previous);
-    else Reflect.deleteProperty(target, key);
+    if (previous) {
+      TestObjectDefineProperty(
+        target,
+        key,
+        copyPropertyDescriptorForTest(previous),
+      );
+    } else {
+      TestReflectDeleteProperty(target, key);
+    }
   };
 }
 
@@ -46,25 +88,85 @@ async function createPayload(
   return createPreparedDeclarativeConfigWorkerPayload(source, context, fileName);
 }
 
+function waitForCondition<T>(
+  description: string,
+  snapshot: () => T,
+  matches: (current: T) => boolean,
+  timeoutMs = TEST_STATE_WAIT_TIMEOUT_MS,
+): Promise<T> {
+  return new TestPromise<T>((resolve, reject) => {
+    let settled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastObserved: T | undefined;
+
+    const cleanup = (): void => {
+      if (pollTimer !== undefined) {
+        TestClearTimeout(pollTimer);
+        pollTimer = undefined;
+      }
+      if (deadlineTimer !== undefined) {
+        TestClearTimeout(deadlineTimer);
+        deadlineTimer = undefined;
+      }
+    };
+    const resolveOnce = (current: T): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(current);
+    };
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const poll = (): void => {
+      try {
+        const current = snapshot();
+        lastObserved = current;
+        if (matches(current)) {
+          resolveOnce(current);
+          return;
+        }
+        pollTimer = TestSetTimeout(poll, 0);
+      } catch (error) {
+        rejectOnce(error);
+      }
+    };
+
+    deadlineTimer = TestSetTimeout(() => {
+      let observed = lastObserved;
+      try {
+        observed = snapshot();
+      } catch {
+        // Preserve the last successful sample in the timeout diagnostic.
+      }
+      rejectOnce(
+        new Error(
+          `Timed out after ${timeoutMs}ms waiting for ${description}; observed ${
+            JSON.stringify(observed)
+          }`,
+        ),
+      );
+    }, timeoutMs);
+    poll();
+  });
+}
+
 async function waitForAdmissionState(
   admission: {
     snapshot(): Readonly<{ active: number; queued: number }>;
   },
   expected: Readonly<{ active: number; queued: number }>,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (
-      admission.snapshot().active === expected.active &&
-      admission.snapshot().queued === expected.queued
-    ) {
-      return;
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(
-    `Timed out waiting for admission state ${JSON.stringify(expected)}; observed ${
-      JSON.stringify(admission.snapshot())
-    }`,
+  await waitForCondition(
+    `admission state ${JSON.stringify(expected)}`,
+    () => admission.snapshot(),
+    (current) =>
+      current.active === expected.active &&
+      current.queued === expected.queued,
   );
 }
 
@@ -74,20 +176,12 @@ async function waitForStartupState(
   },
   expected: Readonly<{ pending: number; maxPending: number }>,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const current = startup.snapshot();
-    if (
+  await waitForCondition(
+    `startup state ${JSON.stringify(expected)}`,
+    () => startup.snapshot(),
+    (current) =>
       current.pending === expected.pending &&
-      current.maxPending === expected.maxPending
-    ) {
-      return;
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(
-    `Timed out waiting for startup state ${JSON.stringify(expected)}; observed ${
-      JSON.stringify(startup.snapshot())
-    }`,
+      current.maxPending === expected.maxPending,
   );
 }
 
@@ -135,6 +229,61 @@ Deno.test("declarative config worker rehydrates typed evaluation failures", asyn
   assertEquals(error.reason, "unsupported-call");
   assertEquals(error.retryable, false);
   assertEquals(error.location?.fileName, "veryfront.config.ts");
+});
+
+Deno.test("declarative config worker preserves hosted cache policy failures", async () => {
+  for (
+    const [source, reason] of [
+      [
+        `export default { cache: { dir: ".tenant-cache" } };`,
+        "hosted-cache-directory",
+      ],
+      [
+        `export default {
+          cache: {
+            render: {
+              type: "redis",
+              redisUrl: "redis://cache.invalid",
+            },
+          },
+        };`,
+        "hosted-render-cache-backend",
+      ],
+      [
+        `export default {
+          cache: {
+            render: { maxEntries: ${MAX_HOSTED_RENDER_CACHE_ENTRIES + 1} },
+          },
+        };`,
+        "hosted-render-cache-capacity",
+      ],
+      [
+        `export default {
+          cache: { bundleManifest: { type: "redis" } },
+        };`,
+        "hosted-bundle-manifest-backend",
+      ],
+      [
+        `export default {
+          cache: { futurePersistentCache: { path: ".tenant-cache" } },
+        };`,
+        "hosted-cache-option",
+      ],
+    ] as const
+  ) {
+    const payload = await createPayload(source);
+    const error = await assertRejects(
+      () => evaluatePreparedDeclarativeConfigInWorker(payload),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+
+    assertEquals(error.name, "DeclarativeConfigEvaluationError");
+    assertEquals(error.code, "unsupported-hosted-feature");
+    assertEquals(error.phase, "result");
+    assertEquals(error.reason, reason);
+    assertEquals(error.retryable, false);
+    assertEquals(error.location?.fileName, "veryfront.config.ts");
+  }
 });
 
 Deno.test("declarative config worker preserves validated JS and MJS diagnostic names", async () => {
@@ -486,9 +635,11 @@ Deno.test("declarative config worker bounds active and queued evaluations", asyn
   await Promise.resolve();
   assertEquals(factoryCalls, 2);
   assertEquals(admission.snapshot(), { active: 1, queued: 0 });
-  for (let attempt = 0; messageListeners.length < 2 && attempt < 100; attempt += 1) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
+  await waitForCondition(
+    "the queued evaluation to install its message listener",
+    () => messageListeners.length,
+    (listenerCount) => listenerCount >= 2,
+  );
   assertEquals(messageListeners.length, 2);
 
   messageListeners[1]?.({ ok: true, snapshot: { sequence: 2 } });
@@ -821,14 +972,16 @@ Deno.test("declarative config worker lifecycle uses captured primordials after s
         5,
         startup,
       );
-    for (
-      let attempt = 0;
-      attempt < 10 &&
-      (admission.snapshot().active !== 0 || startup.snapshot().pending !== 0);
-      attempt += 1
-    ) {
-      await 0;
-    }
+    await waitForCondition(
+      "captured-primordial worker lifecycle cleanup",
+      () => ({
+        admission: admission.snapshot(),
+        startup: startup.snapshot(),
+      }),
+      (current) =>
+        current.admission.active === 0 &&
+        current.startup.pending === 0,
+    );
     admissionState = admission.snapshot();
     startupState = startup.snapshot();
   } finally {
@@ -1139,6 +1292,11 @@ Deno.test("declarative config worker protocol rejects hostile requests without g
       },
       {
         cacheFingerprint: payload.cacheFingerprint,
+        policyVersion: "hosted-declarative-config-v1",
+        evaluationOptions: payload.evaluationOptions,
+      },
+      {
+        cacheFingerprint: payload.cacheFingerprint,
         policyVersion: payload.policyVersion,
         evaluationOptions: {
           source: payload.evaluationOptions.source,
@@ -1190,4 +1348,100 @@ Deno.test("declarative config worker protocol rebuilds cloned success data", () 
   assertEquals(Object.getPrototypeOf(decoded.snapshot.z), null);
   assertEquals(Object.isFrozen(decoded.snapshot), true);
   assertEquals(Object.isFrozen(decoded.snapshot.a), true);
+});
+
+Deno.test("declarative config worker protocol ignores inherited descriptor fields during response round trips", () => {
+  const restores: Array<() => void> = [];
+  let inheritedDescriptorGetterCalls = 0;
+  const inheritedDescriptorGetter = () => {
+    inheritedDescriptorGetterCalls += 1;
+    throw new Error("inherited descriptor field must not be read");
+  };
+  let decodedSuccess:
+    | ReturnType<typeof decodeDeclarativeConfigWorkerResponse>
+    | undefined;
+  let decodedError: unknown;
+
+  try {
+    for (
+      const key of [
+        "configurable",
+        "enumerable",
+        "value",
+        "writable",
+        "get",
+        "set",
+      ] as const
+    ) {
+      restores[restores.length] = replacePropertyForTest(
+        Object.prototype,
+        key,
+        { get: inheritedDescriptorGetter },
+      );
+    }
+
+    const successResponse = createDeclarativeConfigWorkerSuccessResponse({
+      nested: { enabled: true },
+      title: "production",
+    });
+    decodedSuccess = decodeDeclarativeConfigWorkerResponse(
+      successResponse,
+      100,
+    );
+
+    const errorResponse = createDeclarativeConfigWorkerErrorResponse(
+      new DeclarativeConfigEvaluationError({
+        code: "syntax-error",
+        phase: "parse",
+        reason: "syntax-error",
+        location: {
+          line: 2,
+          column: 3,
+          offset: 12,
+          fileName: "veryfront.config.ts",
+        },
+        retryable: false,
+      }),
+    );
+    try {
+      decodeDeclarativeConfigWorkerResponse(errorResponse, 100);
+    } catch (error) {
+      decodedError = error;
+    }
+  } finally {
+    for (let index = restores.length - 1; index >= 0; index -= 1) {
+      restores[index]!();
+    }
+  }
+
+  assertEquals(inheritedDescriptorGetterCalls, 0);
+  assertEquals(decodedSuccess, {
+    ok: true,
+    snapshot: {
+      nested: { enabled: true },
+      title: "production",
+    },
+  });
+  assert(decodedError instanceof DeclarativeConfigEvaluationError);
+  assertEquals(
+    {
+      code: decodedError.code,
+      phase: decodedError.phase,
+      reason: decodedError.reason,
+      location: decodedError.location,
+      retryable: decodedError.retryable,
+    },
+    {
+      code: "syntax-error",
+      phase: "parse",
+      reason: "syntax-error",
+      location: {
+        line: 2,
+        column: 3,
+        offset: 12,
+        fileName: "veryfront.config.ts",
+      },
+      retryable: false,
+    },
+  );
 });

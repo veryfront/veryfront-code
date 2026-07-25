@@ -7,17 +7,17 @@ import {
   recordApiRequest,
   recordApiRetry,
 } from "#veryfront/observability/simple-metrics/metrics-recorder.ts";
+import {
+  type BoundedRetryConfig,
+  requireVeryfrontApiRetryConfig,
+} from "#veryfront/utils/config-resource-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 const log = serverLogger.component("veryfront-api-transport");
 const apiClientLog = serverLogger.component("veryfront-api-client");
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-export interface TransportRetryConfig {
-  maxRetries: number;
-  initialDelay: number;
-  maxDelay: number;
-}
+export type TransportRetryConfig = BoundedRetryConfig;
 
 export interface TransportRequestInit {
   method?: string;
@@ -56,15 +56,23 @@ export interface VeryfrontApiTransport<T> {
 export function createVeryfrontApiTransport<T>(
   config: VeryfrontApiTransportConfig<T>,
 ): VeryfrontApiTransport<T> {
+  const retry = requireVeryfrontApiRetryConfig(config.retry);
+  return createValidatedVeryfrontApiTransport(config, retry);
+}
+
+function createValidatedVeryfrontApiTransport<T>(
+  config: VeryfrontApiTransportConfig<T>,
+  retry: TransportRetryConfig,
+): VeryfrontApiTransport<T> {
   const {
     baseUrl,
     getToken,
-    retry: { maxRetries, initialDelay, maxDelay },
     timeoutMs: cfgTimeout = DEFAULT_TIMEOUT_MS,
     defaultHeaders = {},
     afterFetch,
     wrapFetch,
   } = config;
+  const { maxRetries, initialDelay, maxDelay } = retry;
   const onResponse = config.onResponse ??
     (defaultOnResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
   const shouldRetry = config.shouldRetry ?? defaultShouldRetry;
@@ -135,37 +143,41 @@ export function createCanonicalVeryfrontApiTransport(
   getToken: () => string,
   retry: TransportRetryConfig,
 ): VeryfrontApiTransport<unknown> {
-  return createVeryfrontApiTransport<unknown>({
-    baseUrl,
-    getToken,
-    retry,
-    defaultHeaders: { "Content-Type": "application/json" },
-    afterFetch(status) {
-      recordApiRequest(status);
+  const normalizedRetry = requireVeryfrontApiRetryConfig(retry);
+  return createValidatedVeryfrontApiTransport(
+    {
+      baseUrl,
+      getToken,
+      retry: normalizedRetry,
+      defaultHeaders: { "Content-Type": "application/json" },
+      afterFetch(status) {
+        recordApiRequest(status);
+      },
+      onRetry({ error, attempt, delay, isTimeout, url, timeoutMs }) {
+        if (isTimeout) logTimeout(url, timeoutMs, attempt);
+        recordApiRetry();
+        apiClientLog.warn("Request failed, retrying...", {
+          attempt: attempt + 1,
+          maxRetries: normalizedRetry.maxRetries,
+          delay,
+          error: error.message,
+          timeout: isTimeout,
+        });
+      },
+      wrapFetch(fn, url, method, attempt) {
+        const { pathname, host, protocol } = new URL(url);
+        return withSpan(SpanNames.HTTP_CLIENT_FETCH, fn, {
+          "http.method": method,
+          "http.url": url,
+          "http.target": pathname,
+          "http.host": host,
+          "http.scheme": protocol.replace(":", ""),
+          "http.retry_attempt": attempt,
+        });
+      },
     },
-    onRetry({ error, attempt, delay, isTimeout, url, timeoutMs }) {
-      if (isTimeout) logTimeout(url, timeoutMs, attempt);
-      recordApiRetry();
-      apiClientLog.warn("Request failed, retrying...", {
-        attempt: attempt + 1,
-        maxRetries: retry.maxRetries,
-        delay,
-        error: error.message,
-        timeout: isTimeout,
-      });
-    },
-    wrapFetch(fn, url, method, attempt) {
-      const { pathname, host, protocol } = new URL(url);
-      return withSpan(SpanNames.HTTP_CLIENT_FETCH, fn, {
-        "http.method": method,
-        "http.url": url,
-        "http.target": pathname,
-        "http.host": host,
-        "http.scheme": protocol.replace(":", ""),
-        "http.retry_attempt": attempt,
-      });
-    },
-  });
+    normalizedRetry,
+  );
 }
 
 function logTimeout(url: string, timeoutMs: number, attempt: number): void {

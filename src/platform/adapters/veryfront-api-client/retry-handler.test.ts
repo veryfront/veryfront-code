@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { requestWithRetry } from "./retry-handler.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
@@ -32,6 +33,56 @@ describe("retry-handler", () => {
     it("should export requestWithRetry function", (): void => {
       assertExists(requestWithRetry);
       assertEquals(typeof requestWithRetry, "function");
+    });
+
+    it("rejects invalid retry config before issuing a request", () => {
+      let fetchCallCount = 0;
+      setFetch(() => {
+        fetchCallCount++;
+        return Promise.resolve(new Response());
+      });
+
+      for (
+        const retryConfig of [
+          { maxRetries: 10, initialDelay: 0, maxDelay: 0 },
+          { maxRetries: 0, initialDelay: Number.NaN, maxDelay: 0 },
+          { maxRetries: 0, initialDelay: 2, maxDelay: 1 },
+        ]
+      ) {
+        assertThrows(
+          () =>
+            requestWithRetry(
+              "https://api.test.com/endpoint",
+              "test-token",
+              retryConfig,
+            ),
+          RangeError,
+        );
+      }
+
+      assertEquals(fetchCallCount, 0);
+    });
+
+    it("caps the maximum policy at ten total attempts", async () => {
+      let fetchCallCount = 0;
+      setFetch(() => {
+        fetchCallCount++;
+        return Promise.reject(new Error("retryable transport failure"));
+      });
+
+      await captureVeryfrontError(() =>
+        requestWithRetry(
+          "https://api.test.com/endpoint",
+          "test-token",
+          {
+            maxRetries: MAX_VERYFRONT_API_RETRIES,
+            initialDelay: 0,
+            maxDelay: 0,
+          },
+        )
+      );
+
+      assertEquals(fetchCallCount, 10);
     });
 
     describe("trace context propagation", () => {

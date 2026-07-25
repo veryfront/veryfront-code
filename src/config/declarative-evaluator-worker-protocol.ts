@@ -138,9 +138,14 @@ const ERROR_REASON_TABLE = ObjectFreeze(
     "helper-arguments": true,
     "helper-as-value": true,
     "host-global": true,
+    "hosted-bundle-manifest-backend": true,
+    "hosted-cache-directory": true,
+    "hosted-cache-option": true,
     "hosted-cors-origin": true,
     "hosted-custom-middleware": true,
     "hosted-extensions": true,
+    "hosted-render-cache-backend": true,
+    "hosted-render-cache-capacity": true,
     "import-form": true,
     "intermediate-string": true,
     "missing-default-export": true,
@@ -184,12 +189,12 @@ function defineDataProperty(
   key: PropertyKey,
   value: unknown,
 ): void {
-  ObjectDefineProperty(target, key, {
-    value,
-    enumerable: true,
-    configurable: false,
-    writable: false,
-  });
+  const descriptor = ObjectCreate(null) as PropertyDescriptor;
+  descriptor.value = value;
+  descriptor.enumerable = true;
+  descriptor.configurable = false;
+  descriptor.writable = false;
+  ObjectDefineProperty(target, key, descriptor);
 }
 
 function protocolError(): DeclarativeConfigEvaluationError {
@@ -469,9 +474,14 @@ function isLegalErrorTuple(
       return (phase === "validate" && reason === "function-value") ||
         (phase === "result" &&
           isOneOf(reason, [
+            "hosted-bundle-manifest-backend",
+            "hosted-cache-directory",
+            "hosted-cache-option",
             "hosted-cors-origin",
             "hosted-custom-middleware",
             "hosted-extensions",
+            "hosted-render-cache-backend",
+            "hosted-render-cache-capacity",
           ]));
     case "unsupported-syntax":
       return (phase === "evaluate" && reason === "unsupported-expression") ||

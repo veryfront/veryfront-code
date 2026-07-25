@@ -6,6 +6,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
 import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
+import { findVeryfrontConfigFile } from "veryfront/config";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
@@ -44,13 +45,8 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
   const projectDir = cwd();
   const fs = createFileSystem();
 
-  const configPaths = ["veryfront.config.ts", "veryfront.config.js"].map((file) =>
-    join(projectDir, file)
-  );
-
-  for (const configPath of configPaths) {
-    if (await fs.exists(configPath)) return projectDir;
-  }
+  const configFile = await findVeryfrontConfigFile(projectDir, (path) => fs.exists(path));
+  if (configFile) return projectDir;
 
   cliLogger.debug("No veryfront config found, using defaults");
   return projectDir;

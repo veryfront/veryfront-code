@@ -23,13 +23,12 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MdxBundle } from "#veryfront/types";
 import { CompilerService } from "./compiler-service.ts";
 import { cacheTtlMillisecondsToSeconds } from "#veryfront/cache/backends/ttl.ts";
+import { DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "#veryfront/config/defaults.ts";
 
 const logger = rendererLogger.component("lifecycle");
 
 /** Default max cache entries for debug mode */
 const DEBUG_MODE_MAX_ENTRIES = 50;
-/** Default max cache entries for production mode */
-const PRODUCTION_MAX_ENTRIES = 500;
 
 export interface LifecycleOptions {
   configManager: ConfigurationManager;
@@ -235,7 +234,7 @@ export class RendererLifecycle {
         default:
           cacheStore = new MemoryCacheStore({
             maxEntries: renderCacheConfig.maxEntries ??
-              (debugMode ? DEBUG_MODE_MAX_ENTRIES : PRODUCTION_MAX_ENTRIES),
+              (debugMode ? DEBUG_MODE_MAX_ENTRIES : DEFAULT_RENDER_CACHE_MAX_ENTRIES),
             ttlMs: renderCacheConfig.ttl,
             enforceStoreTtl: false,
           });

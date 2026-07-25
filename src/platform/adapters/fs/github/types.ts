@@ -1,4 +1,6 @@
 import { createError, toError } from "#veryfront/errors";
+import { normalizeFilesystemRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
+import { GITHUB_FS_DEFAULT_MAX_ATTEMPTS } from "#veryfront/utils/constants/retry.ts";
 
 export type { DirectoryEntry } from "../shared-types.ts";
 
@@ -22,6 +24,10 @@ export interface GitHubConfig {
     maxMemory?: number;
   };
   retry?: {
+    /**
+     * Legacy total-attempt budget, from 0 through 10. Values 0 and 1 both
+     * perform one request; 2 performs at most two requests.
+     */
     maxRetries?: number;
     initialDelay?: number;
     maxDelay?: number;
@@ -64,7 +70,7 @@ export interface FileIndexEntry {
 const DEFAULT_CACHE_TTL_MS = 60_000;
 const DEFAULT_CACHE_MAX_ENTRIES = 1_000;
 const DEFAULT_CACHE_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
-const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_MAX_RETRIES = GITHUB_FS_DEFAULT_MAX_ATTEMPTS;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 
@@ -89,6 +95,16 @@ export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
     );
   }
 
+  const retry = normalizeFilesystemRetryConfig(
+    config.retry,
+    {
+      maxRetries: DEFAULT_MAX_RETRIES,
+      initialDelay: DEFAULT_INITIAL_RETRY_DELAY_MS,
+      maxDelay: DEFAULT_MAX_RETRY_DELAY_MS,
+    },
+    "legacy-total-attempts",
+  );
+
   return {
     token: config.token,
     owner: config.owner,
@@ -100,10 +116,6 @@ export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
       maxSize: config.cache?.maxSize ?? DEFAULT_CACHE_MAX_ENTRIES,
       maxMemory: config.cache?.maxMemory ?? DEFAULT_CACHE_MAX_MEMORY_BYTES,
     },
-    retry: {
-      maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
-      initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
-      maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
-    },
+    retry,
   };
 }

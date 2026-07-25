@@ -623,6 +623,17 @@ describe("npm supply-chain policy", () => {
       source,
       "evaluatePreparedDeclarativeConfigInWorker",
     );
+    for (
+      const workerContract of [
+        "forbidden-capability",
+        "worker-aborted",
+        "worker-unavailable",
+        "worker-timeout",
+        "assertNoLeakage",
+      ]
+    ) {
+      assertStringIncludes(source, workerContract);
+    }
     assertStringIncludes(source, 'node --version)" = "v18.18.0"');
     assertStringIncludes(source, "*/@babel/generator");
     assertStringIncludes(source, "*/@babel/traverse");

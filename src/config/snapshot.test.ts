@@ -171,6 +171,78 @@ describe("canonicalizeConfigSnapshot", () => {
     );
   });
 
+  it("fails closed when proxy property-key inspection throws", () => {
+    let getterCalls = 0;
+    const target = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(target, "value", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "secret";
+      },
+    });
+    const input = new Proxy(target, {
+      ownKeys() {
+        throw new Error("ownKeys failed");
+      },
+    });
+
+    const error = assertSnapshotError(
+      () => canonicalizeConfigSnapshot(input),
+      "inspection-failed",
+    );
+    assertEquals(error.path, "$");
+    assertEquals(getterCalls, 0);
+  });
+
+  it("fails closed when proxy descriptor inspection throws", () => {
+    let getterCalls = 0;
+    const target = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(target, "value", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "secret";
+      },
+    });
+    const input = new Proxy(target, {
+      getOwnPropertyDescriptor() {
+        throw new Error("descriptor failed");
+      },
+    });
+
+    const error = assertSnapshotError(
+      () => canonicalizeConfigSnapshot(input),
+      "inspection-failed",
+    );
+    assertEquals(error.path, '$["value"]');
+    assertEquals(getterCalls, 0);
+  });
+
+  it("fails closed when a proxy mutates between key and descriptor inspection", () => {
+    const target = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(target, "vanished", {
+      configurable: true,
+      enumerable: true,
+      value: "value",
+    });
+    const input = new Proxy(target, {
+      ownKeys(value) {
+        const keys = Reflect.ownKeys(value);
+        delete value.vanished;
+        return keys;
+      },
+    });
+
+    const error = assertSnapshotError(
+      () => canonicalizeConfigSnapshot(input),
+      "inspection-failed",
+    );
+    assertEquals(error.path, '$["vanished"]');
+  });
+
   it("rejects cycles and shared object aliases", () => {
     const cycle = Object.create(null) as Record<string, unknown>;
     cycle.self = cycle;

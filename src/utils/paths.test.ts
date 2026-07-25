@@ -12,10 +12,6 @@ describe("paths", () => {
       assertEquals(PATHS.STYLES_DIR, "styles");
       assertEquals(PATHS.DIST_DIR, "dist");
     });
-
-    it("should define config file name", () => {
-      assertEquals(PATHS.CONFIG_FILE, "veryfront.config.js");
-    });
   });
 
   describe("FILE_EXTENSIONS", () => {

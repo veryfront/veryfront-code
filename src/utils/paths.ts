@@ -11,7 +11,6 @@ export const PATHS = {
   PUBLIC_DIR: "public",
   STYLES_DIR: "styles",
   DIST_DIR: "dist",
-  CONFIG_FILE: "veryfront.config.js",
 } as const;
 
 export const FILE_EXTENSIONS = {

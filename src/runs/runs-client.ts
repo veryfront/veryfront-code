@@ -5,6 +5,7 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { normalizeVeryfrontApiRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
 import {
   type CancelRunResponse,
   CancelRunResponseSchema,
@@ -18,9 +19,6 @@ import {
   RunSchema,
 } from "./schemas.ts";
 
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_KNOWLEDGE_INGEST_RUN_NAME = "Ingest knowledge";
 
 /** Configuration used by the Veryfront runs client. */
@@ -28,6 +26,7 @@ export interface VeryfrontRunsClientConfig {
   apiUrl?: string;
   authToken?: string;
   projectReference?: string;
+  /** Retry policy, with 0 through 9 retries after the initial request. */
   retry?: Partial<RetryConfig>;
 }
 
@@ -142,11 +141,7 @@ export class VeryfrontRunsClient {
   };
 
   constructor(private readonly config: VeryfrontRunsClientConfig = {}) {
-    this.retryConfig = {
-      maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
-      initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
-      maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
-    };
+    this.retryConfig = normalizeVeryfrontApiRetryConfig(config.retry);
 
     this.knowledge = {
       ingestByUploadIds: (input) => this.ingestKnowledgeByUploadIds(input),

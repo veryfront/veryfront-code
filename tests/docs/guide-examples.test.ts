@@ -448,24 +448,22 @@ import { defineConfig } from "../../src/config/define-config.ts";
 describe("Guide: configuration.mdx", () => {
   it("should create config with defineConfig", () => {
     const config = defineConfig({
-      title: "My App",
-      description: "A Veryfront application",
+      router: "app",
+      build: { ssg: true },
     });
 
-    assertEquals(config.title, "My App");
-    assertEquals(config.description, "A Veryfront application");
+    assertEquals(config.router, "app");
+    assertEquals(config.build?.ssg, true);
   });
 
   it("should support build config", () => {
     const config = defineConfig({
       build: {
-        outDir: "dist",
-        trailingSlash: false,
+        ssg: true,
       },
     });
 
-    assertEquals(config.build?.outDir, "dist");
-    assertEquals(config.build?.trailingSlash, false);
+    assertEquals(config.build?.ssg, true);
   });
 
   it("should support directories override", () => {

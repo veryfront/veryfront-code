@@ -8,6 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PROJECT_ENV_SNAPSHOT_LIMITS } from "#veryfront/platform/compat/process/project-env-contract.ts";
+import { MAX_HOSTED_RENDER_CACHE_ENTRIES } from "./defaults.ts";
 import {
   createPreparedDeclarativeConfigWorkerPayload,
   DECLARATIVE_CONFIG_LIMITS,
@@ -273,6 +274,11 @@ export default defineConfig({
     assertEquals(reachableNpmNames.has("@babel/traverse"), false);
     assertEquals(reachableNpmNames.has("@babel/generator"), false);
     assertEquals(reachableNpmNames.has("debug"), false);
+    assertEquals(graph.includes("/rendering/cache/stores/redis-store.ts"), false);
+    assertEquals(graph.includes("/rendering/cache/stores/kv-store.ts"), false);
+    assertEquals(graph.includes("/rendering/cache/stores/filesystem-store.ts"), false);
+    assertEquals(graph.includes("/utils/redis-client.ts"), false);
+    assertEquals(reachableNpmNames.has("@redis/client"), false);
   });
 
   it("supports helper aliases, safe spreads, environment branching, templates, and TS wrappers", async () => {
@@ -601,6 +607,125 @@ export default {};`,
         "unsupported-hosted-feature",
         "hosted-cors-origin",
       );
+    }
+  });
+
+  it("allows only memory-backed render cache controls in hosted config", async () => {
+    const accepted = await evaluateDeclarativeConfig({
+      source: `export default {
+        cache: {
+          bundleManifest: {
+            enabled: true,
+            type: "memory",
+            ttl: 60_000,
+          },
+          queryParams: {
+            policy: "include-list",
+            params: ["page"],
+          },
+          render: {
+            type: "memory",
+            ttl: 60_000,
+            maxEntries: ${MAX_HOSTED_RENDER_CACHE_ENTRIES},
+            public: {
+              enabled: true,
+              varyHeaders: ["accept-language"],
+            },
+          },
+        },
+      };`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(accepted, {
+      cache: {
+        bundleManifest: {
+          enabled: true,
+          ttl: 60_000,
+          type: "memory",
+        },
+        queryParams: {
+          params: ["page"],
+          policy: "include-list",
+        },
+        render: {
+          maxEntries: MAX_HOSTED_RENDER_CACHE_ENTRIES,
+          public: {
+            enabled: true,
+            varyHeaders: ["accept-language"],
+          },
+          ttl: 60_000,
+          type: "memory",
+        },
+      },
+    });
+
+    const directoryError = await assertEvaluationError(
+      `export default { cache: { dir: ".tenant-cache" } };`,
+      "unsupported-hosted-feature",
+      "hosted-cache-directory",
+    );
+    assertEquals(directoryError.phase, "result");
+    assertEquals(directoryError.retryable, false);
+
+    const capacityError = await assertEvaluationError(
+      `export default {
+        cache: {
+          render: { maxEntries: ${MAX_HOSTED_RENDER_CACHE_ENTRIES + 1} },
+        },
+      };`,
+      "unsupported-hosted-feature",
+      "hosted-render-cache-capacity",
+    );
+    assertEquals(capacityError.phase, "result");
+    assertEquals(capacityError.retryable, false);
+
+    for (
+      const bundleManifest of [
+        `{ type: "redis" }`,
+        `{ redisUrl: "redis://cache.invalid" }`,
+        `{ type: "memory", futureBackendTarget: "cache.invalid" }`,
+      ]
+    ) {
+      await assertEvaluationError(
+        `export default {
+          cache: { bundleManifest: ${bundleManifest} },
+        };`,
+        "unsupported-hosted-feature",
+        "hosted-bundle-manifest-backend",
+      );
+    }
+
+    await assertEvaluationError(
+      `export default {
+        cache: { futurePersistentCache: { path: ".tenant-cache" } },
+      };`,
+      "unsupported-hosted-feature",
+      "hosted-cache-option",
+    );
+
+    for (
+      const render of [
+        `{ type: "filesystem" }`,
+        `{ type: "kv" }`,
+        `{ type: "redis" }`,
+        `{ type: "disk" }`,
+        `{ kvPath: ".tenant-cache/render.kv" }`,
+        `{ redisUrl: "redis://cache.invalid" }`,
+        `{ redisKeyPrefix: "tenant:" }`,
+        `{ type: "memory", kvPath: ".tenant-cache/render.kv" }`,
+        `{ type: "memory", redisUrl: "redis://cache.invalid" }`,
+        `{ type: "memory", redisKeyPrefix: "tenant:" }`,
+        `{ type: "memory", storagePath: ".tenant-cache/future" }`,
+      ]
+    ) {
+      const error = await assertEvaluationError(
+        `export default { cache: { render: ${render} } };`,
+        "unsupported-hosted-feature",
+        "hosted-render-cache-backend",
+      );
+      assertEquals(error.phase, "result");
+      assertEquals(error.retryable, false);
     }
   });
 
@@ -1217,7 +1342,7 @@ export default process.env;`,
       workerPayload.cacheFingerprint,
       preparedContext.cacheFingerprint,
     );
-    assertEquals(workerPayload.policyVersion, "hosted-declarative-config-v1");
+    assertEquals(workerPayload.policyVersion, "hosted-declarative-config-v2");
     assertEquals(Object.getPrototypeOf(workerPayload), null);
     assertEquals(Object.isFrozen(workerPayload), true);
     assertEquals(Object.isFrozen(workerPayload.evaluationOptions), true);

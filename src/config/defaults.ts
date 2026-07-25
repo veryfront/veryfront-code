@@ -8,6 +8,13 @@ export const SANDBOX_TIMEOUT_MS = 5000;
 export const DATA_FETCH_TIMEOUT_MS = 10000;
 
 export const DEFAULT_CACHE_MAX_SIZE = 100;
+/** Default production render-cache capacity. */
+export const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
+/**
+ * Shared hosted projects may lower, but never raise, the production
+ * render-cache capacity.
+ */
+export const MAX_HOSTED_RENDER_CACHE_ENTRIES = DEFAULT_RENDER_CACHE_MAX_ENTRIES;
 
 export const DURATION_HISTOGRAM_BOUNDARIES_MS = Object.freeze(
   [

@@ -17,19 +17,17 @@ export async function detectConfigSource(
   projectDir: string,
 ): Promise<string | null> {
   const { createFileSystem } = await import("veryfront/platform");
+  const { findVeryfrontConfigFile } = await import("veryfront/config");
   const { join } = await import("veryfront/platform/path");
   const fs = createFileSystem();
 
-  for (
-    const name of [
-      "veryfront.config.ts",
-      "veryfront.config.js",
-      "veryfront.json",
-    ]
-  ) {
-    if (await fs.exists(join(projectDir, name))) return name;
-  }
-  return null;
+  const moduleConfig = await findVeryfrontConfigFile(
+    projectDir,
+    (path) => fs.exists(path),
+  );
+  if (moduleConfig) return moduleConfig.fileName;
+
+  return await fs.exists(join(projectDir, "veryfront.json")) ? "veryfront.json" : null;
 }
 
 export function getEnvOverrides(): string[] {

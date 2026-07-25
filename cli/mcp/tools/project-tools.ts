@@ -4,6 +4,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
+import { findVeryfrontConfigFile } from "veryfront/config";
 import type { FileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
@@ -355,8 +356,7 @@ interface LocalProjectInfo {
 async function detectVeryfrontProject(projectPath: string): Promise<LocalProjectInfo | null> {
   const fs = getFs();
 
-  const configExists = await fileExists(join(projectPath, "veryfront.config.ts")) ||
-    await fileExists(join(projectPath, "veryfront.config.js"));
+  const configExists = await findVeryfrontConfigFile(projectPath, fileExists) !== null;
 
   if (!configExists && !await fileExists(join(projectPath, "veryfront.json"))) return null;
 
@@ -433,7 +433,7 @@ export const vfListLocalProjects: MCPTool<ListLocalProjectsInput, LocalProjectIn
   title: "List Local Projects",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to discover Veryfront projects on the local filesystem by scanning for veryfront.config.ts files. Returns project info including template type and integrations. Do not use for project structure details — use vf_get_project_context instead.",
+    "Use this when you need to discover Veryfront projects on the local filesystem by scanning for supported Veryfront config files. Returns project info including template type and integrations. Do not use for project structure details — use vf_get_project_context instead.",
   inputSchema: listLocalProjectsInput,
   execute: (input) =>
     withSpan(

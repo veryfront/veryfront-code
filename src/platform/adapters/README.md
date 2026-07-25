@@ -236,8 +236,9 @@ interface FSAdapterConfig {
       ttl?: number;
     };
     retry?: {
-      maxRetries?: number;
-      retryDelay?: number;
+      maxRetries?: number; // 0 through 9 retries after the initial request
+      initialDelay?: number; // Milliseconds
+      maxDelay?: number; // Milliseconds
     };
   };
 }
@@ -253,12 +254,20 @@ interface VeryfrontAPIConfig {
   projectId?: string;
   proxyMode?: boolean;
   retry?: {
-    maxRetries?: number; // Default: 3
+    maxRetries?: number; // Default: 3, range: 0 through 9
     initialDelay?: number; // Default: 1000ms
     maxDelay?: number; // Default: 10000ms
   };
 }
 ```
+
+Veryfront API `maxRetries` excludes the initial request and accepts 0 through 9.
+Retry delays must be whole milliseconds in the portable JavaScript timer range,
+and `initialDelay` cannot exceed `maxDelay`. The GitHub filesystem field predates
+that contract and retains its historical total-attempt meaning: it accepts 0
+through 10, with both 0 and 1 performing one request. Each outbound API request
+receives at most 10 attempts. A filesystem operation can issue multiple API
+requests.
 
 ## Runtime Detection
 

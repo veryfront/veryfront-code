@@ -5,8 +5,8 @@
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
 #      and activates the parser extension under Node
-#   2. the parser-only/evaluator path runs under Node 18 without full Babel
-#      traversal, generation, or debug tooling
+#   2. the parser-only/evaluator worker transport runs under Node 18 without
+#      full Babel tooling and preserves typed, redacted failure contracts
 #   3. the @huggingface/transformers optional peer is declared
 #   4. loading a missing extension fails naming the installable package
 #   5. installing @veryfront/ext-auth-jwt makes the extension load
@@ -79,7 +79,7 @@ if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await resolved.extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
 
-echo "== 2. parser-only evaluator runs under Node 18 without full Babel tooling"
+echo "== 2. parser-only evaluator worker transport runs under Node 18"
 [ "$(node --version)" = "v18.18.0" ] ||
   fail "pinned Node 18.18.0 runtime is unavailable"
 PARSER_ONLY_ENTRY="$(node -e "
@@ -123,13 +123,54 @@ const evaluator = await import(
 const runner = await import(
   './node_modules/veryfront/esm/src/config/declarative-evaluator-worker-runner.js'
 );
+const captureFailure = async (label, action) => {
+  try {
+    await action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error(label + ' unexpectedly succeeded');
+};
+const assertErrorTuple = (label, error, expected) => {
+  if (typeof error !== 'object' || error === null) {
+    throw new Error(label + ' did not return an error object');
+  }
+  for (const field of ['code', 'phase', 'reason', 'retryable']) {
+    if (error[field] !== expected[field]) {
+      throw new Error(
+        label + ' returned the wrong ' + field + ': ' + String(error[field]),
+      );
+    }
+  }
+};
+const assertNoLeakage = (label, error, forbiddenValues) => {
+  const exposed = [
+    String(error),
+    error?.message,
+    error?.stack,
+    JSON.stringify(error),
+  ].map((value) => String(value ?? '')).join('\\n');
+  for (const forbidden of forbiddenValues) {
+    if (forbidden && exposed.includes(forbidden)) {
+      throw new Error(label + ' leaked a source or secret sentinel');
+    }
+  }
+  if (
+    Object.hasOwn(error, 'source') ||
+    Object.hasOwn(error, 'sourceText') ||
+    Object.hasOwn(error, 'cause')
+  ) {
+    throw new Error(label + ' exposed an unsafe error field');
+  }
+};
 const context = await evaluator.prepareDeclarativeConfigContext({
   environmentName: 'production',
   environment: {},
 });
-const payload = evaluator.createPreparedDeclarativeConfigWorkerPayload(
+const createPayload = (source) =>
+  evaluator.createPreparedDeclarativeConfigWorkerPayload(source, context);
+const payload = createPayload(
   'export default { ready: true, nested: { value: 18 } };',
-  context,
 );
 const snapshot = await runner.evaluatePreparedDeclarativeConfigInWorker(payload);
 if (snapshot.ready !== true || snapshot.nested?.value !== 18) {
@@ -143,6 +184,103 @@ if (
 ) {
   throw new Error('declarative evaluator snapshot invariants failed');
 }
+
+const secretName = 'VF_NPM_SMOKE_WORKER_SECRET';
+const secretValue = 'vf-worker-secret-value-7f3c';
+const forbiddenSource =
+  'export default { secret: process.env.' + secretName + ' };';
+process.env[secretName] = secretValue;
+const forbiddenError = await captureFailure(
+  'forbidden-access evaluator failure',
+  () => runner.evaluatePreparedDeclarativeConfigInWorker(createPayload(forbiddenSource)),
+);
+delete process.env[secretName];
+assertErrorTuple('forbidden-access evaluator failure', forbiddenError, {
+  code: 'forbidden-capability',
+  phase: 'validate',
+  reason: 'unsupported-call',
+  retryable: false,
+});
+if (forbiddenError.location?.fileName !== 'veryfront.config.ts') {
+  throw new Error('forbidden-access evaluator failure lost its safe location');
+}
+assertNoLeakage(
+  'forbidden-access evaluator failure',
+  forbiddenError,
+  [secretName, secretValue, forbiddenSource, 'process.env'],
+);
+
+const abortSource = 'export default { marker: \\'vf-pre-abort-source-marker\\' };';
+const abortController = new AbortController();
+abortController.abort();
+const abortError = await captureFailure(
+  'pre-aborted worker evaluation',
+  () =>
+    runner.evaluatePreparedDeclarativeConfigInWorker(
+      createPayload(abortSource),
+      { signal: abortController.signal },
+    ),
+);
+assertErrorTuple('pre-aborted worker evaluation', abortError, {
+  code: 'evaluator-unavailable',
+  phase: 'worker',
+  reason: 'worker-aborted',
+  retryable: false,
+});
+assertNoLeakage('pre-aborted worker evaluation', abortError, [abortSource]);
+
+const workerEntryPath = (
+  await import('node:path')
+).resolve(
+  'node_modules/veryfront/esm/src/config/declarative-evaluator-worker-entry.js',
+);
+const savedWorkerEntryPath = workerEntryPath + '.smoke-saved';
+const nodeFs = await import('node:fs/promises');
+await nodeFs.rename(workerEntryPath, savedWorkerEntryPath);
+const exitSource = 'export default { marker: \\'vf-worker-exit-source-marker\\' };';
+let exitError;
+try {
+  await nodeFs.writeFile(
+    workerEntryPath,
+    'await new Promise((resolve) => setTimeout(resolve, 10));\\n',
+  );
+  exitError = await captureFailure(
+    'worker exit transport',
+    () =>
+      runner.evaluatePreparedDeclarativeConfigInWorker(
+        createPayload(exitSource),
+        { timeoutMs: 1000 },
+      ),
+  );
+} finally {
+  await nodeFs.unlink(workerEntryPath).catch(() => {});
+  await nodeFs.rename(savedWorkerEntryPath, workerEntryPath);
+}
+assertErrorTuple('worker exit transport', exitError, {
+  code: 'evaluator-unavailable',
+  phase: 'worker',
+  reason: 'worker-unavailable',
+  retryable: true,
+});
+assertNoLeakage('worker exit transport', exitError, [exitSource]);
+
+const deadlineSource =
+  'export default { marker: \\'vf-worker-deadline-source-marker\\' };';
+const deadlineError = await captureFailure(
+  'worker deadline transport',
+  () =>
+    runner.evaluatePreparedDeclarativeConfigInWorker(
+      createPayload(deadlineSource),
+      { timeoutMs: 1 },
+    ),
+);
+assertErrorTuple('worker deadline transport', deadlineError, {
+  code: 'evaluator-unavailable',
+  phase: 'worker',
+  reason: 'worker-timeout',
+  retryable: true,
+});
+assertNoLeakage('worker deadline transport', deadlineError, [deadlineSource]);
 " || fail "parser-only declarative evaluator failed under Node 18"
 
 for package_dir in "${FULL_BABEL_DIRS[@]}"; do

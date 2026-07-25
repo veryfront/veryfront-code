@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { FileLogSubscriber, parseMaxSize, writeAll } from "./file-log-subscriber.ts";
 import { LogBuffer } from "./log-buffer.ts";
 import type { FileLogConfig } from "./file-log-subscriber.ts";
@@ -100,6 +101,15 @@ describe("observability/file-log-subscriber", () => {
     it("should reject invalid rotation counts and empty paths", () => {
       assertThrows(
         () => new FileLogSubscriber(makeConfig({ path: "test.log", maxFiles: 0 })),
+        RangeError,
+        "maxFiles",
+      );
+      assertThrows(
+        () =>
+          new FileLogSubscriber({
+            ...makeConfig({ path: "test.log" }),
+            maxFiles: MAX_FILE_LOG_FILES + 1,
+          }),
         RangeError,
         "maxFiles",
       );

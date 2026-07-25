@@ -1,31 +1,50 @@
 # Config Module
 
-This module manages all configuration for the Veryfront renderer.
+This module owns project-config discovery, validation and caching, the hosted
+declarative evaluation boundary, process environment snapshots, runtime-config
+helpers, and shared network defaults.
 
 ## Configuration Hierarchy
 
-| Layer                  | Type                | Source                | Purpose                                  |
-| ---------------------- | ------------------- | --------------------- | ---------------------------------------- |
-| **Project Config**     | `VeryfrontConfig`   | `veryfront.config.ts` | Per-project settings defined by the user |
-| **Environment Config** | `EnvironmentConfig` | Environment variables | System-level settings from env vars      |
-| **Runtime Config**     | `RuntimeConfig`     | Merged at startup     | Combined config with runtime info        |
+| Layer                  | Type                | Source                                  | Purpose                          |
+| ---------------------- | ------------------- | --------------------------------------- | -------------------------------- |
+| **Project Config**     | `VeryfrontConfig`   | `veryfront.config.js`, `.ts`, or `.mjs` | Validated per-project settings   |
+| **Environment Config** | `EnvironmentConfig` | Environment variables                   | Process-owned environment state  |
+| **Runtime Config**     | `RuntimeConfig`     | Explicit caller input                   | Opt-in config plus runtime flags |
 
 ## Project Config (`VeryfrontConfig`)
 
-User-defined configuration from `veryfront.config.ts` in the project root.
+User-defined configuration from the project root. Discovery uses one canonical
+precedence order: `veryfront.config.js`, then `veryfront.config.ts`, then
+`veryfront.config.mjs`.
 
 ```typescript
 import { defineConfig } from "veryfront";
 
 export default defineConfig({
-  title: "My App",
+  projectSlug: "my-app",
   app: "components/app.tsx",
-  build: { outDir: "dist", trailingSlash: false },
+  build: { ssg: true },
   router: "app",
 });
 ```
 
-**Key properties:** `app`, `build`, `cache`, `dev`, `router`, `theme`, `security`, `middleware`, etc.
+### Built-in consumption contract
+
+Schema acceptance does not by itself mean core implements behavior for a
+field. The complete validated config is also passed to extensions and included
+in render-cache identity, so compatibility-only fields cannot be removed as
+incidental cleanup.
+
+| Ownership                                                        | Fields                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core runtime/build                                               | `projectSlug`, `react.version`, `directories.app/pages/components`, `router`, `layout`, `app`, `experimental.esmLayouts/rsc`, `build.ssg`, `cache`, supported `dev` fields, `resolve.importMap`, `security`, `middleware.custom`, `fs.veryfront`, `fs.github`, AI primitive discovery, `client`, `tailwind.stylesheet`, `integrations`, `extensions`, and core `openapi` fields |
+| CLI or diagnostics                                               | `experimental.precompileMDX`, `generate.preferredRouter`, `ai.enabled`, and provider API-key checks                                                                                                                                                                                                                                                                             |
+| Accepted for extension compatibility, without built-in semantics | `title`, `description`, `directories.ai`, `theme.colors`, `build.outDir/trailingSlash/esbuild`, `dev.host/open/hmrPort`, `theming`, `assetPipeline`, tracing/metrics project config, `search`, `fs.local.baseDir`, `fs.memory`, provider defaults, `ai.work`, `ai.mcp`, Tailwind plugin/theme/custom-CSS fields, and `openapi.mcp`                                              |
+
+Keep public documentation aligned with this table. Implementing a
+compatibility-only field requires an owned consumer and end-to-end tests;
+removing one requires an explicit deprecation or breaking-change decision.
 
 In shared proxy mode (`PROXY_MODE=1`), the runtime owns the filesystem backend
 and requires `VERYFRONT_API_BASE_URL` to be a credential-free HTTP(S) base URL
@@ -48,6 +67,15 @@ function-valued policies. The runtime validates project, source, release, and
 environment identity before filesystem access. `getEnv` receives only the
 filtered tenant environment snapshot prepared for that same source.
 
+Hosted cache policy permits memory render controls but rejects `cache.dir`,
+persistent or network render backends, and backend-specific targets before the
+validated result reaches config merging. The render allowlist contains only
+`type: "memory"`, `ttl`, `maxEntries`, and `public`; `maxEntries` cannot exceed
+the production default of 500. Top-level cache families and bundle-manifest
+controls are independently allowlisted, so future storage capabilities fail
+closed until the hosted boundary explicitly reviews them. Trusted local and
+standalone config retains the complete cache schema.
+
 Production environment sources are bound to their exact active release.
 Preview sources are bound to the selected branch and are not persisted in the
 production config cache. An exact release that has no authoritative environment
@@ -60,9 +88,13 @@ operational file-read errors are not treated as a missing config file.
 
 ## Environment Config (`EnvironmentConfig`)
 
-System-level configuration read from environment variables. Captured as a frozen snapshot at startup.
+System-level configuration read from environment variables. Before environment
+loading is marked complete, getters return fresh frozen snapshots so an early
+read cannot permanently cache an incomplete environment. After loading,
+initialization stores one frozen process-wide snapshot.
 
 ```typescript
+// Internal source import; this alias is not a package subpath.
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 const env = getEnvironmentConfig();
@@ -91,10 +123,11 @@ only for trusted single-tenant startup or tooling. Never put request-scoped
 hosted tenant configuration in the singleton.
 
 ```typescript
+// Internal source aliases are shown because this README documents the module.
 import { createRuntimeConfig, getRuntimeConfig, initRuntimeConfig } from "#veryfront/config";
 
-const standalone = createRuntimeConfig({ build: { outDir: "output" } });
-console.log(standalone.build?.outDir); // "output"
+const standalone = createRuntimeConfig({ router: "pages" });
+console.log(standalone.router); // "pages"
 
 initRuntimeConfig({ title: "Trusted single-tenant process" });
 const processConfig = getRuntimeConfig();
@@ -128,9 +161,12 @@ src/config/
 ├── environment-config.ts       # EnvironmentConfig type and getters
 ├── runtime-config.ts           # RuntimeConfig merging logic
 ├── loader.ts                   # Config file loading and caching
+├── config-files.ts             # Canonical filenames and discovery order
+├── config-shim.ts              # Cross-runtime config helper module
 ├── declarative-evaluator.ts    # Hosted declarative parser/evaluator
 ├── declarative-evaluator-worker-*.ts
 │                               # Bounded worker protocol and lifecycle
+├── snapshot.ts                 # Descriptor-safe immutable snapshots
 ├── define-config.ts            # defineConfig() helper
 ├── defaults.ts                 # Default values
 ├── network-defaults.ts         # Network-related defaults
@@ -142,13 +178,21 @@ src/config/
 
 ## Usage Patterns
 
-### Reading config in application code
+### Loading project config at an owning boundary
 
 ```typescript
-import { getRuntimeConfig } from "#veryfront/config";
+import { getConfig } from "#veryfront/config";
+import { runtime } from "#veryfront/platform";
 
-const config = getRuntimeConfig();
+const config = await getConfig(projectDir, await runtime.get());
 ```
+
+These `#veryfront/*` aliases are internal source boundaries. The published
+package intentionally does not export `veryfront/config` or
+`veryfront/platform`.
+
+Do not substitute the process-wide `RuntimeConfig` singleton for
+request-scoped hosted project state.
 
 ### Reading environment values
 
@@ -176,3 +220,6 @@ it("test with custom env", () => {
   // use env in test
 });
 ```
+
+The underscored reset helper and `#veryfront/*` aliases are internal test
+surfaces, not package APIs.

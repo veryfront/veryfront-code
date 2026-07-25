@@ -1,5 +1,9 @@
 import { createError, retryWithBackoff, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
+import {
+  filesystemTotalAttempts,
+  normalizeFilesystemRetryConfig,
+} from "#veryfront/utils/config-resource-limits.ts";
 import type { ResolvedGitHubConfig } from "./types.ts";
 import {
   getGitHubBlobResponseSchema,
@@ -27,8 +31,18 @@ type APIError = Error & { statusCode?: number; endpoint?: string; repo?: string 
 export class GitHubApiClient {
   private readonly baseUrl = "https://api.github.com";
   private rateLimitInfo: RateLimitInfo | null = null;
+  private readonly config: ResolvedGitHubConfig;
 
-  constructor(private readonly config: ResolvedGitHubConfig) {}
+  constructor(config: ResolvedGitHubConfig) {
+    this.config = {
+      ...config,
+      retry: normalizeFilesystemRetryConfig(
+        config.retry,
+        config.retry,
+        "legacy-total-attempts",
+      ),
+    };
+  }
 
   get repoId(): string {
     return `${this.config.owner}/${this.config.repo}`;
@@ -105,9 +119,10 @@ export class GitHubApiClient {
         return response.json();
       },
       {
-        // Positive values retain this client's historical TOTAL-attempts
-        // meaning. Zero disables retries but still performs the initial request.
-        maxAttempts: Math.max(1, this.config.retry.maxRetries),
+        maxAttempts: filesystemTotalAttempts(
+          this.config.retry.maxRetries,
+          "legacy-total-attempts",
+        ),
         initialDelay: this.config.retry.initialDelay,
         maxDelay: this.config.retry.maxDelay,
         shouldRetry: (error) => {
@@ -212,16 +227,24 @@ export class GitHubApiClient {
   }
 
   private calculateRetryDelay(attempt: number, error: Error): number {
+    const maxDelay = this.config.retry.maxDelay;
     if (this.isRateLimitError(error) && this.rateLimitInfo) {
       const waitMs = this.rateLimitInfo.reset.getTime() - Date.now();
-      return Math.max(waitMs, this.config.retry.initialDelay);
+      const requestedDelay = Number.isFinite(waitMs)
+        ? Math.max(waitMs, this.config.retry.initialDelay)
+        : maxDelay;
+      return Math.min(Math.max(0, requestedDelay), maxDelay);
     }
 
     const delay = Math.min(
       this.config.retry.initialDelay * Math.pow(2, attempt - 1),
-      this.config.retry.maxDelay,
+      maxDelay,
+    );
+    const jitterBudget = Math.min(
+      RETRY_JITTER_MAX_MS,
+      Math.max(0, maxDelay - delay),
     );
 
-    return delay + Math.random() * RETRY_JITTER_MAX_MS;
+    return Math.min(delay + Math.random() * jitterBudget, maxDelay);
   }
 }

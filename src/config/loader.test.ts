@@ -11,7 +11,9 @@ import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __getHostedConfigFlightStateForTests,
+  __getHostedConfigSourceReadStateForTests,
   __getTrustedConfigFlightStateForTests,
+  __observePromiseForTests,
   __setHostedConfigEvaluatorForTests,
   clearConfigCache,
   getCachedConfigSync,
@@ -40,10 +42,14 @@ import {
   setEnv,
 } from "#veryfront/platform/compat/process.ts";
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
+import { MAX_HOSTED_RENDER_CACHE_ENTRIES } from "./defaults.ts";
 
 const TestObjectDefineProperty = Object.defineProperty;
+const TestObjectCreate = Object.create;
 const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestObjectGetPrototypeOf = Object.getPrototypeOf;
 const TestReflectApply = Reflect.apply;
+const TestReflectDeleteProperty = Reflect.deleteProperty;
 const TestReflectOwnKeys = Reflect.ownKeys;
 
 function replacePropertyForTest(
@@ -59,6 +65,49 @@ function replacePropertyForTest(
   });
   return () => {
     TestObjectDefineProperty(target, key, original);
+  };
+}
+
+function definePropertyForTest(
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): () => void {
+  const original = TestObjectGetOwnPropertyDescriptor(target, key);
+  TestObjectDefineProperty(target, key, {
+    configurable: true,
+    ...descriptor,
+  });
+  return () => {
+    if (original) TestObjectDefineProperty(target, key, original);
+    else TestReflectApply(TestReflectDeleteProperty, Reflect, [target, key]);
+  };
+}
+
+function defineNullPrototypeAccessorForTest(
+  target: object,
+  key: PropertyKey,
+  getter: () => unknown,
+  setter: (value?: unknown) => unknown,
+): () => void {
+  const original = TestObjectGetOwnPropertyDescriptor(target, key);
+  if (original) throw new Error(`Expected no own descriptor for ${String(key)}`);
+  const descriptor = TestReflectApply(
+    TestObjectCreate,
+    Object,
+    [null],
+  ) as PropertyDescriptor;
+  descriptor.get = getter;
+  descriptor.set = setter;
+  descriptor.enumerable = false;
+  descriptor.configurable = true;
+  TestReflectApply(TestObjectDefineProperty, Object, [
+    target,
+    key,
+    descriptor,
+  ]);
+  return () => {
+    TestReflectApply(TestReflectDeleteProperty, Reflect, [target, key]);
   };
 }
 
@@ -89,6 +138,29 @@ async function waitForHostedFlightState(
   );
 }
 
+async function waitForHostedSourceReadState(
+  expected: Readonly<{
+    active: number;
+    queued: number;
+    flights: number;
+    waiters: number;
+  }>,
+): Promise<void> {
+  await waitFor(
+    () => {
+      const current = __getHostedConfigSourceReadStateForTests();
+      return current.active === expected.active &&
+        current.queued === expected.queued &&
+        current.flights === expected.flights &&
+        current.waiters === expected.waiters;
+    },
+    {
+      interval: 10,
+      message: `Expected hosted source-read state ${JSON.stringify(expected)}`,
+    },
+  );
+}
+
 async function waitForTrustedFlightCount(expected: number): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const current = __getTrustedConfigFlightStateForTests();
@@ -101,8 +173,14 @@ async function waitForTrustedFlightCount(expected: number): Promise<void> {
 }
 
 describe("config/loader", () => {
-  afterEach(() => {
+  afterEach(async () => {
     __setHostedConfigEvaluatorForTests();
+    await waitForHostedSourceReadState({
+      active: 0,
+      queued: 0,
+      flights: 0,
+      waiters: 0,
+    });
   });
 
   describe("transpileConfigSourceForImport", () => {
@@ -146,7 +224,10 @@ export default config as const;
       );
 
       assert(!rewritten.includes('"veryfront"'), "bare specifier must be replaced");
-      assert(rewritten.includes("data:text/javascript,"), "specifier must point at the shim");
+      assert(
+        rewritten.includes("data:text/javascript;base64,"),
+        "specifier must point at the shim",
+      );
     });
 
     it("handles single quotes and leaves other specifiers untouched", async () => {
@@ -1132,6 +1213,126 @@ export default config as const;
       }
     });
 
+    it("rejects hosted cache capabilities and capacity before credential lookup or construction", async () => {
+      const adapter = setup();
+      const sourceContext = {
+        productionMode: false,
+        branch: "feature/hosted-cache-policy",
+      } as const;
+      const preparedContext = await prepareDeclarativeConfigContext({
+        environmentName: "preview",
+        environment: {},
+      });
+      let hostedSource = "";
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        readFile: async (path: string) => {
+          if (path !== "/veryfront.config.ts") throw configCandidateNotFound(path);
+          return hostedSource;
+        },
+      });
+
+      const originalEnvGet = Deno.env.get.bind(Deno.env);
+      let redisCredentialReads = 0;
+      let downstreamConstructionAttempts = 0;
+      const restoreEnvGet = replacePropertyForTest(Deno.env, "get", {
+        value: (key: string): string | undefined => {
+          if (key === "REDIS_PASSWORD" || key === "REDIS_USERNAME") {
+            redisCredentialReads += 1;
+            throw new Error("Hosted config must not read host Redis credentials");
+          }
+          return originalEnvGet(key);
+        },
+      });
+
+      try {
+        const loadThenConstruct = async (projectId: string) => {
+          const config = await runWithRequestContext(
+            {
+              projectSlug: projectId,
+              projectId,
+              token: "token",
+              branch: sourceContext.branch,
+            },
+            () =>
+              getHostedConfig(`/hosted-cache-policy/${projectId}`, adapter, {
+                cacheKey: projectId,
+                sourceContext,
+                preparedContext,
+              }),
+          );
+          downstreamConstructionAttempts += 1;
+          return config;
+        };
+
+        for (
+          const [projectId, source, reason] of [
+            [
+              "hosted-cache-redis",
+              `export default {
+                cache: {
+                  render: {
+                    type: "redis",
+                    redisUrl: "redis://cache.invalid",
+                  },
+                },
+              };`,
+              "hosted-render-cache-backend",
+            ],
+            [
+              "hosted-cache-capacity",
+              `export default {
+                cache: {
+                  render: {
+                    maxEntries: ${MAX_HOSTED_RENDER_CACHE_ENTRIES + 1},
+                  },
+                },
+              };`,
+              "hosted-render-cache-capacity",
+            ],
+            [
+              "hosted-cache-bundle",
+              `export default {
+                cache: {
+                  bundleManifest: { type: "redis" },
+                },
+              };`,
+              "hosted-bundle-manifest-backend",
+            ],
+            [
+              "hosted-cache-future",
+              `export default {
+                cache: {
+                  futurePersistentCache: { path: ".tenant-cache" },
+                },
+              };`,
+              "hosted-cache-option",
+            ],
+          ] as const
+        ) {
+          hostedSource = source;
+          const error = await assertRejects(
+            () => loadThenConstruct(projectId),
+            VeryfrontError,
+          ) as VeryfrontError;
+          assertEquals(error.slug, "config-parse-error");
+          assert(error.cause instanceof DeclarativeConfigEvaluationError);
+          const cause = error.cause as DeclarativeConfigEvaluationError;
+          assertEquals(cause.code, "unsupported-hosted-feature");
+          assertEquals(cause.phase, "result");
+          assertEquals(cause.reason, reason);
+          assertEquals(cause.retryable, false);
+          assertEquals(cause.location?.fileName, "veryfront.config.ts");
+        }
+        assertEquals(redisCredentialReads, 0);
+        assertEquals(downstreamConstructionAttempts, 0);
+      } finally {
+        restoreEnvGet();
+      }
+    });
+
     it("never host-executes hosted JavaScript or MJS config variants", async () => {
       const marker = "__veryfrontHostedConfigVariantMutation";
       const host = globalThis as Record<string, unknown>;
@@ -1562,6 +1763,119 @@ export default config as const;
       assertEquals(reads, 4);
     });
 
+    it("frames hosted source and environment identities without inherited toJSON hooks", async () => {
+      const adapter = setup();
+      const sourceContext = {
+        productionMode: true,
+        releaseId: "release-framed-identity",
+        environmentName: "Production",
+      } as const;
+      const requestContext = {
+        projectSlug: "framed-identity",
+        projectId: "framed-identity",
+        token: "token",
+        productionMode: true,
+        releaseId: sourceContext.releaseId,
+        environmentName: sourceContext.environmentName,
+      } as const;
+      let source = "source-a";
+      let reads = 0;
+      let evaluations = 0;
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        readFile: async (path: string) => {
+          if (path !== "/veryfront.config.ts") throw configCandidateNotFound(path);
+          reads += 1;
+          return source;
+        },
+      });
+      const tenantA = await prepareDeclarativeConfigContext({
+        environmentName: "Production",
+        environment: { TENANT: "tenant-a" },
+      });
+      const tenantB = await prepareDeclarativeConfigContext({
+        environmentName: "Production",
+        environment: { TENANT: "tenant-b" },
+      });
+      __setHostedConfigEvaluatorForTests(async (payload) => {
+        evaluations += 1;
+        const environment = payload.evaluationOptions.environment as Record<string, string>;
+        return {
+          title: `${environment.TENANT}:${payload.evaluationOptions.source}`,
+        };
+      });
+
+      let inheritedIdentityHookCalls = 0;
+      const restore = [
+        definePropertyForTest(Array.prototype, "toJSON", {
+          value: () => {
+            inheritedIdentityHookCalls += 1;
+            throw new Error("inherited Array toJSON must not participate in config identity");
+          },
+          writable: true,
+        }),
+        definePropertyForTest(Object.prototype, "toJSON", {
+          value: function (this: unknown): string {
+            // Logger serialization deliberately snapshots general toJSON
+            // values. Count only the array shape used by the legacy cache
+            // identity serializer.
+            if (Array.isArray(this)) {
+              inheritedIdentityHookCalls += 1;
+              throw new Error(
+                "inherited Object toJSON must not participate in config identity",
+              );
+            }
+            return "non-identity-test-value";
+          },
+          writable: true,
+        }),
+      ];
+      const load = (preparedContext: typeof tenantA) =>
+        runWithRequestContext(
+          requestContext,
+          () =>
+            getHostedConfig("/framed-hosted-identity", adapter, {
+              cacheKey: requestContext.projectId,
+              sourceContext,
+              preparedContext,
+            }),
+        );
+
+      let first: Awaited<ReturnType<typeof load>> | undefined;
+      let repeated: Awaited<ReturnType<typeof load>> | undefined;
+      let changedEnvironment: Awaited<ReturnType<typeof load>> | undefined;
+      let changedSource: Awaited<ReturnType<typeof load>> | undefined;
+      try {
+        first = await load(tenantA);
+        repeated = await load(tenantA);
+        changedEnvironment = await load(tenantB);
+        source = "source-b";
+        changedSource = await load(tenantB);
+      } finally {
+        for (let index = restore.length - 1; index >= 0; index -= 1) {
+          restore[index]!();
+        }
+      }
+
+      assertEquals(inheritedIdentityHookCalls, 0);
+      assertEquals(first?.title, "tenant-a:source-a");
+      assert(first === repeated, "equivalent source and environment identities must reuse cache");
+      assertEquals(changedEnvironment?.title, "tenant-b:source-a");
+      assert(
+        changedEnvironment !== repeated,
+        "different tenant environment fingerprints must not share config cache entries",
+      );
+      assertEquals(changedSource?.title, "tenant-b:source-b");
+      assert(
+        changedSource !== changedEnvironment,
+        "different source digests must not share config cache entries",
+      );
+      assertEquals(evaluations, 3);
+      assertEquals(reads, 4);
+    });
+
     describe("hosted config single-flight", () => {
       const productionSourceContext = {
         productionMode: true,
@@ -1623,11 +1937,839 @@ export default config as const;
         });
       }
 
+      it("settles an aborted caller while its admitted filesystem read remains blocked", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        const readStarted = Promise.withResolvers<void>();
+        const releaseRead = Promise.withResolvers<void>();
+        const controller = new AbortController();
+        let evaluations = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path === "/veryfront.config.js") {
+            readStarted.resolve();
+            await releaseRead.promise;
+            throw configCandidateNotFound(path);
+          }
+          if (path === "/veryfront.config.ts") {
+            return 'export default { title: "source" };';
+          }
+          throw configCandidateNotFound(path);
+        };
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          return { title: "must-not-evaluate" };
+        });
+
+        const request = loadProductionHostedConfig(adapter, preparedContext, {
+          signal: controller.signal,
+        });
+        try {
+          await readStarted.promise;
+          await waitForHostedSourceReadState({
+            active: 1,
+            queued: 0,
+            flights: 1,
+            waiters: 1,
+          });
+
+          const failure = assertRejects(
+            () => request,
+            DeclarativeConfigEvaluationError,
+          ) as Promise<DeclarativeConfigEvaluationError>;
+          controller.abort();
+          const error = await failure;
+          assertEquals(error.reason, "worker-aborted");
+          await waitForHostedSourceReadState({
+            active: 1,
+            queued: 0,
+            flights: 1,
+            waiters: 0,
+          });
+          assertEquals(evaluations, 0);
+        } finally {
+          releaseRead.resolve();
+          await Promise.allSettled([request]);
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("coalesces one immutable production read before distinct environment evaluations", async () => {
+        const adapter = createHostedAdapter();
+        const firstContext = await prepareDeclarativeConfigContext({
+          environmentName: "Production",
+          environment: { TENANT: "tenant-a" },
+        });
+        const secondContext = await prepareDeclarativeConfigContext({
+          environmentName: "Production",
+          environment: { TENANT: "tenant-b" },
+        });
+        const readStarted = Promise.withResolvers<void>();
+        const releaseRead = Promise.withResolvers<void>();
+        let reads = 0;
+        let evaluations = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          readStarted.resolve();
+          await releaseRead.promise;
+          return 'export default { title: "source" };';
+        };
+        __setHostedConfigEvaluatorForTests(async (payload) => {
+          evaluations += 1;
+          const environment = payload.evaluationOptions.environment as Record<
+            string,
+            string
+          >;
+          return { title: environment.TENANT ?? "missing" };
+        });
+
+        const first = loadProductionHostedConfig(adapter, firstContext);
+        let second: ReturnType<typeof loadProductionHostedConfig> | undefined;
+        try {
+          await readStarted.promise;
+          second = loadProductionHostedConfig(adapter, secondContext);
+          await waitForHostedSourceReadState({
+            active: 1,
+            queued: 0,
+            flights: 1,
+            waiters: 2,
+          });
+          assertEquals(reads, 1);
+          releaseRead.resolve();
+
+          const [firstConfig, secondConfig] = await Promise.all([first, second]);
+          assertEquals(firstConfig.title, "tenant-a");
+          assertEquals(secondConfig.title, "tenant-b");
+          assert(firstConfig !== secondConfig);
+          assertEquals(evaluations, 2);
+          assertEquals(reads, 1);
+        } finally {
+          releaseRead.resolve();
+          await Promise.allSettled(
+            [first, second].filter(
+              (request): request is ReturnType<typeof loadProductionHostedConfig> =>
+                request !== undefined,
+            ),
+          );
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("keeps concurrent preview reads distinct so each can observe its source snapshot", async () => {
+        const adapter = createHostedAdapter();
+        const sourceContext = {
+          productionMode: false,
+          branch: "feature/mutable-concurrent-source",
+        } as const;
+        const preparedContext = await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: {},
+        });
+        const readStarted = [
+          Promise.withResolvers<void>(),
+          Promise.withResolvers<void>(),
+        ] as const;
+        const releaseRead = [
+          Promise.withResolvers<void>(),
+          Promise.withResolvers<void>(),
+        ] as const;
+        let revision = "first-source";
+        let reads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          const index = reads;
+          const source = revision;
+          reads += 1;
+          readStarted[index]?.resolve();
+          await releaseRead[index]!.promise;
+          return source;
+        };
+        __setHostedConfigEvaluatorForTests(async (payload) => ({
+          title: payload.evaluationOptions.source,
+        }));
+        const load = () =>
+          runWithRequestContext(
+            {
+              projectSlug: "mutable-concurrent-project",
+              projectId: "mutable-concurrent-project",
+              token: "token",
+              branch: sourceContext.branch,
+            },
+            () =>
+              getHostedConfig("/hosted/mutable-concurrent-project", adapter, {
+                cacheKey: "mutable-concurrent-project",
+                sourceContext,
+                preparedContext,
+              }),
+          );
+
+        const first = load();
+        let second: ReturnType<typeof load> | undefined;
+        try {
+          await readStarted[0].promise;
+          revision = "second-source";
+          second = load();
+          await readStarted[1].promise;
+          await waitForHostedSourceReadState({
+            active: 2,
+            queued: 0,
+            flights: 2,
+            waiters: 2,
+          });
+          const admission = __getHostedConfigSourceReadStateForTests();
+          assert(admission.active <= admission.maxActive);
+          assertEquals(reads, 2);
+
+          releaseRead[1].resolve();
+          const secondConfig = await second;
+          releaseRead[0].resolve();
+          const firstConfig = await first;
+          assertEquals(firstConfig.title, "first-source");
+          assertEquals(secondConfig.title, "second-source");
+        } finally {
+          for (const release of releaseRead) release.resolve();
+          await Promise.allSettled(
+            [first, second].filter(
+              (request): request is ReturnType<typeof load> => request !== undefined,
+            ),
+          );
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("bounds source reads and retains orphaned active reads until capacity really recovers", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        const releaseReads = Promise.withResolvers<void>();
+        const admission = __getHostedConfigSourceReadStateForTests();
+        const uniqueFlightCount = admission.maxActive + admission.maxQueued;
+        const uniqueProjectIds = Array.from(
+          { length: uniqueFlightCount },
+          (_, index) => `source-read-bounded-${index}`,
+        );
+        const projectIds = [uniqueProjectIds[0]!, ...uniqueProjectIds];
+        const controllers = projectIds.map(() => new AbortController());
+        let reads = 0;
+        const readProjectIds: Array<string | undefined> = [];
+        adapter.fs.readFile = async (path: string) => {
+          if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+          reads += 1;
+          readProjectIds.push(getCurrentRequestContext()?.projectId);
+          await releaseReads.promise;
+          return 'export default { title: "source" };';
+        };
+        __setHostedConfigEvaluatorForTests(async () => ({
+          title: "capacity-recovered",
+        }));
+
+        const pending = projectIds.map((projectId, index) =>
+          loadProductionHostedConfig(adapter, preparedContext, {
+            projectId,
+            signal: controllers[index]!.signal,
+          })
+        );
+        let recovered:
+          | ReturnType<typeof loadProductionHostedConfig>
+          | undefined;
+        try {
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: admission.maxQueued,
+            flights: uniqueFlightCount,
+            waiters: uniqueFlightCount + 1,
+          });
+          assertEquals(reads, admission.maxActive);
+
+          const overflow = await assertRejects(
+            () =>
+              loadProductionHostedConfig(adapter, preparedContext, {
+                projectId: "source-read-bounded-overflow",
+              }),
+            VeryfrontError,
+          ) as VeryfrontError;
+          assertEquals(overflow.slug, "service-overloaded");
+          assert(overflow.cause instanceof DeclarativeConfigEvaluationError);
+          assertEquals(
+            (overflow.cause as DeclarativeConfigEvaluationError).reason,
+            "worker-overloaded",
+          );
+
+          const failures = pending.map((request) =>
+            assertRejects(() => request, DeclarativeConfigEvaluationError)
+          );
+          for (const controller of controllers) controller.abort();
+          await Promise.all(failures);
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: 0,
+            flights: admission.maxActive,
+            waiters: 0,
+          });
+          assertEquals(reads, admission.maxActive);
+
+          recovered = loadProductionHostedConfig(adapter, preparedContext, {
+            projectId: "source-read-bounded-recovered",
+          });
+          await waitForHostedSourceReadState({
+            active: admission.maxActive,
+            queued: 1,
+            flights: admission.maxActive + 1,
+            waiters: 1,
+          });
+          assertEquals(reads, admission.maxActive);
+
+          releaseReads.resolve();
+          const config = await recovered;
+          assertEquals(config.title, "capacity-recovered");
+          assertEquals(reads, admission.maxActive + 1);
+          assertEquals(
+            readProjectIds[readProjectIds.length - 1],
+            "source-read-bounded-recovered",
+          );
+        } finally {
+          for (const controller of controllers) controller.abort();
+          releaseReads.resolve();
+          await Promise.allSettled([
+            ...pending,
+            ...(recovered ? [recovered] : []),
+          ]);
+        }
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("uses captured abort and TextDecoder primordials for Uint8Array hosted sources", async () => {
+        const adapter = createHostedAdapter();
+        const firstContext = await prepareProductionContext();
+        const secondContext = await prepareDeclarativeConfigContext({
+          environmentName: "Production",
+          environment: { TENANT: "poison-reset" },
+        });
+        const sourceBytes = new TextEncoder().encode(
+          'export default { title: "byte-source" };',
+        );
+        const callerController = new AbortController();
+        const callerSignal = callerController.signal;
+        const secondEvaluationStarted = Promise.withResolvers<void>();
+        const releaseSecondEvaluation = Promise.withResolvers<void>();
+        let secondEvaluationSignal: AbortSignal | undefined;
+        let evaluations = 0;
+        Object.assign(adapter.fs, {
+          readFile: async (path: string) => {
+            if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+            return sourceBytes;
+          },
+        });
+        __setHostedConfigEvaluatorForTests(async (_payload, options) => {
+          evaluations += 1;
+          if (evaluations === 1) return { title: "decoded-byte-source" };
+          secondEvaluationSignal = options?.signal;
+          secondEvaluationStarted.resolve();
+          await releaseSecondEvaluation.promise;
+          return { title: "must-be-aborted-by-reset" };
+        });
+
+        const abortSignalAborted = TestObjectGetOwnPropertyDescriptor(
+          AbortSignal.prototype,
+          "aborted",
+        )?.get;
+        if (!abortSignalAborted) throw new Error("Expected AbortSignal aborted getter");
+        const abortSignalPrototype = AbortSignal.prototype;
+        const textDecoderPrototype = TextDecoder.prototype;
+        let poisonCalls = 0;
+        const descriptorPoisonCalls: string[] = [];
+        const poison = (): never => {
+          poisonCalls += 1;
+          throw new Error("ambient loader lifecycle primordial must not run");
+        };
+        const restore: Array<() => void> = [];
+        let secondRequest:
+          | ReturnType<typeof loadProductionHostedConfig>
+          | undefined;
+        try {
+          const replace = (
+            target: object,
+            key: PropertyKey,
+            descriptor: PropertyDescriptor,
+          ): void => {
+            restore.push(replacePropertyForTest(target, key, descriptor));
+          };
+          replace(globalThis, "TextDecoder", { value: poison });
+          replace(textDecoderPrototype, "decode", { value: poison });
+          replace(AbortController.prototype, "signal", { get: poison });
+          replace(AbortController.prototype, "abort", { value: poison });
+          replace(AbortSignal.prototype, "aborted", { get: poison });
+          replace(EventTarget.prototype, "addEventListener", { value: poison });
+          replace(EventTarget.prototype, "removeEventListener", {
+            value: poison,
+          });
+          for (
+            const descriptorField of [
+              "value",
+              "writable",
+              "get",
+              "enumerable",
+              "configurable",
+            ] as const
+          ) {
+            const descriptorPoison = function (this: unknown): unknown {
+              if (typeof this !== "object" || this === null) return undefined;
+              const value = TestObjectGetOwnPropertyDescriptor(this, "value")
+                ?.value;
+              const getter = TestObjectGetOwnPropertyDescriptor(this, "get")
+                ?.value;
+              const isLoaderSignalDataDescriptor = typeof value === "object" &&
+                value !== null &&
+                TestReflectApply(
+                    TestObjectGetPrototypeOf,
+                    Object,
+                    [value],
+                  ) === abortSignalPrototype;
+              const getterName = typeof getter === "function"
+                ? TestObjectGetOwnPropertyDescriptor(getter, "name")?.value
+                : undefined;
+              if (
+                isLoaderSignalDataDescriptor ||
+                getterName === "intrinsicSignalAbortedOwnGetter"
+              ) {
+                descriptorPoisonCalls.push(descriptorField);
+                return poison();
+              }
+              return undefined;
+            };
+            restore.push(
+              defineNullPrototypeAccessorForTest(
+                Object.prototype,
+                descriptorField,
+                descriptorPoison,
+                descriptorPoison,
+              ),
+            );
+          }
+
+          const first = await loadProductionHostedConfig(adapter, firstContext, {
+            projectId: "captured-byte-source",
+            signal: callerSignal,
+          });
+          assertEquals(first.title, "decoded-byte-source");
+
+          secondRequest = loadProductionHostedConfig(adapter, secondContext, {
+            projectId: "captured-byte-source-reset",
+            signal: callerSignal,
+          });
+          await secondEvaluationStarted.promise;
+          __setHostedConfigEvaluatorForTests();
+          assert(secondEvaluationSignal);
+          assertEquals(
+            TestReflectApply(abortSignalAborted, secondEvaluationSignal, []),
+            true,
+          );
+          releaseSecondEvaluation.resolve();
+          const error = await assertRejects(
+            () => secondRequest!,
+            DeclarativeConfigEvaluationError,
+          ) as DeclarativeConfigEvaluationError;
+          assertEquals(error.reason, "worker-aborted");
+          assertEquals(
+            poisonCalls,
+            0,
+            `Descriptor poison calls: ${descriptorPoisonCalls.join(", ")}`,
+          );
+        } finally {
+          releaseSecondEvaluation.resolve();
+          await Promise.allSettled(
+            secondRequest ? [secondRequest] : [],
+          );
+          for (let index = restore.length - 1; index >= 0; index -= 1) {
+            restore[index]!();
+          }
+          __setHostedConfigEvaluatorForTests();
+        }
+        assertEquals(poisonCalls, 0);
+        await waitForHostedSourceReadState({
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+        });
+      });
+
+      it("keeps WebIDL conversion and source-read FIFO independent of poisoned prototypes", async () => {
+        const adapter = createHostedAdapter();
+        const preparedContext = await prepareProductionContext();
+        const sourceBytes = new TextEncoder().encode(
+          'export default { title: "poison-safe-source" };',
+        );
+        const firstReadStarted = Promise.withResolvers<void>();
+        const secondReadStarted = Promise.withResolvers<void>();
+        const thirdReadStarted = Promise.withResolvers<void>();
+        const fourthReadStarted = Promise.withResolvers<void>();
+        const releaseFirstRead = Promise.withResolvers<void>();
+        const releaseSecondRead = Promise.withResolvers<void>();
+        const releaseThirdRead = Promise.withResolvers<void>();
+        const releaseFourthRead = Promise.withResolvers<void>();
+        const firstEvaluationStarted = Promise.withResolvers<void>();
+        const releaseFirstEvaluation = Promise.withResolvers<void>();
+        let fourthStarted = false;
+        Object.assign(adapter.fs, {
+          readFile: async (path: string) => {
+            if (path !== "/veryfront.config.js") throw configCandidateNotFound(path);
+            switch (getCurrentRequestContext()?.projectId) {
+              case "prototype-poison-first":
+                firstReadStarted.resolve();
+                await releaseFirstRead.promise;
+                break;
+              case "prototype-poison-second":
+                secondReadStarted.resolve();
+                await releaseSecondRead.promise;
+                break;
+              case "prototype-poison-third":
+                thirdReadStarted.resolve();
+                await releaseThirdRead.promise;
+                break;
+              case "prototype-poison-fourth":
+                fourthStarted = true;
+                fourthReadStarted.resolve();
+                await releaseFourthRead.promise;
+                break;
+              default:
+                throw new Error("Unexpected source-read request context");
+            }
+            return sourceBytes;
+          },
+        });
+        let evaluations = 0;
+        __setHostedConfigEvaluatorForTests(async () => {
+          evaluations += 1;
+          if (evaluations === 1) {
+            firstEvaluationStarted.resolve();
+            await releaseFirstEvaluation.promise;
+          }
+          return { title: "poison-safe-source" };
+        });
+
+        let poisonCalls = 0;
+        const poison = (): never => {
+          poisonCalls += 1;
+          throw new Error("inherited WebIDL or array-index hook must not run");
+        };
+        const inheritedArrayIndexGetter = (): undefined => undefined;
+        const inheritedArrayIndexSetter = function (
+          this: unknown,
+          value: unknown,
+        ): void {
+          const queuedState = typeof value === "object" && value !== null
+            ? TestObjectGetOwnPropertyDescriptor(value, "state")?.value
+            : undefined;
+          const waiterCount = typeof value === "object" && value !== null
+            ? TestObjectGetOwnPropertyDescriptor(value, "waiterCount")?.value
+            : undefined;
+          if (queuedState === "queued" && typeof waiterCount === "number") {
+            poison();
+          }
+          if ((typeof this !== "object" && typeof this !== "function") || this === null) {
+            poison();
+          }
+          const descriptor = TestReflectApply(
+            TestObjectCreate,
+            Object,
+            [null],
+          ) as PropertyDescriptor;
+          descriptor.value = value;
+          descriptor.writable = true;
+          descriptor.enumerable = true;
+          descriptor.configurable = true;
+          TestReflectApply(TestObjectDefineProperty, Object, [
+            this,
+            "0",
+            descriptor,
+          ]);
+        };
+        let restoreCapture: (() => void) | undefined;
+        let restoreIgnoreBOM: (() => void) | undefined;
+        let restoreArrayIndex: (() => void) | undefined;
+        let first:
+          | ReturnType<typeof loadProductionHostedConfig>
+          | undefined;
+        let second:
+          | ReturnType<typeof loadProductionHostedConfig>
+          | undefined;
+        let third:
+          | ReturnType<typeof loadProductionHostedConfig>
+          | undefined;
+        let fourth:
+          | ReturnType<typeof loadProductionHostedConfig>
+          | undefined;
+        let firstConfig:
+          | Awaited<ReturnType<typeof loadProductionHostedConfig>>
+          | undefined;
+        let secondConfig:
+          | Awaited<ReturnType<typeof loadProductionHostedConfig>>
+          | undefined;
+        let thirdConfig:
+          | Awaited<ReturnType<typeof loadProductionHostedConfig>>
+          | undefined;
+        let fourthConfig:
+          | Awaited<ReturnType<typeof loadProductionHostedConfig>>
+          | undefined;
+        let queuedState:
+          | ReturnType<typeof __getHostedConfigSourceReadStateForTests>
+          | undefined;
+        let fifoState:
+          | ReturnType<typeof __getHostedConfigSourceReadStateForTests>
+          | undefined;
+        let finalState:
+          | ReturnType<typeof __getHostedConfigSourceReadStateForTests>
+          | undefined;
+        let fourthStartedBeforeItsTurn = false;
+        try {
+          restoreCapture = defineNullPrototypeAccessorForTest(
+            Object.prototype,
+            "capture",
+            poison,
+            poison,
+          );
+          restoreIgnoreBOM = defineNullPrototypeAccessorForTest(
+            Object.prototype,
+            "ignoreBOM",
+            poison,
+            poison,
+          );
+          restoreArrayIndex = defineNullPrototypeAccessorForTest(
+            Array.prototype,
+            "0",
+            inheritedArrayIndexGetter,
+            inheritedArrayIndexSetter,
+          );
+
+          first = loadProductionHostedConfig(adapter, preparedContext, {
+            projectId: "prototype-poison-first",
+            signal: new AbortController().signal,
+          });
+          await firstReadStarted.promise;
+          second = loadProductionHostedConfig(adapter, preparedContext, {
+            projectId: "prototype-poison-second",
+            signal: new AbortController().signal,
+          });
+          await secondReadStarted.promise;
+          third = loadProductionHostedConfig(adapter, preparedContext, {
+            projectId: "prototype-poison-third",
+            signal: new AbortController().signal,
+          });
+          fourth = loadProductionHostedConfig(adapter, preparedContext, {
+            projectId: "prototype-poison-fourth",
+            signal: new AbortController().signal,
+          });
+
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            queuedState = __getHostedConfigSourceReadStateForTests();
+            if (
+              queuedState.active === 2 &&
+              queuedState.queued === 2 &&
+              queuedState.flights === 4 &&
+              queuedState.waiters === 4
+            ) {
+              break;
+            }
+            await Promise.resolve();
+          }
+
+          releaseFirstRead.resolve();
+          await thirdReadStarted.promise;
+          await firstEvaluationStarted.promise;
+          // The first source selection remains leased while its caller
+          // evaluates the selected config. It must therefore remain visible
+          // even though its read slot has already dispatched the third read.
+          fifoState = __getHostedConfigSourceReadStateForTests();
+          fourthStartedBeforeItsTurn = fourthStarted;
+
+          releaseThirdRead.resolve();
+          await fourthReadStarted.promise;
+          releaseFirstEvaluation.resolve();
+          releaseSecondRead.resolve();
+          releaseFourthRead.resolve();
+          firstConfig = await first;
+          secondConfig = await second;
+          thirdConfig = await third;
+          fourthConfig = await fourth;
+
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            finalState = __getHostedConfigSourceReadStateForTests();
+            if (
+              finalState.active === 0 &&
+              finalState.queued === 0 &&
+              finalState.flights === 0 &&
+              finalState.waiters === 0
+            ) {
+              break;
+            }
+            await Promise.resolve();
+          }
+        } finally {
+          // Restore the numeric array hook before aggregate cleanup: Deno's
+          // assertion and console internals legitimately use ordinary arrays.
+          restoreArrayIndex?.();
+          restoreArrayIndex = undefined;
+          releaseFirstRead.resolve();
+          releaseSecondRead.resolve();
+          releaseThirdRead.resolve();
+          releaseFourthRead.resolve();
+          releaseFirstEvaluation.resolve();
+          await Promise.allSettled(
+            [first, second, third, fourth].filter(
+              (
+                request,
+              ): request is ReturnType<typeof loadProductionHostedConfig> => request !== undefined,
+            ),
+          );
+          restoreIgnoreBOM?.();
+          restoreCapture?.();
+        }
+
+        assertEquals(poisonCalls, 0);
+        assertEquals(queuedState, {
+          active: 2,
+          queued: 2,
+          flights: 4,
+          waiters: 4,
+          maxActive: 2,
+          maxQueued: 16,
+        });
+        assertEquals(fifoState?.active, 2);
+        assertEquals(fifoState?.queued, 1);
+        assertEquals(fifoState?.flights, 4);
+        assertEquals(fifoState?.waiters, 4);
+        assertEquals(fourthStartedBeforeItsTurn, false);
+        assertEquals(firstConfig?.title, "poison-safe-source");
+        assertEquals(secondConfig?.title, "poison-safe-source");
+        assertEquals(thirdConfig?.title, "poison-safe-source");
+        assertEquals(fourthConfig?.title, "poison-safe-source");
+        assertEquals(finalState, {
+          active: 0,
+          queued: 0,
+          flights: 0,
+          waiters: 0,
+          maxActive: 2,
+          maxQueued: 16,
+        });
+      });
+
+      it("does not consult a poisoned Promise species hook when observing flights", async () => {
+        const adapter = setup();
+
+        let poisonCalls = 0;
+        const poison = (): never => {
+          poisonCalls += 1;
+          throw new Error("ambient Promise species hook must not run");
+        };
+        let restoreSpecies: (() => void) | undefined;
+        let request: ReturnType<typeof getConfig> | undefined;
+        let config: Awaited<ReturnType<typeof getConfig>> | undefined;
+        let requestHadOwnConstructor = false;
+        let finalFlightCount: number | undefined;
+        try {
+          restoreSpecies = definePropertyForTest(
+            Promise,
+            Symbol.species,
+            { get: poison },
+          );
+
+          // This path invokes the captured promise observer for both trusted
+          // single-flight cleanup and the public getConfig projection. It
+          // performs every relevant observer registration synchronously, so
+          // the ambient hook can be restored before the async test harness
+          // itself observes this test's promise.
+          request = getConfig("/promise-species-poison", adapter);
+          requestHadOwnConstructor = TestObjectGetOwnPropertyDescriptor(
+            request,
+            "constructor",
+          ) !== undefined;
+        } finally {
+          restoreSpecies?.();
+        }
+
+        assert(request);
+        try {
+          config = await request;
+          finalFlightCount = __getTrustedConfigFlightStateForTests().flights;
+          assertEquals(poisonCalls, 0);
+          assert(config);
+          assertEquals(requestHadOwnConstructor, false);
+          assertEquals(finalFlightCount, 0);
+        } finally {
+          await Promise.allSettled(request ? [request] : []);
+        }
+      });
+
+      it("shields the captured Promise observer from poisoned constructor and species hooks", async () => {
+        const source = Promise.resolve("promise-observer-safe");
+        let poisonCalls = 0;
+        const poison = (): never => {
+          poisonCalls += 1;
+          throw new Error("ambient Promise constructor hook must not run");
+        };
+        let restoreConstructor: (() => void) | undefined;
+        let restoreSpecies: (() => void) | undefined;
+        let observed: Promise<string> | undefined;
+        let sourceRetainedOwnConstructor = false;
+        try {
+          restoreConstructor = definePropertyForTest(
+            Promise.prototype,
+            "constructor",
+            { get: poison },
+          );
+          restoreSpecies = definePropertyForTest(
+            Promise,
+            Symbol.species,
+            { get: poison },
+          );
+
+          observed = __observePromiseForTests(source);
+          sourceRetainedOwnConstructor = TestObjectGetOwnPropertyDescriptor(
+            source,
+            "constructor",
+          ) !== undefined;
+        } finally {
+          restoreSpecies?.();
+          restoreConstructor?.();
+        }
+
+        assert(observed);
+        assertEquals(await observed, "promise-observer-safe");
+        assertEquals(poisonCalls, 0);
+        assertEquals(sourceRetainedOwnConstructor, false);
+      });
+
       it("shares one exact production evaluation and result across concurrent callers", async () => {
         const adapter = createHostedAdapter();
         const preparedContext = await prepareProductionContext();
         const started = Promise.withResolvers<void>();
         const resume = Promise.withResolvers<void>();
+        const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+        let selectedSourceReads = 0;
+        adapter.fs.readFile = async (path: string) => {
+          if (path === "/veryfront.config.ts") selectedSourceReads += 1;
+          return await originalReadFile(path);
+        };
         let evaluations = 0;
         __setHostedConfigEvaluatorForTests(async (_payload, options) => {
           evaluations += 1;
@@ -1646,11 +2788,13 @@ export default config as const;
         resume.resolve();
         const [firstConfig, secondConfig] = await Promise.all([first, second]);
         assert(firstConfig === secondConfig);
+        assertEquals(selectedSourceReads, 1);
         await waitForHostedFlightState({ flights: 0, waiters: 0 });
 
         const cached = await loadProductionHostedConfig(adapter, preparedContext);
         assert(cached === firstConfig);
         assertEquals(evaluations, 1);
+        assertEquals(selectedSourceReads, 2);
       });
 
       it("removes rejected flights and never caches their failure", async () => {
@@ -2225,6 +3369,131 @@ export default config as const;
       const [first, second] = await Promise.all([firstRequest, secondRequest]);
       assertEquals(first.title, "first-filesystem");
       assertEquals(second.title, "second-filesystem");
+    });
+
+    it("frames trusted-flight source identities without inherited toJSON hooks", async () => {
+      const adapter = setup();
+      const firstReadStarted = Promise.withResolvers<void>();
+      const secondReadStarted = Promise.withResolvers<void>();
+      const secondLegacyIdentityObserved = Promise.withResolvers<void>();
+      const resumeFirstRead = Promise.withResolvers<void>();
+      const firstBranch = "feature/framed-source-a";
+      const secondBranch = "feature/framed-source-b";
+      let reads = 0;
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+        readFile: async (path: string) => {
+          if (path !== "/veryfront.config.ts") throw configCandidateNotFound(path);
+          const branch = getCurrentRequestContext()?.branch;
+          reads += 1;
+          if (branch === firstBranch) {
+            firstReadStarted.resolve();
+            await resumeFirstRead.promise;
+            return 'export default { title: "first-branch" };';
+          }
+          if (branch === secondBranch) {
+            secondReadStarted.resolve();
+            return 'export default { title: "second-branch" };';
+          }
+          throw new Error("unexpected trusted config branch");
+        },
+      });
+
+      let inheritedIdentityHookCalls = 0;
+      const restore = [
+        definePropertyForTest(Array.prototype, "toJSON", {
+          value: () => {
+            inheritedIdentityHookCalls += 1;
+            throw new Error("inherited Array toJSON must not run");
+          },
+          writable: true,
+        }),
+        definePropertyForTest(Object.prototype, "toJSON", {
+          value: function (this: object): string {
+            // Logger serialization deliberately snapshots general toJSON
+            // values. Count only the normalized source record used by the
+            // legacy trusted-flight identity serializer.
+            const productionMode = TestObjectGetOwnPropertyDescriptor(
+              this,
+              "productionMode",
+            );
+            const branch = TestObjectGetOwnPropertyDescriptor(this, "branch");
+            if (
+              productionMode?.value === false &&
+              typeof branch?.value === "string"
+            ) {
+              inheritedIdentityHookCalls += 1;
+              if (inheritedIdentityHookCalls >= 2) {
+                secondLegacyIdentityObserved.resolve();
+              }
+              return "collapsed-trusted-source-identity";
+            }
+            return "collapsed-trusted-source-identity";
+          },
+          writable: true,
+        }),
+      ];
+      const load = (branch: string) =>
+        runWithRequestContext(
+          {
+            projectSlug: "framed-trusted-source",
+            projectId: "framed-trusted-source",
+            token: "token",
+            branch,
+          },
+          () => getConfig("/framed-trusted-source", adapter),
+        );
+
+      let firstRequest: ReturnType<typeof load> | undefined;
+      let secondRequest: ReturnType<typeof load> | undefined;
+      let first: Awaited<ReturnType<typeof load>> | undefined;
+      let second: Awaited<ReturnType<typeof load>> | undefined;
+      try {
+        firstRequest = load(firstBranch);
+        const firstProgress = await Promise.race([
+          firstReadStarted.promise.then(() => "read-started" as const),
+          firstRequest.then(
+            () => "request-settled" as const,
+            () => "request-settled" as const,
+          ),
+        ]);
+        if (firstProgress === "request-settled") {
+          await firstRequest;
+          throw new Error("first trusted config request settled before its gated read");
+        }
+        secondRequest = load(secondBranch);
+        const secondProgress = await Promise.race([
+          secondReadStarted.promise.then(() => "read-started" as const),
+          secondLegacyIdentityObserved.promise.then(() => "legacy-identity" as const),
+          secondRequest.then(
+            () => "request-settled" as const,
+            () => "request-settled" as const,
+          ),
+        ]);
+        if (secondProgress === "request-settled") {
+          await secondRequest;
+          throw new Error("second trusted config request settled before identity observation");
+        }
+        resumeFirstRead.resolve();
+        [first, second] = await Promise.all([firstRequest, secondRequest]);
+      } finally {
+        resumeFirstRead.resolve();
+        await Promise.allSettled(
+          [firstRequest, secondRequest].filter(
+            (request): request is ReturnType<typeof load> => request !== undefined,
+          ),
+        );
+        for (let index = restore.length - 1; index >= 0; index -= 1) {
+          restore[index]!();
+        }
+      }
+
+      assertEquals(inheritedIdentityHookCalls, 0);
+      assertEquals(reads, 2);
+      assertEquals(first?.title, "first-branch");
+      assertEquals(second?.title, "second-branch");
     });
 
     it("rejects an explicit source that differs from the request context", async () => {

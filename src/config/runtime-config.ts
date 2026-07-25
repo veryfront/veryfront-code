@@ -16,10 +16,8 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import { createTestEnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
+import { DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "./defaults.ts";
 import { DEFAULT_DEV_SERVER_PORT } from "#veryfront/utils/constants/network.ts";
-
-/** Maximum entries in the default render cache */
-const DEFAULT_RENDER_CACHE_MAX_ENTRIES = 500;
 
 /**
  * Runtime-specific configuration derived from environment.

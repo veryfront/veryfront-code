@@ -5,8 +5,10 @@ import {
   assertExists,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { createRunsClient, VeryfrontRunsClient } from "./runs-client.ts";
 
 const originalFetch = globalThis.fetch;
@@ -131,6 +133,36 @@ describe("VeryfrontRunsClient", () => {
   it("exports a client factory", () => {
     assertExists(createRunsClient);
     assertEquals(typeof createRunsClient, "function");
+    assertThrows(
+      () => createRunsClient({ retry: { maxRetries: 10 } }),
+      RangeError,
+      "maxRetries",
+    );
+  });
+
+  it("enforces retry policy at direct client construction", () => {
+    for (
+      const retry of [
+        { maxRetries: 10 },
+        { initialDelay: 0.5 },
+        { initialDelay: 2, maxDelay: 1 },
+      ]
+    ) {
+      assertThrows(
+        () => new VeryfrontRunsClient({ retry }),
+        RangeError,
+      );
+    }
+
+    assertExists(
+      new VeryfrontRunsClient({
+        retry: {
+          maxRetries: MAX_VERYFRONT_API_RETRIES,
+          initialDelay: 0,
+          maxDelay: 0,
+        },
+      }),
+    );
   });
 
   it("creates task runs through canonical /runs", async () => {

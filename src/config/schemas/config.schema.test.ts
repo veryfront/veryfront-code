@@ -13,17 +13,22 @@ import {
   MAX_REMOTE_HOST_COUNT,
   MAX_REMOTE_HOST_URL_LENGTH,
 } from "#veryfront/utils/remote-host-policy-limits.ts";
-import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./config.schema.ts";
+import {
+  MAX_FILE_LOG_FILES,
+  MAX_GITHUB_FILESYSTEM_ATTEMPTS,
+  MAX_VERYFRONT_FILESYSTEM_RETRIES,
+} from "#veryfront/utils/config-resource-limits.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { validateVeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
-  it("validates valid config and finds unknown keys", () => {
+  it("validates valid config", () => {
     const cfg = validateVeryfrontConfig({
       router: "app",
       security: { cors: true, remoteHosts: ["https://esm.sh"] },
     });
 
     assertEquals(cfg.router, "app");
-    assertEquals(findUnknownTopLevelKeys({ foo: 1, router: "pages" }), ["foo"]);
   });
 
   it("rejects unknown top-level keys through the public validator", () => {
@@ -38,25 +43,43 @@ describe("configSchema", () => {
     assertEquals((error as VeryfrontError).slug, "config-validation-failed");
     assertEquals(
       (error as Error).message,
-      "Unknown config keys: buid. Check for typos in veryfront.config.",
+      'Invalid veryfront.config at <root>: Unrecognized key: "buid".',
     );
+    assertEquals((error as VeryfrontError).context, {
+      field: "<root>",
+      expected: 'Unrecognized key: "buid"',
+    });
   });
 
   it("rejects unknown keys in closed nested configuration objects", () => {
     const github = { token: "token", owner: "owner", repo: "repo" };
     for (
-      const [config, path] of [
-        [{ dev: { potr: 4444 } }, "dev"],
-        [{ build: { outDri: "dist" } }, "build"],
-        [{ fs: { type: "github", github: { ...github, cach: {} } } }, "fs.github"],
-        [{ ai: { tools: { discovery: { pahts: [] } } } }, "ai.tools.discovery"],
+      const [config, path, key] of [
+        [{ dev: { potr: 4444 } }, "dev", "potr"],
+        [{ build: { outDri: "dist" } }, "build", "outDri"],
+        [
+          { fs: { type: "github", github: { ...github, cach: {} } } },
+          "fs.github",
+          "cach",
+        ],
+        [
+          { ai: { tools: { discovery: { pahts: [] } } } },
+          "ai.tools.discovery",
+          "pahts",
+        ],
       ] as const
     ) {
-      assertThrows(
+      const error = assertThrows(
         () => validateVeryfrontConfig(config),
         Error,
         `Invalid veryfront.config at ${path}:`,
       );
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "config-validation-failed");
+      assertEquals((error as VeryfrontError).context, {
+        field: path,
+        expected: `Unrecognized key: "${key}"`,
+      });
     }
   });
 
@@ -157,6 +180,151 @@ describe("configSchema", () => {
     assertEquals(
       validateVeryfrontConfig({ fs: { type: "veryfront-api", veryfront } }).fs?.type,
       "veryfront-api",
+    );
+  });
+
+  it("bounds filesystem retry delays to the portable timer domain", () => {
+    const validRetry = {
+      maxRetries: 3,
+      initialDelay: 0,
+      maxDelay: MAX_TIMER_DELAY_MS,
+    };
+    assertEquals(
+      validateVeryfrontConfig({
+        fs: {
+          type: "veryfront-api",
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            retry: validRetry,
+          },
+        },
+      }).fs?.veryfront?.retry,
+      validRetry,
+    );
+    assertEquals(
+      validateVeryfrontConfig({
+        fs: {
+          type: "github",
+          github: {
+            token: "token",
+            owner: "owner",
+            repo: "repo",
+            retry: validRetry,
+          },
+        },
+      }).fs?.github?.retry,
+      validRetry,
+    );
+
+    for (
+      const retry of [
+        { initialDelay: MAX_TIMER_DELAY_MS + 1 },
+        { maxDelay: MAX_TIMER_DELAY_MS + 1 },
+        { initialDelay: 1_000, maxDelay: 500 },
+      ]
+    ) {
+      for (
+        const fs of [
+          {
+            type: "veryfront-api",
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              retry,
+            },
+          },
+          {
+            type: "github",
+            github: {
+              token: "token",
+              owner: "owner",
+              repo: "repo",
+              retry,
+            },
+          },
+        ]
+      ) {
+        assertThrows(
+          () => validateVeryfrontConfig({ fs }),
+          Error,
+          "Invalid veryfront.config at fs",
+        );
+      }
+    }
+  });
+
+  it("bounds each filesystem backend without changing its retry-count contract", () => {
+    const accepted = [
+      {
+        type: "veryfront-api",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          retry: { maxRetries: MAX_VERYFRONT_FILESYSTEM_RETRIES },
+        },
+      },
+      {
+        type: "github",
+        github: {
+          token: "token",
+          owner: "owner",
+          repo: "repo",
+          retry: { maxRetries: MAX_GITHUB_FILESYSTEM_ATTEMPTS },
+        },
+      },
+    ];
+    for (const fs of accepted) {
+      assertEquals(validateVeryfrontConfig({ fs }).fs?.type, fs.type);
+    }
+
+    const rejected = [
+      {
+        type: "veryfront-api",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          retry: { maxRetries: MAX_VERYFRONT_FILESYSTEM_RETRIES + 1 },
+        },
+      },
+      {
+        type: "github",
+        github: {
+          token: "token",
+          owner: "owner",
+          repo: "repo",
+          retry: { maxRetries: MAX_GITHUB_FILESYSTEM_ATTEMPTS + 1 },
+        },
+      },
+    ];
+    for (const fs of rejected) {
+      assertThrows(
+        () => validateVeryfrontConfig({ fs }),
+        Error,
+        "Invalid veryfront.config at fs",
+      );
+    }
+  });
+
+  it("bounds file log retention before rotation work is scheduled", () => {
+    assertEquals(
+      validateVeryfrontConfig({
+        observability: {
+          logging: {
+            file: { maxFiles: MAX_FILE_LOG_FILES },
+          },
+        },
+      }).observability?.logging?.file?.maxFiles,
+      MAX_FILE_LOG_FILES,
+    );
+
+    assertThrows(
+      () =>
+        validateVeryfrontConfig({
+          observability: {
+            logging: {
+              file: { maxFiles: MAX_FILE_LOG_FILES + 1 },
+            },
+          },
+        }),
+      Error,
+      "Invalid veryfront.config at observability.logging.file.maxFiles",
     );
   });
 
@@ -347,6 +515,63 @@ describe("configSchema", () => {
         () => validateVeryfrontConfig({ security: { cors } }),
         Error,
         "Invalid veryfront.config at security.cors",
+      );
+    }
+  });
+
+  it("accepts bounded canonical CSRF customization", () => {
+    const csrf = {
+      cookieName: "__Host-vf_csrf",
+      headerName: "X-CSRF-Token",
+      excludePaths: ["/api/webhooks", "/health%20check"],
+      ttlSec: 3600,
+    };
+
+    assertEquals(
+      validateVeryfrontConfig({ security: { csrf } }).security?.csrf,
+      csrf,
+    );
+  });
+
+  it("rejects CSRF names and exclusion paths that are unsafe or non-canonical", () => {
+    for (
+      const csrf of [
+        { excludePaths: [""] },
+        { excludePaths: ["relative/path"] },
+        { excludePaths: ["//example.com/api"] },
+        { excludePaths: ["/api/../admin"] },
+        { excludePaths: ["/api/"] },
+        { excludePaths: ["/api?public=true"] },
+        { excludePaths: ["/api#public"] },
+        { excludePaths: ["/api\npublic"] },
+        { excludePaths: [`/${"a".repeat(4096)}`] },
+        {
+          excludePaths: Array.from(
+            { length: 65 },
+            (_, index) => `/excluded-${index}`,
+          ),
+        },
+        {
+          excludePaths: Array.from(
+            { length: 64 },
+            (_, index) => `/excluded-${index}-${"a".repeat(256)}`,
+          ),
+        },
+        { cookieName: "" },
+        { cookieName: "csrf cookie" },
+        { cookieName: "csrf;SameSite=None" },
+        { cookieName: "csrf\r\nInjected" },
+        { cookieName: "x".repeat(257) },
+        { headerName: "" },
+        { headerName: "x csrf" },
+        { headerName: "x-csrf\r\nInjected" },
+        { headerName: "x".repeat(257) },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { csrf } }),
+        Error,
+        "Invalid veryfront.config at security.csrf",
       );
     }
   });

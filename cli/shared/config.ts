@@ -7,9 +7,13 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { join } from "veryfront/platform/path";
+import { join, toFileUrl } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
-import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import {
+  type EnvironmentConfig,
+  findVeryfrontConfigFile,
+  getEnvironmentConfig,
+} from "veryfront/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
@@ -81,28 +85,35 @@ async function readConfigFileResolution(projectDir: string): Promise<ConfigFileR
 
   let moduleProjectSlug: string | undefined;
   let moduleProjectSlugFile: string | undefined;
-  for (const ext of [".ts", ".js"]) {
-    const configPath = join(projectDir, `veryfront.config${ext}`);
+  const moduleConfigFile = await findVeryfrontConfigFile(
+    projectDir,
+    async (configPath) => {
+      try {
+        return await fs.exists(configPath);
+      } catch (error) {
+        cliLogger.debug(`Failed to inspect config file ${configPath}:`, error);
+        return false;
+      }
+    },
+  );
 
+  if (moduleConfigFile) {
     try {
-      if (!(await fs.exists(configPath))) continue;
-
-      const module = await import(`file://${configPath}`);
+      const module = await import(toFileUrl(moduleConfigFile.path).href);
       const config = module.default ?? module;
 
       if (config?.projectSlug) {
         moduleProjectSlug = config.projectSlug;
-        moduleProjectSlugFile = `veryfront.config${ext}`;
-        break;
+        moduleProjectSlugFile = moduleConfigFile.fileName;
       }
     } catch (error) {
-      cliLogger.debug(`Failed to import config file ${configPath}:`, error);
+      cliLogger.debug(`Failed to import config file ${moduleConfigFile.path}:`, error);
     }
   }
 
-  // veryfront.json is always merged in: veryfront.config.ts owns the
+  // veryfront.json is always merged in: the selected module config owns the
   // projectSlug when both define one, but apiUrl/apiToken only live in
-  // veryfront.json and must not be dropped because a TS config exists.
+  // veryfront.json and must not be dropped because a module config exists.
   const configJsonPath = join(projectDir, "veryfront.json");
   let jsonConfig: VeryfrontConfig | null = null;
 

@@ -26,19 +26,26 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     2 |       3.4% | Current formal closure evidence remains valid       |
-| Touched, revalidation required |    39 |      67.2% | Substantive recovered or current work exists        |
-| Pending current review         |    17 |      29.3% | No current authoritative-branch review delta exists |
+| Closed                         |     3 |       5.2% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     2 |       3.4% | Review findings exist; remediation is not complete  |
+| Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
+| Pending current review         |    15 |      25.9% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
-Closed plus touched units give current-cycle substantive coverage of 41/58
-(70.7%). This is progress coverage, not a substitute for the stricter closure
-count.
+Closed, deeply reviewed, and touched units give current-cycle substantive
+coverage of 43/58 (74.1%). This is progress coverage, not a substitute for the
+stricter closure count.
 
 ### Closed
 
+- `config`
 - `schemas`
 - `version.ts`
+
+### Deep reviewed, fixes pending
+
+- `embedding`
+- `metrics`
 
 ### Touched, revalidation required
 
@@ -47,7 +54,6 @@ count.
 - `cache`
 - `channels`
 - `client`
-- `config`
 - `data`
 - `discovery`
 - `errors`
@@ -85,14 +91,12 @@ count.
 ### Pending current review
 
 - `chat`
-- `embedding`
 - `eval`
 - `issues`
 - `knowledge`
 - `markdown`
 - `mcp`
 - `mdx`
-- `metrics`
 - `prompt`
 - `repositories`
 - `resource`
@@ -116,63 +120,61 @@ every affected unit.
 
 ## Active review chain
 
-The active checkpoint is a cross-module boundary revalidation spanning cache
-identity, live root, child, and durable project identity, integration and MCP
-credential pairing, untrusted tool-result validation, project credentials and
-source selection, import-map immutability, hosted API isolation, OpenAPI
-generation, and their rendering/server consumers. Focused evidence for a
-boundary change does not by itself close every top-level unit it touches; those
-units remain in revalidation until their complete module review and affected
-repository gates are current.
+This checkpoint closes `config` after a complete consumer map, deep
+module-level review, adversarial loader and evaluator review, bounded resource
+and retry normalization, public-contract documentation, and repository-wide
+verification. Cross-module consumers changed by the fixes remain in
+revalidation; focused evidence for a config boundary does not by itself close
+their top-level units.
 
-`config` remains the next module-level closure target after this checkpoint is
-verified, pushed, and rebased. Its declarative evaluator and bounded one-shot
-worker boundary have focused tests, npm packaging coverage,
-minimum-supported-Node coverage, and independent lifecycle review. The hosted
-remote-filesystem loader now uses that boundary, but the complete unit remains
-open while the accepted-but-unconsumed compatibility surfaces below are
-resolved and the module is revalidated.
+`embedding` and `metrics` have received deep reviews and are the next
+remediation targets. Their findings include authorization, input-size,
+cancellation, persistence-integrity, model-identity, batching, and remote
+transaction boundaries in `embedding`; and tenant/destination identity,
+cardinality, queue and payload bounds, OTLP serialization, provider lifecycle,
+and application-failure isolation in `metrics`. Neither unit is closed until
+those findings are fixed, regression-tested, documented where public behavior
+changes, and verified through its affected integration gates.
 
-### Recovery checkpoint verification
+### Config closure checkpoint verification
 
-The current cross-module recovery checkpoint has the following reproducible
-evidence:
+The current config closure checkpoint has the following reproducible evidence:
 
-- Cache-key and data-cache regressions: 3 files, 86 tests and 67 steps passed.
-- Import-map unit review: 7 files and 86 steps passed.
-- Import-map integration review: 40 files and 487 steps passed.
-- API/OpenAPI isolation and serialization review: 11 files and 300 steps
-  passed.
-- Hosted project identity, child propagation, MCP credential pairing, and
-  untrusted tool-result review: 20 files, 168 tests and 98 nested steps passed.
-- Repository unit suite: 2,970 tests and 23,540 steps passed with zero failures;
-  one intentional case remains ignored with five steps.
+- The complete changed test surface passed 81 test groups and 773 steps with
+  zero failures, including loader, evaluator, worker, schema, discovery,
+  environment, paths, hosted policy, retry, token, runs, GitHub, documentation,
+  and release-asset regressions.
+- The repository unit suite passed 2,982 tests and 23,584 steps with zero
+  failures; one intentional case remains ignored with five steps.
 - `deno task verify:quick` passed, including formatting, linting, static policy
   ratchets, sanitizer and skipped-test baselines, dependency and module
   boundaries, documentation validation, and full entrypoint typechecking.
+- `deno task test:scripts` passed 71 tests and 155 steps with zero failures.
 - `deno task typecheck:consumer` rebuilt the npm and extension packages and
   passed the documented consumer-composition typecheck.
-- `deno task docs:validate` passed all documentation contracts and 714 link
+- The config-loader smoke passed five consecutive runs under Bun 1.3.14.
+- The read-only Node 18.18.0 package smoke passed all six install, CLI,
+  evaluator-worker, optional-peer, extension, and transitive-failure checks.
+- `deno task docs:validate` passed all documentation contracts and 716 link
   checks.
 
-These gates certify this integration checkpoint, not the 17 pending module
-reviews. The broader unit and integration portfolio remains part of the final
-repository production gate.
+These gates certify this integration checkpoint, not the 15 pending module
+reviews or the two reviewed units whose fixes are still pending. The broader
+unit and integration portfolio remains part of the final repository production
+gate.
 
 ### Config residual debt
 
-The following compatibility surfaces remain accepted by
-`src/config/schemas/config.schema.ts`, but the production tree has no consumer
-outside config parsing/merging. They are retained so the review does not
-silently remove an accepted configuration contract.
+The following bounded residuals are explicitly accepted. No critical or high
+config finding remains open.
 
-| Severity | Surface         | Evidence and consequence                                                                                               | Required resolution                                                                                |
-| -------- | --------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Moderate | `build.esbuild` | The schema and runtime merge preserve `wasmURL`/`worker`; production bundler initialization reads shared constants     | Wire the values into one authoritative bundler initializer with integration tests, or deprecate it |
-| Moderate | `theming`       | The schema accepts `brandName`/`logoHtml`; no production code reads the field, so configuration silently has no effect | Add an owned rendering consumer and sanitization tests, or deprecate it                            |
-| Moderate | `assetPipeline` | The schema accepts image pipeline options; no production build/runtime code reads the field                            | Implement the pipeline contract end to end, or deprecate it                                        |
+| Severity | Surface                                              | Evidence and consequence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Required resolution                                                                                                                                                  |
+| -------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Moderate | Compatibility-only project fields                    | The schema, merge, extension boundary, and render-cache identity preserve `title`, `description`, `directories.ai`, `theme.colors`, `build.outDir/trailingSlash/esbuild`, `dev.host/open/hmrPort`, `theming`, `assetPipeline`, tracing/metrics project config, `search`, `fs.local.baseDir`, `fs.memory`, provider defaults, `ai.work`, `ai.mcp`, Tailwind plugin/theme/custom-CSS fields, and `openapi.mcp`. Core has no documented built-in semantics for these fields; silently treating schema acceptance as implementation would mislead users, while removing them would break extension and cache contracts. | Give a field one authoritative owner plus end-to-end tests before claiming built-in behavior, or use an explicit deprecation/breaking-change process before removal. |
+| Low      | Cancellation of an already-active hosted source read | Loader waiters, admission, and queued reads honor `AbortSignal`, but the current filesystem adapter `readFile` contract cannot receive a signal. When the last waiter aborts, an active adapter read therefore remains counted against the two-read limit until the adapter settles. This preserves fail-closed accounting but cannot reclaim underlying I/O early.                                                                                                                                                                                                                                                 | Evolve the filesystem adapter contract and implementations to accept cancellation, then add adapter-level abort and resource-release tests.                          |
 
-Any future removal needs an explicit compatibility decision; a module-hardening
-pass must not erase these surfaces as incidental cleanup.
+The compatibility surfaces are also documented in `src/config/README.md` and
+the public configuration guide. A module-hardening pass must not erase them as
+incidental cleanup.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

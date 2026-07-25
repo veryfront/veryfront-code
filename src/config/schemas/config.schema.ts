@@ -21,8 +21,19 @@ import {
   MAX_REMOTE_HOST_COUNT,
   MAX_REMOTE_HOST_URL_LENGTH,
 } from "#veryfront/utils/remote-host-policy-limits.ts";
+import {
+  MAX_FILE_LOG_FILES,
+  MAX_GITHUB_FILESYSTEM_ATTEMPTS,
+  MAX_VERYFRONT_FILESYSTEM_RETRIES,
+} from "#veryfront/utils/config-resource-limits.ts";
+import { MAX_PATH_LENGTH } from "#veryfront/utils/constants/security.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
+const MAX_CSRF_NAME_LENGTH = 256;
+const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
+const MAX_CSRF_EXCLUDE_PATH_LIST_LENGTH = 16_384;
+const CSRF_EXCLUDE_PATH_BASE_URL = "https://csrf-policy.invalid";
 
 function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
   try {
@@ -31,6 +42,37 @@ function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isCanonicalCsrfExcludePath(path: string): boolean {
+  if (
+    path.length === 0 ||
+    path.length > MAX_PATH_LENGTH ||
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    (path.length > 1 && path.endsWith("/"))
+  ) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(path, CSRF_EXCLUDE_PATH_BASE_URL);
+    return parsed.origin === CSRF_EXCLUDE_PATH_BASE_URL &&
+      parsed.pathname === path &&
+      parsed.search === "" &&
+      parsed.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedCsrfExcludePathList(paths: readonly string[]): boolean {
+  let serializedLength = 0;
+  for (const path of paths) {
+    serializedLength += path.length;
+    if (serializedLength > MAX_CSRF_EXCLUDE_PATH_LIST_LENGTH) return false;
+  }
+  return true;
 }
 
 // Sub-schemas
@@ -110,6 +152,44 @@ const getCorsSchema = defineSchema((v) =>
   ])
 );
 
+const getCsrfSchema = defineSchema((v) =>
+  v.union([
+    v.boolean(),
+    v.object({
+      cookieName: v
+        .string()
+        .min(1)
+        .max(MAX_CSRF_NAME_LENGTH)
+        .regex(HTTP_TOKEN_PATTERN, "Expected a valid cookie name")
+        .optional(),
+      headerName: v
+        .string()
+        .min(1)
+        .max(MAX_CSRF_NAME_LENGTH)
+        .regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name")
+        .optional(),
+      excludePaths: v
+        .array(
+          v
+            .string()
+            .min(1)
+            .max(MAX_PATH_LENGTH)
+            .refine(
+              isCanonicalCsrfExcludePath,
+              "Expected a canonical absolute URL path without a query, fragment, or trailing slash",
+            ),
+        )
+        .max(MAX_CSRF_EXCLUDE_PATH_COUNT)
+        .refine(
+          isBoundedCsrfExcludePathList,
+          "CSRF exclusion paths exceed their aggregate size limit",
+        )
+        .optional(),
+      ttlSec: v.number().int().positive().optional(),
+    }).strict(),
+  ])
+);
+
 const getBasicAuthSchema = defineSchema((v) =>
   v.object({
     username: v.string().min(1),
@@ -122,6 +202,33 @@ const getBearerAuthSchema = defineSchema((v) =>
   v.object({
     token: v.string().min(1),
   }).strict()
+);
+
+function defineFilesystemRetrySchema(maxConfiguredCount: number) {
+  return defineSchema((v) =>
+    v
+      .object({
+        maxRetries: v.number().int().min(0).max(maxConfiguredCount).optional(),
+        initialDelay: v.number().int().min(0).max(MAX_TIMER_DELAY_MS).optional(),
+        maxDelay: v.number().int().min(0).max(MAX_TIMER_DELAY_MS).optional(),
+      })
+      .partial()
+      .strict()
+      .refine(
+        (retry) =>
+          retry.initialDelay === undefined ||
+          retry.maxDelay === undefined ||
+          retry.initialDelay <= retry.maxDelay,
+        "Filesystem retry initialDelay must not exceed maxDelay",
+      )
+  );
+}
+
+const getVeryfrontFilesystemRetrySchema = defineFilesystemRetrySchema(
+  MAX_VERYFRONT_FILESYSTEM_RETRIES,
+);
+const getGitHubFilesystemRetrySchema = defineFilesystemRetrySchema(
+  MAX_GITHUB_FILESYSTEM_ATTEMPTS,
 );
 
 const getEmbeddingDimensionSchema = defineSchema((v) =>
@@ -368,19 +475,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            * When enabled, POST/PUT/PATCH/DELETE requests must include
            * an `x-csrf-token` header matching the `__Host-vf_csrf` cookie.
            * The cookie is set automatically on HTML document responses.
+           * Custom names must use HTTP token syntax. Exclusions must be
+           * canonical absolute URL paths without queries, fragments, or
+           * trailing slashes.
            *
            * Server Actions (`/_veryfront/rsc/action`) are CSRF-protected;
            * client code must forward the cookie value as the header.
            */
-          csrf: v.union([
-            v.boolean(),
-            v.object({
-              cookieName: v.string().optional(),
-              headerName: v.string().optional(),
-              excludePaths: v.array(v.string()).optional(),
-              ttlSec: v.number().int().positive().optional(),
-            }).strict(),
-          ]).optional(),
+          csrf: getCsrfSchema().optional(),
           coop: v.enum(["same-origin", "same-origin-allow-popups", "unsafe-none"]).optional(),
           corp: v.enum(["same-origin", "same-site", "cross-origin"]).optional(),
           coep: v.enum(["require-corp", "unsafe-none"]).optional(),
@@ -476,7 +578,8 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   enabled: v.boolean().optional(),
                   path: v.string().optional(),
                   maxSize: v.union([v.number().int().positive(), v.string()]).optional(),
-                  maxFiles: v.number().int().positive().optional(),
+                  /** Total retained files, including the active file. */
+                  maxFiles: v.number().int().positive().max(MAX_FILE_LOG_FILES).optional(),
                   level: v.enum(["debug", "info", "warn", "error"]).optional(),
                   format: v.enum(["json", "text"]).optional(),
                 })
@@ -549,15 +652,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 .partial()
                 .strict()
                 .optional(),
-              retry: v
-                .object({
-                  maxRetries: v.number().int().min(0).optional(),
-                  initialDelay: v.number().int().positive().optional(),
-                  maxDelay: v.number().int().positive().optional(),
-                })
-                .partial()
-                .strict()
-                .optional(),
+              retry: getVeryfrontFilesystemRetrySchema().optional(),
             })
             .partial()
             .strict()
@@ -590,15 +685,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 .partial()
                 .strict()
                 .optional(),
-              retry: v
-                .object({
-                  maxRetries: v.number().int().min(0).optional(),
-                  initialDelay: v.number().int().positive().optional(),
-                  maxDelay: v.number().int().positive().optional(),
-                })
-                .partial()
-                .strict()
-                .optional(),
+              retry: getGitHubFilesystemRetrySchema().optional(),
             })
             .strict()
             .optional(),
@@ -830,19 +917,6 @@ export type VeryfrontConfigInput = Omit<InferredVeryfrontConfigInput, "integrati
 
 // Validation function
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    const unknown = findUnknownTopLevelKeys(input as Record<string, unknown>);
-    if (unknown.length > 0) {
-      throw CONFIG_VALIDATION_FAILED.create({
-        detail: `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
-        context: {
-          field: unknown.join(", "),
-          expected: "known top-level configuration keys",
-        },
-      });
-    }
-  }
-
   const result = veryfrontConfigSchema.safeParse(input);
   if (result.success) return result.data as VeryfrontConfig;
 
@@ -864,43 +938,4 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
     detail: `Invalid veryfront.config at ${path}: ${expectedWithHint}.`,
     context,
   });
-}
-
-/**
- * Known top-level keys from the config schema definition.
- * Maintained in sync with the `getVeryfrontConfigSchema` shape above.
- */
-const knownConfigKeys = new Set([
-  "projectSlug",
-  "title",
-  "description",
-  "react",
-  "directories",
-  "experimental",
-  "router",
-  "layout",
-  "app",
-  "theme",
-  "build",
-  "cache",
-  "dev",
-  "resolve",
-  "security",
-  "middleware",
-  "theming",
-  "assetPipeline",
-  "observability",
-  "search",
-  "fs",
-  "ai",
-  "client",
-  "generate",
-  "tailwind",
-  "integrations",
-  "extensions",
-  "openapi",
-]);
-
-export function findUnknownTopLevelKeys(input: Record<string, unknown>): string[] {
-  return Object.keys(input).filter((key) => !knownConfigKeys.has(key));
 }

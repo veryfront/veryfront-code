@@ -148,6 +148,22 @@ describe("mcp/tools/project-tools", () => {
       assertEquals(Array.isArray(result), true);
     });
 
+    it("discovers a project with an MJS-only config", async () => {
+      const projectDir = await createProject({
+        "package.json": JSON.stringify({ name: "local-mjs-project" }),
+        "veryfront.config.mjs": "export default {};\n",
+      });
+
+      try {
+        const result = await vfListLocalProjects.execute({ directory: projectDir, depth: 2 });
+
+        assertEquals(result.length, 1);
+        assertEquals(result[0]?.name, "local-mjs-project");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("classifies local projects with AG-UI routes as AI projects", async () => {
       const projectDir = await createProject({
         "package.json": JSON.stringify({ name: "local-ag-ui-project" }),

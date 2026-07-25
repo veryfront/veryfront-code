@@ -635,6 +635,48 @@ describe("createApiClient", () => {
 });
 
 describe("readConfigFile", () => {
+  it("reads projectSlug from an MJS-only module config", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.config.mjs"),
+        'export default { projectSlug: "from-mjs" };\n',
+      );
+
+      const config = await readConfigFile(tempDir);
+
+      assertEquals(config?.projectSlug, "from-mjs");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("uses JavaScript before TypeScript and MJS when multiple module configs exist", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Promise.all([
+        Deno.writeTextFile(
+          join(tempDir, "veryfront.config.js"),
+          'export default { projectSlug: "from-js" };\n',
+        ),
+        Deno.writeTextFile(
+          join(tempDir, "veryfront.config.ts"),
+          'export default { projectSlug: "from-ts" };\n',
+        ),
+        Deno.writeTextFile(
+          join(tempDir, "veryfront.config.mjs"),
+          'export default { projectSlug: "from-mjs" };\n',
+        ),
+      ]);
+
+      const config = await readConfigFile(tempDir);
+
+      assertEquals(config?.projectSlug, "from-js");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("merges veryfront.json apiUrl with the module config projectSlug", async () => {
     const tempDir = await Deno.makeTempDir();
     try {

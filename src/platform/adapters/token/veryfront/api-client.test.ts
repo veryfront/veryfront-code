@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { TokenStorageApiClient } from "./api-client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import type { VeryfrontTokenConfig } from "./types.ts";
@@ -40,6 +46,30 @@ describe("platform/adapters/token/veryfront/api-client", () => {
     it("should create client with valid config", () => {
       const client = new TokenStorageApiClient(createConfig());
       assertExists(client);
+    });
+
+    it("enforces retry policy for direct client construction", () => {
+      assertThrows(
+        () =>
+          new TokenStorageApiClient(
+            createConfig({
+              retry: { maxRetries: 10, initialDelay: 0, maxDelay: 0 },
+            }),
+          ),
+        RangeError,
+        "maxRetries",
+      );
+      assertExists(
+        new TokenStorageApiClient(
+          createConfig({
+            retry: {
+              maxRetries: MAX_VERYFRONT_API_RETRIES,
+              initialDelay: 0,
+              maxDelay: 0,
+            },
+          }),
+        ),
+      );
     });
   });
 

@@ -1,4 +1,5 @@
 import { dirname } from "@std/path";
+import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { LogEntry, LogLevel, LogSubscriber } from "./log-buffer.ts";
 import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
@@ -8,6 +9,7 @@ export interface FileLogConfig {
   enabled: boolean;
   path: string;
   maxSize: number | string;
+  /** Total retained files, including the active log file. */
   maxFiles: number;
   level: LogLevel;
   format: "json" | "text";
@@ -138,8 +140,14 @@ export class FileLogSubscriber {
     if (!config.path.trim()) {
       throw new TypeError("File log path must not be empty");
     }
-    if (!Number.isSafeInteger(config.maxFiles) || config.maxFiles <= 0) {
-      throw new RangeError("File log maxFiles must be a positive integer");
+    if (
+      !Number.isSafeInteger(config.maxFiles) ||
+      config.maxFiles <= 0 ||
+      config.maxFiles > MAX_FILE_LOG_FILES
+    ) {
+      throw new RangeError(
+        `File log maxFiles must be an integer between 1 and ${MAX_FILE_LOG_FILES}`,
+      );
     }
     if (!(config.level in LOG_LEVEL_PRIORITY)) {
       throw new TypeError(`Invalid file log level: ${String(config.level)}`);
