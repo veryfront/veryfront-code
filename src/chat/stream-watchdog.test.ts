@@ -2,11 +2,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
+import * as streamWatchdog from "./stream-watchdog.ts";
 import {
   createChatStreamWatchdog,
   getNextChatStreamWatchdogState,
   isHeartbeatOnlyMetadataChunk,
 } from "./stream-watchdog.ts";
+// @ts-expect-error Lifecycle activity mapping is internal to the stream lifecycle module.
+import type { mapWatchdogChunkToLifecycleActivity as _mapWatchdogChunkToLifecycleActivity } from "./stream-watchdog.ts";
+// @ts-expect-error Lifecycle activity shape is internal to the stream lifecycle module.
+import type { WatchdogLifecycleActivity as _WatchdogLifecycleActivity } from "./stream-watchdog.ts";
 
 const watchdogOptions = {
   idleTimeoutMs: 120,
@@ -16,6 +21,12 @@ const watchdogOptions = {
 };
 
 describe("chat/stream-watchdog", () => {
+  it("keeps lifecycle activity helpers out of the public barrel", () => {
+    const surface = streamWatchdog as Record<string, unknown>;
+
+    assertEquals("mapWatchdogChunkToLifecycleActivity" in surface, false);
+  });
+
   it("transitions through tool input, running, and post-tool idle states", () => {
     const inputStreaming = getNextChatStreamWatchdogState(
       { phase: "response_pending", timeoutMs: 120 },

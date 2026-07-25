@@ -17,6 +17,4 @@ export {
   getNextChatStreamWatchdogState,
   isHeartbeatOnlyMetadataChunk,
   isLongRunningToolRunning,
-  mapWatchdogChunkToLifecycleActivity,
-  type WatchdogLifecycleActivity,
 } from "../agent/streaming/lifecycle/watchdog-compat-adapter.ts";
