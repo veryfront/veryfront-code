@@ -6,7 +6,7 @@
  */
 
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { applyRewrites, parseAllImports } from "./parse-cache.ts";
+import { rewriteWithImportRewriteCore } from "./core.ts";
 import {
   aliasStrategy,
   bareStrategy,
@@ -20,7 +20,7 @@ import {
   veryfrontStrategy,
 } from "./strategies/index.ts";
 import { assetStrategy } from "./strategies/asset-strategy.ts";
-import type { ImportRewriteStrategy, RewriteContext, RewriteResult } from "./types.ts";
+import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
 
 /**
  * Default strategy execution order by priority.
@@ -59,69 +59,12 @@ export class UnifiedImportRewriter {
   rewrite(code: string, ctx: RewriteContext): Promise<string> {
     return withSpan(
       "transform.import-rewriter",
-      async () => {
-        const parsed = await parseAllImports(code);
-        if (parsed.imports.length === 0) return code;
-
-        const rewrites = new Map<number, { specifier?: string | null; statement?: string }>();
-
-        for (let i = 0; i < parsed.imports.length; i++) {
-          const imp = parsed.imports[i]!;
-          const result = this.rewriteImport(imp.specifier, imp, ctx);
-
-          if (result.specifier !== null || result.statement !== undefined) {
-            rewrites.set(i, result);
-          }
-        }
-
-        if (rewrites.size === 0) return code;
-        return applyRewrites(code, parsed, rewrites);
-      },
+      () => rewriteWithImportRewriteCore({ code, context: ctx, strategies: this.strategies }),
       {
         "transform.target": ctx.target,
         "transform.file": ctx.filePath.split("/").pop() ?? ctx.filePath,
       },
     );
-  }
-
-  /**
-   * Rewrite a single import specifier.
-   */
-  private rewriteImport(
-    specifier: string,
-    info: {
-      specifier: string;
-      isDynamic: boolean;
-      start: number;
-      end: number;
-      statementStart: number;
-      statementEnd: number;
-      raw: unknown;
-    },
-    ctx: RewriteContext,
-  ): RewriteResult {
-    for (const strategy of this.strategies) {
-      if (!strategy.matches(specifier, ctx)) continue;
-
-      const result = strategy.rewrite(
-        {
-          specifier: info.specifier,
-          isDynamic: info.isDynamic,
-          start: info.start,
-          end: info.end,
-          statementStart: info.statementStart,
-          statementEnd: info.statementEnd,
-          raw: info.raw as import("./types.ts").ImportSpecifierInfo["raw"],
-        },
-        ctx,
-      );
-
-      if (result.specifier !== null || result.statement !== undefined) {
-        return result;
-      }
-    }
-
-    return { specifier: null };
   }
 }
 

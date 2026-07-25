@@ -15,6 +15,7 @@ import {
   defaultAgentServiceMcpServers,
 } from "../service/mcp-server-config.ts";
 import type { AgentMcpToolPolicy } from "../types.ts";
+import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
@@ -344,42 +345,13 @@ function createHostedProjectRemoteToolSourceFromConfig(
   });
 }
 
-function isHostedMcpToolAllowed(
-  toolName: string,
-  policy: AgentMcpToolPolicy | undefined,
-): boolean {
-  if (policy?.deny?.includes(toolName)) {
-    return false;
-  }
-
-  return policy?.allow ? policy.allow.includes(toolName) : true;
-}
-
 export function createHostedMcpToolPolicySource(
   source: RemoteToolSource,
   policy: AgentMcpToolPolicy | undefined,
 ): RemoteToolSource {
-  if (!policy?.allow && !policy?.deny) {
-    return source;
-  }
-
-  return {
-    id: source.id,
-    async listTools(context) {
-      return (await source.listTools(context)).filter((toolDefinition) =>
-        isHostedMcpToolAllowed(toolDefinition.name, policy)
-      );
-    },
-    executeTool(toolName, args, context) {
-      if (!isHostedMcpToolAllowed(toolName, policy)) {
-        throw PERMISSION_DENIED.create({
-          detail: `Tool "${toolName}" is not allowed for this MCP server`,
-        });
-      }
-
-      return source.executeTool(toolName, args, context);
-    },
-  };
+  return wrapRemoteToolSourceWithMcpPolicy(source, policy, {
+    deniedDetail: (toolName) => `Tool "${toolName}" is not allowed for this MCP server`,
+  });
 }
 
 /** Create hosted project remote tool sources. */
