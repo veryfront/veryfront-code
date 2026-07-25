@@ -605,6 +605,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.isStreaming, false);
         assertEquals(result.showDevOverlay, undefined);
         assertEquals(typeof result.html, "string");
+        assertEquals(result.html?.includes("503"), true);
+        assertEquals(result.html?.includes("Service Temporarily Unavailable"), true);
       });
 
       it("returns runtime error overlay in dev mode", async () => {

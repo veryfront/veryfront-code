@@ -435,7 +435,7 @@ export class SSRService implements SSRServiceLike {
     ) {
       return {
         status: error.status ?? HTTP_UNAVAILABLE,
-        html: ErrorPages.serverError(),
+        html: ErrorPages.memoryPressure(),
         isStreaming: false,
         cacheStrategy: "no-cache",
         error: errorObj,
